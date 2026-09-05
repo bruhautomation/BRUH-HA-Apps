@@ -29,6 +29,10 @@ and so cannot clear anything):
                     list endpoint does not say whether it was meant to run
     zha_devices    [{name, ieee, available, last_seen}] — absent unless ZHA
                     is installed, which is what makes the key unavailable
+    config_entries [{entry_id, domain, title, state, source, disabled_by,
+                    reason}] — every integration entry and whether it set
+                    itself up. Unavailable when Core would not answer, which
+                    is a different claim from a house with nothing failing
     recorder       {db_bytes, db_path, purge_keep_days}
     closures       how much of each hour of the week each door, window,
                     lock and cover is normally open, as `panel/closures.py`
@@ -202,6 +206,49 @@ def _trace_rows(rows: Any) -> list:
 # The live house
 # ---------------------------------------------------------------------------
 
+async def collect_rooms(now: float | None = None) -> dict:
+    """The four keys a `House` needs to answer "what is in this room".
+
+    `collect` fetches statistics, traces, a week of daily means and the
+    Supervisor, which is minutes of work and exactly right for a checks
+    pass — and completely wrong for somebody who has just typed *"design
+    my evening for the living room"* and is watching a spinner. This is
+    the states, the three registries and `scenes.yaml`, and nothing else.
+
+    It is here rather than in the caller so there is one answer to what a
+    snapshot's `states`/`entities`/`devices`/`areas` look like: a second
+    assembly of the same four keys would be a `House` built two ways.
+    """
+    import aiohttp
+
+    import ha_data
+
+    now = time.time() if now is None else now
+    snap: dict[str, Any] = {"now": now, "available": {}, "errors": {}}
+    cfg = load_configs()
+    snap["scenes"] = cfg["scenes"]
+    snap["automations"] = cfg["automations"]
+    async with aiohttp.ClientSession() as session:
+        raw = await ha_data._rest_get(session, "/states", timeout=60)
+        snap["states"] = {
+            s["entity_id"]: {
+                "state": s.get("state"),
+                "attributes": s.get("attributes") or {},
+            } for s in (raw or []) if isinstance(s, dict) and s.get("entity_id")}
+        areas, devices, entities = await ha_data._ws_commands(session, [
+            {"type": "config/area_registry/list"},
+            {"type": "config/device_registry/list"},
+            {"type": "config/entity_registry/list"},
+        ])
+        if entities is None:
+            raise RuntimeError("the entity registry did not answer")
+        snap["areas"] = areas or []
+        snap["devices"] = devices or []
+        snap["entities"] = entities or []
+    snap["services"] = set()
+    return snap
+
+
 async def collect(now: float | None = None) -> dict:
     """Fetch everything the checks read. Never raises."""
     import aiohttp
@@ -309,6 +356,21 @@ async def collect(now: float | None = None) -> dict:
         except Exception as exc:  # noqa: BLE001
             snap["zha_devices"] = []
             _mark("zha_devices", False, str(exc))
+
+        # Every integration entry and whether it loaded. A Core that
+        # would not answer leaves the key UNAVAILABLE rather than empty:
+        # "no entry is failing" and "I could not ask" are different
+        # claims, and only the first may clear a row.
+        try:
+            entries = (await ha_data._ws_commands(
+                session, [{"type": "config_entries/get"}]))[0]
+            snap["config_entries"] = entries if isinstance(entries, list) else []
+            _mark("config_entries", isinstance(entries, list),
+                  "" if isinstance(entries, list)
+                  else "Home Assistant did not list its config entries")
+        except Exception as exc:  # noqa: BLE001
+            snap["config_entries"] = []
+            _mark("config_entries", False, str(exc))
 
         sup = await _supervisor(session)
         snap["supervisor"] = sup

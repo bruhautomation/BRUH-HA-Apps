@@ -157,6 +157,12 @@ STUDY_SCHEMA = vol.Schema(
     }
 )
 
+INTENT_SCHEMA = vol.Schema(
+    {
+        vol.Required("sentence"): vol.All(str, vol.Length(min=1, max=300)),
+    }
+)
+
 
 def entry_type(entry: ConfigEntry) -> str:
     """Entries created before 3.0 have no type and are conversation agents."""
@@ -874,6 +880,25 @@ def _register_services(hass: HomeAssistant) -> None:
             _write_study_request, requests_dir, call.data.get("topic", ""))
         _LOGGER.info("Queued study session: %s", call.data.get("topic") or "(stalest topic)")
 
+    async def handle_intent(call: ServiceCall):
+        """Turn one sentence into an automation that runs once.
+
+        Fire-and-forget, exactly as `study` is and for the same reason:
+        Claude has to search the house for what the sentence names, which
+        is far longer than a service call should block — and a voice
+        command that waited would be a voice command that timed out. What
+        comes back is a card on the Proposals tab, because **nothing brAIn
+        writes is enabled on its own**; a sentence it will not arm gets a
+        card there too, with the reason on it.
+        """
+        from .requests import write_intent  # noqa: PLC0415 — that module
+        # imports homeassistant.core and nothing else on purpose
+
+        sentence = call.data["sentence"]
+        await hass.async_add_executor_job(
+            write_intent, hass, sentence, "service")
+        _LOGGER.info("Queued a one-off intent: %s", sentence)
+
     async def handle_answer_question(call: ServiceCall):
         memory_dir = hass.config.path(SHARED_DIR, MEMORY_DIR)
         await hass.async_add_executor_job(
@@ -938,6 +963,13 @@ def _register_services(hass: HomeAssistant) -> None:
         "study",
         handle_study,
         schema=STUDY_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "intent",
+        handle_intent,
+        schema=INTENT_SCHEMA,
     )
 
     # BRUH Power Tools: registry-management admin services (power_tools.py)

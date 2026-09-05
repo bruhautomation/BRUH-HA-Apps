@@ -41,10 +41,17 @@ def _live_hardware(house: House):
         yield eid, st
 
 
-def _zwave_dead_devices(house: House) -> set[str]:
-    """Device ids whose Z-Wave node status sensor reads `dead`."""
-    out: set[str] = set()
-    for eid, st in house.states.items():
+def _zwave_dead_nodes(house: House) -> list[dict]:
+    """Every device whose Z-Wave node status sensor reads `dead`.
+
+    Both the device id and the **sensor that said so**, because two
+    different callers need two different halves of the same answer:
+    ``dev.unavailable`` and ``dev.zwave_dead`` want the device, and
+    ``panel/healing.py`` wants an entity to ping. Computing it twice is
+    how they would come to disagree about which box this is.
+    """
+    out: list[dict] = []
+    for eid, st in sorted(house.states.items()):
         if not (eid.startswith("sensor.") and eid.endswith("_node_status")):
             continue
         if (house.registry.get(eid) or {}).get("platform") != "zwave_js":
@@ -53,8 +60,19 @@ def _zwave_dead_devices(house: House) -> set[str]:
             continue
         dev = house.device_of(eid)
         if dev:
-            out.add(dev["id"])
+            out.append({"device_id": dev["id"], "entity_id": eid,
+                        "name": house.device_name(dev)})
     return out
+
+
+def _zwave_dead_devices(house: House) -> set[str]:
+    """Device ids whose Z-Wave node status sensor reads `dead`."""
+    return {n["device_id"] for n in _zwave_dead_nodes(house)}
+
+
+def zwave_dead_nodes(snap: dict) -> list[dict]:
+    """The public door onto the same answer, for `panel/healing.py`."""
+    return _zwave_dead_nodes(House(snap))
 
 
 # ---------------------------------------------------------------------------

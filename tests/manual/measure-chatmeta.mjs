@@ -62,6 +62,183 @@ function probe() {
   };
 }
 
+
+// ---------------------------------------------------------------------------
+// The second pass: what a conversation row says about its own live session.
+//
+// A row can carry two marks — a quiet "answering…" while a turn it is
+// writing runs on in the background, and a badge when it is waiting on a
+// person. Both are new, both sit beside a title that is already competing
+// for the width, and the surface differs by screen: the rail is
+// display:none below 1100px, so on a phone the ⋯ dialog is the only place
+// these can be read. So both are measured, at the width each one is the
+// answer for.
+//
+// Unlike the pass above this drives the panel's REAL renderers behind a
+// stubbed fetch (the same arrangement measure-activity.mjs uses): a copy of
+// renderChatRail in this file would only ever agree with itself.
+const LIVE_WIDTHS = [390, 1200];
+const MIN_TARGET = 44;
+
+const CONVS = [
+  { id: 'c-busy', title: 'Why does the porch light come on at three in the '
+      + 'afternoon when nobody is home', modified: 0, age: '2 min ago',
+    source: 'you', live: true, busy: true, needs_ok: false },
+  { id: 'c-ask', title: 'Tidy up the kitchen automations', modified: 0,
+    age: '9 min ago', source: 'you', live: true, busy: false, needs_ok: true },
+  { id: 'c-live', title: 'Bedroom thermostat schedule', modified: 0,
+    age: '1 h ago', source: 'you', live: true, busy: false, needs_ok: false },
+  { id: 'c-cold', title: 'An older one nothing is holding open', modified: 0,
+    age: '3 d ago', source: 'you', live: false, busy: false, needs_ok: false },
+];
+const SESSIONS = CONVS.filter((c) => c.live).map((c) => ({
+  session_id: c.id, state: c.busy ? 'busy' : 'ready', live: true,
+  busy: c.busy, needs_ok: c.needs_ok, attached: c.id === 'c-live',
+  title: c.title, busy_since: 0, last_activity: 0,
+}));
+
+const LIVE_STUB = `
+window.EventSource = function () {
+  return { close() {}, addEventListener() {}, onmessage: null, onerror: null };
+};
+window.fetch = async (url) => {
+  const p = String(url);
+  const answer = (body) => new Response(JSON.stringify(body), {
+    status: 200, headers: { 'Content-Type': 'application/json' } });
+  if (p.includes('api/chat/conversations')) {
+    return answer({ conversations: ${JSON.stringify(CONVS)},
+                    current: 'c-live',
+                    sources: [{ id: 'you', label: 'Chats', blurb: '', count: 4 }],
+                    sessions: ${JSON.stringify(SESSIONS)}, max_sessions: 3 });
+  }
+  if (p.includes('api/chat/state')) {
+    return answer({ type: 'snapshot', events: [], state: 'ready', error: '',
+                    session_id: 'c-live', info: {}, commands: [], context: {},
+                    cli: [], models: [], chat_model: '', default_model: '',
+                    default_model_label: '', permission: null,
+                    sessions: ${JSON.stringify(SESSIONS)}, max_sessions: 3 });
+  }
+  if (p.includes('api/status')) {
+    return answer({
+      version: 'test', authenticated: true, auth_type: 'oauth',
+      auth_source: 'panel', auth_check: { state: 'ok', error: '' },
+      model: 'default', settings: {}, usage: {}, auto: {},
+      categories: [], jobs: {}, queue_size: 0, findings_open: 0,
+    });
+  }
+  if (p.includes('api/settings')) return answer({ settings: {}, usage: {} });
+  if (p.includes('api/insights')) return answer({ insights: [] });
+  if (p.includes('api/findings')) {
+    return answer({ findings: [], hypotheses: [], open: 0, settled: [] });
+  }
+  return answer({});
+};
+`;
+
+async function livePass(browser, note) {
+  for (const width of LIVE_WIDTHS) {
+    const context = await browser.newContext({ viewport: { width, height: 900 } });
+    const page = await context.newPage();
+    page.on('pageerror', (e) => note(`${width}px`, `page error: ${e.message}`));
+    await page.addInitScript(LIVE_STUB);
+    await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+    await page.click('.viewtab[data-view="terminal"]');
+
+    // The rail on a wide screen, the ⋯ dialog on a phone — whichever of the
+    // two a person at this width actually has.
+    const wide = await page.evaluate(() =>
+      getComputedStyle(document.querySelector('#chatRail')).display !== 'none');
+    const selector = wide ? '#chatRailList .crrow' : '#convList .crrow';
+    await page.evaluate(async (isWide) => {
+      chatState.sessionId = 'c-live';
+      if (isWide) await refreshChatRail();
+      else await openConversations();
+    }, wide);
+    await page.waitForSelector(selector);
+
+    const m = await page.evaluate((sel) => {
+      const rows = [...document.querySelectorAll(sel)];
+      const host = rows[0].parentElement.getBoundingClientRect();
+      return {
+        surface: sel,
+        hostRight: host.right,
+        rows: rows.map((r) => {
+          const box = r.getBoundingClientRect();
+          const mark = r.querySelector('.crbusy, .crask');
+          const title = r.querySelector('.ctitle');
+          const ms = mark && getComputedStyle(mark);
+          return {
+            id: r.querySelector('.critem, .convitem').textContent.slice(0, 24),
+            mark: mark ? mark.className : '',
+            markText: mark ? mark.textContent.trim() : '',
+            markShown: !!(ms && ms.display !== 'none'
+                          && ms.visibility !== 'hidden' && Number(ms.opacity) > 0),
+            markRight: mark ? mark.getBoundingClientRect().right : 0,
+            titleRight: title ? title.getBoundingClientRect().right : 0,
+            h: Math.round(box.height),
+            right: box.right,
+          };
+        }),
+        docWidth: document.documentElement.scrollWidth,
+      };
+    }, selector);
+
+    const marks = m.rows.map((r) => r.mark).join(' ');
+    if (!/crbusy/.test(marks)) note(`${width}px`, 'no row says it is answering');
+    if (!/crask/.test(marks)) note(`${width}px`, 'no row says it needs an OK');
+
+    // The marks have to survive a turn ending. `chatState.live` is the
+    // message node partial text streams into and is set to null when an
+    // answer completes; the marks live in `chatState.liveSessions`. For a
+    // release the two shared one name — the second definition in the
+    // literal won, so streamed text rendered into a plain object and the
+    // rail threw on the first repaint after a turn. A repaint here, with no
+    // fetch to rebuild the map, is exactly that moment.
+    let after = -1;
+    try {
+      after = await page.evaluate((isWide) => {
+        chatState.live = null;
+        chatState.liveText = '';
+        if (isWide) renderChatRail(); else renderConvModal();
+        return [...document.querySelectorAll('.crbusy, .crask')].length;
+      }, wide);
+    } catch (e) {
+      note(`${width}px`, `repainting after a turn ended threw: ${e.message.split('\n')[0]}`);
+    }
+    if (after >= 0 && after < 2) {
+      note(`${width}px`, `the marks did not survive a turn ending: ${after} left`);
+    }
+    // Three live rows, two marks: a row whose session is live but quiet is
+    // deliberately unmarked, because "has a process" is not news.
+    if (m.rows.filter((r) => r.mark).length !== 2) {
+      note(`${width}px`, `${m.rows.filter((r) => r.mark).length} marks, expected 2`);
+    }
+    for (const row of m.rows) {
+      if (row.mark && !row.markShown) {
+        note(`${width}px`, `${row.id}: the mark is hidden rather than shown`);
+      }
+      if (row.mark && !row.markText) {
+        note(`${width}px`, `${row.id}: a mark with no words in it`);
+      }
+      if (row.mark && row.markRight > m.hostRight + 0.5) {
+        note(`${width}px`, `${row.id}: the mark hangs off the list`);
+      }
+      if (row.right > m.hostRight + 0.5) {
+        note(`${width}px`, `${row.id}: the row overflows the list`);
+      }
+      if (row.h < MIN_TARGET) {
+        note(`${width}px`, `${row.id} is ${row.h}px, under ${MIN_TARGET}`);
+      }
+    }
+    if (m.docWidth > width + 0.5) {
+      note(`${width}px`, `page scrolls sideways (${m.docWidth}px)`);
+    }
+    console.log(`${String(width).padStart(5)} ${m.surface.padEnd(20)} `
+      + m.rows.map((r) => r.markText || '—').join(' | '));
+    await context.close();
+  }
+}
+
 (async () => {
   const browser = await chromium.launch(
     process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
@@ -91,6 +268,14 @@ function probe() {
     ? `\n${bad}/${WIDTHS.length} width(s) clip the meta line`
     : `\nall ${WIDTHS.length} widths: the model and context line is fully visible`);
 
+  console.log('\nwidth surface              row marks');
+  const failures = [];
+  await livePass(browser, (where, message) => failures.push(`${where}: ${message}`));
+  failures.forEach((f) => console.log('  ' + f));
+  console.log(failures.length
+    ? `\n${failures.length} problem(s) with the live-session marks`
+    : `\nboth widths: "answering…" and "Needs your OK" render inside the row`);
+
   await browser.close();
-  process.exit(bad ? 1 : 0);
+  process.exit(bad || failures.length ? 1 : 0);
 })();

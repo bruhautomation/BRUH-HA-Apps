@@ -102,6 +102,26 @@ study:
         naming, presence, energy, climate, devices, automations, lighting. Any other text
         is studied as a one-off.
       required: false
+
+intent:
+  name: Do this once
+  description: >-
+    Say one thing you want to happen next time, in a sentence. brAIn works out which
+    automation would do it, and offers it on the Proposals tab with a replay of how often
+    that trigger would have fired — nothing is enabled until you accept it. What gets
+    written runs once and switches itself off, and stays in your automations, saying it
+    fired, until you press Remove.
+  fields:
+    sentence:
+      name: Sentence
+      description: >-
+        What should happen, and when. For example: "Turn the porch light off when the
+        guests leave" or "Tell me when the tumble dryer finishes". A standing rule —
+        something that should keep happening — is offered on the ordinary path instead.
+      required: true
+      example: Turn the porch light off when the front door has been shut for ten minutes
+      selector:
+        text:
       example: energy
       selector:
         text:

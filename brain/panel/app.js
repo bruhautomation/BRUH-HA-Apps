@@ -200,14 +200,26 @@ const TOAST_UNDO_MS = 8000;
 // button. Every ending on the Findings tab deletes its row — that is what
 // makes the list a list — so a mis-tap has nothing to put back by hand, and
 // the two endings sit beside each other meaning opposite things.
-function toast(msg, undo) {
+// `action` is the other kind of button a toast can carry: a label and
+// something to do, for a message that is not about undoing anything —
+// "that chat needs your OK", whose whole point is being one press from the
+// conversation asking. Same lifetime as Undo's, for the same reason.
+function toast(msg, undo, action) {
   const t = $("#toast");
   t.textContent = "";
   t.appendChild(el("span", null, msg));
   // Only while the toast is up: the button is the offer, and the offer
   // expires with it. The token expires server-side too, so a stale one is
   // refused rather than acting on a decision made five minutes ago.
-  t.classList.toggle("undoable", !!undo);
+  t.classList.toggle("undoable", !!undo || !!action);
+  if (action && !undo) {
+    const btn = el("button", "toastundo", action.label);
+    btn.addEventListener("click", () => {
+      t.classList.remove("show");
+      action.run();
+    });
+    t.appendChild(btn);
+  }
   if (undo) {
     const btn = el("button", "toastundo", "Undo");
     btn.addEventListener("click", async () => {
@@ -1444,6 +1456,27 @@ async function generate(categoryOrId, question) {
         : "Studying whatever brAIn knows least about — check Memory shortly");
       return;
     }
+    // "when the guests leave…" is not a question about the house, so it never
+    // becomes a card. It goes to the same queue the `brain.intent` service
+    // writes to, and what comes back is a card on Proposals — including when
+    // brAIn will not arm it, because a sentence somebody typed always gets an
+    // answer. Naming where to look is the whole toast: nothing appears here.
+    // "design my evening for the living room" is a room, not a question.
+    // A refusal comes back on the request (composing is deterministic and
+    // costs one fetch) and an offer does not, because naming the four is
+    // a Claude run and a request cannot wait on one.
+    if (res && ("scenes" in res || (res.refused && "area" in res))) {
+      toast(res.refused
+        ? res.refused
+        : `Designing four scenes for the ${res.scenes} — ${res.lights} `
+          + "lights. They land on Proposals in a moment, with a preview.");
+      return;
+    }
+    if (res && "intent" in res) {
+      toast("Working out what that means — it lands on Proposals in a moment. "
+        + "Nothing runs until you accept it.");
+      return;
+    }
     await refreshStatus();
     fastPoll();
   } catch (e) {
@@ -1864,6 +1897,7 @@ function renderModelField(data) {
 function renderSettingsForm(data) {
   $("#setEnabled").checked = data.settings.auto_enabled !== false;
   $("#setTerminalUi").value = data.settings.terminal_ui || "chat";
+  $("#setChatSessions").value = String(data.settings.chat_max_sessions || 3);
   $("#setGatherMode").value = data.settings.gather_mode || "search";
   $("#setPlan").value = data.settings.plan || "pro";
   $("#setBudget").value = data.settings.budget_percent;
@@ -2044,6 +2078,36 @@ function renderDiagnostics(d) {
       : "";
     rows.push(diagRow("Notifications",
       `at ${esc(n.min_severity || "serious")} and up — ${window_}${held}`));
+  }
+  // Overnight self-healing. Three silences look identical from outside —
+  // it is off, it is not the window yet, and it does not know when the
+  // house is quiet — and only the last one needs anything doing.
+  const heal = d.healing || {};
+  if (!heal.enabled) {
+    rows.push(diagRow("Overnight repairs", "off"));
+  } else {
+    const tried = heal.attempts || [];
+    const worked = tried.filter((a) => a.ok).length;
+    let line = tried.length
+      ? `${tried.length} tried last night, ${worked} accepted`
+        + (heal.last_run
+          ? ` — ${timeAgo(new Date(heal.last_run * 1000).toISOString())}`
+          : "")
+      : "on, nothing repaired yet";
+    if ((heal.skips || []).length) line += `, ${heal.skips.length} skipped`;
+    rows.push(diagRow("Overnight repairs", esc(line)));
+    // The reason it will not run is the row worth having: a self-healer
+    // that has never run reads exactly like one with nothing to do.
+    if (heal.reason) {
+      rows.push(diagRow("Not running because", esc(heal.reason),
+        /has not been measured/.test(heal.reason)));
+    }
+    const bad = tried.filter((a) => !a.ok).slice(0, 3).map((a) =>
+      `<li>${esc(a.sentence || a.remedy || "a repair")} — `
+      + `${esc(String(a.error || "failed").slice(0, 120))}</li>`);
+    if (bad.length) {
+      rows.push(diagRow("Repairs that failed", `<ul>${bad.join("")}</ul>`, true));
+    }
   }
   if (failures.length) {
     const items = failures.slice(0, 5).map((f) =>
@@ -2286,6 +2350,11 @@ $("#setPlan").addEventListener("change", () =>
   saveSettings({ plan: $("#setPlan").value }));
 $("#setGatherMode").addEventListener("change", () =>
   saveSettings({ gather_mode: $("#setGatherMode").value }));
+// Applies to the next switch rather than immediately: lowering it does not
+// go round shutting conversations down, it means the next one you open
+// closes the oldest idle one to make room.
+$("#setChatSessions").addEventListener("change", () =>
+  saveSettings({ chat_max_sessions: Number($("#setChatSessions").value) }));
 // Applied straight away rather than on the next status poll, so the Terminal
 // tab has already changed by the time the dialog is closed — and through the
 // same path as the tab's own switch, so changing it here carries the
@@ -3721,6 +3790,84 @@ const propState = {
   error: "",        // and the sentence it was refused with, verbatim
 };
 
+// The area picker. Filled once per visit rather than on a timer: the set
+// of rooms with two lights in them changes when somebody buys a bulb, and
+// a poll for that would be a request per viewer per interval.
+async function refreshSceneAreas() {
+  const pick = $("#sceneArea");
+  const go = $("#sceneGo");
+  const note = $("#sceneNote");
+  if (!pick || !go) return;
+  let data = null;
+  try {
+    data = await api("api/scenes/areas");
+  } catch (err) {
+    // "I could not ask" and "you have no rooms" are different answers and
+    // only one of them is about the house.
+    if (note) note.textContent = String(err && err.message ? err.message : err);
+    return;
+  }
+  const areas = data.areas || [];
+  pick.textContent = "";
+  pick.appendChild(el("option", null, "a room…"));
+  areas.forEach((row) => {
+    const opt = el("option", null,
+      `${row.area} — ${row.lights} light${row.lights === 1 ? "" : "s"}`);
+    opt.value = row.area;
+    pick.appendChild(opt);
+  });
+  go.disabled = true;
+  if (note) {
+    note.textContent = areas.length
+      ? ""
+      : `No room has ${data.min_lights || 2} lights brAIn can set, so there `
+        + "is nothing to compose four moods over yet.";
+  }
+}
+
+async function designScenes() {
+  const pick = $("#sceneArea");
+  const go = $("#sceneGo");
+  const note = $("#sceneNote");
+  const area = pick && pick.value;
+  if (!area || !go) return;
+  go.disabled = true;
+  go.textContent = "Designing…";
+  try {
+    const resp = await fetch("api/scenes/design", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ area }),
+    });
+    let data = null;
+    try { data = await resp.json(); } catch { data = null; }
+    const why = data && data.refused;
+    if (note) {
+      note.textContent = why
+        ? why
+        : `Designing four scenes for the ${area} — they land below in a `
+          + "moment, with a preview.";
+    }
+    if (!why) setTimeout(refreshProposals, 6000);
+  } catch (err) {
+    if (note) note.textContent = String(err && err.message ? err.message : err);
+  } finally {
+    go.textContent = "Design them";
+    go.disabled = !(pick && pick.value);
+  }
+}
+
+// Bound once, here rather than in the render: the picker is static markup
+// and rebuilding a control on every render drops its listener — the same
+// reason the terminal's menu items are static.
+$("#sceneArea")?.addEventListener("change", () => {
+  const go = $("#sceneGo");
+  if (go) go.disabled = !$("#sceneArea").value;
+  const note = $("#sceneNote");
+  if (note) note.textContent = "";
+});
+$("#sceneGo")?.addEventListener("click", designScenes);
+
 async function refreshProposals() {
   try {
     propState.data = await api("api/proposals");
@@ -3824,6 +3971,28 @@ function propReplayLine(row) {
   const r = row.replay;
   if (!r) return "";
   if (r.refused || r.error) return `Not replayable: ${r.error || "unknown"}`;
+  // A proposal that EDITS an automation has two numbers and its whole
+  // case is the pair: what the rule does today, and what it would do with
+  // the condition on it. One of those on its own is a fact about an
+  // automation rather than an argument for changing it.
+  const was = row.replay_before;
+  if (was && !was.refused && !was.error) {
+    const before = was.would_run ?? 0;
+    const after = r.would_run ?? 0;
+    const days = Math.round(r.days ?? was.days ?? 30);
+    const head = `Over the last ${days} days it ran ${before} `
+      + `${before === 1 ? "time" : "times"}. With this condition it would `
+      + `have run ${after}`;
+    if (after === before) {
+      // Worth saying out loud rather than dressing up: over the window
+      // the recorder can answer for, the change would have made no
+      // difference, and that is something to know before saying yes.
+      return head + " — the same. Nothing it did in that window fell "
+        + "inside those hours.";
+    }
+    const fewer = before - after;
+    return head + ` — ${fewer} fewer, in the hours you keep putting it back.`;
+  }
   const ran = r.would_run ?? 0;
   const blocked = r.blocked_by_conditions ?? 0;
   let line = `Over the last ${r.days ?? 30} days it would have run `
@@ -3887,7 +4056,11 @@ async function propAct(ts, path, body) {
       // writes it as the alias — so the toast names what somebody will
       // now find in their automations list.
       const alias = data.alias || data.proposal?.title || "the automation";
-      toast(`Added “${alias}” to your automations`, data.undo);
+      // An edit did not add anything, and a toast saying it did would
+      // send somebody looking for a second automation that is not there.
+      toast(data.proposal?.edits
+        ? `Changed “${alias}” in your automations`
+        : `Added “${alias}” to your automations`, data.undo);
     } else if (data.learned) {
       toast("Noted — brAIn has written that down.");
     }
@@ -3902,18 +4075,215 @@ async function propAct(ts, path, body) {
   }
 }
 
+// ---- playbooks -----------------------------------------------------------
+//
+// An emergency playbook's evidence is not a replay — there is no week
+// with a smoke alarm in it — it is the LIST of what the automation would
+// act on. So the card renders that list, grouped by what happens to each
+// group, with anything protected shown as skipped rather than silently
+// dropped: seeing that brAIn knows the valve is there and knows it may
+// not touch it is the whole point of showing it.
+
+// The config is never capped and this list is, so an over-long group says
+// what it is not showing rather than disagreeing with the count quietly —
+// the same rule the memory queue's list and count follow.
+function propTargetLine(group, cap) {
+  const targets = group.targets || [];
+  const names = targets.slice(0, cap).map((t) => t.name || t.entity_id);
+  const rest = targets.length - names.length;
+  return names.join(", ") + (rest > 0 ? `, and ${rest} more` : "");
+}
+
+function propPlaybookBlock(row) {
+  const book = row.playbook;
+  if (!book) return null;
+  const wrap = el("div", "propbook");
+  const cap = book.card_max || 12;
+
+  const sensors = book.sensors || [];
+  if (sensors.length) {
+    const where = [...new Set(sensors.map((s) => s.area).filter(Boolean))];
+    wrap.appendChild(el("p", "propbookset",
+      `Runs when any of ${sensors.length} sensor`
+      + `${sensors.length === 1 ? "" : "s"} goes off`
+      + (where.length ? ` — ${where.slice(0, 4).join(", ")}` : "") + "."));
+  }
+
+  (book.groups || []).forEach((group) => {
+    const line = el("div", "propgroup");
+    line.appendChild(el("span", "propverb",
+      `${group.verb} (${(group.targets || []).length})`));
+    line.appendChild(el("span", "propnames", propTargetLine(group, cap)));
+    wrap.appendChild(line);
+  });
+
+  if ((book.notify || []).length) {
+    const line = el("div", "propgroup");
+    line.appendChild(el("span", "propverb", "Tells you"));
+    line.appendChild(el("span", "propnames",
+      `${book.notify.join(", ")} — naming the room it happened in`));
+    wrap.appendChild(line);
+  }
+
+  (book.skipped || []).slice(0, cap).forEach((skip) => {
+    const line = el("div", "propgroup skipped");
+    line.appendChild(el("span", "propverb", "Skipped: protected"));
+    line.appendChild(el("span", "propnames", skip.name || skip.entity_id));
+    wrap.appendChild(line);
+  });
+
+  // The sentence that says what this will never do. It is on the card
+  // rather than only in the docs because this is where somebody decides.
+  if (book.note) wrap.appendChild(el("p", "propbooknote", book.note));
+  return wrap;
+}
+
+// The rehearsal is fetched when the disclosure opens, never with the
+// card: it reads every state in the house, and a tab of five playbooks
+// would ask for that five times before anybody looked at one.
+async function propRehearse(ts, body) {
+  body.textContent = "";
+  body.appendChild(el("p", "propbookset", "Reading the house…"));
+  let data = null;
+  try {
+    data = await api(`api/playbook/${ts}/rehearsal`);
+  } catch (err) {
+    body.textContent = "";
+    body.appendChild(el("p", "propbookset",
+      `Could not read the current states: ${err && err.message ? err.message : err}`));
+    return;
+  }
+  body.textContent = "";
+  (data.groups || []).forEach((group) => {
+    const line = el("div", "propgroup");
+    const already = group.already
+      ? ` (${group.already} already ${group.to || "there"})` : "";
+    line.appendChild(el("span", "propverb",
+      `${group.count} → ${group.to || "changed"}${already}`));
+    line.appendChild(el("span", "propnames",
+      (group.targets || []).map((t) => `${t.name || t.entity_id} — ${t.state}`)
+        .join(", ")));
+    body.appendChild(line);
+  });
+  if (!(data.groups || []).length) {
+    body.appendChild(el("p", "propbookset",
+      "This one only sends a notification."));
+  }
+  body.appendChild(el("p", "propbooknote", data.note || ""));
+}
+
+function propRehearsal(row) {
+  const box = el("details", "propreh");
+  const sum = el("summary", null, "Rehearse it — show me what it would do");
+  box.appendChild(sum);
+  const body = el("div", "propbookrows");
+  box.appendChild(body);
+  let loaded = false;
+  box.addEventListener("toggle", () => {
+    if (!box.open || loaded) return;
+    loaded = true;
+    propRehearse(row.ts, body);
+  });
+  return box;
+}
+
+// ---- scene swatches ------------------------------------------------------
+//
+// The payload carries HSV, because that is what a bulb holds — the frames
+// ARE the colours the room will be. This is the only conversion the panel
+// does, and it is here rather than on the server for the same reason
+// BRight's preview does it here: a picture converted from something the
+// house does not use is a picture of the conversion.
+
+function propSwatchCss(light) {
+  if (!light.on) return "transparent";
+  const h = Number(light.h) || 0;
+  const s = Math.max(0, Math.min(1, Number(light.s) || 0));
+  const v = Math.max(0, Math.min(1, Number(light.v) || 0));
+  // A dark swatch on a dark panel is invisible, so the LEVEL is drawn as
+  // the swatch's own lightness floor rather than as its only signal: a
+  // 10% night scene has to be readable as "on and very low", not as an
+  // empty square that looks like "off".
+  const l = 0.28 + 0.55 * v;
+  return `hsl(${h} ${Math.round(s * 100)}% ${Math.round(l * 100)}%)`;
+}
+
+const SCENE_CAP_WORDS = {
+  colour_temp: "colour temperature",
+  colour: "colour only",
+  brightness: "brightness only",
+  onoff: "on/off only",
+};
+
+function propSceneBlock(row) {
+  const scene = row.scene;
+  if (!scene) return null;
+  const wrap = el("div", "propscenes");
+  (scene.preview || []).forEach((mood) => {
+    const line = el("div", "propmood");
+    line.appendChild(el("span", "propmoodname", mood.name));
+    const strip = el("div", "propswatches");
+    (mood.lights || []).forEach((light) => {
+      const dot = el("span", `propswatch${light.on ? "" : " off"}`);
+      dot.style.background = propSwatchCss(light);
+      // The name and what the bulb can be told, because a swatch with no
+      // label is a colour nobody can act on — and "on/off only" is why
+      // one of them is a plain square.
+      dot.dataset.tip = `${light.name} — ${
+        light.on ? SCENE_CAP_WORDS[light.capability] || light.capability
+                 : "off in this scene"}`;
+      strip.appendChild(dot);
+    });
+    line.appendChild(strip);
+    wrap.appendChild(line);
+  });
+  // Named under the swatches rather than in a tooltip: on a phone there
+  // is no hover, and which bulb is which is the whole reading.
+  const names = (scene.lights || []).map((l) => l.name).join(" · ");
+  if (names) wrap.appendChild(el("p", "propscenelights", names));
+  (scene.skipped || []).forEach((skip) => {
+    const line = el("div", "propgroup skipped");
+    line.appendChild(el("span", "propverb", "Skipped: protected"));
+    line.appendChild(el("span", "propnames", skip.name || skip.entity_id));
+    wrap.appendChild(line);
+  });
+  return wrap;
+}
+
 function propCard(row, withHint) {
   const card = el("div", "propcard");
+  const playbook = !!row.playbook;
   const head = el("div", "prophead-row");
   head.appendChild(el("h3", "proptitle", row.title || "A proposal"));
   const over = row.status === "trialling" && propTrialOver(row);
+  if (playbook) head.appendChild(el("span", "pillbook", "Playbook"));
+  if (row.scene) head.appendChild(el("span", "pillscene", "Scenes"));
+  // An edit is a different promise from an addition, and the card has to
+  // say which before somebody says yes: this one changes a rule they
+  // wrote, in their own file, rather than adding one beside it.
+  if (row.edits) head.appendChild(el("span", "pilledit", "Edits your rule"));
   if (row.status === "trialling") {
     head.appendChild(el("span", "pilltrial", over ? "Trial over" : "On trial"));
   }
   card.appendChild(head);
 
   if (row.why) card.appendChild(el("p", "propwhy", row.why));
-  const replay = propReplayLine(row);
+  if (playbook) {
+    const block = propPlaybookBlock(row);
+    if (block) card.appendChild(block);
+    card.appendChild(propRehearsal(row));
+  }
+  const scene = !!row.scene;
+  // A one-off is not a habit: a week of shadow-running "when the guests
+  // leave, turn the porch light off" grades nothing, because the moment it
+  // is for has not happened yet. The replay line above is its sanity
+  // check on the trigger, and the only question left is yes or no.
+  const intent = !!row.intent;
+  if (scene) {
+    const block = propSceneBlock(row);
+    if (block) card.appendChild(block);
+  }
+  const replay = (playbook || scene) ? "" : propReplayLine(row);
   if (replay) card.appendChild(el("p", "propreplay", replay));
   if (row.status === "trialling") {
     card.appendChild(el("p", "proptrial", propTrialLine(row)));
@@ -3968,9 +4338,34 @@ function propCard(row, withHint) {
     return card;
   }
 
+  // A playbook has no trial, and the card says why rather than offering a
+  // button that cannot help: a trial replays the week you lived through,
+  // and that week had no smoke alarm in it.
+  if (playbook && row.playbook.no_trial) {
+    card.appendChild(el("p", "propnotrial", row.playbook.no_trial));
+  }
+
+  if (scene && !row.config) {
+    // Nothing to accept: the card is here to say what brAIn found and why
+    // it will not offer four moods for it.
+    card.appendChild(el("p", "propnotrial", row.refused || ""));
+  }
+
   const btns = el("div", "propbtns");
   const busy = !!propState.busy;
-  if (row.status === "proposed") {
+  if (scene) {
+    card.appendChild(el("p", "propnotrial",
+      "There is no week to try four scenes against — nothing in the last "
+      + "month set them. Accepting writes them to scenes.yaml; brAIn offers "
+      + "the schedule that moves between them once they are there."));
+  }
+  if (intent && row.status === "proposed") {
+    card.appendChild(el("p", "propnotrial",
+      "No trial for a one-off: it is meant to happen once, and a week of "
+      + "shadow-running it grades nothing. The replay above is the check "
+      + "on its trigger."));
+  }
+  if (row.status === "proposed" && !playbook && !scene && !intent) {
     const trial = el("button", "btn small", "Try it for a week");
     trial.dataset.tip = "Runs in shadow — it logs what it would have done and changes nothing";
     trial.addEventListener("click", () => propAct(row.ts, "trial"));
@@ -3996,13 +4391,142 @@ function propCard(row, withHint) {
   return card;
 }
 
+// ---- one-off intents -----------------------------------------------------
+//
+// Not proposals: a proposal is waiting on an answer and these are waiting on
+// the HOUSE (or, for a refusal, on being read once). So they are counted
+// apart and the badge never moves for them — but they share the card, because
+// what somebody wants from both is the same: what it is, what it did, and one
+// press.
+
+function propIntentWhen(ts) {
+  if (!ts) return "";
+  return new Date(ts * 1000).toLocaleTimeString([],
+    { hour: "2-digit", minute: "2-digit" });
+}
+
+function propIntentLine(row) {
+  if (row.status === "refused") return row.refused || "brAIn will not arm this.";
+  if (row.status === "fired") {
+    const when = propIntentWhen(row.fired_at);
+    return `It fired${when ? ` at ${when}` : ""} and switched itself off. It `
+      + "is still in your automations until you remove it.";
+  }
+  if (row.overdue) {
+    // A label, never a deletion. A fortnight of silence almost always means
+    // the thing already happened and nobody told the house — and the answer
+    // to that is a sentence with a press on it, not a file that changed
+    // while somebody was not looking.
+    return "It has been waiting a fortnight and has never fired. Remove it if "
+      + "what you were waiting for already happened.";
+  }
+  return "Armed and waiting. It runs once, then switches itself off.";
+}
+
+async function propRemoveIntent(ts, refused) {
+  if (propState.busy) return;
+  propState.busy = ts;
+  propState.busyVerb = "remove";
+  renderProposals();
+  try {
+    const resp = await fetch(`api/intent/${ts}/remove`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    let data = null;
+    try { data = await resp.json(); } catch { data = null; }
+    if (!resp.ok) {
+      // The same contract an accept's refusal has: the row is still there and
+      // the sentence goes on it, because this one reaches /config too.
+      if (data && data.proposals) propState.data = data;
+      propState.errorFor = ts;
+      propState.error = (data && data.error) || `HTTP ${resp.status}`;
+      return;
+    }
+    propState.data = data;
+    if (data.undo) {
+      toast(refused ? "Dismissed" : "Removed it from your automations",
+        data.undo);
+    }
+  } catch (err) {
+    toast(String(err && err.message ? err.message : err));
+    await refreshProposals();
+  } finally {
+    propState.busy = 0;
+    propState.busyVerb = "";
+    renderProposals();
+  }
+}
+
+function propIntentCard(row) {
+  const card = el("div", "propcard intentcard");
+  const head = el("div", "prophead-row");
+  head.appendChild(el("h3", "proptitle", row.title || row.sentence
+    || "A one-off"));
+  const pill = { armed: "Armed", fired: "It fired",
+                 refused: "Not armed" }[row.status] || row.status;
+  head.appendChild(el("span",
+    `pillintent ${row.status}${row.overdue ? " overdue" : ""}`, pill));
+  card.appendChild(head);
+
+  // The person's own sentence and Claude's restatement of it, apart. Which
+  // half was misread is the only thing worth knowing when it is wrong, and
+  // one paragraph blending the two cannot say.
+  if (row.sentence) {
+    card.appendChild(el("p", "propwhy", `You asked: “${row.sentence}”`));
+  }
+  if (row.plain) {
+    card.appendChild(el("p", "propsaid", `brAIn understood: ${row.plain}`));
+  }
+  card.appendChild(el("p", "propintent", propIntentLine(row)));
+
+  if (propState.errorFor === row.ts) {
+    const box = el("div", "properror");
+    box.setAttribute("role", "alert");
+    box.appendChild(el("p", null, propState.error));
+    const bar = el("div", "propbtns");
+    const back = el("button", "btn small", "Dismiss");
+    back.addEventListener("click", () => {
+      propState.errorFor = 0;
+      propState.error = "";
+      renderProposals();
+    });
+    bar.appendChild(back);
+    box.appendChild(bar);
+    card.appendChild(box);
+    return card;
+  }
+
+  const btns = el("div", "propbtns");
+  const refused = row.status === "refused";
+  const go = el("button",
+    `btn small${row.status === "fired" || refused ? " primary" : ""}`,
+    refused ? "Dismiss" : "Remove");
+  if (!refused) {
+    go.dataset.tip = "Takes the automation back out of automations.yaml — "
+      + "snapshotted first, and undoable from the toast";
+  }
+  if (propState.busy === row.ts) go.textContent = "Removing…";
+  go.addEventListener("click", () => propRemoveIntent(row.ts, refused));
+  btns.appendChild(go);
+  [...btns.children].forEach((b) => { b.disabled = !!propState.busy; });
+  card.appendChild(btns);
+  return card;
+}
+
 function renderProposals() {
   propBadge();
   const list = $("#propList");
   if (!list) return;
   list.textContent = "";
   const rows = propState.data?.proposals || [];
-  if (!rows.length) {
+  // Above the proposals, because a one-off is about to happen (or already
+  // has) and a suggestion is not — and because the Remove press is the only
+  // thing on this tab that is about an automation the house is running now.
+  (propState.data?.intents || []).forEach((row) =>
+    list.appendChild(propIntentCard(row)));
+  if (!rows.length && !(propState.data?.intents || []).length) {
     // Deliberately not phrased as an achievement. An empty Findings list
     // means the house is well; an empty Proposals list means brAIn has
     // not spotted a habit worth automating yet, which is not the same.
@@ -4322,7 +4846,11 @@ function switchView(name) {
   if (name === "activity") { actState.end = null; actState.open = ""; refreshActivity(); }
   // Rendered from what we have, then again once the fetch lands — the same
   // shape Findings uses, so opening the tab is never a blank frame.
-  if (name === "proposals") { renderProposals(); refreshProposals(); }
+  if (name === "proposals") {
+    renderProposals();
+    refreshProposals();
+    refreshSceneAreas();
+  }
 }
 
 document.querySelectorAll(".viewtab").forEach((b) =>
@@ -4428,6 +4956,8 @@ const chatState = {
   defaultModel: "",  // the global model the chat defers to when unset
   defaultModelLabel: "",  // …written out, for the picker's Default row
   convs: [],       // past conversations, for the wide-screen sidebar
+  liveSessions: {},  // session id -> {live, busy, needs_ok} for the rail's marks
+  maxSessions: 0,    // how many may hold a process at once (chat_max_sessions)
   commands: [],      // its slash commands, as it advertises them
   cli: [],           // the brain/ha dispatchers, parsed from their own help
   cmdIndex: 0,       // highlighted row in the command palette
@@ -4900,6 +5430,35 @@ function chatRender(ev) {
     case "cleared":
       chatReset();
       break;
+    case "sessions":
+      // Which conversations are holding a process, and which of those are
+      // answering or waiting on somebody. Pushed rather than polled: it
+      // only ever changes when something else already had an event to send.
+      chatState.liveSessions = {};
+      (ev.sessions || []).forEach((s) => { chatState.liveSessions[s.session_id] = s; });
+      renderChatRail();
+      renderConvModal();
+      break;
+    case "switched":
+      // The view moved to another conversation. Reconnect rather than
+      // patching this stream: the first frame of the new one is the new
+      // session's snapshot, which is the contract the stream has always
+      // had — no client has to stitch "what it was" onto "what happened
+      // next".
+      chatDisconnect();
+      chatConnect();
+      break;
+    case "session_asks": {
+      // A conversation nobody is looking at is waiting on an approval, and
+      // its card times itself out. The rail's badge is the other half of
+      // this and it is not enough on a phone, where there is no rail.
+      const who = ev.title ? `“${ev.title}”` : "Another chat";
+      toast(`${who} needs your OK${ev.tool ? " — " + ev.tool : ""}`, null,
+            { label: "Open it",
+              run: () => resumeConversation({ id: ev.session_id }) });
+      refreshChatRail();
+      break;
+    }
     case "state":
       chatSetState(ev.state, ev.error);
       break;
@@ -5018,6 +5577,11 @@ function chatConnect() {
       chatState.chatModel = ev.chat_model || "";
       chatState.defaultModel = ev.default_model || "";
       chatState.defaultModelLabel = ev.default_model_label || "";
+      // The rail's marks are right on the first paint rather than on the
+      // first thing that happens to move.
+      chatState.liveSessions = {};
+      (ev.sessions || []).forEach((s) => { chatState.liveSessions[s.session_id] = s; });
+      chatState.maxSessions = ev.max_sessions || chatState.maxSessions;
       chatMeta();
       chatState.cli = ev.cli || chatState.cli;
       (ev.events || []).forEach(chatRender);
@@ -5327,6 +5891,25 @@ function setConvFilter(source) {
   if ($("#convModal").classList.contains("open")) openConversations();
 }
 
+// Whether this conversation is holding a live Claude Code process, and
+// what that process is doing. Three states and only two of them draw
+// anything: nothing at all (no process, which is most rows and is not
+// news), a quiet "answering…" while a turn it is writing runs on in the
+// background, and a badge when it is waiting on a person — which is the
+// one that has to be visible, because the approval card behind it declines
+// itself if nobody ever comes.
+//
+// The stream's listing wins over the fetched row: it is refreshed the
+// moment anything moves, where the row is as old as the last request.
+function convMark(row) {
+  const live = chatState.liveSessions[row.id]
+    || (row.live ? { busy: row.busy, needs_ok: row.needs_ok } : null);
+  if (!live) return null;
+  if (live.needs_ok) return el("span", "crask", "Needs your OK");
+  if (live.busy) return el("span", "crbusy", "answering…");
+  return null;
+}
+
 // One row's "who ran this", as a chip. Yours get none: a label on every
 // row for the ordinary case is just noise with extra steps.
 function sourceChip(row) {
@@ -5374,13 +5957,13 @@ function convSelFlip(id) {
   else convSel.ids.add(id);
 }
 
-// A row can be selected unless it is the open conversation — the server
-// refuses to delete that one, and offering a checkbox that always answers
-// "skipped" teaches nothing. Card and fix runs are records in the engine's
-// own store, not files this list's delete can reach, so they are not
-// selectable either.
+// A row can be selected unless the chat is holding a session for it — the
+// server refuses to delete any of those, not only the one on screen, and
+// offering a checkbox that always answers "skipped" teaches nothing. Card
+// and fix runs are records in the engine's own store, not files this
+// list's delete can reach, so they are not selectable either.
 function convSelectable(rows) {
-  return rows.filter((c) => !c.view_only
+  return rows.filter((c) => !c.view_only && !chatState.liveSessions[c.id]
     && !(chatState.sessionId && c.id === chatState.sessionId));
 }
 
@@ -5427,7 +6010,8 @@ async function deleteSelectedConvs(btn) {
     const skipped = (out.skipped || []).length;
     convSelToggle(false);
     toast(`${n} conversation${n === 1 ? "" : "s"} deleted`
-      + (skipped ? ` — ${skipped} skipped` : ""), out.undo);
+      + (skipped ? ` — ${skipped} skipped (still open, or already gone)` : ""),
+      out.undo);
     refreshConversationLists();
   } catch (e) {
     btn.disabled = false;
@@ -5480,6 +6064,8 @@ function renderConvModal() {
     btn.appendChild(el("span", "ctitle", c.title));
     const chip = sourceChip(c);
     if (chip) btn.appendChild(chip);
+    const mark = convMark(c);
+    if (mark) btn.appendChild(mark);
     btn.appendChild(el("span", "cwhen", c.age));
     if (here) btn.setAttribute("aria-current", "true");
     if (convSel.on) {
@@ -5510,10 +6096,31 @@ function deleteConvButton(c) {
   del.addEventListener("click", async (ev) => {
     ev.stopPropagation();
     del.disabled = true;
+    const remove = () => api(
+      `api/chat/conversation/${encodeURIComponent(c.id)}/delete`,
+      { method: "POST" });
     try {
-      const out = await api(
-        `api/chat/conversation/${encodeURIComponent(c.id)}/delete`,
-        { method: "POST" });
+      let out;
+      try {
+        out = await remove();
+      } catch (e) {
+        // The server refuses to delete a conversation something is
+        // holding open — deleting the ground a live session stands on
+        // either kills it or quietly forks it. A refusal with no way to
+        // satisfy it is a dead end, so this offers the way: close the
+        // session, then delete. Never silently, because closing one that
+        // is mid-answer loses the answer.
+        if (!/close it first/.test(e.message)) throw e;
+        if (!window.confirm(
+          "That conversation still has a live Claude session. Close it and "
+          + "delete? Anything it is still writing is lost.")) {
+          del.disabled = false;
+          return;
+        }
+        await api(`api/chat/session/${encodeURIComponent(c.id)}/close`,
+                  { method: "POST" });
+        out = await remove();
+      }
       toast("Conversation deleted", out.undo);
       refreshConversationLists();
     } catch (e) {
@@ -5582,6 +6189,8 @@ function renderChatRail() {
     const foot = el("div", "crfoot");
     const chip = sourceChip(c);
     if (chip) foot.appendChild(chip);
+    const mark = convMark(c);
+    if (mark) foot.appendChild(mark);
     foot.appendChild(el("span", "cwhen", c.age));
     btn.appendChild(foot);
     if (here) btn.setAttribute("aria-current", "true");
@@ -5612,7 +6221,11 @@ $("#convSel").addEventListener("click", () => convSelToggle());
 
 async function resumeConversation(conv) {
   closeBox("#convModal");
-  toast("Opening that conversation…");
+  // Nothing to wait for when the process is already there — the switch is
+  // a change of attachment. A "one moment" toast over something instant is
+  // a toast that teaches people to expect a wait.
+  const held = chatState.liveSessions[conv.id];
+  if (!held) toast("Opening that conversation…");
   try {
     const out = await api("api/chat/resume", {
       method: "POST", body: JSON.stringify({ session_id: conv.id }) });

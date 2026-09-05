@@ -1164,6 +1164,16 @@
           "description": "When on, only report what would change — nothing is modified."
         }
       }
+    },
+    "intent": {
+      "name": "Do this once",
+      "description": "Say one thing you want to happen next time. brAIn works out the automation and offers it on the Proposals tab; it runs once and disarms itself.",
+      "fields": {
+        "sentence": {
+          "name": "Sentence",
+          "description": "What should happen, and when — for example \"Turn the porch light off when the guests leave\"."
+        }
+      }
     }
   },
   "issues": {

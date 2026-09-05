@@ -1,7 +1,7 @@
 ---
 name: "brAIn"
 description: "Give your smart home a mind — Claude with full run of Home Assistant: every entity, device, area, dashboard and automation, plus insights, findings, memory, voice and a terminal"
-version: "1.44.0"
+version: "1.46.0"
 slug: "brain"
 init: false
 
@@ -75,6 +75,10 @@ backup_exclude:
   - .config/claude/**
   - home/.claude/**
   - terminal-credential
+  # The chat's scrollbacks. A directory since 1.45.0 (one file per
+  # conversation); the old single file is still named because an upgraded
+  # install still has one on disk.
+  - chat/**
   - chat_transcript.json
 
 # Lifecycle stage, declared rather than inherited from the default.
@@ -118,6 +122,7 @@ options:
   weekly_report: false
   weekly_report_day: sunday
   checks_interval_hours: 6
+  self_healing: false
   protected_entities: []
   edit_journal_days: 14
   auto_refresh_hours: 24
@@ -163,6 +168,7 @@ schema:
   weekly_report: bool?
   weekly_report_day: "list(monday|tuesday|wednesday|thursday|friday|saturday|sunday)?"
   checks_interval_hours: "int(0,168)?"
+  self_healing: bool?
   protected_entities:
     - str
   edit_journal_days: "int(0,365)?"

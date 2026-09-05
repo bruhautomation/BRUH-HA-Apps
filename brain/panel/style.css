@@ -1655,6 +1655,45 @@ body.modal-open {
   text-transform: uppercase;
 }
 
+/* What a conversation's own Claude session is doing, on its row in both
+   surfaces. Only two of the three states draw anything — a row with no
+   process is the ordinary case and is not news — and the two that do are
+   deliberately different weights: "answering…" is a background fact and
+   stays quiet, while "Needs your OK" is a thing waiting on a person and
+   carries the warning colour, because the card behind it declines itself
+   if nobody ever comes. Both `flex: none`, so a long title gives way
+   first: a mark that wraps to its own line is a row that changes height
+   whenever a turn starts. */
+.crbusy, .crask {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.crbusy {
+  border: 1px solid var(--hairline);
+  background: var(--surface-2);
+  color: var(--ink-3);
+  animation: crpulse 1.6s ease-in-out infinite;
+}
+.crask {
+  border: 1px solid var(--warning);
+  background: transparent;
+  color: var(--warning);
+  text-transform: uppercase;
+}
+@keyframes crpulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+/* A pulse is decoration; the word is the information. */
+@media (prefers-reduced-motion: reduce) {
+  .crbusy { animation: none; }
+}
+
 /* The filter row, in the rail and in the ⋯ dialog. Wraps rather than
    scrolls: four chips must never end up with the fourth off the edge of a
    248px column where nothing suggests it is there. */
@@ -3169,7 +3208,127 @@ body.term-classic #termMode .ico-out { display: block; }
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent);
 }
+/* A proposal that CHANGES a rule somebody wrote rather than adding one
+   beside it. Same shape again, and the neutral ink rather than a colour:
+   it is a fact about what the yes does, not a warning and not a stage. */
+.pilledit {
+  flex: none; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: var(--bg-2); color: var(--ink-2);
+  border: 1px solid var(--hairline);
+}
+/* A one-off intent. Three states, three colours, and the pill is the only
+   thing that distinguishes them at a glance on a list somebody scans. */
+.pillintent {
+  flex: none; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.pillintent.fired {
+  background: color-mix(in srgb, var(--good) 16%, transparent);
+  color: var(--good);
+}
+.pillintent.refused, .pillintent.overdue {
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  color: var(--warning);
+}
+/* A set of four scenes. Same pill shape again, in the accent's sibling:
+   it marks a different KIND of card rather than a stage of one. */
+.pillscene {
+  flex: none; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--good) 14%, transparent);
+  color: var(--good);
+}
+/* The swatches. This IS the evidence on a scene card — there is no replay
+   and no week — so it is laid out to be read down, one row per mood. */
+.propscenes { margin: 0 0 10px; display: flex; flex-direction: column; gap: 6px; }
+.propmood {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  font-size: 13px; padding: 4px 0; border-top: 1px solid var(--hairline);
+}
+.propmoodname { flex: 1 1 140px; color: var(--ink-2); min-width: 0; }
+.propswatches { display: flex; gap: 6px; flex-wrap: wrap; flex: none; }
+/* 28px rather than the touch floor: a swatch is a reading, not a control —
+   nothing happens when you press one, and forty-four-pixel squares would
+   take the card. The names are under the strip, in text. */
+.propswatch {
+  width: 28px; height: 28px; border-radius: 6px;
+  border: 1px solid var(--hairline); display: inline-block;
+}
+/* Off has to be legible as OFF rather than as a dark colour, so it is drawn
+   as an empty outline rather than as a black square. */
+.propswatch.off {
+  background: transparent;
+  border-style: dashed; opacity: 0.6;
+}
+.propscenelights {
+  margin: 6px 0 0; font-size: 12.5px; color: var(--ink-3); line-height: 1.5;
+}
+/* The one control on this tab that asks brAIn for something. */
+.propask {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  margin: 0 0 14px; padding: 10px 12px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px;
+}
+.propask label { font-size: 13.5px; color: var(--ink-2); flex: none; }
+/* `width: auto` sizes a select to its widest option, which is how a picker
+   sets a row's min-content and takes the page's width with it. */
+.propask select { min-width: 0; max-width: 100%; flex: 1 1 160px; }
+.propasknote {
+  flex: 1 1 100%; margin: 0; font-size: 12.5px; color: var(--ink-3);
+  line-height: 1.5;
+}
 .propwhy { margin: 0 0 8px; color: var(--ink-2); line-height: 1.5; }
+/* Claude's restatement, kept apart from the person's own sentence: which of
+   the two was misread is the only thing worth knowing when it is wrong. */
+.propsaid { margin: 0 0 8px; color: var(--ink-2); line-height: 1.5; }
+.propintent { margin: 0 0 10px; color: var(--ink); line-height: 1.5; }
+/* An emergency playbook. The pill is the same shape as the trial one and
+   a different colour, because it marks a different KIND of card rather
+   than a stage of the same lifecycle: this one has no trial and never
+   will. */
+.pillbook {
+  flex: none; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  color: var(--warning);
+}
+/* What it would act on, grouped by what happens to it. This IS the
+   evidence on a playbook card — there is no replay to show — so it is
+   laid out to be read down rather than squeezed into a sentence. */
+.propbook { margin: 0 0 10px; }
+.propbookset { margin: 0 0 8px; font-size: 13px; color: var(--ink-2); }
+.propbookrows { display: flex; flex-direction: column; gap: 6px; }
+.propgroup {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  font-size: 13px; line-height: 1.45; padding: 4px 0;
+  border-top: 1px solid var(--hairline);
+}
+/* The verb never shrinks and the names are what give way, because "Every
+   light to full brightness (12)" is the half that has to survive a
+   390px card — a row whose verb has wrapped to three words is a row
+   nobody can scan. */
+.propverb { flex: none; color: var(--ink); font-weight: 600; }
+.propnames { flex: 1 1 160px; min-width: 0; color: var(--ink-2); }
+.propgroup.skipped .propverb { color: var(--warning); }
+.propbooknote {
+  margin: 10px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--ink-3);
+}
+/* Rehearsal. A disclosure rather than a button, because it reads every
+   state in the house and a tab of five playbooks would ask five times
+   before anybody looked at one. */
+/* Why there is no trial button, said where the button would have been.
+   Its own class rather than `.prophint`, which is the trial hint and is
+   deliberately rendered once for the whole list. */
+.propnotrial {
+  margin: 0 0 8px; font-size: 12.5px; line-height: 1.45; color: var(--ink-3);
+}
+.propreh { margin: 0 0 10px; }
+.propreh > summary {
+  cursor: pointer; font-size: 13px; color: var(--accent);
+  padding: 6px 0; list-style: none;
+}
+.propreh > summary::-webkit-details-marker { display: none; }
+.propreh > summary::before { content: "▸ "; }
+.propreh[open] > summary::before { content: "▾ "; }
 /* The evidence rows. Monospace numerals so a column of them lines up when
    several proposals are open at once. */
 .propreplay, .proptrial {
@@ -3207,6 +3366,9 @@ body.term-classic #termMode .ico-out { display: block; }
    density it was designed at — the same split the 16px text floor uses. */
 @media (pointer: coarse) {
   .propbtns .btn { min-height: 44px; padding-inline: 14px; }
+  /* The rehearsal disclosure is a control, and on a phone it is the one
+     somebody presses before deciding whether to arm their house. */
+  .propreh > summary { min-height: 44px; display: flex; align-items: center; }
   /* Same argument, same scope. One of these signs somebody out and another
      writes a credential to a volume that goes into Home Assistant backups,
      so they are not places to miss by four pixels — and this is the section
@@ -3214,6 +3376,12 @@ body.term-classic #termMode .ico-out { display: block; }
      working. Scoped rather than raised globally for the reason above: the
      rest of the panel's buttons are a separate, real problem. */
   .authbtns .btn { min-height: 44px; padding-inline: 14px; }
+  /* The one control on this tab that asks brAIn for something, so it is
+     the one press somebody makes here on purpose rather than in answer
+     to a card. Scoped like the two above rather than raised globally,
+     for the reason they give. */
+  .propask .btn { min-height: 44px; padding-inline: 14px; }
+  .propask select { min-height: 44px; }
 }
 /* The reason box replaces the buttons INSIDE the card, so what you are
    explaining stays on screen while you write about it. */

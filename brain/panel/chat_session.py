@@ -1,4 +1,4 @@
-"""The chat terminal: one long-lived Claude Code session, as events.
+"""The chat terminal: live Claude Code sessions, as events.
 
 The classic terminal is xterm over ttyd over tmux — a character grid, which
 is the wrong medium for a phone. A grid cannot reflow, so at ~40 columns a
@@ -15,14 +15,27 @@ may Claude do here", not two.
 
 Design notes worth keeping:
 
-* **One session, not a pool.** The chat tab is a place, like the terminal
-  tab is a place. Two people opening the panel are looking at the same
-  conversation, the same way they would be looking at the same tmux.
+* **One process per open conversation, and a view attached to one of
+  them.** Native Claude Code is one process per terminal tab; three open
+  conversations are three processes, each answering on its own. This was a
+  single ``ChatSession`` for a long time, and switching was a stop and a
+  ``--resume`` — which is why picking another conversation mid-answer had
+  to be refused with a 409 saying Claude was still responding. That refusal
+  was honest for one process and is the wrong shape for the question: a
+  ``SessionRegistry`` holds many ``ChatSession``s, ``attach`` changes which
+  one the stream serves and which one ``send`` goes to, and the one left
+  behind carries on answering into its own transcript and its own
+  subscribers. The chat tab is still a *place* — two people opening the
+  panel see the same attached conversation, the same way they would be
+  looking at the same tmux.
 
 * **The transcript is ours, not the CLI's.** Claude Code owns the real
   conversation (and resumes it by ``session_id``); we keep a normalised,
   capped copy so a reload can repaint the screen without asking the model
-  anything. Losing it costs a scrollback, never context.
+  anything. Losing it costs a scrollback, never context. One file per
+  conversation now, named by the CLI's own session id — a single file was
+  the shape of a single session, and two live sessions writing it would
+  each hold half a scrollback.
 
 * **Events are normalised at the boundary.** The CLI's stream-json shape is
   a moving target across versions; everything that knows about
@@ -49,18 +62,182 @@ import engine
 
 import atomic_write
 import journal
+import settings_store
 
 # Where the chat runs. /config so the project's settings.local.json (the
 # permission set) and CLAUDE.md (the description of this house) both apply —
 # the same working directory the listeners use.
 WORK_DIR = os.environ.get("BRAIN_CHAT_WORKDIR", "/config")
 
-# The transcript we keep for repainting a reloaded page. Capped hard: this
-# is a scrollback, and an unbounded one in a long-lived process is a leak
-# with a friendly name.
+# The transcripts we keep for repainting a reloaded page: one file per
+# conversation, named by the CLI's own session id. Capped hard in events:
+# this is a scrollback, and an unbounded one in a long-lived process is a
+# leak with a friendly name — and capped in FILES, because /data is not an
+# archive of every conversation ever opened (Claude Code's own store is).
+TRANSCRIPT_DIR = os.environ.get("BRAIN_CHAT_TRANSCRIPT_DIR", "/data/chat")
+# The single file this used to be. Read exactly once, when the directory is
+# created, so an upgrade does not blank the pane somebody was reading.
 TRANSCRIPT_FILE = os.environ.get(
     "BRAIN_CHAT_TRANSCRIPT", "/data/chat_transcript.json")
 MAX_EVENTS = 600
+MAX_TRANSCRIPTS = 40
+# How many sessions the registry keeps track of at all, live or not. Larger
+# than any cap: what a stopped entry buys is an instant switch back and the
+# notice saying why its process went, which is worth a few hundred events of
+# memory and nothing else.
+MAX_TRACKED = 16
+
+# Which conversation the view was attached to, so a restart comes back where
+# it was. A dotfile rather than a `.json` so the transcript glob — which
+# takes each file's stem as a session id — cannot mistake it for one.
+ATTACHED_FILE = ".attached"
+
+# How many CLI processes the chat may hold at once. Not a config.yaml
+# option: it is a panel setting (``chat_max_sessions``), because it is the
+# sort of number somebody changes while looking at the chat and not the
+# sort that wants a restart.
+DEFAULT_MAX_SESSIONS = 3
+MIN_SESSIONS = 1
+MAX_SESSIONS = 8
+
+# A session id becomes a filename, so it is checked rather than trusted —
+# the resume route takes one off the wire. Claude Code's are UUIDs.
+_SAFE_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,120}")
+
+
+def safe_id(session_id: str) -> bool:
+    """Whether this id may be used as a transcript's filename."""
+    return bool(session_id) and session_id not in (".", "..") \
+        and bool(_SAFE_ID_RE.fullmatch(session_id))
+
+
+def transcript_path(session_id: str):
+    """Where one conversation's scrollback lives, or None for an id that
+    has no business being a path.
+
+    Two checks, and they are not redundant. ``safe_id`` is the rule: a
+    session id is a UUID, and anything that is not one names no
+    conversation the CLI could resume either, so it is refused rather than
+    sanitised. The normalise-and-prefix check underneath is the same rule
+    written where it can be followed — the ids reaching here come off the
+    wire (``/api/chat/resume`` takes one from a request body), and a
+    boolean regex test several call frames away is not something a person
+    or a scanner can trace to the ``open()`` at the end of it. Anything
+    that normalises to a path outside the transcript directory is not a
+    transcript. It is spelled with ``os.path`` and a string prefix rather
+    than with ``Path`` parts because that is the form a static analyser
+    reads as a barrier, and a guard nothing can see is a guard somebody
+    deletes.
+    """
+    if not safe_id(session_id):
+        return None
+    base = os.path.normpath(os.path.abspath(TRANSCRIPT_DIR))
+    candidate = os.path.normpath(os.path.join(base, f"{session_id}.json"))
+    if not candidate.startswith(base + os.sep):
+        return None
+    return Path(candidate)
+
+
+def _migrate_legacy() -> None:
+    """The one-file transcript, moved into the directory, exactly once.
+
+    Guarded by the directory's own existence rather than a marker: creating
+    it IS the migration, so a second pass has nothing to look at. The old
+    file is left where it is — it is somebody's data, `backup_exclude`
+    still names it, and re-reading it is impossible once the directory
+    exists.
+    """
+    directory = Path(TRANSCRIPT_DIR)
+    if directory.exists():
+        return
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+    try:
+        data = json.loads(Path(TRANSCRIPT_FILE).read_text("utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    session_id = data.get("session_id")
+    if not isinstance(session_id, str) or not safe_id(session_id):
+        # A transcript with no id belongs to no conversation the CLI can
+        # resume, so there is nothing to name its file after.
+        return
+    path = transcript_path(session_id)
+    try:
+        atomic_write.write_json(path, data)
+        _write_attached(session_id)
+    except OSError:
+        # A migration that could not write costs one scrollback, and the
+        # conversation itself is still Claude Code's to resume. The
+        # directory exists either way, so this is not retried — a migration
+        # that runs again every boot is a slower way to lose the same file.
+        pass
+
+
+def prune_transcripts(keep: int = MAX_TRANSCRIPTS) -> None:
+    """Oldest scrollbacks out. The conversation itself is the CLI's."""
+    try:
+        files = sorted(Path(TRANSCRIPT_DIR).glob("*.json"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return
+    for path in files[keep:]:
+        try:
+            path.unlink()
+        except OSError:
+            # Another prune got there first; nothing more to do.
+            pass
+
+
+def _write_attached(session_id: str | None) -> None:
+    if not session_id:
+        return
+    try:
+        atomic_write.write_text(
+            Path(TRANSCRIPT_DIR) / ATTACHED_FILE, session_id + "\n")
+    except OSError:
+        # A lost pointer costs one restart landing on a fresh chat, which
+        # is what it did before the pointer existed.
+        pass
+
+
+def _read_attached() -> str | None:
+    try:
+        value = (Path(TRANSCRIPT_DIR) / ATTACHED_FILE).read_text("utf-8").strip()
+    except OSError:
+        return None
+    return value if safe_id(value) else None
+
+
+def max_sessions() -> int:
+    """The cap on live processes, clamped to something a Pi can hold."""
+    try:
+        value = int(settings_store.load().get("chat_max_sessions")
+                    or DEFAULT_MAX_SESSIONS)
+    except (TypeError, ValueError):
+        value = DEFAULT_MAX_SESSIONS
+    return max(MIN_SESSIONS, min(MAX_SESSIONS, value))
+
+
+class SessionCapReached(RuntimeError):
+    """Every live chat is mid-answer and the cap will not stretch.
+
+    The one 409 left on a switch, and it is about the cap rather than about
+    "Claude is still responding" — which is the refusal this whole change
+    exists to remove. It names the count and the setting, because those are
+    the two things that make it actionable.
+    """
+
+    def __init__(self, live: int, cap: int) -> None:
+        super().__init__(
+            f"all {live} open chats are still answering — brAIn keeps "
+            f"{cap} of them alive at once (chat_max_sessions in Settings). "
+            "Stop one, or wait for it to finish.")
+        self.live = live
+        self.cap = cap
 
 # Published context windows. Used ONLY to turn a token count into a
 # percentage — an unknown model reports its tokens and no percentage, rather
@@ -289,9 +466,10 @@ def tool_summary(name: str, args: dict) -> str:
 class ChatSession:
     """One live ``claude`` process, plus the transcript of what it said."""
 
-    def __init__(self) -> None:
+    def __init__(self, session_id: str | None = None) -> None:
         self.proc: asyncio.subprocess.Process | None = None
-        self.session_id: str | None = None
+        self.session_id: str | None = session_id if session_id \
+            and safe_id(session_id) else None
         # What the CLI says about itself at startup: the model it resolved,
         # the directory it considers the project (which is what
         # `claude --resume` keys conversations by), its version, and whether
@@ -360,13 +538,26 @@ class ChatSession:
         # runs exactly as it did before the round-trip — refusals are final
         # and amber — instead of not running at all.
         self._prompt_tool_ok = True
+        # When anything a listing shows moves (the state, the pending
+        # approval), and when THIS session is the one asking. Installed by
+        # the registry; None on a session nobody is holding, which is what
+        # a test constructing one directly gets.
+        self._on_change = None
+        self._on_ask = None
+        # Last time anything happened in here — what the cap's LRU reads.
+        # Bumped by every event rather than by sends alone, so a session
+        # answering in the background is not the one evicted for idleness.
+        self.last_activity = time.time()
         self._load()
 
     # -- transcript ------------------------------------------------------
 
     def _load(self) -> None:
+        path = transcript_path(self.session_id or "")
+        if path is None:
+            return
         try:
-            data = json.loads(Path(TRANSCRIPT_FILE).read_text("utf-8"))
+            data = json.loads(path.read_text("utf-8"))
         except (OSError, ValueError):
             return
         if isinstance(data, dict):
@@ -374,16 +565,60 @@ class ChatSession:
             if isinstance(events, list):
                 self.events = [e for e in events if isinstance(e, dict)][-MAX_EVENTS:]
                 self._seq = max((e.get("seq") or 0) for e in self.events) if self.events else 0
-            if isinstance(data.get("session_id"), str):
-                self.session_id = data["session_id"]
 
     def _persist(self) -> None:
-        path = Path(TRANSCRIPT_FILE)
+        """Write this conversation's scrollback, if it has a name yet.
+
+        A session with no CLI id is deliberately NOT persisted, rather than
+        parked under a temporary name and renamed at ``init``. Every
+        transcript worth keeping already has an id by the time it has
+        anything in it: ``resume`` sets the id before it replays, and a
+        live process announces its own inside its first event. The one
+        thing that can exist without an id is the notice from a spawn that
+        died before speaking — which the next attempt writes again — and
+        buying it would cost a rename that has to race an id the resume
+        fallback can change underneath it.
+        """
+        path = transcript_path(self.session_id or "")
+        if path is None:
+            return
         try:
+            path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write.write_json(
                 path, {"session_id": self.session_id, "events": self.events})
         except OSError:
             pass  # a lost scrollback is not worth failing a turn over
+
+    def title(self) -> str:
+        """The first thing a person said here, as a name for the row.
+
+        The rail joins the CLI's own listing for its titles; this is for the
+        places that only have the live session — the toast that says which
+        background conversation is asking for an approval.
+        """
+        for event in self.events:
+            if event.get("type") == "user" and event.get("text"):
+                return " ".join(str(event["text"]).split())[:60]
+        return ""
+
+    # -- what the registry watches ---------------------------------------
+
+    def _changed(self) -> None:
+        """Tell the registry something a listing shows has moved."""
+        if self._on_change is None:
+            return
+        try:
+            self._on_change(self)
+        except Exception:  # noqa: BLE001 — a listing must never fail a turn
+            pass
+
+    def _asked(self) -> None:
+        if self._on_ask is None:
+            return
+        try:
+            self._on_ask(self)
+        except Exception:  # noqa: BLE001 — same rule
+            pass
 
     def snapshot(self) -> dict:
         return {
@@ -418,6 +653,7 @@ class ChatSession:
         self._seq += 1
         event["seq"] = self._seq
         event.setdefault("ts", time.time())
+        self.last_activity = event["ts"]
         if keep:
             self.events.append(event)
             if len(self.events) > MAX_EVENTS:
@@ -529,6 +765,9 @@ class ChatSession:
         # Not kept in the transcript: state is a fact about now, and a
         # replayed "busy" from last Tuesday is a spinner that never stops.
         self._emit({"type": "state", "state": state, "error": error}, keep=False)
+        # Whether a row in the rail says "answering…" is exactly this,
+        # so the listing is refreshed from here rather than polled.
+        self._changed()
 
     # -- process ---------------------------------------------------------
 
@@ -905,6 +1144,11 @@ class ChatSession:
         # Live-only: the answered question's tool result is the transcript.
         self._emit({"type": "permission", **self.pending_permission},
                    keep=False)
+        # A card in a conversation nobody is looking at would sit there and
+        # time itself out in silence, so the registry gets told twice: once
+        # for the badge on the row, once for the toast on the attached view.
+        self._changed()
+        self._asked()
         self._permission_timer = asyncio.create_task(
             self._permission_expiry(request_id))
 
@@ -1024,6 +1268,7 @@ class ChatSession:
         if pending:
             self._emit({"type": "permission_done", "id": pending.get("id"),
                         "answered": answered, "allow": allowed}, keep=False)
+            self._changed()
 
     async def interrupt(self) -> dict:
         """Politely, then not.
@@ -1120,6 +1365,10 @@ class ChatSession:
         """
         if not session_id:
             raise ValueError("no conversation given")
+        if not safe_id(session_id):
+            # It becomes a transcript's filename, and an id that is not an
+            # id names no conversation the CLI could resume either.
+            raise ValueError("that is not a conversation id")
         async with self._swap_lock:
             if self.state == "busy":
                 raise RuntimeError("Claude is still answering — stop it first")
@@ -1152,14 +1401,22 @@ class ChatSession:
         The model is an argv flag, so a live process keeps the one it was
         started with — changing it means a restart. The conversation
         survives because the CLI persisted it and the respawn carries
-        ``--resume``; the same trick interrupt() already relies on. Refused
-        mid-answer, because a restart now would lose the answer being
-        written.
+        ``--resume``; the same trick interrupt() already relies on.
+
+        Refused mid-answer, because a restart now would lose the answer
+        being written — and this is the one refusal the registry does not
+        make go away, because it is about THIS conversation rather than
+        about which one you are looking at. So the sentence says which
+        conversation is busy and offers the thing that now works: leave it
+        writing and go and talk somewhere else.
         """
         model = (model or "").strip()
         async with self._swap_lock:
             if self.state == "busy":
-                raise RuntimeError("Claude is still answering — stop it first")
+                raise RuntimeError(
+                    "this conversation is still being answered — the model "
+                    "is a restart, and a restart now would lose it. Stop it, "
+                    "or switch to another chat and pick the model there.")
             self.model = model
             # The label rides back on every answer, because the meta line is
             # the only confirmation a pick landed and the event that would
@@ -1203,7 +1460,7 @@ class ChatSession:
             self._persist()
             self._emit({"type": "cleared"}, keep=False)
             await self.start()
-            return {"ok": True}
+            return {"ok": True, "session_id": self.session_id}
 
 
 # ---------------------------------------------------------------------------
@@ -1414,13 +1671,321 @@ def _tmux_argv() -> list[str]:
     return [tmux]
 
 
-# One session per add-on, created lazily so importing this module (which the
+# ---------------------------------------------------------------------------
+# The registry: many sessions, one attached
+# ---------------------------------------------------------------------------
+
+class SessionRegistry:
+    """Every conversation the panel is holding open, and which one is in front.
+
+    The whole of the change this file's header describes lives here.
+    ``ChatSession`` is unchanged in what it is — one process, one
+    transcript, its own subscribers — and what is new is that there are
+    several of them and that switching between them **stops nothing**. A
+    session you switch away from mid-answer goes on answering: its events
+    land in its own transcript and reach its own subscribers, and the rail
+    shows it as still working.
+
+    Three rules make that safe on a box that also runs a house.
+
+    * **The cap is on live PROCESSES** (``chat_max_sessions``, default 3).
+      A conversation with no process is free — it is a transcript and an id
+      the CLI can resume — so what the cap governs is memory and CPU, not
+      how many conversations you may have.
+    * **Eviction takes the least recently active IDLE session.** Never a
+      busy one: the entire point of holding several is that an answer being
+      written survives you looking somewhere else, and an LRU that could
+      take the busy one would break exactly the thing it is here to
+      protect. With every live session busy there is nothing to take, and
+      that — not "Claude is still responding" — is the one 409 left.
+    * **An evicted session keeps its transcript and says what happened.**
+      Its entry stays here with the process gone, so switching back is
+      instant and the notice explaining the gap is on screen; the next
+      message starts the process again with ``--resume``, which is what
+      the CLI's own store is for.
+    """
+
+    def __init__(self) -> None:
+        self._sessions: list[ChatSession] = []
+        self._attached: ChatSession | None = None
+        # Serializes attach/open/new/close against each other: they all
+        # spawn and stop processes, and two of them interleaving is the
+        # `_swap_lock` bug one layer up.
+        self._lock = asyncio.Lock()
+        # How many processes the cap has stopped this run. A session that
+        # was evicted and one that crashed look identical from outside.
+        self._evicted = 0
+        # What a session spawned from here runs. Kept on the registry
+        # rather than read from settings inside it, so this module still
+        # never depends on the web layer — the server refreshes it on every
+        # request, exactly as it refreshes the attached session's own.
+        self.model = os.environ.get("BRAIN_MODEL", "")
+        _migrate_legacy()
+        prune_transcripts()
+
+    # -- membership ------------------------------------------------------
+
+    def _adopt(self, session: ChatSession) -> ChatSession:
+        # A conversation opened from the rail runs the model the chat is
+        # set to, not whatever the environment said at boot.
+        session.model = self.model
+        session._on_change = lambda _s: self._broadcast()
+        session._on_ask = self._announce_ask
+        self._sessions.append(session)
+        self._trim_idle()
+        return session
+
+    def _trim_idle(self) -> None:
+        """Forget sessions we are no longer holding a process for.
+
+        The cap above is on processes; this one is on bookkeeping. A
+        forgotten session loses nothing that matters — its transcript is on
+        disk and its conversation is Claude Code's — it just reopens by
+        replay instead of instantly.
+        """
+        spare = [s for s in self._sessions
+                 if not s.alive() and s is not self._attached]
+        for session in sorted(spare, key=lambda s: s.last_activity)[
+                :max(0, len(self._sessions) - MAX_TRACKED)]:
+            self._sessions.remove(session)
+
+    def get(self, session_id: str) -> ChatSession | None:
+        """The session holding this conversation, if we hold it.
+
+        Looked up by reading each session's own current id rather than
+        through a key the registry maintains: an id changes underneath us
+        (a fresh session announcing its own, a ``--resume`` the CLI
+        refused), and a table of ids to keep in step with that is a second
+        answer to "which conversation is this" waiting to go stale.
+        """
+        if not session_id:
+            return None
+        return next((s for s in self._sessions if s.session_id == session_id),
+                    None)
+
+    def attached(self) -> ChatSession:
+        """The session the view is on, created on first use.
+
+        Synchronous and never spawns: constructing a ``ChatSession`` reads
+        a transcript and nothing else, which is what lets every existing
+        caller keep asking for "the session" on the request path.
+        """
+        if self._attached is None:
+            self._attached = self._adopt(ChatSession(_read_attached()))
+        return self._attached
+
+    def sessions(self) -> list[ChatSession]:
+        return list(self._sessions)
+
+    # -- what the panel is told ------------------------------------------
+
+    def live(self) -> list[dict]:
+        """One row per conversation we are holding, for the rail's marks.
+
+        Only sessions the CLI has named: a session with no id yet is the
+        one you are typing into and has nothing to join onto a listing of
+        conversations that exist.
+        """
+        rows = []
+        for session in self._sessions:
+            if not session.session_id:
+                continue
+            rows.append({
+                "session_id": session.session_id,
+                "state": session.state,
+                "live": session.alive(),
+                "busy": session.alive() and session.state == "busy",
+                "needs_ok": bool(session.pending_permission),
+                "attached": session is self._attached,
+                "title": session.title(),
+                "busy_since": session._busy_since,
+                "last_activity": session.last_activity,
+            })
+        return rows
+
+    def summary(self) -> dict:
+        """Counts for /api/diagnostics — a session stopped by the cap has
+        to be tellable from one that crashed."""
+        rows = self.live()
+        return {
+            "live": sum(1 for r in rows if r["live"]),
+            "busy": sum(1 for r in rows if r["busy"]),
+            "needs_ok": sum(1 for r in rows if r["needs_ok"]),
+            "held": len(self._sessions),
+            "max": max_sessions(),
+            "evicted": self._evicted,
+        }
+
+    def _broadcast(self) -> None:
+        """Push the listing to whoever is looking, live-only.
+
+        The alternative is the rail polling, which would ask a question
+        whose answer only changes when something else already had an event
+        to send.
+        """
+        attached = self._attached
+        if attached is None:
+            return
+        attached._emit({"type": "sessions", "sessions": self.live()},
+                       keep=False)
+
+    def _announce_ask(self, session: ChatSession) -> None:
+        """A background session is waiting on a person.
+
+        The rail's badge is one half of this and it is not enough on its
+        own: the card times itself out after ``PERMISSION_TIMEOUT``, and a
+        question that declined itself while nobody was told is the silent
+        failure the approval card exists to prevent.
+        """
+        attached = self._attached
+        if attached is None or session is attached:
+            return
+        pending = session.pending_permission or {}
+        attached._emit({
+            "type": "session_asks",
+            "session_id": session.session_id or "",
+            "title": session.title(),
+            "tool": pending.get("tool") or "",
+        }, keep=False)
+
+    # -- switching -------------------------------------------------------
+
+    def _attach_locked(self, session: ChatSession) -> None:
+        old = self._attached
+        self._attached = session
+        _write_attached(session.session_id)
+        if old is not None and old is not session:
+            # On the OLD stream, because that is the one a viewer is
+            # holding: the panel reconnects and its first frame is the new
+            # session's snapshot, which is the contract the stream has had
+            # since it was written.
+            old._emit({"type": "switched",
+                       "session_id": session.session_id or ""}, keep=False)
+        self._broadcast()
+
+    async def attach(self, session_id: str) -> dict:
+        """Put the view on a conversation we are already holding."""
+        async with self._lock:
+            session = self.get(session_id)
+            if session is None:
+                raise ValueError("that conversation is not open")
+            self._attach_locked(session)
+            return {"ok": True, "session_id": session.session_id,
+                    "attached": True, "spawned": False}
+
+    async def _make_room(self, target: ChatSession) -> None:
+        """Free a slot for ``target``'s process, or say why there is none."""
+        while True:
+            others = [s for s in self._sessions
+                      if s.alive() and s is not target]
+            cap = max_sessions()
+            if len(others) < cap:
+                return
+            idle = [s for s in others if s.state != "busy"]
+            if not idle:
+                raise SessionCapReached(len(others), cap)
+            victim = min(idle, key=lambda s: s.last_activity)
+            await victim.stop()
+            self._evicted += 1
+            victim._emit({"type": "notice", "text":
+                          "brAIn closed this chat's session to make room for "
+                          f"another one — it keeps {cap} alive at once "
+                          "(chat_max_sessions in Settings). Claude Code still "
+                          "has the conversation: your next message here picks "
+                          "it straight back up."})
+            victim._persist()
+
+    async def open(self, session_id: str, replay: list[dict]) -> dict:
+        """Attach to this conversation, opening a process for it if needed.
+
+        Instant when we already hold it — no stop, no spawn, no replay,
+        just a change of which session the stream serves.
+        """
+        if not session_id:
+            raise ValueError("no conversation given")
+        async with self._lock:
+            existing = self.get(session_id)
+            if existing is not None:
+                await self._make_room(existing)
+                spawned = False
+                if not existing.alive():
+                    # Held but stopped — by the cap, or by a handoff. The
+                    # transcript is already right, so this is a start, not
+                    # a resume: replaying over it would wipe the notice
+                    # that explains the gap.
+                    await existing.start()
+                    spawned = True
+                self._attach_locked(existing)
+                return {"ok": True, "session_id": existing.session_id,
+                        "resumed": not existing.resume_fell_back,
+                        "events": len(existing.events), "attached": True,
+                        "spawned": spawned}
+            session = self._adopt(ChatSession())
+            try:
+                await self._make_room(session)
+                out = await session.resume(session_id, list(replay))
+            except BaseException:
+                # Never leave a half-opened session in the listing: it has
+                # no process, no transcript worth keeping, and it would
+                # count against nothing but somebody's understanding.
+                if session in self._sessions:
+                    self._sessions.remove(session)
+                raise
+            self._attach_locked(session)
+            out["attached"] = True
+            out["spawned"] = True
+            return out
+
+    async def new(self) -> dict:
+        """Start a conversation, leaving whatever else is open alone."""
+        async with self._lock:
+            current = self._attached
+            if current is not None and not current.events:
+                # Nothing was ever said in the one on screen. Spending a
+                # slot on a second empty chat is a process for nothing.
+                return await current.reset()
+            session = self._adopt(ChatSession())
+            try:
+                await self._make_room(session)
+                await session.start()
+            except BaseException:
+                if session in self._sessions:
+                    self._sessions.remove(session)
+                raise
+            self._attach_locked(session)
+            return {"ok": True, "session_id": session.session_id}
+
+    async def close(self, session_id: str) -> bool:
+        """Stop one conversation's process. The conversation is the CLI's."""
+        async with self._lock:
+            session = self.get(session_id)
+            if session is None:
+                return False
+            await session.stop()
+            if session is not self._attached:
+                self._sessions.remove(session)
+            self._broadcast()
+            return True
+
+    async def stop_all(self) -> None:
+        """Shutdown: our children do not outlive us."""
+        for session in list(self._sessions):
+            await session.stop()
+
+
+# One registry per add-on, created lazily so importing this module (which the
 # tests do) never spawns anything.
-_session: ChatSession | None = None
+_registry: SessionRegistry | None = None
+
+
+def registry() -> SessionRegistry:
+    global _registry
+    if _registry is None:
+        _registry = SessionRegistry()
+    return _registry
 
 
 def session() -> ChatSession:
-    global _session
-    if _session is None:
-        _session = ChatSession()
-    return _session
+    """The attached session — what every caller that only knows about one
+    conversation is asking for."""
+    return registry().attached()

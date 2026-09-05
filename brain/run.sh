@@ -383,6 +383,12 @@ MEMORYMD
         | grep -v '^null$' | paste -sd, - || true)
     export BRAIN_CHECKS_INTERVAL_HOURS="$checks_interval_hours"
     export BRAIN_PROTECTED_ENTITIES="$protected_entities"
+    # Overnight self-healing. Off by default, and the panel prefers the
+    # live Supervisor option — this export is the fallback for when the
+    # Supervisor cannot be read, exactly as the notify options are.
+    local self_healing
+    self_healing=$(bashio::config 'self_healing' 'false')
+    export BRAIN_SELF_HEALING="$self_healing"
 
     local env_file="/data/.brain_env"
     cat > "$env_file" << ENVEOF
@@ -411,6 +417,7 @@ export BRAIN_LEARN_MAX_TURNS="${study_max_turns}"
 export BRAIN_LEARN_TIMEOUT="${study_timeout_s}"
 export BRAIN_CHECKS_INTERVAL_HOURS="${checks_interval_hours}"
 export BRAIN_PROTECTED_ENTITIES="${protected_entities}"
+export BRAIN_SELF_HEALING="${self_healing}"
 export TZ="${TZ:-}"
 export CLAUDE_CODE_DISABLE_MCP_DISCOVERY=1
 export CLAUDE_MCP_SERVERS_OVERRIDE="/config/.mcp.json"

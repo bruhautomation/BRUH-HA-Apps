@@ -217,6 +217,32 @@ def add(obj: dict) -> dict | None:
         "source": str(obj.get("source") or "")[:60],
         "config": obj.get("config"),
         "replay": obj.get("replay"),
+        # What the automation does TODAY, replayed over the same window.
+        # A condition proposal's whole case is the pair — "30 times, and
+        # 22 with this" — and one number on its own is a fact about an
+        # automation rather than an argument for changing it.
+        "replay_before": obj.get("replay_before"),
+        # The id of the entry an accept must REPLACE rather than append
+        # to. Empty for every producer that adds an automation; set by
+        # the condition miner, which edits somebody's own rule.
+        "edits": str(obj.get("edits") or "")[:64],
+        # Which automation that is, by entity id and by the name a person
+        # would recognise — the accept path verifies against the entity
+        # Home Assistant actually registered, which a rename moves and a
+        # slug of the alias would not follow.
+        "automation": obj.get("automation"),
+        # An emergency playbook's evidence is the LIST of what it would
+        # act on, exactly as a routine's is its replay — so it rides on
+        # the row for the same reason. `key_for` hashes the config and
+        # never this, so a card that renders differently is still the
+        # same change.
+        "playbook": obj.get("playbook"),
+        # A one-off's evidence is the person's own sentence and Claude's
+        # restatement of it, side by side — which half was misread is the
+        # only thing worth knowing when it is wrong. It rides here for the
+        # same reason a playbook's list does, and `key_for` hashes the
+        # config and never this.
+        "intent": obj.get("intent"),
         "status": "proposed",
         "note": "",
     }

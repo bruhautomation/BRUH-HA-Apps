@@ -617,13 +617,29 @@ def passes(cond: dict, timeline: dict, when: float, tz) -> bool:
         local = dt.datetime.fromtimestamp(when, tz)
         after, before = cond.get("after"), cond.get("before")
         minute = local.hour * 60 + local.minute
-        if after is not None:
-            parts = str(after).split(":")
-            if minute < int(parts[0]) * 60 + int(parts[1]):
+
+        def _minutes(spec) -> int:
+            parts = str(spec).split(":")
+            return int(parts[0]) * 60 + int(parts[1] if len(parts) > 1 else 0)
+
+        # **A time condition wraps midnight**, and this one did not.
+        # Home Assistant's own `condition.time` reads `after > before` as
+        # "from tonight until tomorrow morning" — 22:00 to 01:00 is a real
+        # bedtime and the commonest window anybody writes one for. Testing
+        # the two bounds separately answers `False` at every instant of
+        # such a window, which is not a slightly wrong replay: a
+        # `not`-wrapped one then passes at every instant instead, so a
+        # proposal that stands an automation down between ten and one
+        # would report having changed nothing at all.
+        start = None if after is None else _minutes(after)
+        end = None if before is None else _minutes(before)
+        if start is not None and end is not None and start > end:
+            if not (minute >= start or minute < end):
                 return False
-        if before is not None:
-            parts = str(before).split(":")
-            if minute >= int(parts[0]) * 60 + int(parts[1]):
+        else:
+            if start is not None and minute < start:
+                return False
+            if end is not None and minute >= end:
                 return False
         weekdays = cond.get("weekday")
         if weekdays:
@@ -653,24 +669,54 @@ def would_do(config: dict) -> list[dict]:
     raw = config.get("actions")
     if raw is None:
         raw = config.get("action")
+    out: list[dict] = []
+    _walk_actions(raw, out, 0)
+    return out
+
+
+# The keys a Home Assistant action can hide more actions behind. A
+# `choose` used to be skipped with the delays and the waits, which meant
+# `_protected_refusal` — whose whole job is to read what an automation
+# would DO — saw nothing at all in one and passed it vacuously. Nothing
+# reached that until a schedule was written as four branches of a
+# `choose`, and a check that answers "no service calls" about an
+# automation full of them is not a check.
+_ACTION_KEYS = ("sequence", "then", "else", "default", "actions")
+_MAX_ACTION_DEPTH = 6
+
+
+def _walk_actions(raw, out: list[dict], depth: int) -> None:
+    if depth > _MAX_ACTION_DEPTH:
+        return                             # somebody's YAML, not a promise
     if isinstance(raw, dict):
         raw = [raw]
-    out = []
     for step in (raw or []):
         if not isinstance(step, dict):
             continue
         service = step.get("action") or step.get("service")
-        if not service:
-            continue                       # a delay, a wait, a choose
-        target = step.get("target") or {}
-        entity = step.get("entity_id") or target.get("entity_id")
-        out.append({
-            "service": str(service),
-            "entity_id": entity if isinstance(entity, str) else list(entity or []),
-            "area_id": target.get("area_id"),
-            "device_id": target.get("device_id"),
-        })
-    return out
+        if service:
+            target = step.get("target") or {}
+            entity = step.get("entity_id") or target.get("entity_id")
+            out.append({
+                "service": str(service),
+                "entity_id": entity if isinstance(entity, str)
+                             else list(entity or []),
+                "area_id": target.get("area_id"),
+                "device_id": target.get("device_id"),
+            })
+            continue
+        for branch in (step.get("choose") or []):
+            if isinstance(branch, dict):
+                _walk_actions(branch.get("sequence"), out, depth + 1)
+        for key in _ACTION_KEYS:
+            if key in step:
+                _walk_actions(step[key], out, depth + 1)
+        repeat = step.get("repeat")
+        if isinstance(repeat, dict):
+            _walk_actions(repeat.get("sequence"), out, depth + 1)
+        parallel = step.get("parallel")
+        if parallel is not None:
+            _walk_actions(parallel, out, depth + 1)
 
 
 def replay(config: dict, history: dict, start: float, end: float,

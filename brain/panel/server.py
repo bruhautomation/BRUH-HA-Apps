@@ -123,6 +123,7 @@ import chat_session
 import closures
 import checks
 import cli_commands
+import conditions
 import conversations
 import energy
 import engine
@@ -130,18 +131,22 @@ import feedback_store
 import finding_requests
 import findings_store
 import fixer
+import healing
 import health
 import hypotheses
+import intents
 import journal
 import knowledge_store
 import notify_router
 import override_ledger
 import onboarding
+import playbooks
 import prompt_store
 import proposals
 import rhythm
 import routines
 import run_sources
+import scenes
 import schedule_store
 import settings_store
 import shadow
@@ -426,6 +431,22 @@ logging.basicConfig(
     format="[insights] %(levelname)s %(message)s",
 )
 log = logging.getLogger("brain")
+
+
+def log_safe(text) -> str:
+    """A string off the wire, safe to put in a log line.
+
+    A sentence somebody typed reaches the log in three places now — the
+    room a scene set is for, the one-off's own title — and a log line is
+    read by a person scanning for what went wrong. A newline in it writes
+    a second line that looks like brAIn's own, which is how a log stops
+    being evidence; the two `replace` calls are literal because that is
+    the barrier a scanner can follow, and the printable filter takes the
+    control characters a terminal would act on. Capped, because a log
+    line is a sentence rather than a payload.
+    """
+    flat = str(text or "").replace("\r", " ").replace("\n", " ")
+    return "".join(ch for ch in flat if ch.isprintable())[:60]
 
 
 class QuietAccessLogger(AbstractAccessLogger):
@@ -977,7 +998,8 @@ async def _send_brief(now: float) -> str:
     night = await _brief_overnight(now)
     state = brief.state_from(
         await asyncio.to_thread(findings_store.list_all),
-        verdict, night, BRIEF_STATE["last_sent"] or (now - 86400))
+        verdict, night, BRIEF_STATE["last_sent"] or (now - 86400),
+        await asyncio.to_thread(_healing_brief_lines))
 
     reasons = brief.worth_saying(state)
     BRIEF_STATE["last_reasons"] = reasons
@@ -1101,7 +1123,36 @@ def _proposals_diagnostics() -> dict:
             # result" is the shape of that failure and is unreadable from
             # a single count.
             "trial_results": sum(1 for r in rows if r.get("trial_result")),
-            "trials_due": sum(1 for r in rows if proposals.trial_due(r))}
+            "trials_due": sum(1 for r in rows if proposals.trial_due(r)),
+            # See CONDITIONS_STATE: a pattern brAIn will not act on is
+            # reported here rather than as a card nobody can answer.
+            "conditions": dict(CONDITIONS_STATE),
+            # The one-offs are not proposals and are counted apart: an
+            # armed one is waiting on the house rather than on anybody.
+            "intents": _intents_diagnostics(),
+            # An empty Proposals tab reads the same whether nobody has
+            # asked for scenes or every ask was refused.
+            "scenes": dict(SCENES_STATE)}
+
+
+def _intents_diagnostics() -> dict:
+    try:
+        rows = intents.listing()
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)[:120]}
+    now = time.time()
+    return {
+        "armed": sum(1 for r in rows if r.get("status") == "armed"),
+        "fired": sum(1 for r in rows if r.get("status") == "fired"),
+        "refused": sum(1 for r in rows if r.get("status") == "refused"),
+        # An armed one-off past its fortnight is the shape of a sentence
+        # about something that already happened, and it is a label rather
+        # than a deletion — see `intents.expired`.
+        "overdue": sum(1 for r in rows if intents.expired(r, now)),
+        "queued": intents.pending(),
+        "max_armed": intents.MAX_ARMED,
+        "ttl_days": intents.INTENT_TTL_DAYS,
+    }
 
 
 # The weekly report. The same poll as the brief's and a different gate:
@@ -1296,8 +1347,103 @@ async def _apply_finding_requests() -> list[dict]:
     return out
 
 
+async def _one_intent(req: dict, now: float) -> dict | None:
+    """One sentence into one card. Returns the row it produced, or None.
+
+    Claude writes the config once, with **reading tools only**
+    (`run_analyst`, the middle of the three paths): it can search the
+    house for the thing the sentence names and it cannot act on it. What
+    comes back is checked by `intents.build` before it becomes anything,
+    and a refusal is a row on the tab rather than a log line — somebody
+    typed a sentence and is waiting for an answer, and *"brAIn will not
+    do this, and here is why"* is one.
+    """
+    sentence = req["sentence"]
+    if await asyncio.to_thread(intents.armed_count) >= intents.MAX_ARMED:
+        return await asyncio.to_thread(intents.note, {
+            "sentence": sentence,
+            "refused": (f"you already have {intents.MAX_ARMED} one-offs "
+                        "waiting to happen. Remove one and ask again — a "
+                        "list of things about to happen is only useful "
+                        "while it is short.")}, now)
+    try:
+        import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+        orientation = await ha_data.collect_orientation(sentence)
+    except Exception as exc:  # noqa: BLE001 — a map brAIn could not read
+        # is a smaller prompt, never a refused sentence.
+        log.info("could not orient the intent run: %s", exc)
+        orientation = {}
+    started = time.time()
+    try:
+        result = await asyncio.to_thread(
+            engine.run_analyst, intents.prompt(sentence, orientation),
+            intents.SYSTEM, eff_model(), intents.TIMEOUT_S,
+            intents.MAX_TURNS, "intent")
+    except Exception as exc:  # noqa: BLE001
+        result = {"ok": False, "error": str(exc)}
+    journal.record("intent", "ok" if result.get("ok") else "error",
+                   ok=bool(result.get("ok")),
+                   error="" if result.get("ok") else str(result.get("error")),
+                   duration_s=time.time() - started)
+    answer = intents.parse_answer(result.get("text") or result.get("raw") or "")
+    if not result.get("ok") or answer is None:
+        return await asyncio.to_thread(intents.note, {
+            "sentence": sentence,
+            "refused": ("brAIn could not work out an automation from that "
+                        "sentence: "
+                        + str(result.get("error")
+                              or "it did not answer with a config")[:200])},
+            now)
+
+    protected = automation_writer.protected_patterns()
+    obj = await asyncio.to_thread(
+        intents.build, sentence, answer, int(now * 1000), protected)
+    if obj.get("refused"):
+        return await asyncio.to_thread(intents.note, obj, now)
+
+    import aiohttp  # noqa: PLC0415 — as `_offer_routines` does
+
+    tz, _name = await asyncio.to_thread(baselines.house_timezone)
+    try:
+        async with aiohttp.ClientSession() as session:
+            obj["replay"] = await _replay_config(
+                session, obj["config"], now - REPLAY_DAYS * 86400, now, tz)
+    except Exception as exc:  # noqa: BLE001 — the replay is the card's
+        # sanity check on a trigger that has never fired, not a gate: a
+        # recorder that will not answer costs the number, never the
+        # sentence somebody typed.
+        obj["replay"] = {"refused": True,
+                         "error": f"brAIn could not replay it: {exc}"}
+    row = await asyncio.to_thread(proposals.add, obj)
+    if row is None:
+        return await asyncio.to_thread(intents.note, {
+            **obj, "refused": ("the Proposals tab is full, or brAIn has "
+                               "already offered this exact automation. "
+                               "Answer what is on it and ask again.")}, now)
+    log.info("one-off intent proposed from %s: %s",
+             log_safe(req.get("via") or "the panel"), log_safe(obj["title"]))
+    return row
+
+
+async def _apply_intent_requests() -> int:
+    """Drain the intent drop. Returns how many sentences were answered."""
+    queued = await asyncio.to_thread(intents.collect)
+    now = time.time()
+    answered = 0
+    for req in queued:
+        try:
+            if await _one_intent(req, now):
+                answered += 1
+        except Exception as exc:  # noqa: BLE001 — one bad sentence must
+            # not stop the loop that answers the next one.
+            log.warning("could not answer an intent: %s", exc)
+        now += 0.001                 # so two in one pass get two ids
+    return answered
+
+
 async def _requests_loop():
-    """Watch the drop directory. Cheap, and empty nearly every pass."""
+    """Watch the drop directories. Cheap, and empty nearly every pass."""
     await asyncio.sleep(REQUESTS_FIRST_DELAY_S)
     while True:
         try:
@@ -1306,6 +1452,12 @@ async def _requests_loop():
             raise
         except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
             log.warning("finding request pass failed: %s", exc)
+        try:
+            await _apply_intent_requests()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("intent request pass failed: %s", exc)
         await asyncio.sleep(REQUESTS_POLL_S)
 
 
@@ -1380,6 +1532,198 @@ async def _evening_loop():
         except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
             log.warning("bedtime pass failed: %s", exc)
         await asyncio.sleep(EVENING_POLL_S)
+
+
+# Overnight self-healing. Same shape as the bedtime pass — a cheap poll and
+# a window derived from what this house actually does — and one more
+# refusal on top of it: this one is OFF unless somebody switched it on.
+HEAL_POLL_S = 5 * 60
+HEAL_FIRST_DELAY_S = 900
+HEAL_STATE: dict = {"last": None, "running": False}
+
+
+def _healing_enabled() -> bool:
+    """The `self_healing` option, live, with run.sh's export as fallback.
+
+    Read exactly the way `findings_notify_service` is, so a Configuration-tab
+    edit lands without a restart and an unreachable Supervisor still gets
+    the answer somebody set at boot.
+    """
+    opts = addon_options.snapshot() or {}
+    on = opts.get("self_healing")
+    if on is None:
+        on = os.environ.get("BRAIN_SELF_HEALING", "").lower() in (
+            "true", "1", "yes")
+    return bool(on)
+
+
+def _healing_window(now: float) -> tuple[bool, str]:
+    """Whether tonight's pass is due, and the sentence for why not."""
+    local = _local_now(now)
+    start, end = _quiet_hours()
+    settles = rhythm.settle_minute(rhythm.profile(), local)
+    return healing.window(local, start, end, settles)
+
+
+async def run_healing(reason: str = "schedule") -> dict:
+    """One night's pass: plan against the house, make at most three calls.
+
+    The snapshot is `checks.snapshot.collect` — the same one the checks
+    read — because a second fetcher would be a second answer to "what is
+    broken here", and the finding this is acting on came out of the
+    first one.
+
+    Nothing verifies itself. The next checks pass clears the row or it
+    does not, and the morning brief says which: a call returning 200 is
+    the Supervisor accepting a request, which is not the same claim.
+    """
+    if HEAL_STATE["running"]:
+        return {"error": "a healing pass is already running"}
+    HEAL_STATE["running"] = True
+    started = time.time()
+    night = healing.night_key(_local_now(started))
+    try:
+        store = await asyncio.to_thread(healing.load)
+        done = healing.attempted_tonight(store, night)
+        snapshot = await checks.snapshot.collect(started)
+        rows = await asyncio.to_thread(findings_store.list_all, "open")
+        patterns = automation_writer.protected_patterns()
+        planned = await asyncio.to_thread(
+            healing.plan, rows, snapshot, patterns, done,
+            healing.MAX_PER_NIGHT, started)
+
+        attempts = list(store["attempts"]) if store.get("night") == night else []
+        skips = list(store["skips"]) if store.get("night") == night else []
+        for skipped in planned["skips"]:
+            skips.append(skipped)
+            journal.record("healing", healing.OUTCOME_SKIP, ok=False,
+                           error=str(skipped.get("reason") or "")[:200],
+                           extra={"ts": skipped.get("ts"),
+                                  "source": skipped.get("source")})
+
+        import aiohttp  # noqa: PLC0415 — as `_offer_routines` does
+
+        async with aiohttp.ClientSession() as session:
+            for attempt in planned["attempts"]:
+                ok, why = await healing.perform(session, attempt)
+                row = {k: attempt.get(k) for k in
+                       ("ts", "source", "remedy", "target", "label",
+                        "sentence", "text")}
+                row.update({"ok": ok, "error": why, "at": int(time.time())})
+                attempts.append(row)
+                # Written after EVERY attempt, not at the end: a restart
+                # at three in the morning must not find a pass that made
+                # two calls and recorded none of them.
+                await asyncio.to_thread(
+                    healing.save, {"night": night,
+                                   "started_at": int(started),
+                                   "attempts": attempts, "skips": skips})
+                journal.record(
+                    "healing",
+                    healing.OUTCOME_OK if ok else healing.OUTCOME_FAIL,
+                    ok=ok, error="" if ok else why,
+                    extra={"ts": attempt.get("ts"),
+                           "remedy": attempt.get("remedy"),
+                           "target": str(attempt.get("target") or "")[:60]})
+                log.info("healing: %s — %s", attempt.get("sentence"),
+                         "done" if ok else f"failed: {why}")
+
+        state = {"night": night, "started_at": int(started),
+                 "finished_at": int(time.time()), "reason": reason,
+                 "attempts": attempts, "skips": skips}
+        await asyncio.to_thread(healing.save, state)
+        HEAL_STATE["last"] = state
+        log.info("healing pass (%s): %d attempted, %d skipped",
+                 reason, len(planned["attempts"]), len(planned["skips"]))
+        return state
+    except Exception as exc:  # noqa: BLE001 — a bad pass must not take the loop down
+        log.warning("healing pass failed: %s", exc)
+        journal.record("healing", "error", error=str(exc))
+        return {"error": str(exc)[:300], "night": night}
+    finally:
+        HEAL_STATE["running"] = False
+
+
+async def _heal_loop():
+    """Once a night, inside the window, and only when it is switched on."""
+    await asyncio.sleep(HEAL_FIRST_DELAY_S)
+    while True:
+        try:
+            if _healing_enabled():
+                now = time.time()
+                # The window is asked here and again in the diagnostics,
+                # rather than cached between them: a stale "why not" is
+                # the failure this whole file is built to avoid, and the
+                # question is arithmetic over two numbers.
+                due, _why = _healing_window(now)
+                if due:
+                    night = healing.night_key(_local_now(now))
+                    store = await asyncio.to_thread(healing.load)
+                    if store.get("night") != night:
+                        await run_healing("schedule")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
+            log.warning("healing loop failed: %s", exc)
+        await asyncio.sleep(HEAL_POLL_S)
+
+
+def _healing_diagnostics() -> dict:
+    """Whether it is on, when it would run, and what last night did.
+
+    A self-healer that has never run looks exactly like one with nothing
+    to fix, so the *reason* rides here — including the one refusal
+    nothing else could report: no quiet hours and no measured settle
+    time, which means brAIn does not know when nobody is looking.
+    """
+    on = _healing_enabled()
+    try:
+        store = HEAL_STATE["last"] or healing.load()
+    except Exception as exc:  # noqa: BLE001 — a dev checkout has no /data
+        return {"enabled": on, "error": str(exc)[:120]}
+    # Asked fresh rather than read off the loop's last tick: the dialog is
+    # opened when somebody wants to know NOW, and the loop's answer is up
+    # to five minutes old and says nothing at all before its first pass.
+    reason, due = "", False
+    if on:
+        try:
+            due, reason = _healing_window(time.time())
+        except Exception as exc:  # noqa: BLE001 — a dev checkout has no
+            # rhythm store, and "I could not work it out" is an answer.
+            reason = str(exc)[:120]
+    return {
+        "enabled": on,
+        "max_per_night": healing.MAX_PER_NIGHT,
+        "remedies": sorted(healing.REMEDIES),
+        "in_window": bool(due),
+        # Empty while it is on and inside its window: there is nothing
+        # stopping it, and a "reason" beside a working pass is noise —
+        # the same rule `budget_state` follows about an excuse next to a
+        # number that is fine.
+        "reason": "" if (not on or due) else reason,
+        "night": store.get("night", ""),
+        "last_run": int(store.get("started_at") or 0),
+        "attempts": store.get("attempts") or [],
+        "skips": store.get("skips") or [],
+    }
+
+
+def _healing_brief_lines() -> list[str]:
+    """Last night's healing, as sentences, or nothing at all."""
+    if not _healing_enabled():
+        return []
+    try:
+        store = healing.load()
+        if not store.get("attempts"):
+            return []
+        open_ids = {int(f.get("ts") or 0)
+                    for f in findings_store.list_all("open")}
+        tz, _name = baselines.house_timezone()
+        return healing.brief_lines(store, open_ids, tz)
+    except Exception as exc:  # noqa: BLE001 — a brief without this is still
+        # a brief; one that failed because of it is not.
+        log.info("brief could not read the healing store: %s", exc)
+        return []
 
 
 async def _notify_flush_loop():
@@ -2143,12 +2487,63 @@ LEARN_RE = re.compile(
     re.IGNORECASE)
 
 
+# "when the guests leave, turn the porch light off" — the ask bar's third
+# verb. A sentence shaped like a moment is not a question about the house
+# and never becomes a card: it becomes one automation that runs once and
+# switches itself off. Anchored at the start, because "tell me when the
+# freezer is unusual" is an intent and "what happens when the freezer
+# warms up" is a question, and the difference is which word opens it.
+# Literal spaces, like `SCENE_RE`'s and for its reason: `h_generate`
+# collapses the question first, and `^\s*` beside `(?:please\s+)?` is two
+# adjacent pieces that can both eat the same run of them.
+INTENT_RE = re.compile(
+    r"^(?:please )?(?:when(?:ever)?|once|as soon as|"
+    r"the next time|next time|tell me when|let me know when|"
+    r"remind me when)\b",
+    re.IGNORECASE)
+
+
+# "design my evening for the living room" — the ask bar's fourth verb, and
+# the narrowest of them. It names a room and asks for four moods, which is
+# neither a question about the house nor a thing that happens once, so it
+# is matched on the shape of the sentence rather than on a leading word:
+# the area is the whole of what this needs, and anything that does not
+# name one falls through to the ordinary path.
+# Matched against a question whose whitespace `h_generate` has already
+# collapsed to single spaces, which is what lets every space in here be a
+# literal one. Two adjacent pieces that can both consume the same run of
+# spaces is a regex that backtracks polynomially over a line of them —
+# CodeQL reads that as a denial of service and it is right: the first cut
+# had `(?:\w+\s+){0,2}?` against `[^.?!]*?` against a trailing `\s*`, and
+# a question of five hundred spaces is a question somebody can send.
+SCENE_RE = re.compile(
+    r"^(?:please )?"
+    r"(?:design|set up|(?:\w+ ){0,2}?scenes?)\b"
+    r"[^.?!]*?\bfor (?:the |my )?(?P<area>[^,.?!]{2,40}?)[.?!]?$",
+    re.IGNORECASE)
+
+
 async def h_generate(request: web.Request) -> web.Response:
     body = await request.json()
-    question = (body.get("question") or "").strip() or None
+    # Collapsed before any pattern sees it: it is what makes every space
+    # in `SCENE_RE` a single literal one (see the note there), and it is
+    # also what stops a room's name arriving as two lines.
+    question = " ".join((body.get("question") or "").split()) or None
     if question:
         if len(question) > 500:
             raise web.HTTPBadRequest(text="question too long")
+        scene_match = SCENE_RE.match(question)
+        if scene_match:
+            area = scene_match.group("area").strip()
+            return web.json_response(
+                {"queued": [], **await _design_scenes(area)})
+        if INTENT_RE.match(question):
+            # The same request file the `brain.intent` service writes, so
+            # the expensive half — a Claude run, the checks, the card —
+            # has one implementation and one place to be wrong.
+            queued = await asyncio.to_thread(intents.request, question,
+                                             "panel")
+            return web.json_response({"queued": [], "intent": queued})
         match = LEARN_RE.match(question)
         if match:
             topic = question[match.end():].strip().rstrip("?.!")
@@ -2749,6 +3144,293 @@ async def _offer_routines(now: float) -> int:
     return offered
 
 
+# What the condition miner saw and would not act on, kept for the
+# diagnostics bundle. A pattern brAIn can see and will not touch — an
+# automation with no id, one that already stands down over those hours —
+# is not a card, because every card on the Proposals tab can be answered
+# and that one cannot; but "brAIn found nothing" and "brAIn found this and
+# named the thing to change" are different reports, and an empty tab reads
+# the same either way.
+CONDITIONS_STATE: dict = {"refused": [], "seen": 0, "at": 0}
+
+
+async def _offer_conditions(snapshot: dict, now: float) -> int:
+    """Offer the condition each overridden automation lacks. Returns how many.
+
+    The evidence is `override_ledger.pattern`'s and is never re-derived
+    here — every floor that makes a band mean something already lives in
+    the ledger, and a second answer to "is this a pattern" is the one
+    nobody can see.
+
+    Both replays are run, and that pair is the whole case on the card:
+    what the automation does over the last thirty days, and what it would
+    do with the condition on it. One number on its own is a fact about an
+    automation rather than an argument for changing it.
+    """
+    import aiohttp  # noqa: PLC0415 — as `_offer_routines` does
+
+    try:
+        tz, _name = await asyncio.to_thread(baselines.house_timezone)
+        protected = automation_writer.protected_patterns()
+        found = await asyncio.to_thread(
+            conditions.build, snapshot, None, tz, now, protected)
+    except Exception as exc:  # noqa: BLE001 — an offer is optional; the
+        # pass that would have made it is not.
+        log.warning("could not read the overrides for conditions: %s", exc)
+        return 0
+    CONDITIONS_STATE["seen"] = len(found)
+    CONDITIONS_STATE["at"] = int(now)
+    CONDITIONS_STATE["refused"] = [
+        {"automation": (r.get("automation") or {}).get("alias") or "",
+         "why": r["refused"]} for r in found if r.get("refused")]
+
+    offered = 0
+    async with aiohttp.ClientSession() as session:
+        for obj in found:
+            if obj.get("refused") or not obj.get("config"):
+                continue
+            if await asyncio.to_thread(proposals.knows, obj):
+                continue
+            before = obj.pop("before_config", None)
+            window = (now - REPLAY_DAYS * 86400, now)
+            if before:
+                obj["replay_before"] = await _replay_config(
+                    session, before, window[0], window[1], tz)
+            obj["replay"] = await _replay_config(
+                session, obj["config"], window[0], window[1], tz)
+            if await asyncio.to_thread(proposals.add, obj):
+                offered += 1
+    if offered:
+        log.info("proposed %d condition%s from what you keep undoing",
+                 offered, "" if offered == 1 else "s")
+    return offered
+
+
+# The last thing the ask bar can start, and the only producer a person
+# addresses by name. It is kept here beside the others because it files
+# through the same store and answers to the same rules; what is different
+# is that somebody is waiting for it, which is why the refusal is
+# synchronous and only the naming run is not.
+SCENES_STATE: dict = {"designed": 0, "refused": 0, "last": "", "at": 0}
+
+
+async def _name_and_offer(obj: dict, area: str) -> None:
+    """Ask Claude for four names, then offer the set. Never raises.
+
+    The **one** optional model run in this feature, and it names things.
+    Everything about which bulb takes which kelvin is composed from the
+    registries, because a model choosing that is a guess wearing a config
+    and one nobody can check by looking at the card. A failed run leaves
+    the plain names, which are a perfectly good answer.
+    """
+    try:
+        result = await asyncio.to_thread(
+            engine.run_claude, scenes.name_prompt(area), scenes.SYSTEM,
+            eff_model(), scenes.NAME_TIMEOUT_S, scenes.NAME_MAX_TURNS,
+            "scene")
+        names = scenes.read_names(result.get("text")
+                                  or result.get("raw") or "")
+    except Exception as exc:  # noqa: BLE001 — the card renders from the
+        # deterministic names, which is why there are some.
+        log.info("could not name the %s scenes: %s",
+                 log_safe(area), exc)
+        names = {}
+    if names:
+        # Re-composed rather than renamed in place: the name is inside the
+        # scene's `name`, which is what the entity id comes from, and
+        # patching one of the two would leave a schedule calling a scene
+        # that is not there.
+        obj = await asyncio.to_thread(
+            scenes.build, obj.pop("_snapshot"), area,
+            automation_writer.protected_patterns(), names)
+        if obj.get("refused"):
+            return
+    else:
+        obj.pop("_snapshot", None)
+    if await asyncio.to_thread(proposals.add, obj):
+        SCENES_STATE["designed"] += 1
+        log.info("proposed four scenes for the %s", log_safe(area))
+
+
+async def _design_scenes(area: str) -> dict:
+    """Compose four scenes for one area. Returns what to tell the person.
+
+    Two phases on purpose. Composing is deterministic and takes one fetch,
+    so a **refusal comes back on the request** — *"the box room has one
+    light in it"* is an answer somebody should have before they wonder
+    whether anything is happening. Naming them is a Claude run, so the
+    offer lands on the tab afterwards: a request that waited on a model
+    is a request ingress cuts.
+    """
+    area = str(area or "").strip()[:60]
+    SCENES_STATE["last"] = area
+    SCENES_STATE["at"] = int(time.time())
+    if not area:
+        return {"refused": "brAIn could not tell which room that was."}
+    try:
+        snap = await checks.snapshot.collect_rooms()
+    except Exception as exc:  # noqa: BLE001 — "I could not look" is its own
+        # answer, and it is about brAIn rather than about the room.
+        log.warning("could not read the house for scenes: %s", exc)
+        return {"refused": f"brAIn could not read the house just now: {exc}"}
+
+    protected = automation_writer.protected_patterns()
+    obj = await asyncio.to_thread(scenes.build, snap, area, protected, None)
+    if obj.get("refused"):
+        SCENES_STATE["refused"] += 1
+        return {"refused": obj["refused"], "area": area}
+    if await asyncio.to_thread(proposals.knows, obj):
+        return {"refused": (f"brAIn has already offered these four scenes "
+                            f"for the {area} — the answer is on the "
+                            "Proposals tab."), "area": area}
+    obj["_snapshot"] = snap
+    asyncio.create_task(_name_and_offer(obj, area))
+    return {"scenes": area, "lights": len(obj["scene"]["lights"])}
+
+
+async def _offer_scene_schedule(snapshot: dict, now: float) -> int:
+    """Offer the schedule for any room whose four scenes really exist.
+
+    Read off `scenes.yaml` rather than off the proposals ledger, because
+    what makes the schedule sayable is the scenes being *there* — somebody
+    who copied the card's YAML in by hand has earned it exactly as much as
+    somebody who pressed the button. And it is an ordinary automation, so
+    it goes through 1.44.0's path unchanged and can be tried for a week.
+    """
+    if snapshot.get("scenes") is None:
+        return 0                     # scenes.yaml unreadable: not "no scenes"
+    try:
+        payload = await asyncio.to_thread(rhythm.load)
+        tz, _name = await asyncio.to_thread(baselines.house_timezone)
+    except Exception as exc:  # noqa: BLE001
+        log.info("could not read the rhythm for a scene schedule: %s", exc)
+        payload, tz = {}, None
+
+    import datetime as dt  # noqa: PLC0415 — one call, once a pass
+    import aiohttp  # noqa: PLC0415 — as `_offer_routines` does
+
+    when = dt.datetime.fromtimestamp(now, tz or dt.timezone.utc)
+    wake = rhythm.wake_minute(payload, when) if payload else None
+    settle = rhythm.settle_minute(payload, when) if payload else None
+
+    areas = {str(cfg.get("id") or "").split("_")[2]
+             for cfg in (snapshot.get("scenes") or [])
+             if isinstance(cfg, dict)
+             and str(cfg.get("id") or "").startswith(scenes.ID_PREFIX)
+             and len(str(cfg.get("id") or "").split("_")) > 3}
+    offered = 0
+    async with aiohttp.ClientSession() as session:
+        for slug in sorted(a for a in areas if a):
+            # The area's own name, as the registries have it — the slug in
+            # the id is what survives a rename and the name is what a card
+            # says.
+            house = scenes._house(snapshot)
+            name = next((a for a in {house.area_of(e)
+                                     for e in (snapshot.get("states") or {})}
+                         if a and scenes._slug(a) == slug), slug)
+            obj = await asyncio.to_thread(scenes.schedule, snapshot, name,
+                                          wake, settle)
+            if not obj or await asyncio.to_thread(proposals.knows, obj):
+                continue
+            # Four `time` triggers replay like any habit's, and the card
+            # owes the same line the routine miner's does — "would have
+            # fired 28 times last month" is the sanity check on the two
+            # measured times. Asked after `knows`, as `_offer_routines`
+            # does, so a schedule already answered costs no history.
+            obj["replay"] = await _replay_config(
+                session, obj["config"], now - REPLAY_DAYS * 86400, now, tz)
+            if await asyncio.to_thread(proposals.add, obj):
+                offered += 1
+    if offered:
+        log.info("proposed %d scene schedule%s", offered,
+                 "" if offered == 1 else "s")
+    return offered
+
+
+async def _offer_playbooks(snapshot: dict, now: float) -> int:
+    """Offer the emergency playbooks this house can have. Returns how many.
+
+    Deterministic all the way through: the registries in the snapshot the
+    checks already collected say which detectors exist and which lights,
+    thermostats, blinds, valves and water heaters they would act on. No
+    model chooses any of that — a model picking which valve closes is a
+    guess wearing a config, and one nobody can check afterwards because
+    the automation looks the same either way.
+
+    The one optional Claude run is the **paragraph on the card**, and a
+    run that fails leaves the deterministic sentence exactly where it
+    was. It happens at most once per class per sensor set, because
+    `proposals.knows` is asked first — a house whose playbooks are all
+    answered costs nothing on every later pass.
+    """
+    service, _sev = _findings_notify_target()
+    try:
+        protected = automation_writer.protected_patterns()
+        found = await asyncio.to_thread(
+            playbooks.build, snapshot, protected, service)
+    except Exception as exc:  # noqa: BLE001 — an offer is optional; the
+        # pass that would have made it is not.
+        log.warning("could not compose playbooks: %s", exc)
+        return 0
+
+    offered = 0
+    for obj in found:
+        if await asyncio.to_thread(proposals.knows, obj):
+            continue
+        try:
+            result = await asyncio.to_thread(
+                engine.run_claude, playbooks.describe_prompt(obj),
+                playbooks.SYSTEM, eff_model(),
+                playbooks.DESCRIBE_TIMEOUT_S, playbooks.DESCRIBE_MAX_TURNS,
+                "playbook")
+            obj["why"] = playbooks.tidy_description(
+                result.get("text") or result.get("raw") or "", obj["why"])
+        except Exception as exc:  # noqa: BLE001 — the card renders from the
+            # deterministic sentence, which is why there is one.
+            log.info("could not describe the %s playbook: %s",
+                     (obj.get("playbook") or {}).get("class"), exc)
+        if await asyncio.to_thread(proposals.add, obj):
+            offered += 1
+    if offered:
+        log.info("proposed %d emergency playbook%s",
+                 offered, "" if offered == 1 else "s")
+    return offered
+
+
+async def _poll_intents(now: float) -> int:
+    """Ask Home Assistant whether each armed one-off has fired. Returns how
+    many moved.
+
+    `last_triggered` off the automation itself, not "the automation is
+    off": somebody switching it off by hand is not it having fired, and
+    the difference is the whole of what the card claims. The stamp has to
+    be **after** the accept, or an automation sharing a slug with one that
+    ran last month reads as done the moment it is armed.
+
+    An entity Core has no state for is left exactly as it is. "I could
+    not look" and "it has not happened" are different answers, and only
+    the second one belongs on a card.
+    """
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    rows = [r for r in await asyncio.to_thread(intents.listing)
+            if r.get("status") == "armed" and r.get("entity_id")]
+    moved = 0
+    for row in rows:
+        try:
+            state = await ha_data.entity_state(row["entity_id"])
+        except Exception as exc:  # noqa: BLE001 — one unreadable entity is
+            # not a reason to stop asking about the next.
+            log.info("could not read %s: %s", row["entity_id"], exc)
+            continue
+        when = intents.fired_from_state(row, state)
+        if when and await asyncio.to_thread(intents.mark_fired, row["ts"], when):
+            moved += 1
+            log.info("the one-off %s fired",
+                     log_safe(row.get("title") or row["ts"]))
+    return moved
+
+
 async def _evaluate_trials(now: float) -> int:
     """Re-grade every running trial against the week so far. Returns how many.
 
@@ -2877,6 +3559,27 @@ async def run_checks(reason: str = "schedule") -> dict:
         except Exception as exc:  # noqa: BLE001
             log.warning("could not offer routines: %s", exc)
             offered = 0
+        # And the other producer: the automation brAIn would write for a
+        # night nobody wants. Same store, same tab, same refusal to
+        # enable anything on its own.
+        try:
+            offered += await _offer_playbooks(snapshot, started)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not offer playbooks: %s", exc)
+        # And the third: the condition an automation somebody keeps
+        # undoing does not have. The finding already reports the fight;
+        # this is the change that ends it.
+        try:
+            offered += await _offer_conditions(snapshot, started)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not offer conditions: %s", exc)
+        # And the fourth: the schedule that walks a room through the four
+        # scenes it now has. Only once they really exist — a schedule
+        # naming a scene that is not there errors at 07:00 every morning.
+        try:
+            offered += await _offer_scene_schedule(snapshot, started)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not offer a scene schedule: %s", exc)
         # And the other half of the same lifecycle: a trial that nothing
         # evaluates is a status with no report behind it.
         try:
@@ -2884,6 +3587,16 @@ async def run_checks(reason: str = "schedule") -> dict:
         except Exception as exc:  # noqa: BLE001
             log.warning("could not evaluate trials: %s", exc)
             graded = 0
+        # And the one-offs: whether the thing somebody was waiting for has
+        # happened. Nothing is removed here — a card says it fired and
+        # offers to take it out, because an automation that vanished from
+        # somebody's file while they were not looking is a file they
+        # cannot trust.
+        try:
+            fired = await _poll_intents(started)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not check the armed one-offs: %s", exc)
+            fired = 0
         summary = {
             "reason": reason,
             "started_at": int(started),
@@ -2899,6 +3612,7 @@ async def run_checks(reason: str = "schedule") -> dict:
             "cleared": cleared,
             "proposed": offered,
             "trials_evaluated": graded,
+            "intents_fired": fired,
             "snapshot_errors": snapshot.get("errors") or {},
         }
         journal.record(
@@ -3390,6 +4104,11 @@ def _diagnostics_payload() -> dict:
         # findings since Tuesday" — which is the failure this file exists
         # to make visible from outside.
         "notify": _notify_diagnostics(),
+        # What was mended while the house slept, and — when nothing was —
+        # why not. "It is off", "it is not the window yet" and "this house
+        # has no measured settle time and no quiet hours" are three
+        # different silences, and only the last one needs anything doing.
+        "healing": _healing_diagnostics(),
         # The two things that decide when a person hears from brAIn, and
         # both are invisible from outside: a rhythm that never gathered
         # enough days looks exactly like one that did and chose 07:00.
@@ -3434,6 +4153,10 @@ def _diagnostics_payload() -> dict:
             "coldest": _thermal_store.get("coldest"),
             "reason": _thermal_store.get("reason", ""),
         },
+        # How many conversations the chat is holding open, how many are
+        # answering, and what the cap is. A session the cap stopped and one
+        # that crashed leave the same silence otherwise.
+        "chat": chat_session.registry().summary(),
         "daemons": _daemon_rollcall(),
         "usage": {k: usage.get(k) for k in ("source", "used_percent", "limits")},
     }
@@ -3626,7 +4349,20 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
 
 def _proposals_payload() -> dict:
     rows = proposals.listing()
+    now = time.time()
+    armed = intents.listing()
+    for row in armed:
+        # Derived here rather than stored, because "it has been waiting a
+        # fortnight" is a fact about the clock and a stored one would be
+        # a number that stops being true the moment it is written.
+        row["overdue"] = intents.expired(row, now)
     return {"proposals": rows, "counts": proposals.counts(rows),
+            # What is waiting to happen, what already has, and the
+            # sentences brAIn would not arm. Not proposals — nobody owes
+            # an answer on an armed one — so they are counted separately
+            # and the badge does not move for them.
+            "intents": armed,
+            "intent_ttl_days": intents.INTENT_TTL_DAYS,
             "trial_days": proposals.TRIAL_DAYS,
             # So an empty tab can say what "enough times" means rather
             # than leaving somebody to wonder whether it is broken.
@@ -3636,6 +4372,71 @@ def _proposals_payload() -> dict:
 async def h_proposals(request: web.Request) -> web.Response:
     return web.json_response(
         await asyncio.to_thread(_proposals_payload))
+
+
+async def h_playbook_rehearsal(request: web.Request) -> web.Response:
+    """What this playbook would do, against what is true right now.
+
+    It **calls nothing**. Home Assistant's `automation.trigger` would run
+    the actions, which is not a rehearsal — it is the emergency — so this
+    reads `/states` once and reports each target's state beside the state
+    the call would produce.
+    """
+    ts = int(request.match_info["ts"])
+    row = await asyncio.to_thread(proposals.get, ts)
+    if row is None or not row.get("playbook"):
+        return web.json_response(
+            {"error": "that is not a playbook"}, status=404)
+
+    import aiohttp  # noqa: PLC0415 — as `_offer_routines` does
+
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+    try:
+        async with aiohttp.ClientSession() as session:
+            raw = await ha_data._rest_get(session, "/states", timeout=30)
+    except Exception as exc:  # noqa: BLE001 — "I could not ask" and "every
+        # light is already on" are different answers, and only one of them
+        # is about the house.
+        return web.json_response(
+            {"error": f"brAIn could not read the current states: {exc}"},
+            status=502)
+    states = {s["entity_id"]: s for s in (raw or [])
+              if isinstance(s, dict) and s.get("entity_id")}
+    return web.json_response(
+        await asyncio.to_thread(playbooks.rehearsal, row, states))
+
+
+async def h_scene_areas(request: web.Request) -> web.Response:
+    """Every room brAIn could compose scenes for, with its light count.
+
+    The picker's own list. A room with one bulb is never offered and then
+    refused: a control that hands somebody a choice its own rule forbids
+    is a control that teaches people to distrust it.
+    """
+    try:
+        snap = await checks.snapshot.collect_rooms()
+    except Exception as exc:  # noqa: BLE001 — "I could not ask" and "you
+        # have no rooms" are different answers, and only one is about the
+        # house. `h_ha_entities`' rule, one add-on over.
+        return web.json_response(
+            {"error": f"brAIn could not read the house: {exc}"}, status=502)
+    protected = automation_writer.protected_patterns()
+    return web.json_response({
+        "areas": await asyncio.to_thread(scenes.areas_with_lights, snap,
+                                         protected),
+        "min_lights": scenes.MIN_LIGHTS,
+    })
+
+
+async def h_scene_design(request: web.Request) -> web.Response:
+    """Design four scenes for one room. The picker's press.
+
+    The same function the ask bar's sentence reaches, because two doors
+    into "compose four moods" is two answers to what a mood is.
+    """
+    body = await _json_body(request)
+    out = await _design_scenes(str(body.get("area") or ""))
+    return web.json_response(out, status=409 if out.get("refused") else 200)
 
 
 async def h_proposal_trial(request: web.Request) -> web.Response:
@@ -3689,37 +4490,57 @@ async def _apply_accepted(row: dict) -> tuple[dict | None, str]:
     """
     import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
 
-    written = await asyncio.to_thread(automation_writer.apply, row)
+    # A proposal that names `edits` changes an automation somebody already
+    # has, so it goes through the splice rather than the append: their
+    # entry comes back with one thing different and every other byte of
+    # the file where it was. Everything after this point is identical,
+    # because the three claims are the same three.
+    # Which file this yes writes to. A scene proposal carries a LIST of
+    # four moods and lands in `scenes.yaml`; everything else is one
+    # automation. The five steps below are the same five either way,
+    # which is why `apply` takes a target rather than having a twin.
+    target = "scenes" if row.get("kind") == "scene" else "automations"
+    if row.get("edits"):
+        written = await asyncio.to_thread(automation_writer.apply_edit, row)
+    else:
+        written = await asyncio.to_thread(automation_writer.apply, row,
+                                          target=target)
     if not written.get("ok"):
         return None, str(written.get("error")
-                         or "brAIn could not write the automation")
+                         or "brAIn could not write it")
 
+    domain, service = written.get("reload") or ("automation", "reload")
     failure = ""
     try:
-        await ha_data.call_core_service("automation", "reload")
+        await ha_data.call_core_service(domain, service)
     except Exception as exc:  # noqa: BLE001 — every way this fails is the
         # same answer to the person waiting: it did not take.
-        failure = f"Home Assistant would not reload its automations: {exc}"
+        failure = f"Home Assistant would not reload its {domain}s: {exc}"
     if not failure:
-        try:
-            if not await _wait_for_entity(written["entity_id"]):
-                failure = (
-                    f"the automation was written but {written['entity_id']} "
-                    "never appeared in Home Assistant, so it is not running "
-                    "— check the add-on log and Home Assistant's own")
-        except Exception as exc:  # noqa: BLE001
-            failure = (f"brAIn could not check whether "
-                       f"{written['entity_id']} appeared: {exc}")
+        # Every entity the write claimed, not the first: three scenes out
+        # of four is a mood missing from a schedule nobody has written
+        # yet, and the whole point of the third step is that the file
+        # being on disk is not the thing existing.
+        for eid in written.get("entity_ids") or [written["entity_id"]]:
+            try:
+                if not await _wait_for_entity(eid):
+                    failure = (
+                        f"it was written but {eid} never appeared in Home "
+                        "Assistant, so it is not running — check the add-on "
+                        "log and Home Assistant's own")
+            except Exception as exc:  # noqa: BLE001
+                failure = f"brAIn could not check whether {eid} appeared: {exc}"
+            if failure:
+                break
     if not failure:
         return written, ""
 
     reverted = await asyncio.to_thread(automation_writer.revert, written)
     try:
-        await ha_data.call_core_service("automation", "reload")
+        await ha_data.call_core_service(domain, service)
     except Exception as exc:  # noqa: BLE001 — the file is already back;
         # a second failed reload is a log line, not a second error.
-        log.warning("could not reload after putting automations.yaml back: %s",
-                    exc)
+        log.warning("could not reload after putting the file back: %s", exc)
     if not reverted.get("ok"):
         failure += (" — and putting automations.yaml back failed: "
                     f"{reverted.get('error')}")
@@ -3803,6 +4624,15 @@ async def h_proposal_decide(request: web.Request) -> web.Response:
     if fact:
         await _submit_memory(fact, source="homeowner")
 
+    if applied and row.get("kind") == "intent":
+        # A proposal is answered and gone; an armed intent is a state of
+        # the house, so it moves to a store of its own. Recorded only
+        # once the automation is written, reloaded and verified — a row
+        # saying the house is holding something, about an automation Core
+        # never loaded, is the "the file was written"/"it exists"
+        # confusion with a card on top of it.
+        await asyncio.to_thread(intents.arm, row, applied)
+
     payload = {"proposal": row, "learned": fact,
                **await asyncio.to_thread(_proposals_payload)}
     if applied:
@@ -3815,6 +4645,96 @@ async def h_proposal_decide(request: web.Request) -> web.Response:
             "automation", proposal=row, written=applied,
             fact=fact, fact_source="homeowner")
         await _announce_accepted(row, applied)
+    return web.json_response(payload)
+
+
+async def _wait_for_gone(entity_id: str) -> bool:
+    """Whether this entity has left Core within the ceiling.
+
+    `_wait_for_entity`'s mirror, and separate rather than a flag on it:
+    "it turned up" and "it went away" are the two claims, they are read at
+    opposite ends of a press, and one function answering both with a
+    boolean argument is a call site nobody can read.
+    """
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    deadline = time.monotonic() + ACCEPT_VERIFY_S
+    while True:
+        if not await ha_data.entity_exists(entity_id):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(ACCEPT_POLL_S)
+
+
+async def h_intent_remove(request: web.Request) -> web.Response:
+    """Take a one-off back out of `automations.yaml`.
+
+    The only press that removes an automation, and the reason nothing
+    removes one on its own: an automation that vanished from somebody's
+    file while they were not looking is a file they cannot trust. So a
+    fired intent sits on the tab saying it fired until this is pressed,
+    and an intent that never fired is offered the same press with a
+    different sentence.
+
+    The same four claims the accept path makes, in reverse: the entry is
+    spliced out, Home Assistant reloads, the entity is gone, and only
+    then does the row leave the list. Any of them failing puts the file
+    back and answers 409 with the sentence.
+    """
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    ts = int(request.match_info["ts"])
+    row = await asyncio.to_thread(intents.get, ts)
+    if row is None:
+        return web.json_response({"error": "that one-off is not on the list"},
+                                 status=404)
+
+    written = None
+    if row.get("status") != "refused" and row.get("automation_id"):
+        written = await asyncio.to_thread(
+            automation_writer.remove, row["automation_id"])
+        if not written.get("ok"):
+            return web.json_response(
+                {"error": str(written.get("error")
+                              or "brAIn could not edit automations.yaml"),
+                 **await asyncio.to_thread(_proposals_payload)}, status=409)
+        failure = ""
+        try:
+            await ha_data.call_core_service("automation", "reload")
+        except Exception as exc:  # noqa: BLE001
+            failure = f"Home Assistant would not reload its automations: {exc}"
+        if not failure and row.get("entity_id"):
+            try:
+                if not await _wait_for_gone(row["entity_id"]):
+                    failure = (f"{row['entity_id']} is still in Home "
+                               "Assistant after the reload, so the "
+                               "automation was not really removed")
+            except Exception as exc:  # noqa: BLE001
+                failure = f"brAIn could not check whether it went: {exc}"
+        if failure:
+            reverted = await asyncio.to_thread(
+                automation_writer.revert, written)
+            try:
+                await ha_data.call_core_service("automation", "reload")
+            except Exception as exc:  # noqa: BLE001 — the file is back;
+                # a second failed reload is a log line.
+                log.warning("could not reload after putting it back: %s", exc)
+            if not reverted.get("ok"):
+                failure += (" — and putting automations.yaml back failed: "
+                            f"{reverted.get('error')}")
+            return web.json_response(
+                {"error": failure,
+                 **await asyncio.to_thread(_proposals_payload)}, status=409)
+
+    dropped = await asyncio.to_thread(intents.drop, ts)
+    payload = {"removed": bool(dropped),
+               **await asyncio.to_thread(_proposals_payload)}
+    if dropped:
+        # The same toast-and-token contract every press that takes a row
+        # away owes, and this one reaches /config as well.
+        payload["undo"] = undo_store.record(
+            "intent", intent=dropped, written=written)
     return web.json_response(payload)
 
 
@@ -3914,8 +4834,9 @@ async def h_undo(request: web.Request) -> web.Response:
         written = entry.get("written") or {}
         reverted = await asyncio.to_thread(automation_writer.revert, written)
         reloaded = True
+        domain, service = written.get("reload") or ("automation", "reload")
         try:
-            await ha_data.call_core_service("automation", "reload")
+            await ha_data.call_core_service(domain, service)
         except Exception as exc:  # noqa: BLE001 — the file is back either
             # way, and saying which half failed is the point.
             reloaded = False
@@ -3940,7 +4861,41 @@ async def h_undo(request: web.Request) -> web.Response:
                                 "Home Assistant would not reload it — the "
                                 "automation is still running until it does")
         elif not restored:
-            payload["error"] = ("the automation is gone, but the proposal "
+            payload["error"] = ("automations.yaml is back as it was, but "
+                                "the proposal could not be put back on the "
+                                "list")
+        return web.json_response(payload)
+
+    if entry["kind"] == "intent":
+        # The mirror of an accept's undo: the file first, then the reload,
+        # then the row. Putting the card back while the automation is
+        # still gone would offer somebody a Remove for something that has
+        # already been removed.
+        import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+        written = entry.get("written") or {}
+        reverted = {"ok": True}
+        reloaded = True
+        if written:
+            reverted = await asyncio.to_thread(
+                automation_writer.revert, written)
+            try:
+                await ha_data.call_core_service("automation", "reload")
+            except Exception as exc:  # noqa: BLE001
+                reloaded = False
+                log.warning("could not reload after undoing a remove: %s", exc)
+        restored = await asyncio.to_thread(intents.restore, entry["intent"])
+        payload = await asyncio.to_thread(_proposals_payload)
+        payload["undone"] = bool(restored and reverted.get("ok") and reloaded)
+        payload["reverted"] = bool(reverted.get("ok"))
+        payload["reloaded"] = reloaded
+        if not reverted.get("ok"):
+            payload["error"] = reverted.get("error")
+        elif not reloaded:
+            payload["error"] = ("automations.yaml is back as it was, but "
+                                "Home Assistant would not reload it")
+        elif not restored:
+            payload["error"] = ("the automation is back, but the one-off "
                                 "could not be put back on the list")
         return web.json_response(payload)
 
@@ -5162,8 +6117,27 @@ async def h_health(request: web.Request) -> web.Response:
 # character grid. See chat_session.py.
 # ---------------------------------------------------------------------------
 
+def _chat_registry() -> "chat_session.SessionRegistry":
+    """The registry, told which model a session spawned now should run.
+
+    Same refresh as ``_chat``'s and for the same reason: a conversation
+    opened from the rail must run the model the chat is set to, not the one
+    the environment named at boot.
+    """
+    registry = chat_session.registry()
+    registry.model = eff_chat_model()
+    return registry
+
+
 def _chat() -> "chat_session.ChatSession":
-    session = chat_session.session()
+    """The attached session — the conversation the view is on.
+
+    There are several of them now (see chat_session.SessionRegistry), and
+    every route that acts on "the chat" acts on this one: send, stop, the
+    model picker, the handoff, the stream. Switching is what changes which
+    session that is, and it stops nothing.
+    """
+    session = _chat_registry().attached()
     # Resolved per call rather than at startup: the model is editable from
     # ⚙ Settings, from the Configuration tab and from the chat's own model
     # picker, and a chat session started before an edit should not keep the
@@ -5196,6 +6170,16 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
 
     try:
         await send(_chat_snapshot(session))
+        registry = chat_session.registry()
+        if registry.attached() is not session:
+            # Attached somewhere else between picking the session and
+            # subscribing to it. The `switched` event that would have said
+            # so went to the queue this stream does not hold, so it is
+            # re-sent here rather than leaving a viewer watching a
+            # conversation nobody is in — a narrow race, and the only one
+            # whose failure is permanent.
+            await send({"type": "switched",
+                        "session_id": registry.attached().session_id or ""})
         while True:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=20)
@@ -5247,7 +6231,16 @@ async def h_chat_stop(request: web.Request) -> web.Response:
 
 
 async def h_chat_new(request: web.Request) -> web.Response:
-    return web.json_response(await _chat().reset())
+    """Start a conversation. Whatever else is open carries on.
+
+    On a chat nobody has typed into this reuses the session that is there
+    rather than spending a slot on a second empty process — see
+    ``SessionRegistry.new``.
+    """
+    try:
+        return web.json_response(await _chat_registry().new())
+    except RuntimeError as exc:
+        raise web.HTTPConflict(reason=_refusal(exc))
 
 
 async def h_chat_handoff(request: web.Request) -> web.Response:
@@ -5270,6 +6263,7 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
     is, and ``?source=`` picks which to show; the default is yours, because
     the rail is a list of your conversations.
     """
+    registry = _chat_registry()
     session = _chat()
     wanted = request.query.get("source", "you")
     if wanted in ("", "all"):
@@ -5303,10 +6297,23 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
                 engine_sources, "")
         ]
         rows.sort(key=lambda r: r["modified"], reverse=True)
+    rows = rows[:30]
+    # Which of these the panel is holding a process for, joined here and
+    # once: the listing is Claude Code's store and the marks are ours, and
+    # two surfaces each doing their own join is two chances to disagree
+    # about whether a row is answering.
+    marks = {row["session_id"]: row for row in registry.live()}
+    for row in rows:
+        mark = marks.get(row["id"])
+        row["live"] = bool(mark and mark["live"])
+        row["busy"] = bool(mark and mark["busy"])
+        row["needs_ok"] = bool(mark and mark["needs_ok"])
     return web.json_response({
-        "conversations": rows[:30],
+        "conversations": rows,
         "current": session.session_id,
         "sources": await asyncio.to_thread(_conversation_source_counts),
+        "sessions": registry.live(),
+        "max_sessions": chat_session.max_sessions(),
     })
 
 
@@ -5404,11 +6411,15 @@ async def h_chat_model(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
         raise web.HTTPBadRequest(text="expected an object")
-    session = chat_session.session()
+    session = _chat()
     if session.state == "busy":
         # Refused before anything is saved: a choice that half-applies —
-        # stored but not running — reads as a picker that lies.
-        raise web.HTTPConflict(reason="finish or stop the current answer first")
+        # stored but not running — reads as a picker that lies. The one
+        # refusal switching conversations did not take away, and it says
+        # which conversation it is about now that there can be several.
+        raise web.HTTPConflict(
+            reason="this conversation is still being answered — stop it, or "
+                   "switch to another chat and pick the model there")
     try:
         settings = settings_store.save({"chat_model": body.get("model")})
     except ValueError:
@@ -5418,10 +6429,10 @@ async def h_chat_model(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(text="chat_model must be a string or null")
     try:
         out = await session.set_model(eff_chat_model())
-    except RuntimeError:
+    except RuntimeError as exc:
         # Only raised when a turn started between the busy check above and
-        # here — the same refusal, in the same words.
-        raise web.HTTPConflict(reason="finish or stop the current answer first")
+        # here — the session's own sentence, which says the same thing.
+        raise web.HTTPConflict(reason=_refusal(exc))
     out["chat_model"] = settings.get("chat_model") or ""
     return web.json_response(out)
 
@@ -5469,16 +6480,19 @@ async def h_chat_conversation_delete(request: web.Request) -> web.Response:
     """Delete one conversation from the list — with an Undo, not a shrug.
 
     The file is moved into a trash directory rather than unlinked, so the
-    toast's Undo can put back exactly what was taken. The conversation that
-    is currently open is refused: deleting the ground the live session is
-    standing on either kills it or quietly forks it, and "start a new chat
-    first" is a better answer than either.
+    toast's Undo can put back exactly what was taken. A conversation that
+    something is holding open is refused — not only the attached one:
+    deleting the ground a live session stands on either kills it or quietly
+    forks it, and now that several may be live at once "the one on screen"
+    is no longer the same question as "the ones in use". The refusal names
+    the close route, because a refusal with no way to satisfy it is a dead
+    end.
     """
-    session = _chat()
+    registry = _chat_registry()
     session_id = request.match_info["id"]
-    if session.session_id == session_id:
+    if registry.get(session_id) is not None:
         raise web.HTTPConflict(
-            reason="that's the conversation that's open — start a new chat first")
+            reason="that conversation still has a live session — close it first")
     entry = await asyncio.to_thread(
         conversations.delete, chat_session.WORK_DIR, session_id)
     if entry is None:
@@ -5493,10 +6507,10 @@ async def h_chat_conversations_delete(request: web.Request) -> web.Response:
     """Delete several conversations in one press — one Undo for the lot.
 
     The single-delete's rules apply per row: each file moves to the trash,
-    and the conversation that is currently open is skipped rather than
-    failing the batch — a select-all that refuses outright because the open
-    chat was in it teaches people to deselect one row by trial and error.
-    What was skipped is reported, so the toast can say it.
+    and a conversation with a live session is skipped rather than failing
+    the batch — a select-all that refuses outright because one open chat
+    was in it teaches people to deselect one row by trial and error. What
+    was skipped is reported, so the toast can say it.
     """
     body = await request.json()
     if not isinstance(body, dict) or not isinstance(body.get("ids"), list):
@@ -5510,10 +6524,10 @@ async def h_chat_conversations_delete(request: web.Request) -> web.Response:
         # unrestorable while the toast still offers to restore it.
         raise web.HTTPBadRequest(
             text=f"at most {conversations.TRASH_MAX} at a time")
-    session = _chat()
+    registry = _chat_registry()
     deleted, entries, skipped = [], [], []
     for session_id in dict.fromkeys(ids):     # de-duped, order kept
-        if session.session_id == session_id:
+        if registry.get(session_id) is not None:
             skipped.append(session_id)
             continue
         entry = await asyncio.to_thread(
@@ -5549,21 +6563,47 @@ async def h_chat_conversation_view(request: web.Request) -> web.Response:
 
 
 async def h_chat_resume(request: web.Request) -> web.Response:
+    """Open a conversation: attach to it if it is live, resume it if not.
+
+    The route name and the body's shape are unchanged, and so is what
+    ``resumed: false`` means — Claude Code no longer holds this
+    conversation and a fresh session opened instead. What changed is that
+    this no longer stops anything: a conversation left mid-answer goes on
+    answering in its own session, and the only 409 left here is the cap
+    (every live chat busy, nothing idle to evict), which says so in those
+    words rather than blaming the answer you can still see.
+    """
     body = await request.json()
     if not isinstance(body, dict):
         raise web.HTTPBadRequest(text="expected an object")
     session_id = str(body.get("session_id") or "")
-    session = _chat()
-    replay = await asyncio.to_thread(
-        conversations.transcript, chat_session.WORK_DIR, session_id)
+    registry = _chat_registry()
+    replay = []
+    if registry.get(session_id) is None:
+        # Only for a conversation we are not already holding: reading a
+        # transcript off disk to replay over a session that has the live
+        # one in memory is a slower way to show the same thing, minus the
+        # notices that explain how it got here.
+        replay = await asyncio.to_thread(
+            conversations.transcript, chat_session.WORK_DIR, session_id)
     try:
-        return web.json_response(await session.resume(session_id, replay))
+        return web.json_response(await registry.open(session_id, replay))
     except ValueError as exc:
         raise web.HTTPBadRequest(reason=str(exc))
     except RuntimeError as exc:
-        # Mid-answer: switching would kill the answer being written, the
-        # same refusal adopt and the model picker already make.
         raise web.HTTPConflict(reason=_refusal(exc))
+
+
+async def h_chat_session_close(request: web.Request) -> web.Response:
+    """Stop one conversation's process, keeping the conversation.
+
+    The only thing this takes away is a live session; Claude Code still
+    holds the conversation and the rail still lists it. It exists because
+    deleting a conversation is refused while something is holding it open,
+    and a refusal with no way to satisfy it is a dead end.
+    """
+    closed = await _chat_registry().close(request.match_info["id"])
+    return web.json_response({"ok": True, "closed": closed})
 
 
 def _chat_snapshot(session: "chat_session.ChatSession") -> dict:
@@ -5585,7 +6625,12 @@ def _chat_snapshot(session: "chat_session.ChatSession") -> dict:
             "models": engine.MODEL_CHOICES,
             "chat_model": settings.get("chat_model") or "",
             "default_model": default,
-            "default_model_label": chat_session.pretty_model(default)}
+            "default_model_label": chat_session.pretty_model(default),
+            # Which conversations are live, so the rail's marks are right
+            # on the first paint rather than on the first thing that
+            # happens to move.
+            "sessions": chat_session.registry().live(),
+            "max_sessions": chat_session.max_sessions()}
 
 
 async def h_chat_state(request: web.Request) -> web.Response:
@@ -5634,7 +6679,11 @@ def make_app() -> web.Application:
     app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)
     # Before the {ts} pattern, which would otherwise swallow it.
     app.router.add_get("/api/proposals", h_proposals)
+    app.router.add_get("/api/playbook/{ts}/rehearsal", h_playbook_rehearsal)
     app.router.add_post("/api/proposal/{ts}/trial", h_proposal_trial)
+    app.router.add_post("/api/intent/{ts}/remove", h_intent_remove)
+    app.router.add_get("/api/scenes/areas", h_scene_areas)
+    app.router.add_post("/api/scenes/design", h_scene_design)
     app.router.add_post("/api/proposal/{ts}/{verb}", h_proposal_decide)
     app.router.add_post("/api/replay", h_replay)
     app.router.add_post("/api/findings/unsettle", h_finding_unsettle)
@@ -5701,6 +6750,7 @@ def make_app() -> web.Application:
                         h_chat_conversation_delete)
     app.router.add_get("/api/chat/conversation/{id}/view",
                        h_chat_conversation_view)
+    app.router.add_post("/api/chat/session/{id}/close", h_chat_session_close)
 
     # The terminal tab: /terminal/ is reverse-proxied through to ttyd
     # so the whole add-on lives behind one ingress port.
@@ -5742,6 +6792,7 @@ def make_app() -> web.Application:
         app["notify_flush"] = asyncio.create_task(_notify_flush_loop())
         app["brief"] = asyncio.create_task(_brief_loop())
         app["evening"] = asyncio.create_task(_evening_loop())
+        app["healing"] = asyncio.create_task(_heal_loop())
         app["weekly"] = asyncio.create_task(_weekly_loop())
         app["requests"] = asyncio.create_task(_requests_loop())
         if addon_options.available():
@@ -5753,7 +6804,7 @@ def make_app() -> web.Application:
         # The chat session is a child process of ours; leaving it running
         # after the panel goes down orphans a Claude that nothing will ever
         # read from again.
-        await chat_session.session().stop()
+        await chat_session.registry().stop_all()
 
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)

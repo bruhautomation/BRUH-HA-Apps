@@ -2,6 +2,405 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.46.0
+
+**The last two items on the ranked twelve, and the change #9 named and
+deferred.** #1 one-off intents, the scene-designer half of #11, and the
+condition an automation you keep undoing does not have. With this the
+twelve is complete: #12 and #4 in 1.29.0, #5 in 1.32–1.33, #9 in 1.34.0,
+#10 across 1.35 and 1.37, #7 in 1.38–1.39, #11's thermal half in
+1.40–1.41, #8 and #2's first half in 1.42.0, #2's lifecycle in 1.44.0, #6
+and #3 in 1.45.0 — and #1 plus #11's scenes here.
+
+All three are new **producers** feeding the proposal lifecycle 1.44.0 made
+real, and two of them need brAIn to *edit* somebody's YAML rather than
+append to it, which is the new mechanism and the part that had to be right
+first.
+
+### Added
+
+- **Changing one entry without touching a byte of the rest of the file**
+  (`automation_writer.locate` / `replace_entry` / `remove_entry`).
+  1.44.0's writer appends and never re-serialises, because
+  `automations.yaml` is somebody's file with their ordering, their
+  comments and their quoting in it. Two producers here have to change an
+  entry that is already in it, and re-serialising the list to do that
+  would hand back a diff nobody asked for on every press.
+
+  So an edit is a **byte splice**: `yaml.compose` builds the node tree
+  without constructing any of it and every node carries offsets into the
+  text that was parsed. The load-bearing test is therefore not "the file
+  still parses" — a writer that round-tripped through PyYAML would pass
+  that, keep every value, and quietly delete the comments — but that
+  **every byte outside the span is identical** before and after.
+
+  Three things make the span honest, and each is a refusal. A **block**
+  collection's `end_mark` runs on to whatever token ended it, so the last
+  entry in a file swallows the comment after it and an entry followed by a
+  blank line swallows that; a **flow** one closes at its brace. The
+  leading `- ` is not in the node, so it is walked back to — across a
+  newline, because `-\n  id: x` is the same item written differently. And
+  anything that cannot be cut on a line boundary — two entries under one
+  id, a document that is not a top-level sequence, an item sharing its
+  last line — answers `None`, because nearly-right bytes are somebody's
+  file with a hole in it.
+
+- **The condition an automation you keep undoing does not have**
+  (`panel/conditions.py`). `auto.overridden` already reports the fight —
+  *"you have put Evening lights back 11 times, on 8 separate weekdays"* —
+  and leaves somebody to open the automation editor and work out what to
+  write. This is the change that answers it, with the ledger's numbers on
+  the card.
+
+  **One condition, and it is negated.** The obvious shape — add
+  `condition: time` with the band's hours and the pattern's weekdays — is
+  wrong in the direction that breaks a working house: a `time` condition
+  is a **conjunction**, so an automation carrying one stands down every
+  Saturday and Sunday as well, at every hour. What the evidence supports
+  is far narrower, so it is one `time` inside a `not`.
+
+  The band is `override_ledger.pattern`'s and is never re-derived — every
+  floor that makes one mean something already lives there. Four refusals,
+  each carried rather than dropped and none of them a card: an automation
+  with no `id` (Home Assistant's own editor cannot change it either, so
+  the card says that rather than pretending brAIn is what is in the way),
+  one that already stands down over those hours, one whose existing time
+  condition names an entity instead of a clock (*"I could not tell"* may
+  not be read as *"there is nothing there"*), and a protected target.
+
+  The case on the card is a **pair** of numbers, because one alone is a
+  fact about an automation rather than an argument for changing it: *"it
+  ran 30 times; with this condition it would have run 22 — 8 fewer, in the
+  hours you keep putting it back."*
+
+- **A sentence that happens once** (`panel/intents.py`, `INTENT_RE`, and
+  the new `brain.intent` service). *"Turn the porch light off when the
+  guests leave."* What gets written is an ordinary automation with
+  `mode: single` and one extra action nobody asked the model for —
+  `automation.turn_off` on itself — so Home Assistant does the running and
+  there is nothing left doing anything afterwards. What is left is a card
+  saying it fired, with a **Remove** on it: nothing removes it on its own,
+  because an automation that vanished from somebody's file while they were
+  not looking is a file they cannot trust. One that has waited a fortnight
+  is *labelled*, not deleted.
+
+  Claude writes the config once with reading tools only, and what comes
+  back is checked before it becomes anything. The trigger has to be
+  replayable — not because a one-off needs a shadow week, but because the
+  replay is the only sanity check there is on a trigger that has never
+  fired. It has to act once, and `once: false` is a refusal **with the
+  restatement shown**, because *"every evening at sunset"* is a good thing
+  to want and belongs on the path that gives it a trial. It has to name
+  something. And it may not touch a protected entity.
+
+  A refusal is a row on the tab rather than a log line: somebody typed a
+  sentence and is waiting for an answer. The ask bar and the service write
+  the same request file, so the expensive half has one implementation, and
+  the test drives the integration's writer straight into the add-on's
+  parser.
+
+- **Four moods for a room** (`panel/scenes.py`). Composed from the
+  registries: colour temperature where a bulb takes one, colour where it
+  cannot, brightness where there is neither, on and off where there is not
+  even that — and a bulb whose modes cannot be read gets the last of those
+  rather than being dropped. Night is the only mood that turns most of the
+  room off, and which light stays on is matched on its name.
+
+  The card's evidence is the **picture**, because there is no replay and no
+  week: a swatch per light per mood, an off light drawn as an empty
+  outline rather than a dark square, the lights named in text under the
+  strip because a phone has no hover, and a protected light shown as
+  skipped. Accepting writes to `scenes.yaml` through the same
+  snapshot-append-reload-verify-revert path, and the writer takes a
+  **target** rather than growing a twin. Once the four scenes really
+  exist, a second proposal offers the schedule that moves between them —
+  an ordinary automation, so it gets a replay and a trial week.
+
+  Claude is used for exactly one thing and it is the naming. This is not
+  BRight and the docs do not compare the two.
+
+### Fixed
+
+- **`shadow.would_do` did not look inside a `choose`.** It skipped one
+  along with the delays and the waits, so `_protected_refusal` — whose
+  whole job is to read what an automation would *do* — saw nothing at all
+  in one and passed it vacuously. It walks `choose`, `if`/`then`/`else`,
+  `repeat`, `parallel` and `sequence` now, to a bounded depth.
+
+- **`shadow.passes` did not wrap midnight on a `time` condition.** Core
+  reads `after > before` as "from tonight until tomorrow morning", and
+  22:00–01:00 is the commonest window anybody writes one for; testing the
+  two bounds separately answers `False` at every instant of such a window,
+  so a `not`-wrapped one passes at every instant instead.
+
+- **A YAML file holding nothing but a comment was read as unreadable**
+  and refused. Home Assistant's own loader answers `None` to both an empty
+  document and a broken one, so the distinction is drawn in the writer —
+  and a `scenes.yaml` with one header line is the ordinary case on a house
+  that has never saved a scene.
+
+- CI pins Playwright. An unpinned `npm install` in the layout job is a
+  dependency on whatever was published a minute ago, and a tarball the
+  registry could not serve yet failed the job before a single measure ran.
+
+## 1.45.0
+
+**The two items on the ranked twelve that make the house act, and every
+line of both is about what they will not do.** #6 overnight self-healing
+and #3 emergency playbooks. Everything brAIn has ever done to a house has
+been a person's press on a specific card; these are the first two things
+that are not, and they are deliberately the narrowest shapes that still
+do the job.
+
+### Added
+
+- **`panel/healing.py` — three things brAIn may fix while you are
+  asleep.** A *closed* playbook, keyed to findings the house checks
+  already file: start an add-on that was set to run at boot and is not
+  running, ping a Z-Wave node the controller has marked dead, reload a
+  config entry that failed to set up. All three are calls a person would
+  have pressed and all three fail into nothing — a ping moves nothing, a
+  reload of something already broken cannot make it more broken, and an
+  add-on that was meant to be running is being started the way boot would
+  have started it.
+
+  **Verification is free, and it is the only kind worth having.** Nothing
+  here reads back whether the call worked, because a 200 from the
+  Supervisor is a request being *accepted* — the distinction BRight draws
+  between a `play_media` call and a speaker making a sound. What proves a
+  heal is the **next checks pass**: the row clears or it does not, and
+  the morning brief says which, by name and by the clock (*"started the
+  Mosquitto broker add-on at 03:10; it is working now"* / *"…it has not
+  cleared yet"*).
+
+  Six refusals, each with the mutation `tests/test_healing.py` catches:
+
+  - **Off by default.** `self_healing` ships `false`. A house does not
+    start healing itself because it was updated.
+  - **Only in the window.** Once a night, inside quiet hours. With none
+    set, an hour after the settle time `rhythm` has measured. With
+    neither, **not at all** — and `/api/diagnostics` says so in as many
+    words, because a self-healer that has never run looks exactly like
+    one with nothing to do, and running at an hour nobody set is acting
+    on a guess about when nobody is looking. A night is keyed around
+    local midnight, so 23:40 and 03:10 are the same night; a key that
+    changed at midnight would let two passes run twenty minutes apart.
+  - **One attempt per finding per night**, written to disk after *every*
+    attempt rather than at the end, so a restart at three in the morning
+    does not start the same add-on twice. The unit is the finding rather
+    than the target because the finding is what clears, and the clearing
+    is the verification.
+  - **Never more than three in a pass.** A house with nine broken things
+    at once is not a house to fix unattended; it is a house to look at.
+    The plan is ordered oldest-first so a night that hits the cap takes
+    the same three every time.
+  - **Never on a protected entity, area or device.** `call_service` in
+    the MCP server is the chokepoint every Claude path reaches the house
+    through, and neither a Supervisor request nor an unattended service
+    call from this loop is one of its callers — so the same patterns are
+    read here, exactly as `automation_writer` reads them. A target that
+    cannot be resolved to plain entities is **skipped, not guessed**: an
+    older Core carries no `config_entry_id` on its registry rows, and
+    reading "I could not tell" as "nothing is protected" is the bypass
+    the list exists to prevent. A ping reaches the *box*, so every entity
+    on the node's device is checked and not only the sensor named.
+  - **Never a row a person has touched.** `open` only — `fixing` is a
+    conversation somebody is already having with brAIn.
+  - **Never off a snapshot key that could not be fetched.** `NEEDS` is
+    the same claim `checks.run_all` makes about a check: a Supervisor
+    that did not answer would otherwise read as every add-on having come
+    back, which is `clear_resolved`'s "I could not look is not it went
+    away" in the half that acts.
+
+  What is deliberately **not** here: **no power-cycling of anything** (a
+  plug switched off and on again has a freezer behind it), **no restart
+  of Home Assistant or of brAIn**, and **no Claude run anywhere on this
+  path** — a model choosing what to restart is a guess wearing a
+  remediation. Every attempt is a `journal.record` line (`healed`,
+  `heal_failed`, `heal_skipped`), a row under `healing` in
+  `/api/diagnostics` with the skips and their reasons, and a line in the
+  next morning brief. A failed call is recorded and never retried the
+  same night, which needs no machinery: the attempt is written whatever
+  happened to it, and the store is what the next pass reads.
+
+- **`checks/system.py` gains `sys.entry_failed`**, which is the finding
+  the third remedy stands on. An integration that fails setup takes
+  everything it provides out of the house at once — there is no state to
+  look wrong, because there are no states — so nothing else on the
+  Findings tab can see it. `config_entries` joins the checks snapshot and
+  goes **unavailable rather than empty** when Core will not answer: "no
+  entry is failing" and "I could not ask" are different claims and only
+  the first may clear a row. A **disabled** entry is somebody's decision
+  and an **ignored** one is a discovery somebody waved off; reporting
+  either is how this check would fire on a healthy house.
+  `migration_error` is deliberately out — that is a restore or a
+  downgrade, and a reload cannot touch it.
+
+- **`panel/playbooks.py` — the automation brAIn would write for a bad
+  night, offered as a proposal.** Smoke or CO, a water leak, and a freeze
+  with the heating stopped. **brAIn never runs one**: it writes it,
+  offers it on the Proposals tab, and Home Assistant runs it if — and
+  only if — the person accepted it, through 1.44.0's write-reload-verify
+  path with every refusal that already carries.
+
+  **Nothing unlocks anything, ever.** The capability page lists doors
+  unlocked under smoke and it is wrong: a lock is the canonical protected
+  entity, a smoke detector is the sensor most likely in a house to fire
+  on burnt toast, and opening the house on a false alarm at three in the
+  morning is the worst outcome anything on that page could produce. The
+  rule is asserted over **every action of every generated config** rather
+  than over the branch that would have written one, because a rule
+  checked where the config is built is a rule that holds for the branches
+  somebody remembered.
+
+  **Composed deterministically from the registries.** No model picks
+  which valve closes — that is a guess wearing a config, and one nobody
+  can check afterwards because the automation looks the same either way.
+  Claude is used for exactly one optional thing, the paragraph on the
+  card, and a run that fails leaves the deterministic sentence in place.
+
+  **Every entity it would act on is listed on the card by name**, grouped
+  by what happens to it, and a protected one is rendered as *skipped:
+  protected* rather than silently dropped — seeing that brAIn knows the
+  valve is there and knows it may not touch it is the point of showing
+  it. A playbook with nothing left to do after protection is **not
+  proposed**: what remains is a notification, and brAIn already sends
+  those. `freeze` is the exception and says so, because nothing here may
+  turn a boiler on.
+
+  **A switch is a water shutoff when the word is the whole word.** The
+  match is on `water`, `valve`, `stopcock`, `mains` and `shutoff`, and
+  **not** on a bare `main` — `switch.main_bedroom_lamp` matches that, and
+  a leak playbook that turns the bedroom lamp off is one somebody
+  deletes. A shutoff called only "Main" is missed, which costs a line on
+  a card somebody can read; the other way round costs trust.
+
+  `proposals.key_for` hashes the config, so the key moves when the sensor
+  set moves and a declined playbook comes back when a detector is fitted
+  — and rewording the card does not re-offer it. The written automation
+  keeps the playbook's own id (`brain_playbook_smoke`), which says what
+  it is when somebody opens `automations.yaml` in six months;
+  `automation_writer` takes a config's id only when it carries the
+  `brain_` prefix, because the duplicate-id refusal is what makes a
+  stable id safe.
+
+- **Rehearsal: `GET /api/playbook/{ts}/rehearsal`.** Every call the
+  playbook would make, with each target's state right now — *"12 lights →
+  on (3 already on), 1 valve → closed (open now)"*. It **executes
+  nothing**, and it deliberately does not use `automation.trigger`, which
+  would run the actions: that is not a rehearsal, it is the emergency.
+  A real rehearsal is setting the detector off on purpose and reading the
+  trace afterwards, and the card says so.
+
+### Panel
+
+- The Proposals tab renders a **playbook card**: a Playbook pill, the
+  grouped list of what it would act on, the skipped-protected rows, the
+  rehearsal as a disclosure that fetches on open (it reads every state in
+  the house, and a tab of five playbooks would ask five times before
+  anybody looked at one), and the sentence saying it will not unlock a
+  door. **No trial button**, and the reason where the button would have
+  been: a trial replays the week you lived through, and that week had no
+  emergency in it — a button that cannot help is worse than a sentence
+  saying why.
+- The Diagnostics section under ⚙ shows the healing pass: whether it is
+  on, what it did last night, and — when it did nothing — which of the
+  three silences that was.
+
+### Notes
+
+- `checks/devices.py` grows `zwave_dead_nodes` beside the set the two
+  device checks already share, and `checks/system.py` exports the text of
+  the row `addon_down` files: that check writes two rows and only one of
+  them is startable, and a finding's text is the one stable id it has.
+- The config-entry reload goes through `homeassistant.reload_config_entry`
+  — the documented service — so it rides the `call_core_service` the
+  accept path already uses, where a domain and a service name are checked
+  against the shape one can have. Home Assistant's own frontend reloads
+  an entry over REST rather than the WebSocket API; read the call site,
+  never the first name that sounds right.
+
+### The chat keeps every open conversation alive
+
+**"I'm trying to switch conversations and it keeps giving me a 409 error
+that Claude is still responding. I thought the whole point was like a hot
+swap between these conversations."** They were right, and the refusal was
+honest rather than lazy: `chat_session.session()` was a module singleton,
+one `ChatSession` holding one `claude` process, so switching conversations
+was a stop and a `--resume` — and refusing mid-answer was the only
+alternative to throwing an answer away. Native Claude Code has never
+worked that way. Three terminal tabs are three processes, each answering
+on its own, which is exactly the thing the chat was being asked for. The
+fix is not a better refusal. It is to stop having one process.
+
+- **`chat_session.SessionRegistry` — many sessions, one attached.**
+  `ChatSession` is unchanged in what it *is*: one process, one transcript,
+  its own subscribers. What is new is that there are several of them and
+  that `attach` — which changes which one the stream serves and which one
+  `send` goes to — **stops nothing**. Walk away from a conversation
+  mid-answer and it goes on answering: its events land in its own
+  transcript and reach its own subscribers, and it is finished and waiting
+  when you come back. `session()` still means "the attached one", so
+  every caller that only knows about one conversation kept working
+  unchanged.
+- **The cap is on processes, not on conversations** — `chat_max_sessions`,
+  a panel setting rather than a `config.yaml` option because it is the
+  sort of number somebody changes while looking at the chat. Three by
+  default, one to eight. You may have as many conversations as you like;
+  Claude Code keeps every one of them, and one with no process costs
+  nothing but a file.
+- **Eviction takes the least recently active IDLE session, never a busy
+  one.** An LRU that could take the busy one would break precisely the
+  thing this exists to protect. The evicted session keeps its transcript,
+  keeps its row, and gets a **notice** saying why its process went — so
+  switching back is instant and explains the gap instead of looking like
+  something that crashed, and the next message there resumes the
+  conversation exactly as it always could.
+- **One 409 is left, and it is about the cap.** Every live chat busy and
+  nothing idle to close: it names how many are open and the setting that
+  changes it, rather than blaming an answer you can still watch being
+  written. A model pick still refuses mid-answer — the model is an argv
+  flag and applying it is a restart that would lose the reply — but the
+  sentence now says which conversation is busy and offers the thing that
+  works, which is to go and talk in another one.
+- **One transcript file per conversation** (`/data/chat/<session id>.json`,
+  and `backup_exclude` names the directory). A single file was the shape
+  of a single session; two live ones writing it would each hold half a
+  scrollback. The old single file is migrated once, when the directory is
+  created, so an upgrade does not blank the pane somebody was reading. A
+  session the CLI has not named yet is deliberately not persisted at all:
+  everything worth keeping already has an id by the time it has anything
+  in it.
+- **The rail and the ⋯ dialog say what each session is doing.** Three
+  states and two of them draw anything — nothing at all for a row with no
+  process (which is most of them, and is not news), a quiet
+  **answering…** while a turn runs in the background, and **Needs your
+  OK** for one waiting on an approval. The join happens server-side, once:
+  the listing is Claude Code's store and the marks are ours, and two
+  surfaces each doing that join is two chances to disagree about whether a
+  row is answering. Marks are pushed down the stream rather than polled,
+  because the answer only changes when something already had an event to
+  send.
+- **A background approval reaches you.** A `can_use_tool` in a
+  conversation nobody is looking at declines itself after ten minutes, so
+  the badge on the row is only half an answer — there is no rail at all on
+  a phone. The attached chat gets a toast naming the conversation, with a
+  press that opens it.
+- **Deleting a conversation any session is holding is refused**, not only
+  the one on screen, and the ✕ offers the way out rather than leaving a
+  no: close the session, then delete. It asks first, because closing one
+  mid-answer loses what it was writing. `/api/diagnostics` carries the
+  registry — live, busy, held, the cap and how many the cap has stopped —
+  because a session closed to make room and one that crashed leave the
+  same silence otherwise.
+
+`tests/test_chat_terminal.py` gains `TestManySessions`, driving the real
+fake CLI through the real registry: the old failure reproduced first
+(`ChatSession.resume` during a busy answer still raises, because it is
+still the destructive path) and then the same moment through the registry,
+where it succeeds and the abandoned answer lands in *its* transcript and
+nowhere else. Every refusal above was verified by mutation.
+
 ## 1.44.0
 
 **1.42.0's last two steps did nothing.** It shipped the proposal lifecycle —

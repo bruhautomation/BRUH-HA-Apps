@@ -84,6 +84,11 @@ FINDINGS_STATE_FILENAME = "findings_state.json"
 # writer — port 8099 is unpublished and stays that way — so what crosses
 # the gap is a request, not a write.
 FINDING_REQUESTS_DIRNAME = "finding-requests"
+# Where a one-off intent lands on its way to the panel. A different
+# directory from the finding requests rather than a field on them: the
+# two are drained by different code, and a queue that has to be sorted
+# before it can be applied is two queues sharing a name.
+INTENT_REQUESTS_DIRNAME = "intent-requests"
 
 # The identifier prefix on a notification button, and the event the
 # companion app fires when one is pressed.

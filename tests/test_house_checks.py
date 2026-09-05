@@ -55,8 +55,8 @@ def house(**over) -> dict:
         "available": {k: True for k in (
             "states", "registry", "services", "automations", "traces",
             "stats", "battery_stats", "dashboards", "supervisor",
-            "recorder", "zha_devices", "actions", "baselines",
-                          "closures", "appliances", "thermal")},
+            "recorder", "zha_devices", "config_entries", "actions",
+                          "baselines", "closures", "appliances", "thermal")},
         "errors": {},
         "blueprints_dir": "",
         "states": {
@@ -146,6 +146,17 @@ def house(**over) -> dict:
                      "db_path": "/config/home-assistant_v2.db"},
         "zha_devices": [{"name": "Back Door sensor", "ieee": "00:11",
                          "available": True, "last_seen": iso(1800)}],
+        # Every integration loaded. The disabled and ignored rows are here
+        # on purpose: `sys.entry_failed` has to stay silent about both,
+        # because neither is a fault.
+        "config_entries": [
+            {"entry_id": "e1", "domain": "hue", "title": "Hue bridge",
+             "state": "loaded", "source": "user"},
+            {"entry_id": "e2", "domain": "sonos", "title": "Sonos",
+             "state": "setup_error", "source": "user", "disabled_by": "user"},
+            {"entry_id": "e3", "domain": "roku", "title": "Roku",
+             "state": "setup_error", "source": "ignore"},
+        ],
         # A month of watching, measured. The front door is shut at night
         # and open a little in the afternoon, which is an ordinary house
         # and is what `evening.left_open` has to stay silent about.
@@ -812,6 +823,51 @@ class TestSystemChecks(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0]["severity"], "serious")
         self.assertIn("error", found[0]["text"])
+
+    def test_a_healthy_house_has_no_failed_entries(self):
+        # The clean fixture carries a disabled entry and an ignored one in
+        # `setup_error`, because neither is a fault and reporting them is
+        # how this check would fire on every house that has waved off a
+        # discovery.
+        self.assertEqual(system.entry_failed(house(), NOW), [])
+
+    def test_an_entry_that_did_not_load_is_found(self):
+        snap = house()
+        snap["config_entries"].append(
+            {"entry_id": "e9", "domain": "hue", "title": "Hue bridge",
+             "state": "setup_error", "source": "user",
+             "reason": "Cannot connect to host"})
+        found = system.entry_failed(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["severity"], "serious")
+        self.assertIn("Hue bridge", found[0]["detail"])
+        self.assertIn("Cannot connect", found[0]["detail"])
+
+    def test_a_retrying_entry_counts_too(self):
+        snap = house()
+        snap["config_entries"].append(
+            {"entry_id": "e9", "domain": "sonos", "state": "setup_retry",
+             "source": "user"})
+        self.assertEqual(len(system.entry_failed(snap, NOW)), 1)
+
+    def test_a_migration_error_is_a_different_fix_and_is_not_reported(self):
+        snap = house()
+        snap["config_entries"].append(
+            {"entry_id": "e9", "domain": "sonos", "state": "migration_error",
+             "source": "user"})
+        self.assertEqual(system.entry_failed(snap, NOW), [])
+
+    def test_the_text_is_stable_while_the_detail_moves(self):
+        one = house()
+        one["config_entries"].append(
+            {"entry_id": "e9", "domain": "hue", "state": "setup_error"})
+        two = house()
+        two["config_entries"] += [
+            {"entry_id": "e9", "domain": "hue", "state": "setup_error"},
+            {"entry_id": "e8", "domain": "sonos", "state": "setup_error"}]
+        a, b = system.entry_failed(one, NOW)[0], system.entry_failed(two, NOW)[0]
+        self.assertEqual(a["text"], b["text"])
+        self.assertNotEqual(a["detail"], b["detail"])
 
     def test_disk_space_takes_the_worse_of_the_two_floors(self):
         snap = house()

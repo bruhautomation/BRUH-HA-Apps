@@ -38,7 +38,7 @@ import ha_mcp_server  # noqa: E402
 # exactly these plus the catalog.
 CORE_SERVICES = {
     "send_prompt", "run_task", "clear_conversation", "run_insight",
-    "add_memory", "answer_question", "study",
+    "add_memory", "answer_question", "study", "intent",
 }
 
 

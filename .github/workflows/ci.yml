@@ -79,7 +79,8 @@ jobs:
       # from the repo-root node_modules exactly as the README describes.
       - name: Install Playwright
         run: |
-          npm install playwright --no-fund --no-audit
+          # Pinned: an unpinned install takes whatever npm published a minute ago, and a tarball the registry cannot serve yet fails this job before a single measure runs.
+          npm install playwright@1.62.1 --no-fund --no-audit
           npx playwright install --with-deps chromium
 
       - name: Measure the top bar

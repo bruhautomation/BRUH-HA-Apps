@@ -27,6 +27,12 @@
 //     card, so what you are explaining stays on screen while you write.
 //   * the badge counts what is waiting — a trial whose week is over is
 //     still waiting on you — and disappears when nothing is.
+//   * an emergency playbook shows what it would ACT ON, because there is no
+//     replay to show: grouped by what happens, with anything protected
+//     rendered as skipped rather than silently dropped, and the sentence
+//     saying it will never unlock a door. It offers no trial button and
+//     says why instead of leaving one that cannot help.
+//   * its rehearsal opens on demand and reports each target's state now.
 //   * the empty state does not congratulate anybody. An empty Findings list
 //     means the house is well; an empty Proposals list means brAIn has not
 //     spotted a habit yet, and those are different sentences.
@@ -130,6 +136,163 @@ const PROPOSALS = [
     },
     replay: { days: 30, would_run: 21, blocked_by_conditions: 0, triggered: 21 },
   },
+  {
+    // An emergency playbook. No replay, no trial, and the evidence is the
+    // list of what it would touch — including the one thing it refuses to.
+    ts: NOW * 1000 - 6000, key: 'ggg', kind: 'playbook',
+    title: 'Emergency playbook: smoke or carbon monoxide',
+    why: 'Written from what this house has: 2 detectors in Hall, Landing. '
+       + 'Every light to full brightness (12). Heating and cooling off (3). '
+       + 'Blinds and curtains open (4). Then it tells you, naming the room.',
+    source: 'playbook', status: 'proposed',
+    playbook: {
+      class: 'smoke', card_max: 12,
+      sensors: [
+        { entity_id: 'binary_sensor.hall_smoke', name: 'Hall smoke', area: 'Hall' },
+        { entity_id: 'binary_sensor.landing_smoke', name: 'Landing smoke', area: 'Landing' },
+      ],
+      groups: [
+        { verb: 'Every light to full brightness', service: 'light.turn_on', to: 'on',
+          targets: [
+            { entity_id: 'light.kitchen', name: 'Kitchen', area: 'Kitchen' },
+            { entity_id: 'light.hall', name: 'Hall', area: 'Hall' },
+          ] },
+        { verb: 'Heating and cooling off', service: 'climate.set_hvac_mode', to: 'off',
+          targets: [{ entity_id: 'climate.hall', name: 'Hall thermostat', area: 'Hall' }] },
+      ],
+      skipped: [{ entity_id: 'light.nursery', name: 'Nursery', reason: 'protected' }],
+      notify: ['notify.mobile_app_phone'],
+      note: 'This will not unlock any door and will not disarm the alarm '
+          + '— a false smoke alarm at 3am must not open the house.',
+      no_trial: 'There is no week to try this against: a trial replays the '
+          + 'days you have already lived, and those days had no emergency in '
+          + 'them. Rehearse it instead.',
+    },
+  },
+  {
+    // A condition proposal: it EDITS an automation somebody wrote rather
+    // than adding one beside it, and its whole case is a PAIR of replay
+    // numbers — what the rule does today, and what it would do with the
+    // condition on it. One of those alone is a fact about an automation
+    // rather than an argument for changing it.
+    ts: NOW * 1000 - 7000, key: 'hhh', kind: 'condition',
+    title: 'Stand Evening lights down between 21:00 and 23:00 on weekdays',
+    why: 'You have put Evening lights back 11 times, on 8 separate weekdays '
+       + 'in the last 14 days — almost always between 21:00 and 23:00. '
+       + 'Nothing about that shows up in Home Assistant: the automation ran, '
+       + 'nothing errored, and you undid it.',
+    source: 'condition', status: 'proposed',
+    edits: 'evening_lights',
+    automation: { entity_id: 'automation.evening_lights',
+                  alias: 'Evening lights', id: 'evening_lights' },
+    replay_before: { days: 30, would_run: 30, blocked_by_conditions: 0,
+                     triggered: 30 },
+    replay: { days: 30, would_run: 22, blocked_by_conditions: 8,
+              triggered: 30 },
+  },
+  {
+    // Four scenes for a room. No replay and no trial — nothing in the last
+    // month set them — so the evidence IS the picture: one swatch per light
+    // per mood, and a protected light shown as skipped.
+    ts: NOW * 1000 - 8000, key: 'iii', kind: 'scene',
+    title: 'Four scenes for the Living room',
+    why: 'Composed from the 4 lights the Living room has: 2 take a colour '
+       + 'temperature; 1 takes a colour but not a temperature; 1 only '
+       + 'switches on and off. Morning is cool and bright, day is neutral '
+       + 'and full, evening is warm and dimmed. At night only Lounge '
+       + 'nightlight stays on. Nursery lamp is on your protected entities '
+       + 'list and left out.',
+    source: 'scene', status: 'proposed',
+    config: [1, 2, 3, 4].map((n) => ({ id: 'brain_scene_living_room_' + n })),
+    scene: {
+      area: 'Living room',
+      lights: [
+        { entity_id: 'light.lounge_main', name: 'Lounge main', capability: 'colour_temp' },
+        { entity_id: 'light.lounge_strip', name: 'Lounge strip', capability: 'colour' },
+        { entity_id: 'light.lounge_lamp', name: 'Lounge lamp', capability: 'brightness' },
+        { entity_id: 'light.lounge_night', name: 'Lounge nightlight', capability: 'colour_temp' },
+      ],
+      skipped: [{ entity_id: 'light.nursery', name: 'Nursery lamp', reason: 'protected' }],
+      moods: ['morning', 'day', 'evening', 'night'],
+      preview: [
+        ['morning', 'Morning — Living room', 39, 0.19, 0.8],
+        ['day', 'Day — Living room', 31, 0.35, 1.0],
+        ['evening', 'Evening — Living room', 29, 0.76, 0.45],
+        ['night', 'Night — Living room', 26, 0.94, 0.1],
+      ].map(([mood, name, h, s, v]) => ({
+        mood, name,
+        lights: [
+          { entity_id: 'light.lounge_main', name: 'Lounge main', capability: 'colour_temp',
+            on: true, h, s, v },
+          { entity_id: 'light.lounge_strip', name: 'Lounge strip', capability: 'colour',
+            on: true, h, s, v },
+          { entity_id: 'light.lounge_lamp', name: 'Lounge lamp', capability: 'brightness',
+            on: true, h: 0, s: 0, v },
+          { entity_id: 'light.lounge_night', name: 'Lounge nightlight',
+            capability: 'colour_temp', on: mood !== 'night' ? true : true, h, s, v },
+        ].map((l) => (mood === 'night' && l.entity_id !== 'light.lounge_night'
+          ? { ...l, on: false, h: 0, s: 0, v: 0 } : l)),
+      })),
+    },
+  },
+  {
+    // A one-off, before it is accepted. It is a proposal like the others —
+    // yes or no is owed — but a week of shadow-running "when the guests
+    // leave" grades nothing, so the card must not offer one, and must say
+    // why in words rather than simply lacking the button.
+    ts: NOW * 1000 - 9000, key: 'jjj', kind: 'intent',
+    title: 'When the guests leave, turn the porch light off',
+    why: 'You asked: "when the guests leave turn the porch light off". '
+       + 'brAIn read that as: turn off Porch light the next time '
+       + 'Guest room presence goes from home to away.',
+    source: 'intent', status: 'proposed',
+    config: { id: 'brain_intent_9', mode: 'single' },
+    intent: { sentence: 'when the guests leave turn the porch light off',
+              plain: 'Turn off Porch light the next time Guest room presence '
+                   + 'goes from home to away.' },
+    replay: { days: 30, would_run: 2, triggered: 2 },
+  },
+];
+
+// One-off intents. NOT proposals — nobody owes an answer on an armed one —
+// so they are counted apart and the badge never moves for them. Three
+// states, and each has to say something different: waiting, it happened,
+// and brAIn will not arm this.
+const INTENTS = [
+  {
+    ts: NOW * 1000 - 100, title: 'When the guests leave, turn the porch light off',
+    sentence: 'when the guests leave, turn the porch light off',
+    plain: 'Turn the porch light off ten minutes after the front door shuts.',
+    status: 'armed', accepted_at: NOW - 3600, fired_at: 0,
+    automation_id: 'brain_intent_1', entity_id: 'automation.when_the_guests_leave',
+    overdue: false,
+  },
+  {
+    ts: NOW * 1000 - 200, title: 'Tell me when the tumble dryer finishes',
+    sentence: 'tell me when the tumble dryer finishes',
+    plain: 'Send a notification when the dryer power drops below 5 W.',
+    status: 'fired', accepted_at: NOW - 4 * 3600, fired_at: NOW - 900,
+    automation_id: 'brain_intent_2', entity_id: 'automation.tell_me_when',
+    overdue: false,
+  },
+  {
+    ts: NOW * 1000 - 300, title: 'Turn the porch light on at sunset',
+    sentence: 'when it gets dark, turn the porch light on',
+    plain: 'Turn the porch light on at sunset, every evening.',
+    status: 'refused', accepted_at: 0, fired_at: 0,
+    refused: 'that sounds like a standing rule rather than a one-off — '
+      + 'something that should keep happening. Ask for it as an ordinary '
+      + 'change instead and it gets a replay, a trial week and a report.',
+    overdue: false,
+  },
+  {
+    ts: NOW * 1000 - 400, title: 'When the parcel arrives, unlock nothing',
+    sentence: 'when the parcel arrives, flash the hall light',
+    plain: 'Flash the hall light when the doorbell rings.',
+    status: 'armed', accepted_at: NOW - 20 * 86400, fired_at: 0,
+    automation_id: 'brain_intent_4', entity_id: 'automation.when_the_parcel',
+    overdue: true,
+  },
 ];
 
 const OPEN = PROPOSALS.length;
@@ -141,7 +304,9 @@ const REFUSAL = 'automations.yaml already has one called "Close the blinds '
 const STUB = `
 window.__proposals = {
   proposals: ${JSON.stringify(PROPOSALS)},
-  counts: { proposed: 3, trialling: 3, accepted: 0, declined: 0, open: ${OPEN} },
+  intents: ${JSON.stringify(INTENTS)},
+  intent_ttl_days: 14,
+  counts: { proposed: 6, trialling: 3, accepted: 0, declined: 0, open: ${OPEN} },
   trial_days: 7, routine_min_days: 6,
 };
 window.__empty = false;
@@ -162,6 +327,29 @@ window.fetch = async (url, opts) => {
     window.__undone = p.split('api/undo/')[1];
     return answer({ undone: true, reverted: true, reloaded: true,
                     restored_proposal: true, ...window.__proposals });
+  }
+  if (p.includes('api/intent/')) {
+    const ts = Number(p.split('api/intent/')[1].split('/')[0]);
+    window.__proposals = {
+      ...window.__proposals,
+      intents: window.__proposals.intents.filter((r) => r.ts !== ts),
+    };
+    return answer({ ...window.__proposals, removed: true,
+                    undo: 'tok-i-' + ts });
+  }
+  if (p.includes('api/playbook/')) {
+    return answer({
+      class: 'smoke', executes_nothing: true,
+      note: 'Rehearsing runs nothing.',
+      groups: [
+        { verb: 'Every light to full brightness', service: 'light.turn_on',
+          to: 'on', count: 2, already: 1, targets: [
+            { entity_id: 'light.kitchen', name: 'Kitchen', state: 'off', already: false },
+            { entity_id: 'light.hall', name: 'Hall', state: 'on', already: true },
+          ] },
+      ],
+      notify: ['notify.mobile_app_phone'], skipped: [],
+    });
   }
   if (p.includes('api/proposal/')) {
     const ts = Number(p.split('api/proposal/')[1].split('/')[0]);
@@ -191,7 +379,8 @@ window.fetch = async (url, opts) => {
   }
   if (p.includes('api/proposals')) {
     if (window.__empty) {
-      return answer({ proposals: [], counts: { open: 0 }, trial_days: 7 });
+      return answer({ proposals: [], intents: [], counts: { open: 0 },
+                      trial_days: 7 });
     }
     return answer(window.__proposals);
   }
@@ -211,6 +400,12 @@ window.fetch = async (url, opts) => {
   return answer({});
 };
 `;
+
+// The one-off cards render above the proposals, so a proposal is addressed
+// by its position among the PROPOSALS rather than by nth-child over a list
+// that holds both.
+const prop = (n, rest) => `.propcard:not(.intentcard) >> nth=${n}`
+  + (rest ? ` >> ${rest}` : '');
 
 const failures = [];
 const note = (where, message) => failures.push(`${where}: ${message}`);
@@ -235,7 +430,9 @@ for (const width of WIDTHS) {
   await page.waitForSelector('.propcard');
 
   const read = () => page.evaluate((floor) => {
-    const cards = [...document.querySelectorAll('.propcard')];
+    const intents = [...document.querySelectorAll('.propcard.intentcard')];
+    const cards = [...document.querySelectorAll('.propcard')]
+      .filter((c) => !c.classList.contains('intentcard'));
     const wrap = document.querySelector('.propwrap').getBoundingClientRect();
     const badge = document.querySelector('#propBadge');
     return {
@@ -245,6 +442,16 @@ for (const width of WIDTHS) {
       badge: badge ? { text: badge.textContent,
                        hidden: badge.classList.contains('hidden') } : null,
       hints: document.querySelectorAll('.prophint').length,
+      intents: intents.map((c) => ({
+        title: (c.querySelector('.proptitle') || {}).textContent || '',
+        pill: (c.querySelector('.pillintent') || {}).textContent || '',
+        why: (c.querySelector('.propwhy') || {}).textContent || '',
+        said: (c.querySelector('.propsaid') || {}).textContent || '',
+        line: (c.querySelector('.propintent') || {}).textContent || '',
+        buttons: [...c.querySelectorAll('.propbtns button')]
+          .map((b) => b.textContent.trim()),
+        overflows: c.getBoundingClientRect().right > wrap.right + 1,
+      })),
       cards: cards.map((c) => ({
         title: (c.querySelector('.proptitle') || {}).textContent || '',
         why: (c.querySelector('.propwhy') || {}).textContent || '',
@@ -252,6 +459,28 @@ for (const width of WIDTHS) {
         trial: (c.querySelector('.proptrial') || {}).textContent || '',
         error: (c.querySelector('.properror') || {}).textContent || '',
         pill: (c.querySelector('.pilltrial') || {}).textContent || '',
+        book: (c.querySelector('.pillbook') || {}).textContent || '',
+        edit: (c.querySelector('.pilledit') || {}).textContent || '',
+        scene: (c.querySelector('.pillscene') || {}).textContent || '',
+        moods: [...c.querySelectorAll('.propmood')].map((m) => ({
+          name: (m.querySelector('.propmoodname') || {}).textContent || '',
+          swatches: [...m.querySelectorAll('.propswatch')].map((s) => ({
+            css: getComputedStyle(s).backgroundColor,
+            off: s.classList.contains('off'),
+            w: s.getBoundingClientRect().width,
+            tip: s.dataset.tip || '',
+          })),
+        })),
+        sceneNames: (c.querySelector('.propscenelights') || {}).textContent || '',
+        groups: [...c.querySelectorAll('.propgroup')].map((g) => ({
+          verb: (g.querySelector('.propverb') || {}).textContent || '',
+          names: (g.querySelector('.propnames') || {}).textContent || '',
+          skipped: g.classList.contains('skipped'),
+          wrapped: g.getBoundingClientRect().height > 90,
+        })),
+        note: (c.querySelector('.propbooknote') || {}).textContent || '',
+        notrial: (c.querySelector('.propnotrial') || {}).textContent || '',
+        rehearse: !!c.querySelector('.propreh > summary'),
         buttons: [...c.querySelectorAll('.propbtns button')].map((b) => ({
           label: b.textContent.trim(),
           primary: b.classList.contains('primary'),
@@ -376,10 +605,262 @@ for (const width of WIDTHS) {
     note(where, `a refused replay must say so, got "${m.cards[2].replay}"`);
   }
 
+  // --- the emergency playbook. Its evidence is the list of what it would
+  // act on, because there is no week with a smoke alarm in it to replay.
+  const book = m.cards[6];
+  if (!book.book.trim()) note(where, 'the playbook card has no Playbook pill');
+  if (!book.groups.length) {
+    note(where, 'the playbook card lists nothing it would act on — which is '
+              + 'the only evidence a playbook has');
+  }
+  if (!book.groups.some((g) => /full brightness/i.test(g.verb))) {
+    note(where, 'the playbook does not say what happens to the lights');
+  }
+  if (!book.groups.some((g) => /Kitchen/.test(g.names))) {
+    note(where, 'the playbook does not name the entities it would act on');
+  }
+  // Protected entities are SHOWN as skipped, never silently dropped:
+  // seeing that brAIn knows the nursery light is there and knows it may
+  // not touch it is the point of showing it.
+  const skipped = book.groups.filter((g) => g.skipped);
+  if (skipped.length !== 1 || !/Nursery/.test(skipped[0].names)) {
+    note(where, 'a protected entity is not shown as skipped on the card');
+  }
+  if (!/protected/i.test((skipped[0] || {}).verb || '')) {
+    note(where, `a skipped row does not say why: "${(skipped[0] || {}).verb}"`);
+  }
+  // The sentence somebody reads before arming their house.
+  if (!/unlock/i.test(book.note)) {
+    note(where, `the playbook does not say it will not unlock: "${book.note}"`);
+  }
+  // No trial button, and the reason where the button would have been.
+  if (book.buttons.some((b) => /try it/i.test(b.label))) {
+    note(where, 'a playbook offers a trial — a replay of a week with no '
+              + 'emergency in it answers nothing');
+  }
+  if (!/no week to try this against/i.test(book.notrial)) {
+    note(where, `a playbook does not say why there is no trial: `
+              + `"${book.notrial}"`);
+  }
+  if (!book.rehearse) note(where, 'the playbook offers no rehearsal');
+  if (book.groups.some((g) => g.wrapped)) {
+    note(where, 'a playbook action row is taller than three lines — the verb '
+              + 'has wrapped away from the names it labels');
+  }
+
+  // --- the one-offs. Waiting, it happened, and brAIn will not arm this are
+  // three different sentences, and a card that cannot tell them apart is a
+  // list of things nobody can act on.
+  if (m.intents.length !== INTENTS.length) {
+    note(where, `rendered ${m.intents.length} one-offs, expected ${INTENTS.length}`);
+  }
+  m.intents.forEach((c, i) => {
+    if (!c.title.trim()) note(where, `one-off ${i} has no title`);
+    if (!c.pill.trim()) note(where, `one-off ${i} does not say which state it is in`);
+    if (!c.line.trim()) note(where, `one-off ${i} says nothing about what it did`);
+    if (!c.buttons.length) note(where, `one-off ${i} has no way to answer it`);
+    if (c.overflows) note(where, `one-off ${i} overflows its wrapper`);
+  });
+  // Defaulted, so a list that rendered nothing at all reports the sentences
+  // it is missing rather than throwing a TypeError at the first read.
+  const [armed = {}, fired = {}, refusedIntent = {}, overdue = {}] = m.intents;
+  [armed, fired, refusedIntent, overdue].forEach((c) => { c.buttons = c.buttons || []; });
+  // The person's sentence and the restatement are SEPARATE, because which
+  // of the two was misread is the only thing worth knowing when it is wrong.
+  if (!/you asked/i.test(armed.why) || !/guests leave/i.test(armed.why)) {
+    note(where, `an armed one-off does not carry the sentence: "${armed.why}"`);
+  }
+  if (!/brAIn understood/i.test(armed.said)) {
+    note(where, `an armed one-off does not carry the restatement: "${armed.said}"`);
+  }
+  if (!/switches itself off/i.test(armed.line)) {
+    note(where, `an armed one-off does not say it disarms: "${armed.line}"`);
+  }
+  if (!/^remove$/i.test(armed.buttons[0] || '')) {
+    note(where, `an armed one-off's press is "${armed.buttons[0]}"`);
+  }
+  if (!/fired/i.test(fired.line) || !/still in your automations/i.test(fired.line)) {
+    note(where, `a fired one-off does not say what happened: "${fired.line}"`);
+  }
+  // A refusal is answerable and says why. A refusal that was only a log line
+  // is somebody typing a sentence and watching nothing happen.
+  if (!/standing rule/i.test(refusedIntent.line)) {
+    note(where, `a refused one-off does not carry its reason: "${refusedIntent.line}"`);
+  }
+  if (!/^dismiss$/i.test(refusedIntent.buttons[0] || '')) {
+    note(where, `a refused one-off offers "${refusedIntent.buttons[0]}" — there `
+              + 'is no automation to remove');
+  }
+  if (!/never fired/i.test(overdue.line)) {
+    note(where, `a one-off past its fortnight does not say so: "${overdue.line}"`);
+  }
+  if (!/^remove$/i.test(overdue.buttons[0] || '')) {
+    note(where, 'an overdue one-off is not offered a Remove');
+  }
+  // And the badge is Findings-shaped: it counts what is waiting on YOU, and
+  // an armed one-off is waiting on the house.
+  if (m.badge.text !== String(OPEN)) {
+    note(where, `the badge counted the one-offs too: ${m.badge.text}`);
+  }
+
+  // --- the condition proposal. It changes a rule somebody wrote, so the
+  // card has to say that before they say yes, and its evidence is a pair
+  // of numbers rather than one.
+  const cond = m.cards[7];
+  if (!cond.edit.trim()) {
+    note(where, 'a proposal that EDITS an automation does not say so — a '
+              + 'card that reads as an addition sends somebody looking for '
+              + 'a second automation that is not there');
+  }
+  if (!/it ran 30 times/i.test(cond.replay)) {
+    note(where, `the condition card does not say what the rule does today: `
+              + `"${cond.replay}"`);
+  }
+  if (!/would have run 22/i.test(cond.replay)) {
+    note(where, `the condition card does not say what would change: `
+              + `"${cond.replay}"`);
+  }
+  if (!/8 fewer/i.test(cond.replay)) {
+    note(where, `the condition card leaves the difference to be worked out: `
+              + `"${cond.replay}"`);
+  }
+  if (cond.buttons.length < 2) {
+    note(where, 'the condition card cannot be answered');
+  }
+
+  // --- Remove. It reaches /config, so it owes the same Undo an accept does.
+  const pressed = await waitOr(
+    page.click('.propcard.intentcard:first-child .propbtns button'),
+    'there was no one-off to press Remove on');
+  const removed = pressed && await waitOr(
+    page.waitForFunction((n) =>
+      document.querySelectorAll('.propcard.intentcard').length === n,
+    INTENTS.length - 1),
+    'Remove pressed and the one-off stayed on the list');
+  if (removed) {
+    const t2 = await page.evaluate(() => {
+      const t = document.querySelector('#toast');
+      const undo = t.querySelector('.toastundo');
+      return { text: t.textContent, undo: undo ? undo.getBoundingClientRect().height : 0 };
+    });
+    if (!/removed it from your automations/i.test(t2.text)) {
+      note(where, `Remove says nothing about what it did: "${t2.text}"`);
+    }
+    if (!t2.undo) {
+      note(where, 'Remove offers no Undo — it is a press that deletes from /config');
+    }
+  }
+
+  // --- the scene set. There is no replay and no week, so the evidence IS
+  // the picture: four moods, one swatch per light, and the protected one
+  // shown as skipped rather than silently dropped.
+  const sceneCard = m.cards[8] || {};
+  if (!sceneCard.scene) {
+    note(where, 'a set of four scenes does not say what kind of card it is');
+  }
+  if ((sceneCard.moods || []).length !== 4) {
+    note(where, `the scene card drew ${(sceneCard.moods || []).length} moods, `
+              + 'expected 4');
+  }
+  (sceneCard.moods || []).forEach((mood, i) => {
+    if (!mood.name.trim()) note(where, `scene ${i} has no name`);
+    if (mood.swatches.length !== 4) {
+      note(where, `scene ${i} drew ${mood.swatches.length} swatches for `
+                + '4 lights');
+    }
+    mood.swatches.forEach((s, j) => {
+      if (!s.tip.trim()) {
+        note(where, `swatch ${i}.${j} says nothing about which light it is`);
+      }
+      if (s.w < 16) {
+        note(where, `swatch ${i}.${j} is ${Math.round(s.w)}px — too small to `
+                  + 'read a colour off');
+      }
+    });
+  });
+  // Night is the mood that turns most of the room off, and an off light has
+  // to read as OFF rather than as a dark colour.
+  const night = (sceneCard.moods || [])[3] || { swatches: [] };
+  if (night.swatches.filter((s) => s.off).length !== 3) {
+    note(where, 'night does not show three lights off — a scene where '
+              + 'everything stays on is an evening');
+  }
+  // An off light has to read as OFF rather than as a dark colour: an inline
+  // background beats the class's own rule, so the class alone is not the
+  // signal — the paint has to be empty too.
+  night.swatches.filter((s) => s.off).forEach((s, i) => {
+    if (!/rgba\(0, 0, 0, 0\)|transparent/.test(s.css)) {
+      note(where, `an off swatch is painted "${s.css}" — a dark square reads `
+                + 'as a dim light rather than as one that is off');
+    }
+    void i;
+  });
+  // A colour actually reached the swatch, rather than a default background.
+  const lit = ((sceneCard.moods || [])[0] || { swatches: [] })
+    .swatches.filter((s) => !s.off);
+  if (!lit.length || lit.every((s) => /rgba\(0, 0, 0, 0\)/.test(s.css))) {
+    note(where, 'the morning swatches are transparent — no colour reached them');
+  }
+  if (!/Lounge main/.test(sceneCard.sceneNames || '')) {
+    note(where, 'the scene card does not name its lights in text — on a phone '
+              + 'a tooltip is not a thing that exists');
+  }
+  const sceneSkipped = (sceneCard.groups || []).filter((g) => g.skipped);
+  if (sceneSkipped.length !== 1 || !/Nursery/.test(sceneSkipped[0].names)) {
+    note(where, 'a protected light is not shown as skipped on the scene card');
+  }
+  if ((sceneCard.buttons || []).some((b) => /try it/i.test(b.label))) {
+    note(where, 'a set of scenes offers a trial — there is no week of moods '
+              + 'to replay');
+  }
+  if (!/no week to try four scenes/i.test(sceneCard.notrial || '')) {
+    note(where, `the scene card does not say why there is no trial: `
+              + `"${sceneCard.notrial}"`);
+  }
+
+  // --- a one-off before it is accepted: yes or no, and no week.
+  const intentProp = m.cards.find((c) => /guests leave/i.test(c.title || ''));
+  if (!intentProp) {
+    note(where, 'the one-off proposal did not render as a card');
+  } else {
+    if ((intentProp.buttons || []).some((b) => /try it/i.test(b.label))) {
+      note(where, 'a one-off proposal offers a trial week — it is meant to '
+                + 'happen once, and a replayed week grades nothing');
+    }
+    if (!/no trial for a one-off/i.test(intentProp.notrial || '')) {
+      note(where, `the one-off card does not say why there is no trial: `
+                + `"${intentProp.notrial}"`);
+    }
+    if (!(intentProp.buttons || []).some((b) => /enable it/i.test(b.label))) {
+      note(where, 'the one-off card has no Enable it');
+    }
+  }
+
+  // --- and the rehearsal, which opens on demand and calls nothing.
+  await page.click(prop(6, '.propreh > summary'));
+  const opened = await waitOr(
+    page.waitForSelector('.propreh[open] .propbookrows .propgroup'),
+    'the rehearsal never reported what it would do');
+  if (opened) {
+    const reh = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll(
+        '.propreh[open] .propbookrows .propgroup')];
+      return rows.map((r) => r.textContent);
+    });
+    if (!reh.some((r) => /already/i.test(r))) {
+      note(where, `the rehearsal does not say what is already there: `
+                + `${JSON.stringify(reh)}`);
+    }
+    if (!reh.some((r) => /Kitchen/.test(r) && /off/.test(r))) {
+      note(where, 'the rehearsal does not report each target\'s state now');
+    }
+  }
+  await page.click(prop(6, '.propreh > summary'));
+
   // --- an accept Home Assistant will not honour. The card stays put and
   // the sentence lands on it, because a toast is gone before somebody has
   // read a filename.
-  await page.click('.propcard:nth-child(6) .propbtns button:first-child');
+  await page.click(prop(5, '.propbtns button:first-child'));
   const landed = await waitOr(
     page.waitForSelector('.propcard .properror'),
     'a refused accept never put its sentence on the card — a toast is gone '
@@ -397,7 +878,7 @@ for (const width of WIDTHS) {
         || !/dismiss/i.test(stillThere.buttons[0].label)) {
       note(where, 'the refusal has no way back to the buttons');
     }
-    await page.click('.propcard:nth-child(6) .properror button');
+    await page.click(prop(5, '.properror button'));
     await waitOr(
       page.waitForFunction(() => !document.querySelector('.properror')),
       'the refusal would not dismiss');
@@ -409,10 +890,10 @@ for (const width of WIDTHS) {
 
   // --- an accept that lands. The row goes, and the toast offers Undo,
   // because this is the one press in the panel that writes to /config.
-  await page.click('.propcard:nth-child(2) .propbtns button:first-child');
+  await page.click(prop(1, '.propbtns button:first-child'));
   await waitOr(
     page.waitForFunction((n) =>
-      document.querySelectorAll('.propcard').length === n,
+      document.querySelectorAll('.propcard:not(.intentcard)').length === n,
     PROPOSALS.length - 1),
     'an accepted proposal stayed on the list');
   const toast = await page.evaluate(() => {
@@ -443,10 +924,10 @@ for (const width of WIDTHS) {
 
   // --- "No thanks" opens the reason box in place of the buttons, inside
   // the card — you are explaining something and it has to stay on screen.
-  await page.click('.propcard:first-child .propbtns button:last-child');
+  await page.click(prop(0, '.propbtns button:last-child'));
   await page.waitForSelector('.propnote textarea');
   const box = await page.evaluate(() => {
-    const card = document.querySelector('.propcard');
+    const card = document.querySelector('.propcard:not(.intentcard)');
     const area = card.querySelector('.propnote textarea');
     return {
       inside: !!area && card.contains(area),
