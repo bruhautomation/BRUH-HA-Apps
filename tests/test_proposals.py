@@ -254,5 +254,63 @@ class TestTheStoreItself(ProposalCase):
         self.assertEqual(self.p.counts()["open"], 1)
 
 
+class TestEveryRowHasAnIdOfItsOwn(unittest.TestCase):
+    """A `ts` in milliseconds is not unique, and everything keys on it.
+
+    `_offer_playbooks` files up to three in a loop, `_offer_conditions`
+    three more, the routine miner several — all inside one checks pass,
+    and a write plus a mirror publish is well under a millisecond on a
+    warm page cache. Measured before the fix: eight adds produced four
+    distinct ids.
+
+    That is not a cosmetic collision. `get(ts)` returns the first row with
+    that stamp and `decide(ts)` ends the first — so pressing Accept on one
+    card writes the OTHER card's automation into `automations.yaml`,
+    settles the other card's key, and leaves the card you pressed sitting
+    there. `intents.note` has carried the same guard since it was written,
+    for the same reason, in the same shape.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        os.environ["BRAIN_PROPOSALS_FILE"] = str(root / "proposals.json")
+        os.environ["BRAIN_PROPOSALS_SETTLED"] = str(root / "settled.json")
+        os.environ["BRAIN_PROPOSALS_SHARED"] = str(root / "none" / "b" / "s.json")
+        sys.modules.pop("proposals", None)
+        import proposals
+        self.p = proposals
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(lambda: sys.modules.pop("proposals", None))
+
+    def test_a_burst_of_offers_gets_a_burst_of_ids(self):
+        made = [self.p.add(offer(title=f"Thing {i}",
+                                 config=automation(f"light.l{i}")))
+                for i in range(8)]
+        self.assertTrue(all(made), "the cap or the dedupe ate one")
+        stamps = [r["ts"] for r in made]
+        self.assertEqual(len(set(stamps)), len(stamps), stamps)
+
+    def test_each_id_answers_the_card_it_belongs_to(self):
+        made = [self.p.add(offer(title=f"Thing {i}",
+                                 config=automation(f"light.l{i}")))
+                for i in range(6)]
+        for row in made:
+            self.assertEqual(self.p.get(row["ts"])["title"], row["title"])
+        # And ending one ends that one, not whichever shared its stamp.
+        ended = self.p.decide(made[2]["ts"], "declined")
+        self.assertEqual(ended["title"], made[2]["title"])
+        left = {r["title"] for r in self.p.listing()}
+        self.assertNotIn(made[2]["title"], left)
+        self.assertEqual(len(left), 5)
+
+    def test_the_ids_still_order_the_way_the_rail_reads_them(self):
+        made = [self.p.add(offer(title=f"Thing {i}",
+                                 config=automation(f"light.l{i}")))
+                for i in range(4)]
+        self.assertEqual([r["ts"] for r in made],
+                         sorted(r["ts"] for r in made))
+
+
 if __name__ == "__main__":
     unittest.main()
