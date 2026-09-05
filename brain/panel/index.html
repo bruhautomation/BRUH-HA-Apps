@@ -906,6 +906,33 @@
         <button id="diagCopy" class="btn">Copy for a bug report</button>
         <button id="diagRefresh" class="btn">Refresh</button>
       </div>
+
+      <h4 class="sethead">Deep check</h4>
+      <p class="hint">Everything above is what brAIn <em>recorded</em>. This walks every
+        face — a plain Claude run, the analyst's tools, a chat turn, an automation task,
+        Assist, memory, findings and one real fix — with a live round trip each, and says
+        which of them works right now. It <b>spends about five Claude turns</b> and takes a
+        few minutes; it never runs on its own, only when you press this. Everything it
+        creates it removes, and it checks that it did.</p>
+      <div class="row">
+        <button id="deepRun" class="btn">Run deep check</button>
+        <span id="deepLast" class="hint tight"></span>
+      </div>
+      <div id="deepBody" class="diag" hidden></div>
+
+      <h4 class="sethead">Rehearsal</h4>
+      <p class="hint">The house checks are tested against made-up houses. This tests them
+        against <em>yours</em> — it creates a few deliberately broken things named
+        <code>brain_test_*</code>, runs the checks and the analyst against them, scores
+        both, and removes everything again. The score is the point: “on this house, this
+        Home Assistant version, this model, the analyst found 3 of 4 planted defects and
+        reported 1 thing that was not there.” It asks first and shows exactly what it
+        would create.</p>
+      <div class="row">
+        <button id="rehearseRun" class="btn">Rehearse…</button>
+        <span id="rehearseLast" class="hint tight"></span>
+      </div>
+      <div id="rehearseBody" class="diag" hidden></div>
       <p class="hint tight">Reporting a bug? Run <code>brain report</code> in the Terminal
         tab. It writes a redacted bundle — this payload, <code>brain doctor --json</code>
         and the tail of the add-on log — to <code>/share/brain/reports/</code>, and every

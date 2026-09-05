@@ -15,6 +15,8 @@
 #   brain login                    Sign in to Claude (same as `ha login`)
 #   brain check                    Run the house checks now (no Claude run)
 #   brain doctor [--json]          End-to-end diagnostic
+#   brain doctor --deep            Every face, one real round trip each
+#   brain doctor --rehearse        Plant defects, score the checks, clean up
 #   brain report                   Redacted diagnostics bundle for a bug report
 #   brain help                     This help
 
@@ -62,7 +64,20 @@ Usage:
                                  findings land on the Findings tab
   brain weekly [send]            The week's report: energy, findings, what was
                                  learned, and the one thing to do
-  brain doctor [--json]          End-to-end diagnostic of brAIn itself
+  brain doctor [--json]          End-to-end diagnostic of brAIn itself —
+                                 free, and never calls Claude
+  brain doctor --deep [--json]   Every face of brAIn, one real round trip
+                                 each: a plain Claude run, the analyst's
+                                 tools, a chat turn, an automation task,
+                                 Assist, memory, findings and one fix.
+                                 Spends about five Claude turns; only ever
+                                 runs when you ask for it
+  brain doctor --rehearse [--yes]
+                                 Plant a few defects under a brain_test_
+                                 prefix, run the checks and the analyst
+                                 against them, score both, then remove
+                                 everything. Asks first, and says exactly
+                                 what it would create
   brain report [--no-names]      Write a redacted diagnostics bundle to
                                  /share/brain/reports for a bug report
   brain login [--status|--share] Sign in to Claude, and share that login with
@@ -108,7 +123,15 @@ case "$action" in
     undo)       delegate brain-undo.sh "$@" ;;
     check)      delegate brain-check.sh "$@" ;;
     weekly)     delegate brain-weekly.sh "$@" ;;
-    doctor)     delegate ha-selftest.sh "$@" ;;
+    doctor)
+        # Plain `brain doctor` is unchanged: it is the free one, and the
+        # two costed checks are a different script rather than a flag
+        # inside it, so nothing about the free one can drift.
+        case "${1:-}" in
+            --deep|--rehearse) delegate brain-doctor-deep.sh "$@" ;;
+            *)                 delegate ha-selftest.sh "$@" ;;
+        esac
+        ;;
     report)     delegate brain-report.sh "$@" ;;
     login)      delegate ha-share-login.sh "$@" ;;
     help|--help|-h) usage ;;

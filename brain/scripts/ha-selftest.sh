@@ -538,6 +538,45 @@ else
     info "memory.md not written yet (facts appear after the first consolidation)"
 fi
 
+# --- 5d. rehearsal leftovers -------------------------------------------------
+hdr "Rehearsal leftovers"
+# `brain doctor --rehearse` plants a handful of deliberately broken things
+# under a `brain_test_` prefix and removes them in a `finally`. That is not
+# a guarantee: the add-on can be stopped mid-rehearsal, `/config` can go
+# read-only, Core can refuse a reload. So the free doctor is what catches
+# the one that did not clean up — the design page's own recommendation, and
+# the reason planting anything in somebody's house is defensible at all.
+#
+# Read from the files rather than from Core: `automations.yaml` is the
+# thing an orphan actually sits in, and it is readable whether or not
+# Home Assistant is answering. The panel's own state mirror covers the
+# entity side without needing a token.
+brain_test_leftovers() {
+    local prefix="brain_test_"
+    local autos="${BRAIN_CONFIG_DIR:-/config}/automations.yaml"
+    local found=""
+
+    if [ -r "$autos" ] && grep -q "$prefix" "$autos" 2>/dev/null; then
+        found="$autos"
+    fi
+    # Anything Core still holds. `ha-entity` needs the API; this does not,
+    # and a doctor line that only works when everything else does is a
+    # line that is absent exactly when it matters.
+    local states
+    states=$(curl -s -m 10 -H "Authorization: Bearer ${SUPERVISOR_TOKEN:-}" \
+        "$HA_BASE_URL/states" 2>/dev/null | grep -o "\"entity_id\": *\"[^\"]*${prefix}[^\"]*\"" \
+        | sed 's/.*"\([^"]*\)"$/\1/' | head -6 | tr '\n' ' ')
+    [ -n "$states" ] && found="${found:+$found, }$states"
+
+    if [ -z "$found" ]; then
+        pass "no rehearsal leftovers (nothing named ${prefix}*)"
+        return
+    fi
+    warn "a rehearsal left something behind: ${found}"
+    info "Fix: run 'brain doctor --rehearse' again (its cleanup runs first), or delete the ${prefix}* entries from ${autos} and reload automations"
+}
+brain_test_leftovers
+
 # --- 5a. assist API (fast mode) ----------------------------------------------
 hdr "Assist API (worker pool)"
 # Send the pool token when readable: unauthenticated /health only returns

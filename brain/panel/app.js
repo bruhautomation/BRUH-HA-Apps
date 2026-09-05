@@ -187,6 +187,13 @@ function openBox(sel) {
 function closeBox(sel) {
   $(sel).classList.remove("open");
   syncModalLock();
+  // A poll behind a dialog nobody has open is a request per viewer per
+  // interval for an answer nobody is reading — the same rule the
+  // Diagnostics section itself follows.
+  if (sel === "#setModal" && typeof stopDeepPoll === "function") {
+    stopDeepPoll();
+    stopRehearsePoll();
+  }
 }
 
 // How long an undoable toast stays up. Longer than a plain one, because a
@@ -1920,6 +1927,8 @@ async function openSettings() {
   openBox("#setModal");
   loadAuth();
   loadDiagnostics();
+  loadDeep(true);
+  loadRehearsal(true);
   try {
     renderSettingsForm(await api("api/settings"));
   } catch (e) {
@@ -2155,6 +2164,169 @@ $("#diagCopy").addEventListener("click", async () => {
   }
 });
 $("#diagRefresh").addEventListener("click", loadDiagnostics);
+
+// ------------------------------------------------------------- deep check
+// `brain doctor --deep` from the dialog. Fetched when pressed and while a
+// run is in flight, and NEVER on a timer once it is done: a deep run is a
+// handful of Claude turns, so a poll behind a closed dialog would be a
+// question nobody asked with a bill attached to it.
+const DEEP_MARK = { ok: "✓", failed: "✗", skipped: "–" };
+let deepPoll = null;
+
+function renderDeep(d) {
+  const stages = d.running ? (d.stages || []) : ((d.last || {}).stages || d.stages || []);
+  const body = $("#deepBody");
+  body.hidden = !stages.length && !d.running;
+  const rows = stages.map((s) => diagRow(
+    `${DEEP_MARK[s.state] || "·"} ${esc(s.title || s.name)}`,
+    `${esc(s.sentence || "")}`
+    + (s.detail ? `<div class="hint tight">${esc(s.detail)}</div>` : ""),
+    s.state === "failed"));
+  if (d.running) {
+    // The catalog is what lets a stage that has not started yet be a row
+    // rather than nothing: a list that grows from empty reads as a run
+    // that is stuck on whatever it is doing.
+    (d.stage_catalog || []).slice(stages.length).forEach((s) =>
+      rows.push(diagRow(`· ${esc(s.title)}`,
+        `<span class="hint">${esc(s.proves)}</span>`)));
+  }
+  body.innerHTML = rows.join("");
+  const last = d.last || {};
+  const c = last.counts || {};
+  $("#deepLast").textContent = d.running
+    ? "Running — this takes a few minutes."
+    : (last.finished_at
+      ? `Last run ${timeAgo(new Date(last.finished_at * 1000).toISOString())}: `
+        + `${c.ok || 0} passed, ${c.failed || 0} failed, ${c.skipped || 0} skipped`
+      : "Not run on this install yet.");
+  $("#deepRun").disabled = !!d.running;
+}
+
+function stopDeepPoll() {
+  clearTimeout(deepPoll);
+  deepPoll = null;
+}
+
+async function loadDeep(poll) {
+  try {
+    const d = await api("api/doctor/deep");
+    renderDeep(d);
+    if (d.running && poll) {
+      clearTimeout(deepPoll);
+      deepPoll = setTimeout(() => loadDeep(true), 3000);
+    } else {
+      clearTimeout(deepPoll);
+      deepPoll = null;
+    }
+  } catch (e) {
+    $("#deepLast").textContent = "Could not read the deep check: " + e.message;
+  }
+}
+
+$("#deepRun").addEventListener("click", async () => {
+  $("#deepRun").disabled = true;
+  try {
+    // A 409 means one is already going — which is an answer, not an error:
+    // both presses are watching the same run.
+    await api("api/doctor/deep", { method: "POST" });
+    toast("Deep check started — it spends a few Claude turns");
+  } catch (e) {
+    toast(e.message);
+  }
+  loadDeep(true);
+});
+
+// -------------------------------------------------------------- rehearsal
+// The consent step is the server's: a POST with no consent answers 428 with
+// the exact list of what would be created, and this renders that list as
+// the question. Nothing is created until the second POST.
+let rehearsePoll = null;
+
+function renderRehearsal(d) {
+  const last = d.last || {};
+  const body = $("#rehearseBody");
+  const c = last.checks || {};
+  const a = last.analyst || {};
+  const clean = last.cleanup || {};
+  const rows = [];
+  if (last.finished_at) {
+    rows.push(diagRow("Checks",
+      `${c.found || 0} of ${c.planted || 0} planted defects found`
+      + (c.extra ? `, ${c.extra} reported that were not planted` : ""),
+      (c.found || 0) < (c.planted || 0) || !!c.extra));
+    (c.rows || []).forEach((r) => rows.push(diagRow(
+      `&nbsp;&nbsp;${esc(r.id)}`,
+      `${esc(r.verdict)} <span class="hint">${esc(r.check || "")}</span>`,
+      r.verdict === "missed" || r.verdict === "false positive")));
+    rows.push(diagRow("Analyst", a.ran
+      ? `found ${a.found || 0} of ${a.planted || 0}`
+        + ` — recall ${Math.round((a.recall || 0) * 100)}%,`
+        + ` precision ${Math.round((a.precision || 0) * 100)}%`
+        + ` on ${esc(a.model || "the default model")}`
+      : `did not run — ${esc(a.error || "unknown")}`, !a.ran));
+    rows.push(diagRow("Cleanup", esc(clean.sentence || "?"), !clean.ok));
+    if (last.error) rows.push(diagRow("Error", esc(last.error), true));
+  }
+  body.innerHTML = rows.join("");
+  body.hidden = !rows.length;
+  const step = (d.progress || {}).step;
+  $("#rehearseLast").textContent = d.running
+    ? `Rehearsing — ${step || "starting"}…`
+    : (last.finished_at
+      ? `Last rehearsal ${timeAgo(new Date(last.finished_at * 1000).toISOString())}`
+      : "Not rehearsed on this install yet.");
+  $("#rehearseRun").disabled = !!d.running;
+}
+
+async function loadRehearsal(poll) {
+  try {
+    const d = await api("api/doctor/rehearse");
+    renderRehearsal(d);
+    clearTimeout(rehearsePoll);
+    rehearsePoll = d.running && poll
+      ? setTimeout(() => loadRehearsal(true), 3000) : null;
+  } catch (e) {
+    $("#rehearseLast").textContent = "Could not read the rehearsal: " + e.message;
+  }
+}
+
+function stopRehearsePoll() {
+  clearTimeout(rehearsePoll);
+  rehearsePoll = null;
+}
+
+$("#rehearseRun").addEventListener("click", async () => {
+  // The offer comes off the GET rather than off a POST this expects to
+  // fail: the 428 is the API's contract for every other caller, and a
+  // button that has to provoke an error to read a list is a button that
+  // cannot tell a refusal from a network problem.
+  let offer;
+  try {
+    offer = await api("api/doctor/rehearse");
+  } catch (e) {
+    toast(e.message);
+    return;
+  }
+  if (offer.refused) { toast(offer.refused); return; }
+  const lines = (offer.plan || []).map(
+    (r) => `• ${r.id}\n    ${r.what}`).join("\n");
+  const cannot = (offer.not_rehearsable || []).map(
+    (r) => `• ${r.check} — ${r.why}`).join("\n");
+  if (!window.confirm(
+    "A rehearsal creates these in your Home Assistant, runs the checks and "
+    + "the analyst against them, then removes them:\n\n" + lines
+    + (cannot ? "\n\nIt cannot rehearse these in one pass:\n" + cannot : "")
+    + "\n\nGo ahead?")) return;
+  $("#rehearseRun").disabled = true;
+  try {
+    await api("api/doctor/rehearse",
+      { method: "POST", body: JSON.stringify({ consent: true }) });
+    toast("Rehearsal started — it writes to automations.yaml and takes it back out");
+  } catch (e) {
+    toast(e.message);
+  }
+  loadRehearsal(true);
+});
 
 // ------------------------------------------------------- Claude account
 // The panel could sign you in and could never show you what it had signed
