@@ -204,6 +204,22 @@ def _write_attached(session_id: str | None) -> None:
         pass
 
 
+def _forget_attached() -> None:
+    """Drop the pointer, so the next `attached()` opens a fresh chat.
+
+    `_write_attached` refuses a falsy id — every other caller has one —
+    so clearing it is a separate verb rather than an argument nothing
+    else would ever pass.
+    """
+    try:
+        (Path(TRANSCRIPT_DIR) / ATTACHED_FILE).unlink(missing_ok=True)
+    except OSError:
+        # A pointer that could not be dropped costs one restart landing
+        # back on a conversation with no process, which is what it did
+        # before this existed.
+        pass
+
+
 def _read_attached() -> str | None:
     try:
         value = (Path(TRANSCRIPT_DIR) / ATTACHED_FILE).read_text("utf-8").strip()
@@ -1956,14 +1972,30 @@ class SessionRegistry:
             return {"ok": True, "session_id": session.session_id}
 
     async def close(self, session_id: str) -> bool:
-        """Stop one conversation's process. The conversation is the CLI's."""
+        """Stop one conversation's process. The conversation is the CLI's.
+
+        And **stop holding it**, whichever one it was. Deleting a
+        conversation is refused while the registry holds it, and the
+        refusal names this route as the way out — so a close that left the
+        attached session in the listing answered that refusal with the
+        same sentence a second time, which is the dead end the refusal
+        exists to avoid. Closing the one on screen therefore detaches: the
+        view lands on a fresh conversation that has not spawned anything,
+        and the old stream is told to reconnect exactly as a switch tells
+        it.
+        """
         async with self._lock:
             session = self.get(session_id)
             if session is None:
                 return False
             await session.stop()
-            if session is not self._attached:
-                self._sessions.remove(session)
+            self._sessions.remove(session)
+            if session is self._attached:
+                self._attached = None
+                _forget_attached()
+                self.attached()          # a fresh, unspawned conversation
+                session._emit({"type": "switched", "session_id": ""},
+                              keep=False)
             self._broadcast()
             return True
 

@@ -629,10 +629,17 @@ def fired_from_state(row: dict, state: dict | None) -> float:
     if not stamp:
         return 0.0
     try:
-        when = dt.datetime.fromisoformat(
-            str(stamp).replace("Z", "+00:00")).timestamp()
+        parsed = dt.datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
     except ValueError:
         return 0.0
+    if parsed.tzinfo is None:
+        # `.timestamp()` reads a naive value as LOCAL time, and Core
+        # stamps this in UTC. The error is the house's own offset, in
+        # whichever direction: east of Greenwich a fired one-off resolves
+        # to before its own accept and goes on reading as waiting, west
+        # of it something that ran before the accept reads as this firing.
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    when = parsed.timestamp()
     return when if when > (row.get("accepted_at") or 0) else 0.0
 
 

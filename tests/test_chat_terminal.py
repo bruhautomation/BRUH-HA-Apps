@@ -1444,6 +1444,25 @@ class TestManySessions(unittest.IsolatedAsyncioTestCase):
                           "a closed session is still being held")
         self.assertFalse(await self.reg.close("conv-one"))
 
+    async def test_closing_the_ATTACHED_one_stops_holding_it(self):
+        """`get()` is what the delete route asks, so a close that leaves
+        the attached session in the listing is a close that satisfies
+        nothing. The view lands on a fresh conversation and the old stream
+        is told to reconnect, exactly as a switch does."""
+        shown = await self._open("conv-shown", "something said")
+        watching = shown.subscribe()
+        self.assertTrue(await self.reg.close("conv-shown"))
+        self.assertFalse(shown.alive())
+        self.assertIsNone(self.reg.get("conv-shown"),
+                          "the closed session is still being held")
+        self.assertIsNot(self.reg.attached(), shown)
+        self.assertNotIn("conv-shown",
+                         [r["session_id"] for r in self.reg.live()])
+        events = []
+        while not watching.empty():
+            events.append(watching.get_nowait())
+        self.assertIn("switched", [e["type"] for e in events])
+
     async def test_a_new_chat_leaves_the_others_alone(self):
         busy = await self._busy("conv-busy")
         out = await self.reg.new()
@@ -2165,6 +2184,30 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(closed["closed"])
         resp = await self.client.post("/api/chat/conversation/conv-held/delete")
         self.assertEqual(resp.status, 200)
+        self.assertFalse(path.is_file())
+
+    async def test_closing_the_one_on_SCREEN_is_also_a_way_out(self):
+        """The refusal names a close, so every close has to satisfy it.
+
+        `close` removed a background session from the registry and left
+        the attached one in it — stopped, but still held — so `get()` went
+        on answering and the delete came back 409 with the same sentence
+        the person had just obeyed. That is the dead end the refusal's own
+        docstring says it exists to avoid, reachable from the ✕ on the row
+        you are looking at.
+        """
+        self._fake_conversation("conv-shown", "the one on screen")
+        await self.client.post("/api/chat/resume",
+                               json={"session_id": "conv-shown"})
+        path = Path(self.tmp.name) / "projects" / re.sub(
+            r"[^A-Za-z0-9]", "-", self.tmp.name) / "conv-shown.jsonl"
+
+        closed = await (await self.client.post(
+            "/api/chat/session/conv-shown/close")).json()
+        self.assertTrue(closed["closed"])
+        resp = await self.client.post(
+            "/api/chat/conversation/conv-shown/delete")
+        self.assertEqual(resp.status, 200, resp.reason)
         self.assertFalse(path.is_file())
 
     async def test_batch_delete_skips_a_live_conversation(self):
