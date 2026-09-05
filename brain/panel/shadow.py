@@ -744,8 +744,9 @@ def _call(step: dict, service) -> dict:
                 entities.append(eid)
     call = {"service": str(service), "entity_id": entities}
     for key in _TARGET_KEYS[1:]:
-        call[key] = target.get(key) if target.get(key) is not None \
-            else data.get(key)
+        call[key] = next(
+            (source.get(key) for source in (target, data, step)
+             if source.get(key) is not None), None)
     return call
 
 
@@ -760,6 +761,17 @@ def _walk_actions(raw, out: list[dict], depth: int) -> None:
         service = step.get("action") or step.get("service")
         if service:
             out.append(_call(step, service))
+            continue
+        if step.get("device_id") and not any(k in step for k in _ACTION_KEYS):
+            # A **device action** — what Home Assistant's own automation
+            # editor writes for a device somebody picked off a list. It
+            # names no service at all (`{device_id, domain, type}`), so a
+            # reader looking for one walks straight past it, and every
+            # protected check downstream sees an automation that does
+            # nothing. Reported as the device target it is, which is the
+            # scope `automation_writer` already refuses to expand.
+            out.append(_call(step, "{}.{}".format(
+                step.get("domain") or "device", step.get("type") or "action")))
             continue
         for branch in (step.get("choose") or []):
             if isinstance(branch, dict):

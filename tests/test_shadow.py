@@ -480,6 +480,27 @@ class TestWhatAnActionReallyTargets(unittest.TestCase):
                          "target": {"floor_id": "upstairs"}}]})
         self.assertEqual(calls[0].get("floor_id"), "upstairs")
 
+    def test_a_device_action_is_a_call_even_though_it_names_no_service(self):
+        # What HA's own editor writes when somebody picks a device off a
+        # list: `{device_id, domain, type}` and no `service` at all. A
+        # reader looking for a service walks past it, and the protected
+        # check then sees an automation that does nothing.
+        calls = shadow.would_do({"action": [
+            {"device_id": "abc123", "domain": "lock", "type": "unlock",
+             "entity_id": "lock.front"}]})
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["device_id"], "abc123")
+        self.assertEqual(calls[0]["service"], "lock.unlock")
+
+    def test_a_container_step_is_still_a_container(self):
+        # `repeat` carries a `device_id` in none of its shapes, but a
+        # step that holds actions must never be mistaken for one.
+        calls = shadow.would_do({"action": [
+            {"repeat": {"count": 2, "sequence": [
+                {"service": "light.turn_on",
+                 "target": {"entity_id": "light.a"}}]}}]})
+        self.assertEqual([c["service"] for c in calls], ["light.turn_on"])
+
     def test_a_target_that_is_not_a_mapping_does_not_raise(self):
         # Somebody's YAML, not a promise: a string where a mapping was
         # meant must be a call with no target rather than a traceback on
@@ -522,6 +543,11 @@ class TestProtectedThroughEveryContainer(unittest.TestCase):
         self.assertIn("lock.front", self.refusal([{"parallel": [
             {"service": "lock.unlock",
              "data": {"entity_id": "lock.front"}}]}]))
+
+    def test_a_device_action_on_a_protected_lock_is_refused(self):
+        self.assertIn("device", self.refusal(
+            [{"device_id": "abc", "domain": "lock", "type": "unlock",
+              "entity_id": "lock.front"}]))
 
     def test_a_label_target_is_refused_while_the_list_is_set(self):
         why = self.refusal(
