@@ -732,48 +732,42 @@ def raster_lines(rendered: Rendered, bytes_per_line: int) -> list[bytes]:
 # Where the printing starts
 # ---------------------------------------------------------------------------
 #
-# **The manual DOES document a feed-direction print-position command, and it
-# is deliberately not what this uses.** `<esc> f 1 n` Skip "n" Lines: *"use
-# this command to force the LabelWriter printer to advance the number of
-# lines corresponding to the variable n (0 to 255 lines). This command is put
-# into the data buffer along with the print data so that it will take effect
-# at the appropriate point in the data stream."* That is unambiguous, it is
-# in the printer's own steps, and it is the right mechanism for exactly half
-# of this problem. It cannot express the other half, and the other half is
-# the one this feature exists for.
+# **The 0.6.0 offset was the wrong shape and three prints proved it.** It
+# shifted the artwork inside the rendered sheet, on the theory that a printer
+# starting 4.7mm late could be answered by moving the ink 4.7mm back toward
+# the leading edge. The owner printed the same label at 0, −8 and −4mm and
+# photographed each: everything on the label moved exactly as the offset
+# predicts, and the dead band at the leading edge stayed ~4mm throughout. It
+# had to. The sheet the offset shifts within is itself laid down starting
+# wherever the printer decided to start it, so moving ink toward an edge the
+# printer never reaches only pushes it off the far end.
 #
-# A skip only ever moves paper FORWARD. The measured fault is a printer that
-# begins laying ink 4.7mm AFTER the leading edge, so the correction has to
-# move the artwork toward that edge — a negative skip, which is not a thing.
-# Using `ESC f` for a positive offset and a raster shift for a negative one
-# would give one control two behaviours at the sheet's edge as well: a skip
-# pushes the tail of the raster past the die cut and into the gap, where the
-# printer explicitly does not check ("the printer does not check for
-# inter-label gap when printing. It is the responsibility of the host
-# computer to avoid overrunning the label area"), while a raster shift keeps
-# the sheet exactly one label long, so ink pushed off it is ink this add-on
-# can SEE it is about to lose and say so. A control whose two directions
-# report differently is a control nobody can read. And a skip is charged
-# against the `ESC L` search budget on top of the print lines, which is the
-# arithmetic that took three releases to get right once already.
+# What a dead band at the leading edge actually means is that the label is
+# SHORTER than the catalog says — not in paper, in printable paper. So the
+# answer is a crop, and the two halves of it are:
 #
-# The across axis has the same shape of answer and the same conclusion.
-# `ESC B n` (dot tab) is the documented mechanism and it is in whole BYTES of
-# eight dots — 0.68mm a step, against a misregistration measured in tenths of
-# a millimetre — it is likewise one-directional, and this add-on already
-# sends `ESC B 0` in every preamble for an unrelated and more important
-# reason (to clear whatever another driver left in the printer). Making the
-# same byte carry a per-roll correction would mean the preamble could no
-# longer state a known starting point, which is the whole reason it is sent.
+#   * The label is laid out inside `Stock.printable_feed_mm`, which is the
+#     designer's and the wizard's job (they read the same helper).
+#   * The rows that would land in the band are dropped on the way to the
+#     printer, so what is sent begins at the first row that can carry ink and
+#     ends exactly at the die cut.
 #
-# So: one mechanism, both axes, both directions, in the raster. The shift is
-# in whole dots and it is rounded exactly ONCE, by `mm_to_dots` at the print
-# resolution, which is the only place millimetres become dots in this file.
-
-# Nothing here is applied to the label a person is DESIGNING. The offset is a
-# correction to where the printer puts the sheet, not a change to the label,
-# and a design canvas that drew it would be showing somebody their printer's
-# registration as if it were their own layout.
+# Cropping rather than shifting is what keeps the ink where the document put
+# it: row `dead` of the sheet is meant for `dead` millimetres in, and it is
+# the first row the printer will lay, so it lands where it was drawn. A shift
+# would move the whole label up by the size of a band it cannot escape.
+#
+# The other sign is the one the printer CAN answer, and it answers it with
+# `ESC f`: a negative `start_mm` is ink asked for before the die cut, which
+# is our own over-feed rather than the printer's late start, and feeding that
+# far first puts row 0 on the die cut with the whole label printable. That is
+# why the two directions live in one signed number and come out as two
+# different mechanisms — see `protocol.skip_lines`, and `server._send` for
+# the one place they are chosen between.
+#
+# Nothing here is applied to the label a person is DESIGNING. The crop is a
+# statement about the machine, and a design canvas that drew it would be
+# showing somebody their printer's registration as if it were their layout.
 
 
 def _ink_box(image):
@@ -787,99 +781,71 @@ def _ink_box(image):
     return image.convert("L").point(lambda v: 255 - v).getbbox()
 
 
-def offset_raster(rendered: Rendered, *, across_mm: float = 0.0,
-                  feed_mm: float = 0.0) -> tuple[Rendered, str | None]:
-    """The rendered sheet, moved to where this roll needs it printed.
+def crop_leading(rendered: Rendered, dots: int) -> tuple[Rendered, str | None]:
+    """The sheet with its first `dots` rows dropped.
 
-    Returns the sheet to send and, when the shift pushes real INK off the
-    label, one sentence saying so. Not when the shift is merely non-zero: a
-    correction of a few millimetres normally slides blank margin off one
-    edge and blank margin on at the other, which costs nothing, and a note on
-    every print is a note nobody reads by the second roll. So the test is
-    whether ink was lost, measured on the ink.
+    Returns the sheet to send and, when real INK was in those rows, one
+    sentence saying so. Not when the crop is merely non-zero: a calibrated
+    roll crops every label it prints, and the artwork is laid out inside
+    `printable_feed_mm` precisely so that the band is blank — a note on every
+    print is a note nobody reads by the second roll. So the test is whether
+    ink was lost, measured on the ink, which is the rule the head-placement
+    note follows one function down.
 
-    `across_mm` is positive toward the right-hand edge as the label comes out
-    of the printer, `feed_mm` positive away from the edge that comes out
-    first. The sheet keeps its exact size: what moves off one edge is gone,
-    and what moves on at the other is paper.
+    The sheet gets SHORTER rather than being shifted with paper pulled on at
+    the far end. That is the whole difference between this and the offset it
+    replaces: the rows that remain are the rows the printer can lay, so the
+    first of them lands at the first printable position and the last lands at
+    the die cut. Nothing is moved relative to anything else.
+
+    A crop that would take the whole sheet leaves one row. `protocol.job`
+    refuses a page with no rows at all, and "this roll's dead band is longer
+    than its label" deserves the note it gets here rather than a refusal five
+    frames away naming neither the roll nor the reason.
     """
-    dpi = rendered.dpi
-    across_dots = mm_to_dots(across_mm, dpi)
-    feed_dots = mm_to_dots(feed_mm, dpi)
-    if not across_dots and not feed_dots:
+    dots = max(0, int(dots))
+    if not dots:
         return rendered, None
 
     image = rendered.image
-    width, height = image.width, image.height
     box = _ink_box(image)
-
-    sheet = _new(width, height, 255)
-    # A negative paste origin is a crop, which is exactly the semantics
-    # wanted here: the sheet is one label and stays one label.
-    sheet.paste(image.convert("L"), (across_dots, feed_dots))
+    keep = max(1, image.height - dots)
+    cut = image.height - keep
+    cropped = image.convert("L").crop((0, cut, image.width, image.height))
     moved = Rendered(
-        image=sheet.point(lambda v: 0 if v < 128 else 255).convert("1"),
+        image=cropped.point(lambda v: 0 if v < 128 else 255).convert("1"),
         across_dots=rendered.across_dots,
-        feed_dots=rendered.feed_dots,
-        dpi=dpi,
+        # The sheet is genuinely shorter now, and this is what a caller
+        # asking "how many rows am I sending" reads. It is NOT what `ESC L`
+        # is built from: that is the paper, which did not change.
+        feed_dots=keep,
+        dpi=rendered.dpi,
         # The SAME list objects, not copies. Everything that renders a label
         # reads `rendered.notes` after the print has gone out, so a note
-        # added to either object has to be visible from both — the
-        # alternative is threading a second notes list through five handlers
-        # so that one of them can forget it.
+        # added to either object has to be visible from both.
         notes=rendered.notes,
         problems=rendered.problems,
     )
-    if box is None:
+    if box is None or box[1] >= cut:
         return moved, None
 
-    x0, y0, x1, y1 = box
-    lost = {
-        "the leading edge": max(0, -(y0 + feed_dots)),
-        "the trailing edge": max(0, (y1 + feed_dots) - height),
-        "the left edge": max(0, -(x0 + across_dots)),
-        "the right edge": max(0, (x1 + across_dots) - width),
-    }
-    clipped = [(name, dots) for name, dots in lost.items() if dots > 0]
-    if not clipped:
-        return moved, None
-
-    where = " and ".join(f"{dots / dpi * 25.4:.1f}mm past {name}"
-                         for name, dots in clipped)
+    lost = cut - box[1]
     return moved, (
-        f"This roll’s print offset moves the printing "
-        f"{_offset_words(across_mm, feed_mm)}, so the artwork now runs "
-        f"{where} — that much of it did not print. Change the offset on "
-        f"the Printer tab, under “Where the printing starts”, or "
-        f"move the artwork in from that edge.")
+        f"This printer starts {cut / rendered.dpi * 25.4:.1f}mm into every "
+        f"label on this roll, so nothing can be printed in that band — and "
+        f"{lost / rendered.dpi * 25.4:.1f}mm of this label’s artwork was "
+        f"inside it and did not print. Move the artwork down, or re-run the "
+        f"calibration on the Printer tab if the roll has changed.")
 
-
-def _offset_words(across_mm: float, feed_mm: float) -> str:
-    """The offset as a direction and a distance, never as a signed number.
-
-    Nobody knows which way "+" goes on a label printer, which is the whole
-    reason this reads as words: a note saying "offset -6.4mm" is a note that
-    sends somebody to work out the convention before they can act on it.
-    """
-    parts = []
-    if feed_mm:
-        parts.append(f"{abs(feed_mm):.1f}mm "
-                     + ("further along the roll" if feed_mm > 0
-                        else "back toward the edge that comes out first"))
-    if across_mm:
-        parts.append(f"{abs(across_mm):.1f}mm "
-                     + ("to the right" if across_mm > 0 else "to the left"))
-    return " and ".join(parts) or "not at all"
 
 
 # ---------------------------------------------------------------------------
 # Where the paper is
 # ---------------------------------------------------------------------------
 #
-# The offset above answers "where on the label does the printing start". This
-# answers the question underneath it, which nothing in this add-on could ask
-# until a 0.56" roll came out inked across half its width and no offset would
-# move it.
+# The crop above answers "where along the ROLL does the printing start". This
+# answers the same question across the head, which nothing in this add-on
+# could ask until a 0.56" roll came out inked across half its width.
 #
 # A packed raster line always begins at head dot 0 — `protocol.pack_line`
 # pads a short line on the right — so a rendered sheet is laid against the
@@ -897,18 +863,16 @@ def _offset_words(across_mm: float, feed_mm: float) -> str:
 # the halfway point. 49% of 168 dots is about 82, which puts the paper some
 # 86 dots (7.3mm) in from the head's first dot.
 #
-# **And the across offset structurally cannot fix it**, which is why the
-# person reporting it said "I try and try and it doesn't do anything".
-# `offset_raster` moves artwork inside the rendered sheet, and that sheet is
-# 168 dots wide: shifting right pushes ink off the sheet's own right edge and
-# loses it, and can never move the sheet further along the head. It is the
-# only control there was and it is the wrong axis of freedom.
-#
-# So the placement is its own quantity, and it clips against its own edge.
-# `offset_raster` crops at the label because the sheet is one label and stays
-# one label; this crops at the HEAD, because past the last dot there is no
-# heater. Both report on ink and neither refuses — the stock/roll mismatch is
-# still the only refusal in this add-on.
+# **The 0.6.0 across offset structurally could not fix it**, which is why the
+# person reporting it said "I try and try and it doesn't do anything": that
+# offset moved artwork inside the rendered sheet, and the sheet is 168 dots
+# wide — pushing right only shoves ink off its own edge and can never move
+# the sheet further along the head. There was one control and it was the
+# wrong axis of freedom, which is why the two are now ONE number
+# (`Calibration.across_mm`): there is a single left edge, and this is where
+# it is. It clips at the HEAD, because past the last dot there is no heater.
+# It reports on ink and it never refuses — the stock/roll mismatch is still
+# the only refusal in this add-on.
 
 
 def place_on_head(rendered: Rendered, *, across_mm: float = 0.0,
@@ -918,7 +882,7 @@ def place_on_head(rendered: Rendered, *, across_mm: float = 0.0,
     `across_mm` is how far in from the head's first dot the media begins, so
     the sheet is pasted that many dots along a head-wide line. Returns the
     sheet to send and, when the placement pushes real INK past the head's
-    last dot, one sentence saying so — the same test `offset_raster` makes
+    last dot, one sentence saying so — the same test `crop_leading` makes
     and for the same reason: a placement that slides blank border along the
     head costs nothing, and a note on every print is a note nobody reads.
 
@@ -949,7 +913,7 @@ def place_on_head(rendered: Rendered, *, across_mm: float = 0.0,
         across_dots=rendered.across_dots,
         feed_dots=rendered.feed_dots,
         dpi=dpi,
-        # The SAME lists, for the reason `offset_raster` shares them: every
+        # The SAME lists, for the reason `crop_leading` shares them: every
         # handler reads `rendered.notes` after the print has gone out.
         notes=rendered.notes,
         problems=rendered.problems,
@@ -974,31 +938,27 @@ def place_on_head(rendered: Rendered, *, across_mm: float = 0.0,
     return moved, (
         f"This roll sits {abs(across_mm):.1f}mm in from the print head’s "
         f"first dot, so the artwork now runs {where} — that much of it did "
-        f"not print. Check the measurement on the Printer tab, under "
-        f"“Where the printing starts”, or the label is wider than the head "
-        f"can reach from where the paper sits.")
+        f"not print. Re-run the calibration on the Printer tab, or the label "
+        f"is wider than the head can reach from where the paper sits.")
 
 
 def for_the_head(rendered: Rendered, *, across_mm: float = 0.0,
-                 feed_mm: float = 0.0, media_across_mm: float = 0.0,
+                 crop_dots: int = 0,
                  head_dots: int) -> tuple[Rendered, list[str]]:
-    """The one place the two across corrections meet.
+    """The one place a rendered label becomes what the head is asked for.
 
-    They are different quantities and they stay different everywhere a
-    person reads or types them — one is registration wander in tenths of a
-    millimetre, the other is where a roll sits under a fixed head and on
-    narrow media is centimetres — but they both end up in the same packed
-    line, and there is exactly one function where that happens.
+    Two corrections, two axes, two edges, and each loses ink for a different
+    reason — so they are applied in an order and reported in two sentences
+    rather than merged. `crop_leading` runs first and takes the rows the
+    printer will not lay, so ink it drops is ink in a band nothing can print
+    on; `place_on_head` then lays what is left along the head and crops at
+    the last dot, so ink it drops is ink onto no paper at all.
 
-    The ORDER is the whole of why they cannot be added together and applied
-    once. `offset_raster` runs first and crops at the label, so ink it
-    pushes off the sheet is ink off the label and it says so; `place_on_head`
-    then moves that finished label along the head and crops at the last dot,
-    so ink it pushes off is ink onto no paper at all and it says that
-    instead. Two edges, two sentences, one line on the wire.
+    Zero on both is the default and returns the very object it was handed:
+    an uncalibrated roll gets byte-for-byte the job it always got, which is
+    the promise every measurement in this add-on is added under.
     """
-    moved, offset_note = offset_raster(rendered, across_mm=across_mm,
-                                       feed_mm=feed_mm)
-    placed, media_note = place_on_head(moved, across_mm=media_across_mm,
+    cropped, crop_note = crop_leading(rendered, crop_dots)
+    placed, media_note = place_on_head(cropped, across_mm=across_mm,
                                        head_dots=head_dots)
-    return placed, [note for note in (offset_note, media_note) if note]
+    return placed, [note for note in (crop_note, media_note) if note]

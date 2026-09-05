@@ -46,7 +46,16 @@ ROUTES: dict[str, Any] = {
     "reprint": lambda p: (
         "POST", f"/api/history/{_seg(p.get('entry', ''))}/reprint"),
     "set_roll": lambda p: ("POST", f"/api/roll/{_seg(p.get('side', 'left'))}"),
-    "print_test": lambda p: ("POST", "/api/printer/test"),
+    # Kept under its old name and pointed at the check label, which is
+    # what "print one and look at it" now means: the ruler it used to
+    # print was millimetre ticks inside the stock's own margin, and
+    # both questions it answered — which measurement is which, and is
+    # the printing where it should be — are answered by lining the roll
+    # up and printing the frame. Renaming the service would turn an
+    # automation written last week into a validation error, which is a
+    # worse failure than a service whose name is one release behind
+    # what it prints.
+    "print_test": lambda p: ("POST", "/api/printer/check"),
 }
 
 # A print job can take a while — a run of 200 labels is 200 form feeds and

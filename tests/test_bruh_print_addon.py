@@ -206,6 +206,27 @@ class TestIntegration(unittest.TestCase):
                          "services.yaml and the bridge's routing table "
                          "disagree about what this integration can do")
 
+    def test_the_test_print_is_the_check_label_now(self):
+        """The ruler is gone and `print_test` is not. A service id vanishing
+        turns an automation written last week into a validation error, which
+        is a worse failure than a name one release behind what it prints — so
+        it keeps the id, points at the check label, and says so everywhere a
+        person reads it."""
+        bridge = (ADDON / "integrations" / "ha-bridge.py").read_text()
+        self.assertIn('"print_test": lambda p: ("POST", "/api/printer/check")',
+                      bridge)
+        self.assertNotIn("/api/printer/test", bridge)
+        services = yaml.safe_load(
+            (INTEGRATION / "services.yaml").read_text())["print_test"]
+        self.assertNotIn("ruler", services["name"].lower())
+        self.assertNotIn("ruler", services["description"].lower())
+        for name in ("strings.json", "translations/en.json"):
+            with self.subTest(file=name):
+                blob = json.loads((INTEGRATION / name).read_text())
+                entry = blob["services"]["print_test"]
+                self.assertNotIn("ruler", entry["name"].lower())
+                self.assertNotIn("ruler", entry["description"].lower())
+
     def test_every_service_is_registered_in_python(self):
         init = (INTEGRATION / "__init__.py").read_text()
         for name in yaml.safe_load((INTEGRATION / "services.yaml").read_text()):
@@ -536,6 +557,106 @@ class TestPanelUI(unittest.TestCase):
         tail = css[close + 1:].strip()
         self.assertEqual("", tail,
                          f"something follows the touch floor: {tail[:80]}")
+
+    def test_the_four_knobs_are_gone_rather_than_hidden(self):
+        """Across offset, feed offset, paper position, gap — four boxes with
+        four signs and four meanings, and no way for somebody holding a wrong
+        label to tell which one was theirs. They are replaced by a button that
+        prints, so the dialog, its routes and its callers all go: a control
+        left in the source behind a flag is a control that comes back."""
+        app = (PANEL / "app.js").read_text()
+        server = (PANEL / "server.py").read_text()
+        code = "\n".join(line.split("//", 1)[0] for line in app.splitlines())
+        for gone in ("offsetDialog", "printOffset", "offsetHeadScale",
+                     "/api/printer/head-scale", "/api/printer/test",
+                     "offset_feed_mm", "offset_across_mm", "media_across_mm"):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, code)
+        # And the routes those callers went to. Comments stripped first: the
+        # files SAY what was removed and why, and a test that reads the prose
+        # fails on the explanation for the change it is checking.
+        routes = "\n".join(line.split("#", 1)[0]
+                            for line in server.splitlines())
+        for gone in ("/api/printer/test", "/api/printer/head-scale",
+                     "_ruler_label"):
+            with self.subTest(route=gone):
+                self.assertNotIn(gone, routes)
+
+    def test_the_wizard_is_the_one_way_in_and_it_prints(self):
+        """One control per bay, and the six readings it asks for. The ids are
+        what `measure-print-panel.mjs` drives, so they are asserted here as
+        well: a renamed one is a measure that times out on a selector rather
+        than a panel that says what went."""
+        app = (PANEL / "app.js").read_text()
+        for wanted in ("lineUp-${roll.side}", "lineUpPrint", "calApply",
+                       "calCheck", "lineUpClose", "calSvg",
+                       "/api/printer/calibrate", "/api/printer/check",
+                       "/api/printer/feed"):
+            with self.subTest(wanted=wanted):
+                self.assertIn(wanted, app)
+        for key, letter in [("left", "A"), ("right", "B"), ("top1", "C"),
+                            ("bottom1", "D"), ("top2", "E"),
+                            ("bottom2", "F")]:
+            with self.subTest(reading=key):
+                self.assertIn(f"['{key}', '{letter}'", app)
+
+    def test_continuous_paper_is_not_offered_a_line_up(self):
+        """The printer finds the top of a label by the hole punched between
+        two of them, and continuous paper has neither — so the ladder the
+        calibration label draws is against a length that does not exist and
+        the left reading has nothing to be read from. Said on the bay rather
+        than found at the end of two printed labels and a refusal about a
+        number that was never on the paper."""
+        app = (PANEL / "app.js").read_text()
+        self.assertIn("const rollable = !!stock && !!stock.feed_in;", app)
+        self.assertIn("go.disabled = !rollable;", app)
+
+    def test_an_empty_reading_reaches_the_server_as_null(self):
+        """`Number('')` is 0, which is exactly the conflation these six may
+        not make: the derivation branches on differences under a millimetre,
+        so a box that silently became zero would not be a slightly wrong
+        calibration, it would be a different hypothesis."""
+        app = (PANEL / "app.js").read_text()
+        self.assertIn("readings[key] = typed === '' ? null : Number(typed);",
+                      app)
+
+    def test_a_late_start_is_read_from_the_bottom_and_says_so(self):
+        """The reading rule the pre-skip's removal left, asserted where a
+        person meets it. Nothing can print before where the printer begins,
+        so the top of a late-starting label is blank and the box for it takes
+        a 0 — a reading rather than a missing one. If the panel ever went
+        back to asking for a distance there, this is the sentence that would
+        have to change first."""
+        app = (PANEL / "app.js").read_text()
+        self.assertIn("it is 0 whenever the ladder", app)
+        self.assertIn("print in the blank band at the top", app)
+        # And the pre-skip is gone from the wire the wizard speaks.
+        self.assertNotIn("pre_skip", app)
+
+    def test_the_designer_draws_the_band_the_printer_cannot_reach(self):
+        """And on the right edge of the canvas. The renderer turns the canvas
+        by -rotate on its way to the sheet, so the sheet's leading edge
+        arrives from a different canvas edge each quarter — a band on the
+        wrong one points at a part of the label that prints perfectly."""
+        app = (PANEL / "app.js").read_text()
+        self.assertIn(
+            "const LEAD_EDGE = { 0: 'top', 90: 'left', 180: 'bottom', "
+            "270: 'right' };", app)
+        self.assertIn("deadCrossings()", app)
+        css = (PANEL / "style.css").read_text()
+        for edge in ("top", "bottom", "left", "right"):
+            with self.subTest(edge=edge):
+                self.assertIn(f".deadband.{edge} {{", css)
+
+    def test_the_wizard_sits_above_the_touch_floor_in_the_stylesheet(self):
+        """Everything it adds is ordinary `.field`/`.btn` markup, which the
+        floor already covers — but the one rule that sets a font size on a
+        control's own label has to be declared BEFORE the block, or equal
+        specificity is settled by order and it wins on a phone. Same bug as
+        `.btn.tiny`, one release later."""
+        css = (PANEL / "style.css").read_text()
+        self.assertLess(css.index(".calfield > .calhead"),
+                        css.index("@media (pointer: coarse)"))
 
     def test_the_page_asks_for_its_assets_relatively(self):
         """Ingress mounts the panel under a prefix, so an absolute asset URL

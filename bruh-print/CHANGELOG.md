@@ -1,5 +1,146 @@
 # Changelog
 
+## 0.9.0
+
+**Four boxes to type a millimetre into, and none of them could answer the
+question.** Every release from 0.6.0 to 0.8.x met a misaligned label by adding
+a control — a feed offset, an across offset, a paper position, a die-cut gap —
+until there were four, with four different signs, four different meanings, and
+no way for somebody holding a wrong label to tell which one was theirs. The
+owner of the printer printed, measured, typed, printed again, and said: stop
+adding knobs. They were right, and not only about the count. A correction
+somebody guesses is a guess whatever it is called, and the printer had already
+answered every question that mattered on a piece of paper nobody was reading
+properly.
+
+### What was measured, and what it ruled out
+
+0.7.0's theory was that the dead band at the leading edge was BRUH Print's own
+over-feed: `ESC L` is a search budget the manual says print lines and fed lines
+both count against, so an over-generous one fed onto the paper. `gap_mm` was
+added to wind it down and find out. It was plumbed correctly, it changed the
+bytes, and **it moved nothing** — which is the answer, not a null result: the
+printer *is* finding the sense hole on this roll and positioning every label
+relative to it. `ESC L` was only ever the maximum search distance the manual
+says it is.
+
+Three primary sources settle the rest.
+
+- The *LabelWriter 450 Series Technical Reference*: top of form is "the
+  inter-label gap over the cutter bar", which is **beyond the print head**, and
+  a form feed "places the next label beyond the starting print position.
+  Therefore, a reverse-feed will be automatically invoked when printing on the
+  next label."
+- DYMO's own open-source CUPS driver, as the shape of a document it knows the
+  firmware takes: 156 `ESC` bytes as a reset, `ESC q` **once per document**,
+  `ESC L` as the exact page height, blank rows as `ESC f` skips, `ESC G` per
+  page and `ESC E` per document.
+- DYMO's PPD for the 2¼″ × 1¼″ label, which declares **1.5mm unprintable at
+  each feed end**.
+
+So a 4.7mm leading band is not firmware behaviour on DYMO stock. It is either
+this roll's sense hole sitting where DYMO's does not — every label starts late,
+and no command can reverse the paper — or the reverse feed after a tear-off not
+happening, which costs one label per job and nothing after it. **Only a
+two-copy print tells those apart, and nothing a person can type into a box
+can.**
+
+### Line up this roll
+
+One button per bay. It prints two calibration labels, you read six numbers off
+them, and `calibration.derive` decides which of the three things this printer is
+doing. Every reading is taken against a ladder printed on the same label, which
+is the only kind of measurement that cannot be wrong about its own scale — the
+old dialog asked people to hold a ruler against a label and type tenths of a
+millimetre.
+
+- **A** and **B** — where the label's two edges cut a white-on-black scale
+  drawn across the whole 672-dot print head. `B` may be left empty: a label
+  wider than the band has nothing to read there.
+- **C** and **D** — where label 1's leading and trailing die cuts fall on the
+  feed ladder.
+- **E** and **F** — the same two on label 2, which is the entire evidence for
+  the reverse-feed hypothesis.
+
+**The two signs are read from different ends, and getting that backwards is the
+one mistake this rewrite made twice.** Nothing can print before the point where
+the printer begins, so a printer that starts **late** leaves a blank band at the
+top of the label with the ladder's own `0` and its heavy bar at the bottom of
+it — and there is nothing inside that band to measure it with. `C` is therefore
+`0`, which is a reading and not a missing one: it says the printer began at or
+after the die cut. The size comes from `D`, where the trailing die cut falls
+short of the label's own catalogued length by exactly how late the printing
+started. A printer that starts **early** is the directly measurable one: its
+first rows land before the leading die cut, so the die cut cuts the ladder and
+the number it cuts it at *is* the distance — and with both die cuts on the
+ladder, `D − C` is the label's real length.
+
+An earlier cut of this fed a deliberate 5mm before the first row, on the theory
+that it made a negative start measurable. **It made the reading it was added for
+impossible instead**: the skip only pushes the ladder's `0` further down a band
+that is blank either way, so both signs read `0` at the top and the one number
+that distinguished them was the one nothing printed. It cost the label as well —
+a sheet fed 5mm and then printed one label long overruns the die cut by five
+millimetres more than the printer's own late start does, landing copy 1's tail
+on copy 2's leading edge, which is exactly where `E` is read. The calibration
+job now feeds nothing before raster line 0, and `MAX_LATE_MM` is the floor that
+answers the hazard the new rule introduces: a late start is derived *from* the
+catalogued length, so past any plausible registration fault the likelier answer
+is that the roll is not the length the stock row says, and that is what it says.
+
+The three answers: **the same on every label** is a dead band the layout is
+drawn inside; **level on copy 2 and late on copy 1** is the missing reverse
+feed, answered by one more print opened with `ESC @` ("sets top-of-form as
+true") and otherwise recorded as an after-tear-off allowance charged to the
+first copy of a job only; **a drift between the two copies** is the hole not
+being found at all, and the drift measures the pitch that makes `ESC L` exact.
+Two of those store nothing until a second print settles them, because a
+half-answer left on disk is a roll calibrated by a guess.
+
+### The panel
+
+- **Removed:** `Print the ruler`, `Where the printing starts`, the whole offset
+  dialog with its six boxes, `POST /api/stock/{id}/offset`,
+  `POST /api/printer/head-scale` and `POST /api/printer/test`. The offset and
+  paper-position pills are gone from the stock row and the Edit dialog has no
+  route to any of it — a stock row is a catalog entry and where the printing
+  starts is a fact about a roll in a bay.
+- **Each bay** carries what this roll does in a sentence (`Not lined up yet` /
+  `Lined up: sits 7.3 mm along the head; the printer starts 4.7 mm in`), the one
+  button that measures it, `Print a check label`, and `Forget`. The check label
+  is a frame around everything the roll can print on with *Should reach every
+  edge* inside it: if the frame is complete the answer was right, and a missing
+  side says which way it is out.
+- **The designer draws the band it cannot reach** — hatched, at the sheet's
+  leading edge, turned with the label's own `rotate` — and outlines any box
+  lying in it. It never refuses: the crop happens on the way to the printer and
+  nowhere else, so the canvas still shows the label somebody drew rather than
+  their printer's registration.
+- The Quick tab's summary line gains `· printer starts 4.7 mm in`, and only when
+  it is not zero.
+- `bruh_print.print_test` keeps its service id and now prints the check label.
+  Renaming it would turn an automation written last week into a validation
+  error, which is worse than a service whose name is one release behind what it
+  prints.
+
+### Under it
+
+The job stream takes DYMO's own document shape: sync run, roll select, density
+and quality once; then per copy `ESC L`, `ESC B 0`, `ESC D`, any skip, the rows;
+`ESC G` between copies and `ESC E` or `ESC G` at the end. `skip_lines` scales by
+`LINE_REPEAT`, because the manual says a line's distance follows `ESC h`/`ESC i`
+— the graphics-mode length bug in a third place. The crop for a dead band
+happens in `_send` and nowhere else, and ink lost to it is a note rather than a
+refusal.
+
+**Old stock rows migrate rather than being dropped**: `media_across_mm` and
+`offset_across_mm` were always one edge, so they add into `calibration.across_mm`;
+an offset that moved artwork 4.7mm back toward the leading edge was describing a
+printer that started 4.7mm late, so `start_mm` is that offset's negation; a
+measured `gap_mm` is kept. A roll nobody has measured prints byte-for-byte the
+job it always got — that is the promise every measurement here is added under,
+and `Forget` is what puts a roll back to it.
+
 ## 0.8.0
 
 **The image element was never completable, and every release shipped it as a

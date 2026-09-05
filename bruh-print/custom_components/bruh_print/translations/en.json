@@ -72,10 +72,10 @@
       }
     },
     "print_test": {
-      "name": "Print the ruler",
-      "description": "Print a label with millimetre ticks along both edges.",
+      "name": "Print a check label",
+      "description": "Print a frame around everything this roll can print on. If it reaches every edge, the roll is lined up.",
       "fields": {
-        "stock": {"name": "Label stock", "description": "Which stock to measure."},
+        "stock": {"name": "Label stock", "description": "Which stock to check."},
         "side": {"name": "Roll", "description": "Which roll to print it on."}
       }
     }

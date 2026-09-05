@@ -22,7 +22,14 @@ PANEL = os.path.join(os.path.dirname(__file__), "..", "bruh-print", "panel")
 
 # The names both panels claim. `server` is the big one — every add-on here
 # has one — and `stores` is the one that actually bit.
-SHARED = ("server", "stores", "render", "dymo", "atomic_write", "panel_port")
+#
+# `calibration` is ours alone today and is here for the other half of the
+# problem: a module left in the table across a purge holds references to the
+# `stores.stock` it imported, so it would answer with a `Calibration` class
+# that is not the one the freshly imported store builds. Nothing breaks on
+# that yet, and "yet" is what this list is for.
+SHARED = ("server", "stores", "render", "dymo", "atomic_write", "panel_port",
+          "calibration")
 
 
 @contextlib.contextmanager

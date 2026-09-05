@@ -66,23 +66,56 @@ commands whose meaning is unambiguous are here, deliberately:
                     printers.py), because sending it to a printer with one
                     roll and calling that "printing on the left" would be a
                     lie the panel repeats.
-    ESC E           Form feed. Advances to the next label and is what makes
-                    the printed one tearable.
-    ESC G           Short form feed. Advances just past the print head, so
-                    consecutive labels do not each waste one. Used between
-                    copies; the last copy always gets the long feed.
+    ESC E           Form feed. The reference: it "advances the most recently
+                    printed label to a position where it can be torn off.
+                    This positioning places the next label beyond the
+                    starting print position. Therefore, a reverse-feed will
+                    be automatically invoked when printing on the next
+                    label." So it is not merely "the end" — it is what puts
+                    the paper at the tear bar and owes the next job a
+                    reverse feed.
+    ESC G           Short form feed. "Feeds the next label into print
+                    position. The most recently printed label will still be
+                    partially inside the printer and cannot be torn off." So
+                    it is what goes BETWEEN copies — the same sentence's
+                    advice, verbatim: "to optimize print speed and eliminate
+                    this reverse feeding when printing multiple labels, use
+                    the Short Form Feed command between labels, and the Form
+                    Feed command after the last label."
+    ESC @           Reset. "Resets all parameters (Dot Tabs, Line Tabs,
+                    Bytes per Line, and so on) to their default values and
+                    sets top-of-form as true. Note: acted upon immediately;
+                    any data still in the print buffer will be lost." The
+                    last clause is why it is a per-stock switch rather than
+                    something always sent: a printer that reads it while a
+                    previous job is still draining loses that job, and
+                    nothing here can see whether one is.
+    ESC ESC ...     The sync run. "To reset the printer after a
+                    synchronization error or to recover from an unknown
+                    state, the host computer needs to send at least 85
+                    continuous <esc> characters." DYMO's own CUPS driver
+                    opens every document with 156 of them
+                    (`LabelWriterDriver::GetResetCommand`), which is the
+                    number this file sends: the manual's floor is 85 and
+                    matching the driver known to align costs 71 bytes.
     ESC A           Status request. The printer answers with a status block
                     (see `Status`).
-    ESC f 1 n       Skip "n" lines. Documented, unambiguous, and deliberately
-                    NOT sent: it is the printer's own feed-direction print
-                    position, and it only moves paper forward. The
-                    misregistration this add-on was actually shown is a
-                    printer starting LATE, whose correction is a negative
-                    skip. See `render.image.offset_raster` for the whole of
-                    that reasoning, and for why the across axis does not use
-                    `ESC B` for the same job either. Named here so nobody has
-                    to rediscover it in the manual and wonder whether it was
-                    missed.
+    ESC f 1 n       Skip "n" lines. "Use this command to force the
+                    LabelWriter printer to advance the number of lines
+                    corresponding to the variable n (0 to 255 lines)… The
+                    distance of a line is dependant on the current
+                    resolution set for the printer by the ESC h / ESC i
+                    commands. Note: requires the 1 prior to the value."
+                    Which is why `skip_lines` scales by `LINE_REPEAT` and
+                    chunks at 255 — a skip is in the printer's steps, the
+                    same steps the raster and the ESC L budget are in.
+
+                    It moves paper one way only, which is why it is not the
+                    whole answer to registration: a printer that starts LATE
+                    cannot be corrected by feeding more. It is the half that
+                    IS expressible — a label whose ink is asked for BEFORE
+                    the die cut — and `render.image.crop_leading` is the
+                    other half.
 
     SYN (0x16)      One raster line follows, `bytes_per_line` bytes of it.
     ETB (0x17)      Repeat the previous line. Every label this add-on prints
@@ -116,10 +149,24 @@ and a byte a firmware reads as something else is a wedged printer rather
 than a lighter label. That is what the **bare** print mode is for — it sends
 neither, leaving the printer at its own defaults — and it is the escape
 route from a guess this add-on cannot test from inside a container.
+
+**The shape of a job is DYMO's own, and it was not.** Their open-source CUPS
+driver (`dymo-cups-drivers`, `src/lw/LabelWriterDriver.cpp`) splits a job
+into a document and its pages: `StartDoc()` sends the sync run, then the
+resolution, the line tab, the dot tab, the quality and the density — and
+`CLabelWriterDriverTwinTurbo::StartDoc()` then sends `ESC q` **once**, for
+the whole document. `StartPage()` sends `ESC L`; each page ends with `ESC G`
+and the document ends with `ESC E`. This file used to re-send the roll byte
+per copy, on the reasoning that seven bytes buys a known state per label.
+What that reasoning missed is that a roll select in the middle of a document
+is not a statement about a label — it is a request to change bays between
+two copies of one job. Nothing here is proven to have printed wrong because
+of it; adopting the shape that is known to align costs nothing, and the
+alternative is guessing at a wire byte for a fourth time.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 ESC = 0x1B
 SYN = 0x16
@@ -159,6 +206,50 @@ class ProtocolError(ValueError):
 
 def _esc(letter: str, *args: int) -> bytes:
     return bytes([ESC, ord(letter), *args])
+
+
+# How many ESC bytes open a document. The manual's floor is 85 ("to reset the
+# printer after a synchronization error or to recover from an unknown state,
+# the host computer needs to send at least 85 continuous <esc> characters");
+# DYMO's own CUPS driver sends 156 and cups-filters sends 100. 156 is the one
+# that comes from the vendor's driver for these exact models, and the 71 bytes
+# between it and the floor are not worth having an opinion about.
+SYNC_ESCAPES = 156
+
+
+def sync_run() -> bytes:
+    """The run of ESC bytes that opens a document.
+
+    A printer half-way through reading a command it did not finish getting —
+    a job cut short by a USB error, a panel restarted mid-write, another
+    process interrupted — is a printer that will read the first bytes of the
+    next job as arguments to the last one. A run of ESCs is the manual's own
+    way out of that, because every command begins with one: whatever state
+    the parser is in, it ends up waiting for a command letter.
+
+    It is not a reset. `reset()` restores the printer's *variables*; this
+    only re-synchronises the parser, which is why both exist and why only one
+    of them is optional.
+    """
+    return bytes([ESC]) * SYNC_ESCAPES
+
+
+def reset() -> bytes:
+    """`ESC @` — every parameter back to its default, top-of-form true.
+
+    Optional per stock (`Calibration.job_start`) rather than always sent,
+    for the reason the manual states in the same paragraph: it is "acted upon
+    immediately; any data still in the print buffer will be lost". Nothing on
+    this side can see whether a previous job is still draining out of that
+    buffer, so a reset sent unconditionally is a job that can eat the one
+    before it.
+
+    What makes it worth having at all is the other half of that sentence —
+    "and sets top-of-form as true" — which is the state the reverse feed
+    after an `ESC E` is owed from. If a roll's first label is late and the
+    rest are not, this is the command that would say so.
+    """
+    return _esc("@")
 
 
 def set_dot_tab(tabs: int = 0) -> bytes:
@@ -287,6 +378,61 @@ def search_length(feed_dots: int, gap_dots: int | None = None) -> int:
     if gap_dots is None:
         return feed + max(MIN_HEADROOM_DOTS, round(feed * LENGTH_HEADROOM))
     return feed + max(0, int(gap_dots))
+
+
+def budget_dots(feed_dots: int, gap_dots: int | None = None,
+                pre_skip_dots: int = 0) -> int:
+    """The whole `ESC L` value, skip included, in rendered lines.
+
+    A pre-skip is fed paper, and the manual counts it: "print lines and lines
+    fed both count towards this total". So a job that skips 5mm and then
+    prints a whole label travels 5mm further than the label before it can
+    reach the hole, and a budget that ignored the skip would end the search
+    exactly that far short — which is the pre-0.5.0 drift, reintroduced by
+    the one job whose whole purpose is measuring where the printing starts.
+
+    One function because two callers need the answer: `job_pages` puts it on
+    the wire, and the calibration route reports it to the derivation, which
+    reads it as the distance the printer fed. A second copy of this sum is a
+    second answer to what the printer was told.
+    """
+    return search_length(feed_dots, gap_dots) + max(0, int(pre_skip_dots))
+
+
+# The most lines one `ESC f 1 n` can ask for: n is a single byte, and the
+# manual gives its range as 0 to 255. A longer skip is several commands, not
+# a masked one — `n & 0xFF` on a 300-line skip is a 44-line skip and a label
+# printed a quarter of an inch from where it was asked for.
+MAX_SKIP = 255
+
+
+def skip_lines(dots: int, *, quality: str | None = None) -> bytes:
+    """Feed `dots` blank lines before the next raster row.
+
+    `dots` is in RENDERED lines — 300ths of an inch, the units the raster and
+    every millimetre in this add-on are in — and what goes on the wire is in
+    the printer's own steps, so it is scaled by `LINE_REPEAT` exactly as the
+    raster and the `ESC L` budget are. The manual is explicit that this is
+    the same fact: "the distance of a line is dependant on the current
+    resolution set for the printer by the ESC h / ESC i commands." A skip
+    left unscaled in the 300x600 graphics mode is half the distance asked
+    for, which is the graphics-mode length bug in a third place.
+
+    Zero is no bytes at all rather than `ESC f 1 0`. A command that does
+    nothing is a command a firmware can still refuse, and every ordinary
+    label asks for this one.
+
+    The `0x01` is not decoration — "requires the 1 prior to the value" — and
+    it is why this reader-visible command takes two argument bytes where the
+    others take one.
+    """
+    steps = max(0, int(dots)) * LINE_REPEAT.get(quality or "text", 1)
+    out = bytearray()
+    while steps > 0:
+        chunk = min(MAX_SKIP, steps)
+        out.extend(_esc("f", 0x01, chunk))
+        steps -= chunk
+    return bytes(out)
 
 
 def select_roll(roll: int) -> bytes:
@@ -453,8 +599,8 @@ def pack_line(bits: bytes, bytes_per_line: int) -> bytes:
     and correct for a 2.25" stock, whose 672-dot raster is the whole head,
     and half a label for a 0.56" wrap whose 168 dots are a quarter of it and
     whose paper does not sit at the dot-0 end. Where the paper *does* sit is
-    `stores.stock.media_across_mm`, and `render.image.place_on_head` is what
-    puts the sheet there, before anything reaches this function.
+    `stores.stock.Calibration.across_mm`, and `render.image.place_on_head`
+    is what puts the sheet there, before anything reaches this function.
 
     Truncation used to be justified here by "the renderer is handed the
     printable dot width and never draws past it". That was true of the
@@ -511,88 +657,120 @@ def raster(lines: list[bytes], bytes_per_line: int, *,
             out.extend(packed)
             previous = packed
     return bytes(out)
+@dataclass(frozen=True)
+class Page:
+    """One copy: the rows to print, and how far to feed before them.
 
+    A copy is not always the same bytes as the copy beside it, which is the
+    whole reason this exists. The first label of a job can be the one that
+    starts late (`Calibration.after_tear_mm` — the reverse feed an `ESC E`
+    owes and does not always make), and the calibration job prints two labels
+    that carry different numbers. Both were unsayable while a job was a list
+    of rows and a count.
 
-def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
-        copies: int = 1, label_feed_dots: int | None = None,
-        gap_dots: int | None = None,
-        continuous: bool = False, compress: bool = False,
-        dot_tab: bool = True, density: str | None = None,
-        quality: str | None = None) -> bytes:
-    """A complete print job: preamble, raster, feed — repeated per copy.
-
-    The preamble is re-sent for every copy rather than once for the job. It
-    costs seven bytes and it buys the case that actually happens: a printer
-    that was power-cycled, or a job interleaved behind another process's,
-    starts each label from a known state instead of inheriting whatever the
-    last one left set.
-
-    Every copy but the last gets the SHORT feed. A long feed between copies
-    advances a whole label past the head, so a run of ten came out as ten
-    printed and ten blank — which reads as the printer wasting half the roll,
-    because it is.
-
-    `label_feed_dots` is the LABEL — the die-cut length of the stock, which
-    for everything but continuous paper is also the height of the raster —
-    and never the ESC L value itself. `search_length` turns one into the
-    other, because the two are different quantities and passing the first
-    where the second belonged is what made every label drift down the roll.
-    `continuous=True` is the separate mode for stock with no die cut at all:
-    the length field becomes the continuous-form flag and this argument is
-    not read.
-
-    `gap_dots` is the die-cut gap on this roll, when somebody has measured
-    it, and `None` — the default and what every caller sends until somebody
-    does — keeps the headroom `search_length` has always applied. It rides
-    beside `label_feed_dots` because the two are one measurement of the same
-    paper, hole to hole.
-
-    `dot_tab` sends `ESC B 0` and is on by default, because the dot tab is
-    the printer's state and not ours: a job that does not set it starts
-    wherever the last driver left it. `bare` turns it off along with
-    everything else, which is what `bare` is for.
-
-    `density` and `quality` are both optional and both `None` in the `bare`
-    print mode, which is the one arrangement that leaves the printer at its
-    own defaults. `quality="graphics"` is the slow, darker 300x600 mode, and
-    it changes the body as well as the preamble: every line goes twice and
-    the label length doubles with it, because both are counted in the
-    printer's 600-per-inch steps.
+    `pre_skip_dots` is in rendered lines, like everything else above the
+    wire; `skip_lines` is what turns it into the printer's steps.
     """
-    if not lines:
+
+    lines: list[bytes] = field(default_factory=list)
+    pre_skip_dots: int = 0
+
+
+# What `Calibration.job_start` and `Calibration.ending` may be, checked here
+# because this is where they become bytes. A typo reaching the wire as
+# "neither" would be a printer left at the tear bar by a job that meant to
+# hold, which is a whole label of paper per print and nothing said about it.
+JOB_STARTS = ("plain", "reset")
+ENDINGS = ("tear", "hold")
+
+
+def job_pages(pages: list[Page], *, bytes_per_line: int,
+              roll: int | None = None, label_feed_dots: int | None = None,
+              gap_dots: int | None = None, continuous: bool = False,
+              compress: bool = False, dot_tab: bool = True,
+              density: str | None = None, quality: str | None = None,
+              job_start: str = "plain", ending: str = "tear",
+              sync: bool = True) -> bytes:
+    """A whole document: one preamble, then a page per copy.
+
+    The order is DYMO's own driver's, and the split between the two halves is
+    the part that matters. **Once per document**: the sync run, an optional
+    reset, the roll, the density and the quality — all statements about the
+    printer, none of them about a label, and `ESC q` in particular is a
+    request to change bays that has no business appearing between two copies
+    of one job. **Once per page**: `ESC L`, `ESC B 0`, `ESC D`, any pre-skip,
+    the rows — the geometry of the label about to be printed, re-stated per
+    copy because the manual says the printer holds those variables until
+    something changes them and a page is the thing that can differ.
+
+    `ending` is what the LAST page gets. "tear" is `ESC E`, which puts the
+    label where a person can tear it off and leaves the paper past the next
+    label's starting position — so the printer owes a reverse feed on the
+    next job, and a printer that does not make it starts that label late.
+    "hold" is `ESC G`, which leaves the label inside the printer and cannot
+    be torn: the escape route for a roll whose first label is always wrong,
+    where a Feed button becomes the thing that ends a run.
+
+    `sync` is off for `bare` alone. A 156-byte run of ESC is a command like
+    any other — the manual's own recovery sequence, but still bytes a
+    firmware has to agree about — and `bare` exists to be the minimum, so it
+    would not be answering the question it is for if it sent them.
+
+    `label_feed_dots` is the LABEL, never the ESC L value: `budget_dots`
+    turns one into the other, adding the gap (or the headroom) and the page's
+    own skip. Passing the first where the second belonged is what made every
+    label drift down the roll, and the skip is the same mistake one release
+    later.
+    """
+    if not pages:
+        raise ProtocolError("nothing to print: this job has no copies")
+    if any(not page.lines for page in pages):
         raise ProtocolError("nothing to print: the rendered label has no rows")
-    copies = max(1, int(copies))
-    # Validate before rendering the body: a typo'd density must not cost a
+    if job_start not in JOB_STARTS:
+        raise ProtocolError(
+            f"job_start must be one of {', '.join(JOB_STARTS)}, "
+            f"got {job_start!r}")
+    if ending not in ENDINGS:
+        raise ProtocolError(
+            f"ending must be one of {', '.join(ENDINGS)}, got {ending!r}")
+    # Validate before rendering any body: a typo'd density must not cost a
     # megabyte of raster before it is refused.
     density_bytes = set_density(density) if density is not None else b""
     quality_bytes = set_quality(quality) if quality is not None else b""
     repeat = LINE_REPEAT.get(quality or "text", 1)
-    body = raster(lines, bytes_per_line, compress=compress,
-                  line_repeat=repeat)
-    if continuous:
-        length_bytes = continuous_form()
-    else:
-        feed = label_feed_dots if label_feed_dots is not None else len(lines)
-        # The headroom is worked out in 300 dpi lines and then scaled with
-        # the raster, because the label and the budget spent on it are one
-        # fact counted in whatever steps the printer is taking — the same
-        # reason `LINE_REPEAT` is named rather than written as a bare 2.
-        length_bytes = set_label_length(
-            search_length(feed, gap_dots) * repeat)
 
     out = bytearray()
-    for index in range(copies):
-        if roll is not None:
-            out.extend(select_roll(roll))
-        # Density then quality then the geometry, which is the order the
-        # long-standing cups-filters DYMO path sends them in.
-        out.extend(density_bytes)
-        out.extend(quality_bytes)
-        # Length before the pair that describes a line, which is the order
-        # the long-standing cups-filters DYMO path uses for the two commands
-        # it sends. Almost certainly irrelevant, and matching a shape that is
-        # known to print costs nothing.
-        out.extend(length_bytes)
+    if sync:
+        out.extend(sync_run())
+    if job_start == "reset":
+        out.extend(reset())
+    if roll is not None:
+        out.extend(select_roll(roll))
+    # Density then quality then the geometry, which is the order the
+    # long-standing cups-filters DYMO path sends them in.
+    out.extend(density_bytes)
+    out.extend(quality_bytes)
+
+    # Copies of one label share their row list by construction (`job` builds
+    # them that way), and packing 375 rows is the expensive half of building
+    # a job. Keyed on identity rather than on equality: comparing two
+    # 31,886-byte bodies to find out they are the same is the cost this is
+    # avoiding.
+    bodies: dict[int, bytes] = {}
+    last = len(pages) - 1
+    for index, page in enumerate(pages):
+        if continuous:
+            out.extend(continuous_form())
+        else:
+            feed = (label_feed_dots if label_feed_dots is not None
+                    else len(page.lines))
+            # The budget is worked out in 300 dpi lines and then scaled with
+            # the raster, because the label, the skip and the allowance spent
+            # on them are one fact counted in whatever steps the printer is
+            # taking — the same reason `LINE_REPEAT` is named rather than
+            # written as a bare 2.
+            out.extend(set_label_length(
+                budget_dots(feed, gap_dots, page.pre_skip_dots) * repeat))
         # `ESC B 0` was left out on the grounds that it is "a no-op by
         # construction — the renderer already knows where the left edge is".
         # That reasoning is wrong, and wrong in the way that only shows up on
@@ -602,8 +780,7 @@ def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
         # DYMO Connect, another driver or an earlier job can each leave it
         # set, and every label we print then starts that many bytes — eight
         # dots each — to the right, silently, with nothing on this side able
-        # to see it. A printer shared with DYMO's own software is the
-        # ordinary case, not an exotic one.
+        # to see it.
         #
         # It sits beside the bytes-per-line because the manual pairs them: a
         # line that starts n bytes in must send n fewer, so 0 with 84 is one
@@ -613,6 +790,42 @@ def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
         if dot_tab:
             out.extend(set_dot_tab(0))
         out.extend(set_bytes_per_line(bytes_per_line))
+        out.extend(skip_lines(page.pre_skip_dots, quality=quality))
+        body = bodies.get(id(page.lines))
+        if body is None:
+            body = raster(page.lines, bytes_per_line, compress=compress,
+                          line_repeat=repeat)
+            bodies[id(page.lines)] = body
         out.extend(body)
-        out.extend(short_form_feed() if index < copies - 1 else form_feed())
+        if index < last:
+            # Every copy but the last gets the SHORT feed. A long feed
+            # between copies advances a whole label past the head, so a run
+            # of ten came out as ten printed and ten blank — which reads as
+            # the printer wasting half the roll, because it was.
+            out.extend(short_form_feed())
+        else:
+            out.extend(form_feed() if ending == "tear" else short_form_feed())
     return bytes(out)
+
+
+def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
+        copies: int = 1, label_feed_dots: int | None = None,
+        gap_dots: int | None = None,
+        continuous: bool = False, compress: bool = False,
+        dot_tab: bool = True, density: str | None = None,
+        quality: str | None = None, pre_skip_dots: int = 0,
+        job_start: str = "plain", ending: str = "tear",
+        sync: bool = True) -> bytes:
+    """`copies` identical pages of `lines` — the ordinary case, spelled once.
+
+    Every copy shares the SAME list object, which is what lets `job_pages`
+    pack the raster once for the whole run.
+    """
+    copies = max(1, int(copies))
+    page = Page(lines, pre_skip_dots)
+    return job_pages(
+        [page] * copies, bytes_per_line=bytes_per_line, roll=roll,
+        label_feed_dots=label_feed_dots, gap_dots=gap_dots,
+        continuous=continuous, compress=compress, dot_tab=dot_tab,
+        density=density, quality=quality, job_start=job_start, ending=ending,
+        sync=sync)

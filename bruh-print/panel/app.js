@@ -431,6 +431,13 @@ function quickSummary() {
   const copies = Number($('quickCopies').value) || 1;
   let text = `Label, copies, font \u2014 ${stock ? stock.label : 'none picked'}`;
   if (copies > 1) text += ` \u00b7 ${copies} copies`;
+  /* And the one thing about this roll that changes what comes out and is
+   * visible nowhere on the Quick tab: the band at the leading edge this
+   * printer will not lay ink on. Only when there is one — a "starts 0 mm in"
+   * on every label is a fact nobody needs and the row is already three
+   * nouns long. */
+  if (stock && stock.dead_leading_mm)
+    text += ` \u00b7 printer starts ${mmText(stock.dead_leading_mm)} in`;
   line.textContent = text;
 }
 
@@ -623,18 +630,32 @@ async function refreshPreview() {
   }
 }
 
-/* Applied to the boxes already on screen rather than by rebuilding them:
+/* Which boxes are outlined in red, from two places that are not the same
+ * kind of answer.
+ *
+ * `S.problems` comes off the render — a barcode that will not fit, a fixed
+ * size that clips — and is the server's. The dead band's is CLIENT-side and
+ * has to be: it is a fact about the roll rather than about the drawing, the
+ * renderer draws the whole label on purpose (the crop happens in `_send` and
+ * nowhere else, so the designer and the preview show the label somebody
+ * drew), and the note the print path writes only appears once ink has
+ * actually been lost — which is after the label has come out.
+ *
+ * Applied to the boxes already on screen rather than by rebuilding them:
  * this lands mid-drag, and rebuilding the overlay would take the element out
  * from under the finger holding it. */
 function markProblems() {
   const bad = new Set((S.problems || []).map((p) => p.index));
+  for (const index of deadCrossings()) bad.add(index);
   const boxes = $('overlay').querySelectorAll('.el');
   boxes.forEach((box, index) => box.classList.toggle('bad', bad.has(index)));
   const print = $('designPrint');
   const count = bad.size;
-  /* Still enabled: the rule here is that a print is refused only when it
-   * cannot be right, and a barcode that will not fit is a label with one
-   * element missing — usually still the label somebody wanted. */
+  /* Still enabled, and the dead band is no exception: the rule here is that
+   * a print is refused only when it cannot be right, and a box reaching into
+   * a band the printer will not lay ink on is a label with one element
+   * clipped — usually still the label somebody wanted, and always their
+   * decision rather than this one's. */
   print.setAttribute('data-tip', count
     ? (count === 1
         ? 'One box has a problem — it is outlined in red, and the notes under '
@@ -642,6 +663,53 @@ function markProblems() {
         : `${count} boxes have a problem — they are outlined in red, and the `
           + 'notes under the label say what. It will still print.')
     : 'Send this label to the printer.');
+}
+
+/* Which edge of the DESIGN canvas is the sheet's LEADING one — the edge that
+ * leaves the printer first, and the one a dead band is measured from.
+ *
+ * `render` turns the canvas by `-rotate` on its way to the sheet, which is a
+ * clockwise turn by `rotate`, so the sheet's own top arrives from a
+ * different canvas edge each quarter: `CLIP_EDGE` above is this same table
+ * read for the sheet's right-hand edge. A band on the wrong edge is worse
+ * than none, because it points at a part of the label that prints perfectly.
+ */
+const LEAD_EDGE = { 0: 'top', 90: 'left', 180: 'bottom', 270: 'right' };
+
+/* How far in from that edge this roll's printer lays no ink, and which edge.
+ *
+ * In SHEET millimetres — the margin included — because the crop on the way
+ * to the printer takes rows off the whole sheet, die cut inward. A band
+ * measured from the drawable corner would be short by exactly the margin,
+ * which is the size of the thing it is drawing. */
+function deadBand() {
+  const stock = stockById(S.label && S.label.stock);
+  return {
+    mm: stock ? Number(stock.dead_leading_mm) || 0 : 0,
+    edge: LEAD_EDGE[(S.label && S.label.rotate) || 0] || 'top',
+  };
+}
+
+/* Every element whose box reaches into it. Measured from the same edge the
+ * band is drawn on, in the same millimetres, so the outline and the hatch
+ * cannot disagree about which boxes are in trouble. */
+function deadCrossings() {
+  const dead = deadBand();
+  const out = new Set();
+  if (!(dead.mm > 0) || !S.label) return out;
+  const stock = stockById(S.label.stock);
+  const margin = stock ? stock.margin_mm : 2;
+  const mm = canvasMm();
+  S.label.elements.forEach((element, index) => {
+    const near = {
+      top: margin + element.y_mm,
+      left: margin + element.x_mm,
+      bottom: margin + (mm.h - (element.y_mm + element.h_mm)),
+      right: margin + (mm.w - (element.x_mm + element.w_mm)),
+    }[dead.edge];
+    if (near < dead.mm - 0.001) out.add(index);
+  });
+  return out;
 }
 
 /* The preview is rendered at 2x the printer's resolution for crispness, which
@@ -740,6 +808,35 @@ function drawOverlay() {
       + 'printer\u2019s, not yours. Drawn wide enough to see; it is really '
       + 'about a hundredth of an inch.');
     overlay.append(strip);
+  }
+
+  /* The band this roll's printer will not reach, at the sheet's LEADING
+   * edge. It is drawn rather than refused: the crop happens in `_send` and
+   * nowhere else, so what is on screen is the label somebody drew — and a
+   * designer that quietly shortened the canvas would be showing them their
+   * printer's registration as if it were their layout. What it does instead
+   * is make the band something you can aim away from, and outline anything
+   * lying in it. */
+  const dead = deadBand();
+  const legend = $('canvasLegend');
+  if (dead.mm > 0) {
+    const band = el('div', 'deadband ' + dead.edge);
+    const across = dead.edge === 'top' || dead.edge === 'bottom';
+    band.style[across ? 'height' : 'width'] =
+      dead.mm * (across ? scaleY : scaleX) + 'px';
+    /* One word. The band is a few millimetres on a phone and a sentence in
+     * it would be a sentence nobody can read; what it means is on the
+     * legend under the canvas, which is where the dashed rectangle's
+     * meaning already lives. */
+    band.append(el('span', 'dbt', 'unreachable'));
+    overlay.append(band);
+    if (legend) legend.textContent =
+      'Inside the dashed line prints. The band outside it is the printer’s '
+      + `own margin, and the hatched ${dead.mm}mm at the leading edge is `
+      + 'where this roll’s printer lays no ink at all.';
+  } else if (legend) {
+    legend.textContent = 'Inside the dashed line prints. The band outside it '
+      + 'is the printer’s own margin.';
   }
 
   const guides = el('div', 'guides');
@@ -1542,27 +1639,14 @@ function renderPrinter() {
         $('modal').showModal();
       } catch (error) { fail(error); }
     };
-    const ruler = el('button', 'btn tiny', 'Print the ruler');
-    ruler.setAttribute('data-tip',
-      'A label with millimetre ticks on both axes — the only way to check '
-      + 'a stock is the way round the catalog thinks it is.');
-    ruler.onclick = async () => {
-      try { const data = await post('/api/printer/test', {}); toast(`Ruler printed on the ${data.side} roll.`, 'good'); }
-      catch (error) { fail(error); }
-    };
-    /* The other half of "print one and look at it". The ruler answers which
-     * measurement is which; this answers where the printing starts, which
-     * the ruler structurally cannot — it is drawn inside the stock's margin,
-     * so on a roll with a 5mm margin there is nothing within 5mm of the die
-     * cut to measure against. Two questions, two labels. */
-    const offset = el('button', 'btn tiny', 'Where the printing starts');
-    offset.id = 'printOffset';
-    offset.setAttribute('data-tip',
-      'Print a label with a scale at its own corner, measure how far in the '
-      + 'printing really begins, and tell BRUH Print to move it. Once per '
-      + 'roll.');
-    offset.onclick = () => offsetDialog();
-    foot.append(use, status, ruler, offset, usb);
+    /* Three buttons, all of them about the PRINTER. Lining a roll up is
+     * about a roll, and a roll lives in a bay — so it is a control on the
+     * bay below rather than a fourth button here that has to ask which one
+     * you meant. The two that used to be here went with the four knobs they
+     * served: the ruler measured a stock and this measures the paper, and
+     * "Where the printing starts" was a dialog of boxes to type guesses
+     * into. */
+    foot.append(use, status, usb);
     card.append(foot);
     cards.append(card);
   }
@@ -1646,6 +1730,7 @@ function renderPrinter() {
       bay.append(el('div', 'est',
         'Not counting what is left. Turn it back on under Settings below.'));
     }
+    bay.append(lineUpBlock(roll, stock));
     bays.append(bay);
   }
 
@@ -1668,49 +1753,19 @@ function renderPrinter() {
       + `${stock.feed_in ? '\u2033 along the roll' : ' (continuous)'}`
       + ` \u00b7 ${stock.margin_mm}mm border`));
     if (stock.sku) row.append(el('span', 'sku', stock.sku));
-    /* A print offset is a correction somebody measured, so it says so on the
-     * row: an offset nobody can see is an offset that gets blamed on the
-     * renderer the next time a label looks wrong. */
-    if (stock.offset_feed_mm || stock.offset_across_mm) {
-      const moved = [];
-      if (stock.offset_feed_mm)
-        moved.push(`${stock.offset_feed_mm > 0 ? '+' : '\u2212'}`
-          + `${Math.abs(stock.offset_feed_mm)}mm along`);
-      if (stock.offset_across_mm)
-        moved.push(`${stock.offset_across_mm > 0 ? '+' : '\u2212'}`
-          + `${Math.abs(stock.offset_across_mm)}mm across`);
-      const pill = el('span', 'pill moved', `printing moved ${moved.join(', ')}`);
+    /* One pill where three used to be, and it says a state rather than a
+     * number: what a lined-up roll does is a sentence, and the sentence is
+     * on the bay above where the roll actually is. Three pills carrying
+     * three signed millimetres were three corrections a person could read
+     * as one, which is how somebody types a paper position into a
+     * registration offset. */
+    if (stock.calibrated) {
+      const pill = el('span', 'pill lined', 'lined up');
       pill.setAttribute('data-tip',
-        'Where this roll needs the printing put. Press "Where the printing '
-        + 'starts" on the printer card above to measure or clear it.');
+        'Somebody has printed the calibration labels for this roll and typed '
+        + 'what they read. Press "Line up this roll" on its bay above to do '
+        + 'it again, or Forget to go back to what the add-on shipped with.');
       row.append(pill);
-    }
-    /* A separate pill, never folded into the one above, for the same reason
-     * the two are separate boxes in the dialog: one says the printing was
-     * nudged on this label and the other says where the roll is under the
-     * head. Reading them as one number is how somebody types a 7mm media
-     * position into a registration offset. */
-    if (stock.media_across_mm) {
-      const seated = el('span', 'pill moved',
-        `paper sits ${stock.media_across_mm}mm along the head`);
-      seated.setAttribute('data-tip',
-        'How far in from the print head\u2019s first dot this roll begins. '
-        + 'Press "Where the printing starts" on the printer card above to '
-        + 'measure or clear it.');
-      row.append(seated);
-    }
-    /* A measured gap changes the bytes this roll is printed with, so it is
-     * visible where the two corrections are. `!= null` on purpose: 0 is a
-     * real setting and the one most worth seeing on the row, because it is
-     * the diagnostic somebody left switched on. */
-    if (stock.gap_mm != null) {
-      const gap = el('span', 'pill moved',
-        `${stock.gap_mm}mm gap between labels`);
-      gap.setAttribute('data-tip',
-        'The die-cut gap you measured. It sets how far the printer travels '
-        + 'looking for the sense hole. Empty it under "Where the printing '
-        + 'starts" to go back to the default allowance.');
-      row.append(gap);
     }
     if (stock.loaded)
       row.append(el('span', 'pill in', `in the ${stock.loaded_side} roll`));
@@ -1814,7 +1869,8 @@ function renderPrinter() {
   settings.append(modeWrap);
   settings.append(el('p', 'lede',
     'The printer takes the job and prints nothing? Change this, then press '
-    + 'Print the ruler above. Standard is what everything is tested against; '
+    + 'Print a check label on a bay above. Standard is what everything is '
+    + 'tested against; '
     + 'try the others in order. Tell us which one worked — a LabelWriter '
     + 'cannot be asked which commands it understands, so this is the only '
     + 'way to find out. Bare minimum also drops the darkness and speed '
@@ -1873,222 +1929,541 @@ function renderPrinter() {
   }
 }
 
-/* Where the printing starts, measured rather than guessed.
+/* ── Lining a roll up ────────────────────────────────────────────────────
  *
- * A number a person has to guess is a number they guess wrong, and the only
- * instrument that can answer this is a printed label: nothing in a container
- * can see where a print head laid its first dot. So this dialog is a label
- * and two boxes, and the label is the ruler for the boxes.
+ * Every release from 0.6.0 to 0.8.x answered a misaligned label by adding a
+ * box to type a millimetre into, and by 0.8.4 there were four of them —
+ * across offset, feed offset, paper position, gap — with four different
+ * signs, four different meanings, and no way for a person holding a wrong
+ * label to tell which one was theirs. The owner printed, measured, typed,
+ * printed again, and asked for the boxes to go. They were right: a
+ * correction somebody guesses is a guess whatever it is called, and the
+ * printer had already answered every question that mattered on a piece of
+ * paper nobody was reading properly.
  *
- * The sign is spelled out in words in three places — the lede, each hint,
- * and the label on the calibration print itself — because nobody knows which
- * way "+" goes on a label printer, and a control that needs its convention
- * looked up is a control people set once, backwards, and never touch again.
- *
- * It is per stock because it is the die cut that decides it, and a Twin
- * Turbo with two rolls genuinely has two answers.
+ * So there is one control per bay and it prints. Two labels come out, six
+ * numbers are read off them with the label's own printed ladders, and
+ * `calibration.derive` decides which of the three things this printer is
+ * doing. Six rather than five because the two signs are read off opposite
+ * ends: a printer starting EARLY cuts the ladder and the number at the die
+ * cut is the distance, while one starting LATE prints nothing at all up
+ * there, so its dead band is only measurable from the far edge against the
+ * label's catalogued length — which means both ends of both copies.
+ * Nothing here does arithmetic on a reading: what is typed goes to the
+ * server as it was typed, because a panel that adjusted a number on its way
+ * in would be a seventh place a millimetre could be wrong.
  */
-function offsetDialog(stockId) {
-  const rows = loadedStocks();
-  const start = rows.find((row) => row.id === stockId)
-    || rows.find((row) => row.id === S.settings.default_stock) || rows[0];
-  if (!start) return toast('There is no label stock to calibrate.', 'bad');
 
+/* One millimetre, written the same way everywhere it is shown. A bay
+ * sentence saying 4.7 and a wizard saying 4.70 are two readings of one
+ * measurement to anybody who did not write them. */
+const mmText = (value) => `${Number(value).toFixed(1)} mm`;
+
+/* What this roll does, in the roll's own words.
+ *
+ * `Not lined up yet` is a different sentence from `prints from the die cut`
+ * and that difference is the whole of `Calibration.measured`: a printer that
+ * needs no correction stores seven default numbers, and a panel that could
+ * not tell it from one nobody has measured would offer the wizard for ever
+ * to the person who least needs it. */
+function calibrationSentence(stock) {
+  if (!stock) return 'Nothing is in this bay, so there is nothing to line up.';
+  if (!stock.calibrated) return 'Not lined up yet.';
+  const cal = stock.calibration || {};
+  const bits = [];
+  if (cal.across_mm)
+    bits.push(`sits ${mmText(cal.across_mm)} along the head`);
+  /* `dead_leading_mm` and not `start_mm`, because the two differ exactly
+   * where a person reads them: a negative start is not a dead band, it is a
+   * job that feeds before it prints, and the whole label is usable. */
+  if (stock.dead_leading_mm)
+    bits.push(`the printer starts ${mmText(stock.dead_leading_mm)} in`);
+  else if (cal.start_mm < 0)
+    bits.push(`every job feeds ${mmText(-cal.start_mm)} before it prints`);
+  if (cal.after_tear_mm)
+    bits.push('the first label after a tear-off starts '
+      + `${mmText(stock.first_label_dead_mm)} in`);
+  if (cal.job_start === 'reset')
+    bits.push('every job opens with the printer’s own reset');
+  if (!bits.length) return 'Lined up: prints from the die cut.';
+  return `Lined up: ${bits.join('; ')}.`;
+}
+
+/* The bay's own block: what this roll does, one press that measures it, and
+ * two small things you do afterwards.
+ *
+ * It is on the BAY and not on the printer card because it is a fact about a
+ * roll — where the sense hole sits relative to the die cut is punched into
+ * the paper — and a Twin Turbo with two rolls genuinely has two answers. A
+ * button on the card would have to ask which one you meant, which is the
+ * question the bay has already answered by being the bay. */
+function lineUpBlock(roll, stock) {
+  const wrap = el('div', 'calbay');
+  /* Continuous paper has no die cuts, so it has no sense holes and no top of
+   * form — there is nothing on it for a reading to be measured from, and the
+   * calibration label's own ladder is drawn against a label length it does
+   * not have. Said here rather than left to be found at the end of two
+   * printed labels and a refusal about a number that was never on the
+   * paper. */
+  const rollable = !!stock && !!stock.feed_in;
+  wrap.append(el('p', 'calstate', rollable
+    ? calibrationSentence(stock)
+    : (stock
+        ? 'Continuous paper has no die cuts, so there is no top of form to '
+          + 'line up to.'
+        : calibrationSentence(stock))));
+
+  const go = el('button', 'btn primary wide', 'Line up this roll');
+  go.id = `lineUp-${roll.side}`;
+  go.disabled = !rollable;
+  go.setAttribute('data-tip', rollable
+    ? 'Prints two labels and asks you for six numbers off them. Once per '
+      + 'roll — after that every print on this roll uses the answer.'
+    : (stock
+        ? 'Nothing to measure: the printer finds the top of a label by the '
+          + 'hole punched between two of them, and continuous paper has '
+          + 'neither.'
+        : 'Pick what is in this bay first. Where the printing starts is a '
+          + 'property of the roll, so there is nothing to measure until '
+          + 'there is one.'));
+  go.onclick = () => lineUpDialog(stock, roll.side);
+  wrap.append(go);
+
+  /* The last label of a job left inside the printer rather than pushed out
+   * to the tear bar. Only a roll whose calibration asked for it ends that
+   * way, so the button that gets it out only exists there — a Feed on every
+   * bay is a control that does nothing on nearly all of them. */
+  const cal = (stock && stock.calibration) || {};
+  if (cal.ending === 'hold')
+    wrap.append(el('p', 'est',
+      'The last label is held inside so the next print lines up; press to '
+      + 'feed it out.'));
+
+  const foot = el('div', 'foot');
+  const check = el('button', 'btn tiny', 'Print a check label');
+  check.id = `checkLabel-${roll.side}`;
+  /* Offered on continuous paper, unlike the wizard: a frame drawn around
+   * everything this roll can print on is a real answer there — it is the
+   * artwork's own length — and it is the fastest way to see that a job is
+   * coming out at all. */
+  check.disabled = !stock;
+  check.setAttribute('data-tip',
+    'One label: a frame around everything this roll can print on. If it '
+    + 'reaches all four edges the roll is lined up, and a missing side says '
+    + 'which way it is out.');
+  check.onclick = async () => {
+    try {
+      const data = await post('/api/printer/check',
+                              { stock: stock.id, side: roll.side });
+      toast(`Check label printed on the ${data.side} roll.`, 'good');
+    } catch (error) { fail(error); }
+  };
+  foot.append(check);
+
+  if (cal.ending === 'hold') {
+    const feed = el('button', 'btn tiny', 'Feed');
+    feed.id = `feedRoll-${roll.side}`;
+    feed.setAttribute('data-tip',
+      'Moves the paper to the tear bar. It prints nothing.');
+    feed.onclick = async () => {
+      try { await post('/api/printer/feed', { side: roll.side }); toast('Fed to the tear bar.', 'good'); }
+      catch (error) { fail(error); }
+    };
+    foot.append(feed);
+  }
+
+  /* Only where there is something to forget. A button that clears nothing
+   * is a control asking to be understood, and the answer would be "it does
+   * what has already happened". */
+  if (stock && stock.calibrated) {
+    const forget = el('button', 'btn tiny danger', 'Forget');
+    forget.id = `forgetCal-${roll.side}`;
+    forget.setAttribute('data-tip',
+      'Throws the measurement away and prints exactly what the add-on '
+      + 'shipped with. Not a reset to a guessed default — to nothing.');
+    forget.onclick = async () => {
+      try {
+        await del(`/api/stock/${stock.id}/calibration`);
+        await loadState(); renderPrinter(); fillPickers();
+        toast('Forgotten. This roll prints as it did before.', 'good');
+      } catch (error) { fail(error); }
+    };
+    foot.append(forget);
+  }
+  wrap.append(foot);
+  return wrap;
+}
+
+
+/* ── The wizard ──────────────────────────────────────────────────────────
+ *
+ * Three steps and a picture. It reuses `#modal` — the panel has one dialog
+ * and every dialog in it is markup written into `#modalBody`, so a second
+ * one would be a second thing to keep true about focus, Escape and the
+ * backdrop.
+ *
+ * The six readings and their instructions live in one table, because the
+ * drawing, the fields and the request all have to agree about which letter
+ * names which number. Three copies of that mapping is three chances for the
+ * label on screen to point at the wrong box.
+ */
+const CAL_READINGS = [
+  ['left', 'A', 'Left edge, on the black band',
+    'The white-on-black number under the label’s left-hand edge. It is the '
+    + 'one reading that is not optional: the whole across axis is built on '
+    + 'it.'],
+  ['right', 'B', 'Right edge, on the same band',
+    'The same at the other edge. Leave it empty if the band runs off the '
+    + 'label — a label wider than the band has nothing to read there.'],
+  ['top1', 'C', 'Top of label 1',
+    'The first feed number you can see at the top, minus one for each short '
+    + 'tick line above it — and it is 0 whenever the ladder’s own 0 and its '
+    + 'heavy bar are printed with blank label above them, which is what a '
+    + 'printer that starts late looks like.'],
+  ['bottom1', 'D', 'Bottom of label 1',
+    'The last feed number you can see at the bottom, plus one for each short '
+    + 'tick below it. This is the one that carries a late start: nothing can '
+    + 'print in the blank band at the top, so the far edge against the '
+    + 'label’s own length is what measures it.'],
+  ['top2', 'E', 'Top of label 2',
+    'C again, on the label with a 2 in the box.'],
+  ['bottom2', 'F', 'Bottom of label 2',
+    'D again, on the same label. The two copies are the whole reason two '
+    + 'labels print: one alone cannot tell a roll that starts late from a '
+    + 'printer that only gets the first label of a job wrong.'],
+];
+
+function lineUpDialog(stock, side) {
+  if (!stock) return;
+  const state = {
+    stock, side, printed: null, notes: [], message: '',
+    readings: { left: '', right: '', top1: '', bottom1: '', top2: '',
+                bottom2: '' },
+  };
   const body = $('modalBody');
   body.innerHTML = '';
-  body.append(el('h2', null, 'Where the printing starts'));
-  body.append(el('p', 'lede',
-    'Two different questions, and the second one only bites on a narrow '
-    + 'roll: where on the label the printing starts, and where the roll '
-    + 'itself sits under the print head.'));
+  const wrap = el('div', 'calwiz');
+  wrap.id = 'lineUp';
+  body.append(wrap);
+  calPrintStep(state, wrap, 'plain', '');
+  $('modal').showModal();
+}
 
-  const pick = el('label', 'field');
-  pick.append(el('span', null, 'Which roll'));
-  const select = el('select');
-  select.id = 'offsetStock';
-  for (const row of rows) {
-    const option = el('option', null, `${row.name} \u2014 ${row.label}`);
-    option.value = row.id;
-    select.append(option);
-  }
-  select.value = start.id;
-  pick.append(select);
-  body.append(pick);
+/* Every step ends the same way: a row of actions with Close on it. A dialog
+ * whose only exit is Escape is a dialog somebody is stuck in on a phone,
+ * where there is no Escape key. */
+function calActions(wrap, ...buttons) {
+  const actions = el('div', 'actions');
+  const close = el('button', 'btn', 'Close');
+  close.id = 'lineUpClose';
+  close.onclick = async () => {
+    $('modal').close();
+    try { await loadState(); renderPrinter(); fillPickers(); }
+    catch (error) { fail(error); }
+  };
+  actions.append(...buttons, close);
+  wrap.append(actions);
+}
 
-  /* Signed, so no `min`. The server refuses anything past an inch with a
-   * sentence rather than clamping it, because a clamp would print something
-   * other than what this box says. */
+function calPrintStep(state, wrap, variant, why) {
+  wrap.dataset.step = variant === 'reset' ? 'reprint' : 'print';
+  wrap.innerHTML = '';
+  wrap.append(el('h2', null, `Line up ${state.stock.name}`));
+  wrap.append(el('p', 'lede', why
+    || 'Two labels will print. You read six numbers off them — nothing to '
+       + 'measure with.'));
+  /* Said before the press and not after it: this label is drawn to the
+   * whole print head, so on anything narrower than 2.25" part of it lands
+   * on the liner. That is what makes the across ruler readable, and
+   * somebody who finds it out by looking at the platen is somebody the
+   * panel lied to by omission. */
+  wrap.append(el('p', 'muted small',
+    'The labels are drawn to the full width of the print head, so on a '
+    + 'narrow roll some of the ink lands on the backing. That is the part '
+    + 'that tells you where the paper is.'));
+
+  const go = el('button', 'btn primary big wide',
+                variant === 'reset' ? 'Print them again' : 'Print');
+  go.id = 'lineUpPrint';
+  go.onclick = async () => {
+    go.disabled = true;
+    try {
+      const data = await post('/api/printer/calibrate',
+        { stock: state.stock.id, side: state.side, variant });
+      state.printed = { esc_l_mm: data.esc_l_mm, variant: data.variant };
+      state.notes = data.notes || [];
+      state.message = '';
+      calReadStep(state, wrap);
+    } catch (error) { go.disabled = false; fail(error); }
+  };
+  wrap.append(go);
+  calActions(wrap);
+}
+
+/* Which copy-2 box follows which copy-1 box while it is untouched. */
+const MIRRORED = { top1: 'top2', bottom1: 'bottom2' };
+
+function calReadStep(state, wrap) {
+  wrap.dataset.step = 'read';
+  wrap.innerHTML = '';
+  wrap.append(el('h2', null, 'Type what you see'));
+  if (state.message) wrap.append(el('p', 'calsentence', state.message));
+  wrap.append(el('p', 'lede',
+    'Six numbers off the two labels that just printed. Every one of them '
+    + 'is read against something printed on the same label, which is the '
+    + 'only kind of measurement that cannot be wrong about its own scale.'));
+
+  const split = el('div', 'calsplit');
+  split.append(calDrawing());
+
   const fields = {};
-  const field = (key, id, label, hint) => {
-    const wrap = el('label', 'field');
-    wrap.append(el('span', null, label));
+  const list = el('div', 'calfields');
+  for (const [key, letter, name, hint] of CAL_READINGS) {
+    const field = el('label', 'field calfield');
+    const head = el('span', 'calhead');
+    head.append(el('i', 'calbadge', letter), el('b', null, name));
+    field.append(head);
     const input = el('input');
     input.type = 'number';
     input.step = '0.1';
-    input.id = id;
-    wrap.append(input);
-    wrap.append(el('span', 'muted', hint));
+    /* Every one of the six is a distance from an edge of the label to
+     * something printed on it, so none of them can be negative — and a
+     * minus sign here is somebody carrying over the old offset's
+     * convention, where it meant "the other way". There is no other way
+     * now: the derivation decides the sign, from where the two copies
+     * landed. The server refuses one too; this is the keyboard's half. */
+    input.min = '0';
+    input.inputMode = 'decimal';
+    input.id = `cal${letter}`;
+    input.value = state.readings[key];
+    if (key === 'right') input.placeholder = 'leave empty if it runs off';
+    input.oninput = () => {
+      state.readings[key] = input.value;
+      /* Copy 2 follows copy 1 until somebody types in it. The two are the
+       * same on every roll except the one hypothesis that needs them to
+       * differ, so mirroring saves two boxes of typing in the common case —
+       * and it stops the moment the box is touched, because the case where
+       * they differ is the whole reason both are asked for. */
+      const mirror = MIRRORED[key];
+      if (mirror && fields[mirror] && fields[mirror].dataset.touched !== '1') {
+        fields[mirror].value = input.value;
+        state.readings[mirror] = input.value;
+      }
+      if (key === 'top2' || key === 'bottom2') input.dataset.touched = '1';
+    };
+    field.append(input);
+    field.append(el('span', 'muted', hint));
     fields[key] = input;
-    return wrap;
-  };
+    list.append(field);
+  }
+  split.append(list);
+  wrap.append(split);
 
-  /* Part one: where on the LABEL the printing starts. A correction to
-   * registration wander, in tenths of a millimetre, moving artwork inside
-   * the sheet. */
-  body.append(el('h3', null, 'On the label'));
-  body.append(el('p', 'lede',
-    'Print the calibration label. It has two thick lines meeting at the '
-    + 'corner where the printing begins, and 1mm ticks along each of them. '
-    + 'Hold it up: a gap between the label\u2019s own edge and a thick line '
-    + 'is how far in the printer is starting \u2014 type it with a minus in '
-    + 'front. If a thick line is missing because the printing started before '
-    + 'the edge, count the ticks that did survive and type that as a plus.'));
+  const notesList = el('ul', 'notes');
+  notes(notesList, state.notes);
+  wrap.append(notesList);
 
-  const boxes = el('div', 'row');
-  boxes.append(field('feed', 'offsetFeed',
-    'Move the printing along the roll (mm)',
-    'Minus moves it back toward the edge that comes out of the printer '
-    + 'first. Printing starting 4.7mm in is \u22124.7.'));
-  boxes.append(field('across', 'offsetAcross',
-    'Move the printing across the head (mm)',
-    'Minus moves it toward the left-hand edge as the label comes out.'));
-  body.append(boxes);
-
-  const print = el('button', 'btn', 'Print the calibration label');
-  print.id = 'offsetCalibrate';
-  print.type = 'button';
-  print.setAttribute('data-tip',
-    'One label, drawn to the very edges of the sheet \u2014 the stock\u2019s '
-    + 'margin is ignored, or there would be nothing near the die cut to '
-    + 'measure against. Saved offsets are applied to it, so printing it '
-    + 'again is how you check a correction worked.');
-  print.onclick = async () => {
+  const apply = el('button', 'btn primary big wide', 'Apply');
+  apply.id = 'calApply';
+  apply.onclick = async () => {
+    const readings = {};
+    for (const [key] of CAL_READINGS) {
+      const typed = String(fields[key].value).trim();
+      /* An empty box reaches the server as null and never as 0. `Number('')`
+       * is zero, which is exactly the conflation these six may not make:
+       * the derivation branches on differences under a millimetre, so a
+       * field that silently became zero would not be a slightly wrong
+       * calibration, it would be a different hypothesis. */
+      readings[key] = typed === '' ? null : Number(typed);
+    }
+    apply.disabled = true;
     try {
-      const data = await post('/api/printer/calibrate', { stock: select.value });
-      toast(`Calibration label printed on the ${data.side} roll.`, 'good');
-    } catch (error) { fail(error); }
-  };
-  body.append(print);
-
-  /* Part two, and a different quantity in a different unit: where the ROLL
-   * is under a head that is always 672 dots wide. A raster always begins at
-   * the head's first dot, which is invisible on a 2.25" roll that covers the
-   * whole head and is half a label on a 0.56" wrap that covers a quarter of
-   * it. The box above cannot fix that and it is worth saying so here rather
-   * than letting somebody type into it for an afternoon. */
-  body.append(el('h3', null, 'Under the print head'));
-  body.append(el('p', 'lede',
-    'Only narrow rolls. If a label is inked across part of its width and '
-    + 'blank across the rest \u2014 always the same part, whatever you print '
-    + '\u2014 the roll is sitting further along the print head than BRUH '
-    + 'Print thinks. Moving the printing across the head, above, cannot fix '
-    + 'that: it moves artwork inside the label, and the label is already the '
-    + 'wrong place.'));
-
-  const media = el('div', 'row');
-  media.append(field('media', 'offsetMedia',
-    'How far in the paper sits under the head (mm)',
-    'From the head\u2019s first dot to the edge of the paper. A 2.25\u2033 '
-    + 'roll fills the head and sits at 0; a narrow one can be centimetres '
-    + 'in. Never negative.'));
-  /* The one box here that carries a `min`, and the difference is real: the
-   * two offsets above are signed and the whole measured case for them was a
-   * negative one, while paper cannot begin before the head's first dot. */
-  fields.media.min = '0';
-  body.append(media);
-
-  const headScale = el('button', 'btn', 'Print the scale across the head');
-  headScale.id = 'offsetHeadScale';
-  headScale.type = 'button';
-  headScale.setAttribute('data-tip',
-    'A millimetre scale from the print head\u2019s first dot right across '
-    + 'it, numbered every 5mm. Read the number where the label\u2019s own '
-    + 'edge falls and type it in above.');
-  body.append(headScale);
-  /* Said out loud, before the press rather than after it: this is the one
-   * label in the panel that deliberately prints outside the paper. It is
-   * ticks and digits rather than a band, and it is one label \u2014 but
-   * somebody who finds that out by looking at the platen is somebody the
-   * panel lied to by omission. */
-  body.append(el('p', 'lede',
-    'It prints right across the head, so most of it lands on the liner and '
-    + 'the platen rather than on the label \u2014 that is what makes it '
-    + 'readable, since the part that misses the paper is the part telling '
-    + 'you where the paper is. Ticks and digits, not a solid band, and one '
-    + 'label.'));
-  headScale.onclick = async () => {
-    try {
-      const data = await post('/api/printer/head-scale', { stock: select.value });
-      toast(`Scale printed across the ${data.head_mm}mm head on the `
-        + `${data.side} roll.`, 'good');
-    } catch (error) { fail(error); }
-  };
-
-  /* Part three, and not a correction at all: a measurement of the paper
-   * that changes what the printer is told to look for. It is here because
-   * it is the other half of "the printing does not start where it should",
-   * and it is the half nobody can settle from inside a container — the
-   * printer either finds the sense hole within the budget or it does not,
-   * and only a printed label says which. */
-  body.append(el('h3', null, 'The gap between labels'));
-  body.append(el('p', 'lede',
-    'Leave this empty unless you are chasing something. BRUH Print tells '
-    + 'the printer how far to travel while it hunts for the sense hole '
-    + 'between labels, and with the box empty it allows the label plus a '
-    + 'quarter \u2014 generous, which is what the manual advises. Measure '
-    + 'your roll\u2019s gap and type it here and the allowance becomes '
-    + 'exact instead. Winding it down to 0 is how you find out whether a '
-    + 'dead band at the leading edge is the printer\u2019s top of form or '
-    + 'BRUH Print over-feeding: if the band shrinks, it was ours.'));
-
-  const gapRow = el('div', 'row');
-  gapRow.append(field('gap', 'offsetGap',
-    'Gap between labels (mm)',
-    'The paper BETWEEN two labels, not the label. Empty means not '
-    + 'measured, and prints exactly what it always did. 0 is a real '
-    + 'setting: the search then stops at the end of the label.'));
-  fields.gap.min = '0';
-  fields.gap.placeholder = 'not measured';
-  body.append(gapRow);
-
-  const fill = () => {
-    const row = rows.find((r) => r.id === select.value) || start;
-    fields.feed.value = row.offset_feed_mm || 0;
-    fields.across.value = row.offset_across_mm || 0;
-    fields.media.value = row.media_across_mm || 0;
-    /* Empty is a state, not a zero. `row.gap_mm` is null until somebody has
-     * measured this roll, and filling that in as 0 would turn "I have not
-     * measured it" into "the gap is nothing" on the next Save — which is
-     * the one setting that changes what the printer does. */
-    fields.gap.value = row.gap_mm === null || row.gap_mm === undefined
-      ? '' : row.gap_mm;
-  };
-  fill();
-  select.onchange = fill;
-
-  const actions = el('div', 'actions');
-  const save = el('button', 'btn primary', 'Save');
-  save.id = 'offsetSave';
-  save.onclick = async () => {
-    try {
-      await post(`/api/stock/${select.value}/offset`, {
-        offset_feed_mm: Number(fields.feed.value) || 0,
-        offset_across_mm: Number(fields.across.value) || 0,
-        media_across_mm: Number(fields.media.value) || 0,
-        /* `Number('')` is 0, which is exactly the conflation this control
-         * may not make: an empty box has to reach the server as null. */
-        gap_mm: fields.gap.value === '' ? null : Number(fields.gap.value),
-      });
-      $('modal').close();
+      const data = await post(
+        `/api/stock/${state.stock.id}/calibration`,
+        { readings, printed: state.printed });
       await loadState(); renderPrinter(); fillPickers();
-      toast('Saved. Print the calibration label again to check.', 'good');
+      state.stock = stockById(state.stock.id) || state.stock;
+      state.message = data.sentence;
+      if (data.next) calPrintStep(state, wrap, data.next.variant, data.sentence);
+      else if (data.calibration === null) calReadStep(state, wrap);
+      else calDoneStep(state, wrap, data);
+    } catch (error) { apply.disabled = false; fail(error); }
+  };
+  wrap.append(apply);
+  calActions(wrap);
+}
+
+function calDoneStep(state, wrap, data) {
+  wrap.dataset.step = 'done';
+  wrap.innerHTML = '';
+  wrap.append(el('h2', null, 'Lined up'));
+  wrap.append(el('p', 'calsentence', data.sentence));
+
+  /* Offered, never applied. Two measurements that match the catalog's the
+   * other way round is evidence about somebody's stock row, and quietly
+   * swapping a roll's dimensions on one reading is exactly the sort of
+   * helpful correction that loses a measurement they made with a ruler. */
+  if (data.swap_suggested) {
+    wrap.append(el('p', 'lede',
+      'Those two measurements match this stock’s the other way round, so '
+      + 'the roll is probably described back to front. Swapping exchanges '
+      + 'them and clears what was just measured — it was read off a label '
+      + 'the wrong way round — so line the roll up again afterwards.'));
+    const swap = el('button', 'btn wide', 'These are the wrong way round');
+    swap.id = 'calSwap';
+    swap.onclick = async () => {
+      try {
+        await post(`/api/stock/${state.stock.id}/swap`, {});
+        await loadState(); renderPrinter(); fillPickers();
+        state.stock = stockById(state.stock.id) || state.stock;
+        state.readings = { left: '', right: '', top1: '', bottom1: '',
+                           top2: '', bottom2: '' };
+        calPrintStep(state, wrap, 'plain',
+          'Swapped. Run Line up again — the numbers you just typed were '
+          + 'read off a label the other way round.');
+      } catch (error) { fail(error); }
+    };
+    wrap.append(swap);
+  }
+
+  const check = el('button', 'btn primary big wide', 'Print a check label');
+  check.id = 'calCheck';
+  check.onclick = async () => {
+    try {
+      await post('/api/printer/check',
+                 { stock: state.stock.id, side: state.side });
+      toast('Check label printed.', 'good');
     } catch (error) { fail(error); }
   };
-  const cancel = el('button', 'btn', 'Cancel');
-  cancel.onclick = () => $('modal').close();
-  actions.append(save, cancel);
-  body.append(actions);
-  $('modal').showModal();
+  wrap.append(check);
+  wrap.append(el('p', 'lede',
+    'If the frame reaches every edge you’re done; if not, run Line up '
+    + 'again.'));
+  calActions(wrap);
+}
+
+
+/* ── The drawing ─────────────────────────────────────────────────────────
+ *
+ * Drawn here rather than shipped as an asset, for the same reason nothing
+ * else in this panel is: an image in the container is a second copy of what
+ * the label looks like, and it goes stale the day the calibration label's
+ * layout changes without anybody noticing. This is a diagram of six read
+ * points, and the letters on it are the letters on the boxes.
+ *
+ * It is deliberately NOT to scale — the leading band is drawn far wider than
+ * the few millimetres it usually is, because a diagram that is honest about
+ * the proportions shows nothing at all.
+ */
+const SVGNS = 'http://www.w3.org/2000/svg';
+const svgEl = (name, attrs) => {
+  const node = document.createElementNS(SVGNS, name);
+  for (const [key, value] of Object.entries(attrs || {}))
+    node.setAttribute(key, String(value));
+  return node;
+};
+const svgText = (x, y, text, attrs) => {
+  const node = svgEl('text', { x, y, ...(attrs || {}) });
+  node.textContent = text;
+  return node;
+};
+
+/* One badge: the circle and its letter, at the point being read. Every one
+ * of the six is drawn by this, so a badge on the picture and a badge on a
+ * field cannot come out looking like different things. */
+function svgBadge(group, x, y, letter) {
+  group.append(svgEl('circle', { cx: x, cy: y, r: 5, class: 'calb' }));
+  group.append(svgText(x, y + 2.1, letter, { class: 'calbt' }));
+}
+
+function calDrawing() {
+  const svg = svgEl('svg', {
+    id: 'calSvg', class: 'calsvg', viewBox: '0 0 132 96',
+    role: 'img', 'aria-label':
+      'Where the six readings are taken on the two printed labels',
+  });
+
+  for (const [x, title] of [[8, 'Label 1'], [74, 'Label 2']]) {
+    svg.append(svgText(x + 22, 8, title, { class: 'calt' }));
+    svg.append(svgEl('rect', { x, y: 14, width: 44, height: 68,
+                               class: 'callabel' }));
+    /* The BLANK BAND, drawn because it is the thing being measured and the
+     * thing nothing can measure: on a printer that starts late the top of
+     * the label has no ink on it at all, so the reading taken here is 0 and
+     * the size comes from the far end. */
+    svg.append(svgEl('rect', { x, y: 14, width: 44, height: 16,
+                               class: 'calblank' }));
+    /* The thick bar: raster line 0, the first row the printer lays, with
+     * its own 0 beside it. The pair is the sign — seeing them with blank
+     * label above is what a person types 0 for. */
+    svg.append(svgEl('rect', { x, y: 30, width: 44, height: 2,
+                               class: 'calbar' }));
+    svg.append(svgText(x + 15, 28.6, '0', { class: 'calnum' }));
+    /* The ladder below it, counted from that bar, long rungs every fifth. */
+    for (let n = 1; n <= 11; n += 1) {
+      const y = 32 + n * 4;
+      const long = n % 5 === 0;
+      svg.append(svgEl('line', { x1: x + 3, y1: y, x2: x + (long ? 11 : 7),
+                                 y2: y, class: 'calrung' }));
+      if (long) svg.append(svgText(x + 15, y + 1.6, String(n),
+                                   { class: 'calnum' }));
+    }
+    /* The copy number, boxed, exactly as it is on the label — it is how you
+     * tell the two apart, and it is the one mark on this drawing that is a
+     * name rather than a measurement. */
+    svg.append(svgEl('rect', { x: x + 32, y: 40, width: 9, height: 8,
+                               class: 'calbox' }));
+    svg.append(svgText(x + 36.5, 46.2, title.slice(-1), { class: 'calnum' }));
+  }
+
+  /* The across band, drawn overhanging both edges of label 1 because that is
+   * what it does: it is a scale across the whole 672-dot head, and the part
+   * that misses the paper is the part that says where the paper is. */
+  svg.append(svgEl('rect', { x: 2, y: 60, width: 58, height: 8,
+                             class: 'calband' }));
+  for (let n = 0; n <= 14; n += 1)
+    /* Every fifth notch runs the whole band, exactly as the printed one's
+     * does — that is what makes it read as a numbered scale rather than as
+     * a strip of hatching. */
+    svg.append(svgEl('line', { x1: 2 + n * 4, y1: 60,
+                               x2: 2 + n * 4, y2: n % 5 === 0 ? 68 : 64,
+                               class: 'calnotch' }));
+
+  /* A and B: where label 1's two edges cut that band. Their badges hang
+   * below the label with a leader on the edge itself, because the reading is
+   * about an EDGE — a badge floating in the middle of the band would be
+   * pointing at the band, which is not the question. */
+  for (const [x, letter] of [[8, 'A'], [52, 'B']]) {
+    svg.append(svgEl('line', { x1: x, y1: 68, x2: x, y2: 84,
+                               class: 'calleader' }));
+    svgBadge(svg, x, 89, letter);
+  }
+
+  /* C and E: the blank band down to the bar, INSIDE the label, because that
+   * band is what the reading is about. On a late-starting printer there is
+   * nothing printed in it, which is exactly why the answer there is 0 and
+   * not a distance. */
+  for (const [x, letter] of [[8, 'C'], [74, 'E']]) {
+    svg.append(svgEl('line', { x1: x + 34, y1: 14, x2: x + 34, y2: 30,
+                               class: 'calarrow' }));
+    svgBadge(svg, x + 34, 22, letter);
+  }
+
+  /* D and F: the bar down to the trailing die cut, drawn OUTSIDE each label
+   * as an ordinary dimension line — inside, they would have to cross the
+   * across band, and a measurement drawn over a different measurement is how
+   * somebody reads one off the other. These two are the ones that carry a
+   * late start. */
+  for (const [x, letter] of [[57, 'D'], [123, 'F']]) {
+    svg.append(svgEl('line', { x1: x, y1: 32, x2: x, y2: 82,
+                               class: 'calarrow' }));
+    svg.append(svgEl('line', { x1: x - 3, y1: 32, x2: x + 3, y2: 32,
+                               class: 'calrung' }));
+    svg.append(svgEl('line', { x1: x - 3, y1: 82, x2: x + 3, y2: 82,
+                               class: 'calrung' }));
+    svgBadge(svg, x, 45, letter);
+  }
+  return svg;
 }
 
 
@@ -2106,9 +2481,9 @@ function editStockDialog(stock) {
   body.append(el('h2', null, stock.name));
   body.append(el('p', 'lede',
     'Across the print head is the width the head covers in one pass. Along '
-    + 'the roll is how far the paper travels for one label. Nothing can work '
-    + 'out which is which for you \u2014 print the ruler and hold it against '
-    + 'a real label.'));
+    + 'the roll is how far the paper travels for one label. Nothing here can '
+    + 'work out which is which \u2014 but lining the roll up measures both '
+    + 'edges of the real paper, and says so if they look transposed.'));
 
   const fields = {};
   const field = (key, label, value, step, hint) => {
@@ -2158,7 +2533,8 @@ function editStockDialog(stock) {
       await post(`/api/stock/${stock.id}/swap`, {});
       $('modal').close();
       await loadState(); renderPrinter(); fillPickers();
-      toast('Swapped. Print the ruler to check.', 'good');
+      toast('Swapped. Line up this roll again \u2014 what it measured was '
+        + 'read off a label the other way round.', 'good');
     } catch (error) { fail(error); }
   };
   body.append(swap);
@@ -2167,16 +2543,10 @@ function editStockDialog(stock) {
   rest.append(field('count', 'Labels per roll', stock.per_roll, '1'));
   body.append(rest);
 
-  /* Where the printing starts is measured, not typed, so it is a button to
-   * the dialog that prints the thing you measure with rather than two more
-   * boxes here. Closing this one first: they share `#modal`. */
-  const where = el('button', 'btn', 'Where the printing starts on this roll');
-  where.type = 'button';
-  where.setAttribute('data-tip',
-    'Prints a label with a scale at its own corner, so you can see how far '
-    + 'in the printer really begins and move it.');
-  where.onclick = () => { $('modal').close(); offsetDialog(stock.id); };
-  body.append(where);
+  /* No route to the calibration from here. Where the printing starts is a
+   * property of a roll in a bay, and this dialog edits a row in a catalog —
+   * a stock that is in neither bay has nothing to line up, and a button
+   * offering it would have to ask which bay it meant. */
 
   const actions = el('div', 'actions');
   const save = el('button', 'btn primary', 'Save');

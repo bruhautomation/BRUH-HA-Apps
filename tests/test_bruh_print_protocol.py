@@ -171,8 +171,14 @@ class TestAJobAPrinterCanActuallyRead(unittest.TestCase):
     # the whole command — so a job that sends them still decodes here, and
     # a reader that did not know them would reject a perfectly ordinary
     # job for being unreadable.
+    #
+    # `f` takes TWO, which is the detail a hand-written expectation gets
+    # wrong: the manual says the skip "requires the 1 prior to the value",
+    # so `ESC f 1 n` is four bytes and a reader that consumed three would
+    # then read the count as a command and report a job it could not walk.
     _ARGS = {ord("D"): 1, ord("B"): 1, ord("q"): 1, ord("L"): 2,
-             ord("E"): 0, ord("G"): 0, ord("A"): 0,
+             ord("E"): 0, ord("G"): 0, ord("A"): 0, ord("@"): 0,
+             ord("f"): 2,
              ord("c"): 0, ord("d"): 0, ord("e"): 0, ord("g"): 0,
              ord("h"): 0, ord("i"): 0}
 
@@ -184,6 +190,13 @@ class TestAJobAPrinterCanActuallyRead(unittest.TestCase):
             byte = payload[i]
             if byte == protocol.ESC:
                 letter = payload[i + 1]
+                # An ESC whose "command" is another ESC is the sync run,
+                # which is the one sequence in this protocol that is not a
+                # command at all: every parser state ends up waiting for a
+                # letter, which is the whole point of it.
+                if letter == protocol.ESC:
+                    i += 1
+                    continue
                 if letter not in cls._ARGS:
                     raise AssertionError(
                         f"byte {i + 1} is ESC 0x{letter:02x} ({chr(letter)!r}), "
@@ -248,13 +261,18 @@ class TestJob(unittest.TestCase):
         self.assertEqual(1, job.count(protocol.form_feed()))
         self.assertTrue(job.endswith(protocol.form_feed()))
 
-    def test_the_roll_is_selected_once_per_copy(self):
-        """Re-sent per copy on purpose: seven bytes to start every label
-        from a known state, rather than inheriting whatever a power cycle or
-        another process left set."""
+    def test_the_roll_is_selected_ONCE_FOR_THE_WHOLE_JOB(self):
+        """It used to be re-sent per copy, on the reasoning that seven bytes
+        buys a known state per label. That reasoning is right about the dot
+        tab and the bytes per line — the manual says the printer holds those
+        until something changes them — and it is wrong about this one: a roll
+        select is not a statement about a label, it is a request to change
+        bays, and a request to change bays between copy 3 and copy 4 of one
+        job is not something any driver sends. DYMO's own does it once, in
+        `CLabelWriterDriverTwinTurbo::StartDoc`."""
         job = protocol.job([self.line()], bytes_per_line=84,
                            roll=protocol.ROLL_RIGHT, copies=4)
-        self.assertEqual(4, job.count(protocol.select_roll(2)))
+        self.assertEqual(1, job.count(protocol.select_roll(2)))
 
     def test_the_roll_byte_a_job_carries_is_the_ASCII_digit(self):
         """Asserted on a finished job as well as on the helper, because the
@@ -264,8 +282,11 @@ class TestJob(unittest.TestCase):
             with self.subTest(roll=roll):
                 job = protocol.job([self.line()], bytes_per_line=84,
                                    roll=roll, label_feed_dots=375)
-                self.assertTrue(job.startswith(bytes([ESC, ord("q"), wire])),
-                                job[:6])
+                # After the sync run and before anything about a label:
+                # the roll is the document's, and the geometry is the page's.
+                self.assertTrue(job.startswith(
+                    protocol.sync_run() + bytes([ESC, ord("q"), wire])),
+                    job[protocol.SYNC_ESCAPES:protocol.SYNC_ESCAPES + 6])
                 self.assertNotIn(bytes([ESC, ord("q"), roll]), job)
 
     def test_no_roll_byte_is_sent_when_there_is_no_roll_to_choose(self):
@@ -569,7 +590,8 @@ class TestHowDarkAndHowSlow(unittest.TestCase):
         payload = protocol.job([self.LINE], bytes_per_line=84,
                                label_feed_dots=1,
                                density="dark", quality="graphics")
-        self.assertTrue(payload.startswith(b"\x1bg\x1bi"), payload[:8])
+        self.assertTrue(payload.startswith(protocol.sync_run() + b"\x1bg\x1bi"),
+                        payload[protocol.SYNC_ESCAPES:][:8])
         self.assertLess(payload.index(b"\x1bi"),
                         payload.index(bytes([ESC, ord("L")])))
 
@@ -578,16 +600,19 @@ class TestHowDarkAndHowSlow(unittest.TestCase):
                                label_feed_dots=1,
                                density="dark", quality="graphics")
         self.assertTrue(payload.startswith(
-            protocol.select_roll(1) + b"\x1bg\x1bi"))
+            protocol.sync_run() + protocol.select_roll(1) + b"\x1bg\x1bi"))
 
-    def test_both_are_re_sent_for_every_copy(self):
-        """Same reasoning as the roll byte: four bytes to start each label
-        from a known state rather than inheriting the last job's."""
+    def test_both_are_sent_ONCE_for_the_whole_job(self):
+        """They used to be re-sent per copy, and they are the document's
+        rather than the page's for the same reason the roll byte is: how
+        dark a printer prints and how fast it moves the paper are settings
+        on the machine, and there is one machine for the whole job. DYMO's
+        driver sends both from `StartDoc`."""
         payload = protocol.job([self.LINE], bytes_per_line=84, copies=3,
                                label_feed_dots=1,
                                density="dark", quality="graphics")
-        self.assertEqual(3, payload.count(b"\x1bg"))
-        self.assertEqual(3, payload.count(b"\x1bi"))
+        self.assertEqual(1, payload.count(b"\x1bg"))
+        self.assertEqual(1, payload.count(b"\x1bi"))
 
     def test_graphics_mode_sends_every_line_twice(self):
         """The printer steps the paper 600 times per inch in this mode and
@@ -628,18 +653,25 @@ class TestHowDarkAndHowSlow(unittest.TestCase):
         per line, the rows, the feed. Written out as the literal preamble
         rather than as a list of things it must not contain, because a
         command added later would pass the second and fail the first — and
-        the whole value of this mode is knowing exactly what it sends."""
+        the whole value of this mode is knowing exactly what it sends.
+
+        The sync run goes with the rest. It is the manual's own recovery
+        sequence and it is still 156 bytes a firmware has to agree about, so
+        a `bare` that sent it would not be answering the question it exists
+        for."""
         rows = [bytes([i]) * 84 for i in range(20)]
         bare = protocol.job(rows, bytes_per_line=84, roll=1, copies=1,
                             label_feed_dots=20,
-                            density=None, quality=None, dot_tab=False)
+                            density=None, quality=None, dot_tab=False,
+                            sync=False)
         self.assertTrue(bare.startswith(
             protocol.select_roll(1)
             + protocol.set_label_length(protocol.search_length(20))
             + protocol.set_bytes_per_line(84)
             + bytes([protocol.SYN])), bare[:16])
         for command in (b"\x1bc", b"\x1bd", b"\x1be", b"\x1bg",
-                        b"\x1bh", b"\x1bi", b"\x1bB"):
+                        b"\x1bh", b"\x1bi", b"\x1bB", b"\x1b@", b"\x1bf",
+                        b"\x1b\x1b"):
             self.assertNotIn(command, bare, command)
 
     def test_an_unknown_density_or_quality_is_refused(self):
@@ -863,6 +895,231 @@ class TestModels(unittest.TestCase):
         anonymous = printers.Discovered(0x0020, printers.MODELS[0x0020],
                                         bus=1, address=4)
         self.assertIn("@1.4", anonymous.key)
+
+
+class TestTheDocumentAndItsPages(unittest.TestCase):
+    """A job is a document with pages, which is DYMO's own shape and was not.
+
+    Their CUPS driver (`dymo-cups-drivers`, `src/lw/LabelWriterDriver.cpp`)
+    opens a document with the sync run, the resolution, the tabs, the quality
+    and the density — and, on the Twin Turbo, one `ESC q` — then starts each
+    page with `ESC L`, ends each page with `ESC G` and the document with
+    `ESC E`. This add-on sent the whole preamble per copy.
+
+    None of it is proven to have printed wrong. What makes it worth changing
+    is the reverse: it is free, and it is the shape known to align, so
+    keeping our own arrangement means every future misalignment has one more
+    candidate explanation that nobody can rule out from inside a container.
+    """
+
+    LINE = b"\xf0" * 84
+
+    def job(self, **kwargs):
+        kwargs.setdefault("label_feed_dots", 375)
+        return protocol.job([self.LINE], bytes_per_line=84, **kwargs)
+
+    def test_it_opens_with_the_sync_run_and_that_run_is_dymos_number(self):
+        """The manual's floor is "at least 85 continuous <esc> characters";
+        DYMO's driver sends 156. A printer half-way through reading a command
+        it never finished getting — a job cut short, a panel restarted
+        mid-write — reads the first bytes of the next one as arguments to the
+        last, and this is the sequence that ends that whatever state it is
+        in."""
+        payload = self.job()
+        self.assertEqual(156, protocol.SYNC_ESCAPES)
+        self.assertTrue(payload.startswith(bytes([protocol.ESC]) * 156))
+        self.assertGreaterEqual(protocol.SYNC_ESCAPES, 85,
+                                "the manual's floor")
+        # 157 and not 156: the run ends and the first real command brings an
+        # ESC of its own. A run that ran on would be a printer still waiting
+        # for a command letter with the whole job behind it.
+        leading = len(payload) - len(payload.lstrip(bytes([protocol.ESC])))
+        self.assertEqual(157, leading)
+        self.assertIn(chr(payload[157]), "L@q")
+
+    def test_the_reset_is_sent_only_when_a_roll_asks_for_it(self):
+        """`ESC @` "resets all parameters… and sets top-of-form as true",
+        which is the state a reverse feed after a tear-off is owed from — and
+        in the same breath, "acted upon immediately; any data still in the
+        print buffer will be lost". Nothing here can see whether a previous
+        job is still draining, so it is a per-roll answer somebody measured
+        rather than something sent to every printer in the hope."""
+        self.assertNotIn(b"\x1b@", self.job())
+        self.assertNotIn(b"\x1b@", self.job(job_start="plain"))
+        reset = self.job(job_start="reset")
+        self.assertIn(b"\x1b@", reset)
+        self.assertEqual(1, reset.count(b"\x1b@"))
+        # After the sync run, because a reset the parser is mid-command for
+        # is a reset that never happens.
+        self.assertGreater(reset.index(b"\x1b@"), 155)
+
+    def test_a_job_start_that_is_neither_is_refused(self):
+        """Not defaulted. "Whatever this is, send no reset" would be a roll
+        calibrated with the reset printing without it, silently, for good."""
+        for bad in ("Reset", "", "plain ", None):
+            with self.subTest(job_start=bad), \
+                    self.assertRaises(protocol.ProtocolError):
+                self.job(job_start=bad)
+
+    def test_the_geometry_is_stated_once_per_page(self):
+        """The other half of the split, and the reason it is not "everything
+        once": the manual says the dot tab and the bytes per line are held
+        "until they are changed by a new command sequence or are reset to
+        default values", and `ESC L` positions the label about to be printed.
+        Those are the page's."""
+        payload = protocol.job([self.LINE], bytes_per_line=84, copies=3,
+                               label_feed_dots=375, roll=1)
+        self.assertEqual(3, payload.count(bytes([protocol.ESC, ord("L")])))
+        self.assertEqual(3, payload.count(bytes([protocol.ESC, ord("B"), 0])))
+        self.assertEqual(3, payload.count(protocol.set_bytes_per_line(84)))
+        self.assertEqual(1, payload.count(protocol.select_roll(1)))
+
+    def test_pages_are_divided_by_the_short_feed_and_ended_by_the_long_one(self):
+        """The manual's own advice, verbatim: "to optimize print speed and
+        eliminate this reverse feeding when printing multiple labels, use the
+        Short Form Feed command between labels, and the Form Feed command
+        after the last label"."""
+        payload = protocol.job([self.LINE], bytes_per_line=84, copies=3,
+                               label_feed_dots=375)
+        self.assertEqual(2, payload.count(protocol.short_form_feed()))
+        self.assertEqual(1, payload.count(protocol.form_feed()))
+        self.assertTrue(payload.endswith(protocol.form_feed()))
+
+    def test_hold_ends_a_job_inside_the_printer(self):
+        """The escape route for a roll whose first label of every job is
+        wrong. `ESC E` "places the next label beyond the starting print
+        position", which is what the missing reverse feed then fails to undo;
+        `ESC G` leaves the label "partially inside the printer and cannot be
+        torn off", which costs a Feed button and saves that label."""
+        payload = protocol.job([self.LINE], bytes_per_line=84, copies=2,
+                               label_feed_dots=375, ending="hold")
+        self.assertTrue(payload.endswith(protocol.short_form_feed()))
+        self.assertNotIn(protocol.form_feed(), payload)
+
+    def test_an_ending_that_is_neither_is_refused(self):
+        for bad in ("Tear", "hold ", "", None):
+            with self.subTest(ending=bad), \
+                    self.assertRaises(protocol.ProtocolError):
+                self.job(ending=bad)
+
+    def test_two_pages_can_carry_different_rows(self):
+        """Which is the whole reason a job is a list of pages. The
+        calibration job prints two labels that carry different numbers, and
+        a job that was rows-and-a-count could not express it — nor the first
+        label of a run being the one that starts late."""
+        first = [b"\xff" * 84]
+        second = [b"\x0f" * 84]
+        payload = protocol.job_pages(
+            [protocol.Page(first), protocol.Page(second)],
+            bytes_per_line=84, label_feed_dots=375)
+        self.assertEqual(first + second,
+                         TestAJobAPrinterCanActuallyRead._decode(payload, 84))
+
+    def test_a_page_with_no_rows_is_refused_like_an_empty_job(self):
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.job_pages([], bytes_per_line=84)
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.job_pages([protocol.Page([])], bytes_per_line=84)
+
+    def test_the_whole_document_is_still_something_a_printer_can_walk(self):
+        """The guarantee the ETB failure cost a release to learn: every byte
+        of a finished job has to be readable by something that knows only
+        SYN and the escape commands. The sync run, the reset and the skip are
+        all new bytes in that stream."""
+        rows = [bytes([i % 256]) * 84 for i in range(40)]
+        payload = protocol.job_pages(
+            [protocol.Page(rows, 30), protocol.Page(rows)],
+            bytes_per_line=84, roll=1, label_feed_dots=40,
+            job_start="reset", density="dark", quality="graphics")
+        decoded = TestAJobAPrinterCanActuallyRead._decode(payload, 84)
+        self.assertEqual([row for row in rows for _ in (0, 1)] * 2, decoded)
+
+
+class TestFeedingBlankPaperBeforeARow(unittest.TestCase):
+    """`ESC f 1 n`, which was documented in this file as deliberately unused.
+
+    That was right about what it cannot do — a skip only moves paper forward,
+    so it cannot answer a printer that starts LATE — and wrong to conclude
+    the command has no job. The other sign is real: a roll whose ink is asked
+    for BEFORE the die cut is our own over-feed, and feeding that far first
+    is exactly the fix.
+    """
+
+    def test_it_carries_the_1_the_manual_insists_on(self):
+        """"Note: requires the 1 prior to the value." A skip missing it is a
+        printer told to skip whatever the next byte happens to be, and the
+        next byte is a raster line."""
+        self.assertEqual(bytes([protocol.ESC, ord("f"), 0x01, 30]),
+                         protocol.skip_lines(30))
+
+    def test_zero_is_no_command_at_all(self):
+        """Every ordinary label asks for this, and a command that does
+        nothing is still a command a firmware can refuse."""
+        self.assertEqual(b"", protocol.skip_lines(0))
+        self.assertEqual(b"", protocol.skip_lines(-5))
+
+    def test_a_long_skip_is_chunked_and_never_masked(self):
+        """n is one byte and the manual's range is 0-255. `n & 0xFF` on a
+        300-line skip is a 44-line skip — a quarter of an inch of paper the
+        job never fed, silently."""
+        skip = protocol.skip_lines(300)
+        self.assertEqual(bytes([protocol.ESC, ord("f"), 0x01, 255,
+                                protocol.ESC, ord("f"), 0x01, 45]), skip)
+        self.assertEqual(300, sum(skip[i] for i in range(3, len(skip), 4)))
+
+    def test_it_scales_with_graphics_mode_exactly_as_the_raster_does(self):
+        """"The distance of a line is dependant on the current resolution set
+        for the printer by the ESC h / ESC i commands." So a skip left
+        unscaled in the 300x600 mode feeds half of what it was asked for,
+        which is the graphics-mode length bug in a third place."""
+        text = protocol.skip_lines(50, quality="text")
+        graphics = protocol.skip_lines(50, quality="graphics")
+        self.assertEqual(bytes([protocol.ESC, ord("f"), 0x01, 50]), text)
+        self.assertEqual(bytes([protocol.ESC, ord("f"), 0x01, 100]), graphics)
+        self.assertEqual(protocol.LINE_REPEAT["graphics"], 2)
+
+    def test_it_lands_before_the_rows_and_after_the_geometry(self):
+        """A skip is "put into the data buffer along with the print data so
+        that it will take effect at the appropriate point in the data
+        stream", and the appropriate point here is between the bytes-per-line
+        that describes a row and the first row."""
+        payload = protocol.job([b"\xff" * 84], bytes_per_line=84,
+                               label_feed_dots=375, pre_skip_dots=59)
+        skip = payload.index(bytes([protocol.ESC, ord("f")]))
+        self.assertGreater(skip, payload.index(protocol.set_bytes_per_line(84)))
+        self.assertLess(skip, payload.index(bytes([protocol.SYN])))
+
+    def test_the_skip_is_charged_to_the_search_budget(self):
+        """"Print lines and lines fed both count towards this total." A job
+        that skips 5mm and then prints a whole label travels 5mm further than
+        the label before it can reach the hole, so a budget that ignored the
+        skip would end the search exactly that far short — which is the
+        pre-0.5.0 drift, reintroduced by the one job whose whole purpose is
+        measuring where the printing starts."""
+        skip = 59  # 5mm at 300 dpi
+        without = protocol.job([b"\xff" * 84], bytes_per_line=84,
+                               label_feed_dots=375)
+        with_skip = protocol.job([b"\xff" * 84], bytes_per_line=84,
+                                 label_feed_dots=375, pre_skip_dots=skip)
+        self.assertEqual(469, self._length(without))
+        self.assertEqual(469 + skip, self._length(with_skip))
+        self.assertEqual(469 + skip, protocol.budget_dots(375, None, skip))
+
+    def test_the_budget_helper_and_the_wire_agree_in_graphics_mode(self):
+        """Two answers to "what was the printer told to search within" is one
+        too many, and the calibration route reports the number the derivation
+        divides by."""
+        payload = protocol.job([b"\xff" * 84], bytes_per_line=84,
+                               label_feed_dots=375, pre_skip_dots=59,
+                               quality="graphics")
+        self.assertEqual(protocol.budget_dots(375, None, 59) * 2,
+                         self._length(payload))
+
+    def _length(self, payload: bytes) -> int:
+        marker = bytes([protocol.ESC, ord("L")])
+        index = payload.index(marker)
+        return (payload[index + 2] << 8) | payload[index + 3]
+
 
 
 if __name__ == "__main__":
