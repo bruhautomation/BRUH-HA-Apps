@@ -92,7 +92,7 @@ profile bruh-print flags=(attach_disconnected,mediate_deleted) {
   /run/udev/** r,
 
   # Filesystem: /config (integration deploy, shared state, the Lovelace
-  # card), /data (stocks, templates, history, uploaded images), and the
+  # card), /data (stocks, templates, history, settings), and the
   # container's own tree.
   file,
 

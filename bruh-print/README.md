@@ -18,9 +18,9 @@ that is. The tab reads in that order too: what to say, the picture, then
 and the label, copies, font and the rest sit under one line that says what
 they are currently set to.
 
-**A real designer.** Text, Code 128 barcodes, QR codes, boxes, rules and
-uploaded images, dragged and resized on the label itself. Everything is in
-millimetres and every preview is the printer's own render — the picture you
+**A real designer.** Text, Code 128 barcodes, QR codes, boxes and rules,
+dragged and resized on the label itself. Everything is in millimetres and
+every preview is the printer's own render — the picture you
 see is the bitmap that goes to the head. Boxes snap to the label's edges and
 centre lines, to each other and to a 1mm grid, with a line drawn at whatever
 they caught; the printable area and the printer's own margin are drawn on the
@@ -88,7 +88,14 @@ that does nothing.
    sheet with a 1mm scale at its own corner, you read off how far in the
    printing really begins, and BRUH Print moves it. Once per roll, and
    nothing to do at all unless a label looks wrong.
-7. Type something on the Quick tab and print it.
+7. If a **narrow** roll prints across only part of its width, that is a
+   different number in the same dialog. The head is 672 dots however small
+   the label is, and a raster starts at its first dot — so a roll that does
+   not sit at that end of the head is only partly printed on, and no offset
+   can move it, because an offset shifts artwork inside the label rather
+   than moving the label along the head. Tick **Print a scale across the
+   whole head**, print the calibration label, and read the distance off it.
+8. Type something on the Quick tab and print it.
 
 ## From Home Assistant
 

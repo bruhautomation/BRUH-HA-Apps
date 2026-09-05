@@ -8,6 +8,7 @@
     GET  /api/printer/status         ask the printer how it is
     POST /api/printer/test           print the ruler
     POST /api/printer/calibrate      print the "where does the printing start" label
+    POST /api/printer/head-scale     print a scale across the WHOLE print head
     GET  /api/stocks                 the label catalog
     POST /api/stock                  add or correct a stock
     POST /api/stock/{id}/swap        the two dimensions, exchanged
@@ -25,7 +26,6 @@
     POST /api/template/{id}/print    fill it in and print it
     GET  /api/history                what was printed
     POST /api/history/{id}/reprint   print exactly that again
-    GET/POST/DEL /api/assets         images a label may use
     GET  /api/font/{key}/sample.png  what that font looks like, drawn by the renderer
 
 Two rules shape the whole file.
@@ -34,7 +34,7 @@ Two rules shape the whole file.
 not be.** The one refusal is a stock/roll mismatch — sending a 2.25"-wide
 raster to a 0.56" roll prints across the liner, and a run of fifty does it
 fifty times. Everything else that could be wrong (a barcode that will not
-fit, an image that could not be read, a fixed font size that clips) comes
+fit, a fixed font size that clips, an element type a release retired) comes
 back as a *note* beside a label that still prints, because a label with one
 element missing is usually still the label somebody wanted and a refusal is
 always a person unable to work.
@@ -73,17 +73,18 @@ from stores import templates as template_store  # noqa: E402
 # Layout
 # ---------------------------------------------------------------------------
 DATA = Path(os.environ.get("BRUH_PRINT_DATA", "/data"))
-ASSETS = DATA / "assets"
 SHARED = Path(os.environ.get("BRUH_PRINT_SHARED", "/config/.bruh_print"))
 
 BIND_HOST = "0.0.0.0"  # noqa: S104 - ingress reaches the container, not the LAN
 DEFAULT_PORT = 8097
 
-# An uploaded image is decoded by Pillow, which is a decoder taking bytes
-# from a browser; 8 MB is more than any logo and small enough that a
-# malformed file cannot be a memory problem before it is a decode problem.
-MAX_ASSET_BYTES = 8 * 1024 * 1024
-ALLOWED_ASSET_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
+# The largest body the panel will read. Everything it accepts is now a JSON
+# label document — a few hundred boxes of millimetres and words — so this is
+# generous rather than tight, and it is a named number rather than aiohttp's
+# 1 MB default because a limit nobody chose is a limit nobody can explain the
+# day a template with sixty fields is refused. It was 9 MB while an image
+# upload rode the same route; nothing uploads a file any more.
+MAX_BODY_BYTES = 2 * 1024 * 1024
 
 log = logging.getLogger("bruh_print.panel")
 
@@ -121,8 +122,6 @@ class Panel:
         self.templates = template_store.TemplateStore(data / "templates.json")
         self.history = history.HistoryStore(data / "history.json")
         self.settings = settings.SettingsStore(data / "settings.json")
-        self.assets = data / "assets"
-        self.assets.mkdir(parents=True, exist_ok=True)
         self.started = time.time()
         # Discovery is a USB bus walk and the UI asks for state on every tab
         # change, so it is cached for a couple of seconds. Long enough that a
@@ -303,7 +302,6 @@ class Panel:
             "settings": self.settings.all(),
             "fonts": list(fonts.catalog().values()),
             "catalog": label_doc.catalog_payload(),
-            "assets": self.asset_list(),
             "history": [e.as_dict() for e in self.history.all(30)],
         }
 
@@ -359,19 +357,6 @@ class Panel:
             atomic_write.write_json(SHARED / "state.json", payload)
         except OSError as exc:
             log.warning("Could not mirror state to %s: %s", SHARED, exc)
-
-    # -- assets ------------------------------------------------------------
-    def asset_list(self) -> list[dict]:
-        out = []
-        for path in sorted(self.assets.glob("*")):
-            if not path.is_file():
-                continue
-            try:
-                size = path.stat().st_size
-            except OSError:
-                continue
-            out.append({"name": path.name, "bytes": size})
-        return out
 
 
 # ---------------------------------------------------------------------------
@@ -475,7 +460,6 @@ def _render(state: Panel, document: dict, *, dpi: int | None = None,
         parsed, stock,
         dpi=dpi or model.dpi,
         max_across_dots=head_dots or model.dots,
-        assets=state.assets,
     )
 
 
@@ -486,17 +470,23 @@ async def _send(state: Panel, rendered, *, stock, side: str,
     model = printer.model if printer else dymo_printers.UNKNOWN
     roll_code = protocol.ROLL_CODES.get(side) if model.twin else None
 
-    # Where this roll needs the printing put, applied on the way to the
-    # printer and nowhere else. It is a correction to the machine, not a
-    # change to the label, so the document, the preview and the designer all
-    # stay exactly as they were — and the note, when the shift costs ink,
-    # goes onto the rendered label's own list, which is what every caller
-    # already reads after `_send` returns.
-    to_print, offset_note = render_image.offset_raster(
+    # Where this roll needs the printing put and where its paper sits under
+    # the head, applied on the way to the printer and nowhere else. Both are
+    # corrections to the machine, not changes to the label, so the document,
+    # the preview and the designer all stay exactly as they were — and the
+    # notes, when a shift costs ink, go onto the rendered label's own list,
+    # which is what every caller already reads after `_send` returns.
+    #
+    # One call, because `for_the_head` is the one place the two across
+    # quantities meet: the offset moves artwork within the label and the
+    # media position moves the label along the head, and they clip against
+    # different edges in that order.
+    to_print, placement_notes = render_image.for_the_head(
         rendered, across_mm=stock.offset_across_mm,
-        feed_mm=stock.offset_feed_mm)
-    if offset_note:
-        rendered.notes.append(offset_note)
+        feed_mm=stock.offset_feed_mm,
+        media_across_mm=stock.media_across_mm,
+        head_dots=model.dots)
+    rendered.notes.extend(placement_notes)
 
     lines = render_image.raster_lines(to_print, model.bytes_per_line)
     # `bare` drops roll select: on a Twin Turbo that means every label goes
@@ -509,10 +499,37 @@ async def _send(state: Panel, rendered, *, stock, side: str,
     # take a command, and a mode that still sent three of them would not
     # answer that question.
     bare = mode == "bare"
+    # The die-cut gap, in the printer's own dots, rounded here and nowhere
+    # else — the same `mm_to_dots` every other millimetre in this add-on
+    # goes through. `None` is nobody having measured it, and it is passed
+    # through as `None` rather than as a zero: zero is a real answer that
+    # means something different, and this is the one place the two could be
+    # collapsed by accident.
+    gap_dots = (None if stock.gap_mm is None
+                else render_image.mm_to_dots(stock.gap_mm, model.dpi))
+    if gap_dots is not None and gap_dots <= 0 and not stock.continuous:
+        # Reported every time, deliberately, where the offset's note fires
+        # only on lost ink. This is not a correction that quietly costs
+        # nothing — it is a diagnostic somebody has deliberately wound down
+        # to the state that shipped before 0.5.0 and drifted down the roll,
+        # and the label in their hand is the thing they are reading.
+        rendered.notes.append(
+            f"The gap between labels on this roll is set to "
+            f"{stock.gap_mm:.1f}mm, so the printer's top-of-form search "
+            f"budget is exactly the label: it stops looking for the sense "
+            f"hole at the instant the artwork ends. That is what made every "
+            f"label drift down the roll before 0.5.0, and it is left set "
+            f"because it is how you measure the dead band at the leading "
+            f"edge. Clear the gap on the Printer tab, under “Where the "
+            f"printing starts”, when you have your answer.")
     payload = protocol.job(
         lines, bytes_per_line=model.bytes_per_line,
         roll=None if bare else roll_code,
         copies=copies,
+        # Hole to hole is the label plus the gap after it, which is what
+        # `ESC L` is defined in. `None` keeps the 25%-with-a-floor headroom
+        # that shipped, so a roll nobody has measured is untouched.
+        gap_dots=gap_dots,
         # The STOCK's own feed length, not the raster's, and the two differ
         # exactly where it matters: on continuous paper the raster is as
         # long as the artwork and there is no label length at all. The
@@ -814,6 +831,146 @@ def _calibration_label(stock) -> dict:
             "elements": elements}
 
 
+# How often the head scale prints a number, in millimetres. Every 5mm, and
+# that is the whole design of this label: the person holding it sees a strip
+# of paper with part of a ruler on it and NO view of where that ruler began,
+# so a bare ladder of ticks is unreadable — there is nothing to count from.
+# A number every 5mm makes every fragment self-locating: 14mm of 0.56" wrap
+# carries two or three of them whatever the paper's position turns out to be.
+HEAD_SCALE_NUMBER_MM = 5
+# The digits, and the room a two-digit number needs beside its own tick. The
+# head is 56.9mm across, so the biggest number printed is 55.
+HEAD_SCALE_DIGIT_MM = 2.2
+HEAD_SCALE_DIGIT_ROOM = 5.0
+# What the scale needs along the feed: the baseline, the long ticks, and the
+# digits under them. A stock shorter than this prints the ladder alone.
+HEAD_SCALE_FEED_MM = 6.4
+
+
+async def h_printer_head_scale(request: web.Request) -> web.Response:
+    """Print a scale across the WHOLE print head, media width ignored.
+
+    The third question, and the one neither of the other two labels can
+    answer. The ruler says which measurement is which; the calibration label
+    says where on the LABEL the printing starts. Both are drawn to the
+    stock's own sheet — 168 dots for a 0.56" wrap — so neither can say
+    anything about where those 168 dots land on a 672-dot head, because
+    every mark they make is inside them.
+
+    This one is drawn to the head. The stock's width is replaced by the
+    printer's printable width, so the raster runs from head dot 0 to head dot
+    671 and whatever lands on the paper reads directly as the paper's
+    position. That is the number the person types in.
+
+    **It deliberately prints outside the media, and that is worth saying
+    plainly rather than burying.** A direct-thermal head fires wherever it is
+    told; where there is no thermal paper the heat goes into the liner and,
+    past the web, into the platen roller. Three things make it acceptable and
+    the control says so before anybody presses it: it is line work rather
+    than fill, so the dots fired outside the paper are a small fraction of a
+    pass; it is one label rather than a habit; and the firmware treats it as
+    entirely ordinary — the manual is explicit that "the printer does not
+    check for inter-label gap when printing. It is the responsibility of the
+    host computer to avoid overrunning the label area", which is the machine
+    saying this is the host's call to make. What is NOT acceptable is a solid
+    band across the head, which is why this is a ladder: repeated full-width
+    heating over bare platen rubber is the one thermal-printer habit worth
+    avoiding, and nothing here needs it.
+
+    Neither across correction is applied to it, on purpose. The saved media
+    position and the across offset both move ink along the head, and a scale
+    that moved with them would read relative to itself: print it twice and it
+    says the same thing twice, whatever the number. Left alone it is an
+    absolute instrument — it always reads the truth about where the paper is,
+    which is what makes printing it again a check rather than a ritual. The
+    FEED offset is left on, because it moves the scale along the roll and
+    cannot disturb an across reading.
+    """
+    state = panel(request)
+    payload = await body(request)
+    stock_id = str(payload.get("stock") or state.settings.get("default_stock"))
+    side = str(payload.get("side", "") or "")
+
+    try:
+        entry = state.stocks.require(stock_id)
+    except stock_store.UnknownStock as exc:
+        return bad(exc.detail, 404)
+
+    side, notes = state.resolve_side(entry.id, side)
+    printer = state.chosen()
+    model = printer.model if printer else dymo_printers.UNKNOWN
+    head = stock_store.replace(
+        entry, across_in=model.dots / model.dpi, margin_mm=0.0,
+        media_across_mm=0.0, offset_across_mm=0.0)
+    document = _head_scale_label(head)
+    parsed, _, rendered = await asyncio.to_thread(
+        _render, state, document, stock=head)
+    result = await _send(state, rendered, stock=head, side=side, copies=1)
+    state.consume(side, 1)
+    state.mirror_state()
+    return ok(printed=1, side=side, stock=entry.id,
+              head_mm=round(head.across_mm, 1),
+              notes=notes + rendered.notes, **result)
+
+
+def _head_scale_label(stock) -> dict:
+    """A millimetre scale from head dot 0, right across the print head.
+
+    `stock` here is a copy of the roll whose `across_in` has been replaced by
+    the printer's printable width and whose margin is zero, so (0, 0) in this
+    document is the head's first dot and `across_mm` is the whole head.
+
+    Every mark is numbered often enough to be read from a fragment. That is
+    the difference between this and the calibration label: that one is read
+    against the label's own two edges, which are both on the paper, and this
+    one is read against an edge whose other side is not printed at all.
+    """
+    across_mm, feed_mm = stock.drawable_mm
+    rule = CALIBRATION_RULE_MM
+    tick = CALIBRATION_TICK_MM
+    digits = feed_mm >= HEAD_SCALE_FEED_MM
+
+    def line(x, y, w, h):
+        return {"type": "line", "x_mm": x, "y_mm": y, "w_mm": w, "h_mm": h,
+                "props": {"stroke_mm": min(w, h)}}
+
+    # The baseline the ticks hang off, along the whole head. A thin rule
+    # rather than a band: see the handler for why this label is line work.
+    elements: list[dict] = [line(0, 0, across_mm, rule)]
+
+    for millimetre in range(0, int(across_mm) + 1):
+        numbered = millimetre % HEAD_SCALE_NUMBER_MM == 0
+        elements.append(
+            line(millimetre, 0, tick, 3.0 if numbered else 1.5))
+        if not (numbered and digits):
+            continue
+        # Each number owns the 5mm its own tick sits in the middle of, so
+        # consecutive boxes meet and never overlap — the collision the
+        # calibration label's two ladders had, avoided by construction
+        # rather than by dropping a digit. The two end boxes are cut off by
+        # the sheet, so those digits are pushed against their own tick
+        # instead of being centred in half a box; a "0" floating 1.25mm from
+        # the head's first dot is a scale reading a millimetre wrong to
+        # anybody who trusts the digit over the tick.
+        left = max(0.0, millimetre - HEAD_SCALE_DIGIT_ROOM / 2)
+        right = min(across_mm, millimetre + HEAD_SCALE_DIGIT_ROOM / 2)
+        align = "center"
+        if left <= 0.0:
+            align = "left"
+        elif right >= across_mm:
+            align = "right"
+        elements.append({
+            "type": "text", "x_mm": left, "y_mm": 3.4,
+            "w_mm": max(1.0, right - left), "h_mm": HEAD_SCALE_DIGIT_MM,
+            "props": {"text": str(millimetre), "font": "sans",
+                      "size_mm": HEAD_SCALE_DIGIT_MM, "align": align,
+                      "valign": "top", "wrap": False},
+        })
+
+    return {"stock": stock.id, "rotate": 0, "name": "Head scale",
+            "elements": elements}
+
+
 # -- stocks -----------------------------------------------------------------
 async def h_stocks(request: web.Request) -> web.Response:
     return ok(stocks=[s.as_dict() for s in panel(request).stocks.all()])
@@ -865,6 +1022,8 @@ async def h_stock_put(request: web.Request) -> web.Response:
         # would undo a measurement made one button away.
         offset_across_mm=(existing.offset_across_mm if existing else 0.0),
         offset_feed_mm=(existing.offset_feed_mm if existing else 0.0),
+        media_across_mm=(existing.media_across_mm if existing else 0.0),
+        gap_mm=(existing.gap_mm if existing else None),
     )
     state.stocks.put(entry)
     state.mirror_state()
@@ -940,8 +1099,83 @@ def _offset_mm(payload: dict, key: str, current: float) -> float:
     return value
 
 
+def _media_mm(payload: dict, current: float, head_mm: float) -> float:
+    """Where this roll's paper sits under the head, off the wire.
+
+    A different quantity from an offset and refused against a different
+    bound, which is the whole reason it is not `_offset_mm` with a bigger
+    number: an offset past an inch is a mistyped registration correction,
+    while a media position of 30mm is an ordinary answer for a narrow roll in
+    the middle of a 57mm head. What it cannot be is negative — paper does not
+    begin before the head's first dot; a roll that overhangs that end simply
+    starts at zero — and it cannot be past the head, because paper out there
+    is paper no dot can reach.
+    """
+    raw = payload.get("media_across_mm", None)
+    if raw in (None, ""):
+        return float(current)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise _refuse("Where the paper sits is a number of millimetres in "
+                      "from the print head’s first dot.")
+    if value < 0:
+        raise _refuse(
+            "That number cannot be negative: it is how far in from the "
+            "print head’s first dot the paper begins, and paper cannot "
+            "begin before it. A roll that hangs off that end sits at 0.")
+    if value >= head_mm:
+        raise _refuse(
+            f"This print head is {head_mm:.1f}mm wide, so paper starting "
+            f"{value}mm in would be past the last dot and nothing would "
+            f"print. Print the scale across the head and read the number "
+            f"where the label’s own edge falls.")
+    return value
+
+
+# The catalog carries no die-cut gaps and nothing here can measure one, so
+# the only bound is the shape of a typo. A gap of more than an inch is not a
+# gap, it is a label somebody typed into the wrong box.
+MAX_GAP_MM = 25.4
+
+
+def _gap_mm(payload: dict, current: float | None) -> float | None:
+    """The die-cut gap off the wire, in three states rather than two.
+
+    Absent from the payload means keep what is stored — the partial-update
+    rule this route follows, and what a panel served before 0.7.0 sends.
+    Present and empty means clear it, back to nobody having measured it.
+    Present and a number means that number, **zero included**: an empty
+    answer and a zero answer are different states, and collapsing them is
+    the `${VAR:-default}` trap. Zero is the setting the experiment this
+    control exists for is actually run at, so it is the one value that
+    cannot be allowed to fall through to "unset".
+    """
+    if "gap_mm" not in payload:
+        return current
+    raw = payload["gap_mm"]
+    if raw in (None, ""):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise _refuse("The gap between labels is a number of millimetres — "
+                      "leave it empty if you have not measured it.")
+    if value < 0:
+        raise _refuse("A gap between labels cannot be negative. Leave the "
+                      "box empty if you have not measured it; zero is a "
+                      "real setting and means the search stops at the end "
+                      "of the label.")
+    if value > MAX_GAP_MM:
+        raise _refuse(
+            f"{value}mm is wider than any DYMO die-cut gap. That is the "
+            f"paper BETWEEN two labels, not the label — a few millimetres "
+            f"at most.")
+    return value
+
+
 async def h_stock_offset(request: web.Request) -> web.Response:
-    """Where this roll needs the printing put.
+    """Where this roll needs the printing put, and where its paper sits.
 
     Per stock, because registration on die-cut paper is dominated by where
     the sense holes sit relative to the die cut, and that is a property of
@@ -949,6 +1183,21 @@ async def h_stock_offset(request: web.Request) -> web.Response:
     for the same reason `turn` has one: it is set from a dialog that also
     prints a label to measure with, and sending the whole stock back from
     there would be that dialog quietly saving four numbers it never showed.
+
+    Four numbers now, and only the first two are the same KIND of number.
+    The offsets are registration wander, in tenths of a millimetre, moving
+    artwork within the label. `media_across_mm` is where the whole label
+    lands on a fixed 672-dot head, and on a 0.56" wrap it is centimetres.
+    `gap_mm` is not a correction at all — it is a measurement of the paper
+    that changes what the printer is told to search for. They are typed in
+    different boxes with different words and refused against different
+    bounds — see `_media_mm` and `_gap_mm`. They share this route because
+    they share one dialog and one Save, and a Save that was two requests is
+    a Save that can half-succeed.
+
+    Anything the caller did not name keeps its current value, the same
+    partial-update rule the Edit dialog follows: a panel served before this
+    release posts two keys and must not blank the third.
     """
     state = panel(request)
     try:
@@ -956,10 +1205,16 @@ async def h_stock_offset(request: web.Request) -> web.Response:
     except stock_store.UnknownStock as exc:
         return bad(exc.detail, 404)
     payload = await body(request)
+    printer = state.chosen()
+    model = printer.model if printer else dymo_printers.UNKNOWN
     across = _offset_mm(payload, "offset_across_mm", entry.offset_across_mm)
     feed = _offset_mm(payload, "offset_feed_mm", entry.offset_feed_mm)
+    media = _media_mm(payload, entry.media_across_mm,
+                      model.dots / model.dpi * stock_store.MM_PER_IN)
+    gap = _gap_mm(payload, entry.gap_mm)
     updated = state.stocks.put(stock_store.replace(
-        entry, offset_across_mm=across, offset_feed_mm=feed, builtin=False))
+        entry, offset_across_mm=across, offset_feed_mm=feed,
+        media_across_mm=media, gap_mm=gap, builtin=False))
     state.mirror_state()
     return ok(stock=state._stock_row(updated),
               stocks=[state._stock_row(s) for s in state.stocks.all()])
@@ -1312,58 +1567,6 @@ async def h_history_clear(request: web.Request) -> web.Response:
     return ok(history=[])
 
 
-# -- assets -----------------------------------------------------------------
-async def h_asset_upload(request: web.Request) -> web.Response:
-    state = panel(request)
-    reader = await request.multipart()
-    saved: list[str] = []
-    while True:
-        part = await reader.next()
-        if part is None:
-            break
-        if not getattr(part, "filename", None):
-            continue
-        name = Path(part.filename).name
-        if Path(name).suffix.lower() not in ALLOWED_ASSET_SUFFIXES:
-            return bad(
-                f"“{name}” is not an image BRUH Print can read. PNG, JPEG, "
-                f"GIF, BMP and WebP work.")
-        blob = bytearray()
-        while True:
-            chunk = await part.read_chunk()
-            if not chunk:
-                break
-            blob.extend(chunk)
-            if len(blob) > MAX_ASSET_BYTES:
-                return bad(
-                    f"“{name}” is over {MAX_ASSET_BYTES // (1024 * 1024)}MB. "
-                    f"A label is at most 1248 dots across — a large image "
-                    f"buys nothing the printer can show.", 413)
-        atomic_write.write_bytes(state.assets / name, bytes(blob))
-        saved.append(name)
-    if not saved:
-        return bad("No file arrived with that upload.")
-    return ok(saved=saved, assets=state.asset_list())
-
-
-async def h_asset_get(request: web.Request) -> web.Response:
-    state = panel(request)
-    name = Path(request.match_info["name"]).name
-    path = (state.assets / name).resolve()
-    if path.parent != state.assets.resolve() or not path.is_file():
-        raise web.HTTPNotFound()
-    return web.FileResponse(path, headers={"Cache-Control": "max-age=60"})
-
-
-async def h_asset_delete(request: web.Request) -> web.Response:
-    state = panel(request)
-    name = Path(request.match_info["name"]).name
-    path = (state.assets / name).resolve()
-    if path.parent == state.assets.resolve():
-        path.unlink(missing_ok=True)
-    return ok(assets=state.asset_list())
-
-
 # -- fonts ------------------------------------------------------------------
 # A day: the sample for a given family and text never changes, and the picker
 # asks for one image per font every time it opens.
@@ -1496,7 +1699,7 @@ async def json_errors(request: web.Request, handler):
 
 def build_app(state: Panel | None = None) -> web.Application:
     app = web.Application(middlewares=[json_errors],
-                          client_max_size=MAX_ASSET_BYTES + 1024 * 1024)
+                          client_max_size=MAX_BODY_BYTES)
     app[PANEL_KEY] = state or Panel()
 
     add = app.router.add_route
@@ -1508,6 +1711,7 @@ def build_app(state: Panel | None = None) -> web.Application:
     app.router.add_get("/api/printer/status", h_printer_status)
     app.router.add_post("/api/printer/test", h_printer_test)
     app.router.add_post("/api/printer/calibrate", h_printer_calibrate)
+    app.router.add_post("/api/printer/head-scale", h_printer_head_scale)
     app.router.add_get("/api/printer/usb", h_printer_usb)
 
     app.router.add_get("/api/stocks", h_stocks)
@@ -1535,10 +1739,6 @@ def build_app(state: Panel | None = None) -> web.Application:
     app.router.add_get("/api/history", h_history)
     add("DELETE", "/api/history", h_history_clear)
     app.router.add_post("/api/history/{entry_id}/reprint", h_reprint)
-
-    app.router.add_post("/api/assets", h_asset_upload)
-    app.router.add_get("/api/assets/{name}", h_asset_get)
-    add("DELETE", "/api/assets/{name}", h_asset_delete)
 
     app.router.add_get("/api/font/{font_key}/sample.png", h_font_sample)
 

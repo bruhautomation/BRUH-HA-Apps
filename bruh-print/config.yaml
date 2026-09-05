@@ -1,7 +1,7 @@
 ---
 name: "BRUH Print"
 description: "Design and print labels on a USB DYMO LabelWriter from Home Assistant — a full label designer, fill-in-the-blank templates, Twin Turbo roll selection, and a Lovelace card"
-version: "0.6.2"
+version: "0.8.0"
 slug: "bruh-print"
 init: false
 
@@ -39,12 +39,6 @@ stage: stable
 watchdog: "http://[HOST]:[PORT:8097]/api/health"
 
 homeassistant: "2023.6.0"
-
-# Nothing under /data is a credential — there is no login here at all — but
-# uploaded images and the render cache are bulk that a backup does not need.
-# Paths are relative to /data.
-backup_exclude:
-  - assets/**
 
 ingress: true
 ingress_port: 8097

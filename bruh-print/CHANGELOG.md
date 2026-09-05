@@ -1,5 +1,186 @@
 # Changelog
 
+## 0.8.0
+
+**The image element was never completable, and every release shipped it as a
+picker that could only ever be empty.** There is no upload control anywhere
+in the panel — no file input, no `FormData`, no request to `POST /api/assets`
+in `app.js` or `index.html`. What existed in the UI was one `<select>` in the
+element props pane listing the contents of `/data/assets`, and `/data` is not
+reachable from the Terminal, Samba or the File Editor: those see `/config`.
+So the only way to put a file where the picker could see it was to already be
+inside the container. Meanwhile the README and DOCS both advertised uploaded
+images as a designer feature.
+
+That is worse than not having it. A half-feature that cannot be finished is a
+picker that is always empty, a documented capability that does not exist, and
+four routes of attack surface — a multipart upload, a size cap, a suffix
+allow-list, a path-escape guard and a Pillow decoder taking bytes off the
+wire — serving nobody.
+
+### Removed
+
+- **The `image` element and everything behind it**: the catalog entry, the
+  drawer in `render/image.py` (the module stays — it is named for the bitmap
+  it produces, not for this feature), the `assets` parameter threaded through
+  `render()`, `POST/GET/DELETE /api/assets`, `asset_list()`, the `assets` key
+  on `/api/state`, the props picker in `app.js`, and `asset` from the props a
+  template placeholder may be substituted into.
+- **Nothing on disk is touched.** `/data/assets` and anything in it is
+  somebody's files; an add-on that tidies up after itself without being asked
+  is an add-on that loses data. It is simply no longer served, and it is no
+  longer in `backup_exclude` — which is now empty and therefore gone, so
+  everything BRUH Print keeps is backed up, and all of it is small.
+
+### Changed
+
+- **A retired element type is dropped with a note; an unknown one still
+  refuses the whole document.** `Element.from_dict` refuses a type it does not
+  know, deliberately — rendering it as nothing would be a label silently
+  missing its barcode — and if `image` had simply left the catalog, every
+  saved label, history entry and `bruh_print.print_label` payload holding one
+  would have become unopenable and unprintable, *whole*. That is the wrong
+  failure: the picture could never have been uploaded in the first place, so
+  what is being refused is the rest of somebody's label over a box that was
+  always empty. The two are different claims — "this came from a newer BRUH
+  Print and there is no telling what is missing" against "we took this away
+  and know exactly what is lost" — so `label.RETIRED` names the second, and
+  `Label.from_dict` drops it and says so on the label's notes. The filter is
+  at the Label level because an element cannot express "drop me": it returns
+  one or it raises, and raising is the answer reserved for the type we do not
+  know.
+- **`client_max_size` is a named 2 MB rather than nine.** It was sized for an
+  image upload; deleting it outright would have fallen back to aiohttp's 1 MB
+  default, which is a limit nobody chose and nobody could explain the day a
+  template with sixty fields is refused. The largest thing the panel now
+  accepts is a JSON label document.
+
+## 0.7.0
+
+**Half a label, and the one control that could have fixed it was the wrong
+axis of freedom.** A solid-fill label on the 0.56" × 3.44" cryo wrap came out
+inked across the left of its width and blank across the rest. Measured off
+the photograph: the label is **687 px wide, the inked band is 335 px — 49%**,
+ink starting about 0.7mm in from one edge and stopping dead at the halfway
+point. The 2.25" stock does not show it at all, and 0.6.0's across offset did
+nothing whatever it was set to: "I try and try and it doesn't do anything."
+
+It is structural and it is in the packing. `protocol.pack_line` pads a short
+line **on the right**, so a rendered sheet always lands flush against **head
+dot 0** and the rest of the 672-dot head is blank. That is correct and
+invisible for a 2.25" stock, whose raster is 672 dots and covers the whole
+head. A 0.56" stock renders **168 dots — a quarter of it** — and nothing
+anywhere in this driver knew where the paper sits under the other three
+quarters: the model table carries `dots`, `bytes_per_line` and `dpi` and not
+one field about lateral media position. So a narrow roll registered anywhere
+but the dot-0 end of the head is printed on only where it happens to overlap,
+and the rest of the raster goes onto the liner or into air. 49% of 168 dots
+is about 82, which puts that roll some 86 dots — 7.3mm — in from the head's
+first dot.
+
+**And the across offset structurally could not have fixed it**, which is why
+nothing they tried did anything. `offset_raster` moves artwork *within the
+rendered sheet*, and the sheet for this stock is 168 dots wide: shifting
+right pushes ink off the sheet's own right edge and loses it, and can never
+move the sheet further along the head. On a solid fill it is invisible into
+the bargain — a fill shifted inside a full sheet still covers the overlap.
+The reporter was reaching for the only control there was.
+
+### Added
+
+- **Where the paper sits under the head**, per stock, in millimetres from the
+  head's first dot. Default `0.0`, because dot-0 registration is the shape
+  the 2.25" stock demonstrably has and a guessed number would be a
+  misalignment this add-on invented. It is **not** `offset_across_mm` and the
+  two are kept apart everywhere a person reads or types them: the offset is
+  registration wander in tenths of a millimetre moving artwork *within* the
+  label, this is where a whole label lands on a fixed head and on narrow
+  media it is centimetres. They clip against different edges — the offset at
+  the label, because the sheet is one label and stays one label; the position
+  at the head's last dot, because past that there is no heater — so they
+  cannot be added together and applied once. `render.image.for_the_head` is
+  the one named place they meet, in that order.
+- **Print the scale across the head**, beside the calibration label in the
+  same dialog. The other two labels are drawn to the stock's own sheet — 168
+  dots on this roll — so every mark they make is *inside* the thing whose
+  position is in question, and neither can say anything about it. This one
+  ignores the stock's width and draws a millimetre scale from head dot 0
+  right across the printable width, **numbered every 5mm**, because the
+  person holding it sees a strip of paper with part of a ruler on it and no
+  view of where the ruler began: a bare ladder has nothing to count from,
+  and 14mm of wrap carries two or three numbers wherever the paper turns out
+  to sit. Read the number where the label's own edge falls; that is the
+  number to type in. Neither across correction is applied to it, deliberately
+  — a scale that moved with the number it measures would read the same thing
+  however wrong that number was, and this one is an absolute instrument.
+- **It prints outside the paper, and the control says so before you press
+  it.** A direct-thermal head fires wherever it is told; past the web the
+  heat goes into the liner and then the platen. Three things make that
+  acceptable and none of them is left implied: it is ticks and digits rather
+  than a solid band, so the dots fired off the paper are a small fraction of
+  one pass; it is one label rather than a habit; and the firmware treats it
+  as entirely ordinary — the manual is explicit that "the printer does not
+  check for inter-label gap when printing. It is the responsibility of the
+  host computer to avoid overrunning the label area." What is not acceptable
+  is a solid full-width band over bare platen rubber, which is exactly why
+  this is a ladder.
+- **The gap between labels**, per stock, empty by default. `ESC L` is defined
+  hole to hole, which is the label *plus the gap after it*, and this add-on
+  has only ever sent a guess: the label plus 25% with a 60-dot floor — 469
+  dot lines for a 375-line label, 1.56" against a hole-to-hole pitch probably
+  nearer 1.31". That guess is a candidate for the other measured fault on
+  this printer. Setting the gap makes the budget arithmetic instead.
+
+### Fixed
+
+- **`pack_line` truncated a line past the head silently**, and said in its
+  own docstring that this was safe "because the renderer never draws past the
+  printable width". That was true of the renderer and it was never the whole
+  guarantee — a lateral media position is precisely a way to push ink past
+  the last dot. The guarantee now belongs to `place_on_head`, which crops at
+  the head and **reports** what it lost, in millimetres, naming the edge, in
+  the same voice the offset's note uses. What is left in `pack_line` is a
+  backstop against a bug upstream, and it says so.
+
+### The dead band at the leading edge, and the instrument for it
+
+The other thing the reporter measured, on the 2.25" roll: feed offset at 0,
+then −8mm, then −4mm, photographed each time. At −4 the artwork lands
+correctly at the trailing edge, and **the dead band at the leading edge did
+not move across any of the three settings** — about 4mm every time, while
+everything else moved exactly as the offset predicts. `offset_raster` cannot
+touch that by construction: it moves artwork within a sheet that is one label
+long, and it cannot move where the sheet starts.
+
+Whose fault the late start is remains open, and nothing here guesses. Either
+it is the printer's genuine top-of-form position, in which case ~4mm is a
+hardware fact and the offset is the end of the road; or it is **our own
+over-feed**, because the manual says an over-long budget is free *on the
+grounds that the sense hole re-syncs the counter* — and if that hole is not
+being detected on third-party stock, the printer spends the whole budget and
+lands long by the difference, 76 dots, 6.4mm, the same order as the 4mm
+observed. So what is built is the instrument, exactly as the calibration
+label was built for the offset: measure your roll's die-cut gap, type it in,
+and the budget becomes label-plus-gap. **Winding it to 0 is the experiment** —
+if the band shrinks, it was ours.
+
+Three rules on that control, all of them about not breaking a printer that
+works:
+
+- **Empty is not zero.** Unset keeps the 25%-with-a-floor headroom untouched,
+  and a roll nobody has measured prints **byte for byte** the job it printed
+  before this release — asserted as the whole payload, because "the same
+  budget" and "the same job" are different claims and only the second is the
+  promise. Zero is a real, settable answer, and conflating the two is
+  `${VAR:-default}`'s trap in another language.
+- **Zero is reported, not refused.** A budget equal to the label is exactly
+  the shape that shipped before 0.5.0 and made every label drift down the
+  roll — so it says so, on every print, beside the label somebody is reading.
+  Refusing it would take away the one setting the experiment needs.
+- The `0x7FFF` clamp still holds, so a number typed into a box can never put
+  a printer into continuous-feed mode; the graphics-mode doubling still
+  scales the budget with the lines, one fact named once.
+
 ## 0.6.2
 
 ### Fixed

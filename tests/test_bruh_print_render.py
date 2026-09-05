@@ -170,17 +170,33 @@ class TestRendering(unittest.TestCase):
                 {"stock": "edcc-082wh",
                  "elements": [{"type": "hologram", "props": {}}]})
 
-    def test_an_image_element_cannot_escape_its_folder(self):
-        """A label file is data from outside, even when the outside is the
-        person's own laptop."""
-        assets = Path(tempfile.mkdtemp())
-        rendered = self.render(
-            {"stock": "edcc-082wh", "elements": [
-                {"type": "image", "x_mm": 1, "y_mm": 1, "w_mm": 10, "h_mm": 10,
-                 "props": {"asset": "../../etc/passwd"}}]},
-            assets=assets)
-        self.assertTrue(any("not in this label" in note
-                            for note in rendered.notes))
+    def test_a_retired_element_is_dropped_and_the_label_still_opens(self):
+        """The other half of the same rule, and it may not refuse.
+
+        `image` left the catalog in 0.8.0. Refusing a document that holds
+        one — which is what leaving it out of CATALOG alone would do — would
+        make the rest of somebody's saved label unopenable and unprintable
+        over a box that could never have held a picture: there was never an
+        upload control to put one in it. So the box goes, the text stays,
+        and the reason rides out on the notes every print already reads
+        back.
+        """
+        document = {"stock": "edcc-082wh", "elements": [
+            {"type": "image", "x_mm": 1, "y_mm": 1, "w_mm": 10, "h_mm": 10,
+             "props": {"asset": "logo.png"}},
+            {"type": "text", "x_mm": 1, "y_mm": 12, "w_mm": 40, "h_mm": 10,
+             "props": {"text": "Spare keys"}}]}
+        parsed = label_doc.Label.from_dict(document)
+        self.assertEqual(["text"], [e.type for e in parsed.elements])
+        self.assertTrue(parsed.notes, "the drop happened silently")
+
+        # A note nothing carries out is a drop nobody hears about, so the
+        # render is driven too rather than trusting the label object.
+        rendered = render_image.render(parsed, self.stocks.require("edcc-082wh"))
+        self.assertTrue(any("image" in note for note in rendered.notes),
+                        rendered.notes)
+        self.assertIn("Spare keys",
+                      [e.props.get("text") for e in parsed.elements])
 
     def test_continuous_stock_takes_its_length_from_the_artwork(self):
         rendered = self.render({"stock": "continuous-2-25", "elements": [
@@ -571,3 +587,222 @@ class TestWhereThePrintingStarts(unittest.TestCase):
         moved, _ = render_image.offset_raster(before, feed_mm=-4.7)
         self.assertIs(before.notes, moved.notes)
         self.assertIs(before.problems, moved.problems)
+
+
+def wire_columns(rendered, bytes_per_line=84):
+    """Which dot columns of the PRINT HEAD carry ink, off the wire.
+
+    The head, not the sheet: `ink_columns` above packs a rendered label into
+    its own width, which is the right question for a 2.25" stock whose
+    raster is the whole head and the wrong one for anything narrower. This
+    packs the way `_send` does — through `raster_lines` and then through
+    `protocol.pack_line`, which is what pads a short line — so what comes
+    back is the dot columns the head is actually told to fire.
+    """
+    protocol, = bruh_print_env.load("dymo.protocol")
+    lines = render_image.raster_lines(rendered, bytes_per_line)
+    columns = set()
+    for line in lines:
+        packed = protocol.pack_line(line, bytes_per_line)
+        for index, byte in enumerate(packed):
+            for bit in range(8):
+                if byte & (1 << (7 - bit)):
+                    columns.add(index * 8 + bit)
+    return columns
+
+
+class TestWhereThePaperSitsUnderTheHead(unittest.TestCase):
+    """The reported case, driven rather than described.
+
+    A solid-fill label on the 0.56" x 3.44" cryo wrap came out inked across
+    the LEFT HALF of its width and blank across the right — measured off the
+    photograph at 335px of ink in a 687px label, 49%, starting 0.7mm in from
+    one edge and stopping dead at the halfway point. The 2.25" stock does
+    not show it at all.
+
+    The reason is structural and it is in this file's own packing: a rendered
+    sheet always lands flush against head dot 0, because `pack_line` pads a
+    short line on the right. On the 2.25" stock that is invisible — the
+    raster is 672 dots and covers the whole 672-dot head. On the wrap the
+    raster is 168 dots, a quarter of it, and nothing anywhere in the driver
+    knew where the paper sits under the other three quarters.
+
+    So every assertion below is on the dot columns of the HEAD, read out of
+    the packed bytes.
+    """
+
+    HEAD = 672
+    BYTES = 84
+
+    def wrap(self, across_in=0.56):
+        """The roll from the report."""
+        return stock_store.Stock(
+            id="ed1f-060wh", name="Cryogenic Labels",
+            across_in=across_in, feed_in=3.44)
+
+    def filled(self, entry):
+        """A solid-fill label, which is what was printed: it inks every
+        column of the sheet, so the columns that carry ink ARE the columns
+        the head was told to fire."""
+        label = label_doc.Label.from_dict({"stock": entry.id, "elements": [
+            {"type": "box", "x_mm": 0, "y_mm": 0, "w_mm": 500, "h_mm": 500,
+             "props": {"fill": True, "stroke_mm": 0}}]})
+        return render_image.render(label, entry, max_across_dots=self.HEAD)
+
+    def test_the_reported_case_the_whole_raster_is_in_the_first_168_dots(self):
+        """The reported state, reproduced on the wire: with nothing
+        measured, a 0.56" sheet is 168 dots and every one of them is at the
+        dot-0 end of a 672-dot head, whatever the paper is doing. This is
+        also the default, so it is the job every unmeasured roll still
+        gets — the bug and the promise are the same bytes."""
+        rendered = self.filled(self.wrap())
+        self.assertEqual(168, rendered.image.width)
+        columns = wire_columns(rendered, self.BYTES)
+        # The 2mm border is the renderer's and is correct; what matters is
+        # that every inked column is inside the head's first 168, which is a
+        # quarter of the head, wherever the paper actually is.
+        margin = render_image.mm_to_dots(stock_store.DEFAULT_MARGIN_MM, 300)
+        self.assertEqual(24, margin)
+        self.assertEqual(margin, min(columns))
+        self.assertEqual(167 - margin, max(columns))
+        self.assertFalse([c for c in columns if c > 167],
+                         "nothing is asked of the head past dot 167")
+
+    def test_a_measured_position_puts_the_sheet_where_it_was_asked(self):
+        """7.3mm in is 86 dots, which is what 49% of a 168-dot sheet
+        overlapping the head's first 168 dots works out at. The sheet moves
+        whole and it moves by exactly that."""
+        rendered = self.filled(self.wrap())
+        before = wire_columns(rendered, self.BYTES)
+        placed, note = render_image.place_on_head(rendered, across_mm=7.3,
+                                                  head_dots=self.HEAD)
+        after = wire_columns(placed, self.BYTES)
+        shift = render_image.mm_to_dots(7.3, 300)
+        self.assertEqual(86, shift)
+        self.assertEqual({c + shift for c in before}, after)
+        self.assertEqual(len(before), len(after), "ink was lost or invented")
+        self.assertIsNone(note, "blank border moving along the head is not news")
+
+    def test_the_sheet_becomes_the_head_and_the_label_keeps_its_size(self):
+        rendered = self.filled(self.wrap())
+        placed, _ = render_image.place_on_head(rendered, across_mm=7.3,
+                                               head_dots=self.HEAD)
+        self.assertEqual(self.HEAD, placed.image.width)
+        self.assertEqual(rendered.image.height, placed.image.height)
+        self.assertEqual(rendered.across_dots, placed.across_dots)
+        self.assertEqual(rendered.feed_dots, placed.feed_dots)
+
+    def test_nothing_measured_is_the_same_object_and_the_same_bytes(self):
+        """0.0 is the only honest default, so a roll nobody has measured has
+        to get the job it always got — which on the wire it does anyway,
+        because `pack_line` pads to the head. Asserted both ways: the object
+        is untouched AND the columns are identical."""
+        rendered = self.filled(self.wrap())
+        placed, note = render_image.place_on_head(rendered, head_dots=self.HEAD)
+        self.assertIs(rendered, placed)
+        self.assertIsNone(note)
+        self.assertEqual(wire_columns(rendered, self.BYTES),
+                         wire_columns(placed, self.BYTES))
+
+    def test_ink_pushed_past_the_last_dot_is_reported_not_vanished(self):
+        """`pack_line` truncated a long line silently and said in its own
+        docstring that this was safe because the renderer never draws past
+        the printable width. A lateral position is exactly what can push it
+        there, so the loss is measured on the ink and said out loud."""
+        entry = self.wrap(across_in=2.25)
+        rendered = self.filled(entry)
+        placed, note = render_image.place_on_head(rendered, across_mm=10.0,
+                                                  head_dots=self.HEAD)
+        self.assertIsNotNone(note)
+        self.assertIn("past the head’s last dot", note)
+        self.assertIn("10.0mm in from the print head", note)
+        self.assertIn("did not print", note)
+        # And it still printed: what fits is on the head.
+        columns = wire_columns(placed, self.BYTES)
+        self.assertTrue(columns)
+        self.assertLessEqual(max(columns), self.HEAD - 1)
+
+    def test_a_blank_label_never_reports_losing_ink(self):
+        entry = self.wrap()
+        blank = render_image.render(
+            label_doc.Label.from_dict({"stock": entry.id, "elements": []}),
+            entry)
+        _, note = render_image.place_on_head(blank, across_mm=50.0,
+                                             head_dots=self.HEAD)
+        self.assertIsNone(note)
+
+    def test_the_note_reaches_the_list_the_caller_already_reads(self):
+        rendered = self.filled(self.wrap())
+        placed, _ = render_image.place_on_head(rendered, across_mm=7.3,
+                                               head_dots=self.HEAD)
+        self.assertIs(rendered.notes, placed.notes)
+        self.assertIs(rendered.problems, placed.problems)
+
+
+class TestTheTwoAcrossQuantitiesMeetExactlyOnce(unittest.TestCase):
+    """`for_the_head` is the one place the offset and the media position
+    are combined, and the ORDER is what makes them two things.
+
+    The offset moves artwork inside a sheet that is one label long, so what
+    it pushes off is ink off the LABEL. The media position moves that
+    finished label along the head, so what it pushes off is ink onto no
+    paper at all. Two edges, two sentences, one line on the wire — and
+    adding the two millimetre figures together and shifting once would give
+    the wrong answer to both.
+    """
+
+    HEAD = 672
+    BYTES = 84
+
+    def wrap(self):
+        return stock_store.Stock(id="ed1f-060wh", name="Cryogenic Labels",
+                                 across_in=0.56, feed_in=3.44)
+
+    def rendered(self):
+        entry = self.wrap()
+        label = label_doc.Label.from_dict({"stock": entry.id, "elements": [
+            {"type": "box", "x_mm": 2, "y_mm": 2, "w_mm": 6, "h_mm": 40,
+             "props": {"fill": True, "stroke_mm": 0}}]})
+        return render_image.render(label, entry, max_across_dots=self.HEAD)
+
+    def test_both_reach_the_wire_and_they_do_not_cancel(self):
+        before = min(wire_columns(self.rendered(), self.BYTES))
+        placed, notes = render_image.for_the_head(
+            self.rendered(), across_mm=-1.0, media_across_mm=7.3,
+            head_dots=self.HEAD)
+        after = min(wire_columns(placed, self.BYTES))
+        self.assertEqual([], notes)
+        self.assertEqual(render_image.mm_to_dots(7.3, 300)
+                         - render_image.mm_to_dots(1.0, 300),
+                         after - before)
+
+    def test_neither_alone_is_the_default_and_the_default_is_untouched(self):
+        rendered = self.rendered()
+        placed, notes = render_image.for_the_head(rendered,
+                                                  head_dots=self.HEAD)
+        self.assertIs(rendered, placed)
+        self.assertEqual([], notes)
+
+    def test_the_offset_still_clips_at_the_LABEL_and_says_so(self):
+        """The half that must not change: the sheet is one label and stays
+        one label, so an offset that pushes ink off it loses that ink even
+        though there is head to spare beside it. Anything else and the
+        offset would silently become a second media position."""
+        placed, notes = render_image.for_the_head(
+            self.rendered(), across_mm=8.0, media_across_mm=0.0,
+            head_dots=self.HEAD)
+        self.assertEqual(1, len(notes), notes)
+        self.assertIn("past the right edge", notes[0])
+        self.assertIn("Where the printing starts", notes[0])
+        self.assertLessEqual(max(wire_columns(placed, self.BYTES)), 167)
+
+    def test_two_failures_are_two_sentences(self):
+        """A shift that costs ink off the label AND a position that pushes
+        what is left past the head are different losses at different edges,
+        and one merged sentence would name neither."""
+        _, notes = render_image.for_the_head(
+            self.rendered(), across_mm=8.0, media_across_mm=56.0,
+            head_dots=self.HEAD)
+        self.assertEqual(2, len(notes), notes)
+        self.assertIn("past the right edge", notes[0])
+        self.assertIn("past the head’s last dot", notes[1])

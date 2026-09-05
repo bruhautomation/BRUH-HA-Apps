@@ -126,6 +126,58 @@ class Stock:
     offset_across_mm: float = 0.0
     offset_feed_mm: float = 0.0
 
+    # Where this roll's paper physically sits under the print head: how far
+    # in from the head's FIRST DOT the media begins, in millimetres. Zero by
+    # default, because dot-0 registration is the shape the 2.25" stock
+    # demonstrably has and a number guessed here would be a misalignment
+    # this add-on invented.
+    #
+    # **This is not `offset_across_mm` and the two must never be confused.**
+    # The offset is a correction to registration wander — tenths of a
+    # millimetre — and it moves the artwork WITHIN the sheet, so ink pushed
+    # past the sheet's own edge is ink lost off the label. This says where
+    # that whole sheet lands on a fixed 672-dot head, and on narrow media it
+    # is centimetres. They are typed in different boxes, worded differently,
+    # and clipped against different edges; the one place they meet is
+    # `render.image.for_the_head`.
+    #
+    # It exists because a raster always begins at head dot 0 — `pack_line`
+    # pads a short line on the right — which is invisible on a 2.25" stock
+    # whose 672-dot raster covers the whole head, and is half a label on a
+    # 0.56" wrap whose 168 dots are a quarter of it. The across offset
+    # cannot express the fix: shifting artwork inside a 168-dot sheet can
+    # only push ink off that sheet's own edge, never move the sheet further
+    # along the head.
+    #
+    # On the stock rather than on the bay, for the reason the two offsets
+    # are: a Twin Turbo's two rolls genuinely have two answers, and a stock
+    # is what a roll is loaded as. A house that moves one roll between bays
+    # and finds the number changed has learnt something the panel cannot
+    # measure for them, and the box is one press away.
+    media_across_mm: float = 0.0
+
+    # The die-cut gap on this roll — the paper between the end of one label
+    # and the start of the next — in millimetres. `None` means nobody has
+    # measured it, which is not the same state as `0.0` and must never be
+    # collapsed into it: zero is a real, settable answer and the whole point
+    # of the control, because winding the budget down to the label itself
+    # and watching what the leading edge does is how a person finds out
+    # whether the dead band at the start of a label is the printer's or
+    # ours. That distinction is `${VAR:-default}`'s trap in a different
+    # language, and it is why every reader here tests `is None`.
+    #
+    # It is the quantity `ESC L` is actually defined in. The manual says the
+    # value is the dot lines "from sense hole to sense hole", which is the
+    # label plus the gap after it — so with a gap measured, the search
+    # budget stops being a fraction somebody chose (25% with a 60-dot floor)
+    # and becomes an arithmetic fact. Unset, `protocol.search_length` keeps
+    # that fraction exactly as it always has, so a roll nobody has measured
+    # prints byte-for-byte the job it printed before this field existed.
+    #
+    # On the stock for the same reason the offsets are: the die cut and the
+    # sense hole are punched into the paper.
+    gap_mm: float | None = None
+
     # -- derived -----------------------------------------------------------
     @property
     def across_mm(self) -> float:
@@ -187,11 +239,13 @@ class Stock:
         a second row for the transposed version is two rows a person has to
         choose between with no way to tell which is right.
 
-        The two print offsets are carried across unchanged. They are in the
-        PRINTER's axes — one along the feed, one across the head — and
-        exchanging which of the catalog's two numbers is which does not move
-        either of those; and a swap is not a reason to throw away a
-        measurement somebody made with a ruler.
+        The two print offsets and the media position are carried across
+        unchanged. All three are in the PRINTER's axes — one along the feed,
+        two across the head — and exchanging which of the catalog's two
+        numbers is which does not move any of them; the roll is still in the
+        same place under the head, whichever way round the label on it is.
+        And a swap is not a reason to throw away a measurement somebody made
+        with a ruler.
         """
         return Stock(**{**asdict(self), "across_in": self.feed_in,
                         "feed_in": self.across_in, "builtin": False,

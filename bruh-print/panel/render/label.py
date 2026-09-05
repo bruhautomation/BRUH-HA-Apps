@@ -13,6 +13,8 @@ cryo label is somebody's finger on a phone, not a reason to refuse to print;
 a size of 0 is a template field nobody filled in. The one thing that IS
 refused is an element type we do not know, because rendering it as nothing
 would be a label silently missing its barcode.
+
+A type we RETIRED is the other case and it may not refuse — see `RETIRED`.
 """
 from __future__ import annotations
 
@@ -103,24 +105,23 @@ CATALOG: dict[str, dict[str, Any]] = {
                           "max": 5, "label": "Thickness (mm)"},
         },
     },
-    "image": {
-        "name": "Image",
-        "icon": "🖼",
-        "help": "A PNG or JPEG you uploaded. Converted to pure black and "
-                "white — a thermal head has no grey.",
-        "fields": {
-            "asset": {"type": "asset", "default": "", "label": "Image"},
-            "fit": {"type": "choice", "default": "contain",
-                    "choices": ["contain", "cover", "stretch"],
-                    "label": "Fit"},
-            "threshold": {"type": "number", "default": 128, "min": 1,
-                          "max": 254, "label": "Black point",
-                          "help": "Lower prints less ink"},
-            "dither": {"type": "bool", "default": False, "label": "Dither",
-                       "help": "For photos; leave off for logos"},
-            "invert": {"type": "bool", "default": False, "label": "Invert"},
-        },
-    },
+}
+
+# Types that were in the catalog once and are not any more.
+#
+# A retired type and an unknown type are two different claims and only the
+# second may refuse. "hologram" means this document came from a BRUH Print
+# newer than this one and there is no telling what is missing, so opening it
+# would be a label silently short of its barcode. "image" means WE took the
+# type away — we know exactly what is lost, and refusing the whole document
+# over it would make the rest of somebody's label unopenable on our account,
+# for a box that could never hold a picture in the first place. So it is
+# dropped, the reason goes on the label's notes, and everything else opens.
+RETIRED: dict[str, str] = {
+    "image": "This label had an image box on it. BRUH Print does not have "
+             "image elements any more — there was never a way to get a "
+             "picture into one — so that box is gone and the rest of the "
+             "label is as it was.",
 }
 
 ROTATIONS = (0, 90, 180, 270)
@@ -217,6 +218,11 @@ class Label:
     elements: list[Element] = field(default_factory=list)
     name: str = ""
     invert: bool = False
+    # What reading the document had to say about it — a retired element that
+    # was dropped, today. Deliberately not in `as_dict`: it describes the
+    # READ, not the label, and saving it would bake a one-off sentence into
+    # the file and re-report it on every open afterwards.
+    notes: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, raw: dict) -> "Label":
@@ -233,12 +239,26 @@ class Label:
             rotate = 0
         if rotate not in ROTATIONS:
             rotate = min(ROTATIONS, key=lambda r: abs(r - rotate))
+        # The retired filter is here rather than in `Element.from_dict`
+        # because an element cannot say "drop me" — it returns an Element or
+        # it raises, and raising is the answer reserved for a type we do not
+        # know.
+        elements: list[Element] = []
+        notes: list[str] = []
+        for item in (raw.get("elements") or []):
+            kind = str((item or {}).get("type", "")).strip()
+            if kind in RETIRED:
+                if RETIRED[kind] not in notes:
+                    notes.append(RETIRED[kind])
+                continue
+            elements.append(Element.from_dict(item))
         return cls(
             stock=stock,
             rotate=rotate,
             name=str(raw.get("name", "") or ""),
             invert=bool(raw.get("invert", False)),
-            elements=[Element.from_dict(e) for e in (raw.get("elements") or [])],
+            elements=elements,
+            notes=notes,
         )
 
     def as_dict(self) -> dict:

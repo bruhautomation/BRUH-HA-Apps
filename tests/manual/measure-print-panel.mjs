@@ -401,8 +401,8 @@ await run(PHONE.w, PHONE.h, 'phone-printer', true, async (p) => {
    * and the calibration print are checked in the same open. */
   await reachable(p, 'phone-printer', async () => {}, ['printOffset']);
   await reachable(p, 'phone-printer', () => p.click('#printOffset'),
-    ['offsetStock', 'offsetFeed', 'offsetAcross', 'offsetCalibrate',
-     'offsetSave']);
+    ['offsetStock', 'offsetFeed', 'offsetAcross', 'offsetMedia', 'offsetGap',
+     'offsetHeadScale', 'offsetCalibrate', 'offsetSave']);
   /* Signed, so it must not carry a `min` that the browser will refuse a
    * minus against — the whole measured case is a negative feed offset. */
   const signed = await p.evaluate(() => ['offsetFeed', 'offsetAcross']

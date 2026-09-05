@@ -7,12 +7,12 @@ difference between a designer and the thing people actually use: the
 designer is opened once per label *kind*, and after that the job is "sample
 the date, print two" — which is one form and one button.
 
-Placeholders are substituted into `text`, `data` and `asset` props and
-nowhere else, and the substitution is plain string replacement with no
-expression language. That is a deliberate ceiling: a template that can
-evaluate is a template that can be made to evaluate something else by
-whoever sends the automation payload, and the value of a label expression
-language is nearly zero against that.
+Placeholders are substituted into `text` and `data` props and nowhere
+else, and the substitution is plain string replacement with no expression
+language. That is a deliberate ceiling: a template that can evaluate is a
+template that can be made to evaluate something else by whoever sends the
+automation payload, and the value of a label expression language is nearly
+zero against that.
 
 Two fields are always available without being declared: `{{date}}` and
 `{{time}}`, in the machine's own locale-independent form, because "what was
@@ -31,10 +31,10 @@ import atomic_write
 PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}")
 
 # Props a placeholder may appear in. Anything else — a font key, a rotation,
-# a threshold — is structure, and a template that can rewrite its own
+# a stroke width — is structure, and a template that can rewrite its own
 # structure from an automation payload is a different and much larger thing
 # than a label with a name on it.
-SUBSTITUTED = ("text", "data", "asset")
+SUBSTITUTED = ("text", "data")
 
 
 class UnknownTemplate(KeyError):

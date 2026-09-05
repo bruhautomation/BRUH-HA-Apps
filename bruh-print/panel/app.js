@@ -41,7 +41,7 @@ const prefSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* refus
 const S = {
   stocks: [], rolls: [], templates: [], fonts: [], settings: {},
   catalog: { elements: {}, rotations: [0, 90, 180, 270] },
-  printer: null, printers: [], assets: [], history: [],
+  printer: null, printers: [], history: [],
   label: null, selected: -1, template: null, dirty: false,
   problems: [],
 };
@@ -160,8 +160,7 @@ async function loadState() {
   Object.assign(S, {
     stocks: data.stocks, rolls: data.rolls, templates: data.templates,
     fonts: data.fonts, settings: data.settings, catalog: data.catalog,
-    printer: data.printer, printers: data.printers, assets: data.assets,
-    history: data.history,
+    printer: data.printer, printers: data.printers, history: data.history,
   });
   S.printerError = data.printer_error;
   S.ambiguous = data.ambiguous;
@@ -767,7 +766,6 @@ function describe(element) {
   if (element.type === 'text') return (props.text || 'Text').split('\n')[0].slice(0, 22);
   if (element.type === 'barcode') return '||| ' + (props.data || '').slice(0, 16);
   if (element.type === 'qr') return '▣ ' + (props.data || '').slice(0, 16);
-  if (element.type === 'image') return props.asset || 'image';
   return S.catalog.elements[element.type]?.name || element.type;
 }
 
@@ -1206,16 +1204,6 @@ function propField(element, name, meta) {
       element.props[name] = key;
       markDirty();
     });
-  } else if (meta.type === 'asset') {
-    input = el('select');
-    const none = el('option', null, '— none —'); none.value = '';
-    input.append(none);
-    for (const asset of S.assets) {
-      const option = el('option', null, asset.name);
-      option.value = asset.name;
-      input.append(option);
-    }
-    input.value = element.props[name] || '';
   } else if (meta.type === 'number') {
     input = el('input');
     input.type = 'number'; input.step = '0.1';
@@ -1351,7 +1339,7 @@ function saveTemplateDialog() {
 function placeholdersOf(label) {
   const found = [];
   for (const element of label.elements || []) {
-    for (const key of ['text', 'data', 'asset']) {
+    for (const key of ['text', 'data']) {
       const value = String((element.props || {})[key] || '');
       for (const match of value.matchAll(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g))
         if (!found.includes(match[1])) found.push(match[1]);
@@ -1697,6 +1685,33 @@ function renderPrinter() {
         + 'starts" on the printer card above to measure or clear it.');
       row.append(pill);
     }
+    /* A separate pill, never folded into the one above, for the same reason
+     * the two are separate boxes in the dialog: one says the printing was
+     * nudged on this label and the other says where the roll is under the
+     * head. Reading them as one number is how somebody types a 7mm media
+     * position into a registration offset. */
+    if (stock.media_across_mm) {
+      const seated = el('span', 'pill moved',
+        `paper sits ${stock.media_across_mm}mm along the head`);
+      seated.setAttribute('data-tip',
+        'How far in from the print head\u2019s first dot this roll begins. '
+        + 'Press "Where the printing starts" on the printer card above to '
+        + 'measure or clear it.');
+      row.append(seated);
+    }
+    /* A measured gap changes the bytes this roll is printed with, so it is
+     * visible where the two corrections are. `!= null` on purpose: 0 is a
+     * real setting and the one most worth seeing on the row, because it is
+     * the diagnostic somebody left switched on. */
+    if (stock.gap_mm != null) {
+      const gap = el('span', 'pill moved',
+        `${stock.gap_mm}mm gap between labels`);
+      gap.setAttribute('data-tip',
+        'The die-cut gap you measured. It sets how far the printer travels '
+        + 'looking for the sense hole. Empty it under "Where the printing '
+        + 'starts" to go back to the default allowance.');
+      row.append(gap);
+    }
     if (stock.loaded)
       row.append(el('span', 'pill in', `in the ${stock.loaded_side} roll`));
     row.append(el('span', 'spacer'));
@@ -1883,14 +1898,9 @@ function offsetDialog(stockId) {
   body.innerHTML = '';
   body.append(el('h2', null, 'Where the printing starts'));
   body.append(el('p', 'lede',
-    'Print the calibration label. It has two thick lines meeting at the '
-    + 'corner where the printing begins, and 1mm ticks along each of them.'));
-  body.append(el('p', 'lede',
-    'Hold it up. If there is a gap between the label\u2019s own edge and the '
-    + 'thick line, that gap is how far in the printer is starting \u2014 '
-    + 'type it below with a minus in front. If a thick line is missing '
-    + 'because the printing started before the edge, count the ticks that '
-    + 'did survive and type that as a plus.'));
+    'Two different questions, and the second one only bites on a narrow '
+    + 'roll: where on the label the printing starts, and where the roll '
+    + 'itself sits under the print head.'));
 
   const pick = el('label', 'field');
   pick.append(el('span', null, 'Which roll'));
@@ -1922,6 +1932,18 @@ function offsetDialog(stockId) {
     return wrap;
   };
 
+  /* Part one: where on the LABEL the printing starts. A correction to
+   * registration wander, in tenths of a millimetre, moving artwork inside
+   * the sheet. */
+  body.append(el('h3', null, 'On the label'));
+  body.append(el('p', 'lede',
+    'Print the calibration label. It has two thick lines meeting at the '
+    + 'corner where the printing begins, and 1mm ticks along each of them. '
+    + 'Hold it up: a gap between the label\u2019s own edge and a thick line '
+    + 'is how far in the printer is starting \u2014 type it with a minus in '
+    + 'front. If a thick line is missing because the printing started before '
+    + 'the edge, count the ticks that did survive and type that as a plus.'));
+
   const boxes = el('div', 'row');
   boxes.append(field('feed', 'offsetFeed',
     'Move the printing along the roll (mm)',
@@ -1931,14 +1953,6 @@ function offsetDialog(stockId) {
     'Move the printing across the head (mm)',
     'Minus moves it toward the left-hand edge as the label comes out.'));
   body.append(boxes);
-
-  const fill = () => {
-    const row = rows.find((r) => r.id === select.value) || start;
-    fields.feed.value = row.offset_feed_mm || 0;
-    fields.across.value = row.offset_across_mm || 0;
-  };
-  fill();
-  select.onchange = fill;
 
   const print = el('button', 'btn', 'Print the calibration label');
   print.id = 'offsetCalibrate';
@@ -1956,6 +1970,102 @@ function offsetDialog(stockId) {
   };
   body.append(print);
 
+  /* Part two, and a different quantity in a different unit: where the ROLL
+   * is under a head that is always 672 dots wide. A raster always begins at
+   * the head's first dot, which is invisible on a 2.25" roll that covers the
+   * whole head and is half a label on a 0.56" wrap that covers a quarter of
+   * it. The box above cannot fix that and it is worth saying so here rather
+   * than letting somebody type into it for an afternoon. */
+  body.append(el('h3', null, 'Under the print head'));
+  body.append(el('p', 'lede',
+    'Only narrow rolls. If a label is inked across part of its width and '
+    + 'blank across the rest \u2014 always the same part, whatever you print '
+    + '\u2014 the roll is sitting further along the print head than BRUH '
+    + 'Print thinks. Moving the printing across the head, above, cannot fix '
+    + 'that: it moves artwork inside the label, and the label is already the '
+    + 'wrong place.'));
+
+  const media = el('div', 'row');
+  media.append(field('media', 'offsetMedia',
+    'How far in the paper sits under the head (mm)',
+    'From the head\u2019s first dot to the edge of the paper. A 2.25\u2033 '
+    + 'roll fills the head and sits at 0; a narrow one can be centimetres '
+    + 'in. Never negative.'));
+  /* The one box here that carries a `min`, and the difference is real: the
+   * two offsets above are signed and the whole measured case for them was a
+   * negative one, while paper cannot begin before the head's first dot. */
+  fields.media.min = '0';
+  body.append(media);
+
+  const headScale = el('button', 'btn', 'Print the scale across the head');
+  headScale.id = 'offsetHeadScale';
+  headScale.type = 'button';
+  headScale.setAttribute('data-tip',
+    'A millimetre scale from the print head\u2019s first dot right across '
+    + 'it, numbered every 5mm. Read the number where the label\u2019s own '
+    + 'edge falls and type it in above.');
+  body.append(headScale);
+  /* Said out loud, before the press rather than after it: this is the one
+   * label in the panel that deliberately prints outside the paper. It is
+   * ticks and digits rather than a band, and it is one label \u2014 but
+   * somebody who finds that out by looking at the platen is somebody the
+   * panel lied to by omission. */
+  body.append(el('p', 'lede',
+    'It prints right across the head, so most of it lands on the liner and '
+    + 'the platen rather than on the label \u2014 that is what makes it '
+    + 'readable, since the part that misses the paper is the part telling '
+    + 'you where the paper is. Ticks and digits, not a solid band, and one '
+    + 'label.'));
+  headScale.onclick = async () => {
+    try {
+      const data = await post('/api/printer/head-scale', { stock: select.value });
+      toast(`Scale printed across the ${data.head_mm}mm head on the `
+        + `${data.side} roll.`, 'good');
+    } catch (error) { fail(error); }
+  };
+
+  /* Part three, and not a correction at all: a measurement of the paper
+   * that changes what the printer is told to look for. It is here because
+   * it is the other half of "the printing does not start where it should",
+   * and it is the half nobody can settle from inside a container — the
+   * printer either finds the sense hole within the budget or it does not,
+   * and only a printed label says which. */
+  body.append(el('h3', null, 'The gap between labels'));
+  body.append(el('p', 'lede',
+    'Leave this empty unless you are chasing something. BRUH Print tells '
+    + 'the printer how far to travel while it hunts for the sense hole '
+    + 'between labels, and with the box empty it allows the label plus a '
+    + 'quarter \u2014 generous, which is what the manual advises. Measure '
+    + 'your roll\u2019s gap and type it here and the allowance becomes '
+    + 'exact instead. Winding it down to 0 is how you find out whether a '
+    + 'dead band at the leading edge is the printer\u2019s top of form or '
+    + 'BRUH Print over-feeding: if the band shrinks, it was ours.'));
+
+  const gapRow = el('div', 'row');
+  gapRow.append(field('gap', 'offsetGap',
+    'Gap between labels (mm)',
+    'The paper BETWEEN two labels, not the label. Empty means not '
+    + 'measured, and prints exactly what it always did. 0 is a real '
+    + 'setting: the search then stops at the end of the label.'));
+  fields.gap.min = '0';
+  fields.gap.placeholder = 'not measured';
+  body.append(gapRow);
+
+  const fill = () => {
+    const row = rows.find((r) => r.id === select.value) || start;
+    fields.feed.value = row.offset_feed_mm || 0;
+    fields.across.value = row.offset_across_mm || 0;
+    fields.media.value = row.media_across_mm || 0;
+    /* Empty is a state, not a zero. `row.gap_mm` is null until somebody has
+     * measured this roll, and filling that in as 0 would turn "I have not
+     * measured it" into "the gap is nothing" on the next Save — which is
+     * the one setting that changes what the printer does. */
+    fields.gap.value = row.gap_mm === null || row.gap_mm === undefined
+      ? '' : row.gap_mm;
+  };
+  fill();
+  select.onchange = fill;
+
   const actions = el('div', 'actions');
   const save = el('button', 'btn primary', 'Save');
   save.id = 'offsetSave';
@@ -1964,6 +2074,10 @@ function offsetDialog(stockId) {
       await post(`/api/stock/${select.value}/offset`, {
         offset_feed_mm: Number(fields.feed.value) || 0,
         offset_across_mm: Number(fields.across.value) || 0,
+        media_across_mm: Number(fields.media.value) || 0,
+        /* `Number('')` is 0, which is exactly the conflation this control
+         * may not make: an empty box has to reach the server as null. */
+        gap_mm: fields.gap.value === '' ? null : Number(fields.gap.value),
       });
       $('modal').close();
       await loadState(); renderPrinter(); fillPickers();

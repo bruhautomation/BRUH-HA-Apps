@@ -97,7 +97,7 @@ load_config() {
 # starts — the failure is otherwise silent.
 # ----------------------------------------------------------------------------
 prepare_filesystem() {
-    mkdir -p /data/assets /data/logs
+    mkdir -p /data/logs
 
     # The shared folder is handed to the bridge's user, and /data is not:
     # the panel is root and the bridge is not, and root can write into a
