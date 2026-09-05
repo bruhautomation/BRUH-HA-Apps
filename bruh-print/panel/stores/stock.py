@@ -85,9 +85,14 @@ class Calibration:
     starts wherever the printer decided to start it.
 
     So this is not a set of corrections. It is what the printer was measured
-    doing, and the print path is what works out the correction: five numbers
-    a person reads off one printed label, plus two switches for the two
-    firmware behaviours that are not measurable at all.
+    doing, and the print path is what works out the correction: six numbers
+    a person reads off two printed labels, plus two switches for the two
+    firmware behaviours that are not measurable at all. Two labels rather
+    than one because a drift between the copies is the only thing that tells
+    a printer missing the sense hole from one obeying a dead band, and six
+    numbers because the two signs are read off opposite ends — an early
+    start cuts the ladder and is read at the top, a late one prints nothing
+    at all up there and is read from the bottom against the label's length.
 
     **Every field is in the printer's axes and none of them is a nudge.**
 

@@ -406,11 +406,16 @@ class TestStocks(PanelCase):
         self.assertEqual(400, status)
         self.assertIn("across", body["error"])
 
-    async def test_the_ruler_prints_something_measurable(self):
-        status, body = await self.post("/api/printer/test", {})
-        self.assertEqual(200, status)
-        self.assertEqual(1, len(self.sent))
-        self.assertTrue(self.sent[0].endswith(protocol.form_feed()))
+    async def test_the_ruler_is_gone_and_its_route_with_it(self):
+        """The ruler answered one question — are these two measurements the
+        way round the catalog thinks? — and it answered it badly, because it
+        drew inside the stock's own margin. Lining a roll up measures both
+        edges of the real paper and says so when they look transposed, so the
+        question has a better answer and the label that asked it is gone
+        rather than kept as a second one."""
+        response = await self.client.post("/api/printer/test", json={})
+        self.assertEqual(404, response.status)
+        self.assertEqual([], self.sent, "something still printed a ruler")
 
 
 class TestFailureShapes(PanelCase):
@@ -1453,22 +1458,35 @@ class TestTheCalibrationPrint(CalibrationCase):
     """
 
     async def test_it_prints_two_labels_and_says_what_it_sent(self):
-        """The derivation divides by both numbers, so a report that left
-        either out would leave the readings meaning nothing — a top
-        measurement without the pre-skip it was taken against is not a
-        distance from anything."""
+        """Hypothesis C divides by the budget that went out, so a report
+        that left it out would leave a drift meaning nothing — it is the
+        distance the printer fed when it never found a hole."""
         await self.loaded()
         status, body = await self.post("/api/printer/calibrate", {})
         self.assertEqual(200, status, body)
         self.assertEqual(2, body["printed"])
         self.assertEqual(2, body["copies"])
         self.assertEqual("left", body["side"])
-        self.assertEqual(5.0, body["pre_skip_mm"])
         self.assertEqual("plain", body["variant"])
-        # 375 lines plus 25% plus the 59-line pre-skip, in millimetres.
+        # 375 lines plus 25%, in millimetres. No pre-skip term.
         self.assertAlmostEqual(
-            protocol.budget_dots(375, None, 59) / 300 * 25.4,
+            protocol.budget_dots(375, None, 0) / 300 * 25.4,
             body["esc_l_mm"], places=1)
+
+    async def test_the_pre_skip_is_gone_from_the_wire_and_from_the_report(self):
+        """It was added to make a NEGATIVE start measurable and it made the
+        reading it was added for impossible instead: nothing can print
+        before where the printer begins, so a late start leaves a blank band
+        at the top with the ladder's 0 at the bottom of it — and feeding 5mm
+        first only pushes that 0 further down. It also lengthened the sheet
+        past one label, which lands copy 1's tail on copy 2's leading edge,
+        where `top2` is read."""
+        await self.loaded()
+        await self.post("/api/printer/calibrate", {})
+        status, body = await self.post("/api/printer/calibrate", {})
+        self.assertNotIn("pre_skip_mm", body)
+        self.assertEqual([], self.skips(self.sent[-1]),
+                         "the calibration job feeds before its first row")
 
     async def test_the_two_copies_carry_different_ink(self):
         """Which is the whole reason a job is a list of pages: copy 2 is the
@@ -1483,17 +1501,16 @@ class TestTheCalibrationPrint(CalibrationCase):
         halves = payload.split(protocol.short_form_feed())
         self.assertNotEqual(halves[0][-2000:], halves[1][-2000:])
 
-    async def test_the_deliberate_pre_skip_is_on_the_wire_and_in_the_budget(self):
-        """"Print lines and lines fed both count towards this total", so a
-        budget that ignored the skip would end the search 5mm short of the
-        hole — the pre-0.5.0 drift, reintroduced by the one job whose whole
-        purpose is measuring where the printing starts."""
+    async def test_the_budget_is_the_label_and_nothing_it_fed_first(self):
+        """"Print lines and lines fed both count towards this total", so the
+        budget and the skip are one sum — and with nothing fed, the sum is
+        the label plus its headroom. A budget carrying a skip the job no
+        longer sends would search 5mm past the hole on every calibration."""
         await self.loaded()
         await self.post("/api/printer/calibrate", {})
         payload = self.sent[-1]
         repeat = protocol.LINE_REPEAT["graphics"]
-        self.assertEqual([59 * repeat, 59 * repeat], self.skips(payload))
-        self.assertEqual(protocol.budget_dots(375, None, 59) * repeat,
+        self.assertEqual(protocol.budget_dots(375, None, 0) * repeat,
                          self.length(payload))
 
     async def test_none_of_the_roll_s_own_calibration_reaches_it(self):
@@ -1912,7 +1929,7 @@ class TestTheCalibrationLabelItself(unittest.TestCase):
 
 
 class TestSavingWhatWasRead(CalibrationCase):
-    """The route between the five readings and the store.
+    """The route between the six readings and the store.
 
     The panel does no arithmetic: `calibration.derive` is pure and is tested
     on its own with the numbers the owner measured. What is asserted here is
@@ -1920,9 +1937,14 @@ class TestSavingWhatWasRead(CalibrationCase):
     two answers which are not answers store nothing.
     """
 
-    OWNER = {"left": 0.0, "right": 57.0, "top1": 9.7, "bottom1": 22.05,
-             "top2": 9.7}
-    SENT = {"pre_skip_mm": 5.0, "esc_l_mm": 44.7, "variant": "plain"}
+    # The owner's own roll, in the reading rule that replaced the pre-skip:
+    # the ladder's 0 is on both labels with blank above it, so both tops are
+    # 0, and the trailing die cut falls at 27.05 of a 31.75mm label — which
+    # is the 4.7mm the printer starts late by, read from the one end that
+    # has ink on it.
+    OWNER = {"left": 0.0, "right": 57.0, "top1": 0.0, "bottom1": 27.05,
+             "top2": 0.0, "bottom2": 27.05}
+    SENT = {"esc_l_mm": 39.7, "variant": "plain"}
 
     async def save(self, **changes):
         payload = {"readings": {**self.OWNER, **changes.pop("readings", {})},
@@ -1946,7 +1968,7 @@ class TestSavingWhatWasRead(CalibrationCase):
         route says print again rather than recording a fault one command
         might not have."""
         await self.loaded()
-        _, body = await self.save(readings={"top2": 5.0})
+        _, body = await self.save(readings={"bottom2": 31.75})
         self.assertIsNone(body["calibration"])
         self.assertEqual("reset", body["next"]["variant"])
         _, stocks = await self.get("/api/stocks")
@@ -1955,7 +1977,7 @@ class TestSavingWhatWasRead(CalibrationCase):
 
     async def test_a_reading_that_is_not_a_number_is_refused(self):
         await self.loaded()
-        status, body = await self.save(readings={"top1": "about 9"})
+        status, body = await self.save(readings={"bottom1": "about 27"})
         self.assertEqual(400, status)
         self.assertIn("millimetres", body["error"])
 
@@ -1966,10 +1988,11 @@ class TestSavingWhatWasRead(CalibrationCase):
         await self.loaded()
         status, body = await self.post(
             "/api/stock/edcc-082wh/calibration",
-            {"readings": {k: v for k, v in self.OWNER.items() if k != "top2"},
+            {"readings": {k: v for k, v in self.OWNER.items()
+                          if k != "bottom2"},
              "printed": self.SENT})
         self.assertEqual(400, status)
-        self.assertIn("top2", body["error"])
+        self.assertIn("bottom2", body["error"])
 
     async def test_a_negative_reading_is_refused(self):
         """Every one is a distance from an edge of the label. A minus sign
@@ -1977,7 +2000,7 @@ class TestSavingWhatWasRead(CalibrationCase):
         meant "the other way" — there is no other way now, and the
         derivation decides the sign from where the two copies landed."""
         await self.loaded()
-        status, body = await self.save(readings={"top1": -4.7})
+        status, body = await self.save(readings={"bottom1": -4.7})
         self.assertEqual(400, status)
         self.assertIn("cannot be negative", body["error"])
 
@@ -1990,14 +2013,14 @@ class TestSavingWhatWasRead(CalibrationCase):
         self.assertIsNotNone(body["calibration"])
 
     async def test_the_readings_and_what_was_printed_go_together(self):
-        """A top measurement without the pre-skip it was taken against is
-        not a distance from anything, so half a payload is refused rather
-        than assumed."""
+        """A drift between the two copies is only a measurement against the
+        search budget that went out, so half a payload is refused rather than
+        assumed."""
         await self.loaded()
         status, body = await self.post("/api/stock/edcc-082wh/calibration",
                                        {"readings": self.OWNER})
         self.assertEqual(400, status)
-        self.assertIn("pre-skip", body["error"])
+        self.assertIn("six readings", body["error"])
 
     async def test_it_rides_in_the_state_the_panel_opens_with(self):
         await self.loaded()
@@ -2023,7 +2046,7 @@ class TestSavingWhatWasRead(CalibrationCase):
 
     async def test_editing_the_stock_does_not_blank_it(self):
         """Same partial-update rule as `turn`: the Edit dialog has no
-        control for a calibration — it is two prints and five readings — and
+        control for a calibration — it is two prints and six readings — and
         a Save there that reset it would undo a measurement made one button
         away."""
         await self.loaded()

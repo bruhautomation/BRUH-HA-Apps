@@ -6,14 +6,13 @@
     GET  /api/printers               what is on the USB bus right now
     POST /api/printer/select         remember which one is the default
     GET  /api/printer/status         ask the printer how it is
-    POST /api/printer/test           print the ruler
     POST /api/printer/calibrate      print the two calibration labels
     POST /api/printer/check          print the frame that proves the answer
     POST /api/printer/feed           feed the last label out to the tear bar
     GET  /api/stocks                 the label catalog
     POST /api/stock                  add or correct a stock
     POST /api/stock/{id}/swap        the two dimensions, exchanged
-    POST /api/stock/{id}/calibration five readings -> what this roll does
+    POST /api/stock/{id}/calibration six readings -> what this roll does
     DEL  /api/stock/{id}/calibration forget them and print as shipped
     DEL  /api/stock/{id}             delete a custom stock / hide a built-in
     POST /api/roll/{side}            say what is in a bay
@@ -500,7 +499,7 @@ def _render(state: Panel, document: dict, *, dpi: int | None = None,
     )
 
 
-def _label_geometry(stock, cal, model, pre_skip_mm: float = 0.0):
+def _label_geometry(stock, cal, model):
     """The three numbers the wire needs about the paper, in printer dots.
 
     Rounded here and nowhere else — the same `mm_to_dots` every millimetre in
@@ -521,12 +520,12 @@ def _label_geometry(stock, cal, model, pre_skip_mm: float = 0.0):
     feed_dots = render_image.mm_to_dots(stock.measured_feed_mm, model.dpi)
     gap_dots = (None if cal.gap_mm is None
                 else render_image.mm_to_dots(cal.gap_mm, model.dpi))
-    lead_dots = render_image.mm_to_dots(pre_skip_mm - cal.start_mm, model.dpi)
+    lead_dots = render_image.mm_to_dots(-cal.start_mm, model.dpi)
     return feed_dots, gap_dots, lead_dots
 
 
 async def _send_copies(state: Panel, sheets, *, stock, side: str,
-                       cal=None, pre_skip_mm: float = 0.0) -> dict:
+                       cal=None) -> dict:
     """Pack a page per copy, send them as one job, and say why on a failure.
 
     A copy is a page rather than a repeat count because two of them can
@@ -559,8 +558,7 @@ async def _send_copies(state: Panel, sheets, *, stock, side: str,
     # to try rather than a safe default.
     bare = mode == "bare"
     quality = None if bare else str(state.settings.get("quality", "graphics"))
-    feed_dots, gap_dots, lead_dots = _label_geometry(stock, cal, model,
-                                                     pre_skip_mm)
+    feed_dots, gap_dots, lead_dots = _label_geometry(stock, cal, model)
 
     # Only the first copy is charged the after-tear band, and only when the
     # paper is actually sitting at the tear bar — which is what the previous
@@ -575,7 +573,7 @@ async def _send_copies(state: Panel, sheets, *, stock, side: str,
         lead = lead_dots
         if index == 0 and charged and cal.after_tear_mm:
             lead = render_image.mm_to_dots(
-                pre_skip_mm - cal.start_mm - cal.after_tear_mm, model.dpi)
+                -cal.start_mm - cal.after_tear_mm, model.dpi)
         key = (id(sheet), lead)
         page = built.get(key)
         if page is None:
@@ -633,15 +631,14 @@ async def _send_copies(state: Panel, sheets, *, stock, side: str,
 
 
 async def _send(state: Panel, rendered, *, stock, side: str,
-                copies: int, cal=None, pre_skip_mm: float = 0.0) -> dict:
+                copies: int, cal=None) -> dict:
     """`copies` prints of one rendered label — the ordinary case.
 
     Every copy shares the same `Rendered`, which is what lets `_send_copies`
     pack the raster once for the whole run.
     """
     return await _send_copies(state, [rendered] * max(1, int(copies)),
-                              stock=stock, side=side, cal=cal,
-                              pre_skip_mm=pre_skip_mm)
+                              stock=stock, side=side, cal=cal)
 
 
 def _title(document: dict) -> str:
@@ -723,80 +720,25 @@ async def h_printer_usb(request: web.Request) -> web.Response:
     return ok(**report)
 
 
-async def h_printer_test(request: web.Request) -> web.Response:
-    """Print the ruler.
-
-    Which is not a decorative self-test: it is the only way to answer the
-    question the panel genuinely cannot ("is this stock's width really its
-    first number?"), because a LabelWriter never reports what it printed on.
-    The ruler is ticks at every 5mm across the head and a scale down the
-    feed, so holding it against the label tells you both dimensions and
-    whether they are the way round the catalog thinks.
-    """
-    state = panel(request)
-    payload = await body(request)
-    stock_id = str(payload.get("stock") or state.settings.get("default_stock"))
-    side = str(payload.get("side", "") or "")
-
-    try:
-        stock = state.stocks.require(stock_id)
-    except stock_store.UnknownStock as exc:
-        return bad(exc.detail, 404)
-
-    side, notes = state.resolve_side(stock.id, side)
-    document = _ruler_label(stock)
-    parsed, stock, rendered = await asyncio.to_thread(_render, state, document)
-    result = await _send(state, rendered, stock=stock, side=side,
-                         copies=1)
-    state.consume(side, 1)
-    state.mirror_state()
-    return ok(printed=1, side=side, notes=notes + rendered.notes, **result)
-
-
-def _ruler_label(stock) -> dict:
-    """A measuring label: ticks across the head, a scale down the feed."""
-    across_mm, feed_mm = stock.drawable_mm
-    elements: list[dict] = [{
-        "type": "text", "x_mm": 0, "y_mm": 0,
-        "w_mm": across_mm, "h_mm": min(4.0, feed_mm / 3),
-        "props": {"text": f'{stock.across_in}" × {stock.feed_in}"',
-                  "font": "sans-bold", "size_mm": 0, "align": "left",
-                  "valign": "top"},
-    }]
-    top = min(4.0, feed_mm / 3) + 1
-    for millimetre in range(0, int(across_mm) + 1, 5):
-        tall = 3.0 if millimetre % 10 == 0 else 1.6
-        elements.append({
-            "type": "line", "x_mm": millimetre, "y_mm": top,
-            "w_mm": 0.3, "h_mm": min(tall, feed_mm - top),
-            "props": {"stroke_mm": 0.3},
-        })
-    for millimetre in range(0, int(feed_mm) + 1, 5):
-        wide = 3.0 if millimetre % 10 == 0 else 1.6
-        elements.append({
-            "type": "line", "x_mm": 0, "y_mm": millimetre,
-            "w_mm": min(wide, across_mm), "h_mm": 0.3,
-            "props": {"stroke_mm": 0.3},
-        })
-    elements.append({
-        "type": "box", "x_mm": 0, "y_mm": 0,
-        "w_mm": across_mm, "h_mm": feed_mm,
-        "props": {"stroke_mm": 0.3, "fill": False, "radius_mm": 0},
-    })
-    return {"stock": stock.id, "rotate": 0, "name": "Ruler",
-            "elements": elements}
-
-
-# The deliberate feed before raster line 0 on the calibration job, and the
-# one thing on that label that is not a measurement. It is what makes a
-# NEGATIVE start measurable: a printer that lays its first row exactly on the
-# die cut and one that was asked for ink 2mm before it both print their first
-# row at the die cut, and those two are the difference between "nothing to
-# correct" and "this roll needs a pre-skip on every job". Five millimetres
-# because the worst late start this add-on has been shown is 4.7mm and the
-# reading has to stay positive on a roll that is early by as much again.
-CAL_PRE_SKIP_MM = 5.0
-
+# **The calibration job feeds NOTHING before raster line 0, and the 5mm
+# pre-skip that used to sit here is the one mistake this rewrite made twice.**
+# It was added on the theory that it made a negative start measurable — that
+# without it, a printer laying its first row on the die cut and one asked for
+# ink 2mm before it both print their first row at the die cut. The second half
+# of that is true; the conclusion is backwards. Nothing can print before where
+# the printer begins, so a LATE start leaves a blank band at the top of the
+# label with the ladder's own 0 at the bottom of it and nothing inside the
+# band to measure it with — and a skip only pushes that 0 further down, adding
+# a millimetre to every reading and no new information to any of them. The
+# reading that separates the two signs was always at the far end, where the
+# trailing die cut falls on the ladder against a length the catalog holds.
+# See `calibration._one_copy`.
+#
+# It cost the label as well: a sheet fed 5mm and then printed one label long
+# overruns the die cut by five millimetres more than the printer's own late
+# start does, and copy 1's tail then lands on copy 2's leading edge — which
+# is exactly where `top2` is read.
+#
 # Two copies, because copy 2 is the entire evidence for the hypothesis that
 # only the first label of a job is wrong — the reverse feed a tear-off owes
 # and does not always make. One copy cannot tell that from a roll that starts
@@ -886,23 +828,27 @@ CAL_COPY_BOX_MM = 0.2
 async def h_printer_calibrate(request: web.Request) -> web.Response:
     """Print the two calibration labels.
 
-    Not the ruler. The ruler answers "which of these two measurements is
-    which", and it is drawn inside the stock's own margin — so on a roll
-    somebody has given a 5mm margin there is nothing within 5mm of the die
-    cut to measure anything against. This answers "what does this printer do
-    with this roll", and to do that it is drawn to the FULL PRINT HEAD with
-    no margin: the across ladder has to be able to say where paper narrower
-    than the head is sitting, and every mark a label-wide sheet makes is
-    inside the very thing whose position is the question.
+    It replaces the ruler, which was a label of millimetre ticks drawn
+    INSIDE the stock's own margin — so on a roll somebody had given a 5mm
+    border there was nothing within 5mm of the die cut to hold anything
+    against, and the one question it could answer ("are these two
+    measurements the right way round?") is answered here as a by-product:
+    the readings measure both dimensions of the actual paper, and
+    `calibration._looks_transposed` says so. This answers "what does this
+    printer do with this roll", and to do that it is drawn to the FULL PRINT
+    HEAD with no margin: the across ladder has to be able to say where paper
+    narrower than the head is sitting, and every mark a label-wide sheet
+    makes is inside the very thing whose position is the question.
 
     **None of the roll's own calibration is applied to it**, which is the
-    opposite of the rule the ruler follows and is the point. A ladder that
-    moved with the numbers it measures reads the same thing however wrong
-    they are: print it twice and it says the same thing twice. Left alone it
-    is an absolute instrument, and printing it again after saving an answer
-    is a check rather than a ritual. What IS applied is the one thing that is
-    not a correction — `CAL_PRE_SKIP_MM`, so a start before the die cut has
-    somewhere to be measured.
+    opposite of what every other print here does and is the point. A ladder
+    that moved with the numbers it measures reads the same thing however
+    wrong they are: print it twice and it says the same thing twice. Left
+    alone it is an absolute instrument, and printing it again after saving
+    an answer is a check rather than a ritual. **Nothing at all is applied**,
+    not even a feed before the first row — see the note above `CAL_COPIES`
+    for why the pre-skip that used to be there made the reading it was added
+    for impossible rather than possible.
 
     It deliberately prints outside the media, and the control that offers it
     says so before anybody presses it: where there is no thermal paper the
@@ -966,15 +912,13 @@ async def h_printer_calibrate(request: web.Request) -> web.Response:
     # ago.
     fresh = stock_store.Calibration(job_start=variant, ending="tear")
     result = await _send_copies(state, sheets, stock=entry, side=side,
-                                cal=fresh, pre_skip_mm=CAL_PRE_SKIP_MM)
+                                cal=fresh)
     state.consume(side, CAL_COPIES)
     state.mirror_state()
 
-    feed_dots, gap_dots, lead_dots = _label_geometry(
-        entry, fresh, model, CAL_PRE_SKIP_MM)
+    feed_dots, gap_dots, lead_dots = _label_geometry(entry, fresh, model)
     return ok(printed=CAL_COPIES, copies=CAL_COPIES, side=side,
               stock=entry.id, variant=variant,
-              pre_skip_mm=CAL_PRE_SKIP_MM,
               # What the printer was told to search within, reported so the
               # derivation reads the number that was actually sent rather
               # than one it works out for itself. It is the distance the
@@ -1188,8 +1132,8 @@ async def h_printer_check(request: web.Request) -> web.Response:
 
     The calibration label is an instrument and is deliberately immune to
     every number it measures; this is the opposite, and it has to be. It goes
-    out exactly as a real label does — the same crop, the same pre-skip, the
-    same lateral placement — and it draws a one-millimetre frame around the
+    out exactly as a real label does — the same crop, the same feed before
+    the first row, the same lateral placement — and it draws a one-millimetre frame around the
     whole of what the calibration says is printable. If the answer is right
     the frame reaches all four edges of the label and is complete. If it is
     wrong it is missing a side, and which side says which way.
@@ -1330,7 +1274,7 @@ async def h_stock_put(request: web.Request) -> web.Response:
         turn=existing.turn if existing else None,
         # Same partial-update rule as `turn`: the Edit dialog has no control
         # for the calibration — that is a wizard, because it is two prints
-        # and five readings rather than a field — and a Save here that
+        # and six readings rather than a field — and a Save here that
         # blanked it would undo a measurement made one button away.
         calibration=(existing.calibration if existing
                      else stock_store.Calibration()),
@@ -1401,7 +1345,7 @@ def _reading(payload: dict, key: str, *, optional: bool = False):
             return None
         raise _refuse(
             f"The calibration needs the {key!r} reading — it is one of the "
-            f"five numbers printed on the label, in millimetres.")
+            f"six numbers printed on the two labels, in millimetres.")
     try:
         value = float(raw)
     except (TypeError, ValueError):
@@ -1462,10 +1406,10 @@ async def h_stock_calibration(request: web.Request) -> web.Response:
     printed = payload.get("printed")
     if not isinstance(readings, dict) or not isinstance(printed, dict):
         return bad(
-            "A calibration is the five readings off the label plus what the "
-            "calibration print reported it sent — post `readings` and "
-            "`printed` together, because a reading means nothing without "
-            "the pre-skip it was measured against.")
+            "A calibration is the six readings off the two labels plus what "
+            "the calibration print reported it sent — post `readings` and "
+            "`printed` together, because a drift between the copies is only "
+            "a measurement against the search budget that went out.")
 
     variant = str(printed.get("variant", "plain") or "plain")
     if variant not in protocol.JOB_STARTS:
@@ -1476,10 +1420,10 @@ async def h_stock_calibration(request: web.Request) -> web.Response:
             top1=_reading(readings, "top1"),
             bottom1=_reading(readings, "bottom1"),
             top2=_reading(readings, "top2"),
+            bottom2=_reading(readings, "bottom2"),
             right=_reading(readings, "right", optional=True),
         ),
         calibration.Printed(
-            pre_skip_mm=_reading(printed, "pre_skip_mm"),
             esc_l_mm=_reading(printed, "esc_l_mm"),
             variant=variant,
         ),
@@ -2003,7 +1947,6 @@ def build_app(state: Panel | None = None) -> web.Application:
     app.router.add_get("/api/printers", h_printers)
     app.router.add_post("/api/printer/select", h_printer_select)
     app.router.add_get("/api/printer/status", h_printer_status)
-    app.router.add_post("/api/printer/test", h_printer_test)
     app.router.add_post("/api/printer/calibrate", h_printer_calibrate)
     app.router.add_post("/api/printer/check", h_printer_check)
     app.router.add_post("/api/printer/feed", h_printer_feed)

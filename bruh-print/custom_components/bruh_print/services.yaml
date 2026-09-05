@@ -149,11 +149,12 @@ set_roll:
           mode: box
 
 print_test:
-  name: Print the ruler
+  name: Print a check label
   description: >-
-    Print a label with millimetre ticks along both edges. The only way to
-    check that a stock's measurements are the way round BRUH Print thinks
-    they are, since a LabelWriter never reports what it printed on.
+    Print a frame around everything this roll can print on, with "Should
+    reach every edge" inside it. If the frame is complete the roll is lined
+    up; a missing side says which way it is out. Keeps its old service id so
+    automations written against it go on working.
   fields:
     stock:
       name: Label stock

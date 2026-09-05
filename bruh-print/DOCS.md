@@ -44,8 +44,9 @@ Nothing can work this out for you. A LabelWriter feeds to the next die-cut
 gap and has no idea what shape the label it just printed was, so if a label
 comes out rotated with the text running off the edge, the two numbers are the
 wrong way round. Press **Edit** on the Printer tab and then **"These are the
-wrong way round"** — or press **Print the ruler** and hold the result against
-a real label, which is the only way to be sure and costs one label.
+wrong way round"**. Lining the roll up is what tells you: it measures both
+edges of the real paper, and if the two measurements match the catalog's the
+other way round it says so and offers the swap.
 
 **Text direction** is one setting, on the Printer tab, per stock. A label
 much longer than it is wide is a wrap-around label, so its text runs *along
@@ -79,96 +80,111 @@ measurements: a roll carrying a 5mm border prints artwork a centimetre
 smaller than the label, and that is worth being able to see without opening
 anything.
 
-### Where the printing starts
+### Lining up a roll
 
-A LabelWriter finds the top of a label by an infrared photocell looking for
-the sense hole punched between labels, and where that hole sits relative to
-the die cut is a property of the **roll**. So one printer and one roll can
-begin laying ink a few millimetres after the label's leading edge, every
-time, for good — with nothing wrong anywhere in the driver. On the roll this
-feature was built for, measured off a photograph against the printed ruler's
-own ticks, it was **4.7mm**: the top margin came out 9.9mm where it should
-have been 5.2, the bottom 0.3mm, and the last 4.7mm of the raster ran off the
-end of the label into the gap.
+**What the printer does.** A LabelWriter finds the top of a label with an
+infrared photocell looking for the sense hole punched in the gap between
+labels. Top of form is that gap sitting *over the cutter bar* — which is
+past the print head, not at it — so a form feed "places the next label beyond
+the starting print position. Therefore, a reverse-feed will be automatically
+invoked when printing on the next label." Everything about where ink lands
+follows from those two facts, and where the hole sits relative to the die cut
+is punched into the **roll**.
 
-Nothing in a container can see that, so you measure it and type it in, once
-per roll.
+So one printer and one roll can begin laying ink a few millimetres after the
+label's leading edge, every time, for good, with nothing wrong anywhere in the
+driver. On the roll this feature was built for it is **4.7mm**: the top margin
+came out 9.9mm where it should have been 5.2, the bottom 0.3mm, and the last
+4.7mm of the raster ran off the end into the gap. **No command moves it
+earlier** — the manual's own feed-direction command, `ESC f 1 n`, only ever
+feeds *forward*, and the printer will not reverse paper on request. What BRUH
+Print can do is know where the printable part starts and lay labels out inside
+it.
 
-1. Press **Where the printing starts** on the printer card.
-2. Press **Print the calibration label**. Unlike the ruler, it is drawn to
-   the very edges of the sheet — the border above is ignored, or there would
-   be nothing near the die cut to measure against. It carries two thick rules
-   meeting at the exact corner where the printing begins, and 1mm ticks
-   running along each of them.
-3. Hold it up. If there is a **gap** between the label's own edge and a thick
-   rule, that gap is how far in the printer is starting: type it into the
-   matching box **with a minus in front**. If a thick rule is missing because
-   the printing started before the edge, count the ticks that did survive and
-   type that as a plus.
-4. Save, and print the calibration label again. Saved offsets are applied to
-   it too, so the second one is the check.
+There are three ways a roll can be wrong and they look identical from a
+photograph, so lining up prints **two** labels and reads six numbers off them.
 
-Both boxes default to `0.0` and stay there unless somebody measures. The
-offset moves the rendered sheet on its way to the printer and changes nothing
-about the label: the document, the preview and the design canvas are the
-same, because this is a correction to where the machine puts the paper. A
-shift that slides blank border off one edge costs nothing and is silent; one
-that would push real **ink** off the label still prints and comes back with a
-note saying how much, past which edge, and what to change. An offset in use
-is shown on the stock row.
+1. Press **Line up this roll** on the bay that holds it, then **Print**.
+2. Type what you see. Each box says what it is and the drawing beside it shows
+   where on the label to look.
+3. Press **Apply**. BRUH Print says what your printer does with this roll, in
+   one sentence.
+4. Press **Print a check label**. It draws a frame around everything the roll
+   can print on, with "Should reach every edge" inside it. A complete frame
+   means the answer was right; a missing side says which way it is out, and you
+   run the wizard again.
 
-Anything past an inch is refused rather than clamped — a LabelWriter's
-registration is out by a millimetre or two, so a bigger number is a
-mistyped measurement or two boxes filled in the wrong way round.
+**The six numbers.** Every one is read against a ladder printed on the same
+label, which is the only kind of measurement that cannot be wrong about its own
+scale.
 
-### Where the paper sits under the head
+| | What to read |
+| --- | --- |
+| **A** | The white-on-black number where the label's **left** edge cuts the black band. That band is a scale across the whole 672-dot print head, so the part of it that misses the paper is the part telling you where the paper sits. |
+| **B** | The same at the **right** edge. Leave it empty if the band runs off the label — a label wider than the band has nothing to read there. |
+| **C** | On label 1: the first feed number you can see at the top, minus one for each short tick line above it — and **0** whenever the ladder's own `0` and its heavy bar are printed with blank label above them. |
+| **D** | On label 1: the last feed number you can see at the bottom, plus one for each short tick below it. |
+| **E** | **C** again, on the label with a 2 in the box. |
+| **F** | **D** again, on that same label. |
 
-The print head is **672 dots wide whatever is loaded**. A 2.25" label is 672
-dots, so it covers the head and lands right however the roll is registered. A
-0.56" wrap is 168 dots — a quarter of it — and a raster always begins at the
-head's first dot, so if the roll does not sit at that end of the head, part of
-the printing lands on the liner and the rest of the label stays blank. On the
-roll this was found on, half the label printed and half did not.
+**Why a late start is read from the BOTTOM, and this is the whole shape of it.**
+Nothing can print before the point where the printer begins. So a printer that
+starts late leaves a blank band at the top of the label with the ladder's own
+`0` and its heavy bar at the *bottom* of that band — and there is nothing
+inside the band to measure the band with. `C` is therefore `0`, which is a
+reading rather than a missing one: it says *the printer began at or after the
+die cut*. The size comes from the far end, where the trailing die cut falls on
+the ladder short of the label's own catalogued length, and that shortfall is
+exactly how late the printing started.
 
-**The offsets above cannot fix that**, and this is the one place the
-difference matters: an offset moves artwork *inside* a 168-dot sheet, so
-pushing it right only shoves ink off that sheet's own edge. It can never move
-the sheet further along the head. If you have been typing bigger and bigger
-offsets at a narrow label and nothing changes, this is why.
+The other sign is the one that is directly measurable. A printer that begins
+*before* the leading die cut has its first rows land on the paper ahead, so the
+die cut cuts the ladder part-way down and the number it cuts it at **is** the
+distance — that is `C` being something other than zero. Both die cuts are then
+on the ladder, so `D − C` is the label's real length, measured rather than
+taken from the catalog. On a late roll no length can be measured at all, and
+the check label is what confirms it instead.
 
-So **Where the paper sits** is a separate box, in millimetres in from the
-head's first dot, `0.0` unless measured. To measure it, tick **Print a scale
-across the whole head** before printing the calibration label: it ignores the
-stock's width and lays a numbered scale across all 672 dots, so whatever
-lands on your label reads off directly as the distance. Note what that means
-in practice — the parts of the scale that miss the paper print onto the liner,
-which is ordinary for a calibration pass and is why the tick is not the
-default.
+An earlier release fed 5mm before the first row on the theory that it made a
+negative start measurable. It did the opposite: the skip only pushes the
+ladder's `0` further down a band that is blank either way, so both signs read
+`0` at the top and the one number that separated them was the one nothing
+printed. The calibration job now feeds nothing.
 
-### The gap between labels
+**The three outcomes.**
 
-`ESC L` is defined in the manual as the dot lines **from sense hole to sense
-hole** — the label plus the die-cut gap after it — and it is a *search
-budget*: the printer counts print lines and fed lines against it while looking
-for the next hole. With no measurement to go on this add-on sends the label
-plus 25% (with a floor), which is deliberately generous, because the manual is
-clear that over-long costs nothing **as long as the hole is found and re-syncs
-the counter**.
+- **It prints from the die cut.** Nothing to correct, and that is a different
+  state from *nobody has measured this roll* — the panel says which.
+- **A dead band on every label.** Both copies read the same. The first few
+  millimetres of every label cannot carry ink, so labels are laid out inside
+  what is left; the designer draws that band hatched at the leading edge and
+  outlines anything you put in it. It still prints — ink lost to the band is a
+  note beside the label, never a refusal.
+- **The first label after a tear-off.** Copy 2 comes out on the die cut and copy
+  1 does not: that is the reverse feed a form feed owes the next label not
+  happening, and it costs exactly one label per job. It takes a second print to
+  settle, because `ESC @` ("sets top-of-form as true") is a plausible fix and
+  whether a given firmware honours it is not answerable from inside a
+  container — so BRUH Print prints again with it and compares. If that fixes it,
+  every job sends it from then on; if it does not, the band is charged to the
+  first copy of each job and to nothing else.
 
-If the hole is *not* being found on a given roll, that generosity is fed
-straight onto the paper and every label starts late — which is one of the two
-explanations for a dead band at the leading edge that no offset can shift (the
-other is the printer's own top-of-form, which is a hardware fact).
+A fourth reading is possible and is a diagnosis rather than a setting: if the
+two copies **drift**, the printer is not finding the sense hole at all and is
+counting the label length instead. The drift is then the error in that count,
+the roll's real hole-to-hole pitch falls out of it, and `ESC L` becomes exact
+arithmetic instead of the label plus a quarter.
 
-**Leaving this box empty keeps exactly the bytes the add-on sent before it
-existed**, so a roll nobody has measured prints identically. Measure the gap
-with a ruler and type it in and the budget becomes arithmetic instead of a
-fraction somebody chose. **`0` is a real answer, not the same as empty**: it
-is what you set to wind the budget down to the label itself and watch what the
-leading edge does, which is how you find out which of the two explanations you
-have. A gap that would make the budget shorter than the label is refused — a
-search that ends before the hole is the bug that made every label drift down
-the roll before 0.5.0.
+**`hold` and Feed.** A job normally ends with a form feed, which parks the paper
+at the tear bar. A roll whose first label of every job is wrong can end with the
+short feed instead, which leaves the last label "partially inside" the printer
+where it cannot be torn off — and then the next job's first label starts in the
+right place. When a roll is set that way its bay grows a **Feed** button, which
+moves the paper to the tear bar and prints nothing.
+
+**Forget** throws the measurement away. Not back to a guessed default — to
+nothing: an uncalibrated roll gets byte-for-byte the job this add-on has always
+sent, which is the promise every measurement here is added under.
 
 The two stocks this add-on ships knowing, read off the roll cores:
 
@@ -502,16 +518,26 @@ There is no CUPS in this container and no DYMO driver. `panel/dymo/` speaks
 the LabelWriter's own raster protocol:
 
 ```
+ESC x156       a sync run, so a printer mid-anything starts from a known state
+ESC @          a reset — only where a roll's calibration asked for one
 ESC q '1'|'2'  roll select — ASCII digits, not 1 and 2 (see below)
 ESC c|d|e|g    print density: light, medium, normal, dark
 ESC h|i        300 x 300 (fast) or 300 x 600 ("barcodes and graphics", slow)
+                                                     ...and then per copy:
 ESC L hi lo    how far to search for the next sense hole (see below)
 ESC B 0        dot tab: where on the head a line starts, in bytes
 ESC D 84       bytes per line (672 dots / 8)
+ESC f 1 n      feed n blank lines before the first row (see below)
 SYN <84 bytes> one raster line, one per row
 ESC G          short form feed, between copies
 ESC E          form feed, after the last one
 ```
+
+The split matters: roll select, density and speed are sent **once per job**
+and everything under `ESC L` is sent **per copy**, which is the shape DYMO's
+own CUPS driver uses and the only shape in which two copies of one job can
+carry different values — which is exactly what the calibration print needs,
+since the first label of a job is the one that follows a tear-off.
 
 That is the **Standard** mode and the default: one `SYN` and one full line
 for every row, which is the shape cups-filters' DYMO path has printed with
@@ -594,18 +620,23 @@ of every label, with nothing on this side able to see it. Sending it is how
 a job stops inheriting a stranger's margin. **Bare minimum** does not send
 it, along with everything else.
 
-`ESC f 1 n` (skip *n* lines) is documented, unambiguous, and deliberately not
-sent. It is the printer's own feed-direction print position and it only ever
-moves paper **forward**, so it cannot express the correction that
-*Where the printing starts* exists for — a printer beginning **late**, which
-needs the artwork moved toward the leading edge. Splitting the control
-between a skip for one sign and a raster shift for the other would also give
-it two behaviours at the edge of the sheet: a skip pushes the tail of the
-raster past the die cut into the gap, which the printer explicitly does not
-check, while a raster shift keeps the sheet exactly one label long — which is
-what lets BRUH Print see the ink it is about to lose and tell you. `ESC B n`
-(dot tab) is the same story on the across axis, in steps of eight dots, and
-it is already carrying the more important job above.
+`ESC f 1 n` (skip *n* lines) **is** sent, and only ever in the one direction
+it has. It feeds blank paper before the first row, which is what a roll whose
+printer would start *before* the die cut needs — and it is measured in the
+printer's own steps, so it is scaled by the graphics-mode line doubling exactly
+as the raster and the `ESC L` budget are. A skip left unscaled in the 300 × 600
+mode is half the distance asked for.
+
+It cannot express the other sign. A printer beginning **late** would need paper
+pulled back, and nothing in the command set does that — so that case is answered
+by sending a **shorter sheet**: the rows that fall in the dead band are cut off
+the front, so the first row that goes out is the first one that can carry ink and
+the last still lands at the die cut. Nothing is moved relative to anything else,
+the sheet stays exactly one label long, and BRUH Print can see the ink it is
+about to lose and say so. `ESC B n` (dot tab) is one-directional in the same way
+on the across axis, in steps of eight dots, and it is already carrying the more
+important job above — where a narrow roll sits under the head is
+`calibration.across_mm`, applied to the raster.
 
 ### How dark, and how slowly
 
@@ -647,7 +678,8 @@ one whose firmware predates the status command.
 **It says it printed and nothing came out.** The bytes were accepted and the
 printer did not use them — which produces no error anywhere, because from
 the add-on's side the job succeeded. Printer tab → Settings → **If nothing
-comes out**: change it, press **Print the ruler**, repeat. Standard is what
+comes out**: change it, press **Print a check label** on a bay, repeat.
+Standard is what
 everything is tested against; Compact adds a compression opcode not every
 firmware reads; Bare minimum also drops roll select — which costs a Twin
 Turbo its second bay — along with the darkness and speed commands, and is
@@ -678,10 +710,12 @@ Printer tab and then **"These are the wrong way round"**. If the label is the
 right shape and the words are simply lying the wrong way along it, that is
 **Text direction** on the same row, and it is one press.
 
-**The label comes out blank, or half of it does.** Print the ruler. If the
-ruler is right, the artwork is outside the drawable area — the designer draws
-that area as a dashed rectangle with the margin tinted, and clamps boxes to
-it, so this usually means the stock is wrong rather than the label.
+**The label comes out blank, or half of it does.** Print a check label. If
+the frame reaches every edge, the artwork is outside the drawable area — the
+designer draws that area as a dashed rectangle with the margin tinted, and
+clamps boxes to it, so this usually means the stock is wrong rather than the
+label. If the frame is missing a side, or lands across the liner on a narrow
+roll, the roll needs lining up.
 
 **The words sit too close to the edge.** They should not: text is fitted and
 placed by its ink, inside a 2mm border and a little breathing room inside its
@@ -693,14 +727,14 @@ else changes.
 same amount every time.** That is top-of-form registration, and it is a
 property of the printer and the roll rather than of anything BRUH Print
 draws: the artwork is the right size and the right shape, it just starts in
-the wrong place. Press **Where the printing starts** on the printer card and
-work through it — see *Where the printing starts* above. If it is only *some*
-labels, or it gets worse down the roll, that is a different fault and it was
-fixed in 0.5.0 by sending a real top-of-form search budget; make sure you are
-not on an older version.
+the wrong place. Press **Line up this roll** on the bay that holds it and work
+through it — see *Lining up a roll* above. If it is only *some* labels, or it
+gets worse down the roll, that is a different fault and it was fixed in 0.5.0
+by sending a real top-of-form search budget; make sure you are not on an older
+version.
 
 **Nothing prints and there is no error.** Check the roll is seated and the
-lid is closed, then press **Check it** on the printer's card — a LabelWriter
+lid is closed, then press **Ask the printer** on the printer's card — a LabelWriter
 reports an open lid and an empty roll, and "no status reported" is itself an
 answer (it is what a printer mid-feed says).
 

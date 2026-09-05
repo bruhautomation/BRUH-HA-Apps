@@ -74,28 +74,21 @@ that does nothing.
 2. Open the panel. The Printer tab should show your LabelWriter.
 3. Tell it what is loaded. Pick the stock for each roll — the two cryo
    stocks are already in the list, along with the common DYMO part numbers.
-4. Press **Print the ruler** once per roll. It prints a label with
-   millimetre ticks along both edges; hold it against a real label to check
-   the measurements are the way round BRUH Print thinks they are. If they
-   are not, press **Edit** on that row and then **"These are the wrong way
-   round"**.
-5. Check **Text direction** on the same row. A label much longer than it is
+4. **Line up this roll**, once per roll, on the bay that holds it. Two
+   calibration labels print; you read six numbers off them — where each edge of
+   the label cuts the black scale, and where each label's top and bottom edges
+   fall on the feed ladder — and type them in. Nothing to measure with: every
+   number is read against a ladder printed on the same label. BRUH Print then
+   says what your printer does with that roll in one sentence, and every print
+   on it uses the answer.
+5. Press **Print a check label** on that bay. It prints a frame around
+   everything the roll can print on with "Should reach every edge" inside it.
+   If the frame is complete you are done; if a side is missing, run
+   **Line up this roll** again.
+6. Check **Text direction** on the stock row. A label much longer than it is
    wide reads along the roll automatically and the picker says so; anything
    else is one press, once, for that stock. Nothing asks again per print.
-6. If everything comes out shifted by the same amount every time — a wide
-   band at one edge and nothing at the other — press **Where the printing
-   starts**. It prints a calibration label drawn to the very edges of the
-   sheet with a 1mm scale at its own corner, you read off how far in the
-   printing really begins, and BRUH Print moves it. Once per roll, and
-   nothing to do at all unless a label looks wrong.
-7. If a **narrow** roll prints across only part of its width, that is a
-   different number in the same dialog. The head is 672 dots however small
-   the label is, and a raster starts at its first dot — so a roll that does
-   not sit at that end of the head is only partly printed on, and no offset
-   can move it, because an offset shifts artwork inside the label rather
-   than moving the label along the head. Tick **Print a scale across the
-   whole head**, print the calibration label, and read the distance off it.
-8. Type something on the Quick tab and print it.
+7. Type something on the Quick tab and print it.
 
 ## From Home Assistant
 
@@ -108,7 +101,7 @@ Six services, all of which return what happened so a script can branch on it:
 | `bruh_print.print_label` | Print a complete label document |
 | `bruh_print.reprint` | Print something from the history again |
 | `bruh_print.set_roll` | Say which labels are in a roll |
-| `bruh_print.print_test` | Print the measuring ruler |
+| `bruh_print.print_test` | Print a check label — a frame around everything the roll can print on |
 
 ```yaml
 action: bruh_print.print_template

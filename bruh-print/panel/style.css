@@ -448,11 +448,11 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .strow .sku { font-size: 12px; color: var(--ink-3); }
 .strow .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px;
   background: var(--line-2); color: var(--ink-2); white-space: nowrap; }
-/* A print offset is a correction somebody made to this roll, so it reads as
-   one rather than as another fact about it: the `--warn` ink both themes
-   already define, on the same quiet ground. Not a colour of its own — a
-   fourth palette entry for one pill is a palette that drifts. */
-.strow .pill.moved { color: var(--warn); }
+/* A roll somebody has measured reads as a state rather than as another fact
+   about the stock: the `--good` ink both themes already define, on the same
+   quiet ground. Not a colour of its own — a fourth palette entry for one
+   pill is a palette that drifts. */
+.strow .pill.lined { color: var(--good); }
 /* Sized to its content and capped, never `width: auto` unbounded — a select
    lays out to its WIDEST option, which is how the design tab's stock picker
    once took the page width with it. */
@@ -595,6 +595,36 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .clipped.top { left: 0; right: 0; top: 0; height: 5px; }
 .clipped.bottom { left: 0; right: 0; bottom: 0; height: 5px; }
 
+/* The band at the sheet's LEADING edge that this roll's printer will not
+ * reach. Its thickness is a real measurement — `dead_leading_mm` off the
+ * stock, in the canvas's own scale — where `.clipped` above is drawn wide
+ * enough to see and says so in its tooltip, because three dot columns is a
+ * hundredth of an inch. Hatched the other way round from `.clipped` so two
+ * different losses do not read as one, and it takes no pointer: it lies
+ * over the whole leading edge of the label, which is where boxes are
+ * dragged. */
+.deadband {
+  position: absolute; pointer-events: none; z-index: 2;
+  background: repeating-linear-gradient(
+    -45deg, color-mix(in srgb, var(--warn) 42%, transparent) 0 3px,
+    transparent 3px 7px);
+  border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.deadband.top { left: 0; right: 0; top: 0; }
+.deadband.bottom { left: 0; right: 0; bottom: 0; }
+.deadband.left { top: 0; bottom: 0; left: 0; }
+.deadband.right { top: 0; bottom: 0; right: 0; }
+.deadband .dbt {
+  font-size: 9px; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--warn); background: var(--panel); padding: 0 3px;
+  border-radius: 3px; white-space: nowrap;
+}
+/* Turned with the band on the two edges where it is a tall sliver, or the
+ * word is one letter per line and unreadable. */
+.deadband.left .dbt, .deadband.right .dbt { transform: rotate(-90deg); }
+
 /* Guides live above the boxes: they are drawn while something is being
  * dragged and are the one thing on the canvas that must not be hidden by
  * the thing that caused them. */
@@ -681,6 +711,81 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .stockhelp { margin-bottom: 12px; }
 .stockhelp > summary { min-height: 40px; display: flex; align-items: center;
   gap: 8px; cursor: pointer; font-size: 14px; color: var(--ink-2); }
+
+/* ── Lining a roll up ────────────────────────────────────────────────── */
+/* The bay's own block. It is under the roll picker and the remaining gauge
+   because it is about the roll in this bay, and there is one of these per
+   bay for exactly the reason there is one calibration per roll. */
+.calbay { display: grid; gap: 8px; margin-top: 10px;
+  padding-top: 10px; border-top: 1px solid var(--line-2); }
+.calstate { margin: 0; font-size: 13px; color: var(--ink-2); }
+
+/* The wizard. `.calsplit` is one column on a phone and two above 640px:
+   the drawing has to be ON the screen you are typing into, and at 390px
+   "beside" is not a thing a browser can do without shrinking one of them
+   into uselessness. What ties a badge on the picture to a box below it is
+   the letter, not the adjacency. */
+.calwiz { display: grid; gap: 12px; }
+.calwiz h2 { margin: 0; }
+.calwiz .muted { font-size: 13px; }
+.calsplit { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+.calsvg { width: 100%; height: auto; display: block;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 10px; }
+.calfields { display: grid; gap: 4px; }
+.calfield { margin-bottom: 6px; }
+/* A sentence, not a field label. `.field > span` is uppercase with letter
+   spacing, which is right for "Copies" and shouts at a five-word
+   instruction — and these five names ARE the instruction. */
+.calfield > .calhead { display: flex; align-items: center; gap: 8px;
+  text-transform: none; letter-spacing: 0; font-size: 13.5px;
+  color: var(--ink); }
+/* The badge is the same mark in both places, and it is why the drawing does
+   not need to be beside the box it names. */
+.calbadge, .calb {
+  font-style: normal; font-weight: 800; font-size: 12px;
+}
+.calbadge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; flex: none; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink);
+}
+/* The answer the derivation gave, which is the whole output of the wizard —
+   it names a hypothesis in plain words rather than reporting the numbers
+   back, so it is set as prose and not as a status line. */
+.calsentence {
+  margin: 0; padding: 10px 12px; border-radius: 10px; font-size: 14px;
+  background: var(--accent-soft); color: var(--ink);
+  border-left: 3px solid var(--accent);
+}
+
+/* The drawing. It is deliberately not to scale — a leading band drawn at
+   its real few millimetres is a band nobody can see — so every mark here is
+   about WHERE a reading is taken and never about how big it is. */
+.callabel { fill: var(--panel); stroke: var(--ink-3); stroke-width: .8; }
+.calbar { fill: var(--ink); }
+/* The band the printer lays no ink in, which is the thing C and E are about
+   and the reason both read 0 on a late-starting roll: there is nothing
+   printed inside it to measure it with. Drawn as the absence it is. */
+.calblank { fill: color-mix(in srgb, var(--warn) 14%, transparent); }
+.calbox { fill: none; stroke: var(--ink); stroke-width: .7; }
+.calband { fill: var(--ink); }
+.calnotch { stroke: var(--panel); stroke-width: .8; }
+.calrung { stroke: var(--ink-2); stroke-width: .7; }
+.calleader { stroke: var(--ink-3); stroke-width: .6;
+  stroke-dasharray: 2 2; }
+.calarrow { stroke: var(--accent); stroke-width: .9; }
+.calt { fill: var(--ink-2); font-size: 5px; font-weight: 700;
+  text-anchor: middle; }
+.calnum { fill: var(--ink-2); font-size: 4.5px; text-anchor: middle; }
+.calb { fill: var(--accent); }
+.calbt { fill: var(--accent-ink); font-size: 5.5px; font-weight: 800;
+  text-anchor: middle; }
+
+@media (min-width: 640px) {
+  .calsplit { grid-template-columns: minmax(0, 44%) minmax(0, 1fr);
+    align-items: start; }
+}
 
 /* ── The touch floor ─────────────────────────────────────────────────
  * LAST in the file, and that is load-bearing rather than tidy. These rules

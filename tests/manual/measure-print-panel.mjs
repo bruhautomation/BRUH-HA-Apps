@@ -84,6 +84,16 @@ const audit = (width) => {
   for (const gone of ['quickRotate', 'designRotate'])
     if (document.getElementById(gone))
       out.push(`#${gone} is back — the turn is the stock's, and it is set once`);
+  /* The four knobs, and the two buttons that served them. They are not
+     hidden, they are gone: a correction somebody guesses is a guess whatever
+     it is called, and every one of these was a box to type a millimetre
+     into. What replaced them is one button per bay that prints. */
+  for (const gone of ['printOffset', 'offsetStock', 'offsetFeed',
+                      'offsetAcross', 'offsetMedia', 'offsetGap',
+                      'offsetHeadScale', 'offsetCalibrate', 'offsetSave'])
+    if (document.getElementById(gone))
+      out.push(`#${gone} is back — the offsets were replaced by Line up this `
+        + 'roll, not moved');
   return [...new Set(out)];
 };
 
@@ -197,6 +207,149 @@ const checkTurnedCanvas = async (p, name) => {
       + `sheet (${shape.imgW}×${shape.imgH}), not the strip the overlay describes`);
   if (!(shape.w > shape.h))
     problems.push(`${name}: the design canvas of a turned label is taller than wide`);
+};
+
+/* ── Lining a roll up, driven ──────────────────────────────────────────
+ *
+ * The whole of 0.9.0 from the panel's side, at the width it is least likely
+ * to fit: the wizard is a drawing and five number boxes inside a dialog that
+ * is 94vw of a 390px phone. Every failure this replaced was a control nobody
+ * had ever measured narrow — a 413px page in a 390px window survived a
+ * release on this very tab — and the offset dialog it replaces had SIX
+ * boxes, so the arithmetic here is worse rather than better.
+ *
+ * It drives the real thing end to end because there is no other way to know
+ * it works: the demo panel's only stand-in is the USB write, so the print
+ * goes through the real renderer and the readings through the real
+ * derivation. A test that stubbed either would be a test of the stub.
+ */
+const lineUpWizard = async (p, name, width) => {
+  /* Forgotten first, so the run starts from the same place whether or not
+     the demo's /data has been wiped since the last one. It is also the only
+     drive Forget gets, and it is the press that has to leave a roll printing
+     byte-for-byte what the add-on shipped with. */
+  const forget = await p.$('#forgetCal-left');
+  if (forget) { await forget.click(); await p.waitForTimeout(700); }
+  const state = await p.$('#bays .calstate');
+  if (!state)
+    return problems.push(`${name}: the bay says nothing about whether this `
+      + 'roll has been lined up');
+  const before = (await state.textContent()).trim();
+  if (!/not lined up/i.test(before))
+    problems.push(`${name}: Forget left the bay saying "${before}"`);
+
+  /* Looked up AFTER the Forget, which re-renders every bay: a handle taken
+     before it is a node that is no longer in the page. */
+  const bay = await p.$('#lineUp-left');
+  if (!bay) return problems.push(`${name}: no "Line up this roll" on the left bay`);
+  await bay.click();
+  await p.waitForTimeout(400);
+  /* Asked rather than clicked into. A `page.click` on a control that is not
+     there is thirty seconds of timeout and a stack trace, which reads as a
+     flaky selector — the same failure this script's own header is about. */
+  const print = await p.$('#lineUp[data-step="print"] #lineUpPrint');
+  if (!print) return problems.push(`${name}: step 1 did not render`);
+  await print.click();
+  await p.waitForTimeout(900);
+
+  /* Step 2: the drawing and the five boxes, all of them on a screen 390px
+   * wide. `fit` is measured against the VIEWPORT rather than against the
+   * dialog, because a dialog that overflows the screen is the same failure
+   * as a page that does. */
+  const step = await p.$('#lineUp[data-step="read"]');
+  if (!step) return problems.push(`${name}: step 2 did not render after Print`);
+  const shape = await p.evaluate((w) => {
+    const out = [];
+    const wrap = document.getElementById('lineUp');
+    for (const node of wrap.querySelectorAll('*')) {
+      const box = node.getBoundingClientRect();
+      if (!box.width) continue;
+      if (box.right > w + 1 || box.left < -1)
+        out.push(`${node.id || node.className || node.tagName} runs to `
+          + `${box.right.toFixed(0)}px of ${w}`);
+    }
+    const svg = document.getElementById('calSvg');
+    if (!svg) out.push('there is no drawing on the reading step');
+    else if (svg.getBoundingClientRect().height < 60)
+      out.push('the drawing is drawn but has no height');
+    for (const letter of ['A', 'B', 'C', 'D', 'E', 'F']) {
+      const input = document.getElementById(`cal${letter}`);
+      if (!input) { out.push(`reading ${letter} has no box`); continue; }
+      const box = input.getBoundingClientRect();
+      if (box.height < 44)
+        out.push(`#cal${letter} is ${box.height.toFixed(0)}px tall`);
+      if (parseFloat(getComputedStyle(input).fontSize) < 16)
+        out.push(`#cal${letter} is under 16px — iOS will zoom in and stay there`);
+      /* The badge on the box is what ties it to the badge on the drawing.
+         Without it the picture names five points and the form names five
+         boxes, and nothing joins them. */
+      if (!input.closest('.calfield').querySelector('.calbadge'))
+        out.push(`#cal${letter} has no badge, so the drawing points at nothing`);
+    }
+    if (document.documentElement.scrollWidth > w + 1)
+      out.push(`the page scrolls sideways with the wizard open `
+        + `(${document.documentElement.scrollWidth} > ${w})`);
+    return out;
+  }, width);
+  for (const bad of shape) problems.push(`${name}: ${bad}`);
+
+  /* The owner's own roll, in the reading rule the pre-skip's removal left:
+     both tops 0 (the ladder's 0 and its heavy bar with blank label above
+     them, which is what a late start looks like) and both bottoms 27 of a
+     31.75mm label, which is the 4.7mm dead zone read from the end that has
+     ink on it. B is blank on purpose: a label wider than the across band has
+     nothing to read there, and an empty box has to reach the server as null
+     rather than as the zero `Number('')` would make it. */
+  const apply = await p.$('#calApply');
+  const boxes = await Promise.all(
+    ['calA', 'calC', 'calD', 'calE', 'calF'].map((id) => p.$(`#${id}`)));
+  if (!apply || boxes.some((box) => !box))
+    return problems.push(`${name}: the reading step is missing a box or the `
+      + 'Apply, so there is nothing to drive');
+  for (const [box, value] of [[boxes[0], '0'], [boxes[1], '0'],
+                              [boxes[2], '27'], [boxes[3], '0'],
+                              [boxes[4], '27']])
+    await box.fill(value);
+  await apply.click();
+  await p.waitForTimeout(1200);
+
+  const done = await p.evaluate(() => {
+    const wrap = document.getElementById('lineUp');
+    const sentence = wrap && wrap.querySelector('.calsentence');
+    return { step: wrap && wrap.dataset.step,
+             sentence: sentence ? sentence.textContent.trim() : '',
+             check: !!document.getElementById('calCheck') };
+  });
+  if (done.step !== 'done')
+    problems.push(`${name}: Apply left the wizard on "${done.step}"`);
+  if (!done.sentence)
+    problems.push(`${name}: nothing said what the readings meant`);
+  /* And it has to be the RIGHT answer: 0 at the top with 27 at the bottom of
+     a 31.75mm label is a 4.75mm dead zone, which is the owner's own roll read
+     to the whole millimetre a printed ladder actually offers — 4.8 to the one
+     decimal place every sentence here uses. A wizard that stored something
+     else would still render a sentence. */
+  else if (!/can.t put ink on the first 4\.8mm/i.test(done.sentence))
+    problems.push(`${name}: the owner's readings did not derive a 4.8mm dead `
+      + `zone ("${done.sentence.slice(0, 90)}")`);
+  if (!done.check)
+    problems.push(`${name}: no check label to print, which is the only way `
+      + 'to see whether the answer was right');
+
+  const close = await p.$('#lineUpClose');
+  if (!close) return problems.push(`${name}: the wizard has no way out but Escape`);
+  await close.click();
+  await p.waitForTimeout(700);
+  const after = await p.$eval('#bays .calstate', (n) => n.textContent.trim());
+  if (after === before)
+    problems.push(`${name}: the bay still says "${after}" after a roll was `
+      + 'lined up');
+  if (!/lined up/i.test(after))
+    problems.push(`${name}: the bay does not say the roll is lined up `
+      + `("${after}")`);
+  if (!/4\.8 mm in/.test(after))
+    problems.push(`${name}: the bay does not name the dead zone that was `
+      + `just measured ("${after}")`);
 };
 
 /* ── The phone budget ──────────────────────────────────────────────────
@@ -393,25 +546,7 @@ await run(PHONE.w, PHONE.h, 'phone-printer', true, async (p) => {
   await p.click('[data-view="printer"]');
   await p.waitForTimeout(700);
   await phoneBudget(p, 'phone-printer');
-  /* "Where the printing starts" is the fourth button on the printer card,
-   * and the card's foot is the narrowest row on this tab. A control added
-   * to it is a control nobody has measured at 390px until it is measured
-   * here — which is exactly how a 413px page in a 390px window survived a
-   * release. Its dialog is where the two offsets are typed, so the boxes
-   * and the calibration print are checked in the same open. */
-  await reachable(p, 'phone-printer', async () => {}, ['printOffset']);
-  await reachable(p, 'phone-printer', () => p.click('#printOffset'),
-    ['offsetStock', 'offsetFeed', 'offsetAcross', 'offsetMedia', 'offsetGap',
-     'offsetHeadScale', 'offsetCalibrate', 'offsetSave']);
-  /* Signed, so it must not carry a `min` that the browser will refuse a
-   * minus against — the whole measured case is a negative feed offset. */
-  const signed = await p.evaluate(() => ['offsetFeed', 'offsetAcross']
-    .filter((id) => document.getElementById(id).min !== ''));
-  for (const id of signed)
-    problems.push(`phone-printer: #${id} has a min, so the negative offset `
-      + 'this control exists for cannot be typed into it');
-  await p.keyboard.press('Escape');
-  await p.waitForTimeout(300);
+  await lineUpWizard(p, 'phone-printer', PHONE.w);
 });
 await run(PHONE.w, PHONE.h, 'phone-quick', true, async (p) => {
   await p.fill('#quickText', 'Spare keys');
