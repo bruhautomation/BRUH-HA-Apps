@@ -3307,6 +3307,7 @@ async def _offer_scene_schedule(snapshot: dict, now: float) -> int:
         payload, tz = {}, None
 
     import datetime as dt  # noqa: PLC0415 — one call, once a pass
+    import aiohttp  # noqa: PLC0415 — as `_offer_routines` does
 
     when = dt.datetime.fromtimestamp(now, tz or dt.timezone.utc)
     wake = rhythm.wake_minute(payload, when) if payload else None
@@ -3318,19 +3319,28 @@ async def _offer_scene_schedule(snapshot: dict, now: float) -> int:
              and str(cfg.get("id") or "").startswith(scenes.ID_PREFIX)
              and len(str(cfg.get("id") or "").split("_")) > 3}
     offered = 0
-    for slug in sorted(a for a in areas if a):
-        # The area's own name, as the registries have it — the slug in the
-        # id is what survives a rename and the name is what a card says.
-        house = scenes._house(snapshot)
-        name = next((a for a in {house.area_of(e)
-                                 for e in (snapshot.get("states") or {})}
-                     if a and scenes._slug(a) == slug), slug)
-        obj = await asyncio.to_thread(scenes.schedule, snapshot, name,
-                                      wake, settle)
-        if not obj or await asyncio.to_thread(proposals.knows, obj):
-            continue
-        if await asyncio.to_thread(proposals.add, obj):
-            offered += 1
+    async with aiohttp.ClientSession() as session:
+        for slug in sorted(a for a in areas if a):
+            # The area's own name, as the registries have it — the slug in
+            # the id is what survives a rename and the name is what a card
+            # says.
+            house = scenes._house(snapshot)
+            name = next((a for a in {house.area_of(e)
+                                     for e in (snapshot.get("states") or {})}
+                         if a and scenes._slug(a) == slug), slug)
+            obj = await asyncio.to_thread(scenes.schedule, snapshot, name,
+                                          wake, settle)
+            if not obj or await asyncio.to_thread(proposals.knows, obj):
+                continue
+            # Four `time` triggers replay like any habit's, and the card
+            # owes the same line the routine miner's does — "would have
+            # fired 28 times last month" is the sanity check on the two
+            # measured times. Asked after `knows`, as `_offer_routines`
+            # does, so a schedule already answered costs no history.
+            obj["replay"] = await _replay_config(
+                session, obj["config"], now - REPLAY_DAYS * 86400, now, tz)
+            if await asyncio.to_thread(proposals.add, obj):
+                offered += 1
     if offered:
         log.info("proposed %d scene schedule%s", offered,
                  "" if offered == 1 else "s")

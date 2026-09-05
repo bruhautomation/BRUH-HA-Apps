@@ -1207,3 +1207,49 @@ class TestWhatComesOffTheWire(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheScheduleGetsItsReplay(AcceptCase):
+    """The schedule is an ordinary automation and the changelog says it gets
+    a replay — but `_offer_scene_schedule` filed it without one for a
+    release, so the card had no "would have fired N times" line while the
+    routine miner's did. The mutation: drop the `_replay_config` call and
+    the proposal lands with no `replay` key.
+    """
+
+    async def test_the_schedule_proposal_carries_a_replay(self):
+        server, scenes_mod = self.server, self.server.scenes
+        added, replayed = [], []
+
+        async def fake_replay(session, config, start, end, tz):
+            replayed.append(config)
+            return {"days": 30, "would_run": 28, "triggered": 28}
+
+        def fake_schedule(snap, area, wake, settle):
+            return {"kind": "schedule", "source": "scene", "key": "sched-1",
+                    "title": f"Walk the {area} through its scenes",
+                    "why": "…", "status": "proposed",
+                    "config": {"id": "brain_scene_schedule_lounge",
+                               "trigger": [{"platform": "time",
+                                            "at": "07:00:00"}],
+                               "action": []}}
+
+        old = (server._replay_config, scenes_mod.schedule,
+               server.proposals.add, server.rhythm.load)
+        server._replay_config = fake_replay
+        scenes_mod.schedule = fake_schedule
+        server.proposals.add = lambda obj: added.append(obj) or obj
+        server.rhythm.load = lambda: {}
+        try:
+            snapshot = {"scenes": [{"id": f"brain_scene_lounge_{m}",
+                                    "name": m.title()}
+                                   for m in ("morning", "day", "evening",
+                                             "night")],
+                        "states": {}, "registries": {}}
+            offered = await server._offer_scene_schedule(snapshot, 1_800_000_000)
+        finally:
+            (server._replay_config, scenes_mod.schedule,
+             server.proposals.add, server.rhythm.load) = old
+        self.assertEqual(offered, 1)
+        self.assertEqual(len(replayed), 1)
+        self.assertEqual(added[0]["replay"]["would_run"], 28)

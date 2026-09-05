@@ -235,6 +235,23 @@ const PROPOSALS = [
       })),
     },
   },
+  {
+    // A one-off, before it is accepted. It is a proposal like the others —
+    // yes or no is owed — but a week of shadow-running "when the guests
+    // leave" grades nothing, so the card must not offer one, and must say
+    // why in words rather than simply lacking the button.
+    ts: NOW * 1000 - 9000, key: 'jjj', kind: 'intent',
+    title: 'When the guests leave, turn the porch light off',
+    why: 'You asked: "when the guests leave turn the porch light off". '
+       + 'brAIn read that as: turn off Porch light the next time '
+       + 'Guest room presence goes from home to away.',
+    source: 'intent', status: 'proposed',
+    config: { id: 'brain_intent_9', mode: 'single' },
+    intent: { sentence: 'when the guests leave turn the porch light off',
+              plain: 'Turn off Porch light the next time Guest room presence '
+                   + 'goes from home to away.' },
+    replay: { days: 30, would_run: 2, triggered: 2 },
+  },
 ];
 
 // One-off intents. NOT proposals — nobody owes an answer on an armed one —
@@ -799,6 +816,24 @@ for (const width of WIDTHS) {
   if (!/no week to try four scenes/i.test(sceneCard.notrial || '')) {
     note(where, `the scene card does not say why there is no trial: `
               + `"${sceneCard.notrial}"`);
+  }
+
+  // --- a one-off before it is accepted: yes or no, and no week.
+  const intentProp = m.cards.find((c) => /guests leave/i.test(c.title || ''));
+  if (!intentProp) {
+    note(where, 'the one-off proposal did not render as a card');
+  } else {
+    if ((intentProp.buttons || []).some((b) => /try it/i.test(b.label))) {
+      note(where, 'a one-off proposal offers a trial week — it is meant to '
+                + 'happen once, and a replayed week grades nothing');
+    }
+    if (!/no trial for a one-off/i.test(intentProp.notrial || '')) {
+      note(where, `the one-off card does not say why there is no trial: `
+                + `"${intentProp.notrial}"`);
+    }
+    if (!(intentProp.buttons || []).some((b) => /enable it/i.test(b.label))) {
+      note(where, 'the one-off card has no Enable it');
+    }
   }
 
   // --- and the rehearsal, which opens on demand and calls nothing.

@@ -521,7 +521,8 @@ weekday list, so adding one directly would stand the automation down every
 Saturday and Sunday too, at every hour — which is not what you have been
 telling brAIn by undoing it on weekday evenings.
 
-Four things stop it being offered, each with the reason: the automation has no
+Four things stop it being offered, and a refusal is not a card — there is nothing
+to answer, so ⚙ → Diagnostics names the automations skipped and why: it has no
 \`id\` (Home Assistant's own editor cannot change one either — open it in the
 editor and save it once), it already stands down over those hours, its existing
 time condition names an \`input_datetime\` rather than a clock so brAIn cannot

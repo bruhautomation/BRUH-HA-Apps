@@ -994,7 +994,8 @@ the day is in its weekday list, so adding one directly would stand the
 automation down every Saturday and Sunday too, at every hour — which is not
 what you have been telling brAIn by undoing it on weekday evenings.
 
-Four things stop it being offered, and each says which:
+Four things stop it being offered. A refusal is not a card — there is nothing
+to answer — so ⚙ → Diagnostics names which automations were skipped and why:
 
 - **The automation has no `id`.** Home Assistant's own editor cannot change one
   either — there is nothing stable to address it by. Open it in the automation

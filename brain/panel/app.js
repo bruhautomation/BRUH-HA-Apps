@@ -4274,6 +4274,11 @@ function propCard(row, withHint) {
     card.appendChild(propRehearsal(row));
   }
   const scene = !!row.scene;
+  // A one-off is not a habit: a week of shadow-running "when the guests
+  // leave, turn the porch light off" grades nothing, because the moment it
+  // is for has not happened yet. The replay line above is its sanity
+  // check on the trigger, and the only question left is yes or no.
+  const intent = !!row.intent;
   if (scene) {
     const block = propSceneBlock(row);
     if (block) card.appendChild(block);
@@ -4354,7 +4359,13 @@ function propCard(row, withHint) {
       + "month set them. Accepting writes them to scenes.yaml; brAIn offers "
       + "the schedule that moves between them once they are there."));
   }
-  if (row.status === "proposed" && !playbook && !scene) {
+  if (intent && row.status === "proposed") {
+    card.appendChild(el("p", "propnotrial",
+      "No trial for a one-off: it is meant to happen once, and a week of "
+      + "shadow-running it grades nothing. The replay above is the check "
+      + "on its trigger."));
+  }
+  if (row.status === "proposed" && !playbook && !scene && !intent) {
     const trial = el("button", "btn small", "Try it for a week");
     trial.dataset.tip = "Runs in shadow — it logs what it would have done and changes nothing";
     trial.addEventListener("click", () => propAct(row.ts, "trial"));
