@@ -46,20 +46,32 @@ need_panel() {
     fi
 }
 
-list_checks() {
-    local payload
-    payload=$(curl -s -m 10 "$PANEL/api/checks" 2>/dev/null)
-    need_panel "$payload"
-    printf '%s' "$payload" | python3 -c '
+# The catalog, and what the last pass made of each check.
+#
+# A heredoc rather than `python3 -c '...'`: shell single quotes leave no
+# way to put a `"` inside an f-string expression except a backslash, and a
+# backslash in one is a SyntaxError before Python 3.12 — so a block written
+# that way parses on the image's interpreter and nowhere else, which is
+# code nobody can test. The payload is an ARGUMENT and the script is the
+# heredoc, because a heredoc IS stdin: piping into one delivers nothing and
+# reads as "no checks yet" rather than as an error.
+# `tests/test_cli_report_blocks.py` drives both of these.
+print_catalog() {
+    python3 - "$1" <<'PYCATALOG'
 import json, sys, time
-d = json.load(sys.stdin)
+try:
+    d = json.loads(sys.argv[1])
+except ValueError:
+    print("The panel's answer was not JSON.")
+    sys.exit(1)
 last = d.get("last") or {}
 if last.get("finished_at"):
     ago = int(time.time() - last["finished_at"])
     unit = "s" if ago < 120 else "m" if ago < 7200 else "h"
     n = ago if unit == "s" else ago // 60 if unit == "m" else ago // 3600
-    print(f"Last run {n}{unit} ago: {last.get(\"created\", 0)} filed, "
-          f"{last.get(\"cleared\", 0)} cleared, {len(last.get(\"ran\", []))} checks ran")
+    print(f"Last run {n}{unit} ago: {last.get('created', 0)} filed, "
+          f"{last.get('cleared', 0)} cleared, "
+          f"{len(last.get('ran') or [])} checks ran")
 else:
     print("No run yet (the first one starts two minutes after the panel).")
 print()
@@ -67,17 +79,65 @@ per = last.get("per_check") or {}
 errs = last.get("errors") or {}
 skipped = last.get("skipped") or {}
 for c in d.get("catalog") or []:
-    cid = c["id"]
+    cid = str(c.get("id") or "?")
     if cid in errs:
-        state = "ERROR " + errs[cid]
+        state = "ERROR " + str(errs[cid])
     elif cid in skipped:
-        state = "skipped: " + skipped[cid]
+        state = "skipped: " + str(skipped[cid])
     elif cid in per:
         state = f"{per[cid]} found"
     else:
         state = "-"
-    print(f"  {cid:<32} {c[\"title\"]:<44} {state}")
-'
+    title = str(c.get("title") or "")
+    # A shadow check is not on the tab, and a catalog that did not say so
+    # would have somebody looking for rows that are filed somewhere else.
+    if c.get("shadow"):
+        state += "  (shadow)"
+    print(f"  {cid:<32} {title:<44} {state}")
+PYCATALOG
+}
+
+list_checks() {
+    local payload
+    payload=$(curl -s -m 10 "$PANEL/api/checks" 2>/dev/null)
+    need_panel "$payload"
+    print_catalog "$payload"
+}
+
+# What one pass filed, refreshed and cleared.
+print_run() {
+    python3 - "$1" <<'PYRUN'
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+except ValueError:
+    print("The panel's answer was not JSON.")
+    sys.exit(1)
+if d.get("error"):
+    print("Checks did not run: " + str(d["error"]))
+    sys.exit(1)
+ran = d.get("ran") or []
+created = d.get("created") or []
+cleared = d.get("cleared") or []
+print(f"{len(ran)} checks ran in {d.get('duration_s', 0):.1f}s: "
+      f"{len(created)} new finding(s), {d.get('refreshed', 0)} refreshed, "
+      f"{len(cleared)} cleared")
+for f in created:
+    print(f"  + [{f.get('severity', '?')}] {f.get('text', '')}")
+for f in cleared:
+    print("  - " + str(f.get("text", "")))
+# Filed where nobody will see them, on purpose: a shadow check is earning
+# its place, and the count is the only thing that says it is running at all.
+shadow = d.get("shadow") or {}
+if shadow.get("created"):
+    print(f"  {shadow['created']} shadow row(s) filed (not on the tab)")
+for cid, why in (d.get("skipped") or {}).items():
+    print(f"  skipped {cid}: {why}")
+for cid, err in (d.get("errors") or {}).items():
+    print(f"  ERROR {cid}: {err}")
+for key, err in (d.get("snapshot_errors") or {}).items():
+    print(f"  could not fetch {key}: {err}")
+PYRUN
 }
 
 run_checks() {
@@ -89,28 +149,7 @@ run_checks() {
         printf '%s\n' "$payload"
         return
     fi
-    printf '%s' "$payload" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-if d.get("error"):
-    print("Checks did not run: " + str(d["error"]))
-    sys.exit(1)
-ran = d.get("ran") or []
-print(f"{len(ran)} checks ran in {d.get(\"duration_s\", 0):.1f}s: "
-      f"{len(d.get(\"created\") or [])} new finding(s), "
-      f"{d.get(\"refreshed\", 0)} refreshed, {len(d.get(\"cleared\") or [])} cleared")
-for f in d.get("created") or []:
-    print(f"  + [{f.get(\"severity\", \"?\")}] {f.get(\"text\", \"\")}")
-for f in d.get("cleared") or []:
-    print(f"  - {f.get(\"text\", \"\")}")
-for cid, why in (d.get("skipped") or {}).items():
-    print(f"  skipped {cid}: {why}")
-for cid, err in (d.get("errors") or {}).items():
-    print(f"  ERROR {cid}: {err}")
-snap = d.get("snapshot_errors") or {}
-for key, err in snap.items():
-    print(f"  could not fetch {key}: {err}")
-'
+    print_run "$payload"
 }
 
 case "${1:-run}" in

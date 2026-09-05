@@ -45,21 +45,26 @@ need_panel() {
     fi
 }
 
-show() {
-    local raw="${1:-}"
-    local payload
-    payload=$(curl -s -m 120 "$PANEL/api/weekly" 2>/dev/null)
-    need_panel "$payload"
-    if [ "$raw" = "--json" ]; then
-        printf '%s\n' "$payload"
-        return
-    fi
-    printf '%s' "$payload" | python3 -c '
+# The week's numbers, as a person reads them.
+#
+# A heredoc rather than `python3 -c '...'`: shell single quotes leave no
+# way to put a `"` inside an f-string expression except a backslash, and a
+# backslash in one is a SyntaxError before Python 3.12 — so a block written
+# that way parses on the image's interpreter and nowhere else. The payload
+# is an ARGUMENT and the script is the heredoc, because a heredoc IS stdin:
+# a pipe into one delivers nothing and reads as an empty week rather than
+# as an error. `tests/test_cli_report_blocks.py` drives both of these.
+print_week() {
+    python3 - "$1" <<'PYWEEK'
 import json, sys, time
-d = json.load(sys.stdin)
+try:
+    d = json.loads(sys.argv[1])
+except ValueError:
+    print("The panel's answer was not JSON.")
+    sys.exit(1)
 state = "on" if d.get("enabled") else "off"
-print(f"Weekly report: {state}, {d.get(\"day\", \"?\")}s -> "
-      f"{d.get(\"notify_service\") or \"no notify service set\"}")
+where = d.get("notify_service") or "no notify service set"
+print(f"Weekly report: {state}, {d.get('day', '?')}s -> {where}")
 if d.get("last_sent"):
     days = (time.time() - d["last_sent"]) / 86400
     print(f"Last sent {days:.1f} days ago")
@@ -78,20 +83,21 @@ else:
         if not half:
             continue
         unit = half.get("unit") or ""
-        line = f"{name}: {half[\"this\"]}{unit} over 7 days"
+        line = f"{name}: {half['this']}{unit} over 7 days"
         if half.get("comparable"):
             pct = half.get("change_pct")
-            line += (f" vs {half[\"last\"]}{unit} before"
-                     + (f" ({pct:+.1f}%)" if pct is not None else ""))
+            line += f" vs {half['last']}{unit} before"
+            if pct is not None:
+                line += f" ({pct:+.1f}%)"
         else:
-            line += f" ({half[\"days\"]}/7 days complete — no comparison)"
+            line += f" ({half['days']}/7 days complete — no comparison)"
         print(line)
 
 f = d.get("findings") or {}
-print(f"Findings: {f.get(\"settled\", 0)} answered this week "
-      f"({f.get(\"confirmed\", 0)} real, {f.get(\"wrong\", 0)} misread), "
-      f"{f.get(\"still_open\", 0)} raised and still open, "
-      f"{f.get(\"open_now\", 0)} open in total")
+print(f"Findings: {f.get('settled', 0)} answered this week "
+      f"({f.get('confirmed', 0)} real, {f.get('wrong', 0)} misread), "
+      f"{f.get('still_open', 0)} raised and still open, "
+      f"{f.get('open_now', 0)} open in total")
 for title, count in f.get("by_source") or []:
     print(f"  {count} from {title}")
 
@@ -99,32 +105,46 @@ lore = d.get("learned") or {}
 if not lore.get("available"):
     print("Learned: the memory log could not be read")
 else:
-    print(f"Learned: {lore.get(\"total\", 0)} new, "
-          f"{lore.get(\"removed\", 0)} corrected")
+    print(f"Learned: {lore.get('total', 0)} new, "
+          f"{lore.get('removed', 0)} corrected")
     for line in lore.get("added") or []:
-        print("  - " + line)
+        print("  - " + str(line))
 
 pick = d.get("one_thing")
 if pick:
-    print(f"\nOne thing to do: [{pick.get(\"severity\", \"?\")}] "
-          f"{pick.get(\"text\", \"\")}")
+    print(f"\nOne thing to do: [{pick.get('severity', '?')}] "
+          f"{pick.get('text', '')}")
 else:
     print("\nOne thing to do: nothing open")
 
 if not d.get("worth_reporting"):
     print("\nThis week holds nothing worth a report; none would be sent.")
 if d.get("last_text"):
-    print("\nLast report sent:\n" + d["last_text"])
-'
+    print("\nLast report sent:\n" + str(d["last_text"]))
+PYWEEK
 }
 
-send() {
+show() {
+    local raw="${1:-}"
     local payload
-    payload=$(curl -s -m 400 -X POST "$PANEL/api/weekly/run" 2>/dev/null)
+    payload=$(curl -s -m 120 "$PANEL/api/weekly" 2>/dev/null)
     need_panel "$payload"
-    printf '%s' "$payload" | python3 -c '
+    if [ "$raw" = "--json" ]; then
+        printf '%s\n' "$payload"
+        return
+    fi
+    print_week "$payload"
+}
+
+# What came of sending one by hand.
+print_sent() {
+    python3 - "$1" <<'PYSENT'
 import json, sys
-d = json.load(sys.stdin)
+try:
+    d = json.loads(sys.argv[1])
+except ValueError:
+    print("The panel's answer was not JSON.")
+    sys.exit(1)
 if d.get("error"):
     print("Not sent: " + str(d["error"]))
     sys.exit(1)
@@ -132,7 +152,14 @@ if not d.get("sent"):
     print("Nothing was worth reporting this week, so nothing was sent.")
     sys.exit(0)
 print(d.get("text") or "")
-'
+PYSENT
+}
+
+send() {
+    local payload
+    payload=$(curl -s -m 400 -X POST "$PANEL/api/weekly/run" 2>/dev/null)
+    need_panel "$payload"
+    print_sent "$payload"
 }
 
 case "${1:-show}" in
