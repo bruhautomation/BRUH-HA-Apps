@@ -38,6 +38,9 @@ Anthropic account and stores that credential in the add-on's `/data`. It
 is, by design, an agent that can change your home. The security boundary
 is Home Assistant's own authentication: nothing brAIn exposes should be
 reachable without it.
+Capture (off by default) records what the analyst was sent and what it
+answered, redacted as it is written, and keeps it in `/data`; nothing reaches
+`/share` until a person presses Export, and nothing leaves the machine at all.
 
 **BRUH Minecraft** runs a JVM that loads third-party plugin jars, and it
 uses `host_network: true` so Bedrock clients can find the server on the

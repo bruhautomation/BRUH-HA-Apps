@@ -1258,6 +1258,207 @@ on the clipboard (it falls back to putting the text on screen, selected, when an
 ingress iframe is refused the clipboard). It is the same payload behind **Download
 diagnostics** on the brAIn integration page, and the one `brain report` bundles.
 
+## Checking brAIn itself
+
+Three of these, and they cost three different amounts.
+
+| | What it answers | What it spends |
+| --- | --- | --- |
+| `brain doctor` | Is the plumbing connected? | nothing |
+| `brain doctor --deep` | Does each face work end to end, right now? | ~5 Claude turns |
+| `brain doctor --rehearse` | Do the checks and the analyst find a defect planted in *this* house? | 1 analyst run |
+
+`brain doctor` is unchanged and is still the one to run first. It reads what is
+there — a token, an MCP handshake, the panel, the daemons, three credential
+stores — and calls Claude never. `--json` gives the same report as one object,
+which is what `brain report` bundles.
+
+### `brain doctor --deep`
+
+Eight stages, in order. Each is a real round trip with its own budget, and each
+has a sentence that names the switch or the log to look at when it fails. Every
+stage is reported, not just the first break — "the chat works and the automation
+listener does not" is the answer. A stage whose precondition failed is *skipped
+with the reason* rather than run, because eight identical authentication
+failures is a report nobody reads past line one.
+
+| Stage | What it does | What it proves |
+| --- | --- | --- |
+| Claude, no tools | Asks for a fixed JSON object and reads it back | The credential works for a plain run, and the JSON extractor can read a real reply — the step every insight card depends on |
+| Analyst tools | Asks for the area count **and** attempts a `call_service` | MCP reaches the model, the allow list lets a read through, and the deny list blocks an acting tool. An acting call that *ran* is the loudest failure here |
+| Chat session | Opens a session of its own, sends one message, closes it | The stream-json session spawns, speaks and ends a turn |
+| Automation listener | Writes a task the way the integration does | The listener is alive, the claim-by-rename contract holds, and a result arrives inside the bridge's window |
+| Assist | `conversation/process` with brAIn's own agent id | The worker pool answers through Home Assistant's front door, not just its health endpoint |
+| Memory | Queues a fact, consolidates, then removes it again | A fact reaches `memory.md` and can be taken out |
+| Findings and undo | Files a finding, ends it, undoes it, ends it again | The store, the settled ledger, the memory line and the undo token all round-trip |
+| Fixer | One real fix run renaming a `brain_test_` helper | The one path that can change the house can, and it is verified in Core |
+
+**It never runs on its own.** There is no option that schedules one and no timer
+anywhere: it costs real Claude turns, so it happens when you ask.
+
+**Everything it creates it removes, and it checks that it did.** The synthetic
+fact is not in `memory.md` afterwards, the synthetic finding is in neither the
+store nor the settled ledger, the helper is deleted. A leftover is reported as a
+failure of the stage that left it.
+
+**A skipped stage is not a failure.** Assist with the Assist integration
+switched off, the automation task with the Automation integration off, and the
+fixer with `protected_entities` covering the helper it would rename are all
+*skipped*, and each says which switch. The chat stage skips rather than closing
+somebody's conversation to make room for itself.
+
+Run it from the terminal (`brain doctor --deep`, `--json` for the whole object,
+non-zero exit on any failed stage), or from **⚙ Settings → Diagnostics → Run
+deep check**, which fills the stage list in as it goes. The last run's verdict
+rides in the diagnostics bundle, so a bug report carries it without anybody
+having to ask.
+
+### `brain doctor --rehearse`
+
+The test suite checks every house check against fixture houses. What it cannot
+see is *this* install's Home Assistant version, its integrations and its data
+shapes — which is where every late bug has lived. A rehearsal plants a small set
+of defects in your house, runs the checks and the analyst against them, scores
+both, and removes everything.
+
+**It asks first, and the question names exactly what it would create.** Nothing
+is created before you answer. `--yes` skips the question for scripted use; the ⚙
+button shows the same list in a confirm dialog.
+
+Everything it plants is named `brain_test_*` and goes in through paths brAIn
+already owns — automations through the same write-reload-verify path an accepted
+proposal uses — so the rehearsal is also a real round trip of the writer.
+
+What it reports:
+
+- **Checks** — of the defects planted, how many the checks found, and whether
+  anything *else* fired on a `brain_test_` row. A check firing on a healthy
+  planted row is a false positive worth knowing about.
+- **Analyst** — the automations card's own prompt, run against the same house,
+  scored for precision and recall over the planted rows. That number — "on this
+  house, this Home Assistant version, this model, the analyst found 3 of 4
+  planted defects and reported 1 thing that was not there" — is the reason the
+  rehearsal exists.
+- **Not rehearsable** — the checks whose floor is measured in days
+  (`auto.forgotten_off` needs 30 days off, `dev.frozen` needs a week of
+  statistics) are named with the reason rather than counted as missed.
+- **Cleanup** — what was removed, and loudly if anything could not be.
+
+The removal runs in a `finally`, so a rehearsal that fails halfway still cleans
+up. And **cleanup is the first thing the plain `brain doctor` verifies on its
+next run**: it warns if any `brain_test_*` automation, entity or helper is still
+there, and names the command that removes it.
+
+The rehearsal never runs on its own either, and it refuses before asking for
+consent if `protected_entities` would match a `brain_test_*` id.
+
+## Capture, corpus and replay
+
+Everything above tests brAIn's *plumbing*. The one part no test can reach is the
+**prompts** — the framing and the output contract behind every insight card —
+because nothing in the project runs them against a real house or a real model.
+A prompt edit ships on somebody's judgement.
+
+This is the machinery that changes that, and every part of it is off, optional
+or invisible until somebody chooses otherwise.
+
+### Capture
+
+**⚙ Settings → Diagnostics → Capture runs for the corpus.** Off by default.
+
+With it on, every card run writes one file under `/data/capture`:
+
+- the data brAIn gave Claude (the map for a search run, the slimmed home for a
+  snapshot one),
+- the card that came back — its findings, what it learned, the fields you read,
+  never the rendered chart,
+- what it cost,
+- and later, **the ending you gave each finding it raised**.
+
+That last part is the whole point. An ending on the Findings tab is already a
+label: **I've fixed it** and **Got it** say the report was right, **Wrong** says
+it was not. Pairing that with the prompt that produced it turns a house into a
+graded example, and a directory of graded examples is something a prompt change
+can be scored against before it ships.
+
+Four things about what it does and does not do:
+
+- **Anything credential-shaped is stripped as the file is written**, not as it
+  is exported — a redaction applied on the way out is one that never ran for the
+  file somebody found by another route. It is the same scrub `brain report`
+  applies to every file in a bundle.
+- **Your entity and area names ARE in these files.** They are a floor plan.
+  That is why the switch is off, why the list has a **View** button, and why
+  step three below is *read one*.
+- **Nothing leaves the add-on until you press Export.** `/data` is not visible
+  from the file editor, from Samba or from Home Assistant, and `backup_exclude`
+  names the folder so a backup does not carry it either.
+- **The newest 50 runs are kept**, oldest deleted first.
+
+The list under the switch gives you three buttons per run. **View** shows the
+whole file exactly as it is on disk. **Export** copies that one file to
+`/share/brain/corpus/<run id>.json`, where the file editor and Samba can reach
+it. **Delete** removes it.
+
+`/api/diagnostics` carries the numbers — whether capture is on, how many files,
+how many have an ending on them — and never the captures themselves, because a
+diagnostics bundle is what gets attached to a public issue.
+
+### The corpus
+
+`tests/corpus/` in the repository holds contributed houses with their labels.
+Two ship with it, and neither is hand-written: the clean fixture house, whose
+whole label is *every check must be silent here*, and that same house with the
+rehearsal's own planted defects in it, whose labels are the rehearsal's plan.
+Ground truth by construction in both cases.
+
+Contributing one from your own house is four steps and the third is the
+important one: switch capture on, use brAIn normally and answer its findings,
+**read the file**, then export it and open a pull request adding it to
+`tests/corpus/entries/`. `tests/corpus/README.md` is the whole procedure. It is
+entirely optional, and it should be.
+
+### Replay
+
+`python tests/corpus/replay.py` scores this release's producers against the
+corpus, in two halves.
+
+The **free half** runs every house check against each entry and compares what it
+found with what the entry says should be found. No model, no tokens, no network
+— it runs in ordinary CI on every pull request, and it is what fails when
+somebody changes a threshold: a check that gains a condition stops finding a
+defect that was planted for it, and one that loses a condition starts firing on
+a house that is meant to be quiet.
+
+The **analyst half** rebuilds the prompt with the *current* builder and asks a
+real model, then scores its findings against the endings people gave. It is
+capped by `--max-entries`, `--max-tokens` and `--model`, runs nightly in CI when
+a `BRAIN_REPLAY_TOKEN` secret is present (and does the free half and says so in
+the log when it is not), and is never required for a pull request. A capture
+from a *search* run is skipped there and says why: that run read the house with
+Home Assistant tools, and replaying the prompt where those tools reach nothing
+would grade a model that cannot look anything up.
+
+### Shadow mode
+
+A house check that is new goes into shadow first: it runs on every pass, files
+to a store of its own, and reaches nothing you look at — not the Findings tab,
+not the badge, not a notification, not the To-do list, not the analyst's own
+prompt.
+
+For as long as it is there, ⚙ → Diagnostics shows a line per trialled check:
+*"`dev.example`: 14 rows over 9 days, 11 agree with what was filed"*. Agreement
+means something else — the analyst, or another check — reported the same thing,
+which is the only corroboration available for a row nobody can press Wrong on.
+
+**Nothing is promoted automatically.** A check moves onto the visible list when
+somebody reads those numbers, and the corpus numbers beside them, and decides it
+has earned a place. A rule that promoted itself on a threshold would be a
+threshold nobody can see deciding what your house is told about.
+
+No check is in shadow in this release. Every one that ships has earned its
+place, and the set is empty on purpose.
+
 ## The CLI
 
 Two dispatchers, split by what they act on. brAIn's own faculties are under `brain`;
@@ -1280,6 +1481,8 @@ brain undo                         # review and revert Claude's edits
 brain check                        # run the house checks now (no Claude run)
 brain doctor                       # end-to-end diagnostic
 brain doctor --json                # the same verdict as one JSON object
+brain doctor --deep                # every face, one real round trip each (~5 turns)
+brain doctor --rehearse            # plant defects here, score the checks, clean up
 brain weekly [send]                # the week's report: what it holds, or send one
 brain report                       # redacted diagnostics bundle for a bug report
 

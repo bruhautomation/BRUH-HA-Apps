@@ -1248,6 +1248,8 @@ brain undo                         # revert Claude's file edits
 brain check                        # the house checks, now — no Claude run
 brain doctor                       # end-to-end diagnostic
 brain doctor --json                # the same verdict as one JSON object
+brain doctor --deep                # every face, one real round trip each (~5 turns)
+brain doctor --rehearse            # plant defects here, score the checks, clean up
 brain report                       # redacted diagnostics bundle for a bug report
 \`\`\`
 
@@ -1615,6 +1617,118 @@ different reports of a quiet house.
 **Copy for a bug report** puts the whole payload on the clipboard. If your browser
 refuses the panel the clipboard — an ingress iframe sometimes does, and there is no way
 to ask in advance — the text appears on screen already selected, ready for Ctrl/Cmd+C.
+
+## Checking brAIn itself
+
+Three of these, and they cost three different amounts.
+
+| | What it answers | What it spends |
+| --- | --- | --- |
+| \`brain doctor\` | Is the plumbing connected? | nothing |
+| \`brain doctor --deep\` | Does each face work end to end, right now? | ~5 Claude turns |
+| \`brain doctor --rehearse\` | Do the checks and the analyst find a defect planted in *this* house? | 1 analyst run |
+
+### brain doctor --deep
+
+\`brain doctor\` reads what is there — a token, an MCP handshake, the panel, the
+daemons. Every one of those can be true while the thing you actually use is broken.
+This asks the other question the only way that can be trusted: by doing the thing.
+
+Eight stages, each a real round trip with its own budget and its own failure sentence
+naming the switch or the log to look at — a no-tool Claude run whose reply the JSON
+extractor has to read (the step every card depends on), an analyst run that must read
+your areas **and** must be refused \`call_service\`, a chat session that spawns and
+speaks, an automation task claimed and answered, an Assist turn through Home
+Assistant's own front door, a fact filed into memory and taken back out, a finding
+ended and undone, and one real fix run renaming a helper.
+
+**Every stage is reported**, not just the first break: "the chat works and the
+automation listener does not" is the answer. **A stage whose precondition failed is
+skipped with the reason** — eight identical authentication failures is a report nobody
+reads past line one. **A disabled face is skipped, not failed.** **Everything it
+creates it removes, and it checks that it did**; a leftover is reported as a failure
+of the stage that left it.
+
+**It never runs on its own.** It costs real Claude turns, so it happens when you ask —
+from the terminal, or from **⚙ Settings → Diagnostics → Run deep check**, which fills
+the stage list in as it goes.
+
+### brain doctor --rehearse
+
+Every house check is tested against made-up houses. This tests them against *yours*.
+It plants a few deliberately broken things named \`brain_test_*\`, runs the checks and
+the analyst against them, scores both, and removes everything again.
+
+The score is the point: *on this house, this Home Assistant version, this model, the
+analyst found 3 of 4 planted defects and reported 1 thing that was not there.* That is
+what makes a prompt change measurable somewhere other than the developer's own home.
+
+**It asks first, and the question names exactly what it would create.** Nothing is
+written before you answer. Checks whose floor is measured in days — thirty days
+switched off, a week of statistics — are named as *not rehearsable* rather than
+counted as missed, because scoring those would report a working check as broken every
+time. The removal runs whatever else happened, and the plain \`brain doctor\` warns
+afterwards about anything \`brain_test_*\` still on the system.
+
+## Capture, corpus and replay
+
+Everything above tests brAIn's plumbing. The one part no test can reach is the
+**prompts** behind every insight card, because nothing runs them against a real house
+and a real model. This is the machinery that changes that, and all of it is off,
+optional or invisible until you choose otherwise.
+
+### Capture — off by default
+
+**⚙ Settings → Diagnostics → Capture runs for the corpus.** With it on, every card run
+writes one file under \`/data/capture\`: the data brAIn gave Claude, the card that came
+back, what it cost, and later **the ending you gave each finding it raised**.
+
+That last part is why it exists. An ending is already a label — **I've fixed it** and
+**Got it** say the report was right, **Wrong** says it was not — and pairing that with
+the prompt that produced it turns a house into a graded example.
+
+- **Anything credential-shaped is stripped as the file is written**, not as it is
+  exported. A redaction applied on the way out is one that never ran for the file
+  somebody found another way.
+- **Your entity and area names ARE in these files.** They are a floor plan. That is
+  why the switch is off, why every run has a **View** button, and why you should read
+  one before you send it anywhere.
+- **Nothing leaves the add-on until you press Export**, which copies one file to
+  \`/share/brain/corpus/\`. \`/data\` is invisible to the file editor, to Samba and to
+  Home Assistant, and backups skip the folder.
+- The newest 50 runs are kept, oldest deleted first.
+
+**View**, **Export** and **Delete** are the three buttons per run. The diagnostics
+payload carries the counts and never the captures — a bundle is what gets attached to
+a public issue.
+
+### The corpus and the nightly replay
+
+\`tests/corpus/\` in the repository holds houses with their labels. Two ship with it and
+neither is hand-written: the clean fixture house, whose whole label is *every check
+must be silent here*, and that same house with the rehearsal's own planted defects in
+it. Ground truth by construction either way.
+
+The replay scores this release's producers against them. The free half runs every
+check and compares what it found with what the entry says should be found — no model,
+no tokens, on every pull request — and it is what fails when a threshold moves: a
+check that gains a condition stops finding a defect planted for it, and one that loses
+a condition starts firing on a house meant to be quiet. The costed half rebuilds the
+prompt with the *current* builder, asks a real model and scores its findings against
+your endings; it runs nightly, capped, and never as a required check.
+
+Contributing an entry from your own house is a switch, a look, a press and a pull
+request — see \`tests/corpus/README.md\`. It is entirely optional.
+
+### Shadow mode
+
+A new house check runs in shadow first: on every pass, filing to a store of its own,
+reaching nothing you look at — not the Findings tab, not the badge, not a
+notification, not the To-do list, not the analyst's prompt. ⚙ → Diagnostics shows a
+line per trialled check (*"14 rows over 9 days, 11 agree with what was filed"*), and
+**nothing is promoted automatically**: a rule joins the visible list when somebody
+reads those numbers and decides it has earned a place. No check is in shadow in this
+release.
 
 ## Reporting a bug
 
