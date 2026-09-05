@@ -926,3 +926,135 @@ def _offset_words(across_mm: float, feed_mm: float) -> str:
         parts.append(f"{abs(across_mm):.1f}mm "
                      + ("to the right" if across_mm > 0 else "to the left"))
     return " and ".join(parts) or "not at all"
+
+
+# ---------------------------------------------------------------------------
+# Where the paper is
+# ---------------------------------------------------------------------------
+#
+# The offset above answers "where on the label does the printing start". This
+# answers the question underneath it, which nothing in this add-on could ask
+# until a 0.56" roll came out inked across half its width and no offset would
+# move it.
+#
+# A packed raster line always begins at head dot 0 — `protocol.pack_line`
+# pads a short line on the right — so a rendered sheet is laid against the
+# first dot of the head and the rest of the head is blank. On a 2.25" stock
+# that is invisible and correct: the sheet is 672 dots and covers the whole
+# head. On a 0.56" wrap the sheet is 168 dots, a quarter of it, and where the
+# paper sits under the other three quarters is something nothing in this
+# driver knew: `printers.py` has `dots`, `bytes_per_line` and `dpi`, and not
+# one field about lateral media position. So a narrow roll registered
+# anywhere but the dot-0 end of the head gets ink on the part that happens to
+# overlap and the rest of the raster goes onto the liner or into air.
+#
+# The reported case, measured off the photograph: a 687px-wide label with a
+# 335px inked band — 49% of the width, ink from one edge and stopping dead at
+# the halfway point. 49% of 168 dots is about 82, which puts the paper some
+# 86 dots (7.3mm) in from the head's first dot.
+#
+# **And the across offset structurally cannot fix it**, which is why the
+# person reporting it said "I try and try and it doesn't do anything".
+# `offset_raster` moves artwork inside the rendered sheet, and that sheet is
+# 168 dots wide: shifting right pushes ink off the sheet's own right edge and
+# loses it, and can never move the sheet further along the head. It is the
+# only control there was and it is the wrong axis of freedom.
+#
+# So the placement is its own quantity, and it clips against its own edge.
+# `offset_raster` crops at the label because the sheet is one label and stays
+# one label; this crops at the HEAD, because past the last dot there is no
+# heater. Both report on ink and neither refuses — the stock/roll mismatch is
+# still the only refusal in this add-on.
+
+
+def place_on_head(rendered: Rendered, *, across_mm: float = 0.0,
+                  head_dots: int) -> tuple[Rendered, str | None]:
+    """The sheet, laid where this roll's paper actually is under the head.
+
+    `across_mm` is how far in from the head's first dot the media begins, so
+    the sheet is pasted that many dots along a head-wide line. Returns the
+    sheet to send and, when the placement pushes real INK past the head's
+    last dot, one sentence saying so — the same test `offset_raster` makes
+    and for the same reason: a placement that slides blank border along the
+    head costs nothing, and a note on every print is a note nobody reads.
+
+    Zero is the default and returns the sheet untouched, because it already
+    is where it would be put: `pack_line` pads to the head's width, so a
+    house that has never measured this gets byte-for-byte the job it always
+    got.
+    """
+    dpi = rendered.dpi
+    start = mm_to_dots(across_mm, dpi)
+    if not start:
+        return rendered, None
+
+    image = rendered.image
+    box = _ink_box(image)
+
+    # The head is the sheet now. Past its last dot there is no heater, so
+    # anything beyond it is lost whatever this does — the difference is
+    # whether it is lost silently. `pack_line` truncated it without a word
+    # and said in its own docstring that this was safe because the renderer
+    # never draws past the printable width; a lateral position is exactly
+    # what can push it there, so the reporting is here, on the ink, before
+    # the bits are packed.
+    head = _new(max(1, int(head_dots)), image.height, 255)
+    head.paste(image.convert("L"), (start, 0))
+    moved = Rendered(
+        image=head.point(lambda v: 0 if v < 128 else 255).convert("1"),
+        across_dots=rendered.across_dots,
+        feed_dots=rendered.feed_dots,
+        dpi=dpi,
+        # The SAME lists, for the reason `offset_raster` shares them: every
+        # handler reads `rendered.notes` after the print has gone out.
+        notes=rendered.notes,
+        problems=rendered.problems,
+    )
+    if box is None:
+        return moved, None
+
+    # Both ends, though only one of them is reachable through the panel: the
+    # route refuses a negative position, because paper cannot begin before
+    # the head's first dot. A function that reported one edge and truncated
+    # at the other would be the bug this one exists to fix, one direction
+    # narrower.
+    lost = {
+        "the head’s last dot": max(0, (box[2] + start) - head.width),
+        "the head’s first dot": max(0, -(box[0] + start)),
+    }
+    clipped = [(edge, dots) for edge, dots in lost.items() if dots > 0]
+    if not clipped:
+        return moved, None
+    where = " and ".join(f"{dots / dpi * 25.4:.1f}mm past {edge}"
+                         for edge, dots in clipped)
+    return moved, (
+        f"This roll sits {abs(across_mm):.1f}mm in from the print head’s "
+        f"first dot, so the artwork now runs {where} — that much of it did "
+        f"not print. Check the measurement on the Printer tab, under "
+        f"“Where the printing starts”, or the label is wider than the head "
+        f"can reach from where the paper sits.")
+
+
+def for_the_head(rendered: Rendered, *, across_mm: float = 0.0,
+                 feed_mm: float = 0.0, media_across_mm: float = 0.0,
+                 head_dots: int) -> tuple[Rendered, list[str]]:
+    """The one place the two across corrections meet.
+
+    They are different quantities and they stay different everywhere a
+    person reads or types them — one is registration wander in tenths of a
+    millimetre, the other is where a roll sits under a fixed head and on
+    narrow media is centimetres — but they both end up in the same packed
+    line, and there is exactly one function where that happens.
+
+    The ORDER is the whole of why they cannot be added together and applied
+    once. `offset_raster` runs first and crops at the label, so ink it
+    pushes off the sheet is ink off the label and it says so; `place_on_head`
+    then moves that finished label along the head and crops at the last dot,
+    so ink it pushes off is ink onto no paper at all and it says that
+    instead. Two edges, two sentences, one line on the wire.
+    """
+    moved, offset_note = offset_raster(rendered, across_mm=across_mm,
+                                       feed_mm=feed_mm)
+    placed, media_note = place_on_head(moved, across_mm=media_across_mm,
+                                       head_dots=head_dots)
+    return placed, [note for note in (offset_note, media_note) if note]

@@ -400,6 +400,105 @@ class TestTheLengthIsASearchBudget(unittest.TestCase):
             protocol.set_label_length(protocol.search_length(self.LABEL))))
 
 
+class TestAMeasuredGapReplacesTheGuessedHeadroom(unittest.TestCase):
+    """`ESC L` is defined hole to hole, and a measured gap is what makes it
+    a measurement.
+
+    The 25% headroom with a 60-dot floor is a fraction somebody chose,
+    generous on the manual's own advice. It is also a candidate for the dead
+    band a reporter measured at the LEADING edge of every label on this
+    roll: 469 dot lines against a hole-to-hole pitch nearer 394 is 75 lines
+    of over-feed, 6.4mm, on the order of the ~4mm observed. Nothing in a
+    container can tell whether that is the printer's top of form or ours, so
+    what is built is the instrument: type the gap you measured and the
+    budget becomes label-plus-gap.
+
+    Every assertion here is on the two bytes that reach the printer, in both
+    line modes, because that is the only place the answer exists.
+    """
+
+    LABEL = 375           # a 2.25" x 1.25" cryo label, at 300 dpi
+    LINE = b"\xf0" * 84
+
+    def _length(self, payload: bytes) -> int:
+        marker = bytes([protocol.ESC, ord("L")])
+        index = payload.index(marker)
+        return (payload[index + 2] << 8) | payload[index + 3]
+
+    def _job(self, **kwargs) -> bytes:
+        return protocol.job([self.LINE] * self.LABEL, bytes_per_line=84,
+                            label_feed_dots=self.LABEL, **kwargs)
+
+    def test_unset_is_byte_for_byte_the_job_that_shipped(self):
+        """The rule this whole control is built under: a house that never
+        opens it must get exactly the printer it had. Asserted as the whole
+        payload rather than the length bytes, because "the same budget" and
+        "the same job" are different claims and only the second is the
+        promise."""
+        self.assertEqual(self._job(), self._job(gap_dots=None))
+        self.assertEqual(469, self._length(self._job(gap_dots=None)))
+
+    def test_a_measured_gap_is_the_label_plus_the_gap_and_nothing_else(self):
+        """1.5mm at 300 dpi is 18 dot lines, so the budget is 393 — not the
+        469 the fraction gives, and not 469 plus anything. A measured
+        quantity replaces the guess rather than adjusting it."""
+        self.assertEqual(375 + 18, self._length(self._job(gap_dots=18)))
+        self.assertEqual(375 + 60, self._length(self._job(gap_dots=60)))
+
+    def test_zero_is_a_setting_and_not_the_absence_of_one(self):
+        """The experiment is "wind it down to nothing and watch the leading
+        edge", so zero has to reach the wire as zero. A falsy test here
+        would hand it the 469 the unset case gets, the experiment would
+        produce no change, and the wrong conclusion would be drawn from a
+        control that was never applied — which is `${VAR:-default}` in
+        Python."""
+        self.assertEqual(self.LABEL, self._length(self._job(gap_dots=0)))
+        self.assertNotEqual(self._length(self._job(gap_dots=0)),
+                            self._length(self._job(gap_dots=None)))
+
+    def test_zero_reproduces_the_shape_that_shipped_before_0_5_0(self):
+        """Which is why it is reported rather than refused: it is a real
+        state, it is the state the experiment needs, and it is also the bug
+        that made every label drift. The budget equals the lines printed."""
+        payload = self._job(gap_dots=0)
+        printed = len(TestAJobAPrinterCanActuallyRead._decode(payload, 84))
+        self.assertEqual(printed, self._length(payload))
+
+    def test_it_scales_with_graphics_mode_exactly_as_the_lines_do(self):
+        """The repeat and the length are one fact. A gap measured in 300ths
+        of an inch has to double along with the raster, or the label comes
+        out with a budget half as long as the paper it describes."""
+        text = self._job(gap_dots=18, quality="text")
+        graphics = self._job(gap_dots=18, quality="graphics")
+        self.assertEqual(393, self._length(text))
+        self.assertEqual(393 * protocol.LINE_REPEAT["graphics"],
+                         self._length(graphics))
+        self.assertEqual(786, self._length(graphics))
+
+    def test_an_absurd_gap_still_cannot_reach_continuous_feed(self):
+        """0x8000-0xFFFF is a MODE, not a length, and a number typed into a
+        box may never put a printer into continuous feed. The clamp is at
+        0x7FFF and a gap goes through it like every other length."""
+        payload = self._job(gap_dots=90000)
+        self.assertEqual(protocol.MAX_LENGTH, self._length(payload))
+        self.assertLess(self._length(payload), 0x8000)
+
+    def test_continuous_stock_ignores_a_gap_entirely(self):
+        """There are no sense holes on continuous paper, so there is no
+        hole-to-hole distance for a gap to be part of."""
+        payload = self._job(gap_dots=18, continuous=True)
+        self.assertEqual(protocol.CONTINUOUS_LENGTH, self._length(payload))
+
+    def test_the_helper_answers_the_same_way_the_job_does(self):
+        """Driven both ways round because `search_length` is what a reader
+        checks and `job` is what a printer gets, and the one that matters is
+        the second."""
+        self.assertEqual(469, protocol.search_length(375))
+        self.assertEqual(469, protocol.search_length(375, None))
+        self.assertEqual(393, protocol.search_length(375, 18))
+        self.assertEqual(375, protocol.search_length(375, 0))
+
+
 class TestTheDotTabIsPrinterState(unittest.TestCase):
     """`ESC B 0` was left out as "a no-op by construction", and it is not.
 

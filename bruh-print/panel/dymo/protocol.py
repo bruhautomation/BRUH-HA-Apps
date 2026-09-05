@@ -247,7 +247,7 @@ LENGTH_HEADROOM = 0.25
 MIN_HEADROOM_DOTS = 60  # 0.2" at 300 dpi
 
 
-def search_length(feed_dots: int) -> int:
+def search_length(feed_dots: int, gap_dots: int | None = None) -> int:
     """The ESC L value for a die-cut label `feed_dots` lines long.
 
     `feed_dots` is the label; the answer is the label plus room to reach the
@@ -261,9 +261,32 @@ def search_length(feed_dots: int) -> int:
     label started fractionally further along the roll than the one before.
     That is a systematic drift down a roll rather than a one-off, which is
     what makes it visible on a printed ruler.
+
+    `gap_dots` is the die-cut gap, when somebody has measured theirs, and it
+    is the quantity this command is actually defined in: hole to hole is the
+    label plus the gap after it, so a measured gap makes the answer a
+    measurement rather than a fraction. `None` is "nobody has measured it"
+    and keeps the headroom below — which is not a fallback that happens to
+    agree, it is the shipped behaviour untouched, so a house that never
+    opens this control gets byte-for-byte the job it always got.
+
+    **Zero is a real value and must not be read as unset.** "Wind it down to
+    nothing and watch what the leading edge does" is the whole experiment
+    this argument exists for; `${VAR:-default}` cannot express the
+    difference between an empty answer and a zero one, and this is the same
+    trap in a different language. Hence `is None` and never a falsy test.
+
+    A gap of zero makes the budget exactly the label, which is precisely the
+    shape that shipped before 0.5.0 and drifted down the roll. It is allowed
+    anyway, and reported rather than refused: the caller that sets it is
+    running an experiment, and a control that refuses the one setting the
+    experiment needs is not an instrument. The report lives with the printed
+    label, in `server._send`, where a person can read it.
     """
     feed = max(1, int(feed_dots))
-    return feed + max(MIN_HEADROOM_DOTS, round(feed * LENGTH_HEADROOM))
+    if gap_dots is None:
+        return feed + max(MIN_HEADROOM_DOTS, round(feed * LENGTH_HEADROOM))
+    return feed + max(0, int(gap_dots))
 
 
 def select_roll(roll: int) -> bytes:
@@ -422,13 +445,28 @@ def parse_status(block: bytes | None) -> Status:
 # Raster
 # ---------------------------------------------------------------------------
 def pack_line(bits: bytes, bytes_per_line: int) -> bytes:
-    """One line's pixels, padded or truncated to the head's width.
+    """One line's pixels, padded on the right or truncated to the head.
 
-    Truncation is silent on purpose and the renderer is what stops it
-    mattering: it is handed the printable dot width from the model table and
-    never draws past it, so a line arriving too long here means a bug
-    upstream, not a wide label. Padding is the ordinary case — a label
-    narrower than the head is most labels.
+    **Padding on the right is where the printing starts, and for one release
+    that was a decision nothing knew it was making.** A short line lands
+    flush against head dot 0 and the rest of the head is blank — invisible
+    and correct for a 2.25" stock, whose 672-dot raster is the whole head,
+    and half a label for a 0.56" wrap whose 168 dots are a quarter of it and
+    whose paper does not sit at the dot-0 end. Where the paper *does* sit is
+    `stores.stock.media_across_mm`, and `render.image.place_on_head` is what
+    puts the sheet there, before anything reaches this function.
+
+    Truncation used to be justified here by "the renderer is handed the
+    printable dot width and never draws past it". That was true of the
+    renderer and it was never the whole guarantee: it stopped being true the
+    moment a sheet could be laid somewhere other than dot 0, because a
+    lateral position is precisely a way to push ink past the last dot. So
+    the guarantee now belongs to `place_on_head`, which crops at the head
+    and REPORTS the ink it lost, in millimetres, naming the edge. What is
+    left here is a backstop against a bug upstream — a line arriving too
+    long is not a wide label — and it is deliberately not a policy: the
+    place a person is told about lost ink is the note beside their label,
+    not a raster row nobody can see.
     """
     if len(bits) >= bytes_per_line:
         return bytes(bits[:bytes_per_line])
@@ -477,6 +515,7 @@ def raster(lines: list[bytes], bytes_per_line: int, *,
 
 def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
         copies: int = 1, label_feed_dots: int | None = None,
+        gap_dots: int | None = None,
         continuous: bool = False, compress: bool = False,
         dot_tab: bool = True, density: str | None = None,
         quality: str | None = None) -> bytes:
@@ -501,6 +540,12 @@ def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
     `continuous=True` is the separate mode for stock with no die cut at all:
     the length field becomes the continuous-form flag and this argument is
     not read.
+
+    `gap_dots` is the die-cut gap on this roll, when somebody has measured
+    it, and `None` — the default and what every caller sends until somebody
+    does — keeps the headroom `search_length` has always applied. It rides
+    beside `label_feed_dots` because the two are one measurement of the same
+    paper, hole to hole.
 
     `dot_tab` sends `ESC B 0` and is on by default, because the dot tab is
     the printer's state and not ours: a job that does not set it starts
@@ -532,7 +577,8 @@ def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
         # the raster, because the label and the budget spent on it are one
         # fact counted in whatever steps the printer is taking — the same
         # reason `LINE_REPEAT` is named rather than written as a bare 2.
-        length_bytes = set_label_length(search_length(feed) * repeat)
+        length_bytes = set_label_length(
+            search_length(feed, gap_dots) * repeat)
 
     out = bytearray()
     for index in range(copies):

@@ -121,6 +121,55 @@ Anything past an inch is refused rather than clamped — a LabelWriter's
 registration is out by a millimetre or two, so a bigger number is a
 mistyped measurement or two boxes filled in the wrong way round.
 
+### Where the paper sits under the head
+
+The print head is **672 dots wide whatever is loaded**. A 2.25" label is 672
+dots, so it covers the head and lands right however the roll is registered. A
+0.56" wrap is 168 dots — a quarter of it — and a raster always begins at the
+head's first dot, so if the roll does not sit at that end of the head, part of
+the printing lands on the liner and the rest of the label stays blank. On the
+roll this was found on, half the label printed and half did not.
+
+**The offsets above cannot fix that**, and this is the one place the
+difference matters: an offset moves artwork *inside* a 168-dot sheet, so
+pushing it right only shoves ink off that sheet's own edge. It can never move
+the sheet further along the head. If you have been typing bigger and bigger
+offsets at a narrow label and nothing changes, this is why.
+
+So **Where the paper sits** is a separate box, in millimetres in from the
+head's first dot, `0.0` unless measured. To measure it, tick **Print a scale
+across the whole head** before printing the calibration label: it ignores the
+stock's width and lays a numbered scale across all 672 dots, so whatever
+lands on your label reads off directly as the distance. Note what that means
+in practice — the parts of the scale that miss the paper print onto the liner,
+which is ordinary for a calibration pass and is why the tick is not the
+default.
+
+### The gap between labels
+
+`ESC L` is defined in the manual as the dot lines **from sense hole to sense
+hole** — the label plus the die-cut gap after it — and it is a *search
+budget*: the printer counts print lines and fed lines against it while looking
+for the next hole. With no measurement to go on this add-on sends the label
+plus 25% (with a floor), which is deliberately generous, because the manual is
+clear that over-long costs nothing **as long as the hole is found and re-syncs
+the counter**.
+
+If the hole is *not* being found on a given roll, that generosity is fed
+straight onto the paper and every label starts late — which is one of the two
+explanations for a dead band at the leading edge that no offset can shift (the
+other is the printer's own top-of-form, which is a hardware fact).
+
+**Leaving this box empty keeps exactly the bytes the add-on sent before it
+existed**, so a roll nobody has measured prints identically. Measure the gap
+with a ruler and type it in and the budget becomes arithmetic instead of a
+fraction somebody chose. **`0` is a real answer, not the same as empty**: it
+is what you set to wind the budget down to the label itself and watch what the
+leading edge does, which is how you find out which of the two explanations you
+have. A gap that would make the budget shorter than the label is refused — a
+search that ends before the hole is the bug that made every label drift down
+the roll before 0.5.0.
+
 The two stocks this add-on ships knowing, read off the roll cores:
 
 | SKU | Name | across × feed | per roll |

@@ -1411,3 +1411,419 @@ class TestTheCalibrationLabel(PanelCase):
                                        {"stock": "nothing-like-that"})
         self.assertEqual(404, status)
         self.assertIn("nothing-like-that", body["error"])
+
+
+class TestWhereThePaperSitsUnderTheHead(PanelCase):
+    """The narrow-roll half of "where the printing starts", end to end.
+
+    The report: a solid-fill label on the 0.56" x 3.44" cryo wrap, inked
+    across 335px of a 687px label — 49% of its width, from one edge, ending
+    dead at the halfway point — and no value of the 0.6.0 across offset
+    changed anything. It could not: that offset moves artwork inside a sheet
+    that is 168 dots wide, and the sheet itself always began at head dot 0.
+
+    So what is asserted here is the dot columns of the head, off the payload
+    that would have been written.
+    """
+
+    HEAD_BYTES = 84
+
+    async def loaded(self):
+        await self.post("/api/roll/left", {"stock": "ed1f-060wh"})
+
+    def wrap_label(self):
+        """Solid fill, which is what was printed: every column of the sheet
+        carries ink, so the inked columns are the columns of the head."""
+        return {"stock": "ed1f-060wh", "rotate": 0, "elements": [
+            {"type": "box", "x_mm": 0, "y_mm": 0, "w_mm": 500, "h_mm": 500,
+             "props": {"fill": True, "stroke_mm": 0}}]}
+
+    def head_columns(self, payload):
+        """Which head dots a job asks for, walking the wire the way a
+        printer does."""
+        columns = set()
+        index = 0
+        while index < len(payload):
+            byte = payload[index]
+            if byte == protocol.ESC:
+                letter = chr(payload[index + 1])
+                index += 2 + {"L": 2, "B": 1, "D": 1, "q": 1}.get(letter, 0)
+            elif byte == protocol.SYN:
+                row = payload[index + 1:index + 1 + self.HEAD_BYTES]
+                for position, value in enumerate(row):
+                    for bit in range(8):
+                        if value & (1 << (7 - bit)):
+                            columns.add(position * 8 + bit)
+                index += 1 + self.HEAD_BYTES
+            else:
+                raise AssertionError(f"byte {byte:#x} at {index}")
+        return columns
+
+    async def print_wrap(self):
+        status, body = await self.post("/api/print",
+                                       {"label": self.wrap_label()})
+        self.assertEqual(200, status, body)
+        return body, self.sent[-1]
+
+    async def test_the_reported_case_lands_on_head_dots_0_to_167(self):
+        """Reproduced through the real routes before anything is asked of
+        the new control: with nothing measured, the whole 168-dot sheet is
+        against the head's first dot and the other 504 dots are never asked
+        for. On a roll whose paper is not there, that is the half-inked
+        label in the photograph."""
+        await self.loaded()
+        _, payload = await self.print_wrap()
+        columns = self.head_columns(payload)
+        self.assertEqual(24, min(columns), "the renderer's 2mm border")
+        self.assertEqual(143, max(columns))
+        self.assertFalse([c for c in columns if c > 167])
+
+    async def test_a_measured_position_moves_it_along_the_head(self):
+        await self.loaded()
+        _, before = await self.print_wrap()
+        status, saved = await self.post("/api/stock/ed1f-060wh/offset",
+                                        {"media_across_mm": 7.3})
+        self.assertEqual(200, status, saved)
+        self.assertEqual(7.3, saved["stock"]["media_across_mm"])
+        _, after = await self.print_wrap()
+
+        shift = 86  # 7.3mm at 300 dpi, rounded once
+        self.assertEqual({c + shift for c in self.head_columns(before)},
+                         self.head_columns(after))
+        self.assertEqual(110, min(self.head_columns(after)))
+
+    async def test_the_across_offset_still_cannot_do_this_job(self):
+        """The half that explains "I try and try and it doesn't do
+        anything": an across offset shifts artwork inside a 168-dot sheet,
+        so on a solid fill it moves nothing the head can see — the sheet is
+        already full, and what leaves one edge is simply lost."""
+        await self.loaded()
+        _, before = await self.print_wrap()
+        await self.post("/api/stock/ed1f-060wh/offset",
+                        {"offset_across_mm": 4.0})
+        _, after = await self.print_wrap()
+        self.assertLessEqual(max(self.head_columns(after)), 167,
+                             "an across offset reached past the sheet")
+        self.assertEqual(min(self.head_columns(before)) + 47,
+                         min(self.head_columns(after)),
+                         "it moved ink within the label, and only there")
+
+    async def test_a_roll_nobody_measured_prints_the_job_it_always_did(self):
+        """0.0 is the only honest default — nothing in a container can see a
+        print head — so this must be byte-for-byte identical."""
+        await self.loaded()
+        _, before = await self.print_wrap()
+        await self.post("/api/stock/ed1f-060wh/offset",
+                        {"media_across_mm": 0})
+        _, after = await self.print_wrap()
+        self.assertEqual(before, after)
+
+    async def test_a_position_that_costs_ink_prints_and_says_so(self):
+        """The standing rule: the stock/roll mismatch is the only refusal.
+        A position that pushes the label past the head's last dot still
+        prints what fits, with a note naming the amount and the edge."""
+        await self.loaded()
+        await self.post("/api/stock/ed1f-060wh/offset",
+                        {"media_across_mm": 50.0})
+        body, payload = await self.print_wrap()
+        note = " ".join(body["notes"])
+        self.assertIn("past the head’s last dot", note)
+        self.assertIn("50.0mm in from the print head", note)
+        self.assertLessEqual(max(self.head_columns(payload)), 671)
+
+    async def test_a_negative_position_is_refused_with_a_sentence(self):
+        """Paper cannot begin before the head's first dot, and a minus here
+        is somebody reading it as an offset — which is the one confusion
+        this control has to avoid."""
+        await self.loaded()
+        status, body = await self.post("/api/stock/ed1f-060wh/offset",
+                                       {"media_across_mm": -7.3})
+        self.assertEqual(400, status)
+        self.assertIn("cannot be negative", body["error"])
+        _, state = await self.get("/api/stocks")
+        entry = next(s for s in state["stocks"] if s["id"] == "ed1f-060wh")
+        self.assertEqual(0.0, entry["media_across_mm"])
+
+    async def test_a_position_past_the_head_is_refused_and_names_the_head(self):
+        await self.loaded()
+        status, body = await self.post("/api/stock/ed1f-060wh/offset",
+                                       {"media_across_mm": 90})
+        self.assertEqual(400, status)
+        self.assertIn("56.9mm wide", body["error"])
+
+    async def test_the_two_quantities_are_saved_apart(self):
+        """They are typed in different boxes and they clip against different
+        edges; a Save that wrote one into the other would be the whole bug
+        again, silently."""
+        await self.loaded()
+        await self.post("/api/stock/ed1f-060wh/offset",
+                        {"media_across_mm": 7.3, "offset_across_mm": -0.4})
+        _, body = await self.get("/api/stocks")
+        entry = next(s for s in body["stocks"] if s["id"] == "ed1f-060wh")
+        self.assertEqual(7.3, entry["media_across_mm"])
+        self.assertEqual(-0.4, entry["offset_across_mm"])
+
+    async def test_editing_the_stock_does_not_blank_the_position(self):
+        await self.loaded()
+        await self.post("/api/stock/ed1f-060wh/offset",
+                        {"media_across_mm": 7.3})
+        _, body = await self.post("/api/stock", {
+            "id": "ed1f-060wh", "name": "Cryogenic Labels",
+            "across_in": 0.56, "feed_in": 3.44})
+        self.assertEqual(7.3, body["stock"]["media_across_mm"])
+
+    async def test_the_position_is_not_part_of_the_label(self):
+        """It is a correction to the machine, so the preview is untouched —
+        the same rule the offsets follow. A preview that moved with it would
+        be showing somebody their printer's geometry as their layout."""
+        await self.loaded()
+        response = await self.client.post("/api/preview",
+                                          json={"label": self.wrap_label()})
+        before = await response.read()
+        await self.post("/api/stock/ed1f-060wh/offset",
+                        {"media_across_mm": 7.3})
+        response = await self.client.post("/api/preview",
+                                          json={"label": self.wrap_label()})
+        self.assertEqual(before, await response.read())
+
+
+class TestTheScaleAcrossTheHead(PanelCase):
+    """The instrument for the number above.
+
+    Neither of the other two labels can answer this and that is structural,
+    not a wording problem: both are drawn to the stock's own sheet, which on
+    a 0.56" wrap is 168 dots, so every mark they make is inside the very
+    thing whose position is in question.
+    """
+
+    HEAD_BYTES = 84
+
+    WRAP = {"stock": "ed1f-060wh"}
+
+    async def loaded(self):
+        await self.post("/api/roll/left", {"stock": "ed1f-060wh"})
+
+    def columns(self, payload):
+        return TestWhereThePaperSitsUnderTheHead.head_columns(self, payload)
+
+    async def test_it_prints_right_across_the_head(self):
+        await self.loaded()
+        status, body = await self.post("/api/printer/head-scale", self.WRAP)
+        self.assertEqual(200, status, body)
+        self.assertEqual(1, body["printed"])
+        self.assertEqual("left", body["side"])
+        self.assertEqual(56.9, body["head_mm"])
+
+        columns = self.columns(self.sent[-1])
+        self.assertEqual(0, min(columns), "it does not start at head dot 0")
+        self.assertEqual(671, max(columns), "it stops short of the head")
+
+    async def test_it_is_numbered_often_enough_to_read_from_a_fragment(self):
+        """The whole design. The person holding it sees a strip of paper
+        with part of a ruler on it and no view of where that ruler began, so
+        a bare ladder is unreadable — there is nothing to count from. Every
+        5mm carries a digit, which is two or three of them on 14mm of wrap
+        wherever the paper turns out to sit."""
+        entry = self.panel.stocks.require("ed1f-060wh")
+        head = server.stock_store.replace(entry, across_in=672 / 300,
+                                          margin_mm=0.0)
+        document = server._head_scale_label(head)
+        numbers = [e for e in document["elements"] if e["type"] == "text"]
+        self.assertEqual([str(m) for m in range(0, 57, 5)],
+                         [e["props"]["text"] for e in numbers])
+        for one in range(len(numbers)):
+            for two in range(one + 1, len(numbers)):
+                a, b = numbers[one], numbers[two]
+                self.assertFalse(
+                    a["x_mm"] < b["x_mm"] + b["w_mm"]
+                    and b["x_mm"] < a["x_mm"] + a["w_mm"],
+                    f"{a['props']['text']} overlaps {b['props']['text']}")
+
+    async def test_neither_across_correction_is_applied_to_it(self):
+        """It is an absolute instrument or it is nothing: a scale that moved
+        with the number it measures reads the same thing however wrong that
+        number is, so printing it again could never check anything."""
+        await self.loaded()
+        await self.post("/api/printer/head-scale", self.WRAP)
+        first = self.sent[-1]
+        await self.post("/api/stock/ed1f-060wh/offset",
+                        {"media_across_mm": 7.3, "offset_across_mm": -2.0})
+        await self.post("/api/printer/head-scale", self.WRAP)
+        self.assertEqual(first, self.sent[-1])
+
+    async def test_the_feed_offset_still_reaches_it(self):
+        """Which is the other half of the same rule: a feed offset moves the
+        scale along the roll and cannot disturb an across reading, so
+        leaving it off would be printing this one label somewhere the rest
+        of the roll is not."""
+        await self.loaded()
+        await self.post("/api/printer/head-scale", self.WRAP)
+        first = self.sent[-1]
+        await self.post("/api/stock/ed1f-060wh/offset", {"offset_feed_mm": -4.0})
+        await self.post("/api/printer/head-scale", self.WRAP)
+        self.assertNotEqual(first, self.sent[-1])
+
+    async def test_it_never_saves_the_head_wide_copy_it_draws_with(self):
+        """It renders against a copy of the roll whose width is the print
+        head's. Saving that would turn somebody's 0.56" wrap into a 2.24"
+        one on the press that is meant to be safe to try."""
+        await self.loaded()
+        await self.post("/api/printer/head-scale", self.WRAP)
+        _, body = await self.get("/api/stocks")
+        entry = next(s for s in body["stocks"] if s["id"] == "ed1f-060wh")
+        self.assertEqual(0.56, entry["across_in"])
+        self.assertEqual(2.0, entry["margin_mm"])
+
+    async def test_an_unknown_stock_is_a_404(self):
+        status, body = await self.post("/api/printer/head-scale",
+                                       {"stock": "nothing-like-that"})
+        self.assertEqual(404, status)
+        self.assertIn("nothing-like-that", body["error"])
+
+
+class TestTheGapBetweenLabels(PanelCase):
+    """`ESC L` is defined hole to hole, and this is the half of it nobody
+    could measure from inside a container.
+
+    The reporter set the feed offset to 0, then -8mm, then -4mm on the 2.25"
+    roll and photographed each. Everything moved exactly as the offset
+    predicts, and the dead band at the LEADING edge did not move at all —
+    ~4mm every time. So the printer begins laying ink about 4mm past the
+    leading edge and `offset_raster` structurally cannot touch that: it
+    moves artwork within a sheet that is one label long.
+
+    Whose fault the late start is remains open, and deliberately so. Either
+    it is the printer's top of form, or it is our own over-feed: the search
+    budget is the label plus 25%, 469 dot lines for a 375-line label, against
+    a hole-to-hole pitch nearer 394. What is built is the instrument to
+    settle it, not a guess at the answer.
+    """
+
+    async def loaded(self):
+        await self.post("/api/roll/left", {"stock": "edcc-082wh"})
+
+    def length(self, payload):
+        marker = bytes([protocol.ESC, ord("L")])
+        index = payload.index(marker)
+        return (payload[index + 2] << 8) | payload[index + 3]
+
+    async def print_once(self):
+        status, body = await self.post("/api/print",
+                                       {"label": self.label(text="Rice")})
+        self.assertEqual(200, status, body)
+        return body, self.sent[-1]
+
+    async def test_unmeasured_is_byte_for_byte_the_job_that_shipped(self):
+        """The promise the whole control is built under. 375 lines plus 25%
+        is 469, doubled by the default graphics mode to 938 — which is what
+        main sends today, and what a house that never opens this gets."""
+        await self.loaded()
+        _, payload = await self.print_once()
+        self.assertEqual(938, self.length(payload))
+        _, entry = await self.get("/api/stocks")
+        row = next(s for s in entry["stocks"] if s["id"] == "edcc-082wh")
+        self.assertIsNone(row["gap_mm"])
+
+    async def test_a_measured_gap_makes_the_budget_arithmetic(self):
+        """1.5mm is 18 dot lines, so the budget is 375 + 18 = 393, doubled
+        to 786 by the graphics mode. Not 469-plus-anything: a measurement
+        replaces the guess."""
+        await self.loaded()
+        status, saved = await self.post("/api/stock/edcc-082wh/offset",
+                                        {"gap_mm": 1.5})
+        self.assertEqual(200, status, saved)
+        self.assertEqual(1.5, saved["stock"]["gap_mm"])
+        _, payload = await self.print_once()
+        self.assertEqual(786, self.length(payload))
+
+    async def test_it_is_the_same_number_in_the_faster_line_mode(self):
+        """The repeat and the length are one fact, and a gap is counted in
+        the printer's steps like everything else."""
+        await self.loaded()
+        await self.post("/api/settings", {"quality": "text"})
+        await self.post("/api/stock/edcc-082wh/offset", {"gap_mm": 1.5})
+        _, payload = await self.print_once()
+        self.assertEqual(393, self.length(payload))
+
+    async def test_zero_is_settable_and_means_zero(self):
+        """"Wind it down to nothing and watch the leading edge" is the
+        experiment this exists for, so zero has to survive the wire. A falsy
+        test anywhere on this path would hand it the unset default, the
+        experiment would show no change, and the wrong conclusion would be
+        drawn from a control that never applied."""
+        await self.loaded()
+        _, saved = await self.post("/api/stock/edcc-082wh/offset",
+                                   {"gap_mm": 0})
+        self.assertEqual(0.0, saved["stock"]["gap_mm"])
+        _, payload = await self.print_once()
+        self.assertEqual(375 * protocol.LINE_REPEAT["graphics"],
+                         self.length(payload))
+
+    async def test_zero_says_out_loud_what_it_has_done(self):
+        """It is the shape that shipped before 0.5.0 and drifted down the
+        roll. Reported every print rather than refused: refusing would take
+        away the one setting the experiment needs, and a diagnostic left
+        switched on is exactly the thing worth saying on every label."""
+        await self.loaded()
+        await self.post("/api/stock/edcc-082wh/offset", {"gap_mm": 0})
+        body, _ = await self.print_once()
+        note = " ".join(body["notes"])
+        self.assertIn("set to 0.0mm", note)
+        self.assertIn("stops looking for the sense hole", note)
+        self.assertIn("drift", note)
+
+    async def test_a_measured_gap_is_silent(self):
+        await self.loaded()
+        await self.post("/api/stock/edcc-082wh/offset", {"gap_mm": 1.5})
+        body, _ = await self.print_once()
+        # The one note this stock always carries is the renderer's, about
+        # 2.25" of label on a 2.24" head. A measured gap adds nothing to it.
+        self.assertEqual(1, len(body["notes"]), body["notes"])
+        self.assertIn("the outer 3 dot columns", body["notes"][0])
+
+    async def test_empty_clears_it_back_to_unmeasured(self):
+        """Three states, not two: absent keeps, empty clears, a number sets.
+        Clearing has to give back the exact job that shipped, or the control
+        is a one-way door."""
+        await self.loaded()
+        _, before = await self.print_once()
+        await self.post("/api/stock/edcc-082wh/offset", {"gap_mm": 1.5})
+        _, saved = await self.post("/api/stock/edcc-082wh/offset",
+                                   {"gap_mm": None})
+        self.assertIsNone(saved["stock"]["gap_mm"])
+        _, after = await self.print_once()
+        self.assertEqual(before, after)
+
+    async def test_a_payload_that_never_mentions_it_keeps_it(self):
+        """Which is what a panel served before 0.7.0 posts. The same
+        partial-update rule the Edit dialog follows."""
+        await self.loaded()
+        await self.post("/api/stock/edcc-082wh/offset", {"gap_mm": 1.5})
+        _, body = await self.post("/api/stock/edcc-082wh/offset",
+                                  {"offset_feed_mm": -4.0})
+        self.assertEqual(1.5, body["stock"]["gap_mm"])
+        self.assertEqual(-4.0, body["stock"]["offset_feed_mm"])
+
+    async def test_a_negative_gap_is_refused(self):
+        await self.loaded()
+        status, body = await self.post("/api/stock/edcc-082wh/offset",
+                                       {"gap_mm": -2})
+        self.assertEqual(400, status)
+        self.assertIn("cannot be negative", body["error"])
+
+    async def test_a_gap_wider_than_any_die_cut_is_refused(self):
+        """A number bigger than an inch is a label typed into the gap box,
+        and a budget built on it would search most of a foot of paper."""
+        await self.loaded()
+        status, body = await self.post("/api/stock/edcc-082wh/offset",
+                                       {"gap_mm": 40})
+        self.assertEqual(400, status)
+        self.assertIn("BETWEEN two labels", body["error"])
+
+    async def test_it_survives_an_edit_of_the_stock(self):
+        await self.loaded()
+        await self.post("/api/stock/edcc-082wh/offset", {"gap_mm": 1.5})
+        _, body = await self.post("/api/stock", {
+            "id": "edcc-082wh", "name": "Chemical-Resistant Cryo Labels",
+            "across_in": 2.25, "feed_in": 1.25})
+        self.assertEqual(1.5, body["stock"]["gap_mm"])

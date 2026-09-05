@@ -88,7 +88,14 @@ that does nothing.
    sheet with a 1mm scale at its own corner, you read off how far in the
    printing really begins, and BRUH Print moves it. Once per roll, and
    nothing to do at all unless a label looks wrong.
-7. Type something on the Quick tab and print it.
+7. If a **narrow** roll prints across only part of its width, that is a
+   different number in the same dialog. The head is 672 dots however small
+   the label is, and a raster starts at its first dot — so a roll that does
+   not sit at that end of the head is only partly printed on, and no offset
+   can move it, because an offset shifts artwork inside the label rather
+   than moving the label along the head. Tick **Print a scale across the
+   whole head**, print the calibration label, and read the distance off it.
+8. Type something on the Quick tab and print it.
 
 ## From Home Assistant
 
