@@ -186,6 +186,28 @@ async function livePass(browser, note) {
     const marks = m.rows.map((r) => r.mark).join(' ');
     if (!/crbusy/.test(marks)) note(`${width}px`, 'no row says it is answering');
     if (!/crask/.test(marks)) note(`${width}px`, 'no row says it needs an OK');
+
+    // The marks have to survive a turn ending. `chatState.live` is the
+    // message node partial text streams into and is set to null when an
+    // answer completes; the marks live in `chatState.liveSessions`. For a
+    // release the two shared one name — the second definition in the
+    // literal won, so streamed text rendered into a plain object and the
+    // rail threw on the first repaint after a turn. A repaint here, with no
+    // fetch to rebuild the map, is exactly that moment.
+    let after = -1;
+    try {
+      after = await page.evaluate((isWide) => {
+        chatState.live = null;
+        chatState.liveText = '';
+        if (isWide) renderChatRail(); else renderConvModal();
+        return [...document.querySelectorAll('.crbusy, .crask')].length;
+      }, wide);
+    } catch (e) {
+      note(`${width}px`, `repainting after a turn ended threw: ${e.message.split('\n')[0]}`);
+    }
+    if (after >= 0 && after < 2) {
+      note(`${width}px`, `the marks did not survive a turn ending: ${after} left`);
+    }
     // Three live rows, two marks: a row whose session is live but quiet is
     // deliberately unmarked, because "has a process" is not news.
     if (m.rows.filter((r) => r.mark).length !== 2) {

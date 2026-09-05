@@ -4956,7 +4956,7 @@ const chatState = {
   defaultModel: "",  // the global model the chat defers to when unset
   defaultModelLabel: "",  // …written out, for the picker's Default row
   convs: [],       // past conversations, for the wide-screen sidebar
-  live: {},          // session id -> {live, busy, needs_ok} for the rail's marks
+  liveSessions: {},  // session id -> {live, busy, needs_ok} for the rail's marks
   maxSessions: 0,    // how many may hold a process at once (chat_max_sessions)
   commands: [],      // its slash commands, as it advertises them
   cli: [],           // the brain/ha dispatchers, parsed from their own help
@@ -5434,8 +5434,8 @@ function chatRender(ev) {
       // Which conversations are holding a process, and which of those are
       // answering or waiting on somebody. Pushed rather than polled: it
       // only ever changes when something else already had an event to send.
-      chatState.live = {};
-      (ev.sessions || []).forEach((s) => { chatState.live[s.session_id] = s; });
+      chatState.liveSessions = {};
+      (ev.sessions || []).forEach((s) => { chatState.liveSessions[s.session_id] = s; });
       renderChatRail();
       renderConvModal();
       break;
@@ -5579,8 +5579,8 @@ function chatConnect() {
       chatState.defaultModelLabel = ev.default_model_label || "";
       // The rail's marks are right on the first paint rather than on the
       // first thing that happens to move.
-      chatState.live = {};
-      (ev.sessions || []).forEach((s) => { chatState.live[s.session_id] = s; });
+      chatState.liveSessions = {};
+      (ev.sessions || []).forEach((s) => { chatState.liveSessions[s.session_id] = s; });
       chatState.maxSessions = ev.max_sessions || chatState.maxSessions;
       chatMeta();
       chatState.cli = ev.cli || chatState.cli;
@@ -5902,7 +5902,7 @@ function setConvFilter(source) {
 // The stream's listing wins over the fetched row: it is refreshed the
 // moment anything moves, where the row is as old as the last request.
 function convMark(row) {
-  const live = chatState.live[row.id]
+  const live = chatState.liveSessions[row.id]
     || (row.live ? { busy: row.busy, needs_ok: row.needs_ok } : null);
   if (!live) return null;
   if (live.needs_ok) return el("span", "crask", "Needs your OK");
@@ -5963,7 +5963,7 @@ function convSelFlip(id) {
 // and fix runs are records in the engine's own store, not files this
 // list's delete can reach, so they are not selectable either.
 function convSelectable(rows) {
-  return rows.filter((c) => !c.view_only && !chatState.live[c.id]
+  return rows.filter((c) => !c.view_only && !chatState.liveSessions[c.id]
     && !(chatState.sessionId && c.id === chatState.sessionId));
 }
 
@@ -6224,7 +6224,7 @@ async function resumeConversation(conv) {
   // Nothing to wait for when the process is already there — the switch is
   // a change of attachment. A "one moment" toast over something instant is
   // a toast that teaches people to expect a wait.
-  const held = chatState.live[conv.id];
+  const held = chatState.liveSessions[conv.id];
   if (!held) toast("Opening that conversation…");
   try {
     const out = await api("api/chat/resume", {

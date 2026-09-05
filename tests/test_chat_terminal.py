@@ -2240,6 +2240,23 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status, 400)
 
 
+class TestChatStateLiteral(unittest.TestCase):
+    """`chatState` is one object literal, and a key written twice in it is
+    the second definition silently winning. `live` was: the node partial
+    text streams into (null between turns) and, four releases later, the
+    rail's session-marks map — so streamed text went into a plain object
+    and the rail threw on the first repaint after a turn. `node --check`
+    does not see it; CodeQL did, after the fact."""
+
+    def test_no_key_is_defined_twice(self):
+        src = (PANEL / "app.js").read_text("utf-8")
+        start = src.index("const chatState = {")
+        end = src.index("\n};", start)
+        keys = re.findall(r"^  ([A-Za-z_]\w*):", src[start:end], re.M)
+        dupes = sorted({k for k in keys if keys.count(k) > 1})
+        self.assertEqual(dupes, [], f"chatState defines twice: {dupes}")
+
+
 class TestChatChrome(unittest.TestCase):
     """The parts of the chat tab that are markup and CSS rather than events."""
 
