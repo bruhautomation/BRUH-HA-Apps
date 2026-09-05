@@ -212,6 +212,9 @@
     },
     "reset_dashboard_config": {
       "service": "mdi:view-dashboard-outline"
+    },
+    "intent": {
+      "service": "mdi:timer-sand"
     }
   }
 }

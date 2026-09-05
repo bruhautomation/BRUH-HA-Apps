@@ -39,7 +39,8 @@ import uuid
 
 from homeassistant.core import HomeAssistant
 
-from .const import ACTION_PREFIX, FINDING_REQUESTS_DIRNAME, SHARED_DIR
+from .const import (ACTION_PREFIX, FINDING_REQUESTS_DIRNAME,
+                    INTENT_REQUESTS_DIRNAME, SHARED_DIR)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -118,5 +119,53 @@ def write_request(hass: HomeAssistant, ts: int, action: str,
             # is usually the `open` itself — and if there is one, the
             # add-on cannot see it: it globs "*.json".
             pass
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# One-off intents — the same shape, a different drop
+# ---------------------------------------------------------------------------
+
+def intent_requests_dir(hass: HomeAssistant) -> str:
+    return hass.config.path(SHARED_DIR, INTENT_REQUESTS_DIRNAME)
+
+
+def write_intent(hass: HomeAssistant, sentence: str, via: str = "") -> bool:
+    """Drop one sentence for the add-on to turn into a one-off automation.
+
+    `write_request`'s three rules, for the same three reasons — the
+    atomic rename because the add-on globs `*.json`, the chronological
+    name because a backlog is answered in the order it was given, and no
+    waiting because the add-on may be stopped and a voice command must
+    not hang on that.
+
+    It is `brain.intent`'s half of a wire format the add-on's
+    `intents.request` writes the other half of, and `tests/test_intents.py`
+    drives this one straight into the add-on's parser rather than writing
+    the shape down twice.
+    """
+    text = str(sentence or "").strip()[:300]
+    if not text:
+        _LOGGER.warning("refusing to queue an empty intent")
+        return False
+    directory = intent_requests_dir(hass)
+    name = (f"{int(time.time() * 1000):013d}"
+            f"-{next(_SEQUENCE):06d}-{uuid.uuid4().hex[:8]}.json")
+    target = os.path.join(directory, name)
+    scratch = target + ".tmp"
+    body = {"ts": int(time.time()), "sentence": text,
+            "via": str(via or "")[:32]}
+    try:
+        os.makedirs(directory, exist_ok=True)
+        with open(scratch, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(body))
+        os.replace(scratch, target)
+    except OSError as exc:
+        _LOGGER.warning("could not queue the one-off intent: %s", exc)
+        try:
+            os.unlink(scratch)
+        except OSError:
+            pass                     # see write_request: usually no scratch
         return False
     return True

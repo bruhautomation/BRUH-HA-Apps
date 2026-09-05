@@ -237,6 +237,12 @@ def add(obj: dict) -> dict | None:
         # never this, so a card that renders differently is still the
         # same change.
         "playbook": obj.get("playbook"),
+        # A one-off's evidence is the person's own sentence and Claude's
+        # restatement of it, side by side — which half was misread is the
+        # only thing worth knowing when it is wrong. It rides here for the
+        # same reason a playbook's list does, and `key_for` hashes the
+        # config and never this.
+        "intent": obj.get("intent"),
         "status": "proposed",
         "note": "",
     }

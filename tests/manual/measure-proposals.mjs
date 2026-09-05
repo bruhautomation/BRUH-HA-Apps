@@ -192,6 +192,47 @@ const PROPOSALS = [
   },
 ];
 
+// One-off intents. NOT proposals — nobody owes an answer on an armed one —
+// so they are counted apart and the badge never moves for them. Three
+// states, and each has to say something different: waiting, it happened,
+// and brAIn will not arm this.
+const INTENTS = [
+  {
+    ts: NOW * 1000 - 100, title: 'When the guests leave, turn the porch light off',
+    sentence: 'when the guests leave, turn the porch light off',
+    plain: 'Turn the porch light off ten minutes after the front door shuts.',
+    status: 'armed', accepted_at: NOW - 3600, fired_at: 0,
+    automation_id: 'brain_intent_1', entity_id: 'automation.when_the_guests_leave',
+    overdue: false,
+  },
+  {
+    ts: NOW * 1000 - 200, title: 'Tell me when the tumble dryer finishes',
+    sentence: 'tell me when the tumble dryer finishes',
+    plain: 'Send a notification when the dryer power drops below 5 W.',
+    status: 'fired', accepted_at: NOW - 4 * 3600, fired_at: NOW - 900,
+    automation_id: 'brain_intent_2', entity_id: 'automation.tell_me_when',
+    overdue: false,
+  },
+  {
+    ts: NOW * 1000 - 300, title: 'Turn the porch light on at sunset',
+    sentence: 'when it gets dark, turn the porch light on',
+    plain: 'Turn the porch light on at sunset, every evening.',
+    status: 'refused', accepted_at: 0, fired_at: 0,
+    refused: 'that sounds like a standing rule rather than a one-off — '
+      + 'something that should keep happening. Ask for it as an ordinary '
+      + 'change instead and it gets a replay, a trial week and a report.',
+    overdue: false,
+  },
+  {
+    ts: NOW * 1000 - 400, title: 'When the parcel arrives, unlock nothing',
+    sentence: 'when the parcel arrives, flash the hall light',
+    plain: 'Flash the hall light when the doorbell rings.',
+    status: 'armed', accepted_at: NOW - 20 * 86400, fired_at: 0,
+    automation_id: 'brain_intent_4', entity_id: 'automation.when_the_parcel',
+    overdue: true,
+  },
+];
+
 const OPEN = PROPOSALS.length;
 // The sentence the panel must show verbatim when Home Assistant will not
 // take the change. It is the whole reason the 409 carries a body.
@@ -201,6 +242,8 @@ const REFUSAL = 'automations.yaml already has one called "Close the blinds '
 const STUB = `
 window.__proposals = {
   proposals: ${JSON.stringify(PROPOSALS)},
+  intents: ${JSON.stringify(INTENTS)},
+  intent_ttl_days: 14,
   counts: { proposed: 5, trialling: 3, accepted: 0, declined: 0, open: ${OPEN} },
   trial_days: 7, routine_min_days: 6,
 };
@@ -222,6 +265,15 @@ window.fetch = async (url, opts) => {
     window.__undone = p.split('api/undo/')[1];
     return answer({ undone: true, reverted: true, reloaded: true,
                     restored_proposal: true, ...window.__proposals });
+  }
+  if (p.includes('api/intent/')) {
+    const ts = Number(p.split('api/intent/')[1].split('/')[0]);
+    window.__proposals = {
+      ...window.__proposals,
+      intents: window.__proposals.intents.filter((r) => r.ts !== ts),
+    };
+    return answer({ ...window.__proposals, removed: true,
+                    undo: 'tok-i-' + ts });
   }
   if (p.includes('api/playbook/')) {
     return answer({
@@ -265,7 +317,8 @@ window.fetch = async (url, opts) => {
   }
   if (p.includes('api/proposals')) {
     if (window.__empty) {
-      return answer({ proposals: [], counts: { open: 0 }, trial_days: 7 });
+      return answer({ proposals: [], intents: [], counts: { open: 0 },
+                      trial_days: 7 });
     }
     return answer(window.__proposals);
   }
@@ -285,6 +338,12 @@ window.fetch = async (url, opts) => {
   return answer({});
 };
 `;
+
+// The one-off cards render above the proposals, so a proposal is addressed
+// by its position among the PROPOSALS rather than by nth-child over a list
+// that holds both.
+const prop = (n, rest) => `.propcard:not(.intentcard) >> nth=${n}`
+  + (rest ? ` >> ${rest}` : '');
 
 const failures = [];
 const note = (where, message) => failures.push(`${where}: ${message}`);
@@ -309,7 +368,9 @@ for (const width of WIDTHS) {
   await page.waitForSelector('.propcard');
 
   const read = () => page.evaluate((floor) => {
-    const cards = [...document.querySelectorAll('.propcard')];
+    const intents = [...document.querySelectorAll('.propcard.intentcard')];
+    const cards = [...document.querySelectorAll('.propcard')]
+      .filter((c) => !c.classList.contains('intentcard'));
     const wrap = document.querySelector('.propwrap').getBoundingClientRect();
     const badge = document.querySelector('#propBadge');
     return {
@@ -319,6 +380,16 @@ for (const width of WIDTHS) {
       badge: badge ? { text: badge.textContent,
                        hidden: badge.classList.contains('hidden') } : null,
       hints: document.querySelectorAll('.prophint').length,
+      intents: intents.map((c) => ({
+        title: (c.querySelector('.proptitle') || {}).textContent || '',
+        pill: (c.querySelector('.pillintent') || {}).textContent || '',
+        why: (c.querySelector('.propwhy') || {}).textContent || '',
+        said: (c.querySelector('.propsaid') || {}).textContent || '',
+        line: (c.querySelector('.propintent') || {}).textContent || '',
+        buttons: [...c.querySelectorAll('.propbtns button')]
+          .map((b) => b.textContent.trim()),
+        overflows: c.getBoundingClientRect().right > wrap.right + 1,
+      })),
       cards: cards.map((c) => ({
         title: (c.querySelector('.proptitle') || {}).textContent || '',
         why: (c.querySelector('.propwhy') || {}).textContent || '',
@@ -504,6 +575,61 @@ for (const width of WIDTHS) {
               + 'has wrapped away from the names it labels');
   }
 
+  // --- the one-offs. Waiting, it happened, and brAIn will not arm this are
+  // three different sentences, and a card that cannot tell them apart is a
+  // list of things nobody can act on.
+  if (m.intents.length !== INTENTS.length) {
+    note(where, `rendered ${m.intents.length} one-offs, expected ${INTENTS.length}`);
+  }
+  m.intents.forEach((c, i) => {
+    if (!c.title.trim()) note(where, `one-off ${i} has no title`);
+    if (!c.pill.trim()) note(where, `one-off ${i} does not say which state it is in`);
+    if (!c.line.trim()) note(where, `one-off ${i} says nothing about what it did`);
+    if (!c.buttons.length) note(where, `one-off ${i} has no way to answer it`);
+    if (c.overflows) note(where, `one-off ${i} overflows its wrapper`);
+  });
+  // Defaulted, so a list that rendered nothing at all reports the sentences
+  // it is missing rather than throwing a TypeError at the first read.
+  const [armed = {}, fired = {}, refusedIntent = {}, overdue = {}] = m.intents;
+  [armed, fired, refusedIntent, overdue].forEach((c) => { c.buttons = c.buttons || []; });
+  // The person's sentence and the restatement are SEPARATE, because which
+  // of the two was misread is the only thing worth knowing when it is wrong.
+  if (!/you asked/i.test(armed.why) || !/guests leave/i.test(armed.why)) {
+    note(where, `an armed one-off does not carry the sentence: "${armed.why}"`);
+  }
+  if (!/brAIn understood/i.test(armed.said)) {
+    note(where, `an armed one-off does not carry the restatement: "${armed.said}"`);
+  }
+  if (!/switches itself off/i.test(armed.line)) {
+    note(where, `an armed one-off does not say it disarms: "${armed.line}"`);
+  }
+  if (!/^remove$/i.test(armed.buttons[0] || '')) {
+    note(where, `an armed one-off's press is "${armed.buttons[0]}"`);
+  }
+  if (!/fired/i.test(fired.line) || !/still in your automations/i.test(fired.line)) {
+    note(where, `a fired one-off does not say what happened: "${fired.line}"`);
+  }
+  // A refusal is answerable and says why. A refusal that was only a log line
+  // is somebody typing a sentence and watching nothing happen.
+  if (!/standing rule/i.test(refusedIntent.line)) {
+    note(where, `a refused one-off does not carry its reason: "${refusedIntent.line}"`);
+  }
+  if (!/^dismiss$/i.test(refusedIntent.buttons[0] || '')) {
+    note(where, `a refused one-off offers "${refusedIntent.buttons[0]}" — there `
+              + 'is no automation to remove');
+  }
+  if (!/never fired/i.test(overdue.line)) {
+    note(where, `a one-off past its fortnight does not say so: "${overdue.line}"`);
+  }
+  if (!/^remove$/i.test(overdue.buttons[0] || '')) {
+    note(where, 'an overdue one-off is not offered a Remove');
+  }
+  // And the badge is Findings-shaped: it counts what is waiting on YOU, and
+  // an armed one-off is waiting on the house.
+  if (m.badge.text !== String(OPEN)) {
+    note(where, `the badge counted the one-offs too: ${m.badge.text}`);
+  }
+
   // --- the condition proposal. It changes a rule somebody wrote, so the
   // card has to say that before they say yes, and its evidence is a pair
   // of numbers rather than one.
@@ -529,8 +655,31 @@ for (const width of WIDTHS) {
     note(where, 'the condition card cannot be answered');
   }
 
+  // --- Remove. It reaches /config, so it owes the same Undo an accept does.
+  const pressed = await waitOr(
+    page.click('.propcard.intentcard:first-child .propbtns button'),
+    'there was no one-off to press Remove on');
+  const removed = pressed && await waitOr(
+    page.waitForFunction((n) =>
+      document.querySelectorAll('.propcard.intentcard').length === n,
+    INTENTS.length - 1),
+    'Remove pressed and the one-off stayed on the list');
+  if (removed) {
+    const t2 = await page.evaluate(() => {
+      const t = document.querySelector('#toast');
+      const undo = t.querySelector('.toastundo');
+      return { text: t.textContent, undo: undo ? undo.getBoundingClientRect().height : 0 };
+    });
+    if (!/removed it from your automations/i.test(t2.text)) {
+      note(where, `Remove says nothing about what it did: "${t2.text}"`);
+    }
+    if (!t2.undo) {
+      note(where, 'Remove offers no Undo — it is a press that deletes from /config');
+    }
+  }
+
   // --- and the rehearsal, which opens on demand and calls nothing.
-  await page.click('.propcard:nth-child(7) .propreh > summary');
+  await page.click(prop(6, '.propreh > summary'));
   const opened = await waitOr(
     page.waitForSelector('.propreh[open] .propbookrows .propgroup'),
     'the rehearsal never reported what it would do');
@@ -548,12 +697,12 @@ for (const width of WIDTHS) {
       note(where, 'the rehearsal does not report each target\'s state now');
     }
   }
-  await page.click('.propcard:nth-child(7) .propreh > summary');
+  await page.click(prop(6, '.propreh > summary'));
 
   // --- an accept Home Assistant will not honour. The card stays put and
   // the sentence lands on it, because a toast is gone before somebody has
   // read a filename.
-  await page.click('.propcard:nth-child(6) .propbtns button:first-child');
+  await page.click(prop(5, '.propbtns button:first-child'));
   const landed = await waitOr(
     page.waitForSelector('.propcard .properror'),
     'a refused accept never put its sentence on the card — a toast is gone '
@@ -571,7 +720,7 @@ for (const width of WIDTHS) {
         || !/dismiss/i.test(stillThere.buttons[0].label)) {
       note(where, 'the refusal has no way back to the buttons');
     }
-    await page.click('.propcard:nth-child(6) .properror button');
+    await page.click(prop(5, '.properror button'));
     await waitOr(
       page.waitForFunction(() => !document.querySelector('.properror')),
       'the refusal would not dismiss');
@@ -583,10 +732,10 @@ for (const width of WIDTHS) {
 
   // --- an accept that lands. The row goes, and the toast offers Undo,
   // because this is the one press in the panel that writes to /config.
-  await page.click('.propcard:nth-child(2) .propbtns button:first-child');
+  await page.click(prop(1, '.propbtns button:first-child'));
   await waitOr(
     page.waitForFunction((n) =>
-      document.querySelectorAll('.propcard').length === n,
+      document.querySelectorAll('.propcard:not(.intentcard)').length === n,
     PROPOSALS.length - 1),
     'an accepted proposal stayed on the list');
   const toast = await page.evaluate(() => {
@@ -617,10 +766,10 @@ for (const width of WIDTHS) {
 
   // --- "No thanks" opens the reason box in place of the buttons, inside
   // the card — you are explaining something and it has to stay on screen.
-  await page.click('.propcard:first-child .propbtns button:last-child');
+  await page.click(prop(0, '.propbtns button:last-child'));
   await page.waitForSelector('.propnote textarea');
   const box = await page.evaluate(() => {
-    const card = document.querySelector('.propcard');
+    const card = document.querySelector('.propcard:not(.intentcard)');
     const area = card.querySelector('.propnote textarea');
     return {
       inside: !!area && card.contains(area),

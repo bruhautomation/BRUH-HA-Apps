@@ -134,6 +134,7 @@ import fixer
 import healing
 import health
 import hypotheses
+import intents
 import journal
 import knowledge_store
 import notify_router
@@ -1108,7 +1109,30 @@ def _proposals_diagnostics() -> dict:
             "trials_due": sum(1 for r in rows if proposals.trial_due(r)),
             # See CONDITIONS_STATE: a pattern brAIn will not act on is
             # reported here rather than as a card nobody can answer.
-            "conditions": dict(CONDITIONS_STATE)}
+            "conditions": dict(CONDITIONS_STATE),
+            # The one-offs are not proposals and are counted apart: an
+            # armed one is waiting on the house rather than on anybody.
+            "intents": _intents_diagnostics()}
+
+
+def _intents_diagnostics() -> dict:
+    try:
+        rows = intents.listing()
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)[:120]}
+    now = time.time()
+    return {
+        "armed": sum(1 for r in rows if r.get("status") == "armed"),
+        "fired": sum(1 for r in rows if r.get("status") == "fired"),
+        "refused": sum(1 for r in rows if r.get("status") == "refused"),
+        # An armed one-off past its fortnight is the shape of a sentence
+        # about something that already happened, and it is a label rather
+        # than a deletion — see `intents.expired`.
+        "overdue": sum(1 for r in rows if intents.expired(r, now)),
+        "queued": intents.pending(),
+        "max_armed": intents.MAX_ARMED,
+        "ttl_days": intents.INTENT_TTL_DAYS,
+    }
 
 
 # The weekly report. The same poll as the brief's and a different gate:
@@ -1303,8 +1327,103 @@ async def _apply_finding_requests() -> list[dict]:
     return out
 
 
+async def _one_intent(req: dict, now: float) -> dict | None:
+    """One sentence into one card. Returns the row it produced, or None.
+
+    Claude writes the config once, with **reading tools only**
+    (`run_analyst`, the middle of the three paths): it can search the
+    house for the thing the sentence names and it cannot act on it. What
+    comes back is checked by `intents.build` before it becomes anything,
+    and a refusal is a row on the tab rather than a log line — somebody
+    typed a sentence and is waiting for an answer, and *"brAIn will not
+    do this, and here is why"* is one.
+    """
+    sentence = req["sentence"]
+    if await asyncio.to_thread(intents.armed_count) >= intents.MAX_ARMED:
+        return await asyncio.to_thread(intents.note, {
+            "sentence": sentence,
+            "refused": (f"you already have {intents.MAX_ARMED} one-offs "
+                        "waiting to happen. Remove one and ask again — a "
+                        "list of things about to happen is only useful "
+                        "while it is short.")}, now)
+    try:
+        import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+        orientation = await ha_data.collect_orientation(sentence)
+    except Exception as exc:  # noqa: BLE001 — a map brAIn could not read
+        # is a smaller prompt, never a refused sentence.
+        log.info("could not orient the intent run: %s", exc)
+        orientation = {}
+    started = time.time()
+    try:
+        result = await asyncio.to_thread(
+            engine.run_analyst, intents.prompt(sentence, orientation),
+            intents.SYSTEM, eff_model(), intents.TIMEOUT_S,
+            intents.MAX_TURNS, "intent")
+    except Exception as exc:  # noqa: BLE001
+        result = {"ok": False, "error": str(exc)}
+    journal.record("intent", "ok" if result.get("ok") else "error",
+                   ok=bool(result.get("ok")),
+                   error="" if result.get("ok") else str(result.get("error")),
+                   duration_s=time.time() - started)
+    answer = intents.parse_answer(result.get("text") or result.get("raw") or "")
+    if not result.get("ok") or answer is None:
+        return await asyncio.to_thread(intents.note, {
+            "sentence": sentence,
+            "refused": ("brAIn could not work out an automation from that "
+                        "sentence: "
+                        + str(result.get("error")
+                              or "it did not answer with a config")[:200])},
+            now)
+
+    protected = automation_writer.protected_patterns()
+    obj = await asyncio.to_thread(
+        intents.build, sentence, answer, int(now * 1000), protected)
+    if obj.get("refused"):
+        return await asyncio.to_thread(intents.note, obj, now)
+
+    import aiohttp  # noqa: PLC0415 — as `_offer_routines` does
+
+    tz, _name = await asyncio.to_thread(baselines.house_timezone)
+    try:
+        async with aiohttp.ClientSession() as session:
+            obj["replay"] = await _replay_config(
+                session, obj["config"], now - REPLAY_DAYS * 86400, now, tz)
+    except Exception as exc:  # noqa: BLE001 — the replay is the card's
+        # sanity check on a trigger that has never fired, not a gate: a
+        # recorder that will not answer costs the number, never the
+        # sentence somebody typed.
+        obj["replay"] = {"refused": True,
+                         "error": f"brAIn could not replay it: {exc}"}
+    row = await asyncio.to_thread(proposals.add, obj)
+    if row is None:
+        return await asyncio.to_thread(intents.note, {
+            **obj, "refused": ("the Proposals tab is full, or brAIn has "
+                               "already offered this exact automation. "
+                               "Answer what is on it and ask again.")}, now)
+    log.info("one-off intent proposed from %s: %s",
+             req.get("via") or "the panel", obj["title"])
+    return row
+
+
+async def _apply_intent_requests() -> int:
+    """Drain the intent drop. Returns how many sentences were answered."""
+    queued = await asyncio.to_thread(intents.collect)
+    now = time.time()
+    answered = 0
+    for req in queued:
+        try:
+            if await _one_intent(req, now):
+                answered += 1
+        except Exception as exc:  # noqa: BLE001 — one bad sentence must
+            # not stop the loop that answers the next one.
+            log.warning("could not answer an intent: %s", exc)
+        now += 0.001                 # so two in one pass get two ids
+    return answered
+
+
 async def _requests_loop():
-    """Watch the drop directory. Cheap, and empty nearly every pass."""
+    """Watch the drop directories. Cheap, and empty nearly every pass."""
     await asyncio.sleep(REQUESTS_FIRST_DELAY_S)
     while True:
         try:
@@ -1313,6 +1432,12 @@ async def _requests_loop():
             raise
         except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
             log.warning("finding request pass failed: %s", exc)
+        try:
+            await _apply_intent_requests()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("intent request pass failed: %s", exc)
         await asyncio.sleep(REQUESTS_POLL_S)
 
 
@@ -2342,12 +2467,32 @@ LEARN_RE = re.compile(
     re.IGNORECASE)
 
 
+# "when the guests leave, turn the porch light off" — the ask bar's third
+# verb. A sentence shaped like a moment is not a question about the house
+# and never becomes a card: it becomes one automation that runs once and
+# switches itself off. Anchored at the start, because "tell me when the
+# freezer is unusual" is an intent and "what happens when the freezer
+# warms up" is a question, and the difference is which word opens it.
+INTENT_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:when(?:ever)?|once|as\s+soon\s+as|"
+    r"the\s+next\s+time|next\s+time|tell\s+me\s+when|let\s+me\s+know\s+when|"
+    r"remind\s+me\s+when)\b",
+    re.IGNORECASE)
+
+
 async def h_generate(request: web.Request) -> web.Response:
     body = await request.json()
     question = (body.get("question") or "").strip() or None
     if question:
         if len(question) > 500:
             raise web.HTTPBadRequest(text="question too long")
+        if INTENT_RE.match(question):
+            # The same request file the `brain.intent` service writes, so
+            # the expensive half — a Claude run, the checks, the card —
+            # has one implementation and one place to be wrong.
+            queued = await asyncio.to_thread(intents.request, question,
+                                             "panel")
+            return web.json_response({"queued": [], "intent": queued})
         match = LEARN_RE.match(question)
         if match:
             topic = question[match.end():].strip().rstrip("?.!")
@@ -3060,6 +3205,39 @@ async def _offer_playbooks(snapshot: dict, now: float) -> int:
     return offered
 
 
+async def _poll_intents(now: float) -> int:
+    """Ask Home Assistant whether each armed one-off has fired. Returns how
+    many moved.
+
+    `last_triggered` off the automation itself, not "the automation is
+    off": somebody switching it off by hand is not it having fired, and
+    the difference is the whole of what the card claims. The stamp has to
+    be **after** the accept, or an automation sharing a slug with one that
+    ran last month reads as done the moment it is armed.
+
+    An entity Core has no state for is left exactly as it is. "I could
+    not look" and "it has not happened" are different answers, and only
+    the second one belongs on a card.
+    """
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    rows = [r for r in await asyncio.to_thread(intents.listing)
+            if r.get("status") == "armed" and r.get("entity_id")]
+    moved = 0
+    for row in rows:
+        try:
+            state = await ha_data.entity_state(row["entity_id"])
+        except Exception as exc:  # noqa: BLE001 — one unreadable entity is
+            # not a reason to stop asking about the next.
+            log.info("could not read %s: %s", row["entity_id"], exc)
+            continue
+        when = intents.fired_from_state(row, state)
+        if when and await asyncio.to_thread(intents.mark_fired, row["ts"], when):
+            moved += 1
+            log.info("the one-off %r fired", row.get("title") or row["ts"])
+    return moved
+
+
 async def _evaluate_trials(now: float) -> int:
     """Re-grade every running trial against the week so far. Returns how many.
 
@@ -3209,6 +3387,16 @@ async def run_checks(reason: str = "schedule") -> dict:
         except Exception as exc:  # noqa: BLE001
             log.warning("could not evaluate trials: %s", exc)
             graded = 0
+        # And the one-offs: whether the thing somebody was waiting for has
+        # happened. Nothing is removed here — a card says it fired and
+        # offers to take it out, because an automation that vanished from
+        # somebody's file while they were not looking is a file they
+        # cannot trust.
+        try:
+            fired = await _poll_intents(started)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not check the armed one-offs: %s", exc)
+            fired = 0
         summary = {
             "reason": reason,
             "started_at": int(started),
@@ -3224,6 +3412,7 @@ async def run_checks(reason: str = "schedule") -> dict:
             "cleared": cleared,
             "proposed": offered,
             "trials_evaluated": graded,
+            "intents_fired": fired,
             "snapshot_errors": snapshot.get("errors") or {},
         }
         journal.record(
@@ -3960,7 +4149,20 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
 
 def _proposals_payload() -> dict:
     rows = proposals.listing()
+    now = time.time()
+    armed = intents.listing()
+    for row in armed:
+        # Derived here rather than stored, because "it has been waiting a
+        # fortnight" is a fact about the clock and a stored one would be
+        # a number that stops being true the moment it is written.
+        row["overdue"] = intents.expired(row, now)
     return {"proposals": rows, "counts": proposals.counts(rows),
+            # What is waiting to happen, what already has, and the
+            # sentences brAIn would not arm. Not proposals — nobody owes
+            # an answer on an armed one — so they are counted separately
+            # and the badge does not move for them.
+            "intents": armed,
+            "intent_ttl_days": intents.INTENT_TTL_DAYS,
             "trial_days": proposals.TRIAL_DAYS,
             # So an empty tab can say what "enough times" means rather
             # than leaving somebody to wonder whether it is broken.
@@ -4177,6 +4379,15 @@ async def h_proposal_decide(request: web.Request) -> web.Response:
     if fact:
         await _submit_memory(fact, source="homeowner")
 
+    if applied and row.get("kind") == "intent":
+        # A proposal is answered and gone; an armed intent is a state of
+        # the house, so it moves to a store of its own. Recorded only
+        # once the automation is written, reloaded and verified — a row
+        # saying the house is holding something, about an automation Core
+        # never loaded, is the "the file was written"/"it exists"
+        # confusion with a card on top of it.
+        await asyncio.to_thread(intents.arm, row, applied)
+
     payload = {"proposal": row, "learned": fact,
                **await asyncio.to_thread(_proposals_payload)}
     if applied:
@@ -4189,6 +4400,96 @@ async def h_proposal_decide(request: web.Request) -> web.Response:
             "automation", proposal=row, written=applied,
             fact=fact, fact_source="homeowner")
         await _announce_accepted(row, applied)
+    return web.json_response(payload)
+
+
+async def _wait_for_gone(entity_id: str) -> bool:
+    """Whether this entity has left Core within the ceiling.
+
+    `_wait_for_entity`'s mirror, and separate rather than a flag on it:
+    "it turned up" and "it went away" are the two claims, they are read at
+    opposite ends of a press, and one function answering both with a
+    boolean argument is a call site nobody can read.
+    """
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    deadline = time.monotonic() + ACCEPT_VERIFY_S
+    while True:
+        if not await ha_data.entity_exists(entity_id):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(ACCEPT_POLL_S)
+
+
+async def h_intent_remove(request: web.Request) -> web.Response:
+    """Take a one-off back out of `automations.yaml`.
+
+    The only press that removes an automation, and the reason nothing
+    removes one on its own: an automation that vanished from somebody's
+    file while they were not looking is a file they cannot trust. So a
+    fired intent sits on the tab saying it fired until this is pressed,
+    and an intent that never fired is offered the same press with a
+    different sentence.
+
+    The same four claims the accept path makes, in reverse: the entry is
+    spliced out, Home Assistant reloads, the entity is gone, and only
+    then does the row leave the list. Any of them failing puts the file
+    back and answers 409 with the sentence.
+    """
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    ts = int(request.match_info["ts"])
+    row = await asyncio.to_thread(intents.get, ts)
+    if row is None:
+        return web.json_response({"error": "that one-off is not on the list"},
+                                 status=404)
+
+    written = None
+    if row.get("status") != "refused" and row.get("automation_id"):
+        written = await asyncio.to_thread(
+            automation_writer.remove, row["automation_id"])
+        if not written.get("ok"):
+            return web.json_response(
+                {"error": str(written.get("error")
+                              or "brAIn could not edit automations.yaml"),
+                 **await asyncio.to_thread(_proposals_payload)}, status=409)
+        failure = ""
+        try:
+            await ha_data.call_core_service("automation", "reload")
+        except Exception as exc:  # noqa: BLE001
+            failure = f"Home Assistant would not reload its automations: {exc}"
+        if not failure and row.get("entity_id"):
+            try:
+                if not await _wait_for_gone(row["entity_id"]):
+                    failure = (f"{row['entity_id']} is still in Home "
+                               "Assistant after the reload, so the "
+                               "automation was not really removed")
+            except Exception as exc:  # noqa: BLE001
+                failure = f"brAIn could not check whether it went: {exc}"
+        if failure:
+            reverted = await asyncio.to_thread(
+                automation_writer.revert, written)
+            try:
+                await ha_data.call_core_service("automation", "reload")
+            except Exception as exc:  # noqa: BLE001 — the file is back;
+                # a second failed reload is a log line.
+                log.warning("could not reload after putting it back: %s", exc)
+            if not reverted.get("ok"):
+                failure += (" — and putting automations.yaml back failed: "
+                            f"{reverted.get('error')}")
+            return web.json_response(
+                {"error": failure,
+                 **await asyncio.to_thread(_proposals_payload)}, status=409)
+
+    dropped = await asyncio.to_thread(intents.drop, ts)
+    payload = {"removed": bool(dropped),
+               **await asyncio.to_thread(_proposals_payload)}
+    if dropped:
+        # The same toast-and-token contract every press that takes a row
+        # away owes, and this one reaches /config as well.
+        payload["undo"] = undo_store.record(
+            "intent", intent=dropped, written=written)
     return web.json_response(payload)
 
 
@@ -4317,6 +4618,39 @@ async def h_undo(request: web.Request) -> web.Response:
             payload["error"] = ("automations.yaml is back as it was, but "
                                 "the proposal could not be put back on the "
                                 "list")
+        return web.json_response(payload)
+
+    if entry["kind"] == "intent":
+        # The mirror of an accept's undo: the file first, then the reload,
+        # then the row. Putting the card back while the automation is
+        # still gone would offer somebody a Remove for something that has
+        # already been removed.
+        import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+        written = entry.get("written") or {}
+        reverted = {"ok": True}
+        reloaded = True
+        if written:
+            reverted = await asyncio.to_thread(
+                automation_writer.revert, written)
+            try:
+                await ha_data.call_core_service("automation", "reload")
+            except Exception as exc:  # noqa: BLE001
+                reloaded = False
+                log.warning("could not reload after undoing a remove: %s", exc)
+        restored = await asyncio.to_thread(intents.restore, entry["intent"])
+        payload = await asyncio.to_thread(_proposals_payload)
+        payload["undone"] = bool(restored and reverted.get("ok") and reloaded)
+        payload["reverted"] = bool(reverted.get("ok"))
+        payload["reloaded"] = reloaded
+        if not reverted.get("ok"):
+            payload["error"] = reverted.get("error")
+        elif not reloaded:
+            payload["error"] = ("automations.yaml is back as it was, but "
+                                "Home Assistant would not reload it")
+        elif not restored:
+            payload["error"] = ("the automation is back, but the one-off "
+                                "could not be put back on the list")
         return web.json_response(payload)
 
     if entry["kind"] == "conversations":
@@ -6101,6 +6435,7 @@ def make_app() -> web.Application:
     app.router.add_get("/api/proposals", h_proposals)
     app.router.add_get("/api/playbook/{ts}/rehearsal", h_playbook_rehearsal)
     app.router.add_post("/api/proposal/{ts}/trial", h_proposal_trial)
+    app.router.add_post("/api/intent/{ts}/remove", h_intent_remove)
     app.router.add_post("/api/proposal/{ts}/{verb}", h_proposal_decide)
     app.router.add_post("/api/replay", h_replay)
     app.router.add_post("/api/findings/unsettle", h_finding_unsettle)

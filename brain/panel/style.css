@@ -3216,7 +3216,26 @@ body.term-classic #termMode .ico-out { display: block; }
   background: var(--bg-2); color: var(--ink-2);
   border: 1px solid var(--hairline);
 }
+/* A one-off intent. Three states, three colours, and the pill is the only
+   thing that distinguishes them at a glance on a list somebody scans. */
+.pillintent {
+  flex: none; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.pillintent.fired {
+  background: color-mix(in srgb, var(--good) 16%, transparent);
+  color: var(--good);
+}
+.pillintent.refused, .pillintent.overdue {
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  color: var(--warning);
+}
 .propwhy { margin: 0 0 8px; color: var(--ink-2); line-height: 1.5; }
+/* Claude's restatement, kept apart from the person's own sentence: which of
+   the two was misread is the only thing worth knowing when it is wrong. */
+.propsaid { margin: 0 0 8px; color: var(--ink-2); line-height: 1.5; }
+.propintent { margin: 0 0 10px; color: var(--ink); line-height: 1.5; }
 /* An emergency playbook. The pill is the same shape as the trial one and
    a different colour, because it marks a different KIND of card rather
    than a stage of the same lifecycle: this one has no trial and never

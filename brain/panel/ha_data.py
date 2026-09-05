@@ -229,6 +229,31 @@ async def entity_exists(entity_id: str, timeout: int = 15) -> bool:
             return True
 
 
+async def entity_state(entity_id: str, timeout: int = 15) -> dict | None:
+    """Core's current state row for one entity, or None if it has none.
+
+    `entity_exists`' sibling, and separate for the same reason it draws
+    its own distinction: an armed intent is watched by reading
+    `last_triggered` off the automation, which is an **attribute** — a
+    boolean answer cannot carry one, and asking twice would be two
+    questions about an entity that may change between them. A 404 is the
+    answer; anything else raises, because "Core did not answer" and
+    "Core says it is not there" are different claims.
+    """
+    if not is_entity_id(str(entity_id or "")):
+        return None
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            f"{CORE_API}/states/{entity_id}", headers=_headers(),
+            timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as resp:
+            if resp.status == 404:
+                return None
+            resp.raise_for_status()
+            data = await resp.json()
+            return data if isinstance(data, dict) else None
+
+
 async def send_notification(service: str, title: str, message: str,
                             timeout: int = 15, data: dict | None = None) -> None:
     """Deliver one notification through a notify.<service> HA service.

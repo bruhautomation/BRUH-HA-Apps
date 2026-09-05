@@ -49,7 +49,7 @@ def _power_tool_services():
 # brAIn's own services, as distinct from the Power Tools catalog below.
 PRE_EXISTING_SERVICES = {
     "send_prompt", "run_task", "clear_conversation", "run_insight",
-    "add_memory", "answer_question", "study",
+    "add_memory", "answer_question", "study", "intent",
 }
 
 

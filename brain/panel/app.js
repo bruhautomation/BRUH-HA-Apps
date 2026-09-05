@@ -1456,6 +1456,16 @@ async function generate(categoryOrId, question) {
         : "Studying whatever brAIn knows least about — check Memory shortly");
       return;
     }
+    // "when the guests leave…" is not a question about the house, so it never
+    // becomes a card. It goes to the same queue the `brain.intent` service
+    // writes to, and what comes back is a card on Proposals — including when
+    // brAIn will not arm it, because a sentence somebody typed always gets an
+    // answer. Naming where to look is the whole toast: nothing appears here.
+    if (res && "intent" in res) {
+      toast("Working out what that means — it lands on Proposals in a moment. "
+        + "Nothing runs until you accept it.");
+      return;
+    }
     await refreshStatus();
     fastPoll();
   } catch (e) {
@@ -4200,13 +4210,142 @@ function propCard(row, withHint) {
   return card;
 }
 
+// ---- one-off intents -----------------------------------------------------
+//
+// Not proposals: a proposal is waiting on an answer and these are waiting on
+// the HOUSE (or, for a refusal, on being read once). So they are counted
+// apart and the badge never moves for them — but they share the card, because
+// what somebody wants from both is the same: what it is, what it did, and one
+// press.
+
+function propIntentWhen(ts) {
+  if (!ts) return "";
+  return new Date(ts * 1000).toLocaleTimeString([],
+    { hour: "2-digit", minute: "2-digit" });
+}
+
+function propIntentLine(row) {
+  if (row.status === "refused") return row.refused || "brAIn will not arm this.";
+  if (row.status === "fired") {
+    const when = propIntentWhen(row.fired_at);
+    return `It fired${when ? ` at ${when}` : ""} and switched itself off. It `
+      + "is still in your automations until you remove it.";
+  }
+  if (row.overdue) {
+    // A label, never a deletion. A fortnight of silence almost always means
+    // the thing already happened and nobody told the house — and the answer
+    // to that is a sentence with a press on it, not a file that changed
+    // while somebody was not looking.
+    return "It has been waiting a fortnight and has never fired. Remove it if "
+      + "what you were waiting for already happened.";
+  }
+  return "Armed and waiting. It runs once, then switches itself off.";
+}
+
+async function propRemoveIntent(ts, refused) {
+  if (propState.busy) return;
+  propState.busy = ts;
+  propState.busyVerb = "remove";
+  renderProposals();
+  try {
+    const resp = await fetch(`api/intent/${ts}/remove`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    let data = null;
+    try { data = await resp.json(); } catch { data = null; }
+    if (!resp.ok) {
+      // The same contract an accept's refusal has: the row is still there and
+      // the sentence goes on it, because this one reaches /config too.
+      if (data && data.proposals) propState.data = data;
+      propState.errorFor = ts;
+      propState.error = (data && data.error) || `HTTP ${resp.status}`;
+      return;
+    }
+    propState.data = data;
+    if (data.undo) {
+      toast(refused ? "Dismissed" : "Removed it from your automations",
+        data.undo);
+    }
+  } catch (err) {
+    toast(String(err && err.message ? err.message : err));
+    await refreshProposals();
+  } finally {
+    propState.busy = 0;
+    propState.busyVerb = "";
+    renderProposals();
+  }
+}
+
+function propIntentCard(row) {
+  const card = el("div", "propcard intentcard");
+  const head = el("div", "prophead-row");
+  head.appendChild(el("h3", "proptitle", row.title || row.sentence
+    || "A one-off"));
+  const pill = { armed: "Armed", fired: "It fired",
+                 refused: "Not armed" }[row.status] || row.status;
+  head.appendChild(el("span",
+    `pillintent ${row.status}${row.overdue ? " overdue" : ""}`, pill));
+  card.appendChild(head);
+
+  // The person's own sentence and Claude's restatement of it, apart. Which
+  // half was misread is the only thing worth knowing when it is wrong, and
+  // one paragraph blending the two cannot say.
+  if (row.sentence) {
+    card.appendChild(el("p", "propwhy", `You asked: “${row.sentence}”`));
+  }
+  if (row.plain) {
+    card.appendChild(el("p", "propsaid", `brAIn understood: ${row.plain}`));
+  }
+  card.appendChild(el("p", "propintent", propIntentLine(row)));
+
+  if (propState.errorFor === row.ts) {
+    const box = el("div", "properror");
+    box.setAttribute("role", "alert");
+    box.appendChild(el("p", null, propState.error));
+    const bar = el("div", "propbtns");
+    const back = el("button", "btn small", "Dismiss");
+    back.addEventListener("click", () => {
+      propState.errorFor = 0;
+      propState.error = "";
+      renderProposals();
+    });
+    bar.appendChild(back);
+    box.appendChild(bar);
+    card.appendChild(box);
+    return card;
+  }
+
+  const btns = el("div", "propbtns");
+  const refused = row.status === "refused";
+  const go = el("button",
+    `btn small${row.status === "fired" || refused ? " primary" : ""}`,
+    refused ? "Dismiss" : "Remove");
+  if (!refused) {
+    go.dataset.tip = "Takes the automation back out of automations.yaml — "
+      + "snapshotted first, and undoable from the toast";
+  }
+  if (propState.busy === row.ts) go.textContent = "Removing…";
+  go.addEventListener("click", () => propRemoveIntent(row.ts, refused));
+  btns.appendChild(go);
+  [...btns.children].forEach((b) => { b.disabled = !!propState.busy; });
+  card.appendChild(btns);
+  return card;
+}
+
 function renderProposals() {
   propBadge();
   const list = $("#propList");
   if (!list) return;
   list.textContent = "";
   const rows = propState.data?.proposals || [];
-  if (!rows.length) {
+  // Above the proposals, because a one-off is about to happen (or already
+  // has) and a suggestion is not — and because the Remove press is the only
+  // thing on this tab that is about an automation the house is running now.
+  (propState.data?.intents || []).forEach((row) =>
+    list.appendChild(propIntentCard(row)));
+  if (!rows.length && !(propState.data?.intents || []).length) {
     // Deliberately not phrased as an achievement. An empty Findings list
     // means the house is well; an empty Proposals list means brAIn has
     // not spotted a habit worth automating yet, which is not the same.
