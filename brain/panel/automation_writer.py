@@ -160,8 +160,15 @@ def _protected_refusal(config: dict, patterns: list[str]) -> str | None:
     import shadow  # noqa: PLC0415 — panel-local, and only needed here
 
     for call in shadow.would_do(config):
-        if call.get("area_id") or call.get("device_id"):
-            return ("this automation targets an area or a device, and while "
+        # An area, a device, a label or a floor: all four are scopes this
+        # has no registry to expand, and all four are refused for the one
+        # reason. Naming only the first two is how a protected lock
+        # reached through a label gets written — the same conservatism
+        # `_meta_call_denied` applies, applied to every spelling of it.
+        scope = next((k for k in ("area", "device", "label", "floor")
+                      if call.get(f"{k}_id")), "")
+        if scope:
+            return (f"this automation targets a {scope}, and while "
                     "protected entities are set brAIn will not write one it "
                     "cannot expand — it has no registry to expand it with")
         entity = call.get("entity_id")

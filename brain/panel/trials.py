@@ -103,7 +103,8 @@ def target_of(config: dict) -> tuple[str, str] | None:
     if len(calls) != 1:
         return None
     call = calls[0]
-    if call.get("area_id") or call.get("device_id"):
+    if any(call.get(f"{k}_id")
+           for k in ("area", "device", "label", "floor")):
         # Resolving one needs the registries as they were at the time,
         # exactly as `actions.py` and `shadow.would_do` refuse to.
         return None

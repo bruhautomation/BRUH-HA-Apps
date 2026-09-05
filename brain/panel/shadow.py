@@ -176,15 +176,26 @@ def entities_watched(config: dict) -> set[str]:
     return out
 
 
+def _ensure_list(raw) -> list[dict]:
+    """`cv.ensure_list`, which is what Home Assistant applies to a nested
+    `conditions:`.
+
+    A single mapping is a list of one everywhere HA reads a condition
+    block, so a reader that only understands a list answers an `and`/`not`
+    written that way with "no conditions at all" — which is `True` at
+    every instant, silently, in a module whose whole promise is that it
+    never returns a plausible wrong number.
+    """
+    if isinstance(raw, dict):
+        raw = [raw]
+    return [c for c in (raw or []) if isinstance(c, dict)]
+
+
 def _conditions_of(config: dict) -> list[dict]:
     raw = config.get("conditions")
     if raw is None:
         raw = config.get("condition")
-    if raw is None:
-        return []
-    if isinstance(raw, dict):
-        raw = [raw]
-    return [c for c in raw if isinstance(c, dict)]
+    return _ensure_list(raw)
 
 
 def _condition_entities(cond: dict) -> set[str]:
@@ -197,10 +208,9 @@ def _condition_entities(cond: dict) -> set[str]:
         out |= template_entities(cond["value_template"])
     for key in ("conditions", "condition"):
         nested = cond.get(key)
-        if isinstance(nested, list):
-            for c in nested:
-                if isinstance(c, dict):
-                    out |= _condition_entities(c)
+        if isinstance(nested, (list, dict)):
+            for c in _ensure_list(nested):
+                out |= _condition_entities(c)
     return out
 
 
@@ -583,7 +593,7 @@ def passes(cond: dict, timeline: dict, when: float, tz) -> bool:
     """Whether one condition held at an instant."""
     kind = str(cond.get("condition") or "").lower()
     if kind in ("and", "or", "not"):
-        inner = [c for c in (cond.get("conditions") or []) if isinstance(c, dict)]
+        inner = _ensure_list(cond.get("conditions"))
         results = [passes(c, timeline, when, tz) for c in inner]
         if kind == "and":
             return all(results)
@@ -619,8 +629,20 @@ def passes(cond: dict, timeline: dict, when: float, tz) -> bool:
         minute = local.hour * 60 + local.minute
 
         def _minutes(spec) -> int:
+            # `_time_firings` already refuses an `at:` naming an entity
+            # and says why; this half raised `ValueError` out of `int()`
+            # instead, which reaches the Replay button as a 500 about
+            # nothing somebody can act on. Same claim, same sentence.
             parts = str(spec).split(":")
-            return int(parts[0]) * 60 + int(parts[1] if len(parts) > 1 else 0)
+            try:
+                return (int(parts[0]) * 60
+                        + int(parts[1] if len(parts) > 1 else 0))
+            except ValueError:
+                raise Refused(
+                    f"`{spec}` is not a plain time of day — a time "
+                    "condition on a sensor or a helper is resolved by Home "
+                    "Assistant when it runs, which history does not record"
+                ) from None
 
         # **A time condition wraps midnight**, and this one did not.
         # Home Assistant's own `condition.time` reads `after > before` as
@@ -685,6 +707,47 @@ _ACTION_KEYS = ("sequence", "then", "else", "default", "actions")
 _MAX_ACTION_DEPTH = 6
 
 
+# Where an entity id can be written on one action. `target:` is the
+# modern spelling and `entity_id:` at the top of the step is the older
+# one — and `data: {entity_id: ...}` is the oldest of the three, still
+# honoured by every entity service and still what most automations
+# written before 2021 say. Reading only the first two is how a lock
+# reached that way is a lock `_protected_refusal` cannot see.
+_TARGET_KEYS = ("entity_id", "area_id", "device_id", "label_id", "floor_id")
+
+
+def _ids(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    return [str(v) for v in (value or []) if isinstance(v, (str, int))]
+
+
+def _call(step: dict, service) -> dict:
+    """One service call, with every way its targets can be spelled.
+
+    A **scope** — an area, a device, a label or a floor — is recorded and
+    deliberately not resolved: expanding one needs the registries as they
+    were at the time, and `automation_writer` refuses outright rather
+    than guess. All four are reported, because a scope this does not
+    mention is a scope nothing downstream can refuse.
+    """
+    target = step.get("target")
+    target = target if isinstance(target, dict) else {}
+    data = step.get("data")
+    data = data if isinstance(data, dict) else {}
+
+    entities: list[str] = []
+    for source in (step, target, data):
+        for eid in _ids(source.get("entity_id")):
+            if eid not in entities:
+                entities.append(eid)
+    call = {"service": str(service), "entity_id": entities}
+    for key in _TARGET_KEYS[1:]:
+        call[key] = target.get(key) if target.get(key) is not None \
+            else data.get(key)
+    return call
+
+
 def _walk_actions(raw, out: list[dict], depth: int) -> None:
     if depth > _MAX_ACTION_DEPTH:
         return                             # somebody's YAML, not a promise
@@ -695,15 +758,7 @@ def _walk_actions(raw, out: list[dict], depth: int) -> None:
             continue
         service = step.get("action") or step.get("service")
         if service:
-            target = step.get("target") or {}
-            entity = step.get("entity_id") or target.get("entity_id")
-            out.append({
-                "service": str(service),
-                "entity_id": entity if isinstance(entity, str)
-                             else list(entity or []),
-                "area_id": target.get("area_id"),
-                "device_id": target.get("device_id"),
-            })
+            out.append(_call(step, service))
             continue
         for branch in (step.get("choose") or []):
             if isinstance(branch, dict):

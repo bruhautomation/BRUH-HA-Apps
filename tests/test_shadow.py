@@ -19,6 +19,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
 
+import automation_writer  # noqa: E402
 import shadow  # noqa: E402
 
 UTC = dt.timezone.utc
@@ -323,9 +324,14 @@ class TestWhatItWouldHaveDone(unittest.TestCase):
                                  "entity_id": "binary_sensor.door", "to": "on"}],
                    "actions": [{"action": "light.turn_on",
                                 "target": {"entity_id": "light.hall"}}]})
+        # `entity_id` is always a LIST: one action can name entities in
+        # three places and a reader that has to branch on the type is a
+        # reader that eventually forgets to.
         self.assertEqual(got["actions"], [{"service": "light.turn_on",
-                                           "entity_id": "light.hall",
-                                           "area_id": None, "device_id": None}])
+                                           "entity_id": ["light.hall"],
+                                           "area_id": None, "device_id": None,
+                                           "label_id": None,
+                                           "floor_id": None}])
 
     def test_an_area_target_is_recorded_and_NOT_resolved(self):
         """Expanding one needs the registry as it was at the time, and a
@@ -415,6 +421,196 @@ class TestTheDependencyNothingWasAsserting(unittest.TestCase):
         self.assertIn("jinja2", reqs.lower(),
                       "the suite must not depend on Jinja arriving by "
                       "accident — that is what hid this for a release")
+
+
+class TestWhatAnActionReallyTargets(unittest.TestCase):
+    """`would_do` is the one reader of an action list, and three writers
+    ask it the one question that matters: does this touch something
+    somebody said not to touch.
+
+    `automation_writer._protected_refusal`, `intents.build` and
+    `playbooks._assert_no_locks` all read exactly what comes out of here,
+    so a target shape this does not report is a protected entity none of
+    them can see. Each test below names the shape and the bypass.
+    """
+
+    def entities(self, config: dict) -> set[str]:
+        out: set[str] = set()
+        for call in shadow.would_do(config):
+            raw = call.get("entity_id")
+            out |= {str(e) for e in
+                    ([raw] if isinstance(raw, str) else list(raw or []))}
+        return out
+
+    def test_entity_id_inside_data_is_a_target(self):
+        # The pre-`target:` spelling, which Home Assistant still honours
+        # and which every automation written before 2021 uses. Missed
+        # here, a lock reached this way is a lock nothing refuses.
+        config = {"trigger": [{"platform": "time", "at": "07:00:00"}],
+                  "action": [{"service": "lock.unlock",
+                              "data": {"entity_id": "lock.front"}}]}
+        self.assertEqual(self.entities(config), {"lock.front"})
+
+    def test_a_list_of_entities_inside_data_is_read(self):
+        config = {"action": [{"service": "light.turn_on",
+                              "data": {"entity_id": ["light.a", "light.b"],
+                                       "brightness": 4}}]}
+        self.assertEqual(self.entities(config), {"light.a", "light.b"})
+
+    def test_target_wins_over_data_but_neither_is_lost(self):
+        config = {"action": [{"service": "light.turn_on",
+                              "target": {"entity_id": "light.a"},
+                              "data": {"entity_id": "light.b"}}]}
+        self.assertEqual(self.entities(config), {"light.a", "light.b"})
+
+    def test_a_label_target_is_reported_as_a_scope_this_cannot_expand(self):
+        # `automation_writer` refuses an area or a device outright while
+        # protected entities are set, because expanding one needs
+        # registries it has none of. A label and a floor are the same
+        # claim, and reporting neither is how one gets written.
+        calls = shadow.would_do(
+            {"action": [{"service": "lock.unlock",
+                         "target": {"label_id": "outside"}}]})
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].get("label_id"), "outside")
+
+    def test_a_floor_target_is_reported_too(self):
+        calls = shadow.would_do(
+            {"action": [{"action": "light.turn_off",
+                         "target": {"floor_id": "upstairs"}}]})
+        self.assertEqual(calls[0].get("floor_id"), "upstairs")
+
+    def test_a_target_that_is_not_a_mapping_does_not_raise(self):
+        # Somebody's YAML, not a promise: a string where a mapping was
+        # meant must be a call with no target rather than a traceback on
+        # the accept path.
+        calls = shadow.would_do(
+            {"action": [{"service": "light.turn_on", "target": "light.a"}]})
+        self.assertEqual(calls[0]["entity_id"], [])
+
+
+class TestProtectedThroughEveryContainer(unittest.TestCase):
+    """The refusal, driven through each place HA lets an action hide."""
+
+    def refusal(self, action) -> str:
+        return automation_writer._protected_refusal(
+            {"trigger": [{"platform": "time", "at": "07:00:00"}],
+             "action": action}, ["lock.front"]) or ""
+
+    def test_data_entity_id_is_refused(self):
+        self.assertIn("lock.front", self.refusal(
+            [{"service": "lock.unlock", "data": {"entity_id": "lock.front"}}]))
+
+    def test_data_entity_id_inside_a_choose_is_refused(self):
+        self.assertIn("lock.front", self.refusal([{"choose": [{
+            "conditions": [], "sequence": [
+                {"service": "lock.unlock",
+                 "data": {"entity_id": "lock.front"}}]}]}]))
+
+    def test_data_entity_id_inside_if_then_is_refused(self):
+        self.assertIn("lock.front", self.refusal([{
+            "if": [], "then": [{"action": "lock.unlock",
+                                "data": {"entity_id": "lock.front"}}]}]))
+
+    def test_data_entity_id_inside_repeat_is_refused(self):
+        self.assertIn("lock.front", self.refusal([{"repeat": {
+            "count": 2, "sequence": [
+                {"service": "lock.unlock",
+                 "data": {"entity_id": "lock.front"}}]}}]))
+
+    def test_data_entity_id_inside_parallel_is_refused(self):
+        self.assertIn("lock.front", self.refusal([{"parallel": [
+            {"service": "lock.unlock",
+             "data": {"entity_id": "lock.front"}}]}]))
+
+    def test_a_label_target_is_refused_while_the_list_is_set(self):
+        why = self.refusal(
+            [{"service": "lock.unlock", "target": {"label_id": "doors"}}])
+        self.assertIn("expand", why)
+
+    def test_an_empty_list_still_writes_a_label_target(self):
+        # The refusal is about not being able to expand a scope, and with
+        # nothing protected there is nothing to expand it for.
+        self.assertEqual(automation_writer._protected_refusal(
+            {"action": [{"service": "light.turn_on",
+                         "target": {"label_id": "doors"}}]}, []), None)
+
+
+class TestNestedConditionsWrittenAsOneMapping(unittest.TestCase):
+    """`cv.ensure_list`: HA takes a single mapping under `conditions:`.
+
+    A replay that reads one as an empty list answers `not` and `and` with
+    True at every instant and `or` with False at every instant — a
+    silently wrong count, which is the one answer this module exists to
+    refuse.
+    """
+
+    def timeline(self):
+        return shadow.build_timeline(
+            {"binary_sensor.away": rows([(0, "on"), (5, "off")])})
+
+    def test_a_not_over_one_mapping_is_evaluated(self):
+        cond = {"condition": "not",
+                "conditions": {"condition": "state",
+                               "entity_id": "binary_sensor.away",
+                               "state": "on"}}
+        line = self.timeline()
+        self.assertFalse(shadow.passes(cond, line, T0 + 3600, UTC))
+        self.assertTrue(shadow.passes(cond, line, T0 + 6 * 3600, UTC))
+
+    def test_an_and_over_one_mapping_is_evaluated(self):
+        cond = {"condition": "and",
+                "conditions": {"condition": "state",
+                               "entity_id": "binary_sensor.away",
+                               "state": "on"}}
+        self.assertFalse(
+            shadow.passes(cond, self.timeline(), T0 + 6 * 3600, UTC))
+
+    def test_an_or_over_one_mapping_is_evaluated(self):
+        cond = {"condition": "or",
+                "conditions": {"condition": "state",
+                               "entity_id": "binary_sensor.away",
+                               "state": "on"}}
+        self.assertTrue(
+            shadow.passes(cond, self.timeline(), T0 + 3600, UTC))
+
+    def test_the_entity_under_a_single_mapping_is_watched(self):
+        # If it is not, no history is fetched for it and `_require_history`
+        # never gets the chance to refuse — the replay just answers wrong.
+        config = {"trigger": [{"platform": "time", "at": "07:00:00"}],
+                  "condition": [{"condition": "not",
+                                 "conditions": {
+                                     "condition": "state",
+                                     "entity_id": "binary_sensor.away",
+                                     "state": "on"}}]}
+        self.assertIn("binary_sensor.away", shadow.entities_watched(config))
+
+
+class TestATimeConditionOnAnEntity(unittest.TestCase):
+    """`after: input_datetime.bedtime` is a refusal, not a traceback.
+
+    `_time_firings` already refuses a `at:` that is not a clock time and
+    says why. The condition half raised `ValueError` out of `int()`, which
+    reaches the Replay button as a 500 and the checks pass as a warning
+    about something nobody can act on.
+    """
+
+    def test_an_entity_for_after_is_refused_by_name(self):
+        with self.assertRaises(shadow.Refused) as caught:
+            shadow.passes({"condition": "time",
+                           "after": "input_datetime.bedtime"},
+                          {}, T0 + 3600, UTC)
+        self.assertIn("input_datetime.bedtime", str(caught.exception))
+
+    def test_an_entity_for_before_is_refused_by_name(self):
+        with self.assertRaises(shadow.Refused):
+            shadow.passes({"condition": "time",
+                           "before": "sensor.sunset_ish"}, {}, T0, UTC)
+
+    def test_a_plain_clock_still_passes(self):
+        self.assertTrue(shadow.passes(
+            {"condition": "time", "after": "00:00", "before": "23:59"},
+            {}, T0 + 3600, UTC))
 
 
 if __name__ == "__main__":

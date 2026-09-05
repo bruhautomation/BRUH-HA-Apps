@@ -427,7 +427,8 @@ def build(sentence: str, answer: dict, ts: int,
             continue                 # brAIn's own, and not evidence of one
         raw = call.get("entity_id")
         named |= {str(e) for e in _listify(raw) if e}
-        if call.get("area_id") or call.get("device_id"):
+        if any(call.get(f"{k}_id")
+               for k in ("area", "device", "label", "floor")):
             named.add("a target")
     if not named:
         out["refused"] = ("that sentence did not name anything in this "
