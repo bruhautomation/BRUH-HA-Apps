@@ -2509,6 +2509,22 @@ INTENT_RE = re.compile(
     r"remind me when)\b",
     re.IGNORECASE)
 
+# ...and the half of that opener which is a QUESTION. "when did the boiler
+# last run?" starts with the same word as "when the guests leave, turn the
+# porch light off", so `INTENT_RE` alone sent it down the one-off path,
+# where it spent a Claude run to produce a refusal card instead of
+# answering. The signal is one word further along: an **auxiliary verb
+# straight after the opener** ("when *did* …", "once *was* …") is somebody
+# asking, and an instruction never has one there — "when the guests leave"
+# and "tell me when the dishwasher is done" both put a noun phrase next.
+# Cheaper and more honest than trailing-`?` detection, which nobody types
+# on a phone.
+INTENT_QUESTION_RE = re.compile(
+    r"^(?:please )?(?:when(?:ever)?|once)\s+"
+    r"(?:did|do|does|was|were|is|are|will|would|should|can|could|has|"
+    r"have|had|am)\b",
+    re.IGNORECASE)
+
 
 # "design my evening for the living room" — the ask bar's fourth verb, and
 # the narrowest of them. It names a room and asks for four moods, which is
@@ -2544,7 +2560,7 @@ async def h_generate(request: web.Request) -> web.Response:
             area = scene_match.group("area").strip()
             return web.json_response(
                 {"queued": [], **await _design_scenes(area)})
-        if INTENT_RE.match(question):
+        if INTENT_RE.match(question) and not INTENT_QUESTION_RE.match(question):
             # The same request file the `brain.intent` service writes, so
             # the expensive half — a Claude run, the checks, the card —
             # has one implementation and one place to be wrong.
@@ -4958,6 +4974,13 @@ async def _remove_automation(entry_id: str,
     import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
 
     written = await asyncio.to_thread(automation_writer.remove, entry_id)
+    if written.get("missing"):
+        # The entry is not in the file: somebody deleted it by hand, and
+        # there is nothing to splice, nothing to reload and nothing to put
+        # back. Reporting that as a failure would leave an intent card on
+        # the tab with no way to end it — Remove is its only ending — so
+        # "already gone" IS the removal having happened.
+        return None, ""
     if not written.get("ok"):
         return None, str(written.get("error")
                          or "brAIn could not edit automations.yaml")
