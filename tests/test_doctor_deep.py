@@ -34,6 +34,8 @@ import asyncio
 import importlib
 import json
 import os
+import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -955,6 +957,137 @@ class TestTheRoutes(unittest.IsolatedAsyncioTestCase):
         await self.server.QUEUE.join()
         worker.cancel()
         self.assertEqual(ran, ["doctor-deep"])
+
+
+class TestTheCliReportBlocks(unittest.TestCase):
+    """`brain doctor --deep`'s own printing, lifted out and driven.
+
+    The same treatment `test_doctor_json` gives `ha-selftest.sh`'s report
+    block, and it exists because the first cut of these was written as
+    `python3 -c '...'`: shell single quotes leave no way to put a `"`
+    inside an f-string expression except a backslash, and a backslash in
+    one is a SyntaxError before Python 3.12. It would have parsed on the
+    image and nowhere else. The second cut moved the script into a
+    heredoc — which is stdin, so the payload had to stop being piped and
+    become an argument, and a pipe into a heredoc reads as empty rather
+    than as an error.
+    """
+
+    SCRIPT = (BASE_DIR / "brain" / "scripts" / "brain-doctor-deep.sh")
+
+    def block(self, *names: str) -> str:
+        src = self.SCRIPT.read_text(encoding="utf-8")
+        out = []
+        for name in names:
+            match = re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", src,
+                              re.M | re.S)
+            self.assertIsNotNone(match, f"{name} is gone from the script")
+            out.append(match.group(0))
+        return "".join(out)
+
+    def run_sh(self, names, body) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", "-c", "set -u\n" + self.block(*names) + "\n" + body],
+            capture_output=True, text=True, timeout=30)
+
+    PAYLOAD = json.dumps({
+        "stages": [
+            {"name": "chat", "title": "Chat session", "state": "ok",
+             "seconds": 3.2, "sentence": "it worked", "detail": "reply: OK"},
+            {"name": "memory", "title": "Memory", "state": "failed",
+             "seconds": 9, "sentence": "the queue did not move"},
+            {"name": "assist", "title": "Assist", "state": "skipped",
+             "seconds": 0, "sentence": "the integration is off"},
+        ],
+        "last": {"counts": {"ok": 6, "failed": 1, "skipped": 1},
+                 "verdict": "failed", "failed_stage": "memory"},
+    })
+
+    def test_the_stage_printer_prints_only_what_is_new(self):
+        proc = self.run_sh(
+            ["print_new_stages"],
+            f"n=$(print_new_stages 0 '{self.PAYLOAD}'); echo \"count=$n\"\n"
+            f"print_new_stages 2 '{self.PAYLOAD}' > /dev/null\n")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("count=3", proc.stdout)
+        self.assertIn("Chat session", proc.stderr)
+        self.assertIn("the queue did not move", proc.stderr)
+        # The second call started at 2, so only Assist came out again.
+        self.assertEqual(proc.stderr.count("Chat session"), 1)
+
+    def test_a_torn_payload_carries_the_count_rather_than_crashing(self):
+        proc = self.run_sh(["print_new_stages"],
+                           "print_new_stages 4 'not json'\n")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "4")
+
+    def test_the_verdict_exits_non_zero_on_a_failed_stage(self):
+        proc = self.run_sh(["print_verdict"],
+                           f"print_verdict '{self.PAYLOAD}'\n")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("6 passed, 1 failed, 1 skipped", proc.stdout)
+        self.assertIn("First failure: memory", proc.stdout)
+
+    def test_a_clean_verdict_exits_zero(self):
+        payload = json.dumps({"last": {"counts": {"ok": 8, "failed": 0,
+                                                  "skipped": 0},
+                                       "verdict": "ok"}})
+        proc = self.run_sh(["print_verdict"], f"print_verdict '{payload}'\n")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("First failure", proc.stdout)
+
+    def test_the_consent_offer_names_every_id_and_what_cannot_be_rehearsed(self):
+        plan = json.dumps({
+            "plan": [{"id": "brain_test_dead_ref", "what": "an automation",
+                      "proves": "auto.dead_ref"}],
+            "not_rehearsable": [{"check": "dev.frozen",
+                                 "why": "needs a week of statistics"}]})
+        proc = self.run_sh(["print_plan"], f"print_plan '{plan}'\n")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("brain_test_dead_ref", proc.stdout)
+        self.assertIn("an automation", proc.stdout)
+        self.assertIn("dev.frozen cannot be rehearsed", proc.stdout)
+
+    def test_the_score_prints_both_numbers_and_fails_on_a_bad_cleanup(self):
+        payload = json.dumps({"last": {
+            "checks": {"planted": 2, "found": 1, "extra": 1,
+                       "rows": [{"verdict": "found", "id": "a",
+                                 "check": "auto.dead_ref"}]},
+            "analyst": {"ran": True, "found": 1, "planted": 2,
+                        "recall": 0.5, "precision": 1.0, "model": "m"},
+            "cleanup": {"ok": False, "sentence": "SOMETHING WAS LEFT BEHIND"}}})
+        proc = self.run_sh(["print_score"], f"print_score '' '{payload}'\n")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("1 of 2 planted defects found", proc.stdout)
+        self.assertIn("recall 50%, precision 100%", proc.stdout)
+        self.assertIn("SOMETHING WAS LEFT BEHIND", proc.stdout)
+
+    def test_json_mode_prints_no_prose_and_still_carries_the_code(self):
+        payload = json.dumps({"last": {"checks": {}, "analyst": {},
+                                       "cleanup": {"ok": True,
+                                                   "sentence": "removed"}}})
+        proc = self.run_sh(["print_score"],
+                           f"print_score --json '{payload}'\n")
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(), "")
+
+    def test_nothing_in_the_script_uses_python3_dash_c(self):
+        """A `python3 -c '…'` here cannot contain a `\"` inside an f-string
+        expression without a backslash, and that is a SyntaxError before
+        3.12 — code that only parses on the interpreter the image happens
+        to ship."""
+        src = self.SCRIPT.read_text(encoding="utf-8")
+        offenders = [line for line in src.splitlines()
+                     if "python3 -c" in line and not line.lstrip().startswith("#")]
+        self.assertEqual(offenders, [], "\n".join(offenders))
+
+    def test_no_heredoc_python_is_also_piped_into(self):
+        """A heredoc IS stdin, so a pipe into one arrives empty — and
+        empty reads as "no stages yet" rather than as an error."""
+        src = self.SCRIPT.read_text(encoding="utf-8")
+        offenders = [line for line in src.splitlines()
+                     if "|" in line and "python3 - " in line]
+        self.assertEqual(offenders, [], "\n".join(offenders))
 
 
 class TestTheSourceIsClaimed(unittest.TestCase):

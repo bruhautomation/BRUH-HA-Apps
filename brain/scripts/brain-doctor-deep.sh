@@ -69,44 +69,103 @@ need_panel() {
 # Print the stages that have landed since the last call. Reads the whole
 # payload on stdin and the count already printed in $1; echoes the new
 # count so the caller can carry it.
+#
+# A heredoc rather than `python3 -c '...'`: shell single quotes leave no
+# way to put a `"` inside an f-string expression except a backslash, and a
+# backslash in one is a SyntaxError before Python 3.12 — code that parses
+# only on the interpreter the image happens to ship is code nobody can
+# test anywhere else. `tests/test_doctor_deep.py` drives both of these.
 print_new_stages() {
-    python3 -c '
+    python3 - "$1" "$2" <<'PYSTAGES'
 import json, sys
 already = int(sys.argv[1])
 try:
-    data = json.load(sys.stdin)
+    data = json.loads(sys.argv[2])
 except ValueError:
     print(already)
     sys.exit(0)
 stages = data.get("stages") or []
-mark = {"ok": "\033[0;32m✓\033[0m", "failed": "\033[0;31m✗\033[0m",
-        "skipped": "\033[0;33m–\033[0m"}
+mark = {"ok": "\033[0;32m\u2713\033[0m", "failed": "\033[0;31m\u2717\033[0m",
+        "skipped": "\033[0;33m\u2013\033[0m"}
 for s in stages[already:]:
-    secs = f" ({s.get(\"seconds\", 0):.0f}s)" if s.get("seconds") else ""
-    sys.stderr.write(f"  {mark.get(s[\"state\"], \" \")} {s.get(\"title\", s[\"name\"])}{secs}\n")
-    sys.stderr.write(f"      {s.get(\"sentence\", \"\")}\n")
+    secs = s.get("seconds") or 0
+    took = f" ({secs:.0f}s)" if secs else ""
+    glyph = mark.get(s.get("state", ""), " ")
+    title = s.get("title") or s.get("name") or "?"
+    sys.stderr.write(f"  {glyph} {title}{took}\n")
+    sys.stderr.write("      " + str(s.get("sentence") or "") + "\n")
     if s.get("detail"):
-        sys.stderr.write(f"      \033[2m{s[\"detail\"]}\033[0m\n")
+        sys.stderr.write("      \033[2m" + str(s["detail"]) + "\033[0m\n")
 print(len(stages))
-' "$1"
+PYSTAGES
 }
 
 # The verdict line, and the exit code. Reads the finished payload on stdin.
 print_verdict() {
-    python3 -c '
+    python3 - "$1" <<'PYVERDICT'
 import json, sys
-data = json.load(sys.stdin)
+data = json.loads(sys.argv[1])
 last = data.get("last") or data
 counts = last.get("counts") or {}
-verdict = last.get("verdict") or "?"
 print()
-print(f"  {counts.get(\"ok\", 0)} passed, {counts.get(\"failed\", 0)} failed, "
-      f"{counts.get(\"skipped\", 0)} skipped")
-if verdict == "failed":
-    print(f"  First failure: {last.get(\"failed_stage\") or \"?\"}")
+print(f"  {counts.get('ok', 0)} passed, {counts.get('failed', 0)} failed, "
+      f"{counts.get('skipped', 0)} skipped")
+if last.get("verdict") == "failed":
+    print("  First failure: " + str(last.get("failed_stage") or "?"))
     sys.exit(1)
 sys.exit(0)
-'
+PYVERDICT
+}
+
+# The consent offer, as a person reads it before answering y/N.
+print_plan() {
+    python3 - "$1" <<'PYPLAN'
+import json, sys
+d = json.loads(sys.argv[1])
+print("A rehearsal creates these in your Home Assistant, runs the checks "
+      "and the analyst against them, and then removes them:")
+for row in d.get("plan") or []:
+    print("  " + str(row.get("id") or "?"))
+    print("      " + str(row.get("what") or ""))
+    print("      \033[2mfor " + str(row.get("proves") or "") + "\033[0m")
+for row in d.get("not_rehearsable") or []:
+    print("  \033[2m" + str(row.get("check") or "?")
+          + " cannot be rehearsed in one pass: "
+          + str(row.get("why") or "") + "\033[0m")
+PYPLAN
+}
+
+# What the rehearsal scored, and the exit code. `$1` is "--json" when the
+# raw object has already been printed and this is only here for the code.
+print_score() {
+    python3 - "${1:-}" "$2" <<'PYSCORE'
+import json, sys
+raw = sys.argv[1] == "--json"
+last = (json.loads(sys.argv[2]).get("last") or {})
+checks = last.get("checks") or {}
+analyst = last.get("analyst") or {}
+cleanup = last.get("cleanup") or {}
+if not raw:
+    print()
+    print(f"  Checks:  {checks.get('found', 0)} of "
+          f"{checks.get('planted', 0)} planted defects found, "
+          f"{checks.get('extra', 0)} reported that were not planted")
+    for row in checks.get("rows") or []:
+        verdict = str(row.get("verdict") or "?")
+        print(f"    {verdict:<15} {row.get('id', '')}"
+              f"  ({row.get('check', '')})")
+    if analyst.get("ran"):
+        print(f"  Analyst: found {analyst.get('found', 0)} of "
+              f"{analyst.get('planted', 0)} "
+              f"(recall {analyst.get('recall', 0):.0%}, "
+              f"precision {analyst.get('precision', 0):.0%}) "
+              f"on {analyst.get('model') or 'the default model'}")
+    else:
+        print("  Analyst: did not run - "
+              + str(analyst.get("error") or "?"))
+    print("  Cleanup: " + str(cleanup.get("sentence") or "?"))
+sys.exit(0 if cleanup.get("ok") and not last.get("error") else 1)
+PYSCORE
 }
 
 run_deep() {
@@ -116,10 +175,10 @@ run_deep() {
     if printf '%s' "$started" | grep -q '"error"'; then
         # Already running is not a failure of this invocation: watch the
         # run that is going rather than starting a second one.
-        printf '%s' "$started" | python3 -c '
+        python3 - "$started" >&2 <<'PYBUSY'
 import json, sys
-print("Already running: " + str(json.load(sys.stdin).get("error") or ""))
-' >&2
+print("Already running: " + str(json.loads(sys.argv[1]).get("error") or ""))
+PYBUSY
     fi
 
     [ "$raw" = "--json" ] || echo "brAIn — deep check (this spends Claude turns)" >&2
@@ -127,7 +186,7 @@ print("Already running: " + str(json.load(sys.stdin).get("error") or ""))
         payload=$(curl -s -m 30 "$PANEL/api/doctor/deep" 2>/dev/null)
         need_panel "$payload"
         if [ "$raw" != "--json" ]; then
-            printed=$(printf '%s' "$payload" | print_new_stages "$printed")
+            printed=$(print_new_stages "$printed" "$payload")
         fi
         if ! printf '%s' "$payload" | grep -q '"running": *true'; then
             break
@@ -138,14 +197,14 @@ print("Already running: " + str(json.load(sys.stdin).get("error") or ""))
 
     if [ "$raw" = "--json" ]; then
         printf '%s\n' "$payload"
-        printf '%s' "$payload" | python3 -c '
+        python3 - "$payload" <<'PYRC'
 import json, sys
-last = (json.load(sys.stdin).get("last") or {})
+last = (json.loads(sys.argv[1]).get("last") or {})
 sys.exit(1 if last.get("verdict") == "failed" else 0)
-'
+PYRC
         return
     fi
-    printf '%s' "$payload" | print_verdict
+    print_verdict "$payload"
 }
 
 run_rehearsal() {
@@ -165,26 +224,14 @@ run_rehearsal() {
         -d '{}' "$PANEL/api/doctor/rehearse" 2>/dev/null)
     need_panel "$plan"
     if printf '%s' "$plan" | grep -q '"refused"'; then
-        printf '%s' "$plan" | python3 -c '
+        python3 - "$plan" >&2 <<'PYREFUSED'
 import json, sys
-print(json.load(sys.stdin).get("refused") or "refused")
-' >&2
+print(json.loads(sys.argv[1]).get("refused") or "refused")
+PYREFUSED
         exit 1
     fi
     if [ -z "$yes" ]; then
-        printf '%s' "$plan" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-print("A rehearsal creates these in your Home Assistant, runs the checks "
-      "and the analyst against them, and then removes them:")
-for row in d.get("plan") or []:
-    print(f"  {row.get(\"id\", \"?\")}")
-    print(f"      {row.get(\"what\", \"\")}")
-    print(f"      \033[2mfor {row.get(\"proves\", \"\")}\033[0m")
-for row in d.get("not_rehearsable") or []:
-    print(f"  \033[2m{row.get(\"check\", \"?\")} cannot be rehearsed in one "
-          f"pass: {row.get(\"why\", \"\")}\033[0m")
-'
+        print_plan "$plan"
         printf 'Go ahead? [y/N] '
         read -r reply
         case "$reply" in
@@ -209,32 +256,7 @@ for row in d.get("not_rehearsable") or []:
     if [ "$raw" = "--json" ]; then
         printf '%s\n' "$payload"
     fi
-    printf '%s' "$payload" | python3 -c '
-import json, sys
-last = (json.load(sys.stdin).get("last") or {})
-raw = "'"$raw"'" == "--json"
-checks = last.get("checks") or {}
-analyst = last.get("analyst") or {}
-cleanup = last.get("cleanup") or {}
-if not raw:
-    print()
-    print(f"  Checks:  {checks.get(\"found\", 0)} of "
-          f"{checks.get(\"planted\", 0)} planted defects found, "
-          f"{checks.get(\"extra\", 0)} reported that were not planted")
-    for row in checks.get("rows") or []:
-        print(f"    {row.get(\"verdict\", \"?\"):<7} {row.get(\"id\", \"\")}"
-              f"  ({row.get(\"check\", \"\")})")
-    if analyst.get("ran"):
-        print(f"  Analyst: found {analyst.get(\"found\", 0)} of "
-              f"{analyst.get(\"planted\", 0)} "
-              f"(recall {analyst.get(\"recall\", 0):.0%}, "
-              f"precision {analyst.get(\"precision\", 0):.0%}) "
-              f"on {analyst.get(\"model\") or \"the default model\"}")
-    else:
-        print(f"  Analyst: did not run — {analyst.get(\"error\") or \"?\"}")
-    print(f"  Cleanup: {cleanup.get(\"sentence\") or \"?\"}")
-sys.exit(0 if cleanup.get("ok") and not last.get("error") else 1)
-'
+    print_score "$raw" "$payload"
 }
 
 case "${1:-}" in
