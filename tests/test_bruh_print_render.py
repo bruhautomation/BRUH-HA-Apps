@@ -170,17 +170,33 @@ class TestRendering(unittest.TestCase):
                 {"stock": "edcc-082wh",
                  "elements": [{"type": "hologram", "props": {}}]})
 
-    def test_an_image_element_cannot_escape_its_folder(self):
-        """A label file is data from outside, even when the outside is the
-        person's own laptop."""
-        assets = Path(tempfile.mkdtemp())
-        rendered = self.render(
-            {"stock": "edcc-082wh", "elements": [
-                {"type": "image", "x_mm": 1, "y_mm": 1, "w_mm": 10, "h_mm": 10,
-                 "props": {"asset": "../../etc/passwd"}}]},
-            assets=assets)
-        self.assertTrue(any("not in this label" in note
-                            for note in rendered.notes))
+    def test_a_retired_element_is_dropped_and_the_label_still_opens(self):
+        """The other half of the same rule, and it may not refuse.
+
+        `image` left the catalog in 0.8.0. Refusing a document that holds
+        one — which is what leaving it out of CATALOG alone would do — would
+        make the rest of somebody's saved label unopenable and unprintable
+        over a box that could never have held a picture: there was never an
+        upload control to put one in it. So the box goes, the text stays,
+        and the reason rides out on the notes every print already reads
+        back.
+        """
+        document = {"stock": "edcc-082wh", "elements": [
+            {"type": "image", "x_mm": 1, "y_mm": 1, "w_mm": 10, "h_mm": 10,
+             "props": {"asset": "logo.png"}},
+            {"type": "text", "x_mm": 1, "y_mm": 12, "w_mm": 40, "h_mm": 10,
+             "props": {"text": "Spare keys"}}]}
+        parsed = label_doc.Label.from_dict(document)
+        self.assertEqual(["text"], [e.type for e in parsed.elements])
+        self.assertTrue(parsed.notes, "the drop happened silently")
+
+        # A note nothing carries out is a drop nobody hears about, so the
+        # render is driven too rather than trusting the label object.
+        rendered = render_image.render(parsed, self.stocks.require("edcc-082wh"))
+        self.assertTrue(any("image" in note for note in rendered.notes),
+                        rendered.notes)
+        self.assertIn("Spare keys",
+                      [e.props.get("text") for e in parsed.elements])
 
     def test_continuous_stock_takes_its_length_from_the_artwork(self):
         rendered = self.render({"stock": "continuous-2-25", "elements": [

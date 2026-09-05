@@ -41,7 +41,7 @@ const prefSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* refus
 const S = {
   stocks: [], rolls: [], templates: [], fonts: [], settings: {},
   catalog: { elements: {}, rotations: [0, 90, 180, 270] },
-  printer: null, printers: [], assets: [], history: [],
+  printer: null, printers: [], history: [],
   label: null, selected: -1, template: null, dirty: false,
   problems: [],
 };
@@ -160,8 +160,7 @@ async function loadState() {
   Object.assign(S, {
     stocks: data.stocks, rolls: data.rolls, templates: data.templates,
     fonts: data.fonts, settings: data.settings, catalog: data.catalog,
-    printer: data.printer, printers: data.printers, assets: data.assets,
-    history: data.history,
+    printer: data.printer, printers: data.printers, history: data.history,
   });
   S.printerError = data.printer_error;
   S.ambiguous = data.ambiguous;
@@ -767,7 +766,6 @@ function describe(element) {
   if (element.type === 'text') return (props.text || 'Text').split('\n')[0].slice(0, 22);
   if (element.type === 'barcode') return '||| ' + (props.data || '').slice(0, 16);
   if (element.type === 'qr') return '▣ ' + (props.data || '').slice(0, 16);
-  if (element.type === 'image') return props.asset || 'image';
   return S.catalog.elements[element.type]?.name || element.type;
 }
 
@@ -1206,16 +1204,6 @@ function propField(element, name, meta) {
       element.props[name] = key;
       markDirty();
     });
-  } else if (meta.type === 'asset') {
-    input = el('select');
-    const none = el('option', null, '— none —'); none.value = '';
-    input.append(none);
-    for (const asset of S.assets) {
-      const option = el('option', null, asset.name);
-      option.value = asset.name;
-      input.append(option);
-    }
-    input.value = element.props[name] || '';
   } else if (meta.type === 'number') {
     input = el('input');
     input.type = 'number'; input.step = '0.1';
@@ -1351,7 +1339,7 @@ function saveTemplateDialog() {
 function placeholdersOf(label) {
   const found = [];
   for (const element of label.elements || []) {
-    for (const key of ['text', 'data', 'asset']) {
+    for (const key of ['text', 'data']) {
       const value = String((element.props || {})[key] || '');
       for (const match of value.matchAll(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g))
         if (!found.includes(match[1])) found.push(match[1]);

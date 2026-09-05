@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.8.0
+
+**The image element was never completable, and every release shipped it as a
+picker that could only ever be empty.** There is no upload control anywhere
+in the panel — no file input, no `FormData`, no request to `POST /api/assets`
+in `app.js` or `index.html`. What existed in the UI was one `<select>` in the
+element props pane listing the contents of `/data/assets`, and `/data` is not
+reachable from the Terminal, Samba or the File Editor: those see `/config`.
+So the only way to put a file where the picker could see it was to already be
+inside the container. Meanwhile the README and DOCS both advertised uploaded
+images as a designer feature.
+
+That is worse than not having it. A half-feature that cannot be finished is a
+picker that is always empty, a documented capability that does not exist, and
+four routes of attack surface — a multipart upload, a size cap, a suffix
+allow-list, a path-escape guard and a Pillow decoder taking bytes off the
+wire — serving nobody.
+
+### Removed
+
+- **The `image` element and everything behind it**: the catalog entry, the
+  drawer in `render/image.py` (the module stays — it is named for the bitmap
+  it produces, not for this feature), the `assets` parameter threaded through
+  `render()`, `POST/GET/DELETE /api/assets`, `asset_list()`, the `assets` key
+  on `/api/state`, the props picker in `app.js`, and `asset` from the props a
+  template placeholder may be substituted into.
+- **Nothing on disk is touched.** `/data/assets` and anything in it is
+  somebody's files; an add-on that tidies up after itself without being asked
+  is an add-on that loses data. It is simply no longer served, and it is no
+  longer in `backup_exclude` — which is now empty and therefore gone, so
+  everything BRUH Print keeps is backed up, and all of it is small.
+
+### Changed
+
+- **A retired element type is dropped with a note; an unknown one still
+  refuses the whole document.** `Element.from_dict` refuses a type it does not
+  know, deliberately — rendering it as nothing would be a label silently
+  missing its barcode — and if `image` had simply left the catalog, every
+  saved label, history entry and `bruh_print.print_label` payload holding one
+  would have become unopenable and unprintable, *whole*. That is the wrong
+  failure: the picture could never have been uploaded in the first place, so
+  what is being refused is the rest of somebody's label over a box that was
+  always empty. The two are different claims — "this came from a newer BRUH
+  Print and there is no telling what is missing" against "we took this away
+  and know exactly what is lost" — so `label.RETIRED` names the second, and
+  `Label.from_dict` drops it and says so on the label's notes. The filter is
+  at the Label level because an element cannot express "drop me": it returns
+  one or it raises, and raising is the answer reserved for the type we do not
+  know.
+- **`client_max_size` is a named 2 MB rather than nine.** It was sized for an
+  image upload; deleting it outright would have fallen back to aiohttp's 1 MB
+  default, which is a limit nobody chose and nobody could explain the day a
+  template with sixty fields is refused. The largest thing the panel now
+  accepts is a JSON label document.
+
 ## 0.7.0
 
 **Half a label, and the one control that could have fixed it was the wrong

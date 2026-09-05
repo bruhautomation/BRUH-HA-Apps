@@ -26,7 +26,6 @@
     POST /api/template/{id}/print    fill it in and print it
     GET  /api/history                what was printed
     POST /api/history/{id}/reprint   print exactly that again
-    GET/POST/DEL /api/assets         images a label may use
     GET  /api/font/{key}/sample.png  what that font looks like, drawn by the renderer
 
 Two rules shape the whole file.
@@ -35,7 +34,7 @@ Two rules shape the whole file.
 not be.** The one refusal is a stock/roll mismatch — sending a 2.25"-wide
 raster to a 0.56" roll prints across the liner, and a run of fifty does it
 fifty times. Everything else that could be wrong (a barcode that will not
-fit, an image that could not be read, a fixed font size that clips) comes
+fit, a fixed font size that clips, an element type a release retired) comes
 back as a *note* beside a label that still prints, because a label with one
 element missing is usually still the label somebody wanted and a refusal is
 always a person unable to work.
@@ -74,17 +73,18 @@ from stores import templates as template_store  # noqa: E402
 # Layout
 # ---------------------------------------------------------------------------
 DATA = Path(os.environ.get("BRUH_PRINT_DATA", "/data"))
-ASSETS = DATA / "assets"
 SHARED = Path(os.environ.get("BRUH_PRINT_SHARED", "/config/.bruh_print"))
 
 BIND_HOST = "0.0.0.0"  # noqa: S104 - ingress reaches the container, not the LAN
 DEFAULT_PORT = 8097
 
-# An uploaded image is decoded by Pillow, which is a decoder taking bytes
-# from a browser; 8 MB is more than any logo and small enough that a
-# malformed file cannot be a memory problem before it is a decode problem.
-MAX_ASSET_BYTES = 8 * 1024 * 1024
-ALLOWED_ASSET_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
+# The largest body the panel will read. Everything it accepts is now a JSON
+# label document — a few hundred boxes of millimetres and words — so this is
+# generous rather than tight, and it is a named number rather than aiohttp's
+# 1 MB default because a limit nobody chose is a limit nobody can explain the
+# day a template with sixty fields is refused. It was 9 MB while an image
+# upload rode the same route; nothing uploads a file any more.
+MAX_BODY_BYTES = 2 * 1024 * 1024
 
 log = logging.getLogger("bruh_print.panel")
 
@@ -122,8 +122,6 @@ class Panel:
         self.templates = template_store.TemplateStore(data / "templates.json")
         self.history = history.HistoryStore(data / "history.json")
         self.settings = settings.SettingsStore(data / "settings.json")
-        self.assets = data / "assets"
-        self.assets.mkdir(parents=True, exist_ok=True)
         self.started = time.time()
         # Discovery is a USB bus walk and the UI asks for state on every tab
         # change, so it is cached for a couple of seconds. Long enough that a
@@ -304,7 +302,6 @@ class Panel:
             "settings": self.settings.all(),
             "fonts": list(fonts.catalog().values()),
             "catalog": label_doc.catalog_payload(),
-            "assets": self.asset_list(),
             "history": [e.as_dict() for e in self.history.all(30)],
         }
 
@@ -360,19 +357,6 @@ class Panel:
             atomic_write.write_json(SHARED / "state.json", payload)
         except OSError as exc:
             log.warning("Could not mirror state to %s: %s", SHARED, exc)
-
-    # -- assets ------------------------------------------------------------
-    def asset_list(self) -> list[dict]:
-        out = []
-        for path in sorted(self.assets.glob("*")):
-            if not path.is_file():
-                continue
-            try:
-                size = path.stat().st_size
-            except OSError:
-                continue
-            out.append({"name": path.name, "bytes": size})
-        return out
 
 
 # ---------------------------------------------------------------------------
@@ -476,7 +460,6 @@ def _render(state: Panel, document: dict, *, dpi: int | None = None,
         parsed, stock,
         dpi=dpi or model.dpi,
         max_across_dots=head_dots or model.dots,
-        assets=state.assets,
     )
 
 
@@ -1584,58 +1567,6 @@ async def h_history_clear(request: web.Request) -> web.Response:
     return ok(history=[])
 
 
-# -- assets -----------------------------------------------------------------
-async def h_asset_upload(request: web.Request) -> web.Response:
-    state = panel(request)
-    reader = await request.multipart()
-    saved: list[str] = []
-    while True:
-        part = await reader.next()
-        if part is None:
-            break
-        if not getattr(part, "filename", None):
-            continue
-        name = Path(part.filename).name
-        if Path(name).suffix.lower() not in ALLOWED_ASSET_SUFFIXES:
-            return bad(
-                f"“{name}” is not an image BRUH Print can read. PNG, JPEG, "
-                f"GIF, BMP and WebP work.")
-        blob = bytearray()
-        while True:
-            chunk = await part.read_chunk()
-            if not chunk:
-                break
-            blob.extend(chunk)
-            if len(blob) > MAX_ASSET_BYTES:
-                return bad(
-                    f"“{name}” is over {MAX_ASSET_BYTES // (1024 * 1024)}MB. "
-                    f"A label is at most 1248 dots across — a large image "
-                    f"buys nothing the printer can show.", 413)
-        atomic_write.write_bytes(state.assets / name, bytes(blob))
-        saved.append(name)
-    if not saved:
-        return bad("No file arrived with that upload.")
-    return ok(saved=saved, assets=state.asset_list())
-
-
-async def h_asset_get(request: web.Request) -> web.Response:
-    state = panel(request)
-    name = Path(request.match_info["name"]).name
-    path = (state.assets / name).resolve()
-    if path.parent != state.assets.resolve() or not path.is_file():
-        raise web.HTTPNotFound()
-    return web.FileResponse(path, headers={"Cache-Control": "max-age=60"})
-
-
-async def h_asset_delete(request: web.Request) -> web.Response:
-    state = panel(request)
-    name = Path(request.match_info["name"]).name
-    path = (state.assets / name).resolve()
-    if path.parent == state.assets.resolve():
-        path.unlink(missing_ok=True)
-    return ok(assets=state.asset_list())
-
-
 # -- fonts ------------------------------------------------------------------
 # A day: the sample for a given family and text never changes, and the picker
 # asks for one image per font every time it opens.
@@ -1768,7 +1699,7 @@ async def json_errors(request: web.Request, handler):
 
 def build_app(state: Panel | None = None) -> web.Application:
     app = web.Application(middlewares=[json_errors],
-                          client_max_size=MAX_ASSET_BYTES + 1024 * 1024)
+                          client_max_size=MAX_BODY_BYTES)
     app[PANEL_KEY] = state or Panel()
 
     add = app.router.add_route
@@ -1808,10 +1739,6 @@ def build_app(state: Panel | None = None) -> web.Application:
     app.router.add_get("/api/history", h_history)
     add("DELETE", "/api/history", h_history_clear)
     app.router.add_post("/api/history/{entry_id}/reprint", h_reprint)
-
-    app.router.add_post("/api/assets", h_asset_upload)
-    app.router.add_get("/api/assets/{name}", h_asset_get)
-    add("DELETE", "/api/assets/{name}", h_asset_delete)
 
     app.router.add_get("/api/font/{font_key}/sample.png", h_font_sample)
 

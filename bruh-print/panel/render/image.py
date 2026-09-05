@@ -10,11 +10,10 @@ and it would look right while the label came out blank.
 Two details are load-bearing and both are about the head being one bit deep.
 
 *Nothing is anti-aliased.* Text is drawn onto a greyscale canvas and
-thresholded, images are converted with an explicit black point, and every
-barcode bar is a whole number of dots wide. A thermal head has no grey: a
-50% pixel is a black one, so an anti-aliased hairline becomes a solid line
-and an anti-aliased bar becomes a bar one dot wider than the scanner
-expects.
+thresholded, and every barcode bar is a whole number of dots wide. A
+thermal head has no grey: a 50% pixel is a black one, so an anti-aliased
+hairline becomes a solid line and an anti-aliased bar becomes a bar one dot
+wider than the scanner expects.
 
 *Ink is 1 and paper is 0.* PIL's mode-"1" convention is the other way round
 (255 is white), so the flip happens exactly once, in `raster_lines`, and
@@ -26,7 +25,6 @@ from __future__ import annotations
 import io
 import math
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from . import barcode, fonts
 from .label import Element, Label
@@ -513,7 +511,7 @@ def _draw_qr(canvas, element: Element, box: tuple[int, int, int, int],
 
 
 # ---------------------------------------------------------------------------
-# Shapes and images
+# Shapes
 # ---------------------------------------------------------------------------
 def _draw_box(canvas, element: Element, box: tuple[int, int, int, int],
               dpi: int, notes: list[str]) -> None:
@@ -557,61 +555,6 @@ def _draw_line(canvas, element: Element, box: tuple[int, int, int, int],
                        fill=0)
 
 
-def _draw_image(canvas, element: Element, box: tuple[int, int, int, int],
-                dpi: int, notes: list[str], assets: Path | None) -> None:
-    from PIL import Image  # noqa: PLC0415
-
-    name = str(element.props.get("asset", "") or "")
-    if not name or assets is None:
-        return
-    # The asset name is a filename in the asset folder and nothing else.
-    # Resolving it and checking the parent is what stops "../../config/
-    # secrets.yaml" being a valid image reference in a label somebody
-    # imported — a label file is data from outside, even when the outside is
-    # the person's own laptop.
-    candidate = (assets / Path(name).name).resolve()
-    if candidate.parent != assets.resolve() or not candidate.is_file():
-        notes.append(f"The image “{name}” is not in this label's uploads.")
-        return
-
-    x0, y0, width, height = box
-    try:
-        source = Image.open(candidate)
-        source.load()
-    except (OSError, ValueError) as exc:
-        notes.append(f"“{name}” could not be read as an image ({exc}).")
-        return
-
-    source = source.convert("L")
-    fit = element.props.get("fit", "contain")
-    if fit == "stretch":
-        source = source.resize((max(1, width), max(1, height)),
-                               Image.Resampling.LANCZOS)
-    else:
-        ratio = (max if fit == "cover" else min)(
-            width / source.width, height / source.height)
-        source = source.resize(
-            (max(1, int(source.width * ratio)),
-             max(1, int(source.height * ratio))),
-            Image.Resampling.LANCZOS)
-
-    if element.props.get("invert"):
-        source = source.point(lambda v: 255 - v)
-
-    if element.props.get("dither"):
-        source = source.convert("1", dither=Image.Dither.FLOYDSTEINBERG)
-        source = source.convert("L")
-    else:
-        threshold = int(element.props.get("threshold", 128))
-        source = source.point(lambda v: 0 if v < threshold else 255)
-
-    left = x0 + max(0, (width - source.width) // 2)
-    top = y0 + max(0, (height - source.height) // 2)
-    crop = source.crop((0, 0, min(source.width, width),
-                        min(source.height, height)))
-    canvas.paste(crop, (left, top), mask=crop.point(lambda v: 255 - v))
-
-
 _DRAWERS = {
     "text": _draw_text,
     "barcode": _draw_barcode,
@@ -624,8 +567,8 @@ _DRAWERS = {
 # ---------------------------------------------------------------------------
 # The pass
 # ---------------------------------------------------------------------------
-def render(label: Label, stock, *, dpi: int = 300, max_across_dots: int = 672,
-           assets: Path | None = None) -> Rendered:
+def render(label: Label, stock, *, dpi: int = 300,
+           max_across_dots: int = 672) -> Rendered:
     """Draw a label at the printer's resolution.
 
     `max_across_dots` is the print head's real width and the canvas is
@@ -637,7 +580,11 @@ def render(label: Label, stock, *, dpi: int = 300, max_across_dots: int = 672,
     columns of margin instead, and says so.
     """
 
-    notes: list[str] = []
+    # Seeded with whatever reading the document had to say — a retired
+    # element dropped by `Label.from_dict` is a note about the label the same
+    # way the head-width note is, and there is one notes list because there
+    # is one place every caller reads them from.
+    notes: list[str] = list(label.notes)
     across_dots, feed_dots = stock.dots(dpi)
 
     if across_dots > max_across_dots:
@@ -668,7 +615,7 @@ def render(label: Label, stock, *, dpi: int = 300, max_across_dots: int = 672,
     problems: list[dict] = []
     for index, element in enumerate(label.elements):
         # Which notes this element is responsible for, taken by watching the
-        # list rather than by threading an index through six drawers: a new
+        # list rather than by threading an index through five drawers: a new
         # element type gets its problems drawn on the canvas by existing, and
         # cannot forget to report one.
         before = len(notes)
@@ -685,10 +632,7 @@ def render(label: Label, stock, *, dpi: int = 300, max_across_dots: int = 672,
         height = max(1, min(height, canvas_h - y0))
         box = (x0, y0, width, height)
         try:
-            if element.type == "image":
-                _draw_image(canvas, element, box, dpi, notes, assets)
-            else:
-                _DRAWERS[element.type](canvas, element, box, dpi, notes)
+            _DRAWERS[element.type](canvas, element, box, dpi, notes)
         except barcode.BarcodeError as exc:
             notes.append(str(exc))
         except (OSError, ValueError) as exc:

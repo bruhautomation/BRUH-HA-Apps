@@ -278,7 +278,6 @@ shrunk, because you set it on purpose, probably to match another element.
 | `qr` | Error correction L/M/Q/H, default M. Always square. |
 | `box` | Outline or filled, optional corner radius. |
 | `line` | A rule; orientation follows whichever dimension is larger. |
-| `image` | PNG/JPEG/GIF/BMP/WebP you uploaded. Thresholded or dithered. |
 
 Every module of a barcode and every module of a QR code is a whole number of
 printer dots. That is not tidiness — a fractional module width rounds each
@@ -707,6 +706,7 @@ answer (it is what a printer mid-feed says).
 
 ## Backups
 
-`/data/assets` is excluded from Home Assistant backups — uploaded images are
-bulk, and everything that defines a label (stocks, rolls, templates, history)
-is small and *is* backed up.
+Everything BRUH Print keeps is in `/data` and all of it goes into a Home
+Assistant backup: stocks, rolls, templates, history and settings. Nothing is
+excluded and there is nothing worth excluding — it is all small, and none of
+it is a credential, because this add-on has no login.

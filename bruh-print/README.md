@@ -18,9 +18,9 @@ that is. The tab reads in that order too: what to say, the picture, then
 and the label, copies, font and the rest sit under one line that says what
 they are currently set to.
 
-**A real designer.** Text, Code 128 barcodes, QR codes, boxes, rules and
-uploaded images, dragged and resized on the label itself. Everything is in
-millimetres and every preview is the printer's own render — the picture you
+**A real designer.** Text, Code 128 barcodes, QR codes, boxes and rules,
+dragged and resized on the label itself. Everything is in millimetres and
+every preview is the printer's own render — the picture you
 see is the bitmap that goes to the head. Boxes snap to the label's edges and
 centre lines, to each other and to a 1mm grid, with a line drawn at whatever
 they caught; the printable area and the printer's own margin are drawn on the
