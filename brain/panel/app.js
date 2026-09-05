@@ -1903,6 +1903,7 @@ function renderModelField(data) {
 
 function renderSettingsForm(data) {
   $("#setEnabled").checked = data.settings.auto_enabled !== false;
+  $("#setCapture").checked = data.settings.capture === true;
   $("#setTerminalUi").value = data.settings.terminal_ui || "chat";
   $("#setChatSessions").value = String(data.settings.chat_max_sessions || 3);
   $("#setGatherMode").value = data.settings.gather_mode || "search";
@@ -1927,6 +1928,7 @@ async function openSettings() {
   openBox("#setModal");
   loadAuth();
   loadDiagnostics();
+  loadCaptures();
   loadDeep(true);
   loadRehearsal(true);
   try {
@@ -2164,6 +2166,126 @@ $("#diagCopy").addEventListener("click", async () => {
   }
 });
 $("#diagRefresh").addEventListener("click", loadDiagnostics);
+
+// ------------------------------------------------------------- captured runs
+// The list under the capture switch: what has been recorded, and the three
+// things a person may do with one. Fetched when the dialog opens and after
+// every press, never on a timer — nothing here changes unless a card runs.
+//
+// View is deliberately the first control. Everything else about capture is
+// designed so nothing leaves the add-on without a press, and a press you
+// make without being able to read what you are sending is not consent.
+function capRows(data) {
+  const rows = data.captures || [];
+  if (!data.enabled && !rows.length) {
+    return "<p class=\"hint tight\">Nothing recorded. Switch capture on above "
+         + "and the next card run writes the first one.</p>";
+  }
+  if (!rows.length) {
+    return "<p class=\"hint tight\">Capture is on; the next card run writes "
+         + "the first file. Nothing has run yet.</p>";
+  }
+  return rows.map((r) => {
+    const when = r.captured_at
+      ? timeAgo(new Date(r.captured_at * 1000).toISOString()) : "just now";
+    const what = r.question
+      ? `“${esc(r.question.slice(0, 70))}”`
+      : esc(r.category || r.source || "a card");
+    // The labels count is the number that says whether an entry is worth
+    // contributing: a capture with no ending on it is a prompt and a reply
+    // and nothing to score them against.
+    const labels = r.labels
+      ? `${r.labels} ending${r.labels === 1 ? "" : "s"} recorded`
+      : "no endings yet";
+    return `<div class="drow"><div class="dk">${esc(when)}</div>`
+      + `<div class="dv">${what} — ${r.findings} finding`
+      + `${r.findings === 1 ? "" : "s"}, ${esc(labels)}`
+      + `<div class="row tight">`
+      + `<button class="btn tiny" data-cap-view="${esc(r.run_id)}">View</button>`
+      + `<button class="btn tiny" data-cap-export="${esc(r.run_id)}">Export</button>`
+      + `<button class="btn tiny" data-cap-del="${esc(r.run_id)}">Delete</button>`
+      + `</div></div></div>`;
+  }).join("");
+}
+
+async function loadCaptures() {
+  const box = $("#capBody");
+  if (!box) return;
+  box.textContent = "Loading…";
+  try {
+    const data = await api("api/capture");
+    $("#capMax").textContent = String(data.max_files || 50);
+    box.innerHTML = capRows(data);
+  } catch (e) {
+    box.textContent = "Could not list captured runs: " + e.message;
+  }
+}
+
+// The same fallback `diagCopy` uses, and for the same reason: an ingress
+// iframe may be refused the clipboard outright, and a failure that only
+// says so leaves the text nowhere a person can reach it.
+async function copyOrSelect(text, okMessage) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(okMessage);
+    return;
+  } catch (e) { /* fall through to the textarea */ }
+  const box = document.createElement("textarea");
+  box.value = text;
+  box.style.cssText = "position:fixed;left:0;top:0;width:100%;height:60vh;z-index:99";
+  document.body.appendChild(box);
+  box.select();
+  let copied = false;
+  try { copied = document.execCommand("copy"); } catch (e2) { copied = false; }
+  if (copied) { box.remove(); toast(okMessage); return; }
+  toast("This browser will not let the panel copy — the text is selected, "
+        + "press Ctrl/Cmd+C, then Esc");
+  box.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") box.remove();
+  });
+  box.addEventListener("blur", () => box.remove());
+}
+
+// Delegated, because these rows are rebuilt on every load.
+$("#capBody").addEventListener("click", async (ev) => {
+  const view = ev.target.closest("[data-cap-view]");
+  const exp = ev.target.closest("[data-cap-export]");
+  const del = ev.target.closest("[data-cap-del]");
+  try {
+    if (view) {
+      const id = view.getAttribute("data-cap-view");
+      const entry = await api("api/capture/" + encodeURIComponent(id));
+      const text = JSON.stringify(entry, null, 2);
+      const pre = document.createElement("pre");
+      pre.className = "capview";
+      pre.textContent = text;
+      const holder = view.closest(".drow");
+      const already = holder.querySelector(".capview");
+      if (already) { already.remove(); return; }
+      holder.appendChild(pre);
+      const copy = document.createElement("button");
+      copy.className = "btn tiny";
+      copy.textContent = "Copy this run";
+      copy.addEventListener("click", () => copyOrSelect(text, "Capture copied"));
+      holder.appendChild(copy);
+      return;
+    }
+    if (exp) {
+      const id = exp.getAttribute("data-cap-export");
+      const out = await api("api/capture/" + encodeURIComponent(id) + "/export",
+                            { method: "POST" });
+      toast("Exported to " + out.path);
+      return;
+    }
+    if (del) {
+      const id = del.getAttribute("data-cap-del");
+      await api("api/capture/" + encodeURIComponent(id), { method: "DELETE" });
+      loadCaptures();
+    }
+  } catch (e) {
+    toast("That did not work: " + e.message);
+  }
+});
 
 // ------------------------------------------------------------- deep check
 // `brain doctor --deep` from the dialog. Fetched when pressed and while a
@@ -2518,6 +2640,13 @@ $("#authChip").addEventListener("click", openSignIn);
 
 $("#setEnabled").addEventListener("change", () =>
   saveSettings({ auto_enabled: $("#setEnabled").checked }));
+// Switching it on records nothing that has already happened: the next card
+// run is the first one captured, so the list is refreshed rather than
+// expected to change.
+$("#setCapture").addEventListener("change", async () => {
+  await saveSettings({ capture: $("#setCapture").checked });
+  loadCaptures();
+});
 $("#setPlan").addEventListener("change", () =>
   saveSettings({ plan: $("#setPlan").value }));
 $("#setGatherMode").addEventListener("change", () =>

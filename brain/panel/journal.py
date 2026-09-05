@@ -95,9 +95,16 @@ def classify(result: dict, timeout_message: str = "") -> str:
 def record(source: str, outcome: str, *, ok: bool | None = None,
            error: str = "", duration_s: float | None = None,
            model: str = "", tokens: int | None = None,
-           turns: int | None = None, extra: dict | None = None,
-           now: float | None = None) -> dict:
-    """Append one line. Never raises: accounting must not fail the run."""
+           turns: int | None = None, run_id: str = "",
+           extra: dict | None = None, now: float | None = None) -> dict:
+    """Append one line. Never raises: accounting must not fail the run.
+
+    ``run_id`` is Claude Code's own session id for the invocation, which
+    `engine._run_cli` mints and claims in `run_sources` before the run.
+    Carrying it here is what lets a journal line, a capture file, a
+    transcript and a Chats rail row be joined into one run rather than
+    four ids nothing can put together.
+    """
     if outcome not in OUTCOMES:
         outcome = "error"
     row: dict = {
@@ -114,6 +121,8 @@ def record(source: str, outcome: str, *, ok: bool | None = None,
         row["tokens"] = tokens
     if isinstance(turns, int) and turns >= 0:
         row["turns"] = turns
+    if run_id:
+        row["run_id"] = str(run_id)[:64]
     if error:
         row["error"] = scrub(error)[:MAX_ERROR]
     if extra:

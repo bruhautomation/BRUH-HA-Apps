@@ -75,6 +75,7 @@ import atomic_write
 import doctor
 import engine
 import journal
+import scoring
 
 PREFIX = doctor.PREFIX
 SOURCE = doctor.SOURCE
@@ -289,10 +290,16 @@ def score_checks(result: dict, planted: list[dict]) -> dict:
                     "reported": [f.get("text", "") for f in hits]})
     extra = [f for f in ours if id(f) not in matched]
     scored = [r for r in out if r["check"] != "(nothing should fire)"]
+    # The arithmetic is `scoring.tally`'s, not a second copy of it: the
+    # corpus replay grades the same producers against contributed houses,
+    # and two answers to "precision against labels" is one too many.
+    counts = scoring.tally(
+        sum(1 for r in scored if r["verdict"] == "found"),
+        len(scored), len(extra))
     return {
-        "planted": len(scored),
-        "found": sum(1 for r in scored if r["verdict"] == "found"),
-        "extra": len(extra),
+        "planted": counts["planted"],
+        "found": counts["found"],
+        "extra": counts["extra"],
         "extra_rows": [{"source": f.get("source", ""),
                         "text": f.get("text", "")} for f in extra[:10]],
         "rows": out,
@@ -326,16 +333,16 @@ def score_analyst(findings, planted: list[dict], model: str = "") -> dict:
         rows.append({"id": row["id"],
                      "verdict": "found" if hits else "missed"})
     found = sum(1 for r in rows if r["verdict"] == "found")
-    extra = len(ours) - len(matched)
+    # Same arithmetic as the checks half and as the corpus replay, from one
+    # place. `precision` is over the rows about planted things only: found
+    # of everything the model said about a `brain_test_` id.
+    counts = scoring.tally(found, len(scored), len(ours) - len(matched))
     return {
-        "planted": len(scored),
-        "found": found,
-        "extra": extra,
-        "recall": round(found / len(scored), 3) if scored else 0.0,
-        # Over the rows about planted things only: found of everything the
-        # model said about a `brain_test_` id.
-        "precision": round(found / (found + extra), 3) if (found + extra)
-                     else 0.0,
+        "planted": counts["planted"],
+        "found": counts["found"],
+        "extra": counts["extra"],
+        "recall": counts["recall"],
+        "precision": counts["precision"],
         "reported": len(texts),
         "rows": rows,
         "model": model,

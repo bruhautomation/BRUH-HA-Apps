@@ -1179,6 +1179,27 @@ body.modal-open {
 .diag .dbad { color: var(--critical); }
 .diag ul { margin: 4px 0 0; padding-left: 16px; }
 .diag li { margin: 2px 0; }
+/* The captured-runs list reuses .drow, and its per-row controls sit under
+   the description rather than beside it: a 40%/60% split leaves no room
+   for three buttons, and a button that wraps mid-word is one nobody
+   presses confidently on a phone. */
+.diag .row.tight { margin: 6px 0 0; gap: 6px; flex-wrap: wrap; }
+/* One capture is a house's worth of JSON. It scrolls inside its own box,
+   because the dialog it is in is the one place a horizontal scrollbar on
+   the page would be worst. */
+.capview {
+  margin: 8px 0 4px;
+  max-height: 40vh;
+  overflow: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: pre;
+}
 
 
 /* ----------------------------------------------------------------- docs

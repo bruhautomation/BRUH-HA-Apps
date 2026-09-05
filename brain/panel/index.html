@@ -907,6 +907,25 @@
         <button id="diagRefresh" class="btn">Refresh</button>
       </div>
 
+      <h4 class="sethead">Capture runs for the corpus</h4>
+      <label class="check bigcheck"><input id="setCapture" type="checkbox">
+        <span><b>Record what the analyst was sent and what it answered</b><br>
+        <span class="subtext">Off by default. With it on, every card run writes one file
+        under <code>/data/capture</code>: the data brAIn gave Claude, the card that came
+        back, and later the ending you gave each finding it raised — which is what turns
+        a run into a graded example. Anything credential-shaped is stripped as it is
+        written. <b>Nothing leaves this add-on until you press Export on a run below</b>,
+        which copies that one file to <code>/share/brain/corpus/</code> where the file
+        editor and Samba can reach it. Your entity and area names ARE in these files, so
+        read one before you share it. The newest
+        <span id="capMax">50</span> runs are kept; backups skip the whole folder.</span></span></label>
+      <div id="capBody" class="diag">Loading…</div>
+      <p class="hint tight">Why this exists: the prompts behind every card are the one
+        part of brAIn no test can check, because nothing in the repository runs them
+        against a real house. A run with your ending on it is what makes a prompt change
+        measurable. Contributing one is a pull request adding it to
+        <code>tests/corpus/entries/</code> — entirely optional, and reviewed by you first.</p>
+
       <h4 class="sethead">Deep check</h4>
       <p class="hint">Everything above is what brAIn <em>recorded</em>. This walks every
         face — a plain Claude run, the analyst's tools, a chat turn, an automation task,

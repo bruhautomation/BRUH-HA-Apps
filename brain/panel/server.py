@@ -118,6 +118,7 @@ import atomic_write
 import automation_writer
 import baselines
 import brief
+import capture
 import card_tags
 import chat_session
 import closures
@@ -1817,16 +1818,18 @@ async def _search_run(insight_id: str, cat: dict, framing: dict):
     so what a run costs finally tracks what it actually needed rather than
     being the same number whatever was asked.
 
-    Returns ``(result, cost)``, or ``(None, None)`` when the map itself
-    could not be collected — the caller then runs the snapshot path, which
-    is the floor under every mode.
+    Returns ``(result, cost, sent)``, or ``(None, None, None)`` when the map
+    itself could not be collected — the caller then runs the snapshot path,
+    which is the floor under every mode. ``sent`` is what the analyst was
+    given, handed back rather than re-collected: `capture` files exactly the
+    payload this run used, and a second fetch would file a different house.
     """
     import ha_data
     try:
         orientation = await ha_data.collect_orientation(question=framing["question"])
     except Exception as exc:  # noqa: BLE001 — a failed map is a fallback, not an error
         log.warning("%s: could not collect the orientation map (%s)", insight_id, exc)
-        return None, None
+        return None, None, None
     prompt = build_orientation_prompt(cat, orientation, **framing)
     # `entities` is what the run has been GIVEN, and a search run is given
     # none — the spinner says "searching" rather than claiming a number the
@@ -1840,7 +1843,9 @@ async def _search_run(insight_id: str, cat: dict, framing: dict):
         engine.run_analyst, prompt, ANALYST_SYSTEM, eff_model(),
         eff_timeout_s(), ANALYST_MAX_TURNS, "card",
     )
-    return result, _record_usage(result, insight_id)
+    return result, _record_usage(result, insight_id), {
+        "gather_mode": "search", "bundle": orientation,
+        "prompt_chars": len(prompt)}
 
 
 async def _snapshot_run(insight_id: str, cat: dict, framing: dict):
@@ -1871,7 +1876,8 @@ async def _snapshot_run(insight_id: str, cat: dict, framing: dict):
         engine.run_claude, prompt, SYSTEM_PROMPT, eff_model(), eff_timeout_s(),
         source="card",
     )
-    return result, _record_usage(result, insight_id)
+    return result, _record_usage(result, insight_id), {
+        "gather_mode": "snapshot", "bundle": bundle, "prompt_chars": len(prompt)}
 
 
 async def _generate(insight_id: str) -> None:
@@ -1909,9 +1915,9 @@ async def _generate(insight_id: str) -> None:
                        knowledge=knowledge, previous=previous,
                        findings=findings_store.prompt_block())
 
-        result = cost = None
+        result = cost = sent = None
         if eff_gather_mode() == "search":
-            result, cost = await _search_run(insight_id, cat, framing)
+            result, cost, sent = await _search_run(insight_id, cat, framing)
         if result is None or not result["ok"]:
             # The snapshot path is the floor, not a mode: whatever the setting
             # says, a failed search must still produce a card. It costs more
@@ -1926,7 +1932,7 @@ async def _generate(insight_id: str) -> None:
                                error=result.get("error") or "no result",
                                extra={"id": insight_id, "from": "search",
                                       "to": "snapshot"})
-            result, cost = await _snapshot_run(insight_id, cat, framing)
+            result, cost, sent = await _snapshot_run(insight_id, cat, framing)
         if not result["ok"]:
             raise RuntimeError(result["error"] or "generation failed")
 
@@ -1961,9 +1967,18 @@ async def _generate(insight_id: str) -> None:
         # reported lives in the store, which is the one place that knows
         # whether it has since been fixed or dismissed. Storing a copy on
         # the card would be a snapshot guaranteed to go stale.
+        # The run id is Claude Code's own session id for this invocation —
+        # already minted, already claimed in `run_sources`, already on the
+        # journal line. Carrying it onto the row is what lets an ENDING be
+        # joined back to the prompt that earned it, which is the label half
+        # of the corpus. A run whose CLI returned no session id simply has
+        # no id here, and nothing downstream pretends otherwise.
+        run_id = capture.run_id_from(result.get("meta") or {})
+        model_findings = _model_findings(obj.get("findings"))
         filed = findings_store.add_many([
-            {**f, "source": cat["id"], "source_title": cat.get("title", "Insight")}
-            for f in _model_findings(obj.get("findings"))])
+            {**f, "source": cat["id"], "source_title": cat.get("title", "Insight"),
+             "run_id": run_id}
+            for f in model_findings])
         await _announce_findings(filed)
         tags = card_tags.clean_tags(_clean_strings(obj.get("tags"), 4, 24))
         insight = {
@@ -1990,6 +2005,29 @@ async def _generate(insight_id: str) -> None:
             "meta": {**result.get("meta", {}), "cost": cost},
         }
         save_insight(insight)
+        # What was sent, what came back, and — later, when somebody ends one
+        # of the findings above — what they made of it. Off unless somebody
+        # switched it on in ⚙, redacted on the way in, and never leaving
+        # /data until a person exports it.
+        if settings_store.load().get("capture") and run_id and sent:
+            await asyncio.to_thread(
+                capture.record, run_id,
+                source="ask" if question is not None else "card",
+                category=insight["category"], question=question or "",
+                model=str(result.get("meta", {}).get("model")
+                          or eff_model() or ""),
+                gather_mode=sent["gather_mode"],
+                prompt_chars=sent["prompt_chars"], bundle=sent["bundle"],
+                # The card's findings and what it learned, plus the fields a
+                # person reads. Never the `html`: that is a rendered
+                # visualization of up to 200 KB, and what a corpus scores is
+                # the findings.
+                reply={"title": insight["title"], "summary": insight["summary"],
+                       "highlights": insight["highlights"], "learned": learned,
+                       "findings": model_findings,
+                       "hypotheses": _clean_strings(obj.get("hypotheses"), 3, 300),
+                       "tags": tags, "html_bytes": len(html.encode())},
+                tokens=cost or {})
         # Learn the durable discoveries: store NEW ones in our own knowledge
         # base (dedup by content) and hand those on to the home's shared
         # memory. Already-known ones are silently swallowed — the model was
@@ -4447,6 +4485,11 @@ def _diagnostics_payload() -> dict:
         # answering, and what the cap is. A session the cap stopped and one
         # that crashed leave the same silence otherwise.
         "chat": chat_session.registry().summary(),
+        # Whether the analyst's prompts are being sampled, how many runs
+        # are on disk, and how many of those an ending has labelled.
+        # Numbers only — the captures themselves are never bundled: this
+        # payload is what gets attached to a public issue.
+        "capture": capture.stats(bool(settings.get("capture"))),
         "daemons": _daemon_rollcall(),
         "usage": {k: usage.get(k) for k in ("source", "used_percent", "limits")},
     }
@@ -4474,6 +4517,55 @@ def publish_diagnostics() -> None:
 
 async def h_diagnostics(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(_diagnostics_payload))
+
+
+# ---------------------------------------------------------------------------
+# Captured runs — reviewable before anything leaves the add-on
+# ---------------------------------------------------------------------------
+
+async def h_capture_list(request: web.Request) -> web.Response:
+    """One row per captured run: when, what, how many findings, how many
+    endings have labelled them."""
+    settings = await asyncio.to_thread(settings_store.load)
+    return web.json_response({
+        "enabled": bool(settings.get("capture")),
+        "captures": await asyncio.to_thread(capture.listing),
+        "max_files": capture.CAPTURE_MAX_FILES,
+        "export_dir": str(capture.EXPORT_DIR),
+    })
+
+
+async def h_capture_get(request: web.Request) -> web.Response:
+    """One whole capture, as it is on disk. Already redacted — the file is
+    written that way, so there is no unredacted copy for this to leak."""
+    entry = await asyncio.to_thread(capture.read, request.match_info["run_id"])
+    if entry is None:
+        return web.json_response({"error": "no such capture"}, status=404)
+    return web.json_response(entry)
+
+
+async def h_capture_export(request: web.Request) -> web.Response:
+    """Copy one capture to /share, which is the one route out of the add-on.
+
+    Deliberately a press rather than anything automatic: everything above
+    this line keeps the file in /data, where Home Assistant cannot see it
+    and a backup does not carry it.
+    """
+    path, error = await asyncio.to_thread(
+        capture.export, request.match_info["run_id"])
+    if error:
+        return web.json_response(
+            {"error": error},
+            status=404 if "no capture" in error else 500)
+    log.info("exported capture %s to %s", request.match_info["run_id"], path)
+    return web.json_response({"ok": True, "path": path})
+
+
+async def h_capture_delete(request: web.Request) -> web.Response:
+    gone = await asyncio.to_thread(capture.delete, request.match_info["run_id"])
+    if not gone:
+        return web.json_response({"error": "no such capture"}, status=404)
+    return web.json_response({"ok": True})
 
 
 def _findings_payload() -> dict:
@@ -4542,7 +4634,12 @@ FINDING_VERBS = {
               "memory": "Not a problem in this home: {text}",
               "noted": 'brAIn reported: "{text}". The homeowner says that is '
                        "not a problem here, because: {note}",
-              "source": "correction"},
+              "source": "correction",
+              # What this ending means to anything counting them. `kind` is
+              # what the settled ledger stores and two verbs share one, so
+              # it cannot be the label: "I did it" and "Got it" are both
+              # `fixed` and are different evidence about the report.
+              "label": "wrong"},
     # "I already handled it myself" — the ending for anything needing hands,
     # and the one where what you did is worth more than that you did it. "I
     # fixed it" leaves brAIn knowing a problem is over; "replaced the CR2032,
@@ -4551,10 +4648,11 @@ FINDING_VERBS = {
              "memory": "Fixed by the homeowner on {date}: {text}",
              "noted": "Fixed by the homeowner on {date}: {text}. They said: "
                       "{note}",
-             "source": "homeowner"},
+             "source": "homeowner",
+             "label": "done"},
     # "I've read what brAIn changed" — the ending for an automated fix,
     # which already wrote its own memory line when it made the change.
-    "ack": {"kind": "fixed", "memory": ""},
+    "ack": {"kind": "fixed", "memory": "", "label": "got_it"},
     # Not an ending: puts a legacy row (dismissed before the ledger existed,
     # and still on disk) back on the list.
     "reopen": {"status": "open"},
@@ -4621,6 +4719,18 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
         return _findings_payload()
 
     payload = await asyncio.to_thread(settle)
+    # And the label, on the capture of the run that raised it. This is the
+    # one door every ending comes through — the tab's buttons, a tick in
+    # the To-do app, a button on a notification — so hooking it here is
+    # what makes "the ending is the label" true of the ANSWER rather than
+    # of the surface it was given on. Best effort in every direction: a
+    # capture that was never written, or has been pruned, simply has
+    # nothing to label, and an ending must never fail because of one.
+    if finding.get("run_id") and spec.get("label"):
+        await asyncio.to_thread(
+            capture.add_label, finding["run_id"],
+            finding_key=findings_store.normalize(finding["text"]),
+            verb=spec["label"], note=note)
     # A note only changes the sentence for endings that have a second one to
     # offer. "Got it" plus a comment is still "Got it": falling back to
     # `memory` is what stops a note silently costing the memory line.
@@ -6994,6 +7104,10 @@ def make_app() -> web.Application:
     app.router.add_get("/api/doctor/rehearse", h_rehearse_get)
     app.router.add_post("/api/doctor/rehearse", h_rehearse_start)
     app.router.add_get("/api/diagnostics", h_diagnostics)
+    app.router.add_get("/api/capture", h_capture_list)
+    app.router.add_get("/api/capture/{run_id}", h_capture_get)
+    app.router.add_post("/api/capture/{run_id}/export", h_capture_export)
+    app.router.add_delete("/api/capture/{run_id}", h_capture_delete)
     app.router.add_get("/api/baselines", h_baselines)
     app.router.add_post("/api/baselines/run", h_baselines_run)
     app.router.add_get("/api/appliances", h_appliances)

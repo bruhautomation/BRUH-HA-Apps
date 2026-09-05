@@ -80,6 +80,10 @@ backup_exclude:
   # install still has one on disk.
   - chat/**
   - chat_transcript.json
+  # Captured analyst runs (⚙ → capture, off by default). Not a credential
+  # — they are redacted on the way in — but a house's entity names are a
+  # floor plan, and a backup is the one route out nobody presses.
+  - capture/**
 
 # Lifecycle stage, declared rather than inherited from the default.
 stage: stable

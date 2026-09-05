@@ -274,6 +274,13 @@ def _shape(entry: dict) -> dict:
         "entity_id": str(entry.get("entity_id") or "")[:255],
         "source": str(entry.get("source") or "")[:64],
         "source_title": str(entry.get("source_title") or "")[:120],
+        # Which Claude run raised it, when one did. Empty for a house
+        # check, which is the honest answer: nothing was asked. It is
+        # what `capture` joins an ENDING back to the prompt that earned
+        # it — the label half of the corpus — and it is deliberately not
+        # in the shared-volume mirror, because Home Assistant has no use
+        # for a session id.
+        "run_id": str(entry.get("run_id") or "")[:64],
         "status": status,
         "result": str(entry.get("result") or "")[:MAX_RESULT],
         "changed": _clean_changed(entry.get("changed")),
@@ -487,6 +494,7 @@ def coerce(obj: dict) -> dict | None:
         "entity_id": str(obj.get("entity_id") or "").strip()[:255],
         "source": str(obj.get("source") or "").strip()[:64],
         "source_title": str(obj.get("source_title") or "").strip()[:120],
+        "run_id": str(obj.get("run_id") or "").strip()[:64],
         "status": "open",
         "result": "",
         "changed": [],

@@ -732,6 +732,7 @@ def _journal(source: str, result: dict, model: str, timeout_message: str,
         model=model or "",
         tokens=usage_store.tokens_from_meta(meta),
         turns=meta.get("num_turns") if isinstance(meta.get("num_turns"), int) else None,
+        run_id=str(meta.get("session_id") or "")[:64],
     )
 
 
