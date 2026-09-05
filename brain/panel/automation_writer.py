@@ -659,6 +659,37 @@ def _item_span(text: str, node) -> tuple[int, int, str] | None:
     return start, end, indent
 
 
+def entry_ids(text: str) -> list[str]:
+    """Every top-level `id` in the document, in order, or `[]`.
+
+    `locate` answers `None` for three different things — the id is not
+    there, the id is there twice, the item cannot be cut on a line
+    boundary — and only the first of those means the entry is *gone*.
+    A caller with a row on a list and a person pressing Remove has to be
+    able to tell "this was already deleted by hand" from "brAIn will not
+    touch this file", because one of those is a card that can never be
+    cleared and the other is a real refusal.
+    """
+    import yaml  # noqa: PLC0415 — see `_dump`
+
+    try:
+        root = yaml.compose(text)
+    except yaml.YAMLError:
+        return []
+    if not isinstance(root, yaml.SequenceNode):
+        return []
+    out = []
+    for item in root.value:
+        if not isinstance(item, yaml.MappingNode):
+            continue
+        for key, value in item.value:
+            if (isinstance(key, yaml.ScalarNode) and key.value == "id"
+                    and isinstance(value, yaml.ScalarNode)):
+                out.append(value.value)
+                break
+    return out
+
+
 def locate(text: str, entry_id: str) -> tuple[int, int] | None:
     """The byte span of the top-level item whose `id` is `entry_id`.
 
@@ -727,6 +758,15 @@ def _splice(path: Path, entry_id: str, new_entry: dict | None,
                      "keeps them somewhere else — brAIn will not guess where")
     located = locate(text, entry_id)
     if located is None:
+        if str(entry_id) not in entry_ids(text):
+            # Gone rather than uncuttable. Said apart because the caller
+            # has a row on a list and a person pressing a button: "you
+            # already deleted this yourself" ends that row, where "brAIn
+            # will not touch this file" is a refusal it has to keep.
+            return {"ok": False, "missing": True,
+                    "error": (f"there is no entry with the id {entry_id} in "
+                              f"{path.name} any more — it looks like it was "
+                              "already taken out by hand")}
         return _fail(
             f"brAIn could not find exactly one entry with the id "
             f"{entry_id} in {path.name} that it could edit without "
@@ -872,6 +912,7 @@ def remove(entry_id: str, *, config_dir: str | None = None,
 
 
 __all__ = ["AUTOMATIONS_FILE", "CONFIGURATION_FILE", "ID_PREFIX", "INCLUDE_RE",
+           "entry_ids",
            "SCENES_FILE", "SCENE_INCLUDE_RE", "TARGETS",
            "INDEX", "JOURNAL_DIR", "SNAP_DIR", "TOOL", "apply", "apply_edit", "entry_for",
            "is_protected", "locate", "protected_patterns", "remove",
