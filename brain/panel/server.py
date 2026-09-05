@@ -153,6 +153,7 @@ import scenes
 import schedule_store
 import settings_store
 import shadow
+import shadow_findings
 import terminal_proxy
 import thermal
 import trials
@@ -3583,6 +3584,13 @@ async def run_checks(reason: str = "schedule") -> dict:
     A second caller while a pass is in flight gets the last summary back
     with an error rather than a second pass: two passes racing would file
     and clear against each other.
+
+    Rows from a check in `checks.SHADOW` take the same three moves against
+    a **different file** (`shadow_findings`) — a check being trialled runs
+    and reaches nobody. It is a separate store rather than a status
+    because `add_many` dedupes across every status and the settled ledger,
+    so a shadow row sharing the file could suppress a real report of the
+    same problem: a rule nobody has agreed to yet, silencing the analyst.
     """
     if CHECKS_STATE["running"]:
         return {"error": "a checks pass is already running",
@@ -3601,15 +3609,29 @@ async def run_checks(reason: str = "schedule") -> dict:
         await asyncio.to_thread(_record_routines, snapshot, started)
         result = checks.run_all(snapshot, started)
 
-        def apply() -> tuple[list[dict], int, list[dict]]:
+        def apply() -> tuple[list[dict], int, list[dict], dict]:
+            ran_sources = {checks.source_for(c) for c in result["ran"]}
             created = findings_store.add_many(result["findings"])
             refreshed = findings_store.refresh_details(result["findings"])
             cleared = findings_store.clear_resolved(
-                {checks.source_for(c) for c in result["ran"]},
+                ran_sources,
                 {findings_store.normalize(f["text"]) for f in result["findings"]})
-            return created, refreshed, cleared
+            # And the other store, which nothing renders. Rows from a check
+            # being trialled go here instead — a separate file rather than
+            # a status, because `add_many` dedupes across every status and
+            # a shadow row that suppressed a real report would silence the
+            # analyst about a problem on the say-so of a rule nobody has
+            # agreed to yet.
+            shadow_rows = result.get("shadow") or []
+            hidden = shadow_findings.add_many(shadow_rows, started)
+            shadow_findings.clear_resolved(
+                ran_sources,
+                {findings_store.normalize(f["text"]) for f in shadow_rows})
+            shadow_findings.prune(started)
+            return created, refreshed, cleared, {
+                "created": len(hidden), "found": len(shadow_rows)}
 
-        created, refreshed, cleared = await asyncio.to_thread(apply)
+        created, refreshed, cleared, shadow_counts = await asyncio.to_thread(apply)
         await _announce_findings(created)
         # After the findings, and outside them. A proposal is not a
         # finding: different store, different tab, and a habit miner
@@ -3674,6 +3696,9 @@ async def run_checks(reason: str = "schedule") -> dict:
             "proposed": offered,
             "trials_evaluated": graded,
             "intents_fired": fired,
+            # Filed where nobody will see them, on purpose. The count is
+            # the only thing that says a trialled check is running at all.
+            "shadow": shadow_counts,
             "snapshot_errors": snapshot.get("errors") or {},
         }
         journal.record(
@@ -3694,6 +3719,7 @@ async def run_checks(reason: str = "schedule") -> dict:
                    "finished_at": int(time.time()), "error": str(exc)[:300],
                    "ran": [], "created": [], "cleared": [], "refreshed": 0,
                    "skipped": {}, "errors": {}, "per_check": {}, "found": 0,
+                   "shadow": {"created": 0, "found": 0},
                    "snapshot_errors": {}}
     finally:
         CHECKS_STATE["running"] = False
@@ -3931,8 +3957,14 @@ async def h_appliances(request: web.Request) -> web.Response:
 
 async def h_checks(request: web.Request) -> web.Response:
     return web.json_response({
+        # `shadow` per row rather than a separate list: `brain check list`
+        # prints one catalog, and a check that files somewhere the tab
+        # does not render has to say so on its own line or somebody goes
+        # looking for rows that are not there.
         "catalog": [{"id": c["id"], "title": c["title"],
-                     "group": checks.title_for(c["id"])} for c in checks.CHECKS],
+                     "group": checks.title_for(c["id"]),
+                     "shadow": checks.is_shadow(c["id"])}
+                    for c in checks.CHECKS],
         "last": CHECKS_STATE["last"],
         "running": CHECKS_STATE["running"],
         "interval_hours": eff_checks_interval_hours(),
@@ -4490,6 +4522,11 @@ def _diagnostics_payload() -> dict:
         # Numbers only — the captures themselves are never bundled: this
         # payload is what gets attached to a public issue.
         "capture": capture.stats(bool(settings.get("capture"))),
+        # Checks that run and are not on the tab, and how much of what
+        # they said something else said too. No automatic promotion — this
+        # is the number a person reads before moving an id out of
+        # `checks.SHADOW`, which is a code change.
+        "shadow_checks": shadow_findings.diagnostics(),
         "daemons": _daemon_rollcall(),
         "usage": {k: usage.get(k) for k in ("source", "used_percent", "limits")},
     }

@@ -68,6 +68,12 @@ SOURCES: dict[str, dict[str, str]] = {
     # asks for "you" — does not show it either.
     "doctor": {"label": "Doctor", "blurb": "a deep self-check round trip",
                "store": "engine"},
+    # `tests/corpus/replay.py` — the same argument as `doctor`, one step
+    # further from a person: a replay re-runs somebody else's captured
+    # prompt to score this release's version of it, so every turn is a
+    # measurement and none of it is a conversation anybody had.
+    "replay": {"label": "Replay", "blurb": "a corpus run, scoring a prompt",
+               "store": "engine"},
 }
 
 # The sources whose transcripts live in the engine's project directory

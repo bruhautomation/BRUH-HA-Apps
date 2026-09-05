@@ -1,0 +1,117 @@
+---
+# The costed half of the corpus replay.
+#
+# The free half — every `checks` entry, scored against its labels with no
+# model at all — rides the ordinary `tests` job as `tests/test_corpus.py`,
+# and that is where a moved floor fails. This is the other half: the
+# analyst's own prompts, run against contributed houses with a real model
+# and graded against the endings people gave.
+#
+# Three things about how it is wired, and all three are about not being a
+# job people switch off.
+#
+# **It is never required for a pull request.** It costs money and it can
+# be red because a model had a bad night, which is not a reason to block
+# a change.
+#
+# **No secret means a no-op with a sentence, never a failure.** A fork, a
+# pull request from one, and a repository nobody has set the secret on all
+# reach this workflow; a scheduled job that goes red for want of a
+# credential is a notification people learn to ignore, and then the real
+# failure is in that same stream.
+#
+# **The budget is in the workflow, not in the script's default.** Nightly
+# spend is a decision about this repository rather than about the tool, so
+# it is written where somebody editing the schedule can see it.
+name: Corpus replay
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Model id to grade (empty = the CLI's own default)"
+        required: false
+        default: ""
+      max_tokens:
+        description: "Stop asking once this much has been spent"
+        required: false
+        default: "200000"
+  schedule:
+    # 04:20 UTC. Off the hour on purpose: every scheduled job in the world
+    # asks for :00, and GitHub queues those.
+    - cron: "20 4 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    name: Score the prompts against the corpus
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: tests/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/requirements-dev.txt
+
+      # The free half always runs, on every trigger. It needs no
+      # credential, it takes a second, and it is what makes the artifact
+      # worth downloading even on a repository with no secret set.
+      - name: Replay the deterministic half
+        run: |
+          python tests/corpus/replay.py --checks-only \
+            --out corpus-report-checks.json
+
+      # A step that answers the question rather than a conditional buried
+      # in the next one's `if`: "the secret is absent" is a fact the log
+      # should state in words.
+      - name: Is there a credential to spend?
+        id: creds
+        env:
+          TOKEN: ${{ secrets.BRAIN_REPLAY_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "have=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=no" >> "$GITHUB_OUTPUT"
+            echo "No BRAIN_REPLAY_TOKEN is set, so the model half of the" \
+                 "replay is skipped. The deterministic half above ran and" \
+                 "is in the artifact. This is not a failure: set the" \
+                 "secret to a Claude OAuth token to grade the prompts."
+          fi
+
+      - name: Install Claude Code
+        if: steps.creds.outputs.have == 'yes'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Replay the analyst half
+        if: steps.creds.outputs.have == 'yes'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.BRAIN_REPLAY_TOKEN }}
+          MODEL: ${{ inputs.model }}
+          # A modest cap. A card run is 25-45k tokens, so this is a
+          # handful of them a night — enough to see a contract drift,
+          # small enough that nobody has to think about it.
+          MAX_TOKENS: ${{ inputs.max_tokens || '200000' }}
+        run: |
+          python tests/corpus/replay.py \
+            --model "$MODEL" \
+            --max-tokens "$MAX_TOKENS" \
+            --out corpus-report.json
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-replay
+          path: corpus-report*.json
+          if-no-files-found: warn

@@ -17,11 +17,11 @@ BRAIN_RUN_SOURCES="${BRAIN_RUN_SOURCES:-/data/run-sources.jsonl}"
 
 # Kept in step with SOURCES in panel/run_sources.py. An unknown source is
 # refused here rather than written and silently ignored on the way out.
-# card/fix/doctor are claimed by engine._run_cli rather than any shell
+# card/fix/doctor/replay are claimed by engine._run_cli rather than any shell
 # caller, but both halves have to agree on what a valid source IS.
 _brain_known_source() {
     case "$1" in
-        voice|automation|memory|study|card|fix|doctor) return 0 ;;
+        voice|automation|memory|study|card|fix|doctor|replay) return 0 ;;
         *) return 1 ;;
     esac
 }

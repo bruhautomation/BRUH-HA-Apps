@@ -70,6 +70,24 @@ CHECKS: list[dict] = [
 
 CHECK_IDS = [c["id"] for c in CHECKS]
 
+# Checks that run but do not reach the Findings tab. A new rule goes here
+# FIRST: it files to `shadow_findings` instead of to the findings store,
+# nothing renders it, nothing notifies about it, and for a fortnight its
+# rows are compared with what was actually filed over the same window.
+# It moves out of this set when its precision on the corpus and its
+# agreement in shadow both clear the bar — a code change a person makes
+# reading those two numbers, because a producer that promoted itself on a
+# threshold would be a threshold nobody can see deciding what a house is
+# told.
+#
+# Empty on purpose: every check shipped so far has earned its place, and
+# a set with something in it "for now" is how a trial becomes permanent.
+SHADOW: frozenset[str] = frozenset()
+
+
+def is_shadow(check_id: str) -> bool:
+    return check_id in SHADOW
+
 # What a group's findings are labelled with on the tab, beside the
 # severity. "Automation check" reads better under a card than "check:auto".
 GROUP_TITLES = {
@@ -105,15 +123,25 @@ def run_all(snap: dict, now: float | None = None,
             only: list[str] | None = None) -> dict:
     """Run every check the snapshot can feed.
 
-    Returns ``{"findings": [...], "ran": [ids], "skipped": {id: reason},
-    "errors": {id: message}, "per_check": {id: count}}``. A check that
-    raises is reported under ``errors`` and treated as not run: one bad
-    rule must not take the batch down, and must not clear anything either.
+    Returns ``{"findings": [...], "shadow": [...], "ran": [ids],
+    "skipped": {id: reason}, "errors": {id: message}, "per_check":
+    {id: count}}``. A check that raises is reported under ``errors`` and
+    treated as not run: one bad rule must not take the batch down, and
+    must not clear anything either.
+
+    ``shadow`` is the rows from checks in :data:`SHADOW`, split out here
+    rather than filtered by the caller — the catalog knows which rules are
+    being trialled, and a caller that forgot to filter would put a
+    trialled rule straight onto somebody's Findings tab, which is the one
+    thing shadow mode exists to prevent. ``ran`` and ``per_check`` span
+    both, because a shadow check that ran still ran and still may clear
+    its own rows.
     """
     import time as _time
     now = _time.time() if now is None else now
     available = snap.get("available") or {}
     out: list[dict] = []
+    hidden: list[dict] = []
     ran: list[str] = []
     skipped: dict[str, str] = {}
     errors: dict[str, str] = {}
@@ -133,10 +161,11 @@ def run_all(snap: dict, now: float | None = None,
             continue
         ran.append(cid)
         per_check[cid] = len(found)
+        into = hidden if is_shadow(cid) else out
         for f in found:
             f = dict(f)
             f["source"] = source_for(cid)
             f["source_title"] = title_for(cid)
-            out.append(f)
-    return {"findings": out, "ran": ran, "skipped": skipped,
+            into.append(f)
+    return {"findings": out, "shadow": hidden, "ran": ran, "skipped": skipped,
             "errors": errors, "per_check": per_check}

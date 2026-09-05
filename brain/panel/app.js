@@ -2120,6 +2120,28 @@ function renderDiagnostics(d) {
       rows.push(diagRow("Repairs that failed", `<ul>${bad.join("")}</ul>`, true));
     }
   }
+  // Checks that run and are not on the tab. One line per trialled check,
+  // because "14 rows over 9 days, 11 agree with what was filed" is the
+  // number somebody reads before moving an id out of `checks.SHADOW` —
+  // which is a code change, deliberately: a producer that promoted itself
+  // on a threshold would be a threshold nobody can see deciding what a
+  // house is told.
+  const sh = d.shadow_checks || {};
+  const trialled = sh.checks || [];
+  if (trialled.length || (sh.total || 0) > 0) {
+    const byCheck = sh.by_check || {};
+    const items = Object.keys(byCheck).sort().map((id) => {
+      const r = byCheck[id] || {};
+      if (!r.rows) {
+        return `<li><b>${esc(id)}</b> — nothing found yet</li>`;
+      }
+      return `<li><b>${esc(id)}</b> — ${r.rows} row`
+        + `${r.rows === 1 ? "" : "s"} over ${r.days} day`
+        + `${r.days === 1 ? "" : "s"}, ${r.agreed} agree with what was `
+        + "filed</li>";
+    });
+    rows.push(diagRow("Checks in shadow", `<ul>${items.join("")}</ul>`));
+  }
   if (failures.length) {
     const items = failures.slice(0, 5).map((f) =>
       `<li><b>${esc(f.source || "?")}</b> · ${esc(f.outcome || "?")}`

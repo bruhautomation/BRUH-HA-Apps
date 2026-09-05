@@ -261,7 +261,10 @@ def score_checks(result: dict, planted: list[dict]) -> dict:
     about the real house are neither right nor wrong here, and counting
     them would make the number a property of how tidy the house is.
     """
-    rows = result.get("findings") or []
+    # Both halves: a check in `checks.SHADOW` still ran and still found
+    # the planted defect, and scoring only the visible rows would report a
+    # rule being trialled as a rule that does not work.
+    rows = (result.get("findings") or []) + (result.get("shadow") or [])
     ours = [f for f in rows
             if PREFIX in f"{f.get('text', '')} {f.get('entity_id', '')}"]
     out: list[dict] = []

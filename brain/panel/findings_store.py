@@ -885,6 +885,29 @@ def refresh_details(objs: list[dict]) -> int:
     return changed
 
 
+def resolve_clear(items: list[dict], sources: set[str],
+                  keep_keys: set[str]) -> tuple[list[dict], list[dict]]:
+    """Split rows into what survives a pass and what that pass cleared.
+
+    Pure over a list, so the shadow store can hold the *same* rule rather
+    than a copy of it: a shadow check earning its place has to clear
+    exactly the way a real one does, or the two numbers being compared are
+    measuring different lifecycles. :func:`clear_resolved` is this against
+    the real store; ``shadow_findings.clear_resolved`` is it against the
+    other one.
+    """
+    kept: list[dict] = []
+    gone: list[dict] = []
+    for f in items:
+        if (f.get("source") in sources
+                and f.get("status") in CLEARABLE
+                and normalize(f.get("text", "")) not in keep_keys):
+            gone.append(_shape(f))
+            continue
+        kept.append(f)
+    return kept, gone
+
+
 @_mutates
 def clear_resolved(sources: set[str], keep_keys: set[str]) -> list[dict]:
     """Drop open rows a producer no longer reports.
@@ -902,16 +925,7 @@ def clear_resolved(sources: set[str], keep_keys: set[str]) -> list[dict]:
     house, and if it comes back the check files it again. Returns the
     rows that were removed.
     """
-    items = _load()
-    kept: list[dict] = []
-    gone: list[dict] = []
-    for f in items:
-        if (f.get("source") in sources
-                and f.get("status") in CLEARABLE
-                and normalize(f.get("text", "")) not in keep_keys):
-            gone.append(_shape(f))
-            continue
-        kept.append(f)
+    kept, gone = resolve_clear(_load(), sources, keep_keys)
     if gone:
         _write(kept)
     return gone
