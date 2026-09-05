@@ -718,8 +718,9 @@ _TARGET_KEYS = ("entity_id", "area_id", "device_id", "label_id", "floor_id")
 
 def _ids(value) -> list[str]:
     if isinstance(value, str):
-        return [value]
-    return [str(v) for v in (value or []) if isinstance(v, (str, int))]
+        value = [value]
+    return [str(v).strip() for v in (value or [])
+            if isinstance(v, (str, int)) and str(v).strip()]
 
 
 def _call(step: dict, service) -> dict:

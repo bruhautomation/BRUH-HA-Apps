@@ -528,6 +528,31 @@ class TestProtectedThroughEveryContainer(unittest.TestCase):
             [{"service": "lock.unlock", "target": {"label_id": "doors"}}])
         self.assertIn("expand", why)
 
+    def test_a_templated_entity_id_is_refused_rather_than_matched(self):
+        # `{{ trigger.entity_id }}` may be a lock and there is no way to
+        # find out from a config. The same answer an area target gets,
+        # with the target spelled differently — and the shape that
+        # reaches this path most, because the condition producer edits
+        # somebody's own automation rather than composing one.
+        why = self.refusal([{"service": "lock.unlock",
+                             "target": {"entity_id": "{{ trigger.entity_id }}"}}])
+        self.assertIn("cannot resolve", why)
+
+    def test_the_legacy_entity_id_all_is_refused(self):
+        self.assertIn("cannot resolve", self.refusal(
+            [{"service": "light.turn_off", "entity_id": "all"}]))
+
+    def test_an_ordinary_id_is_not_refused_by_that(self):
+        self.assertEqual(self.refusal(
+            [{"service": "light.turn_on",
+              "target": {"entity_id": ["light.a", "switch.b_2"]}}]), "")
+
+    def test_an_action_naming_nothing_is_not_refused_by_that(self):
+        # A notification has no entity at all, and a playbook is mostly
+        # those. An empty target may not read as an unresolvable one.
+        self.assertEqual(self.refusal(
+            [{"service": "notify.phone", "data": {"message": "hello"}}]), "")
+
     def test_an_empty_list_still_writes_a_label_target(self):
         # The refusal is about not being able to expand a scope, and with
         # nothing protected there is nothing to expand it for.

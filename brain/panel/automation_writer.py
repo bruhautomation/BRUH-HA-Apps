@@ -95,6 +95,14 @@ SCENE_INCLUDE_RE = re.compile(
 # where it came from when somebody opens the file in six months.
 ID_PREFIX = "brain_"
 
+# What a plain entity id looks like. Anything else in an `entity_id:` —
+# a Jinja template, the legacy `all`, a helper's name — is something this
+# cannot decide about, and while the protected list is non-empty that is
+# a refusal rather than a pass: "I could not tell" and "nothing is
+# protected" are different answers, the same distinction an area or a
+# device target already gets.
+ENTITY_RE = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z0-9_]+$")
+
 # Two files, and every difference between them named once.
 #
 # `apply` was written for automations and the scene designer needs the
@@ -177,6 +185,15 @@ def _protected_refusal(config: dict, patterns: list[str]) -> str | None:
             if is_protected(str(eid), patterns):
                 return (f"{eid} is on the protected entities list, so brAIn "
                         "will not write an automation that acts on it")
+            if not ENTITY_RE.match(str(eid).strip().lower()):
+                # A template, or `all`, or something nobody can resolve
+                # from a config alone. It may be a lock; there is no way
+                # to find out from here, so it is the area target's
+                # answer with the target spelled differently.
+                return (f"this automation targets `{str(eid)[:60]}`, which "
+                        "brAIn cannot resolve to an entity — and while "
+                        "protected entities are set it will not write one "
+                        "it cannot check")
     return None
 
 
