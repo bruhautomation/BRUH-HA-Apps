@@ -57,6 +57,17 @@ SOURCES: dict[str, dict[str, str]] = {
              "store": "engine"},
     "fix": {"label": "Fixes", "blurb": "a Fix it run at the house",
             "store": "engine"},
+    # `brain doctor --deep` and `brain doctor --rehearse`. Claimed for the
+    # same reason the consolidator's runs are: they are probes, not
+    # conversations, and a rail offering somebody "Reply with exactly: OK"
+    # as something they said is a rail with the person's own chats buried
+    # under machine ones. Filed under the engine's store because that is
+    # where nearly all of them run from (`engine._run_cli` works from
+    # CLAUDE_HOME); the deep run's one chat-session probe lives in
+    # /config's store and is claimed here too, so the default rail — which
+    # asks for "you" — does not show it either.
+    "doctor": {"label": "Doctor", "blurb": "a deep self-check round trip",
+               "store": "engine"},
 }
 
 # The sources whose transcripts live in the engine's project directory
