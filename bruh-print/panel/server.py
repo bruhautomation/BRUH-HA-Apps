@@ -50,6 +50,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -1352,7 +1353,7 @@ def _reading(payload: dict, key: str, *, optional: bool = False):
         raise _refuse(
             f"{key!r} has to be a number of millimetres — read it off the "
             f"ladder printed on the calibration label.")
-    if value != value or abs(value) == float("inf"):
+    if math.isnan(value) or math.isinf(value):
         raise _refuse(f"{key!r} is not a measurement.")
     if abs(value) > MAX_READING_MM:
         raise _refuse(

@@ -30,6 +30,7 @@ tab, which is the only way to be sure and takes one label.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -232,7 +233,7 @@ def _number(value, fallback: float) -> float:
         return fallback
     # NaN survives `float()` and then poisons every sum it reaches, so a
     # label would be shifted by a distance nothing can compare against.
-    return result if result == result and abs(result) != float("inf") else fallback
+    return fallback if math.isnan(result) or math.isinf(result) else result
 
 
 def _optional(value) -> float | None:
@@ -240,7 +241,7 @@ def _optional(value) -> float | None:
     if value is None or value == "":
         return None
     result = _number(value, float("nan"))
-    return None if result != result else result
+    return None if math.isnan(result) else result
 
 
 def _choice(value, allowed: tuple[str, ...], fallback: str) -> str:
@@ -292,7 +293,7 @@ class Stock:
     # wide the liner is: both are properties of the roll. A house with two
     # rolls in a Twin Turbo genuinely has two answers, and they are not each
     # other's.
-    calibration: "Calibration" = field(default_factory=lambda: Calibration())
+    calibration: "Calibration" = field(default_factory=Calibration)
 
     # -- derived -----------------------------------------------------------
     @property
