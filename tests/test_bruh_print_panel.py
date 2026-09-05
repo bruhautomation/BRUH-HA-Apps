@@ -121,8 +121,11 @@ class TestRollRouting(PanelCase):
         way."""
         await self.post("/api/roll/right", {"stock": "edcc-082wh"})
         await self.post("/api/print", {"label": self.label()})
+        # After the sync run that opens every document, and before anything
+        # about a label: the bay is the document's and the geometry is the
+        # page's, which is DYMO's own driver's split.
         self.assertTrue(self.sent[-1].startswith(
-            protocol.select_roll(protocol.ROLL_RIGHT)))
+            protocol.sync_run() + protocol.select_roll(protocol.ROLL_RIGHT)))
 
     async def test_the_byte_on_the_wire_is_the_manuals_ASCII_digit(self):
         """`ESC q` takes ASCII '1'/'2', which is what the reference spells
@@ -140,8 +143,9 @@ class TestRollRouting(PanelCase):
                                 {"label": self.label(), "side": side})
                 payload = self.sent[-1]
                 self.assertTrue(
-                    payload.startswith(bytes([0x1B, ord("q"), wire])),
-                    payload[:6])
+                    payload.startswith(
+                        protocol.sync_run() + bytes([0x1B, ord("q"), wire])),
+                    payload[protocol.SYNC_ESCAPES:][:6])
                 self.assertNotIn(bytes([0x1B, ord("q"), stale]), payload)
 
     async def test_a_mismatched_roll_is_refused_with_both_names_in_it(self):
@@ -1092,113 +1096,184 @@ class TestTheDesignerSeesTheCanvasNotTheSheet(PanelCase):
         self.assertEqual("sheet", view, "nothing was turned, and the header says so")
 
 
-class TestWhereThePrintingStarts(PanelCase):
-    """The offset, through the routes and out onto the wire.
+class CalibrationCase(PanelCase):
+    """Shared plumbing for the four classes below.
 
-    Everything above the wire was measured correct on this exact roll before
-    any of it was written — the raster is 672 x 375 with its ink inset 24
-    dots on all four sides — and the label still came out 4.7mm low. So what
-    is asserted here is the thing nothing else could see: that the raster
-    which reaches the printer is the one that moved, and that the label, the
-    document and the preview are untouched.
+    Everything here walks the payload that would have been written, because
+    that is the only place the answer exists: the panel says "Printed 1 on
+    the left roll" whether the label came out where it was asked for or 5mm
+    down the roll.
     """
 
-    async def loaded(self, margin_mm=5.2):
-        """The roll from the report: a 2.25" x 1.25" cryo label whose owner
-        had typed a 5.2mm border in by hand, because the panel offered them
-        nothing else to do about a printer starting late."""
-        await self.post("/api/stock", {
-            "id": "edcc-082wh", "name": "Chemical-Resistant Cryo Labels",
-            "across_in": 2.25, "feed_in": 1.25, "margin_mm": margin_mm})
-        await self.post("/api/roll/left", {"stock": "edcc-082wh"})
+    HEAD_BYTES = 84
 
-    def raster_rows(self, payload):
+    async def loaded(self, stock="edcc-082wh", **changes):
+        if changes:
+            await self.post("/api/stock", {
+                "id": stock, "name": "Chemical-Resistant Cryo Labels",
+                "across_in": 2.25, "feed_in": 1.25, **changes})
+        await self.post("/api/roll/left", {"stock": stock})
+
+    async def calibrate(self, stock="edcc-082wh", **calibration):
+        """Save a calibration the way the wizard does, without the printing.
+
+        Through the real route and the real derivation: a test that reached
+        into the store would be testing a shape rather than the thing the
+        panel does with five numbers.
+        """
+        entry = self.panel.stocks.require(stock)
+        self.panel.stocks.put(server.stock_store.replace(
+            entry, calibration=server.stock_store.Calibration(**calibration),
+            builtin=False))
+
+    def rows(self, payload):
         """The SYN lines out of a job, the way a printer reads them."""
-        rows, index = [], 0
+        out, index = [], 0
         while index < len(payload):
             byte = payload[index]
             if byte == protocol.ESC:
                 letter = chr(payload[index + 1])
-                index += 2 + {"L": 2, "B": 1, "D": 1, "q": 1}.get(letter, 0)
-                if letter == "f":  # not sent, and this proves it
-                    raise AssertionError("ESC f reached the printer")
+                if payload[index + 1] == protocol.ESC:
+                    index += 1
+                    continue
+                index += 2 + {"L": 2, "B": 1, "D": 1, "q": 1,
+                              "f": 2}.get(letter, 0)
             elif byte == protocol.SYN:
-                rows.append(payload[index + 1:index + 85])
-                index += 85
+                out.append(payload[index + 1:index + 1 + self.HEAD_BYTES])
+                index += 1 + self.HEAD_BYTES
             else:
                 raise AssertionError(f"byte {byte:#x} at {index}")
-        return rows
+        return out
+
+    def skips(self, payload):
+        """Every `ESC f 1 n` in a job, in order, as line counts."""
+        out, index = [], 0
+        marker = bytes([protocol.ESC, ord("f")])
+        while True:
+            index = payload.find(marker, index)
+            if index < 0:
+                return out
+            self.assertEqual(0x01, payload[index + 2],
+                             "the manual requires the 1 prior to the value")
+            out.append(payload[index + 3])
+            index += 4
 
     def first_inked(self, payload):
-        for number, row in enumerate(self.raster_rows(payload)):
+        for number, row in enumerate(self.rows(payload)):
             if any(row):
                 return number
         raise AssertionError("nothing in this job has any ink in it")
 
-    async def print_once(self):
+    def columns(self, payload):
+        """Which head dots a job asks for."""
+        found = set()
+        for row in self.rows(payload):
+            packed = protocol.pack_line(row, self.HEAD_BYTES)
+            for position, value in enumerate(packed):
+                for bit in range(8):
+                    if value & (1 << (7 - bit)):
+                        found.add(position * 8 + bit)
+        return found
+
+    def length(self, payload):
+        marker = bytes([protocol.ESC, ord("L")])
+        index = payload.index(marker)
+        return (payload[index + 2] << 8) | payload[index + 3]
+
+    async def print_once(self, **extra):
         status, body = await self.post(
-            "/api/print", {"label": self.label(text="Rice")})
+            "/api/print", {"label": self.label(text="Rice"), **extra})
         self.assertEqual(200, status, body)
         return body, self.sent[-1]
 
-    async def test_the_raster_that_reaches_the_printer_is_the_one_that_moved(self):
+
+class TestTheDeadBandAtTheLeadingEdge(CalibrationCase):
+    """A printer that starts late, and what the print path does about it.
+
+    The measured case: on this roll the printer lays no ink for the first
+    4.7mm of every label. 0.6.0 answered it with a raster shift and three
+    prints proved the shift could not reach it — everything on the label
+    moved and the band did not. What reaches the printer now is a SHORTER
+    sheet: the rows that would land in the band are cut off the front, so
+    the first row sent is the first row the printer can lay and everything
+    else stays where the document put it.
+    """
+
+    async def test_the_sheet_that_reaches_the_printer_is_the_one_that_was_cut(self):
         """4.7mm is 56 dot lines at 300 dpi, and the default quality is the
-        300x600 graphics mode, where every raster row goes twice — so the
-        wire moves 112 lines for a 56-line shift. The doubling and the
-        offset are one fact and they must not drift apart."""
+        300x600 graphics mode where every raster row goes twice — so the
+        wire loses 112 lines for a 56-line band. The doubling and the crop
+        are one fact and they must not drift apart."""
         await self.loaded()
         _, before = await self.print_once()
-        _, updated = await self.post("/api/stock/edcc-082wh/offset",
-                                     {"offset_feed_mm": -4.7})
+        await self.calibrate(start_mm=4.7)
         _, after = await self.print_once()
 
         repeat = protocol.LINE_REPEAT["graphics"]
-        self.assertEqual(56, (self.first_inked(before)
-                              - self.first_inked(after)) // repeat)
-        self.assertEqual(112, self.first_inked(before) - self.first_inked(after))
-        self.assertEqual(len(self.raster_rows(before)),
-                         len(self.raster_rows(after)),
-                         "the job grew or shrank — the sheet is one label")
-        self.assertEqual(-4.7, updated["stock"]["offset_feed_mm"])
+        self.assertEqual(56 * repeat,
+                         len(self.rows(before)) - len(self.rows(after)))
+        self.assertEqual(56 * repeat,
+                         self.first_inked(before) - self.first_inked(after))
+        self.assertEqual([], self.skips(after),
+                         "a printer that starts late cannot be fed forwards")
 
-    async def test_the_length_budget_is_unchanged_by_an_offset(self):
-        """ESC L is about reaching the sense hole, which does not move
-        because the artwork did."""
+    async def test_the_ink_does_not_move_relative_to_the_paper(self):
+        """The whole point of a crop rather than a shift. Row 82 of the
+        sheet was drawn for 82 lines in; the printer starts 56 lines in and
+        is handed the sheet from row 56, so that ink still lands 82 lines
+        down the label. A shift would have moved it to 26."""
         await self.loaded()
         _, before = await self.print_once()
-        await self.post("/api/stock/edcc-082wh/offset", {"offset_feed_mm": -4.7})
+        await self.calibrate(start_mm=4.7)
         _, after = await self.print_once()
-        marker = bytes([protocol.ESC, ord("L")])
-        self.assertEqual(before[before.index(marker):before.index(marker) + 4],
-                         after[after.index(marker):after.index(marker) + 4])
+        dead = 56 * protocol.LINE_REPEAT["graphics"]
+        self.assertEqual(self.first_inked(before),
+                         dead + self.first_inked(after))
 
-    async def test_an_across_offset_moves_the_bits_within_a_line(self):
+    async def test_the_length_budget_is_unchanged_by_a_crop(self):
+        """`ESC L` is about reaching the sense hole, which did not move
+        because the raster got shorter. It is the STOCK's length and never
+        the height of what is sent."""
         await self.loaded()
         _, before = await self.print_once()
-        await self.post("/api/stock/edcc-082wh/offset",
-                        {"offset_across_mm": -2.0})
+        await self.calibrate(start_mm=4.7)
         _, after = await self.print_once()
-        rows_before = [r for r in self.raster_rows(before) if any(r)]
-        rows_after = [r for r in self.raster_rows(after) if any(r)]
-        self.assertEqual(len(rows_before), len(rows_after))
-        left = lambda row: next(  # noqa: E731
-            i * 8 + b for i, byte in enumerate(row) for b in range(8)
-            if byte & (1 << (7 - b)))
-        self.assertEqual(round(2.0 / 25.4 * 300),
-                         left(rows_before[0]) - left(rows_after[0]))
+        self.assertEqual(938, self.length(before))
+        self.assertEqual(938, self.length(after))
 
-    async def test_a_default_roll_is_byte_for_byte_what_it_always_was(self):
-        """0.0 on both axes is the only honest default — nothing in a
-        container can measure a print head — so a house that has never
-        opened this dialog must get exactly the job it got before."""
+    async def test_ink_asked_for_before_the_die_cut_is_fed_instead(self):
+        """The other sign, and the one the printer can answer: `ESC f 1 n`
+        feeds that far first and the whole label is printable. It was
+        documented in this add-on as deliberately unused, which was right
+        about what it cannot do and wrong to conclude it had no job."""
+        await self.loaded()
+        await self.calibrate(start_mm=-2.0)
+        _, payload = await self.print_once()
+        # 2mm is 24 lines at 300 dpi, doubled by the graphics mode.
+        self.assertEqual([48], self.skips(payload))
+        self.assertEqual(375 * protocol.LINE_REPEAT["graphics"],
+                         len(self.rows(payload)), "nothing was cropped")
+
+    async def test_a_roll_nobody_calibrated_prints_what_it_always_did(self):
+        """The promise every measurement in this add-on is added under, and
+        the one that makes a calibration safe to try."""
         await self.loaded()
         _, before = await self.print_once()
-        await self.post("/api/stock/edcc-082wh/offset",
-                        {"offset_feed_mm": 0, "offset_across_mm": 0})
+        await self.calibrate()
         _, after = await self.print_once()
         self.assertEqual(before, after)
+        self.assertEqual([], self.skips(after))
 
-    async def test_the_offset_is_not_part_of_the_label(self):
+    async def test_a_crop_that_costs_ink_prints_and_says_so(self):
+        await self.loaded()
+        await self.calibrate(start_mm=20.0)
+        body, _ = await self.print_once()
+        self.assertEqual(1, body["printed"])
+        note = " ".join(body["notes"])
+        self.assertIn("20.0mm into every label", note)
+        self.assertIn("did not print", note)
+
+    async def test_the_calibration_is_not_part_of_the_label(self):
         """It is a correction to where the machine puts the paper. A preview
         that drew it would be showing somebody their printer's registration
         as if it were their own layout — and the design canvas is where
@@ -1206,230 +1281,106 @@ class TestWhereThePrintingStarts(PanelCase):
         await self.loaded()
         first = await self.client.post("/api/preview",
                                        json={"label": self.label(text="Rice")})
-        png_before = await first.read()
-        await self.post("/api/stock/edcc-082wh/offset", {"offset_feed_mm": -4.7})
+        before = await first.read()
+        await self.calibrate(start_mm=4.7, across_mm=7.3)
         second = await self.client.post("/api/preview",
                                         json={"label": self.label(text="Rice")})
-        self.assertEqual(png_before, await second.read())
-
-    async def test_a_shift_that_costs_ink_prints_and_says_so(self):
-        await self.loaded()
-        await self.post("/api/stock/edcc-082wh/offset",
-                        {"offset_feed_mm": -20.0})
-        body, payload = await self.print_once()
-        self.assertEqual(1, body["printed"])
-        self.assertTrue(any("past the leading edge" in note
-                            for note in body["notes"]), body["notes"])
-        self.assertTrue(any("Where the printing starts" in note
-                            for note in body["notes"]))
-
-    async def test_an_offset_past_an_inch_is_refused_with_a_sentence(self):
-        """Refused rather than clamped: a clamp would print something other
-        than what the box says, on a control whose entire purpose is that
-        the two agree."""
-        await self.loaded()
-        status, body = await self.post("/api/stock/edcc-082wh/offset",
-                                       {"offset_feed_mm": 40})
-        self.assertEqual(400, status)
-        self.assertIn("inch", body["error"])
-        _, state = await self.get("/api/stocks")
-        entry = next(s for s in state["stocks"] if s["id"] == "edcc-082wh")
-        self.assertEqual(0.0, entry["offset_feed_mm"])
-
-    async def test_an_offset_that_is_not_a_number_is_refused(self):
-        await self.loaded()
-        status, body = await self.post("/api/stock/edcc-082wh/offset",
-                                       {"offset_feed_mm": "a bit"})
-        self.assertEqual(400, status)
-        self.assertIn("millimetres", body["error"])
-
-    async def test_naming_one_axis_leaves_the_other_alone(self):
-        await self.loaded()
-        await self.post("/api/stock/edcc-082wh/offset",
-                        {"offset_feed_mm": -4.7, "offset_across_mm": -1.2})
-        _, body = await self.post("/api/stock/edcc-082wh/offset",
-                                  {"offset_feed_mm": -5.0})
-        self.assertEqual(-5.0, body["stock"]["offset_feed_mm"])
-        self.assertEqual(-1.2, body["stock"]["offset_across_mm"])
-
-    async def test_editing_the_stock_does_not_blank_the_offset(self):
-        """Same partial-update rule as `turn`: the Edit dialog has no
-        control for this, and a Save there that reset it would undo a
-        measurement made one button away."""
-        await self.loaded()
-        await self.post("/api/stock/edcc-082wh/offset", {"offset_feed_mm": -4.7})
-        _, body = await self.post("/api/stock", {
-            "id": "edcc-082wh", "name": "Chemical-Resistant Cryo Labels",
-            "across_in": 2.25, "feed_in": 1.25, "margin_mm": 2.0})
-        self.assertEqual(-4.7, body["stock"]["offset_feed_mm"])
-
-    async def test_the_offset_survives_a_swap(self):
-        """A swap fixes which of the catalog's two numbers is which. The
-        offsets are in the printer's axes, which do not move when it does —
-        and a swap is not a reason to throw away a ruler measurement."""
-        await self.loaded()
-        await self.post("/api/stock/edcc-082wh/offset", {"offset_feed_mm": -4.7})
-        _, body = await self.post("/api/stock/edcc-082wh/swap", {})
-        self.assertEqual(-4.7, body["stock"]["offset_feed_mm"])
-
-    async def test_it_rides_in_the_state_the_panel_opens_with(self):
-        await self.loaded()
-        await self.post("/api/stock/edcc-082wh/offset", {"offset_feed_mm": -4.7})
-        _, body = await self.get("/api/state")
-        entry = next(s for s in body["stocks"] if s["id"] == "edcc-082wh")
-        self.assertEqual(-4.7, entry["offset_feed_mm"])
-        self.assertEqual(0.0, entry["offset_across_mm"])
+        self.assertEqual(before, await second.read())
 
 
-class TestTheCalibrationLabel(PanelCase):
-    """The label you measure the offset with.
+class TestTheFirstLabelOfAJob(CalibrationCase):
+    """`after_tear_mm`: the band that is only on the first copy.
 
-    The ruler cannot do this job and that is structural, not a wording
-    problem: it is drawn inside the stock's own border, so on the roll in
-    the report — which carried 5.2mm of it — there was nothing within 5mm of
-    the die cut to hold a ruler against.
+    The manual says an `ESC E` "places the next label beyond the starting
+    print position. Therefore, a reverse-feed will be automatically invoked
+    when printing on the next label." A printer that does not make that
+    reverse feed loses a fixed amount off the first label of every job and
+    nothing off the rest — which no single number can express, and which is
+    why a job is a list of pages rather than rows and a count.
     """
 
-    async def loaded(self, margin_mm=5.2):
-        await self.post("/api/stock", {
-            "id": "edcc-082wh", "name": "Chemical-Resistant Cryo Labels",
-            "across_in": 2.25, "feed_in": 1.25, "margin_mm": margin_mm})
-        await self.post("/api/roll/left", {"stock": "edcc-082wh"})
-
-    def render(self, document, entry):
-        render_image, label_doc = bruh_print_env.load("render.image",
-                                                      "render.label")
-        return render_image.render(label_doc.Label.from_dict(document), entry)
-
-    def ink_box(self, rendered):
-        render_image, = bruh_print_env.load("render.image")
-        return render_image._ink_box(rendered.image)
-
-    def test_it_is_drawn_to_the_sheet_and_the_ruler_is_not(self):
-        """The one difference that matters, asserted as a difference: the
-        calibration label's ink starts at row 0 and column 0 of the sheet,
-        and the ruler's starts a border in."""
-        stock_store, = bruh_print_env.load("stores.stock")
-        entry = stock_store.Stock(id="edcc-082wh", name="Cryo",
-                                  across_in=2.25, feed_in=1.25, margin_mm=5.2)
-        full = stock_store.replace(entry, margin_mm=0.0)
-
-        calibration = self.ink_box(
-            self.render(server._calibration_label(full), full))
-        self.assertEqual((0, 0), calibration[:2])
-
-        ruler = self.ink_box(self.render(server._ruler_label(entry), entry))
-        border = round(5.2 / 25.4 * 300)
-        self.assertGreaterEqual(ruler[0], border - 1)
-        self.assertGreaterEqual(ruler[1], border - 1)
-
-    def test_the_ticks_are_one_millimetre_apart_from_the_corner(self):
-        """A scale that is not where it claims to be is worse than no scale:
-        somebody reads it, types the number, and the label moves the wrong
-        way. So the ticks are counted at the dot rows they should be at."""
-        stock_store, = bruh_print_env.load("stores.stock")
-        full = stock_store.Stock(id="c", name="c", across_in=2.25,
-                                 feed_in=1.25, margin_mm=0.0)
-        image = self.render(server._calibration_label(full), full).image
-        pixels = image.convert("L").load()
-        for millimetre in (1, 2, 3, 5, 10):
-            row = round(millimetre / 25.4 * 300)
-            column = round(millimetre / 25.4 * 300)
-            self.assertTrue(pixels[0, row] < 128,
-                            f"no feed tick at {millimetre}mm")
-            self.assertTrue(pixels[column, 0] < 128,
-                            f"no across tick at {millimetre}mm")
-
-    def test_it_fits_a_narrow_wrap_without_a_complaint(self):
-        """0.56" across is 14mm, which is not room for numbers beside a
-        ladder — so it draws the ladder and drops the numbers rather than
-        drawing a digit crammed into a tick."""
-        stock_store, = bruh_print_env.load("stores.stock")
-        full = stock_store.Stock(id="w", name="w", across_in=0.56,
-                                 feed_in=3.44, margin_mm=0.0)
-        drawn = self.render(server._calibration_label(full), full)
-        self.assertEqual([], drawn.notes)
-        self.assertEqual((0, 0), self.ink_box(drawn)[:2])
-
-    def test_no_two_numbers_are_printed_over_each_other(self):
-        """The two ladders meet at the corner, so their first numbers want
-        the same few square millimetres — and the first cut drew both, which
-        put a "5" on top of a "5" on the one label whose whole job is being
-        read to the millimetre. The digit is dropped where it would collide
-        and the 1mm ticks carry that stretch, so this walks the real document
-        rather than the picture: two boxes that overlap are the bug whether
-        or not the glyphs inside them happen to touch."""
-        stock_store, = bruh_print_env.load("stores.stock")
-        for across_in, feed_in in ((2.25, 1.25), (2.3125, 4.0), (1.125, 3.5)):
-            full = stock_store.Stock(id="c", name="c", across_in=across_in,
-                                     feed_in=feed_in, margin_mm=0.0)
-            boxes = [
-                (e["x_mm"], e["y_mm"], e["x_mm"] + e["w_mm"],
-                 e["y_mm"] + e["h_mm"])
-                for e in server._calibration_label(full)["elements"]
-                if e["type"] == "text"
-            ]
-            for one in range(len(boxes)):
-                for two in range(one + 1, len(boxes)):
-                    ax0, ay0, ax1, ay1 = boxes[one]
-                    bx0, by0, bx1, by1 = boxes[two]
-                    overlaps = (ax0 < bx1 and bx0 < ax1
-                                and ay0 < by1 and by0 < ay1)
-                    self.assertFalse(
-                        overlaps,
-                        f'{across_in}" x {feed_in}": {boxes[one]} overlaps '
-                        f'{boxes[two]}')
-
-    async def test_printing_it_goes_through_the_ordinary_print_path(self):
-        """Which is what makes printing it again the check on a correction:
-        the offset is applied to it exactly as it is to every other label."""
+    async def test_only_the_first_copy_is_charged(self):
         await self.loaded()
-        status, body = await self.post("/api/printer/calibrate", {})
+        await self.calibrate(after_tear_mm=4.7)
+        _, payload = await self.print_once(copies=3)
+        pages = self._pages(payload)
+        self.assertEqual(3, len(pages))
+        repeat = protocol.LINE_REPEAT["graphics"]
+        self.assertEqual(56 * repeat, len(pages[1]) - len(pages[0]))
+        self.assertEqual(len(pages[1]), len(pages[2]))
+
+    async def test_a_job_after_a_hold_does_not_pay_it(self):
+        """`ending: "hold"` leaves the label inside the printer, so there is
+        no tear-off and no reverse feed owed — which is the whole reason
+        that ending exists on a roll with this fault."""
+        await self.loaded()
+        await self.calibrate(after_tear_mm=4.7, ending="hold")
+        await self.print_once()
+        _, second = await self.print_once()
+        pages = self._pages(second)
+        self.assertEqual(375 * protocol.LINE_REPEAT["graphics"],
+                         len(pages[0]),
+                         "the first label of the second job was charged")
+        self.assertTrue(second.endswith(protocol.short_form_feed()))
+        self.assertNotIn(protocol.form_feed(), second)
+
+    async def test_a_job_after_a_tear_off_pays_it_again(self):
+        """Which is what makes it per-job rather than per-panel-start: every
+        ordinary job ends at the tear bar, so every ordinary job's first
+        label is the one that follows one."""
+        await self.loaded()
+        await self.calibrate(after_tear_mm=4.7)
+        await self.print_once()
+        _, second = await self.print_once()
+        repeat = protocol.LINE_REPEAT["graphics"]
+        self.assertEqual((375 - 56) * repeat, len(self._pages(second)[0]))
+
+    async def test_the_feed_button_puts_the_paper_back_at_the_tear_bar(self):
+        """A roll running with `hold` ends its runs by hand, and after that
+        the next job's first label is charged again. The bookkeeping has to
+        follow the paper, not the setting."""
+        await self.loaded()
+        await self.calibrate(after_tear_mm=4.7, ending="hold")
+        await self.print_once()
+        status, body = await self.post("/api/printer/feed", {})
         self.assertEqual(200, status, body)
-        self.assertEqual(1, body["printed"])
-        self.assertEqual("left", body["side"])
-        first = self.sent[-1]
+        self.assertEqual(protocol.form_feed(), self.sent[-1])
+        _, after = await self.print_once()
+        repeat = protocol.LINE_REPEAT["graphics"]
+        self.assertEqual((375 - 56) * repeat, len(self._pages(after)[0]))
 
-        await self.post("/api/stock/edcc-082wh/offset", {"offset_feed_mm": -4.7})
-        await self.post("/api/printer/calibrate", {})
-        self.assertNotEqual(first, self.sent[-1],
-                            "the offset did not reach the calibration label, "
-                            "so printing it again cannot check anything")
+    def _pages(self, payload):
+        """The rows of each page, split on the feeds between them."""
+        pages, current, index = [], [], 0
+        while index < len(payload):
+            byte = payload[index]
+            if byte == protocol.ESC:
+                letter = chr(payload[index + 1])
+                if payload[index + 1] == protocol.ESC:
+                    index += 1
+                    continue
+                index += 2 + {"L": 2, "B": 1, "D": 1, "q": 1,
+                              "f": 2}.get(letter, 0)
+                if letter in ("G", "E"):
+                    pages.append(current)
+                    current = []
+            elif byte == protocol.SYN:
+                current.append(payload[index + 1:index + 1 + self.HEAD_BYTES])
+                index += 1 + self.HEAD_BYTES
+            else:
+                raise AssertionError(f"byte {byte:#x} at {index}")
+        return pages
 
-    async def test_it_never_saves_the_zero_margin_copy_it_draws_with(self):
-        """It renders against a borderless copy of the roll. Saving that
-        would silently take somebody's measured border away, on the one
-        press that is supposed to be safe to try."""
-        await self.loaded()
-        await self.post("/api/printer/calibrate", {})
-        _, body = await self.get("/api/stocks")
-        entry = next(s for s in body["stocks"] if s["id"] == "edcc-082wh")
-        self.assertEqual(5.2, entry["margin_mm"])
 
-    async def test_an_unknown_stock_is_a_404_and_not_a_blank_label(self):
-        status, body = await self.post("/api/printer/calibrate",
-                                       {"stock": "nothing-like-that"})
-        self.assertEqual(404, status)
-        self.assertIn("nothing-like-that", body["error"])
-
-
-class TestWhereThePaperSitsUnderTheHead(PanelCase):
-    """The narrow-roll half of "where the printing starts", end to end.
+class TestWhereThePaperSitsUnderTheHead(CalibrationCase):
+    """The across half, which is now one number instead of two.
 
     The report: a solid-fill label on the 0.56" x 3.44" cryo wrap, inked
     across 335px of a 687px label — 49% of its width, from one edge, ending
     dead at the halfway point — and no value of the 0.6.0 across offset
-    changed anything. It could not: that offset moves artwork inside a sheet
+    changed anything. It could not: that offset moved artwork inside a sheet
     that is 168 dots wide, and the sheet itself always began at head dot 0.
-
-    So what is asserted here is the dot columns of the head, off the payload
-    that would have been written.
     """
-
-    HEAD_BYTES = 84
-
-    async def loaded(self):
-        await self.post("/api/roll/left", {"stock": "ed1f-060wh"})
 
     def wrap_label(self):
         """Solid fill, which is what was printed: every column of the sheet
@@ -1437,27 +1388,6 @@ class TestWhereThePaperSitsUnderTheHead(PanelCase):
         return {"stock": "ed1f-060wh", "rotate": 0, "elements": [
             {"type": "box", "x_mm": 0, "y_mm": 0, "w_mm": 500, "h_mm": 500,
              "props": {"fill": True, "stroke_mm": 0}}]}
-
-    def head_columns(self, payload):
-        """Which head dots a job asks for, walking the wire the way a
-        printer does."""
-        columns = set()
-        index = 0
-        while index < len(payload):
-            byte = payload[index]
-            if byte == protocol.ESC:
-                letter = chr(payload[index + 1])
-                index += 2 + {"L": 2, "B": 1, "D": 1, "q": 1}.get(letter, 0)
-            elif byte == protocol.SYN:
-                row = payload[index + 1:index + 1 + self.HEAD_BYTES]
-                for position, value in enumerate(row):
-                    for bit in range(8):
-                        if value & (1 << (7 - bit)):
-                            columns.add(position * 8 + bit)
-                index += 1 + self.HEAD_BYTES
-            else:
-                raise AssertionError(f"byte {byte:#x} at {index}")
-        return columns
 
     async def print_wrap(self):
         status, body = await self.post("/api/print",
@@ -1467,363 +1397,852 @@ class TestWhereThePaperSitsUnderTheHead(PanelCase):
 
     async def test_the_reported_case_lands_on_head_dots_0_to_167(self):
         """Reproduced through the real routes before anything is asked of
-        the new control: with nothing measured, the whole 168-dot sheet is
+        the calibration: with nothing measured, the whole 168-dot sheet is
         against the head's first dot and the other 504 dots are never asked
         for. On a roll whose paper is not there, that is the half-inked
         label in the photograph."""
-        await self.loaded()
+        await self.post("/api/roll/left", {"stock": "ed1f-060wh"})
         _, payload = await self.print_wrap()
-        columns = self.head_columns(payload)
+        columns = self.columns(payload)
         self.assertEqual(24, min(columns), "the renderer's 2mm border")
         self.assertEqual(143, max(columns))
         self.assertFalse([c for c in columns if c > 167])
 
-    async def test_a_measured_position_moves_it_along_the_head(self):
-        await self.loaded()
+    async def test_a_measured_edge_moves_the_whole_sheet_along_the_head(self):
+        await self.post("/api/roll/left", {"stock": "ed1f-060wh"})
         _, before = await self.print_wrap()
-        status, saved = await self.post("/api/stock/ed1f-060wh/offset",
-                                        {"media_across_mm": 7.3})
-        self.assertEqual(200, status, saved)
-        self.assertEqual(7.3, saved["stock"]["media_across_mm"])
+        await self.calibrate("ed1f-060wh", across_mm=7.3)
         _, after = await self.print_wrap()
-
         shift = 86  # 7.3mm at 300 dpi, rounded once
-        self.assertEqual({c + shift for c in self.head_columns(before)},
-                         self.head_columns(after))
-        self.assertEqual(110, min(self.head_columns(after)))
-
-    async def test_the_across_offset_still_cannot_do_this_job(self):
-        """The half that explains "I try and try and it doesn't do
-        anything": an across offset shifts artwork inside a 168-dot sheet,
-        so on a solid fill it moves nothing the head can see — the sheet is
-        already full, and what leaves one edge is simply lost."""
-        await self.loaded()
-        _, before = await self.print_wrap()
-        await self.post("/api/stock/ed1f-060wh/offset",
-                        {"offset_across_mm": 4.0})
-        _, after = await self.print_wrap()
-        self.assertLessEqual(max(self.head_columns(after)), 167,
-                             "an across offset reached past the sheet")
-        self.assertEqual(min(self.head_columns(before)) + 47,
-                         min(self.head_columns(after)),
-                         "it moved ink within the label, and only there")
-
-    async def test_a_roll_nobody_measured_prints_the_job_it_always_did(self):
-        """0.0 is the only honest default — nothing in a container can see a
-        print head — so this must be byte-for-byte identical."""
-        await self.loaded()
-        _, before = await self.print_wrap()
-        await self.post("/api/stock/ed1f-060wh/offset",
-                        {"media_across_mm": 0})
-        _, after = await self.print_wrap()
-        self.assertEqual(before, after)
+        self.assertEqual({c + shift for c in self.columns(before)},
+                         self.columns(after))
+        self.assertEqual(110, min(self.columns(after)))
 
     async def test_a_position_that_costs_ink_prints_and_says_so(self):
         """The standing rule: the stock/roll mismatch is the only refusal.
         A position that pushes the label past the head's last dot still
         prints what fits, with a note naming the amount and the edge."""
-        await self.loaded()
-        await self.post("/api/stock/ed1f-060wh/offset",
-                        {"media_across_mm": 50.0})
+        await self.post("/api/roll/left", {"stock": "ed1f-060wh"})
+        await self.calibrate("ed1f-060wh", across_mm=50.0)
         body, payload = await self.print_wrap()
         note = " ".join(body["notes"])
         self.assertIn("past the head’s last dot", note)
         self.assertIn("50.0mm in from the print head", note)
-        self.assertLessEqual(max(self.head_columns(payload)), 671)
+        self.assertLessEqual(max(self.columns(payload)), 671)
 
-    async def test_a_negative_position_is_refused_with_a_sentence(self):
-        """Paper cannot begin before the head's first dot, and a minus here
-        is somebody reading it as an offset — which is the one confusion
-        this control has to avoid."""
-        await self.loaded()
-        status, body = await self.post("/api/stock/ed1f-060wh/offset",
-                                       {"media_across_mm": -7.3})
-        self.assertEqual(400, status)
-        self.assertIn("cannot be negative", body["error"])
-        _, state = await self.get("/api/stocks")
-        entry = next(s for s in state["stocks"] if s["id"] == "ed1f-060wh")
-        self.assertEqual(0.0, entry["media_across_mm"])
-
-    async def test_a_position_past_the_head_is_refused_and_names_the_head(self):
-        await self.loaded()
-        status, body = await self.post("/api/stock/ed1f-060wh/offset",
-                                       {"media_across_mm": 90})
-        self.assertEqual(400, status)
-        self.assertIn("56.9mm wide", body["error"])
-
-    async def test_the_two_quantities_are_saved_apart(self):
-        """They are typed in different boxes and they clip against different
-        edges; a Save that wrote one into the other would be the whole bug
-        again, silently."""
-        await self.loaded()
-        await self.post("/api/stock/ed1f-060wh/offset",
-                        {"media_across_mm": 7.3, "offset_across_mm": -0.4})
+    async def test_the_two_boxes_that_could_not_be_told_apart_are_gone(self):
+        """`media_across_mm` said where a narrow roll's paper sat and
+        `offset_across_mm` shifted artwork inside the sheet. There is one
+        left edge on a roll, and a person whose label printed 7mm to the
+        left had no way of knowing which box was theirs."""
         _, body = await self.get("/api/stocks")
-        entry = next(s for s in body["stocks"] if s["id"] == "ed1f-060wh")
-        self.assertEqual(7.3, entry["media_across_mm"])
-        self.assertEqual(-0.4, entry["offset_across_mm"])
-
-    async def test_editing_the_stock_does_not_blank_the_position(self):
-        await self.loaded()
-        await self.post("/api/stock/ed1f-060wh/offset",
-                        {"media_across_mm": 7.3})
-        _, body = await self.post("/api/stock", {
-            "id": "ed1f-060wh", "name": "Cryogenic Labels",
-            "across_in": 0.56, "feed_in": 3.44})
-        self.assertEqual(7.3, body["stock"]["media_across_mm"])
-
-    async def test_the_position_is_not_part_of_the_label(self):
-        """It is a correction to the machine, so the preview is untouched —
-        the same rule the offsets follow. A preview that moved with it would
-        be showing somebody their printer's geometry as their layout."""
-        await self.loaded()
-        response = await self.client.post("/api/preview",
-                                          json={"label": self.wrap_label()})
-        before = await response.read()
-        await self.post("/api/stock/ed1f-060wh/offset",
-                        {"media_across_mm": 7.3})
-        response = await self.client.post("/api/preview",
-                                          json={"label": self.wrap_label()})
-        self.assertEqual(before, await response.read())
+        row = next(s for s in body["stocks"] if s["id"] == "ed1f-060wh")
+        self.assertNotIn("media_across_mm", row)
+        self.assertNotIn("offset_across_mm", row)
+        self.assertNotIn("offset_feed_mm", row)
+        self.assertIn("across_mm", row["calibration"])
 
 
-class TestTheScaleAcrossTheHead(PanelCase):
-    """The instrument for the number above.
+class TestTheCalibrationPrint(CalibrationCase):
+    """The two labels a person reads, and what the route reports sending.
 
-    Neither of the other two labels can answer this and that is structural,
-    not a wording problem: both are drawn to the stock's own sheet, which on
-    a 0.56" wrap is 168 dots, so every mark they make is inside the very
-    thing whose position is in question.
+    The ruler cannot do this job and neither could the 0.7.0 calibration
+    label: both are drawn to the stock's own sheet, which on a 0.56" wrap is
+    168 dots, so every mark they make is inside the very thing whose
+    position is in question. This one is drawn to the whole head.
     """
 
-    HEAD_BYTES = 84
-
-    WRAP = {"stock": "ed1f-060wh"}
-
-    async def loaded(self):
-        await self.post("/api/roll/left", {"stock": "ed1f-060wh"})
-
-    def columns(self, payload):
-        return TestWhereThePaperSitsUnderTheHead.head_columns(self, payload)
-
-    async def test_it_prints_right_across_the_head(self):
+    async def test_it_prints_two_labels_and_says_what_it_sent(self):
+        """The derivation divides by both numbers, so a report that left
+        either out would leave the readings meaning nothing — a top
+        measurement without the pre-skip it was taken against is not a
+        distance from anything."""
         await self.loaded()
-        status, body = await self.post("/api/printer/head-scale", self.WRAP)
+        status, body = await self.post("/api/printer/calibrate", {})
         self.assertEqual(200, status, body)
-        self.assertEqual(1, body["printed"])
+        self.assertEqual(2, body["printed"])
+        self.assertEqual(2, body["copies"])
         self.assertEqual("left", body["side"])
-        self.assertEqual(56.9, body["head_mm"])
+        self.assertEqual(5.0, body["pre_skip_mm"])
+        self.assertEqual("plain", body["variant"])
+        # 375 lines plus 25% plus the 59-line pre-skip, in millimetres.
+        self.assertAlmostEqual(
+            protocol.budget_dots(375, None, 59) / 300 * 25.4,
+            body["esc_l_mm"], places=1)
 
+    async def test_the_two_copies_carry_different_ink(self):
+        """Which is the whole reason a job is a list of pages: copy 2 is the
+        entire evidence for the hypothesis that only the first label of a
+        job is wrong, and telling the two apart by the order somebody picked
+        them up is not evidence."""
+        await self.loaded()
+        await self.post("/api/printer/calibrate", {})
+        payload = self.sent[-1]
+        self.assertEqual(1, payload.count(protocol.short_form_feed()))
+        self.assertTrue(payload.endswith(protocol.form_feed()))
+        halves = payload.split(protocol.short_form_feed())
+        self.assertNotEqual(halves[0][-2000:], halves[1][-2000:])
+
+    async def test_the_deliberate_pre_skip_is_on_the_wire_and_in_the_budget(self):
+        """"Print lines and lines fed both count towards this total", so a
+        budget that ignored the skip would end the search 5mm short of the
+        hole — the pre-0.5.0 drift, reintroduced by the one job whose whole
+        purpose is measuring where the printing starts."""
+        await self.loaded()
+        await self.post("/api/printer/calibrate", {})
+        payload = self.sent[-1]
+        repeat = protocol.LINE_REPEAT["graphics"]
+        self.assertEqual([59 * repeat, 59 * repeat], self.skips(payload))
+        self.assertEqual(protocol.budget_dots(375, None, 59) * repeat,
+                         self.length(payload))
+
+    async def test_none_of_the_roll_s_own_calibration_reaches_it(self):
+        """It is an absolute instrument or it is nothing: a ladder that
+        moved with the numbers it measures reads the same thing however
+        wrong they are, so printing it again could never check anything."""
+        await self.loaded()
+        await self.post("/api/printer/calibrate", {})
+        first = self.sent[-1]
+        await self.calibrate(start_mm=4.7, across_mm=7.3, after_tear_mm=2.0)
+        await self.post("/api/printer/calibrate", {})
+        self.assertEqual(first, self.sent[-1])
+
+    async def test_the_reset_variant_is_the_one_command_that_differs(self):
+        await self.loaded()
+        await self.post("/api/printer/calibrate", {"variant": "plain"})
+        plain = self.sent[-1]
+        _, body = await self.post("/api/printer/calibrate",
+                                  {"variant": "reset"})
+        reset = self.sent[-1]
+        self.assertEqual("reset", body["variant"])
+        self.assertNotIn(b"\x1b@", plain)
+        self.assertIn(b"\x1b@", reset)
+        self.assertEqual(len(plain) + 2, len(reset))
+
+    async def test_a_variant_nobody_has_is_refused(self):
+        await self.loaded()
+        status, body = await self.post("/api/printer/calibrate",
+                                       {"variant": "hold"})
+        self.assertEqual(400, status)
+        self.assertIn("hold", body["error"])
+        self.assertEqual([], self.sent)
+
+    async def test_it_is_drawn_across_the_whole_head(self):
+        """672 dots, whatever is loaded. The across ladder has to be able to
+        say where paper narrower than the head is sitting, and a ladder
+        drawn on that paper cannot."""
+        await self.post("/api/roll/left", {"stock": "ed1f-060wh"})
+        status, body = await self.post("/api/printer/calibrate",
+                                       {"stock": "ed1f-060wh"})
+        self.assertEqual(200, status, body)
         columns = self.columns(self.sent[-1])
         self.assertEqual(0, min(columns), "it does not start at head dot 0")
         self.assertEqual(671, max(columns), "it stops short of the head")
 
-    async def test_it_is_numbered_often_enough_to_read_from_a_fragment(self):
-        """The whole design. The person holding it sees a strip of paper
-        with part of a ruler on it and no view of where that ruler began, so
-        a bare ladder is unreadable — there is nothing to count from. Every
-        5mm carries a digit, which is two or three of them on 14mm of wrap
-        wherever the paper turns out to sit."""
-        entry = self.panel.stocks.require("ed1f-060wh")
-        head = server.stock_store.replace(entry, across_in=672 / 300,
-                                          margin_mm=0.0)
-        document = server._head_scale_label(head)
-        numbers = [e for e in document["elements"] if e["type"] == "text"]
-        self.assertEqual([str(m) for m in range(0, 57, 5)],
-                         [e["props"]["text"] for e in numbers])
-        for one in range(len(numbers)):
-            for two in range(one + 1, len(numbers)):
-                a, b = numbers[one], numbers[two]
-                self.assertFalse(
-                    a["x_mm"] < b["x_mm"] + b["w_mm"]
-                    and b["x_mm"] < a["x_mm"] + a["w_mm"],
-                    f"{a['props']['text']} overlaps {b['props']['text']}")
-
-    async def test_neither_across_correction_is_applied_to_it(self):
-        """It is an absolute instrument or it is nothing: a scale that moved
-        with the number it measures reads the same thing however wrong that
-        number is, so printing it again could never check anything."""
-        await self.loaded()
-        await self.post("/api/printer/head-scale", self.WRAP)
-        first = self.sent[-1]
-        await self.post("/api/stock/ed1f-060wh/offset",
-                        {"media_across_mm": 7.3, "offset_across_mm": -2.0})
-        await self.post("/api/printer/head-scale", self.WRAP)
-        self.assertEqual(first, self.sent[-1])
-
-    async def test_the_feed_offset_still_reaches_it(self):
-        """Which is the other half of the same rule: a feed offset moves the
-        scale along the roll and cannot disturb an across reading, so
-        leaving it off would be printing this one label somewhere the rest
-        of the roll is not."""
-        await self.loaded()
-        await self.post("/api/printer/head-scale", self.WRAP)
-        first = self.sent[-1]
-        await self.post("/api/stock/ed1f-060wh/offset", {"offset_feed_mm": -4.0})
-        await self.post("/api/printer/head-scale", self.WRAP)
-        self.assertNotEqual(first, self.sent[-1])
-
     async def test_it_never_saves_the_head_wide_copy_it_draws_with(self):
         """It renders against a copy of the roll whose width is the print
-        head's. Saving that would turn somebody's 0.56" wrap into a 2.24"
-        one on the press that is meant to be safe to try."""
-        await self.loaded()
-        await self.post("/api/printer/head-scale", self.WRAP)
+        head's and whose margin is zero. Saving that would turn somebody's
+        0.56" wrap into a 2.24" one on the press that is meant to be safe to
+        try."""
+        await self.loaded(margin_mm=5.2)
+        await self.post("/api/printer/calibrate", {})
         _, body = await self.get("/api/stocks")
-        entry = next(s for s in body["stocks"] if s["id"] == "ed1f-060wh")
-        self.assertEqual(0.56, entry["across_in"])
-        self.assertEqual(2.0, entry["margin_mm"])
+        row = next(s for s in body["stocks"] if s["id"] == "edcc-082wh")
+        self.assertEqual(2.25, row["across_in"])
+        self.assertEqual(5.2, row["margin_mm"])
 
-    async def test_an_unknown_stock_is_a_404(self):
-        status, body = await self.post("/api/printer/head-scale",
+    async def test_an_unknown_stock_is_a_404_and_not_a_blank_label(self):
+        status, body = await self.post("/api/printer/calibrate",
                                        {"stock": "nothing-like-that"})
         self.assertEqual(404, status)
         self.assertIn("nothing-like-that", body["error"])
 
 
-class TestTheGapBetweenLabels(PanelCase):
-    """`ESC L` is defined hole to hole, and this is the half of it nobody
-    could measure from inside a container.
+class TestTheCalibrationLabelItself(unittest.TestCase):
+    """The artwork, driven rather than looked at.
 
-    The reporter set the feed offset to 0, then -8mm, then -4mm on the 2.25"
-    roll and photographed each. Everything moved exactly as the offset
-    predicts, and the dead band at the LEADING edge did not move at all —
-    ~4mm every time. So the printer begins laying ink about 4mm past the
-    leading edge and `offset_raster` structurally cannot touch that: it
-    moves artwork within a sheet that is one label long.
-
-    Whose fault the late start is remains open, and deliberately so. Either
-    it is the printer's top of form, or it is our own over-feed: the search
-    budget is the label plus 25%, 469 dot lines for a 375-line label, against
-    a hole-to-hole pitch nearer 394. What is built is the instrument to
-    settle it, not a guess at the answer.
+    Every assertion here is about a reading being possible, and the reason
+    they are this specific is that the first version of this label passed a
+    weaker set. It put the copy number and an across ruler in the first 14mm
+    of the sheet and started the feed numbers at 15 — and the reading the
+    label exists for is taken in exactly that band: the roll it was built for
+    lands its first row 9.7mm down. The first number a person could read was
+    15, so a 4.7mm dead zone would have been typed in as 10, and the across
+    ruler's own "0 5 10" sat where they would look for it and reads as a feed
+    number. A ladder that is not readable where it is read is worse than no
+    ladder, because a wrong reading is stored and printed against for ever.
     """
 
-    async def loaded(self):
-        await self.post("/api/roll/left", {"stock": "edcc-082wh"})
+    CLEAR_MM = 11.4
 
-    def length(self, payload):
-        marker = bytes([protocol.ESC, ord("L")])
-        index = payload.index(marker)
-        return (payload[index + 2] << 8) | payload[index + 3]
+    def head(self, across_in=2.25, feed_in=1.25):
+        stock_store, = bruh_print_env.load("stores.stock")
+        entry = stock_store.Stock(id="c", name="c", across_in=across_in,
+                                  feed_in=feed_in)
+        return stock_store.replace(entry, across_in=672 / 300, margin_mm=0.0)
 
-    async def print_once(self):
-        status, body = await self.post("/api/print",
-                                       {"label": self.label(text="Rice")})
+    def rendered(self, stock, copy_no=1):
+        render_image, label_doc = bruh_print_env.load("render.image",
+                                                      "render.label")
+        document = server._calibration_label(stock, copy_no)
+        return render_image.render(label_doc.Label.from_dict(document), stock,
+                                   max_across_dots=672)
+
+    def periods(self, across_mm=56.9):
+        """(number column, tick stretch) per period, in millimetres.
+
+        Read off the same two constants the label is built from rather than
+        off the document, because these are what the WINDOW guarantee is
+        about — a test that recovered them from the elements would agree with
+        whatever the label happened to draw.
+        """
+        out = []
+        x = 0.0
+        while x <= across_mm - server.CAL_COLUMN_MM + 1e-9:
+            out.append(((x, x + server.CAL_COLUMN_MM),
+                        (x + server.CAL_COLUMN_MM + 0.2,
+                         min(across_mm, x + server.CAL_COLUMN_PERIOD_MM))))
+            x += server.CAL_COLUMN_PERIOD_MM
+        return out
+
+    def feed_numbers(self, document):
+        """The ladder's own numbers: a text box exactly a column wide."""
+        return [e for e in document["elements"]
+                if e["type"] == "text" and e["w_mm"] == server.CAL_COLUMN_MM]
+
+    # -- the band the reading is taken in ---------------------------------
+    def test_there_is_a_tick_at_raster_line_zero(self):
+        """The datum every feed measurement is taken from. A ladder whose
+        first mark is one line down puts every reading on the roll a line
+        out, invisibly."""
+        image = self.rendered(self.head()).image
+        pixels = image.convert("L").load()
+        for _column, (first, last) in self.periods():
+            middle = round((first + last) / 2 / 25.4 * 300)
+            self.assertTrue(pixels[middle, 0] < 128,
+                            f"no tick at row 0 near head dot {middle}")
+
+    def test_the_ladder_is_numbered_from_zero_every_five_millimetres(self):
+        """Including 0, 5 and 10 — the three that live in the band where the
+        top reading is taken, and the three the first version did not draw.
+        The wizard's rule is "the first number you can see, less one per
+        short tick above it", which is true only if the numbers really do
+        start at the datum."""
+        document = server._calibration_label(self.head(), 1)
+        values = sorted({int(e["props"]["text"])
+                         for e in self.feed_numbers(document)})
+        self.assertEqual([0, 5, 10, 15, 20, 25, 30], values)
+
+    def test_the_first_three_numbers_are_inside_the_reading_band(self):
+        """0, 5 and 10 have to be whole and above 12.5mm, because that is
+        where a die cut falls on the roll this was built for (9.7mm) and on
+        any roll whose printer starts anywhere near it."""
+        document = server._calibration_label(self.head(), 1)
+        for value in (0, 5, 10):
+            boxes = [e for e in self.feed_numbers(document)
+                     if e["props"]["text"] == str(value)]
+            self.assertTrue(boxes, f"the ladder has no {value}")
+            for box in boxes:
+                self.assertGreaterEqual(box["y_mm"], 0.0)
+                self.assertLessEqual(box["y_mm"] + box["h_mm"], 12.5,
+                                     f"{value} is drawn below the band it is "
+                                     f"read in")
+
+    def test_every_number_is_centred_on_its_own_tick(self):
+        """Or the rule for counting the short ticks between two numbers is
+        off by half a digit, which on a 1mm ladder is half a millimetre of
+        dead zone typed in wrong. The 0 is the one exception and it is
+        clamped rather than centred, because half of it would be off the top
+        of the sheet — the tick at row 0 is what it names."""
+        document = server._calibration_label(self.head(), 1)
+        for box in self.feed_numbers(document):
+            value = int(box["props"]["text"])
+            middle = box["y_mm"] + box["h_mm"] / 2
+            if value == 0:
+                self.assertEqual(0.0, box["y_mm"])
+                continue
+            self.assertAlmostEqual(value, middle, places=6,
+                                   msg=f"{value} is not centred on its tick")
+
+    def test_the_reading_band_carries_the_ladder_and_nothing_else(self):
+        """Rows 0 to 11.4 are the measurement. Asserted on the document —
+        every element that reaches into the band is a feed tick or a feed
+        number — because that is the rule, and then on the ink, because the
+        rule is only worth what the renderer does with it."""
+        document = server._calibration_label(self.head(), 1)
+        for element in document["elements"]:
+            if element["y_mm"] >= self.CLEAR_MM:
+                continue
+            if element["type"] == "line":
+                continue
+            self.assertEqual("text", element["type"], element)
+            self.assertEqual(server.CAL_COLUMN_MM, element["w_mm"],
+                             f"{element['props']['text']!r} is in the reading "
+                             f"band and is not a ladder number")
+            self.assertEqual(0, int(element["props"]["text"]) % 5)
+
+    def test_no_ink_reaches_the_gutters_of_the_reading_band(self):
+        """The other half, measured on the bitmap: between a number column
+        and its tick stretch there is 0.2mm that belongs to neither, and past
+        the last period there is the tail. A full-width rule at row 0, an
+        across band an inch too high, a caption — anything that is not the
+        ladder — lands in one of them."""
+        render_image, = bruh_print_env.load("render.image")
+        image = self.rendered(self.head()).image
+        pixels = image.convert("L").load()
+        rows = round(self.CLEAR_MM / 25.4 * 300)
+
+        forbidden: list[tuple[int, int]] = []
+        periods = self.periods()
+        for (_c0, column_end), (tick_start, _t1) in periods:
+            forbidden.append((render_image.mm_to_dots(column_end, 300),
+                              render_image.mm_to_dots(tick_start, 300)))
+        forbidden.append((render_image.mm_to_dots(periods[-1][1][1], 300),
+                          image.width))
+
+        for start, stop in forbidden:
+            for x in range(max(0, start), min(image.width, stop)):
+                for y in range(rows):
+                    self.assertFalse(
+                        pixels[x, y] < 128,
+                        f"ink at ({x}, {y}) is outside the ladder, inside the "
+                        f"band the top reading is taken in")
+
+    # -- the window guarantee ---------------------------------------------
+    def test_every_window_the_width_of_a_label_carries_a_number_column(self):
+        """The design constraint the whole layout is built on. A 0.56" wrap
+        is 14mm of a 57mm head and may sit anywhere along it, so a person
+        holding one sees a fragment of the ladder with no view of where it
+        began — and a bare run of ticks has nothing to count from.
+
+        An interval as long as the column period always contains a multiple
+        of it, so a whole column fits in any window at least `period +
+        column` wide. Asserted by walking every position at tenth-millimetre
+        steps rather than by restating the arithmetic, because the arithmetic
+        is what was wrong the first time round."""
+        columns = [column for column, _ticks in self.periods()]
+        self.assertGreater(len(columns), 5)
+        for step in range(0, int((56.9 - 12.0) * 10) + 1):
+            start = step / 10
+            self.assertTrue(
+                any(start <= left and right <= start + 12.0
+                    for left, right in columns),
+                f"a 12mm label at {start}mm carries no whole number column")
+
+    def test_the_first_three_numbers_survive_every_window_as_well(self):
+        """The window guarantee is about a column; the reading is about the
+        three numbers inside it. Both have to hold at once, or a wrap sitting
+        at 3.2mm shows a ladder with nothing to count from in the only band
+        that matters."""
+        document = server._calibration_label(self.head(), 1)
+        for value in (0, 5, 10):
+            boxes = [(e["x_mm"], e["x_mm"] + e["w_mm"])
+                     for e in self.feed_numbers(document)
+                     if e["props"]["text"] == str(value)]
+            for step in range(0, int((56.9 - 12.0) * 10) + 1):
+                start = step / 10
+                self.assertTrue(
+                    any(start <= left and right <= start + 12.0
+                        for left, right in boxes),
+                    f"a 12mm label at {start}mm cannot read {value}")
+
+    def test_it_holds_for_the_narrowest_stock_in_the_catalog(self):
+        """0.4375" is 11.1mm — under the 12mm the layout is stated for, and
+        in the catalog, so it is the one that decides whether the period is
+        7mm or 10."""
+        columns = [column for column, _ticks in self.periods()]
+        for step in range(0, int((56.9 - 11.1) * 10) + 1):
+            start = step / 10
+            self.assertTrue(
+                any(start <= left and right <= start + 11.1
+                    for left, right in columns),
+                f"an 11.1mm label at {start}mm carries no whole column")
+
+    # -- the across ruler --------------------------------------------------
+    def across_digits(self, document):
+        """The inverted ones. That is what makes them unmistakable, and it
+        is also the only thing that tells them from a feed number in the
+        document — which is the point."""
+        return [e for e in document["elements"]
+                if e["type"] == "text" and e["props"].get("invert")]
+
+    def test_the_across_ruler_is_drawn_inverted(self):
+        """White marks on a solid black band, because it measures the other
+        axis entirely and the reading it would be confused with is the one
+        the label exists for. The first version drew it in ordinary black
+        ticks and digits, in the gap where somebody looks for a number."""
+        document = server._calibration_label(self.head(), 1)
+        digits = self.across_digits(document)
+        self.assertTrue(digits)
+        self.assertEqual([str(m) for m in range(0, 57, 5)],
+                         [e["props"]["text"] for e in digits[:12]])
+        # And the band under them is solid: filled boxes with a white notch
+        # at every millimetre, which is a white tick made of black ones.
+        bars = [e for e in document["elements"]
+                if e["type"] == "box" and e["props"].get("fill")]
+        self.assertGreater(len(bars), 40)
+
+    def test_the_across_band_never_shares_a_row_with_a_feed_number(self):
+        """It lives in the gap between two of them. A band that overlapped
+        one would be white-on-black ink through a number somebody is reading
+        to the millimetre — and worse, it would be in the band the top
+        reading is taken in if it crept up far enough."""
+        document = server._calibration_label(self.head(0.56, 3.44), 1)
+        numbers = [(e["y_mm"], e["y_mm"] + e["h_mm"])
+                   for e in self.feed_numbers(document)]
+        for digit in self.across_digits(document):
+            band = (digit["y_mm"] - server.CAL_ACROSS_TICK_MM,
+                    digit["y_mm"] + digit["h_mm"])
+            self.assertGreaterEqual(band[0], self.CLEAR_MM,
+                                    "an across band reaches into the reading")
+            for top, bottom in numbers:
+                self.assertFalse(band[0] < bottom and top < band[1],
+                                 f"the across band {band} overlaps the feed "
+                                 f"number at {top}")
+
+    def test_the_across_ruler_is_measured_from_head_dot_zero(self):
+        """It reads where the paper is, so its own zero has to be the head's
+        — a ruler starting at the sheet's margin would report the margin."""
+        document = server._calibration_label(self.head(), 1)
+        zeros = [e for e in self.across_digits(document)
+                 if e["props"]["text"] == "0"]
+        self.assertTrue(zeros)
+        self.assertTrue(all(e["x_mm"] <= 0.01 for e in zeros), zeros)
+
+    def test_a_sheet_too_short_for_a_band_gets_none_and_the_route_says_so(self):
+        """A label shorter than the first gap has no across ruler at all,
+        which is a thing the wizard has to know: it asks for a left and a
+        right reading, and "there is no ruler on my label" is a person stuck
+        at a question with no answer on the paper."""
+        self.assertEqual([], server.across_band_tops(12.0))
+        self.assertEqual([11.4], server.across_band_tops(20.0))
+        self.assertEqual([11.4, 26.4], server.across_band_tops(31.75))
+        self.assertEqual([11.4, 26.4, 56.4], server.across_band_tops(87.0))
+        short = self.head(2.25, 0.5)
+        self.assertEqual([], self.across_digits(
+            server._calibration_label(short, 1)))
+
+    # -- the copy number ---------------------------------------------------
+    def test_the_copy_number_is_boxed_in_a_gap_and_repeats(self):
+        """Two labels out of one job seconds apart are otherwise told apart
+        by the order somebody picked them up in. It is in a box so it is not
+        read as a measurement, in the gap under 15 so it is not in one, and
+        on the ladder's own period so a narrow roll cannot miss it."""
+        first = server._calibration_label(self.head(), 1)
+        second = server._calibration_label(self.head(), 2)
+        ones = [e for e in first["elements"] if e["type"] == "text"
+                and e["props"]["text"] == "1"
+                and e["y_mm"] >= server.CAL_COPY_TOP_MM]
+        twos = [e for e in second["elements"] if e["type"] == "text"
+                and e["props"]["text"] == "2"
+                and e["y_mm"] >= server.CAL_COPY_TOP_MM]
+        self.assertEqual(len(ones), len(twos))
+        self.assertEqual(len(self.periods()), len(ones))
+        for element in ones:
+            self.assertGreaterEqual(element["y_mm"], self.CLEAR_MM)
+
+    def test_the_copy_box_never_crosses_a_tick(self):
+        """It is drawn in a number column and is never wider than one: a box
+        that reached into the tick stretch beside it would be ink across a
+        ladder somebody is counting."""
+        document = server._calibration_label(self.head(), 1)
+        boxes = [e for e in document["elements"]
+                 if e["type"] == "box" and not e["props"].get("fill")]
+        self.assertTrue(boxes)
+        columns = [column for column, _ticks in self.periods()]
+        for box in boxes:
+            span = (box["x_mm"], box["x_mm"] + box["w_mm"])
+            self.assertTrue(
+                any(left - 1e-9 <= span[0] and span[1] <= right + 1e-9
+                    for left, right in columns),
+                f"the copy box {span} reaches outside its column")
+
+    # -- and the rules the first version already had -----------------------
+    def test_no_number_is_printed_on_top_of_another(self):
+        """Two ladders and two number columns meet on one label, and the
+        first cut of the 0.7.0 label printed a "5" over a "5" on the one
+        label whose whole job is being read to the millimetre. Walked on the
+        real document rather than on the picture: two boxes that overlap are
+        the bug whether or not the glyphs inside them happen to touch."""
+        for across_in, feed_in in ((2.25, 1.25), (0.56, 3.44), (2.3125, 4.0)):
+            document = server._calibration_label(
+                self.head(across_in, feed_in), 1)
+            boxes = [(e["x_mm"], e["y_mm"], e["x_mm"] + e["w_mm"],
+                      e["y_mm"] + e["h_mm"])
+                     for e in document["elements"] if e["type"] == "text"]
+            for one in range(len(boxes)):
+                for two in range(one + 1, len(boxes)):
+                    ax0, ay0, ax1, ay1 = boxes[one]
+                    bx0, by0, bx1, by1 = boxes[two]
+                    self.assertFalse(
+                        ax0 < bx1 and bx0 < ax1 and ay0 < by1 and by0 < ay1,
+                        f'{across_in}" x {feed_in}": {boxes[one]} overlaps '
+                        f'{boxes[two]}')
+
+    def test_a_number_is_big_enough_to_be_read_as_the_number_it_is(self):
+        """2mm for anything on the feed ladder, which is what a person reads
+        a millimetre off. The across ruler's digits are smaller because the
+        whole band has to fit in the gap between two feed numbers — and they
+        are white on black, which is the compensation as well as the reason
+        they cannot be confused with one."""
+        document = server._calibration_label(self.head(), 1)
+        inverted = {id(e) for e in self.across_digits(document)}
+        for element in document["elements"]:
+            if element["type"] != "text":
+                continue
+            size = element["props"]["size_mm"]
+            if id(element) in inverted:
+                self.assertGreaterEqual(size, 1.5)
+            else:
+                self.assertGreaterEqual(size, 2.0)
+
+    def test_it_draws_without_a_complaint_on_every_stock_in_the_catalog(self):
+        """Including the narrow wrap, where 0.7.0's version had to drop its
+        numbers entirely — that label was drawn to the stock's own sheet, and
+        this one is drawn to the head, so the paper's width decides what is
+        VISIBLE rather than what is drawn."""
+        stock_store, = bruh_print_env.load("stores.stock")
+        for entry in stock_store.BUILTIN:
+            if entry.continuous:
+                continue
+            with self.subTest(stock=entry.id):
+                drawn = self.rendered(
+                    self.head(entry.across_in, entry.feed_in))
+                self.assertEqual([], drawn.notes)
+
+
+class TestSavingWhatWasRead(CalibrationCase):
+    """The route between the five readings and the store.
+
+    The panel does no arithmetic: `calibration.derive` is pure and is tested
+    on its own with the numbers the owner measured. What is asserted here is
+    that the readings reach it, that what comes back is stored, and that the
+    two answers which are not answers store nothing.
+    """
+
+    OWNER = {"left": 0.0, "right": 57.0, "top1": 9.7, "bottom1": 22.05,
+             "top2": 9.7}
+    SENT = {"pre_skip_mm": 5.0, "esc_l_mm": 44.7, "variant": "plain"}
+
+    async def save(self, **changes):
+        payload = {"readings": {**self.OWNER, **changes.pop("readings", {})},
+                   "printed": {**self.SENT, **changes.pop("printed", {})}}
+        return await self.post("/api/stock/edcc-082wh/calibration", payload)
+
+    async def test_the_measured_case_is_stored_and_reaches_the_wire(self):
+        await self.loaded()
+        status, body = await self.save()
         self.assertEqual(200, status, body)
-        return body, self.sent[-1]
-
-    async def test_unmeasured_is_byte_for_byte_the_job_that_shipped(self):
-        """The promise the whole control is built under. 375 lines plus 25%
-        is 469, doubled by the default graphics mode to 938 — which is what
-        main sends today, and what a house that never opens this gets."""
-        await self.loaded()
+        self.assertAlmostEqual(4.7, body["calibration"]["start_mm"], places=1)
+        self.assertIn("4.7mm", body["sentence"])
+        self.assertIsNone(body["next"])
         _, payload = await self.print_once()
-        self.assertEqual(938, self.length(payload))
-        _, entry = await self.get("/api/stocks")
-        row = next(s for s in entry["stocks"] if s["id"] == "edcc-082wh")
-        self.assertIsNone(row["gap_mm"])
+        repeat = protocol.LINE_REPEAT["graphics"]
+        self.assertEqual((375 - 56) * repeat, len(self.rows(payload)))
 
-    async def test_a_measured_gap_makes_the_budget_arithmetic(self):
-        """1.5mm is 18 dot lines, so the budget is 375 + 18 = 393, doubled
-        to 786 by the graphics mode. Not 469-plus-anything: a measurement
-        replaces the guess."""
+    async def test_the_first_label_hypothesis_stores_nothing_and_asks_again(self):
+        """The one answer that is not an answer. `ESC @` is a real candidate
+        and whether a firmware honours it is not knowable from here, so the
+        route says print again rather than recording a fault one command
+        might not have."""
         await self.loaded()
-        status, saved = await self.post("/api/stock/edcc-082wh/offset",
-                                        {"gap_mm": 1.5})
-        self.assertEqual(200, status, saved)
-        self.assertEqual(1.5, saved["stock"]["gap_mm"])
-        _, payload = await self.print_once()
-        self.assertEqual(786, self.length(payload))
+        _, body = await self.save(readings={"top2": 5.0})
+        self.assertIsNone(body["calibration"])
+        self.assertEqual("reset", body["next"]["variant"])
+        _, stocks = await self.get("/api/stocks")
+        row = next(s for s in stocks["stocks"] if s["id"] == "edcc-082wh")
+        self.assertEqual(0.0, row["calibration"]["start_mm"])
 
-    async def test_it_is_the_same_number_in_the_faster_line_mode(self):
-        """The repeat and the length are one fact, and a gap is counted in
-        the printer's steps like everything else."""
+    async def test_a_reading_that_is_not_a_number_is_refused(self):
         await self.loaded()
-        await self.post("/api/settings", {"quality": "text"})
-        await self.post("/api/stock/edcc-082wh/offset", {"gap_mm": 1.5})
-        _, payload = await self.print_once()
-        self.assertEqual(393, self.length(payload))
+        status, body = await self.save(readings={"top1": "about 9"})
+        self.assertEqual(400, status)
+        self.assertIn("millimetres", body["error"])
 
-    async def test_zero_is_settable_and_means_zero(self):
-        """"Wind it down to nothing and watch the leading edge" is the
-        experiment this exists for, so zero has to survive the wire. A falsy
-        test anywhere on this path would hand it the unset default, the
-        experiment would show no change, and the wrong conclusion would be
-        drawn from a control that never applied."""
+    async def test_a_missing_reading_is_refused_by_name(self):
+        """Not defaulted to zero: every branch turns on differences of less
+        than a millimetre, so a field that quietly became zero would not be
+        a slightly wrong calibration, it would be a different hypothesis."""
         await self.loaded()
-        _, saved = await self.post("/api/stock/edcc-082wh/offset",
-                                   {"gap_mm": 0})
-        self.assertEqual(0.0, saved["stock"]["gap_mm"])
-        _, payload = await self.print_once()
-        self.assertEqual(375 * protocol.LINE_REPEAT["graphics"],
-                         self.length(payload))
+        status, body = await self.post(
+            "/api/stock/edcc-082wh/calibration",
+            {"readings": {k: v for k, v in self.OWNER.items() if k != "top2"},
+             "printed": self.SENT})
+        self.assertEqual(400, status)
+        self.assertIn("top2", body["error"])
 
-    async def test_zero_says_out_loud_what_it_has_done(self):
-        """It is the shape that shipped before 0.5.0 and drifted down the
-        roll. Reported every print rather than refused: refusing would take
-        away the one setting the experiment needs, and a diagnostic left
-        switched on is exactly the thing worth saying on every label."""
+    async def test_a_negative_reading_is_refused(self):
+        """Every one is a distance from an edge of the label. A minus sign
+        here is somebody carrying over the old offset's convention, where it
+        meant "the other way" — there is no other way now, and the
+        derivation decides the sign from where the two copies landed."""
         await self.loaded()
-        await self.post("/api/stock/edcc-082wh/offset", {"gap_mm": 0})
-        body, _ = await self.print_once()
-        note = " ".join(body["notes"])
-        self.assertIn("set to 0.0mm", note)
-        self.assertIn("stops looking for the sense hole", note)
-        self.assertIn("drift", note)
-
-    async def test_a_measured_gap_is_silent(self):
-        await self.loaded()
-        await self.post("/api/stock/edcc-082wh/offset", {"gap_mm": 1.5})
-        body, _ = await self.print_once()
-        # The one note this stock always carries is the renderer's, about
-        # 2.25" of label on a 2.24" head. A measured gap adds nothing to it.
-        self.assertEqual(1, len(body["notes"]), body["notes"])
-        self.assertIn("the outer 3 dot columns", body["notes"][0])
-
-    async def test_empty_clears_it_back_to_unmeasured(self):
-        """Three states, not two: absent keeps, empty clears, a number sets.
-        Clearing has to give back the exact job that shipped, or the control
-        is a one-way door."""
-        await self.loaded()
-        _, before = await self.print_once()
-        await self.post("/api/stock/edcc-082wh/offset", {"gap_mm": 1.5})
-        _, saved = await self.post("/api/stock/edcc-082wh/offset",
-                                   {"gap_mm": None})
-        self.assertIsNone(saved["stock"]["gap_mm"])
-        _, after = await self.print_once()
-        self.assertEqual(before, after)
-
-    async def test_a_payload_that_never_mentions_it_keeps_it(self):
-        """Which is what a panel served before 0.7.0 posts. The same
-        partial-update rule the Edit dialog follows."""
-        await self.loaded()
-        await self.post("/api/stock/edcc-082wh/offset", {"gap_mm": 1.5})
-        _, body = await self.post("/api/stock/edcc-082wh/offset",
-                                  {"offset_feed_mm": -4.0})
-        self.assertEqual(1.5, body["stock"]["gap_mm"])
-        self.assertEqual(-4.0, body["stock"]["offset_feed_mm"])
-
-    async def test_a_negative_gap_is_refused(self):
-        await self.loaded()
-        status, body = await self.post("/api/stock/edcc-082wh/offset",
-                                       {"gap_mm": -2})
+        status, body = await self.save(readings={"top1": -4.7})
         self.assertEqual(400, status)
         self.assertIn("cannot be negative", body["error"])
 
-    async def test_a_gap_wider_than_any_die_cut_is_refused(self):
-        """A number bigger than an inch is a label typed into the gap box,
-        and a budget built on it would search most of a foot of paper."""
+    async def test_a_label_wider_than_the_head_may_omit_the_right_edge(self):
+        """Not a failure: the across ladder runs out at the head's last dot,
+        so a wider label has nothing printed at its right edge to read."""
         await self.loaded()
-        status, body = await self.post("/api/stock/edcc-082wh/offset",
-                                       {"gap_mm": 40})
-        self.assertEqual(400, status)
-        self.assertIn("BETWEEN two labels", body["error"])
+        status, body = await self.save(readings={"right": ""})
+        self.assertEqual(200, status, body)
+        self.assertIsNotNone(body["calibration"])
 
-    async def test_it_survives_an_edit_of_the_stock(self):
+    async def test_the_readings_and_what_was_printed_go_together(self):
+        """A top measurement without the pre-skip it was taken against is
+        not a distance from anything, so half a payload is refused rather
+        than assumed."""
         await self.loaded()
-        await self.post("/api/stock/edcc-082wh/offset", {"gap_mm": 1.5})
+        status, body = await self.post("/api/stock/edcc-082wh/calibration",
+                                       {"readings": self.OWNER})
+        self.assertEqual(400, status)
+        self.assertIn("pre-skip", body["error"])
+
+    async def test_it_rides_in_the_state_the_panel_opens_with(self):
+        await self.loaded()
+        await self.save()
+        _, body = await self.get("/api/state")
+        row = next(s for s in body["stocks"] if s["id"] == "edcc-082wh")
+        self.assertAlmostEqual(4.7, row["calibration"]["start_mm"], places=1)
+        self.assertTrue(row["calibrated"])
+        self.assertAlmostEqual(27.05, row["printable_feed_mm"], places=1)
+
+    async def test_clearing_it_gives_back_the_job_that_shipped(self):
+        """A calibration is safe to try only if it is safe to undo, and the
+        undo is to nothing rather than to a guessed default."""
+        await self.loaded()
+        _, before = await self.print_once()
+        await self.save()
+        _, after = await self.print_once()
+        self.assertNotEqual(before, after)
+        response = await self.client.delete("/api/stock/edcc-082wh/calibration")
+        self.assertEqual(200, response.status)
+        _, cleared = await self.print_once()
+        self.assertEqual(before, cleared)
+
+    async def test_editing_the_stock_does_not_blank_it(self):
+        """Same partial-update rule as `turn`: the Edit dialog has no
+        control for a calibration — it is two prints and five readings — and
+        a Save there that reset it would undo a measurement made one button
+        away."""
+        await self.loaded()
+        await self.save()
         _, body = await self.post("/api/stock", {
             "id": "edcc-082wh", "name": "Chemical-Resistant Cryo Labels",
-            "across_in": 2.25, "feed_in": 1.25})
-        self.assertEqual(1.5, body["stock"]["gap_mm"])
+            "across_in": 2.25, "feed_in": 1.25, "margin_mm": 2.0})
+        self.assertAlmostEqual(4.7, body["stock"]["calibration"]["start_mm"],
+                               places=1)
+
+
+class TestTheCheckPrint(CalibrationCase):
+    """The frame that proves the answer, through the ordinary print path.
+
+    The calibration label is an instrument and is immune to every number it
+    measures. This is the opposite and has to be: it goes out exactly as a
+    real label does, so a frame that comes back whole is the calibration
+    being right and a missing side says which way it is wrong.
+    """
+
+    async def test_it_frames_what_the_calibration_says_is_printable(self):
+        """The frame is drawn at the printable rectangle, which starts at the
+        dead band and not at row 0 — so the crop on the way to the printer
+        takes the blank rows in front of it and the frame's top edge lands on
+        the first row the printer can lay. A frame drawn from row 0 would
+        have had its own top edge cropped away, and the check would fail on
+        a calibration that was right."""
+        await self.loaded()
+        await self.calibrate(start_mm=4.7)
+
+        entry = self.panel.stocks.require("edcc-082wh")
+        full = server.stock_store.replace(entry, margin_mm=0.0)
+        document = server._check_label(full, entry.dead_leading_mm())
+        frame = next(e for e in document["elements"] if e["type"] == "box")
+        self.assertAlmostEqual(4.7, frame["y_mm"], places=2)
+        self.assertAlmostEqual(31.75, frame["y_mm"] + frame["h_mm"], places=1)
+
+        status, body = await self.post("/api/printer/check", {})
+        self.assertEqual(200, status, body)
+        self.assertEqual(1, body["printed"])
+        rows = self.rows(self.sent[-1])
+        repeat = protocol.LINE_REPEAT["graphics"]
+        self.assertEqual((375 - 56) * repeat, len(rows))
+        self.assertTrue(any(rows[0]), "nothing on the first printable row")
+        self.assertTrue(any(rows[-1]), "nothing on the last row")
+        # And it is a frame rather than a band: the rows between its edges
+        # carry the two uprights and the words, not a solid rule.
+        middle = rows[len(rows) // 2]
+        self.assertTrue(any(middle))
+        self.assertLess(sum(bin(b).count("1") for b in middle),
+                        sum(bin(b).count("1") for b in rows[0]))
+
+    async def test_it_goes_through_the_same_path_as_a_real_label(self):
+        """Which is what makes it a proof rather than a picture: the crop,
+        the placement and the feed are the ones every other label gets."""
+        await self.loaded()
+        await self.post("/api/printer/check", {})
+        first = self.sent[-1]
+        await self.calibrate(start_mm=4.7, across_mm=3.0)
+        await self.post("/api/printer/check", {})
+        self.assertNotEqual(first, self.sent[-1])
+
+    async def test_an_uncalibrated_roll_frames_the_whole_label(self):
+        await self.loaded()
+        await self.post("/api/printer/check", {})
+        rows = self.rows(self.sent[-1])
+        self.assertEqual(375 * protocol.LINE_REPEAT["graphics"], len(rows))
+        self.assertTrue(any(rows[0]))
+        self.assertTrue(any(rows[-1]))
+
+    async def test_an_unknown_stock_is_a_404(self):
+        status, body = await self.post("/api/printer/check",
+                                       {"stock": "nothing-like-that"})
+        self.assertEqual(404, status)
+        self.assertIn("nothing-like-that", body["error"])
+
+
+class TestTheStoreRemembersWhatWasMeasured(unittest.TestCase):
+    """The model, including the four fields it replaced.
+
+    A stock saved by 0.6.0 through 0.8.x carries somebody's ruler
+    measurements at the top level, and dropping them would silently
+    un-calibrate a roll that was working.
+    """
+
+    def setUp(self):
+        self.stock_store, = bruh_print_env.load("stores.stock")
+        self.path = Path(tempfile.mkdtemp()) / "stocks.json"
+
+    def store(self, rows):
+        self.path.write_text(json.dumps({"stocks": rows, "hidden": []}))
+        return self.stock_store.StockStore(self.path)
+
+    def test_the_four_old_fields_become_the_one_calibration(self):
+        """The two across numbers were always one edge, so they add; and a
+        correction that moved artwork 4.7mm back toward the leading edge was
+        describing a printer that started 4.7mm late, so the start is the
+        offset's negation."""
+        entry = self.store([{
+            "id": "edcc-082wh", "name": "Cryo", "across_in": 2.25,
+            "feed_in": 1.25, "offset_feed_mm": -4.7,
+            "offset_across_mm": -0.4, "media_across_mm": 7.3,
+            "gap_mm": 1.5,
+        }]).require("edcc-082wh")
+        self.assertAlmostEqual(4.7, entry.calibration.start_mm, places=2)
+        self.assertAlmostEqual(6.9, entry.calibration.across_mm, places=2)
+        self.assertEqual(1.5, entry.calibration.gap_mm)
+        self.assertEqual(0.0, entry.calibration.after_tear_mm)
+
+    def test_a_row_from_before_any_of_them_loads_uncalibrated(self):
+        entry = self.store([{"id": "x", "name": "X", "across_in": 2.0,
+                             "feed_in": 1.0}]).require("x")
+        self.assertFalse(entry.calibration.measured)
+        self.assertIsNone(entry.calibration.gap_mm)
+
+    def test_a_row_of_nonsense_does_not_take_the_catalog_with_it(self):
+        """This runs over a file another release wrote. A stock that fails
+        to load is a roll that vanishes out of the catalog with the panel
+        reporting nothing at all."""
+        store = self.store([
+            {"id": "x", "name": "X", "across_in": 2.0, "feed_in": 1.0,
+             "offset_feed_mm": "a bit", "media_across_mm": None,
+             "gap_mm": "nope"},
+            "not even a row",
+        ])
+        entry = store.require("x")
+        self.assertEqual(0.0, entry.calibration.start_mm)
+        self.assertEqual(0.0, entry.calibration.across_mm)
+        self.assertIsNone(entry.calibration.gap_mm)
+
+    def test_only_the_new_shape_is_written_back(self):
+        """Carrying the old keys along "just in case" is how two writers end
+        up disagreeing about which of them a reader believes."""
+        store = self.store([{
+            "id": "x", "name": "X", "across_in": 2.0, "feed_in": 1.0,
+            "offset_feed_mm": -4.7, "media_across_mm": 7.3}])
+        store.put(store.require("x"))
+        raw = json.loads(self.path.read_text())["stocks"][0]
+        self.assertNotIn("offset_feed_mm", raw)
+        self.assertNotIn("media_across_mm", raw)
+        self.assertAlmostEqual(4.7, raw["calibration"]["start_mm"], places=2)
+
+    def test_a_roll_with_nothing_to_correct_is_still_a_roll_somebody_read(self):
+        """Seven default numbers is what a perfect printer measures, and it
+        is also what a roll nobody has touched holds. The stamp is what tells
+        them apart, and the panel keeps offering the calibration for ever
+        without it."""
+        entry = self.stock_store.Stock(
+            id="x", name="X", across_in=2.25, feed_in=1.25,
+            calibration=self.stock_store.Calibration(
+                measured_at=1_700_000_000.0))
+        self.assertTrue(entry.calibration.measured)
+        self.assertTrue(entry.as_dict()["calibrated"])
+        self.assertFalse(self.stock_store.Stock(
+            id="y", name="Y", across_in=2.25,
+            feed_in=1.25).as_dict()["calibrated"])
+
+    def test_a_calibration_from_before_the_stamp_still_reads_as_measured(self):
+        """A roll calibrated by 0.6.0 through 0.8.x carries numbers and no
+        stamp, and those numbers are still somebody's measurement."""
+        entry = self.store([{
+            "id": "x", "name": "X", "across_in": 2.25, "feed_in": 1.25,
+            "offset_feed_mm": -4.7}]).require("x")
+        self.assertIsNone(entry.calibration.measured_at)
+        self.assertTrue(entry.calibration.measured)
+
+    def test_a_swap_keeps_the_across_edge_and_drops_the_rest(self):
+        """Where the paper's left edge sits is a fact about the liner, and
+        exchanging which catalog number is called "across" does not slide
+        the roll along the head. The other four were read off one printed
+        label, against a sheet drawn to the shape the swap has just declared
+        wrong."""
+        entry = self.stock_store.Stock(
+            id="x", name="X", across_in=2.25, feed_in=1.25,
+            calibration=self.stock_store.Calibration(
+                across_mm=7.3, start_mm=4.7, after_tear_mm=2.0,
+                length_mm=34.0, gap_mm=1.5, job_start="reset",
+                measured_at=1_700_000_000.0))
+        swapped = entry.swapped()
+        self.assertEqual(7.3, swapped.calibration.across_mm)
+        self.assertIsNone(swapped.calibration.measured_at,
+                          "a roll holding a stamp and four zeroed "
+                          "measurements reads as calibrated for ever")
+        self.assertEqual("reset", swapped.calibration.job_start)
+        self.assertEqual(0.0, swapped.calibration.start_mm)
+        self.assertEqual(0.0, swapped.calibration.after_tear_mm)
+        self.assertIsNone(swapped.calibration.length_mm)
+        self.assertIsNone(swapped.calibration.gap_mm)
+
+    def test_the_helpers_the_three_readers_share(self):
+        """The renderer, the designer and the send path each need "how much
+        of this label can I use", and three answers to that is three chances
+        for a box to be laid into a band the printer will not reach."""
+        entry = self.stock_store.Stock(
+            id="x", name="X", across_in=2.25, feed_in=1.25,
+            calibration=self.stock_store.Calibration(start_mm=4.7,
+                                                     after_tear_mm=2.0))
+        self.assertAlmostEqual(4.7, entry.dead_leading_mm(), places=2)
+        self.assertAlmostEqual(6.7, entry.dead_leading_mm(True), places=2)
+        self.assertAlmostEqual(31.75 - 4.7, entry.printable_feed_mm(),
+                               places=2)
+        self.assertAlmostEqual(31.75 - 6.7, entry.printable_feed_mm(True),
+                               places=2)
+
+    def test_ink_before_the_die_cut_leaves_the_whole_label_printable(self):
+        """A negative start is a pre-skip rather than a dead band, so there
+        is nothing to take off the label — and `dead_leading_mm` says zero
+        rather than a negative, which would make the printable length longer
+        than the paper."""
+        entry = self.stock_store.Stock(
+            id="x", name="X", across_in=2.25, feed_in=1.25,
+            calibration=self.stock_store.Calibration(start_mm=-2.0))
+        self.assertEqual(0.0, entry.dead_leading_mm())
+        self.assertAlmostEqual(31.75, entry.printable_feed_mm(), places=2)
+
+    def test_a_measured_length_is_what_the_printer_is_told(self):
+        entry = self.stock_store.Stock(
+            id="x", name="X", across_in=2.25, feed_in=1.25,
+            calibration=self.stock_store.Calibration(length_mm=34.0))
+        self.assertEqual(34.0, entry.measured_feed_mm)
+        self.assertEqual(31.75, self.stock_store.Stock(
+            id="x", name="X", across_in=2.25, feed_in=1.25).measured_feed_mm)

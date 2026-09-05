@@ -58,14 +58,188 @@ MM_PER_IN = 25.4
 # Printer tab is where a roll that wants more or less says so.
 DEFAULT_MARGIN_MM = 2.0
 
-# How far the printing may be nudged, in millimetres, in either direction on
-# either axis. An inch. Registration on a LabelWriter wanders by fractions of
-# a millimetre and the worst real misregistration this add-on has been shown
-# measured 4.7mm; a number bigger than an inch is a typo, and a number bigger
-# than the label is a blank label with a note explaining why. It is a bound on
-# what the panel will SAVE rather than a clamp in the print path, because a
-# clamp would silently print something other than what the field says.
-MAX_OFFSET_MM = 25.4
+# There is deliberately no bound named here on how far the printing may be
+# found to start from where it was asked for. 0.6.0 through 0.8.x had one —
+# an inch — because those numbers were TYPED, and the bound was there to
+# catch a decimal point in the wrong place. Nothing is typed any more: every
+# number on a `Calibration` is derived from readings the route has already
+# bounded, and `calibration.derive` refuses the two shapes that are actually
+# impossible (a dead band longer than the label, a gap of less than no
+# paper). A second bound here would be a second opinion about somebody's
+# measurement, in a file that has never seen the label.
+
+
+@dataclass
+class Calibration:
+    """What this printer does with this roll, measured rather than typed.
+
+    0.6.0 shipped a signed feed offset, 0.7.0 a lateral media position and a
+    die-cut gap beside it, and 0.8.x had four numbers on one dialog with four
+    different meanings and four different signs. The owner printed the
+    calibration label, read it, typed a number, printed again, and said: stop
+    adding knobs. They were right, and not only about the count — the four
+    could not answer the question between them. Three offsets (0, −8, −4) on
+    the 2.25" roll moved everything on the label except the dead band at the
+    leading edge, which stayed ~4mm throughout: proof that a raster shift
+    cannot touch where the printer BEGINS, because the sheet it shifts within
+    starts wherever the printer decided to start it.
+
+    So this is not a set of corrections. It is what the printer was measured
+    doing, and the print path is what works out the correction: five numbers
+    a person reads off one printed label, plus two switches for the two
+    firmware behaviours that are not measurable at all.
+
+    **Every field is in the printer's axes and none of them is a nudge.**
+
+    `across_mm` — where the label's LEFT edge sits on the print head, from
+    head dot 0. It absorbs both of the old across numbers, which were always
+    one quantity pretending to be two: `media_across_mm` said where a narrow
+    roll's paper sat and `offset_across_mm` shifted artwork inside the sheet,
+    and a person with a label printing 7mm to the left had no way to tell
+    which of the two boxes was theirs. There is one edge, and this is where
+    it is.
+
+    `start_mm` — SIGNED, and the field the whole rewrite is for. Where raster
+    line 0 lands relative to the die cut, on every label. Positive is the
+    measured case: the printer lays no ink for the first `start_mm` of every
+    label, so that band is unprintable and the artwork has to be laid out
+    inside what is left (`printable_feed_mm`). Negative is the other one: ink
+    would be asked for before the die cut, which `ESC f` can fix by feeding
+    that far first, and the whole label is printable.
+
+    `after_tear_mm` — how much LATER still the first copy of a job starts
+    when the paper is sitting at the tear bar. The manual says an `ESC E`
+    "places the next label beyond the starting print position. Therefore, a
+    reverse-feed will be automatically invoked when printing on the next
+    label"; a printer that does not make that reverse feed loses exactly this
+    much off the first label of every job and nothing off the rest. It is 0.0
+    on any printer that does, which is most of them — and it exists because
+    "copy 1 is wrong and copy 2 is right" is a shape a single number cannot
+    hold, so a roll with it would otherwise be calibrated wrong twice over.
+
+    `length_mm` — the die-cut length as the calibration measured it, or
+    `None` for "trust the catalog". Only stored when it disagrees with the
+    catalog by more than a millimetre, because a measurement that merely
+    confirms the number already on the row is a second copy of it that can
+    drift.
+
+    `gap_mm` — the measured hole-to-hole pitch minus the label, which is what
+    `ESC L` is defined in. `None` keeps the 25%-with-a-floor headroom that
+    every uncalibrated roll gets, byte for byte. It is derived rather than
+    typed and no UI shows it: it is only knowable when the printer is NOT
+    finding the sense hole, and that is a diagnosis the derivation makes.
+
+    `job_start` / `ending` — the two that are not measurements. Whether a job
+    opens with `ESC @` and whether it ends at the tear bar are firmware
+    behaviours, and which one a given roll wants is answered by printing
+    twice and comparing, not by measuring once.
+
+    `measured_at` — when somebody last read a label, and the field that makes
+    "this printer needs no correction" a different state from "nobody has
+    asked". They are the same seven numbers otherwise, and a panel that could
+    not tell them apart would offer the calibration for ever on the printer
+    that least needs it, while a roll that was measured a year and two rolls
+    ago would look freshly checked. Same distinction `usual_open` returning
+    `None` keeps one add-on over, and the reason `derive` takes its `now`
+    rather than reading the clock: a pure function that stamps itself is a
+    pure function nobody can test twice.
+
+    **`None` and `0.0` stay different states in both fields that have them.**
+    Unset means nobody has measured it and the shipped behaviour is kept
+    exactly; zero is a real answer with real consequences. That is
+    `${VAR:-default}`'s trap in another language and every reader here tests
+    `is None`.
+    """
+
+    across_mm: float = 0.0
+    start_mm: float = 0.0
+    after_tear_mm: float = 0.0
+    length_mm: float | None = None
+    gap_mm: float | None = None
+    job_start: str = "plain"
+    ending: str = "tear"
+    measured_at: float | None = None
+
+    @property
+    def measured(self) -> bool:
+        """Has anybody read a calibration label for this roll?
+
+        The stamp first, because a printer that needs no correction saves
+        seven default numbers and would otherwise read as never measured —
+        which is the one answer that would keep offering the calibration to
+        the person who least needs it. The rest of the test is for a roll
+        calibrated before the stamp existed, whose numbers are still theirs.
+        """
+        return bool(self.measured_at
+                    or self.across_mm or self.start_mm or self.after_tear_mm
+                    or self.length_mm is not None or self.gap_mm is not None
+                    or self.job_start != "plain" or self.ending != "tear")
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, raw, legacy: dict | None = None) -> "Calibration":
+        """One calibration off disk, whichever shape it was written in.
+
+        A stock saved by 0.6.0 through 0.8.x carries `offset_feed_mm`,
+        `offset_across_mm`, `media_across_mm` and `gap_mm` at the top level,
+        and those are somebody's ruler measurements: dropping them would
+        silently un-calibrate a roll that was working. The map is the one the
+        rewrite is built on — the two across numbers were always one edge, so
+        they add; and a correction that moved the artwork 4.7mm back toward
+        the leading edge was describing a printer that started 4.7mm late, so
+        `start_mm` is the offset's negation.
+
+        Nothing here may raise. This runs over a file another release wrote,
+        and a stock that fails to load is a roll that vanishes out of the
+        catalog with the panel reporting nothing at all.
+        """
+        if isinstance(raw, dict):
+            return cls(
+                across_mm=_number(raw.get("across_mm"), 0.0),
+                start_mm=_number(raw.get("start_mm"), 0.0),
+                after_tear_mm=_number(raw.get("after_tear_mm"), 0.0),
+                length_mm=_optional(raw.get("length_mm")),
+                gap_mm=_optional(raw.get("gap_mm")),
+                job_start=_choice(raw.get("job_start"), JOB_STARTS, "plain"),
+                ending=_choice(raw.get("ending"), ENDINGS, "tear"),
+                measured_at=_optional(raw.get("measured_at")),
+            )
+        old = legacy or {}
+        return cls(
+            across_mm=(_number(old.get("media_across_mm"), 0.0)
+                       + _number(old.get("offset_across_mm"), 0.0)),
+            start_mm=-_number(old.get("offset_feed_mm"), 0.0),
+            gap_mm=_optional(old.get("gap_mm")),
+        )
+
+
+JOB_STARTS = ("plain", "reset")
+ENDINGS = ("tear", "hold")
+
+
+def _number(value, fallback: float) -> float:
+    """A float off disk, or the fallback. Never a raise — see `from_dict`."""
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    # NaN survives `float()` and then poisons every sum it reaches, so a
+    # label would be shifted by a distance nothing can compare against.
+    return result if result == result and abs(result) != float("inf") else fallback
+
+
+def _optional(value) -> float | None:
+    """A float, or `None` — and the two are not the same answer."""
+    if value is None or value == "":
+        return None
+    result = _number(value, float("nan"))
+    return None if result != result else result
+
+
+def _choice(value, allowed: tuple[str, ...], fallback: str) -> str:
+    return str(value) if value in allowed else fallback
 
 
 class UnknownStock(KeyError):
@@ -105,78 +279,15 @@ class Stock:
     # corrected it, and survives.
     turn: int | None = None
 
-    # Where this printer actually starts laying ink on THIS roll, expressed
-    # as the correction that puts it right: how far the whole rendered sheet
-    # moves on its way to the printer, in millimetres. Both default to 0.0,
-    # which is the only honest default — nothing here can measure a printer's
-    # registration, and a guess would be a misalignment this add-on invented.
-    #
-    # **Signs, once, in words.** `offset_feed_mm` is negative toward the edge
-    # of the label that leaves the printer FIRST, and positive the other way.
-    # `offset_across_mm` is negative toward the left-hand edge as the label
-    # comes out, positive toward the right. The case this was built for is a
-    # printer that began laying ink 4.7mm after the leading edge, so its
-    # correction is `offset_feed_mm = -4.7`.
-    #
-    # It lives on the STOCK rather than on the printer or on the label,
-    # because registration on a die-cut roll is dominated by where the sense
-    # holes are punched relative to the die cut, which is a property of the
-    # roll. A house with two rolls in a Twin Turbo genuinely has two answers,
-    # and they are not each other's.
-    offset_across_mm: float = 0.0
-    offset_feed_mm: float = 0.0
-
-    # Where this roll's paper physically sits under the print head: how far
-    # in from the head's FIRST DOT the media begins, in millimetres. Zero by
-    # default, because dot-0 registration is the shape the 2.25" stock
-    # demonstrably has and a number guessed here would be a misalignment
-    # this add-on invented.
-    #
-    # **This is not `offset_across_mm` and the two must never be confused.**
-    # The offset is a correction to registration wander — tenths of a
-    # millimetre — and it moves the artwork WITHIN the sheet, so ink pushed
-    # past the sheet's own edge is ink lost off the label. This says where
-    # that whole sheet lands on a fixed 672-dot head, and on narrow media it
-    # is centimetres. They are typed in different boxes, worded differently,
-    # and clipped against different edges; the one place they meet is
-    # `render.image.for_the_head`.
-    #
-    # It exists because a raster always begins at head dot 0 — `pack_line`
-    # pads a short line on the right — which is invisible on a 2.25" stock
-    # whose 672-dot raster covers the whole head, and is half a label on a
-    # 0.56" wrap whose 168 dots are a quarter of it. The across offset
-    # cannot express the fix: shifting artwork inside a 168-dot sheet can
-    # only push ink off that sheet's own edge, never move the sheet further
-    # along the head.
-    #
-    # On the stock rather than on the bay, for the reason the two offsets
-    # are: a Twin Turbo's two rolls genuinely have two answers, and a stock
-    # is what a roll is loaded as. A house that moves one roll between bays
-    # and finds the number changed has learnt something the panel cannot
-    # measure for them, and the box is one press away.
-    media_across_mm: float = 0.0
-
-    # The die-cut gap on this roll — the paper between the end of one label
-    # and the start of the next — in millimetres. `None` means nobody has
-    # measured it, which is not the same state as `0.0` and must never be
-    # collapsed into it: zero is a real, settable answer and the whole point
-    # of the control, because winding the budget down to the label itself
-    # and watching what the leading edge does is how a person finds out
-    # whether the dead band at the start of a label is the printer's or
-    # ours. That distinction is `${VAR:-default}`'s trap in a different
-    # language, and it is why every reader here tests `is None`.
-    #
-    # It is the quantity `ESC L` is actually defined in. The manual says the
-    # value is the dot lines "from sense hole to sense hole", which is the
-    # label plus the gap after it — so with a gap measured, the search
-    # budget stops being a fraction somebody chose (25% with a 60-dot floor)
-    # and becomes an arithmetic fact. Unset, `protocol.search_length` keeps
-    # that fraction exactly as it always has, so a roll nobody has measured
-    # prints byte-for-byte the job it printed before this field existed.
-    #
-    # On the stock for the same reason the offsets are: the die cut and the
-    # sense hole are punched into the paper.
-    gap_mm: float | None = None
+    # What this printer was measured doing with this roll — see
+    # `Calibration`, which is where all of it is explained. It lives on the
+    # STOCK rather than on the printer or on the label because registration
+    # on a die-cut roll is dominated by where the sense holes are punched
+    # relative to the die cut, and where the paper sits under the head by how
+    # wide the liner is: both are properties of the roll. A house with two
+    # rolls in a Twin Turbo genuinely has two answers, and they are not each
+    # other's.
+    calibration: "Calibration" = field(default_factory=lambda: Calibration())
 
     # -- derived -----------------------------------------------------------
     @property
@@ -227,6 +338,48 @@ class Stock:
             return self.turn
         return 90 if self.feed_in > self.across_in * 1.6 else 0
 
+    @property
+    def measured_feed_mm(self) -> float:
+        """How long a label on this roll really is.
+
+        The calibration's own measurement where there is one, the catalog
+        otherwise. `ESC L` is built on this rather than on the height of the
+        raster, because the two are different quantities: one is the paper
+        and the other is what we chose to draw on it, and a continuous stock
+        has the second and not the first.
+        """
+        if self.calibration.length_mm is not None:
+            return max(0.0, self.calibration.length_mm)
+        return self.feed_mm
+
+    def dead_leading_mm(self, first_after_tear: bool = False) -> float:
+        """How much of this label the printer will not put ink on.
+
+        Positive only. A negative `start_mm` is a printer asked for ink
+        before the die cut, which is not a dead band — it is a pre-skip, and
+        `printable_feed_mm` is the whole label there.
+
+        `first_after_tear` is the copy that follows an `ESC E`, which is the
+        first copy of a job on a roll whose `ending` is "tear". One helper
+        for the renderer, the designer and the send path, because three
+        answers to "how much of this label can I use" is three chances for
+        the designer to lay artwork into a band the printer will not reach.
+        """
+        cal = self.calibration
+        extra = cal.after_tear_mm if first_after_tear else 0.0
+        return max(0.0, cal.start_mm + extra)
+
+    def printable_feed_mm(self, first_after_tear: bool = False) -> float:
+        """How much of this label's length can carry ink.
+
+        Floored at a millimetre rather than allowed to go negative: a dead
+        band longer than the label is a calibration read off the wrong label
+        or a roll nothing can print on, and a negative canvas would raise
+        somewhere a long way from either.
+        """
+        return max(1.0, self.measured_feed_mm
+                   - self.dead_leading_mm(first_after_tear))
+
     def dots(self, dpi: int = 300) -> tuple[int, int]:
         """(across, feed) in printer dots."""
         return (max(1, round(self.across_in * dpi)),
@@ -239,22 +392,36 @@ class Stock:
         a second row for the transposed version is two rows a person has to
         choose between with no way to tell which is right.
 
-        The two print offsets and the media position are carried across
-        unchanged. All three are in the PRINTER's axes — one along the feed,
-        two across the head — and exchanging which of the catalog's two
-        numbers is which does not move any of them; the roll is still in the
-        same place under the head, whichever way round the label on it is.
-        And a swap is not a reason to throw away a measurement somebody made
-        with a ruler.
+        **`across_mm` survives and the feed-direction measurements do not.**
+        Where the paper's left edge sits under the head is a fact about the
+        liner, and exchanging which of the catalog's two numbers is called
+        "across" does not slide the roll along the head. The other four were
+        all read off ONE printed calibration label, against a sheet drawn to
+        the shape the swap has just declared wrong — so `start_mm`,
+        `after_tear_mm`, `length_mm` and `gap_mm` are measurements of a label
+        that was the wrong way round, and keeping them would be a swap that
+        fixes the width and leaves the printing starting in the wrong place
+        for a reason nobody could find. Printing the calibration label again
+        is one press, and it is the only honest answer.
+
+        `measured_at` goes with them, which is what makes the panel ask for
+        that press: a roll left holding a stamp over four zeroed measurements
+        would read as calibrated for ever, and a verdict nothing re-earns is
+        a verdict nothing can correct.
         """
-        return Stock(**{**asdict(self), "across_in": self.feed_in,
-                        "feed_in": self.across_in, "builtin": False,
-                        # Deliberately not carried over: the shape is what
-                        # `natural_turn` reads, so a derived turn has to be
-                        # re-derived from the new shape. Keeping the old
-                        # answer is how a swap fixes the width and leaves
-                        # the text lying the way it was wrong before.
-                        "turn": None})
+        cal = self.calibration
+        return replace(
+            self, across_in=self.feed_in, feed_in=self.across_in,
+            builtin=False,
+            # Deliberately not carried over: the shape is what
+            # `natural_turn` reads, so a derived turn has to be re-derived
+            # from the new shape. Keeping the old answer is how a swap fixes
+            # the width and leaves the text lying the way it was wrong
+            # before.
+            turn=None,
+            calibration=Calibration(across_mm=cal.across_mm,
+                                    job_start=cal.job_start,
+                                    ending=cal.ending))
 
     def as_dict(self) -> dict:
         data = asdict(self)
@@ -265,6 +432,15 @@ class Stock:
         data["label"] = f'{self.across_in}" × {self.feed_in}"'
         data["turn"] = self.natural_turn
         data["turn_set"] = self.turn is not None
+        # What the wizard and the designer read: the dead band the printer
+        # will not reach, and what is left of the label. Derived here so the
+        # panel cannot answer it a second way — the designer laying a box
+        # inside the printable part and the send path cropping to it have to
+        # agree to the dot.
+        data["calibrated"] = self.calibration.measured
+        data["dead_leading_mm"] = round(self.dead_leading_mm(), 2)
+        data["printable_feed_mm"] = round(self.printable_feed_mm(), 2)
+        data["first_label_dead_mm"] = round(self.dead_leading_mm(True), 2)
         return data
 
 
@@ -274,12 +450,36 @@ def replace(entry: Stock, **changes) -> Stock:
     `dataclasses.replace` would do, except a builtin edited into a custom
     row has to flip `builtin` too, and every caller forgetting that is a row
     that silently reverts on the next release.
+
+    `asdict` recurses, so the calibration comes back as a plain dict and
+    handing that to `Stock(...)` would make `entry.calibration.start_mm`
+    raise on a copy of a stock nobody edited. It is rebuilt rather than
+    deep-copied because a `Calibration` a caller passed in is theirs.
     """
-    return Stock(**{**asdict(entry), **changes})
+    data = {**asdict(entry), **changes}
+    cal = data.get("calibration")
+    if isinstance(cal, dict):
+        data["calibration"] = Calibration.from_dict(cal)
+    return Stock(**data)
 
 
 def _builtin(**kwargs) -> Stock:
     return Stock(builtin=True, **kwargs)
+
+
+def _from_stored(item: dict) -> Stock:
+    """One row off disk, in whichever release's shape it was written.
+
+    The four pre-0.9 fields are mapped in `Calibration.from_dict` and the
+    rest is the ordinary field filter. What is written back is only ever the
+    new shape: carrying the old keys along "just in case" is how two writers
+    end up disagreeing about which of them a reader believes.
+    """
+    fields = {key: value for key, value in item.items()
+              if key in Stock.__dataclass_fields__ and key != "calibration"}
+    fields["calibration"] = Calibration.from_dict(
+        item.get("calibration"), legacy=item)
+    return Stock(**fields)
 
 
 # The rolls this add-on ships knowing about. The two cryo ones are the
@@ -345,9 +545,10 @@ class StockStore:
         except (OSError, ValueError):
             return
         for item in raw.get("stocks", []):
+            if not isinstance(item, dict):
+                continue
             try:
-                stock = Stock(**{k: v for k, v in item.items()
-                                 if k in Stock.__dataclass_fields__})
+                stock = _from_stored(item)
             except TypeError:
                 continue
             self._custom[stock.id] = stock
