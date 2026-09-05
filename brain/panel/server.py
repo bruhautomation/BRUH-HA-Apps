@@ -4594,7 +4594,7 @@ async def h_capture_export(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": error},
             status=404 if "no capture" in error else 500)
-    log.info("exported capture %s to %s", request.match_info["run_id"], path)
+    log.info("exported capture %s to %s", log_safe(request.match_info["run_id"]), path)
     return web.json_response({"ok": True, "path": path})
 
 

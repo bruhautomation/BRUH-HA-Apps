@@ -81,7 +81,7 @@ class TestIntentRouting(ServerCase):
 
     async def _route(self, question: str) -> dict:
         class R:
-            async def json(self_inner):
+            async def json(self):
                 return {"question": question}
         resp = await self.server.h_generate(R())
         return json.loads(resp.text)

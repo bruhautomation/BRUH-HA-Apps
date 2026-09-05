@@ -93,13 +93,16 @@ class TestRedaction(CaptureCase):
         start = src.index("redact() {")
         end = src.index("\n}\n", start) + 3
         block = src[start:end]
+        # The shell writes the sample and reads it back: the fixture secret
+        # rides as an argument, so nothing on the Python side stores it.
         target = self.base / "sample.txt"
-        target.write_text(text, encoding="utf-8")
         proc = subprocess.run(
-            ["bash", "-c", block + f'\nredact "{target}"\n'],
+            ["bash", "-c",
+             block + '\nprintf "%s" "$1" > "$2"\nredact "$2"\ncat "$2"\n',
+             "_", text, str(target)],
             capture_output=True, text=True, timeout=30)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        return target.read_text(encoding="utf-8")
+        return proc.stdout
 
     def test_both_implementations_remove_the_same_secrets(self):
         for secret, what in SECRETS:

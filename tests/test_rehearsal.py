@@ -190,7 +190,7 @@ class TestThePlantedDefectsAreReal(unittest.TestCase):
     def setUp(self):
         import rehearsal
         self.r = rehearsal
-        from checks import automations as auto_checks
+        import checks.automations as auto_checks
         self.checks = auto_checks
 
     def _snap(self, configs):

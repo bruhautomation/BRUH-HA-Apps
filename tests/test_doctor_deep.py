@@ -431,7 +431,8 @@ class TestAutomationTaskStage(DoctorCase):
         task = asyncio.create_task(d.stage_automation_task(h))
         written = await self._claim(
             d, answer={"status": "completed", "result": "READY"})
-        await task
+        out = await task
+        self.assertEqual(out["state"], "ok")
         self.assertEqual(set(written) & {"id", "prompt", "ts", "timeout"},
                          {"id", "prompt", "ts", "timeout"})
         self.assertIsInstance(written["timeout"], int)
