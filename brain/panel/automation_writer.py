@@ -237,12 +237,28 @@ def _scene_entries(row: dict, now: float) -> tuple[list[dict], str]:
 # ---------------------------------------------------------------------------
 
 def _read_text(path: Path) -> str | None:
+    """The file's own bytes, decoded and **not** newline-translated.
+
+    `Path.read_text` opens in universal-newline mode, which turns every
+    `\r\n` into `\n` — and everything here writes the result straight
+    back. On a `automations.yaml` edited from Windows over Samba that
+    turns one appended entry, or one spliced one, into a whole-file diff:
+    every line ending in somebody's file changed by an add-on that
+    promises not to reformat it. `revert` had it worse — it restored a
+    CRLF snapshot as LF, so putting the file back did not put it back.
+    """
     try:
-        return path.read_text(encoding="utf-8")
+        with open(path, encoding="utf-8", newline="") as handle:
+            return handle.read()
     except FileNotFoundError:
         return None
     except OSError:
         return None
+
+
+def _match_newlines(block: str, sample: str) -> str:
+    """The new block, using the line ending the text around it uses."""
+    return block.replace("\n", "\r\n") if "\r\n" in sample else block
 
 
 def _existing(path: Path, what: str = "automations"):
@@ -459,8 +475,9 @@ def apply(row: dict, *, config_dir: str | None = None,
                      f"did not write to it: {exc}")
 
     original = _read_text(path) or ""
+    block = _match_newlines(block, original)
     if original and not original.endswith("\n"):
-        original += "\n"
+        original += "\r\n" if "\r\n" in original else "\n"
     try:
         atomic_write.write_text(path, original + block)
     except OSError as exc:
@@ -613,6 +630,23 @@ def _item_span(text: str, node) -> tuple[int, int, str] | None:
         return None                  # something else shares the dash's line
 
     end = _content_end(node)
+    if end > 0 and end <= len(text) and text[end - 1] == "\n":
+        # A **block scalar** (`|`, `>`) ends where the scanner stopped,
+        # which is the start of the next token's line — already a line
+        # boundary, so the span is cuttable as it stands. Refusing it
+        # meant an entry whose `description:` is a block could never be
+        # edited or removed, and that is the shape HA's own editor writes
+        # for anything multi-line. What the walk-back is for is the blank
+        # lines the scanner ran on through on its way there: swallowing
+        # somebody's spacing between entries into the span is the thing
+        # this whole module exists not to do.
+        while True:
+            previous = _line_start(text, end - 1)
+            if previous >= end or text[previous:end].strip():
+                break
+            end = previous
+        return start, end, indent
+
     while end < len(text) and text[end] in " \t":
         end += 1
     if end < len(text):
@@ -704,10 +738,29 @@ def _splice(path: Path, entry_id: str, new_entry: dict | None,
     block = ""
     if new_entry is not None:
         try:
-            block = _reindent(_dump(new_entry), indent)
+            block = _match_newlines(_reindent(_dump(new_entry), indent),
+                                    text[start:end])
         except Exception as exc:  # noqa: BLE001 — a config that will not
             # serialise is a refusal, not a crash on somebody's press.
             return _fail(f"this entry could not be written as YAML: {exc}")
+
+    spliced = text[:start] + block + text[end:]
+    # Read the result back before it is written. A splice is bytes, and
+    # the one thing bytes cannot tell you is whether what is left is
+    # still a file Home Assistant can load — a document reduced to its
+    # own `...` end marker is the case that found this, and PyYAML
+    # refuses that outright. Every other guard in this module is about
+    # the span; this is about the whole file, which is what the reload
+    # afterwards will actually be handed.
+    try:
+        parsed = yaml.safe_load(spliced)
+    except yaml.YAMLError as exc:
+        return _fail(f"brAIn's edit would have left {path.name} in a state "
+                     f"Home Assistant cannot read, so it did not write it: "
+                     f"{exc}")
+    if parsed is not None and not isinstance(parsed, list):
+        return _fail(f"brAIn's edit would have left {path.name} as something "
+                     "other than a list of entries, so it did not write it")
 
     try:
         journalled = snapshot(path, now)
@@ -715,7 +768,7 @@ def _splice(path: Path, entry_id: str, new_entry: dict | None,
         return _fail(f"brAIn could not snapshot {path.name} first, so it did "
                      f"not write to it: {exc}")
     try:
-        atomic_write.write_text(path, text[:start] + block + text[end:])
+        atomic_write.write_text(path, spliced)
     except OSError as exc:
         return _fail(f"brAIn could not write {path.name}: {exc}")
     return {
