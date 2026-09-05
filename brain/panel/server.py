@@ -146,6 +146,7 @@ import proposals
 import rhythm
 import routines
 import run_sources
+import scenes
 import schedule_store
 import settings_store
 import shadow
@@ -1112,7 +1113,10 @@ def _proposals_diagnostics() -> dict:
             "conditions": dict(CONDITIONS_STATE),
             # The one-offs are not proposals and are counted apart: an
             # armed one is waiting on the house rather than on anybody.
-            "intents": _intents_diagnostics()}
+            "intents": _intents_diagnostics(),
+            # An empty Proposals tab reads the same whether nobody has
+            # asked for scenes or every ask was refused.
+            "scenes": dict(SCENES_STATE)}
 
 
 def _intents_diagnostics() -> dict:
@@ -2480,12 +2484,30 @@ INTENT_RE = re.compile(
     re.IGNORECASE)
 
 
+# "design my evening for the living room" — the ask bar's fourth verb, and
+# the narrowest of them. It names a room and asks for four moods, which is
+# neither a question about the house nor a thing that happens once, so it
+# is matched on the shape of the sentence rather than on a leading word:
+# the area is the whole of what this needs, and anything that does not
+# name one falls through to the ordinary path.
+SCENE_RE = re.compile(
+    r"^\s*(?:please\s+)?"
+    r"(?:design|set\s+up|(?:\w+\s+){0,2}?scenes?)\b"
+    r"[^.?!]*?\bfor\s+(?:the\s+|my\s+)?(?P<area>[^,.?!]{2,40})\s*[.?!]?\s*$",
+    re.IGNORECASE)
+
+
 async def h_generate(request: web.Request) -> web.Response:
     body = await request.json()
     question = (body.get("question") or "").strip() or None
     if question:
         if len(question) > 500:
             raise web.HTTPBadRequest(text="question too long")
+        scene_match = SCENE_RE.match(question)
+        if scene_match:
+            area = scene_match.group("area").strip()
+            return web.json_response(
+                {"queued": [], **await _design_scenes(area)})
         if INTENT_RE.match(question):
             # The same request file the `brain.intent` service writes, so
             # the expensive half — a Claude run, the checks, the card —
@@ -3155,6 +3177,136 @@ async def _offer_conditions(snapshot: dict, now: float) -> int:
     return offered
 
 
+# The last thing the ask bar can start, and the only producer a person
+# addresses by name. It is kept here beside the others because it files
+# through the same store and answers to the same rules; what is different
+# is that somebody is waiting for it, which is why the refusal is
+# synchronous and only the naming run is not.
+SCENES_STATE: dict = {"designed": 0, "refused": 0, "last": "", "at": 0}
+
+
+async def _name_and_offer(obj: dict, area: str) -> None:
+    """Ask Claude for four names, then offer the set. Never raises.
+
+    The **one** optional model run in this feature, and it names things.
+    Everything about which bulb takes which kelvin is composed from the
+    registries, because a model choosing that is a guess wearing a config
+    and one nobody can check by looking at the card. A failed run leaves
+    the plain names, which are a perfectly good answer.
+    """
+    try:
+        result = await asyncio.to_thread(
+            engine.run_claude, scenes.name_prompt(area), scenes.SYSTEM,
+            eff_model(), scenes.NAME_TIMEOUT_S, scenes.NAME_MAX_TURNS,
+            "scene")
+        names = scenes.read_names(result.get("text")
+                                  or result.get("raw") or "")
+    except Exception as exc:  # noqa: BLE001 — the card renders from the
+        # deterministic names, which is why there are some.
+        log.info("could not name the %s scenes: %s", area, exc)
+        names = {}
+    if names:
+        # Re-composed rather than renamed in place: the name is inside the
+        # scene's `name`, which is what the entity id comes from, and
+        # patching one of the two would leave a schedule calling a scene
+        # that is not there.
+        obj = await asyncio.to_thread(
+            scenes.build, obj.pop("_snapshot"), area,
+            automation_writer.protected_patterns(), names)
+        if obj.get("refused"):
+            return
+    else:
+        obj.pop("_snapshot", None)
+    if await asyncio.to_thread(proposals.add, obj):
+        SCENES_STATE["designed"] += 1
+        log.info("proposed four scenes for the %s", area)
+
+
+async def _design_scenes(area: str) -> dict:
+    """Compose four scenes for one area. Returns what to tell the person.
+
+    Two phases on purpose. Composing is deterministic and takes one fetch,
+    so a **refusal comes back on the request** — *"the box room has one
+    light in it"* is an answer somebody should have before they wonder
+    whether anything is happening. Naming them is a Claude run, so the
+    offer lands on the tab afterwards: a request that waited on a model
+    is a request ingress cuts.
+    """
+    area = str(area or "").strip()[:60]
+    SCENES_STATE["last"] = area
+    SCENES_STATE["at"] = int(time.time())
+    if not area:
+        return {"refused": "brAIn could not tell which room that was."}
+    try:
+        snap = await checks.snapshot.collect_rooms()
+    except Exception as exc:  # noqa: BLE001 — "I could not look" is its own
+        # answer, and it is about brAIn rather than about the room.
+        log.warning("could not read the house for scenes: %s", exc)
+        return {"refused": f"brAIn could not read the house just now: {exc}"}
+
+    protected = automation_writer.protected_patterns()
+    obj = await asyncio.to_thread(scenes.build, snap, area, protected, None)
+    if obj.get("refused"):
+        SCENES_STATE["refused"] += 1
+        return {"refused": obj["refused"], "area": area}
+    if await asyncio.to_thread(proposals.knows, obj):
+        return {"refused": (f"brAIn has already offered these four scenes "
+                            f"for the {area} — the answer is on the "
+                            "Proposals tab."), "area": area}
+    obj["_snapshot"] = snap
+    asyncio.create_task(_name_and_offer(obj, area))
+    return {"scenes": area, "lights": len(obj["scene"]["lights"])}
+
+
+async def _offer_scene_schedule(snapshot: dict, now: float) -> int:
+    """Offer the schedule for any room whose four scenes really exist.
+
+    Read off `scenes.yaml` rather than off the proposals ledger, because
+    what makes the schedule sayable is the scenes being *there* — somebody
+    who copied the card's YAML in by hand has earned it exactly as much as
+    somebody who pressed the button. And it is an ordinary automation, so
+    it goes through 1.44.0's path unchanged and can be tried for a week.
+    """
+    if snapshot.get("scenes") is None:
+        return 0                     # scenes.yaml unreadable: not "no scenes"
+    try:
+        payload = await asyncio.to_thread(rhythm.load)
+        tz, _name = await asyncio.to_thread(baselines.house_timezone)
+    except Exception as exc:  # noqa: BLE001
+        log.info("could not read the rhythm for a scene schedule: %s", exc)
+        payload, tz = {}, None
+
+    import datetime as dt  # noqa: PLC0415 — one call, once a pass
+
+    when = dt.datetime.fromtimestamp(now, tz or dt.timezone.utc)
+    wake = rhythm.wake_minute(payload, when) if payload else None
+    settle = rhythm.settle_minute(payload, when) if payload else None
+
+    areas = {str(cfg.get("id") or "").split("_")[2]
+             for cfg in (snapshot.get("scenes") or [])
+             if isinstance(cfg, dict)
+             and str(cfg.get("id") or "").startswith(scenes.ID_PREFIX)
+             and len(str(cfg.get("id") or "").split("_")) > 3}
+    offered = 0
+    for slug in sorted(a for a in areas if a):
+        # The area's own name, as the registries have it — the slug in the
+        # id is what survives a rename and the name is what a card says.
+        house = scenes._house(snapshot)
+        name = next((a for a in {house.area_of(e)
+                                 for e in (snapshot.get("states") or {})}
+                     if a and scenes._slug(a) == slug), slug)
+        obj = await asyncio.to_thread(scenes.schedule, snapshot, name,
+                                      wake, settle)
+        if not obj or await asyncio.to_thread(proposals.knows, obj):
+            continue
+        if await asyncio.to_thread(proposals.add, obj):
+            offered += 1
+    if offered:
+        log.info("proposed %d scene schedule%s", offered,
+                 "" if offered == 1 else "s")
+    return offered
+
+
 async def _offer_playbooks(snapshot: dict, now: float) -> int:
     """Offer the emergency playbooks this house can have. Returns how many.
 
@@ -3380,6 +3532,13 @@ async def run_checks(reason: str = "schedule") -> dict:
             offered += await _offer_conditions(snapshot, started)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not offer conditions: %s", exc)
+        # And the fourth: the schedule that walks a room through the four
+        # scenes it now has. Only once they really exist — a schedule
+        # naming a scene that is not there errors at 07:00 every morning.
+        try:
+            offered += await _offer_scene_schedule(snapshot, started)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not offer a scene schedule: %s", exc)
         # And the other half of the same lifecycle: a trial that nothing
         # evaluates is a status with no report behind it.
         try:
@@ -4206,6 +4365,39 @@ async def h_playbook_rehearsal(request: web.Request) -> web.Response:
         await asyncio.to_thread(playbooks.rehearsal, row, states))
 
 
+async def h_scene_areas(request: web.Request) -> web.Response:
+    """Every room brAIn could compose scenes for, with its light count.
+
+    The picker's own list. A room with one bulb is never offered and then
+    refused: a control that hands somebody a choice its own rule forbids
+    is a control that teaches people to distrust it.
+    """
+    try:
+        snap = await checks.snapshot.collect_rooms()
+    except Exception as exc:  # noqa: BLE001 — "I could not ask" and "you
+        # have no rooms" are different answers, and only one is about the
+        # house. `h_ha_entities`' rule, one add-on over.
+        return web.json_response(
+            {"error": f"brAIn could not read the house: {exc}"}, status=502)
+    protected = automation_writer.protected_patterns()
+    return web.json_response({
+        "areas": await asyncio.to_thread(scenes.areas_with_lights, snap,
+                                         protected),
+        "min_lights": scenes.MIN_LIGHTS,
+    })
+
+
+async def h_scene_design(request: web.Request) -> web.Response:
+    """Design four scenes for one room. The picker's press.
+
+    The same function the ask bar's sentence reaches, because two doors
+    into "compose four moods" is two answers to what a mood is.
+    """
+    body = await _json_body(request)
+    out = await _design_scenes(str(body.get("area") or ""))
+    return web.json_response(out, status=409 if out.get("refused") else 200)
+
+
 async def h_proposal_trial(request: web.Request) -> web.Response:
     ts = int(request.match_info["ts"])
     row = await asyncio.to_thread(proposals.start_trial, ts)
@@ -4262,40 +4454,52 @@ async def _apply_accepted(row: dict) -> tuple[dict | None, str]:
     # entry comes back with one thing different and every other byte of
     # the file where it was. Everything after this point is identical,
     # because the three claims are the same three.
+    # Which file this yes writes to. A scene proposal carries a LIST of
+    # four moods and lands in `scenes.yaml`; everything else is one
+    # automation. The five steps below are the same five either way,
+    # which is why `apply` takes a target rather than having a twin.
+    target = "scenes" if row.get("kind") == "scene" else "automations"
     if row.get("edits"):
         written = await asyncio.to_thread(automation_writer.apply_edit, row)
     else:
-        written = await asyncio.to_thread(automation_writer.apply, row)
+        written = await asyncio.to_thread(automation_writer.apply, row,
+                                          target=target)
     if not written.get("ok"):
         return None, str(written.get("error")
-                         or "brAIn could not write the automation")
+                         or "brAIn could not write it")
 
+    domain, service = written.get("reload") or ("automation", "reload")
     failure = ""
     try:
-        await ha_data.call_core_service("automation", "reload")
+        await ha_data.call_core_service(domain, service)
     except Exception as exc:  # noqa: BLE001 — every way this fails is the
         # same answer to the person waiting: it did not take.
-        failure = f"Home Assistant would not reload its automations: {exc}"
+        failure = f"Home Assistant would not reload its {domain}s: {exc}"
     if not failure:
-        try:
-            if not await _wait_for_entity(written["entity_id"]):
-                failure = (
-                    f"the automation was written but {written['entity_id']} "
-                    "never appeared in Home Assistant, so it is not running "
-                    "— check the add-on log and Home Assistant's own")
-        except Exception as exc:  # noqa: BLE001
-            failure = (f"brAIn could not check whether "
-                       f"{written['entity_id']} appeared: {exc}")
+        # Every entity the write claimed, not the first: three scenes out
+        # of four is a mood missing from a schedule nobody has written
+        # yet, and the whole point of the third step is that the file
+        # being on disk is not the thing existing.
+        for eid in written.get("entity_ids") or [written["entity_id"]]:
+            try:
+                if not await _wait_for_entity(eid):
+                    failure = (
+                        f"it was written but {eid} never appeared in Home "
+                        "Assistant, so it is not running — check the add-on "
+                        "log and Home Assistant's own")
+            except Exception as exc:  # noqa: BLE001
+                failure = f"brAIn could not check whether {eid} appeared: {exc}"
+            if failure:
+                break
     if not failure:
         return written, ""
 
     reverted = await asyncio.to_thread(automation_writer.revert, written)
     try:
-        await ha_data.call_core_service("automation", "reload")
+        await ha_data.call_core_service(domain, service)
     except Exception as exc:  # noqa: BLE001 — the file is already back;
         # a second failed reload is a log line, not a second error.
-        log.warning("could not reload after putting automations.yaml back: %s",
-                    exc)
+        log.warning("could not reload after putting the file back: %s", exc)
     if not reverted.get("ok"):
         failure += (" — and putting automations.yaml back failed: "
                     f"{reverted.get('error')}")
@@ -4589,8 +4793,9 @@ async def h_undo(request: web.Request) -> web.Response:
         written = entry.get("written") or {}
         reverted = await asyncio.to_thread(automation_writer.revert, written)
         reloaded = True
+        domain, service = written.get("reload") or ("automation", "reload")
         try:
-            await ha_data.call_core_service("automation", "reload")
+            await ha_data.call_core_service(domain, service)
         except Exception as exc:  # noqa: BLE001 — the file is back either
             # way, and saying which half failed is the point.
             reloaded = False
@@ -6436,6 +6641,8 @@ def make_app() -> web.Application:
     app.router.add_get("/api/playbook/{ts}/rehearsal", h_playbook_rehearsal)
     app.router.add_post("/api/proposal/{ts}/trial", h_proposal_trial)
     app.router.add_post("/api/intent/{ts}/remove", h_intent_remove)
+    app.router.add_get("/api/scenes/areas", h_scene_areas)
+    app.router.add_post("/api/scenes/design", h_scene_design)
     app.router.add_post("/api/proposal/{ts}/{verb}", h_proposal_decide)
     app.router.add_post("/api/replay", h_replay)
     app.router.add_post("/api/findings/unsettle", h_finding_unsettle)

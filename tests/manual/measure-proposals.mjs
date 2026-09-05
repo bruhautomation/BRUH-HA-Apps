@@ -190,6 +190,51 @@ const PROPOSALS = [
     replay: { days: 30, would_run: 22, blocked_by_conditions: 8,
               triggered: 30 },
   },
+  {
+    // Four scenes for a room. No replay and no trial — nothing in the last
+    // month set them — so the evidence IS the picture: one swatch per light
+    // per mood, and a protected light shown as skipped.
+    ts: NOW * 1000 - 8000, key: 'iii', kind: 'scene',
+    title: 'Four scenes for the Living room',
+    why: 'Composed from the 4 lights the Living room has: 2 take a colour '
+       + 'temperature; 1 takes a colour but not a temperature; 1 only '
+       + 'switches on and off. Morning is cool and bright, day is neutral '
+       + 'and full, evening is warm and dimmed. At night only Lounge '
+       + 'nightlight stays on. Nursery lamp is on your protected entities '
+       + 'list and left out.',
+    source: 'scene', status: 'proposed',
+    config: [1, 2, 3, 4].map((n) => ({ id: 'brain_scene_living_room_' + n })),
+    scene: {
+      area: 'Living room',
+      lights: [
+        { entity_id: 'light.lounge_main', name: 'Lounge main', capability: 'colour_temp' },
+        { entity_id: 'light.lounge_strip', name: 'Lounge strip', capability: 'colour' },
+        { entity_id: 'light.lounge_lamp', name: 'Lounge lamp', capability: 'brightness' },
+        { entity_id: 'light.lounge_night', name: 'Lounge nightlight', capability: 'colour_temp' },
+      ],
+      skipped: [{ entity_id: 'light.nursery', name: 'Nursery lamp', reason: 'protected' }],
+      moods: ['morning', 'day', 'evening', 'night'],
+      preview: [
+        ['morning', 'Morning — Living room', 39, 0.19, 0.8],
+        ['day', 'Day — Living room', 31, 0.35, 1.0],
+        ['evening', 'Evening — Living room', 29, 0.76, 0.45],
+        ['night', 'Night — Living room', 26, 0.94, 0.1],
+      ].map(([mood, name, h, s, v]) => ({
+        mood, name,
+        lights: [
+          { entity_id: 'light.lounge_main', name: 'Lounge main', capability: 'colour_temp',
+            on: true, h, s, v },
+          { entity_id: 'light.lounge_strip', name: 'Lounge strip', capability: 'colour',
+            on: true, h, s, v },
+          { entity_id: 'light.lounge_lamp', name: 'Lounge lamp', capability: 'brightness',
+            on: true, h: 0, s: 0, v },
+          { entity_id: 'light.lounge_night', name: 'Lounge nightlight',
+            capability: 'colour_temp', on: mood !== 'night' ? true : true, h, s, v },
+        ].map((l) => (mood === 'night' && l.entity_id !== 'light.lounge_night'
+          ? { ...l, on: false, h: 0, s: 0, v: 0 } : l)),
+      })),
+    },
+  },
 ];
 
 // One-off intents. NOT proposals — nobody owes an answer on an armed one —
@@ -244,7 +289,7 @@ window.__proposals = {
   proposals: ${JSON.stringify(PROPOSALS)},
   intents: ${JSON.stringify(INTENTS)},
   intent_ttl_days: 14,
-  counts: { proposed: 5, trialling: 3, accepted: 0, declined: 0, open: ${OPEN} },
+  counts: { proposed: 6, trialling: 3, accepted: 0, declined: 0, open: ${OPEN} },
   trial_days: 7, routine_min_days: 6,
 };
 window.__empty = false;
@@ -399,6 +444,17 @@ for (const width of WIDTHS) {
         pill: (c.querySelector('.pilltrial') || {}).textContent || '',
         book: (c.querySelector('.pillbook') || {}).textContent || '',
         edit: (c.querySelector('.pilledit') || {}).textContent || '',
+        scene: (c.querySelector('.pillscene') || {}).textContent || '',
+        moods: [...c.querySelectorAll('.propmood')].map((m) => ({
+          name: (m.querySelector('.propmoodname') || {}).textContent || '',
+          swatches: [...m.querySelectorAll('.propswatch')].map((s) => ({
+            css: getComputedStyle(s).backgroundColor,
+            off: s.classList.contains('off'),
+            w: s.getBoundingClientRect().width,
+            tip: s.dataset.tip || '',
+          })),
+        })),
+        sceneNames: (c.querySelector('.propscenelights') || {}).textContent || '',
         groups: [...c.querySelectorAll('.propgroup')].map((g) => ({
           verb: (g.querySelector('.propverb') || {}).textContent || '',
           names: (g.querySelector('.propnames') || {}).textContent || '',
@@ -676,6 +732,73 @@ for (const width of WIDTHS) {
     if (!t2.undo) {
       note(where, 'Remove offers no Undo — it is a press that deletes from /config');
     }
+  }
+
+  // --- the scene set. There is no replay and no week, so the evidence IS
+  // the picture: four moods, one swatch per light, and the protected one
+  // shown as skipped rather than silently dropped.
+  const sceneCard = m.cards[8] || {};
+  if (!sceneCard.scene) {
+    note(where, 'a set of four scenes does not say what kind of card it is');
+  }
+  if ((sceneCard.moods || []).length !== 4) {
+    note(where, `the scene card drew ${(sceneCard.moods || []).length} moods, `
+              + 'expected 4');
+  }
+  (sceneCard.moods || []).forEach((mood, i) => {
+    if (!mood.name.trim()) note(where, `scene ${i} has no name`);
+    if (mood.swatches.length !== 4) {
+      note(where, `scene ${i} drew ${mood.swatches.length} swatches for `
+                + '4 lights');
+    }
+    mood.swatches.forEach((s, j) => {
+      if (!s.tip.trim()) {
+        note(where, `swatch ${i}.${j} says nothing about which light it is`);
+      }
+      if (s.w < 16) {
+        note(where, `swatch ${i}.${j} is ${Math.round(s.w)}px — too small to `
+                  + 'read a colour off');
+      }
+    });
+  });
+  // Night is the mood that turns most of the room off, and an off light has
+  // to read as OFF rather than as a dark colour.
+  const night = (sceneCard.moods || [])[3] || { swatches: [] };
+  if (night.swatches.filter((s) => s.off).length !== 3) {
+    note(where, 'night does not show three lights off — a scene where '
+              + 'everything stays on is an evening');
+  }
+  // An off light has to read as OFF rather than as a dark colour: an inline
+  // background beats the class's own rule, so the class alone is not the
+  // signal — the paint has to be empty too.
+  night.swatches.filter((s) => s.off).forEach((s, i) => {
+    if (!/rgba\(0, 0, 0, 0\)|transparent/.test(s.css)) {
+      note(where, `an off swatch is painted "${s.css}" — a dark square reads `
+                + 'as a dim light rather than as one that is off');
+    }
+    void i;
+  });
+  // A colour actually reached the swatch, rather than a default background.
+  const lit = ((sceneCard.moods || [])[0] || { swatches: [] })
+    .swatches.filter((s) => !s.off);
+  if (!lit.length || lit.every((s) => /rgba\(0, 0, 0, 0\)/.test(s.css))) {
+    note(where, 'the morning swatches are transparent — no colour reached them');
+  }
+  if (!/Lounge main/.test(sceneCard.sceneNames || '')) {
+    note(where, 'the scene card does not name its lights in text — on a phone '
+              + 'a tooltip is not a thing that exists');
+  }
+  const sceneSkipped = (sceneCard.groups || []).filter((g) => g.skipped);
+  if (sceneSkipped.length !== 1 || !/Nursery/.test(sceneSkipped[0].names)) {
+    note(where, 'a protected light is not shown as skipped on the scene card');
+  }
+  if ((sceneCard.buttons || []).some((b) => /try it/i.test(b.label))) {
+    note(where, 'a set of scenes offers a trial — there is no week of moods '
+              + 'to replay');
+  }
+  if (!/no week to try four scenes/i.test(sceneCard.notrial || '')) {
+    note(where, `the scene card does not say why there is no trial: `
+              + `"${sceneCard.notrial}"`);
   }
 
   // --- and the rehearsal, which opens on demand and calls nothing.

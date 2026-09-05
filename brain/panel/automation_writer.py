@@ -75,6 +75,7 @@ INDEX = JOURNAL_DIR / "index.jsonl"
 TOOL = "brain-panel"
 
 AUTOMATIONS_FILE = "automations.yaml"
+SCENES_FILE = "scenes.yaml"
 CONFIGURATION_FILE = "configuration.yaml"
 
 # `automation: !include automations.yaml`, however it is spaced and
@@ -86,9 +87,40 @@ INCLUDE_RE = re.compile(
     r"^\s*automation:\s*!include\s+['\"]?automations\.yaml['\"]?\s*$",
     re.MULTILINE)
 
+SCENE_INCLUDE_RE = re.compile(
+    r"^\s*scene:\s*!include\s+['\"]?scenes\.yaml['\"]?\s*$",
+    re.MULTILINE)
+
 # An id nothing else in the house is going to pick, and one that says
 # where it came from when somebody opens the file in six months.
 ID_PREFIX = "brain_"
+
+# Two files, and every difference between them named once.
+#
+# `apply` was written for automations and the scene designer needs the
+# same five steps against a different file — so what varies is a table
+# rather than a branch: the file, the include line Core is read through,
+# the reload service, and the domain the verification waits on. A second
+# `apply` would be a second answer to "snapshot, append, reload, verify,
+# revert", and the one that drifts is always the copy.
+TARGETS = {
+    "automations": {
+        "file": AUTOMATIONS_FILE,
+        "include": INCLUDE_RE,
+        "include_line": "automation: !include automations.yaml",
+        "reload": ("automation", "reload"),
+        "domain": "automation",
+        "what": "automations",
+    },
+    "scenes": {
+        "file": SCENES_FILE,
+        "include": SCENE_INCLUDE_RE,
+        "include_line": "scene: !include scenes.yaml",
+        "reload": ("scene", "reload"),
+        "domain": "scene",
+        "what": "scenes",
+    },
+}
 
 
 def _fail(reason: str) -> dict:
@@ -141,6 +173,58 @@ def _protected_refusal(config: dict, patterns: list[str]) -> str | None:
     return None
 
 
+def _protected_scene_refusal(entries: list[dict],
+                             patterns: list[str]) -> str | None:
+    """Why these scenes may not be written, or None.
+
+    A scene names entities directly — there is no service call to read —
+    so `shadow.would_do` has nothing to say about one and this asks the
+    same question of the keys instead. The producer drops a protected
+    light and lists it as skipped; this is the second ask, at the writer,
+    for the reason the first one is not enough: the chokepoint every
+    Claude path goes through cannot see a file the panel writes.
+    """
+    if not patterns:
+        return None
+    for entry in entries:
+        for eid in (entry.get("entities") or {}):
+            if is_protected(str(eid), patterns):
+                return (f"{eid} is on the protected entities list, so brAIn "
+                        "will not write a scene that sets it")
+    return None
+
+
+def _scene_entries(row: dict, now: float) -> tuple[list[dict], str]:
+    """`(entries, "")` or `([], why)`. The scene half of `entry_for`.
+
+    A scene proposal's `config` is a **list**: four moods are one decision
+    and one press, and offering them one at a time would be four cards
+    somebody has to answer consistently for the set to mean anything.
+    """
+    config = row.get("config")
+    if not isinstance(config, list) or not config:
+        return [], "this proposal has no scenes behind it"
+    stamp = int(row.get("ts") or now * 1000)
+    out = []
+    for i, scene in enumerate(config):
+        if not isinstance(scene, dict):
+            return [], "one of these scenes is not a scene"
+        name = str(scene.get("name") or "").strip()
+        entities = scene.get("entities")
+        if not name or not isinstance(entities, dict) or not entities:
+            return [], ("a scene needs a name and at least one entity, and "
+                        + "one of these has neither")
+        named = str(scene.get("id") or "").strip()
+        entry = {
+            "id": named if named.startswith(ID_PREFIX) and len(named) <= 64
+                  else f"{ID_PREFIX}scene_{stamp}_{i}",
+            "name": name[:255],
+            "entities": entities,
+        }
+        out.append(entry)
+    return out, ""
+
+
 # ---------------------------------------------------------------------------
 # Reading what is there
 # ---------------------------------------------------------------------------
@@ -154,7 +238,7 @@ def _read_text(path: Path) -> str | None:
         return None
 
 
-def _existing(path: Path):
+def _existing(path: Path, what: str = "automations"):
     """`(rows, "")` or `(None, why)`. A missing or empty file is `[]`."""
     text = _read_text(path)
     if text is None:
@@ -163,7 +247,14 @@ def _existing(path: Path):
         # of kind — but only where the include line says Core reads it,
         # which the caller has already checked.
         return [], ""
-    if not text.strip():
+    # A file with nothing in it but comments is an EMPTY list, not an
+    # unreadable one — Home Assistant's own loader answers `None` to both
+    # and cannot tell them apart, so the distinction is drawn here. A
+    # `scenes.yaml` holding one header line is the ordinary case on a
+    # house that has never saved a scene, and refusing it would refuse
+    # the commonest first press.
+    if not [line for line in text.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")]:
         return [], ""
     try:
         from checks import snapshot as ha_yaml  # noqa: PLC0415
@@ -171,14 +262,14 @@ def _existing(path: Path):
     except ImportError:                            # pragma: no cover
         return None, "brAIn could not read automations.yaml"
     if rows is None:
-        unreadable = ("automations.yaml could not be parsed — brAIn will not "
+        unreadable = (f"{path.name} could not be parsed — brAIn will not "
                       "append to a file it cannot read")
         return None, unreadable
     if not isinstance(rows, list) or not all(
             isinstance(r, dict) for r in rows):
-        wrong_shape = ("automations.yaml is not a list of automations, so "
-                       "this install keeps them somewhere else — brAIn will "
-                       "not guess where")
+        wrong_shape = (f"{path.name} is not a list of {what}, so this "
+                       "install keeps them somewhere else — brAIn will not "
+                       "guess where")
         return None, wrong_shape
     return rows, ""
 
@@ -253,91 +344,121 @@ def entry_for(row: dict, now: float | None = None) -> dict:
     return entry
 
 
-def _dump(entry: dict) -> str:
+def _dump(entry) -> str:
     import yaml  # noqa: PLC0415 — the image ships py3-yaml; the tests
                  # install pyyaml. Asserted separately, because they are
                  # two different installs of the same package.
-    return yaml.safe_dump([entry], sort_keys=False, allow_unicode=True,
+    rows = entry if isinstance(entry, list) else [entry]
+    return yaml.safe_dump(rows, sort_keys=False, allow_unicode=True,
                           default_flow_style=False)
 
 
 def apply(row: dict, *, config_dir: str | None = None,
-          now: float | None = None, protected=None) -> dict:
-    """Write an accepted proposal into `automations.yaml`.
+          now: float | None = None, protected=None,
+          target: str = "automations") -> dict:
+    """Write an accepted proposal into `automations.yaml` or `scenes.yaml`.
 
     Returns `{"ok": True, ...}` or `{"ok": False, "error": <sentence>}`.
     An expected refusal never raises: the caller has a person waiting on
     a press, and a traceback is not an answer they can act on.
+
+    `target` picks a row out of `TARGETS` and nothing else changes: the
+    five steps are the five steps, and a second `apply` for the second
+    file would be the copy that drifts.
     """
     now = time.time() if now is None else now
+    spec = TARGETS.get(target)
+    if spec is None:
+        return _fail(f"brAIn does not know how to write {target}")
     root = Path(config_dir or CONFIG_DIR)
-    config = row.get("config")
-    if not isinstance(config, dict):
-        return _fail("this proposal has no automation behind it")
-    has_trigger = config.get("trigger") or config.get("triggers")
-    has_action = config.get("action") or config.get("actions")
-    if not has_trigger or not has_action:
-        return _fail("an automation needs both a trigger and an action, and "
-                     "this proposal is missing one")
 
-    refusal = _protected_refusal(config, protected_patterns(protected))
+    if target == "scenes":
+        entries, why = _scene_entries(row, now)
+        if not entries:
+            return _fail(why)
+        refusal = _protected_scene_refusal(entries,
+                                           protected_patterns(protected))
+    else:
+        config = row.get("config")
+        if not isinstance(config, dict):
+            return _fail("this proposal has no automation behind it")
+        has_trigger = config.get("trigger") or config.get("triggers")
+        has_action = config.get("action") or config.get("actions")
+        if not has_trigger or not has_action:
+            return _fail("an automation needs both a trigger and an action, "
+                         "and this proposal is missing one")
+        entries = [entry_for(row, now)]
+        refusal = _protected_refusal(config, protected_patterns(protected))
     if refusal:
         return _fail(refusal)
 
     configuration = _read_text(root / CONFIGURATION_FILE)
-    if configuration is None or not INCLUDE_RE.search(configuration):
+    if configuration is None or not spec["include"].search(configuration):
         return _fail(
             "brAIn looked in configuration.yaml for the line "
-            "`automation: !include automations.yaml` and did not find it, so "
-            "it cannot tell where this house keeps its automations. Add that "
-            "line, or add the automation yourself from the proposal's YAML")
+            f"`{spec['include_line']}` and did not find it, so it cannot "
+            f"tell where this house keeps its {spec['what']}. Add that "
+            f"line, or add the {spec['what'][:-1]} yourself from the "
+            "proposal's YAML")
 
-    target = root / AUTOMATIONS_FILE
-    rows, why = _existing(target)
+    path = root / spec["file"]
+    rows, why = _existing(path, spec["what"])
     if rows is None:
         return _fail(why)
 
-    entry = entry_for(row, now)
-    for existing in rows:
-        if str(existing.get("id") or "") == entry["id"]:
-            return _fail("an automation with this proposal's id is already "
-                         "in automations.yaml — it looks like this was "
-                         "accepted before")
-        if str(existing.get("alias") or "") == entry["alias"]:
-            return _fail(
-                f"automations.yaml already has one called \"{entry['alias']}\""
-                " — brAIn will not add a second automation under the same "
-                "name")
+    # `alias` for an automation, `name` for a scene: the same claim about
+    # the same file, spelled the way each schema spells it.
+    label = "alias" if target == "automations" else "name"
+    for entry in entries:
+        for existing in rows:
+            if str(existing.get("id") or "") == entry["id"]:
+                return _fail(f"something with this proposal's id is already "
+                             f"in {spec['file']} — it looks like this was "
+                             "accepted before")
+            if str(existing.get(label) or "") == entry[label]:
+                return _fail(
+                    f"{spec['file']} already has one called "
+                    f"\"{entry[label]}\" — brAIn will not add a second "
+                    "under the same name")
 
     try:
-        block = _dump(entry)
+        block = _dump(entries)
     except Exception as exc:  # noqa: BLE001 — a config that will not
         # serialise is a refusal, not a crash on somebody's press.
-        return _fail(f"this automation could not be written as YAML: {exc}")
+        return _fail(f"this could not be written as YAML: {exc}")
 
     # The snapshot goes down BEFORE the file is touched. A snapshot taken
     # after the write records the change rather than what it replaced,
     # which is an undo that restores the thing it was undoing.
     try:
-        journalled = snapshot(target, now)
+        journalled = snapshot(path, now)
     except OSError as exc:
-        return _fail(f"brAIn could not snapshot automations.yaml first, so "
-                     f"it did not write to it: {exc}")
+        return _fail(f"brAIn could not snapshot {spec['file']} first, so it "
+                     f"did not write to it: {exc}")
 
-    original = _read_text(target) or ""
+    original = _read_text(path) or ""
     if original and not original.endswith("\n"):
         original += "\n"
     try:
-        atomic_write.write_text(target, original + block)
+        atomic_write.write_text(path, original + block)
     except OSError as exc:
-        return _fail(f"brAIn could not write automations.yaml: {exc}")
+        return _fail(f"brAIn could not write {spec['file']}: {exc}")
 
+    domain = spec["domain"]
+    ids = [f"{domain}.{slugify(e[label])}" for e in entries]
     return {
         "ok": True,
-        "automation_id": entry["id"],
-        "alias": entry["alias"],
-        "entity_id": f"automation.{slugify(entry['alias'])}",
-        "path": str(target),
+        "target": target,
+        "automation_id": entries[0]["id"],
+        "alias": entries[0][label],
+        "entity_id": ids[0],
+        # Every entity the write is claiming to have created. One for an
+        # automation, four for a set of scenes — and the accept path waits
+        # for all of them, because three scenes out of four is a mood
+        # missing from a schedule nobody has written yet.
+        "entity_ids": ids,
+        "reload": list(spec["reload"]),
+        "path": str(path),
         "snapshot": journalled["snapshot"],
         "journal_ts": journalled["ts"],
         "existed": journalled["existed"],
@@ -676,6 +797,7 @@ def remove(entry_id: str, *, config_dir: str | None = None,
 
 
 __all__ = ["AUTOMATIONS_FILE", "CONFIGURATION_FILE", "ID_PREFIX", "INCLUDE_RE",
+           "SCENES_FILE", "SCENE_INCLUDE_RE", "TARGETS",
            "INDEX", "JOURNAL_DIR", "SNAP_DIR", "TOOL", "apply", "apply_edit", "entry_for",
            "is_protected", "locate", "protected_patterns", "remove",
            "remove_entry",

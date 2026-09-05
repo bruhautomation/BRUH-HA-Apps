@@ -1461,6 +1461,17 @@ async function generate(categoryOrId, question) {
     // writes to, and what comes back is a card on Proposals — including when
     // brAIn will not arm it, because a sentence somebody typed always gets an
     // answer. Naming where to look is the whole toast: nothing appears here.
+    // "design my evening for the living room" is a room, not a question.
+    // A refusal comes back on the request (composing is deterministic and
+    // costs one fetch) and an offer does not, because naming the four is
+    // a Claude run and a request cannot wait on one.
+    if (res && ("scenes" in res || (res.refused && "area" in res))) {
+      toast(res.refused
+        ? res.refused
+        : `Designing four scenes for the ${res.scenes} — ${res.lights} `
+          + "lights. They land on Proposals in a moment, with a preview.");
+      return;
+    }
     if (res && "intent" in res) {
       toast("Working out what that means — it lands on Proposals in a moment. "
         + "Nothing runs until you accept it.");
@@ -3779,6 +3790,84 @@ const propState = {
   error: "",        // and the sentence it was refused with, verbatim
 };
 
+// The area picker. Filled once per visit rather than on a timer: the set
+// of rooms with two lights in them changes when somebody buys a bulb, and
+// a poll for that would be a request per viewer per interval.
+async function refreshSceneAreas() {
+  const pick = $("#sceneArea");
+  const go = $("#sceneGo");
+  const note = $("#sceneNote");
+  if (!pick || !go) return;
+  let data = null;
+  try {
+    data = await api("api/scenes/areas");
+  } catch (err) {
+    // "I could not ask" and "you have no rooms" are different answers and
+    // only one of them is about the house.
+    if (note) note.textContent = String(err && err.message ? err.message : err);
+    return;
+  }
+  const areas = data.areas || [];
+  pick.textContent = "";
+  pick.appendChild(el("option", null, "a room…"));
+  areas.forEach((row) => {
+    const opt = el("option", null,
+      `${row.area} — ${row.lights} light${row.lights === 1 ? "" : "s"}`);
+    opt.value = row.area;
+    pick.appendChild(opt);
+  });
+  go.disabled = true;
+  if (note) {
+    note.textContent = areas.length
+      ? ""
+      : `No room has ${data.min_lights || 2} lights brAIn can set, so there `
+        + "is nothing to compose four moods over yet.";
+  }
+}
+
+async function designScenes() {
+  const pick = $("#sceneArea");
+  const go = $("#sceneGo");
+  const note = $("#sceneNote");
+  const area = pick && pick.value;
+  if (!area || !go) return;
+  go.disabled = true;
+  go.textContent = "Designing…";
+  try {
+    const resp = await fetch("api/scenes/design", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ area }),
+    });
+    let data = null;
+    try { data = await resp.json(); } catch { data = null; }
+    const why = data && data.refused;
+    if (note) {
+      note.textContent = why
+        ? why
+        : `Designing four scenes for the ${area} — they land below in a `
+          + "moment, with a preview.";
+    }
+    if (!why) setTimeout(refreshProposals, 6000);
+  } catch (err) {
+    if (note) note.textContent = String(err && err.message ? err.message : err);
+  } finally {
+    go.textContent = "Design them";
+    go.disabled = !(pick && pick.value);
+  }
+}
+
+// Bound once, here rather than in the render: the picker is static markup
+// and rebuilding a control on every render drops its listener — the same
+// reason the terminal's menu items are static.
+$("#sceneArea")?.addEventListener("change", () => {
+  const go = $("#sceneGo");
+  if (go) go.disabled = !$("#sceneArea").value;
+  const note = $("#sceneNote");
+  if (note) note.textContent = "";
+});
+$("#sceneGo")?.addEventListener("click", designScenes);
+
 async function refreshProposals() {
   try {
     propState.data = await api("api/proposals");
@@ -4098,6 +4187,69 @@ function propRehearsal(row) {
   return box;
 }
 
+// ---- scene swatches ------------------------------------------------------
+//
+// The payload carries HSV, because that is what a bulb holds — the frames
+// ARE the colours the room will be. This is the only conversion the panel
+// does, and it is here rather than on the server for the same reason
+// BRight's preview does it here: a picture converted from something the
+// house does not use is a picture of the conversion.
+
+function propSwatchCss(light) {
+  if (!light.on) return "transparent";
+  const h = Number(light.h) || 0;
+  const s = Math.max(0, Math.min(1, Number(light.s) || 0));
+  const v = Math.max(0, Math.min(1, Number(light.v) || 0));
+  // A dark swatch on a dark panel is invisible, so the LEVEL is drawn as
+  // the swatch's own lightness floor rather than as its only signal: a
+  // 10% night scene has to be readable as "on and very low", not as an
+  // empty square that looks like "off".
+  const l = 0.28 + 0.55 * v;
+  return `hsl(${h} ${Math.round(s * 100)}% ${Math.round(l * 100)}%)`;
+}
+
+const SCENE_CAP_WORDS = {
+  colour_temp: "colour temperature",
+  colour: "colour only",
+  brightness: "brightness only",
+  onoff: "on/off only",
+};
+
+function propSceneBlock(row) {
+  const scene = row.scene;
+  if (!scene) return null;
+  const wrap = el("div", "propscenes");
+  (scene.preview || []).forEach((mood) => {
+    const line = el("div", "propmood");
+    line.appendChild(el("span", "propmoodname", mood.name));
+    const strip = el("div", "propswatches");
+    (mood.lights || []).forEach((light) => {
+      const dot = el("span", `propswatch${light.on ? "" : " off"}`);
+      dot.style.background = propSwatchCss(light);
+      // The name and what the bulb can be told, because a swatch with no
+      // label is a colour nobody can act on — and "on/off only" is why
+      // one of them is a plain square.
+      dot.dataset.tip = `${light.name} — ${
+        light.on ? SCENE_CAP_WORDS[light.capability] || light.capability
+                 : "off in this scene"}`;
+      strip.appendChild(dot);
+    });
+    line.appendChild(strip);
+    wrap.appendChild(line);
+  });
+  // Named under the swatches rather than in a tooltip: on a phone there
+  // is no hover, and which bulb is which is the whole reading.
+  const names = (scene.lights || []).map((l) => l.name).join(" · ");
+  if (names) wrap.appendChild(el("p", "propscenelights", names));
+  (scene.skipped || []).forEach((skip) => {
+    const line = el("div", "propgroup skipped");
+    line.appendChild(el("span", "propverb", "Skipped: protected"));
+    line.appendChild(el("span", "propnames", skip.name || skip.entity_id));
+    wrap.appendChild(line);
+  });
+  return wrap;
+}
+
 function propCard(row, withHint) {
   const card = el("div", "propcard");
   const playbook = !!row.playbook;
@@ -4105,6 +4257,7 @@ function propCard(row, withHint) {
   head.appendChild(el("h3", "proptitle", row.title || "A proposal"));
   const over = row.status === "trialling" && propTrialOver(row);
   if (playbook) head.appendChild(el("span", "pillbook", "Playbook"));
+  if (row.scene) head.appendChild(el("span", "pillscene", "Scenes"));
   // An edit is a different promise from an addition, and the card has to
   // say which before somebody says yes: this one changes a rule they
   // wrote, in their own file, rather than adding one beside it.
@@ -4120,7 +4273,12 @@ function propCard(row, withHint) {
     if (block) card.appendChild(block);
     card.appendChild(propRehearsal(row));
   }
-  const replay = playbook ? "" : propReplayLine(row);
+  const scene = !!row.scene;
+  if (scene) {
+    const block = propSceneBlock(row);
+    if (block) card.appendChild(block);
+  }
+  const replay = (playbook || scene) ? "" : propReplayLine(row);
   if (replay) card.appendChild(el("p", "propreplay", replay));
   if (row.status === "trialling") {
     card.appendChild(el("p", "proptrial", propTrialLine(row)));
@@ -4182,9 +4340,21 @@ function propCard(row, withHint) {
     card.appendChild(el("p", "propnotrial", row.playbook.no_trial));
   }
 
+  if (scene && !row.config) {
+    // Nothing to accept: the card is here to say what brAIn found and why
+    // it will not offer four moods for it.
+    card.appendChild(el("p", "propnotrial", row.refused || ""));
+  }
+
   const btns = el("div", "propbtns");
   const busy = !!propState.busy;
-  if (row.status === "proposed" && !playbook) {
+  if (scene) {
+    card.appendChild(el("p", "propnotrial",
+      "There is no week to try four scenes against — nothing in the last "
+      + "month set them. Accepting writes them to scenes.yaml; brAIn offers "
+      + "the schedule that moves between them once they are there."));
+  }
+  if (row.status === "proposed" && !playbook && !scene) {
     const trial = el("button", "btn small", "Try it for a week");
     trial.dataset.tip = "Runs in shadow — it logs what it would have done and changes nothing";
     trial.addEventListener("click", () => propAct(row.ts, "trial"));
@@ -4665,7 +4835,11 @@ function switchView(name) {
   if (name === "activity") { actState.end = null; actState.open = ""; refreshActivity(); }
   // Rendered from what we have, then again once the fetch lands — the same
   // shape Findings uses, so opening the tab is never a blank frame.
-  if (name === "proposals") { renderProposals(); refreshProposals(); }
+  if (name === "proposals") {
+    renderProposals();
+    refreshProposals();
+    refreshSceneAreas();
+  }
 }
 
 document.querySelectorAll(".viewtab").forEach((b) =>

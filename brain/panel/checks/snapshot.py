@@ -206,6 +206,49 @@ def _trace_rows(rows: Any) -> list:
 # The live house
 # ---------------------------------------------------------------------------
 
+async def collect_rooms(now: float | None = None) -> dict:
+    """The four keys a `House` needs to answer "what is in this room".
+
+    `collect` fetches statistics, traces, a week of daily means and the
+    Supervisor, which is minutes of work and exactly right for a checks
+    pass — and completely wrong for somebody who has just typed *"design
+    my evening for the living room"* and is watching a spinner. This is
+    the states, the three registries and `scenes.yaml`, and nothing else.
+
+    It is here rather than in the caller so there is one answer to what a
+    snapshot's `states`/`entities`/`devices`/`areas` look like: a second
+    assembly of the same four keys would be a `House` built two ways.
+    """
+    import aiohttp
+
+    import ha_data
+
+    now = time.time() if now is None else now
+    snap: dict[str, Any] = {"now": now, "available": {}, "errors": {}}
+    cfg = load_configs()
+    snap["scenes"] = cfg["scenes"]
+    snap["automations"] = cfg["automations"]
+    async with aiohttp.ClientSession() as session:
+        raw = await ha_data._rest_get(session, "/states", timeout=60)
+        snap["states"] = {
+            s["entity_id"]: {
+                "state": s.get("state"),
+                "attributes": s.get("attributes") or {},
+            } for s in (raw or []) if isinstance(s, dict) and s.get("entity_id")}
+        areas, devices, entities = await ha_data._ws_commands(session, [
+            {"type": "config/area_registry/list"},
+            {"type": "config/device_registry/list"},
+            {"type": "config/entity_registry/list"},
+        ])
+        if entities is None:
+            raise RuntimeError("the entity registry did not answer")
+        snap["areas"] = areas or []
+        snap["devices"] = devices or []
+        snap["entities"] = entities or []
+    snap["services"] = set()
+    return snap
+
+
 async def collect(now: float | None = None) -> dict:
     """Fetch everything the checks read. Never raises."""
     import aiohttp

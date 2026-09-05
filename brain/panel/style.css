@@ -3231,6 +3231,52 @@ body.term-classic #termMode .ico-out { display: block; }
   background: color-mix(in srgb, var(--warning) 18%, transparent);
   color: var(--warning);
 }
+/* A set of four scenes. Same pill shape again, in the accent's sibling:
+   it marks a different KIND of card rather than a stage of one. */
+.pillscene {
+  flex: none; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--good) 14%, transparent);
+  color: var(--good);
+}
+/* The swatches. This IS the evidence on a scene card — there is no replay
+   and no week — so it is laid out to be read down, one row per mood. */
+.propscenes { margin: 0 0 10px; display: flex; flex-direction: column; gap: 6px; }
+.propmood {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  font-size: 13px; padding: 4px 0; border-top: 1px solid var(--hairline);
+}
+.propmoodname { flex: 1 1 140px; color: var(--ink-2); min-width: 0; }
+.propswatches { display: flex; gap: 6px; flex-wrap: wrap; flex: none; }
+/* 28px rather than the touch floor: a swatch is a reading, not a control —
+   nothing happens when you press one, and forty-four-pixel squares would
+   take the card. The names are under the strip, in text. */
+.propswatch {
+  width: 28px; height: 28px; border-radius: 6px;
+  border: 1px solid var(--hairline); display: inline-block;
+}
+/* Off has to be legible as OFF rather than as a dark colour, so it is drawn
+   as an empty outline rather than as a black square. */
+.propswatch.off {
+  background: transparent;
+  border-style: dashed; opacity: 0.6;
+}
+.propscenelights {
+  margin: 6px 0 0; font-size: 12.5px; color: var(--ink-3); line-height: 1.5;
+}
+/* The one control on this tab that asks brAIn for something. */
+.propask {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  margin: 0 0 14px; padding: 10px 12px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px;
+}
+.propask label { font-size: 13.5px; color: var(--ink-2); flex: none; }
+/* `width: auto` sizes a select to its widest option, which is how a picker
+   sets a row's min-content and takes the page's width with it. */
+.propask select { min-width: 0; max-width: 100%; flex: 1 1 160px; }
+.propasknote {
+  flex: 1 1 100%; margin: 0; font-size: 12.5px; color: var(--ink-3);
+  line-height: 1.5;
+}
 .propwhy { margin: 0 0 8px; color: var(--ink-2); line-height: 1.5; }
 /* Claude's restatement, kept apart from the person's own sentence: which of
    the two was misread is the only thing worth knowing when it is wrong. */
@@ -3330,6 +3376,12 @@ body.term-classic #termMode .ico-out { display: block; }
      working. Scoped rather than raised globally for the reason above: the
      rest of the panel's buttons are a separate, real problem. */
   .authbtns .btn { min-height: 44px; padding-inline: 14px; }
+  /* The one control on this tab that asks brAIn for something, so it is
+     the one press somebody makes here on purpose rather than in answer
+     to a card. Scoped like the two above rather than raised globally,
+     for the reason they give. */
+  .propask .btn { min-height: 44px; padding-inline: 14px; }
+  .propask select { min-height: 44px; }
 }
 /* The reason box replaces the buttons INSIDE the card, so what you are
    explaining stays on screen while you write about it. */
