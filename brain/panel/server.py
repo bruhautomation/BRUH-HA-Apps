@@ -118,6 +118,7 @@ import atomic_write
 import automation_writer
 import baselines
 import brief
+import capture
 import card_tags
 import chat_session
 import closures
@@ -125,6 +126,7 @@ import checks
 import cli_commands
 import conditions
 import conversations
+import doctor
 import energy
 import engine
 import feedback_store
@@ -143,6 +145,7 @@ import onboarding
 import playbooks
 import prompt_store
 import proposals
+import rehearsal
 import rhythm
 import routines
 import run_sources
@@ -150,6 +153,7 @@ import scenes
 import schedule_store
 import settings_store
 import shadow
+import shadow_findings
 import terminal_proxy
 import thermal
 import trials
@@ -1815,16 +1819,18 @@ async def _search_run(insight_id: str, cat: dict, framing: dict):
     so what a run costs finally tracks what it actually needed rather than
     being the same number whatever was asked.
 
-    Returns ``(result, cost)``, or ``(None, None)`` when the map itself
-    could not be collected — the caller then runs the snapshot path, which
-    is the floor under every mode.
+    Returns ``(result, cost, sent)``, or ``(None, None, None)`` when the map
+    itself could not be collected — the caller then runs the snapshot path,
+    which is the floor under every mode. ``sent`` is what the analyst was
+    given, handed back rather than re-collected: `capture` files exactly the
+    payload this run used, and a second fetch would file a different house.
     """
     import ha_data
     try:
         orientation = await ha_data.collect_orientation(question=framing["question"])
     except Exception as exc:  # noqa: BLE001 — a failed map is a fallback, not an error
         log.warning("%s: could not collect the orientation map (%s)", insight_id, exc)
-        return None, None
+        return None, None, None
     prompt = build_orientation_prompt(cat, orientation, **framing)
     # `entities` is what the run has been GIVEN, and a search run is given
     # none — the spinner says "searching" rather than claiming a number the
@@ -1838,7 +1844,9 @@ async def _search_run(insight_id: str, cat: dict, framing: dict):
         engine.run_analyst, prompt, ANALYST_SYSTEM, eff_model(),
         eff_timeout_s(), ANALYST_MAX_TURNS, "card",
     )
-    return result, _record_usage(result, insight_id)
+    return result, _record_usage(result, insight_id), {
+        "gather_mode": "search", "bundle": orientation,
+        "prompt_chars": len(prompt)}
 
 
 async def _snapshot_run(insight_id: str, cat: dict, framing: dict):
@@ -1869,7 +1877,8 @@ async def _snapshot_run(insight_id: str, cat: dict, framing: dict):
         engine.run_claude, prompt, SYSTEM_PROMPT, eff_model(), eff_timeout_s(),
         source="card",
     )
-    return result, _record_usage(result, insight_id)
+    return result, _record_usage(result, insight_id), {
+        "gather_mode": "snapshot", "bundle": bundle, "prompt_chars": len(prompt)}
 
 
 async def _generate(insight_id: str) -> None:
@@ -1907,9 +1916,9 @@ async def _generate(insight_id: str) -> None:
                        knowledge=knowledge, previous=previous,
                        findings=findings_store.prompt_block())
 
-        result = cost = None
+        result = cost = sent = None
         if eff_gather_mode() == "search":
-            result, cost = await _search_run(insight_id, cat, framing)
+            result, cost, sent = await _search_run(insight_id, cat, framing)
         if result is None or not result["ok"]:
             # The snapshot path is the floor, not a mode: whatever the setting
             # says, a failed search must still produce a card. It costs more
@@ -1924,7 +1933,7 @@ async def _generate(insight_id: str) -> None:
                                error=result.get("error") or "no result",
                                extra={"id": insight_id, "from": "search",
                                       "to": "snapshot"})
-            result, cost = await _snapshot_run(insight_id, cat, framing)
+            result, cost, sent = await _snapshot_run(insight_id, cat, framing)
         if not result["ok"]:
             raise RuntimeError(result["error"] or "generation failed")
 
@@ -1959,9 +1968,18 @@ async def _generate(insight_id: str) -> None:
         # reported lives in the store, which is the one place that knows
         # whether it has since been fixed or dismissed. Storing a copy on
         # the card would be a snapshot guaranteed to go stale.
+        # The run id is Claude Code's own session id for this invocation —
+        # already minted, already claimed in `run_sources`, already on the
+        # journal line. Carrying it onto the row is what lets an ENDING be
+        # joined back to the prompt that earned it, which is the label half
+        # of the corpus. A run whose CLI returned no session id simply has
+        # no id here, and nothing downstream pretends otherwise.
+        run_id = capture.run_id_from(result.get("meta") or {})
+        model_findings = _model_findings(obj.get("findings"))
         filed = findings_store.add_many([
-            {**f, "source": cat["id"], "source_title": cat.get("title", "Insight")}
-            for f in _model_findings(obj.get("findings"))])
+            {**f, "source": cat["id"], "source_title": cat.get("title", "Insight"),
+             "run_id": run_id}
+            for f in model_findings])
         await _announce_findings(filed)
         tags = card_tags.clean_tags(_clean_strings(obj.get("tags"), 4, 24))
         insight = {
@@ -1988,6 +2006,29 @@ async def _generate(insight_id: str) -> None:
             "meta": {**result.get("meta", {}), "cost": cost},
         }
         save_insight(insight)
+        # What was sent, what came back, and — later, when somebody ends one
+        # of the findings above — what they made of it. Off unless somebody
+        # switched it on in ⚙, redacted on the way in, and never leaving
+        # /data until a person exports it.
+        if settings_store.load().get("capture") and run_id and sent:
+            await asyncio.to_thread(
+                capture.record, run_id,
+                source="ask" if question is not None else "card",
+                category=insight["category"], question=question or "",
+                model=str(result.get("meta", {}).get("model")
+                          or eff_model() or ""),
+                gather_mode=sent["gather_mode"],
+                prompt_chars=sent["prompt_chars"], bundle=sent["bundle"],
+                # The card's findings and what it learned, plus the fields a
+                # person reads. Never the `html`: that is a rendered
+                # visualization of up to 200 KB, and what a corpus scores is
+                # the findings.
+                reply={"title": insight["title"], "summary": insight["summary"],
+                       "highlights": insight["highlights"], "learned": learned,
+                       "findings": model_findings,
+                       "hypotheses": _clean_strings(obj.get("hypotheses"), 3, 300),
+                       "tags": tags, "html_bytes": len(html.encode())},
+                tokens=cost or {})
         # Learn the durable discoveries: store NEW ones in our own knowledge
         # base (dedup by content) and hand those on to the home's shared
         # memory. Already-known ones are silently swallowed — the model was
@@ -2074,8 +2115,13 @@ async def _worker() -> None:
     while True:
         job_id = await QUEUE.get()
         try:
-            if JOBS.get(job_id, {}).get("kind") == "fix":
+            kind = JOBS.get(job_id, {}).get("kind")
+            if kind == "fix":
                 await _run_fix(job_id)
+            elif kind == "doctor":
+                await _run_doctor_deep(job_id)
+            elif kind == "rehearse":
+                await _run_rehearsal(job_id)
             else:
                 await _generate(job_id)
         finally:
@@ -2502,6 +2548,22 @@ INTENT_RE = re.compile(
     r"remind me when)\b",
     re.IGNORECASE)
 
+# ...and the half of that opener which is a QUESTION. "when did the boiler
+# last run?" starts with the same word as "when the guests leave, turn the
+# porch light off", so `INTENT_RE` alone sent it down the one-off path,
+# where it spent a Claude run to produce a refusal card instead of
+# answering. The signal is one word further along: an **auxiliary verb
+# straight after the opener** ("when *did* …", "once *was* …") is somebody
+# asking, and an instruction never has one there — "when the guests leave"
+# and "tell me when the dishwasher is done" both put a noun phrase next.
+# Cheaper and more honest than trailing-`?` detection, which nobody types
+# on a phone.
+INTENT_QUESTION_RE = re.compile(
+    r"^(?:please )?(?:when(?:ever)?|once)\s+"
+    r"(?:did|do|does|was|were|is|are|will|would|should|can|could|has|"
+    r"have|had|am)\b",
+    re.IGNORECASE)
+
 
 # "design my evening for the living room" — the ask bar's fourth verb, and
 # the narrowest of them. It names a room and asks for four moods, which is
@@ -2537,7 +2599,7 @@ async def h_generate(request: web.Request) -> web.Response:
             area = scene_match.group("area").strip()
             return web.json_response(
                 {"queued": [], **await _design_scenes(area)})
-        if INTENT_RE.match(question):
+        if INTENT_RE.match(question) and not INTENT_QUESTION_RE.match(question):
             # The same request file the `brain.intent` service writes, so
             # the expensive half — a Claude run, the checks, the card —
             # has one implementation and one place to be wrong.
@@ -3522,6 +3584,13 @@ async def run_checks(reason: str = "schedule") -> dict:
     A second caller while a pass is in flight gets the last summary back
     with an error rather than a second pass: two passes racing would file
     and clear against each other.
+
+    Rows from a check in `checks.SHADOW` take the same three moves against
+    a **different file** (`shadow_findings`) — a check being trialled runs
+    and reaches nobody. It is a separate store rather than a status
+    because `add_many` dedupes across every status and the settled ledger,
+    so a shadow row sharing the file could suppress a real report of the
+    same problem: a rule nobody has agreed to yet, silencing the analyst.
     """
     if CHECKS_STATE["running"]:
         return {"error": "a checks pass is already running",
@@ -3540,15 +3609,29 @@ async def run_checks(reason: str = "schedule") -> dict:
         await asyncio.to_thread(_record_routines, snapshot, started)
         result = checks.run_all(snapshot, started)
 
-        def apply() -> tuple[list[dict], int, list[dict]]:
+        def apply() -> tuple[list[dict], int, list[dict], dict]:
+            ran_sources = {checks.source_for(c) for c in result["ran"]}
             created = findings_store.add_many(result["findings"])
             refreshed = findings_store.refresh_details(result["findings"])
             cleared = findings_store.clear_resolved(
-                {checks.source_for(c) for c in result["ran"]},
+                ran_sources,
                 {findings_store.normalize(f["text"]) for f in result["findings"]})
-            return created, refreshed, cleared
+            # And the other store, which nothing renders. Rows from a check
+            # being trialled go here instead — a separate file rather than
+            # a status, because `add_many` dedupes across every status and
+            # a shadow row that suppressed a real report would silence the
+            # analyst about a problem on the say-so of a rule nobody has
+            # agreed to yet.
+            shadow_rows = result.get("shadow") or []
+            hidden = shadow_findings.add_many(shadow_rows, started)
+            shadow_findings.clear_resolved(
+                ran_sources,
+                {findings_store.normalize(f["text"]) for f in shadow_rows})
+            shadow_findings.prune(started)
+            return created, refreshed, cleared, {
+                "created": len(hidden), "found": len(shadow_rows)}
 
-        created, refreshed, cleared = await asyncio.to_thread(apply)
+        created, refreshed, cleared, shadow_counts = await asyncio.to_thread(apply)
         await _announce_findings(created)
         # After the findings, and outside them. A proposal is not a
         # finding: different store, different tab, and a habit miner
@@ -3613,6 +3696,9 @@ async def run_checks(reason: str = "schedule") -> dict:
             "proposed": offered,
             "trials_evaluated": graded,
             "intents_fired": fired,
+            # Filed where nobody will see them, on purpose. The count is
+            # the only thing that says a trialled check is running at all.
+            "shadow": shadow_counts,
             "snapshot_errors": snapshot.get("errors") or {},
         }
         journal.record(
@@ -3633,6 +3719,7 @@ async def run_checks(reason: str = "schedule") -> dict:
                    "finished_at": int(time.time()), "error": str(exc)[:300],
                    "ran": [], "created": [], "cleared": [], "refreshed": 0,
                    "skipped": {}, "errors": {}, "per_check": {}, "found": 0,
+                   "shadow": {"created": 0, "found": 0},
                    "snapshot_errors": {}}
     finally:
         CHECKS_STATE["running"] = False
@@ -3870,8 +3957,14 @@ async def h_appliances(request: web.Request) -> web.Response:
 
 async def h_checks(request: web.Request) -> web.Response:
     return web.json_response({
+        # `shadow` per row rather than a separate list: `brain check list`
+        # prints one catalog, and a check that files somewhere the tab
+        # does not render has to say so on its own line or somebody goes
+        # looking for rows that are not there.
         "catalog": [{"id": c["id"], "title": c["title"],
-                     "group": checks.title_for(c["id"])} for c in checks.CHECKS],
+                     "group": checks.title_for(c["id"]),
+                     "shadow": checks.is_shadow(c["id"])}
+                    for c in checks.CHECKS],
         "last": CHECKS_STATE["last"],
         "running": CHECKS_STATE["running"],
         "interval_hours": eff_checks_interval_hours(),
@@ -3882,6 +3975,263 @@ async def h_checks_run(request: web.Request) -> web.Response:
     summary = await run_checks("manual")
     status = 409 if summary.get("error") == "a checks pass is already running" else 200
     return web.json_response(summary, status=status)
+
+
+# ---------------------------------------------------------------------------
+# The deep doctor — every face, one real round trip each
+# ---------------------------------------------------------------------------
+# `brain doctor` says whether the plumbing is connected; this says whether
+# each face works end to end on this install. It is opt-in and costed and
+# NEVER on a timer — the design page's own words, and the same rule the
+# auth re-check follows for the same reason: a real Claude turn spent on a
+# question nobody is asking is a turn spent forever.
+#
+# It rides the generation queue like a fix run does, because a deep run is
+# several Claude invocations and one at a time across the whole add-on is
+# what keeps a subscription's rate limit intact.
+DOCTOR_JOB = "doctor-deep"
+DOCTOR_STATE: dict = {"running": False, "started_at": 0,
+                      "stages": [], "last": None, "kind": ""}
+
+
+def _doctor_hooks() -> "doctor.Hooks":
+    """The panel's own implementations, handed to the stages.
+
+    Three of the eight stages act on stores the server owns, and this is
+    the whole of how they reach them: `_end_finding` is the ending every
+    button and every To-do tick already goes through, `_undo_finding` is
+    what the toast's Undo calls, and `_consolidate_now` is the same
+    subprocess the Memory tab's button starts. A deep run that used copies
+    of those would be testing the copies.
+    """
+    async def ws(commands: list[dict]):
+        import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+        import aiohttp  # noqa: PLC0415
+        async with aiohttp.ClientSession() as session:
+            return await ha_data._ws_commands(session, commands)
+
+    return doctor.Hooks(
+        end_finding=_end_finding,
+        undo_finding=lambda entry: asyncio.to_thread(_undo_finding, entry),
+        queue_memory=_queue_memory_fact,
+        drop_memory=lambda source, fact: _drop_from_inbox(
+            _inbox_id(source, fact)),
+        inbox_pending=_inbox_pending,
+        memory_text=_read_shared_memory,
+        consolidate=_consolidate_now,
+        record_usage=_record_usage,
+        ws=ws,
+        model=eff_model(),
+        options=addon_options.snapshot() or {},
+    )
+
+
+def _doctor_payload() -> dict:
+    """What `GET /api/doctor/deep` answers, running or not."""
+    return {
+        "running": DOCTOR_STATE["running"],
+        "kind": DOCTOR_STATE["kind"],
+        "started_at": DOCTOR_STATE["started_at"],
+        "stages": DOCTOR_STATE["stages"],
+        "last": DOCTOR_STATE["last"] or doctor.load() or None,
+        "stage_catalog": [{"name": s["name"], "title": s["title"],
+                           "proves": s["proves"]} for s in doctor.STAGES],
+    }
+
+
+async def _run_doctor_deep(job_id: str) -> None:
+    """One deep run, on the generation queue's worker."""
+    DOCTOR_STATE.update(running=True, kind="deep", stages=[],
+                        started_at=int(time.time()))
+    _set_job(job_id, state="generating", error="")
+    try:
+        def progress(payload: dict) -> None:
+            DOCTOR_STATE["stages"] = payload["stages"]
+
+        payload = await doctor.run_deep(_doctor_hooks(), progress=progress)
+        DOCTOR_STATE.update(stages=payload["stages"], last=payload)
+        await asyncio.to_thread(doctor.save, payload)
+        _set_job(job_id, state="done", error="")
+        log.info("deep doctor: %s (%s)", payload["verdict"],
+                 ", ".join(f"{k} {v}" for k, v in payload["counts"].items()))
+    except Exception as exc:  # noqa: BLE001 — the report is the product
+        log.warning("deep doctor failed: %s", exc)
+        _set_job(job_id, state="error", error=str(exc)[:500])
+    finally:
+        DOCTOR_STATE.update(running=False, kind="")
+        publish_diagnostics()
+
+
+async def h_doctor_deep_get(request: web.Request) -> web.Response:
+    return web.json_response(_doctor_payload())
+
+
+async def h_doctor_deep_start(request: web.Request) -> web.Response:
+    """Start one. A second caller gets the one already running.
+
+    409 with the live job's id rather than a collision, the way BRight's
+    Claude jobs answer a second press: both presses are watching the same
+    run, and starting a second would put two Claude invocations in flight
+    against a subscription that allows one.
+    """
+    if DOCTOR_STATE["running"]:
+        return web.json_response(
+            {"error": f"a {DOCTOR_STATE['kind'] or 'deep'} check is already "
+                      "running", "job": DOCTOR_JOB, **_doctor_payload()},
+            status=409)
+    _set_job(DOCTOR_JOB, kind="doctor", state="queued", error="")
+    QUEUE.put_nowait(DOCTOR_JOB)
+    return web.json_response({"started": True, "job": DOCTOR_JOB,
+                              **_doctor_payload()})
+
+
+# ---------------------------------------------------------------------------
+# The rehearsal — planted defects on the real house
+# ---------------------------------------------------------------------------
+REHEARSE_JOB = "doctor-rehearse"
+
+
+def _rehearsal_hooks() -> "rehearsal.Hooks":
+    """The panel's write, remove and snapshot, handed to the rehearsal.
+
+    `_apply_accepted` and `_remove_automation` are the two halves of what
+    an accepted proposal does; using them here is what makes a rehearsal a
+    real round trip of the writer rather than a test of a copy of it.
+    """
+    async def write(row: dict):
+        return await _apply_accepted(row)
+
+    async def remove(entry_id: str, entity_id: str = ""):
+        written, failure = await _remove_automation(entry_id, entity_id or "")
+        return written is not None, failure
+
+    async def snapshot():
+        return await checks.snapshot.collect(time.time())
+
+    async def ws(commands: list[dict]):
+        import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+        import aiohttp  # noqa: PLC0415
+        async with aiohttp.ClientSession() as session:
+            return await ha_data._ws_commands(session, commands)
+
+    return rehearsal.Hooks(write=write, remove=remove, snapshot=snapshot,
+                           analyst=_rehearsal_analyst, ws=ws,
+                           options=addon_options.snapshot() or {})
+
+
+async def _rehearsal_analyst(planted: list[dict]) -> dict:
+    """The automations card's own prompt, run once, persisting nothing.
+
+    It goes through `build_orientation_prompt` and `ANALYST_SYSTEM` — the
+    same builders `_search_run` uses — because what is being measured is
+    the prompt people actually get. What it does NOT do is save a card,
+    file its findings or queue its `learned` facts: a self-test that left
+    a card behind would be reporting on a house it had changed.
+    """
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    cat = get_category(rehearsal.ANALYST_CATEGORY)
+    if cat is None:
+        return {"ok": False, "findings": [],
+                "error": f"there is no {rehearsal.ANALYST_CATEGORY} category "
+                         "in this build"}
+    try:
+        orientation = await ha_data.collect_orientation(question=None)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "findings": [],
+                "error": f"could not collect the orientation map: {exc}"}
+    framing = dict(question=None, feedback=[],
+                   hypothesis_budget=0, knowledge="", previous=None,
+                   findings="")
+    prompt = rehearsal.analyst_prompt(planted, build_orientation_prompt, cat,
+                                      orientation, framing)
+    model = eff_model()
+    answer = await asyncio.to_thread(rehearsal.run_analyst, prompt,
+                                     ANALYST_SYSTEM, model)
+    _record_usage(answer.get("result") or {}, "doctor-rehearsal")
+    answer.pop("result", None)
+    return answer
+
+
+def _rehearsal_payload() -> dict:
+    """State, and the offer.
+
+    The plan rides the GET as well as the 428, because the panel has to be
+    able to draw the confirmation dialog without first making a request it
+    expects to fail. The 428 is still the contract for every other caller —
+    the CLI, an automation, anything that POSTs without reading this first —
+    and it is what keeps "nothing is created before consent" true of the
+    API rather than only of the button.
+    """
+    protected = (addon_options.snapshot() or {}).get("protected_entities")
+    return {
+        "running": DOCTOR_STATE["running"] and DOCTOR_STATE["kind"] == "rehearse",
+        "started_at": DOCTOR_STATE["started_at"],
+        "progress": DOCTOR_STATE.get("progress") or {},
+        "last": rehearsal.load() or None,
+        **rehearsal.plan(protected),
+    }
+
+
+async def _run_rehearsal(job_id: str) -> None:
+    DOCTOR_STATE.update(running=True, kind="rehearse", stages=[],
+                        progress={}, started_at=int(time.time()))
+    _set_job(job_id, state="generating", error="")
+    try:
+        def progress(payload: dict) -> None:
+            DOCTOR_STATE["progress"] = {"step": payload.get("step", ""),
+                                        "created": payload.get("created") or []}
+
+        payload = await rehearsal.run(_rehearsal_hooks(), progress=progress)
+        await asyncio.to_thread(rehearsal.save, payload)
+        DOCTOR_STATE["progress"] = {}
+        _set_job(job_id, state="done", error="")
+        log.info("rehearsal: %s of %s planted defects found, cleanup %s",
+                 (payload.get("checks") or {}).get("found", 0),
+                 (payload.get("checks") or {}).get("planted", 0),
+                 (payload.get("cleanup") or {}).get("sentence", "?"))
+    except Exception as exc:  # noqa: BLE001 — rehearsal.run has its own
+        # finally; this is the belt for anything outside it.
+        log.warning("rehearsal failed: %s", exc)
+        _set_job(job_id, state="error", error=str(exc)[:500])
+    finally:
+        DOCTOR_STATE.update(running=False, kind="")
+        publish_diagnostics()
+
+
+async def h_rehearse_get(request: web.Request) -> web.Response:
+    return web.json_response(_rehearsal_payload())
+
+
+async def h_rehearse_start(request: web.Request) -> web.Response:
+    """Start one — but only with consent, and only after saying what for.
+
+    **428 Precondition Required** without `{"consent": true}`, carrying the
+    exact list of what would be created. Nothing is written before that
+    answer comes back: planting automations in somebody's config is a step
+    some people will not want, and an offer they cannot read is not one
+    they can decline.
+    """
+    body = await _json_body(request)
+    protected = (addon_options.snapshot() or {}).get("protected_entities")
+    offer = await asyncio.to_thread(rehearsal.plan, protected)
+    if offer["refused"]:
+        return web.json_response(offer, status=409)
+    if not body.get("consent"):
+        return web.json_response(
+            {**offer,
+             "error": "a rehearsal creates things in your Home Assistant — "
+                      "call again with {\"consent\": true} to go ahead"},
+            status=428)
+    if DOCTOR_STATE["running"]:
+        return web.json_response(
+            {"error": f"a {DOCTOR_STATE['kind'] or 'deep'} check is already "
+                      "running", "job": REHEARSE_JOB, **_rehearsal_payload()},
+            status=409)
+    _set_job(REHEARSE_JOB, kind="rehearse", state="queued", error="")
+    QUEUE.put_nowait(REHEARSE_JOB)
+    return web.json_response({"started": True, "job": REHEARSE_JOB,
+                              **offer, **_rehearsal_payload()})
 
 
 # ---------------------------------------------------------------------------
@@ -4087,6 +4437,16 @@ def _diagnostics_payload() -> dict:
             "hypotheses_open": len(hypotheses.list_all("open")),
         },
         "checks": CHECKS_STATE["last"],
+        # The last deep run's verdict — three facts, never the transcript.
+        # A bug report needs to know whether every face was walked, when,
+        # and which one broke; the stage list is a page of prose and
+        # belongs on the screen that asked for it.
+        "doctor_deep": doctor.summary(),
+        # And the other costed check: what the checks and the model
+        # scored against defects whose ground truth is known by
+        # construction. The one number in this payload that is
+        # about the PROMPT rather than about the house.
+        "rehearsal": rehearsal.summary(),
         # Numbers, not the buckets: a bug report needs to know whether the
         # house has been measured and when, not a month of hourly medians
         # for four hundred sensors.
@@ -4157,6 +4517,16 @@ def _diagnostics_payload() -> dict:
         # answering, and what the cap is. A session the cap stopped and one
         # that crashed leave the same silence otherwise.
         "chat": chat_session.registry().summary(),
+        # Whether the analyst's prompts are being sampled, how many runs
+        # are on disk, and how many of those an ending has labelled.
+        # Numbers only — the captures themselves are never bundled: this
+        # payload is what gets attached to a public issue.
+        "capture": capture.stats(bool(settings.get("capture"))),
+        # Checks that run and are not on the tab, and how much of what
+        # they said something else said too. No automatic promotion — this
+        # is the number a person reads before moving an id out of
+        # `checks.SHADOW`, which is a code change.
+        "shadow_checks": shadow_findings.diagnostics(),
         "daemons": _daemon_rollcall(),
         "usage": {k: usage.get(k) for k in ("source", "used_percent", "limits")},
     }
@@ -4184,6 +4554,55 @@ def publish_diagnostics() -> None:
 
 async def h_diagnostics(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(_diagnostics_payload))
+
+
+# ---------------------------------------------------------------------------
+# Captured runs — reviewable before anything leaves the add-on
+# ---------------------------------------------------------------------------
+
+async def h_capture_list(request: web.Request) -> web.Response:
+    """One row per captured run: when, what, how many findings, how many
+    endings have labelled them."""
+    settings = await asyncio.to_thread(settings_store.load)
+    return web.json_response({
+        "enabled": bool(settings.get("capture")),
+        "captures": await asyncio.to_thread(capture.listing),
+        "max_files": capture.CAPTURE_MAX_FILES,
+        "export_dir": str(capture.EXPORT_DIR),
+    })
+
+
+async def h_capture_get(request: web.Request) -> web.Response:
+    """One whole capture, as it is on disk. Already redacted — the file is
+    written that way, so there is no unredacted copy for this to leak."""
+    entry = await asyncio.to_thread(capture.read, request.match_info["run_id"])
+    if entry is None:
+        return web.json_response({"error": "no such capture"}, status=404)
+    return web.json_response(entry)
+
+
+async def h_capture_export(request: web.Request) -> web.Response:
+    """Copy one capture to /share, which is the one route out of the add-on.
+
+    Deliberately a press rather than anything automatic: everything above
+    this line keeps the file in /data, where Home Assistant cannot see it
+    and a backup does not carry it.
+    """
+    path, error = await asyncio.to_thread(
+        capture.export, request.match_info["run_id"])
+    if error:
+        return web.json_response(
+            {"error": error},
+            status=404 if "no capture" in error else 500)
+    log.info("exported capture %s to %s", log_safe(request.match_info["run_id"]), path)
+    return web.json_response({"ok": True, "path": path})
+
+
+async def h_capture_delete(request: web.Request) -> web.Response:
+    gone = await asyncio.to_thread(capture.delete, request.match_info["run_id"])
+    if not gone:
+        return web.json_response({"error": "no such capture"}, status=404)
+    return web.json_response({"ok": True})
 
 
 def _findings_payload() -> dict:
@@ -4252,7 +4671,12 @@ FINDING_VERBS = {
               "memory": "Not a problem in this home: {text}",
               "noted": 'brAIn reported: "{text}". The homeowner says that is '
                        "not a problem here, because: {note}",
-              "source": "correction"},
+              "source": "correction",
+              # What this ending means to anything counting them. `kind` is
+              # what the settled ledger stores and two verbs share one, so
+              # it cannot be the label: "I did it" and "Got it" are both
+              # `fixed` and are different evidence about the report.
+              "label": "wrong"},
     # "I already handled it myself" — the ending for anything needing hands,
     # and the one where what you did is worth more than that you did it. "I
     # fixed it" leaves brAIn knowing a problem is over; "replaced the CR2032,
@@ -4261,10 +4685,11 @@ FINDING_VERBS = {
              "memory": "Fixed by the homeowner on {date}: {text}",
              "noted": "Fixed by the homeowner on {date}: {text}. They said: "
                       "{note}",
-             "source": "homeowner"},
+             "source": "homeowner",
+             "label": "done"},
     # "I've read what brAIn changed" — the ending for an automated fix,
     # which already wrote its own memory line when it made the change.
-    "ack": {"kind": "fixed", "memory": ""},
+    "ack": {"kind": "fixed", "memory": "", "label": "got_it"},
     # Not an ending: puts a legacy row (dismissed before the ledger existed,
     # and still on disk) back on the list.
     "reopen": {"status": "open"},
@@ -4331,6 +4756,18 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
         return _findings_payload()
 
     payload = await asyncio.to_thread(settle)
+    # And the label, on the capture of the run that raised it. This is the
+    # one door every ending comes through — the tab's buttons, a tick in
+    # the To-do app, a button on a notification — so hooking it here is
+    # what makes "the ending is the label" true of the ANSWER rather than
+    # of the surface it was given on. Best effort in every direction: a
+    # capture that was never written, or has been pruned, simply has
+    # nothing to label, and an ending must never fail because of one.
+    if finding.get("run_id") and spec.get("label"):
+        await asyncio.to_thread(
+            capture.add_label, finding["run_id"],
+            finding_key=findings_store.normalize(finding["text"]),
+            verb=spec["label"], note=note)
     # A note only changes the sentence for endings that have a second one to
     # offer. "Got it" plus a comment is still "Got it": falling back to
     # `memory` is what stops a note silently costing the memory line.
@@ -4667,6 +5104,61 @@ async def _wait_for_gone(entity_id: str) -> bool:
         await asyncio.sleep(ACCEPT_POLL_S)
 
 
+async def _remove_automation(entry_id: str,
+                             entity_id: str = "") -> tuple[dict | None, str]:
+    """Splice one entry out, reload, and check it really went.
+
+    `_apply_accepted`'s mirror, and the same three claims backwards: the
+    bytes are out of the file, Home Assistant read the file again, and the
+    entity has left Core. Any of them failing puts the file back and
+    reloads again, so a removal that could not be honoured leaves nothing
+    half done.
+
+    A function rather than a block inside the Remove route because the
+    rehearsal removes what it planted through it: a second implementation
+    of taking an automation out is a second chance to leave one behind.
+    """
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    written = await asyncio.to_thread(automation_writer.remove, entry_id)
+    if written.get("missing"):
+        # The entry is not in the file: somebody deleted it by hand, and
+        # there is nothing to splice, nothing to reload and nothing to put
+        # back. Reporting that as a failure would leave an intent card on
+        # the tab with no way to end it — Remove is its only ending — so
+        # "already gone" IS the removal having happened.
+        return None, ""
+    if not written.get("ok"):
+        return None, str(written.get("error")
+                         or "brAIn could not edit automations.yaml")
+    failure = ""
+    try:
+        await ha_data.call_core_service("automation", "reload")
+    except Exception as exc:  # noqa: BLE001
+        failure = f"Home Assistant would not reload its automations: {exc}"
+    if not failure and entity_id:
+        try:
+            if not await _wait_for_gone(entity_id):
+                failure = (f"{entity_id} is still in Home Assistant after "
+                           "the reload, so the automation was not really "
+                           "removed")
+        except Exception as exc:  # noqa: BLE001
+            failure = f"brAIn could not check whether it went: {exc}"
+    if not failure:
+        return written, ""
+
+    reverted = await asyncio.to_thread(automation_writer.revert, written)
+    try:
+        await ha_data.call_core_service("automation", "reload")
+    except Exception as exc:  # noqa: BLE001 — the file is back; a second
+        # failed reload is a log line.
+        log.warning("could not reload after putting it back: %s", exc)
+    if not reverted.get("ok"):
+        failure += (" — and putting automations.yaml back failed: "
+                    f"{reverted.get('error')}")
+    return None, failure
+
+
 async def h_intent_remove(request: web.Request) -> web.Response:
     """Take a one-off back out of `automations.yaml`.
 
@@ -4682,8 +5174,6 @@ async def h_intent_remove(request: web.Request) -> web.Response:
     then does the row leave the list. Any of them failing puts the file
     back and answers 409 with the sentence.
     """
-    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
-
     ts = int(request.match_info["ts"])
     row = await asyncio.to_thread(intents.get, ts)
     if row is None:
@@ -4692,37 +5182,9 @@ async def h_intent_remove(request: web.Request) -> web.Response:
 
     written = None
     if row.get("status") != "refused" and row.get("automation_id"):
-        written = await asyncio.to_thread(
-            automation_writer.remove, row["automation_id"])
-        if not written.get("ok"):
-            return web.json_response(
-                {"error": str(written.get("error")
-                              or "brAIn could not edit automations.yaml"),
-                 **await asyncio.to_thread(_proposals_payload)}, status=409)
-        failure = ""
-        try:
-            await ha_data.call_core_service("automation", "reload")
-        except Exception as exc:  # noqa: BLE001
-            failure = f"Home Assistant would not reload its automations: {exc}"
-        if not failure and row.get("entity_id"):
-            try:
-                if not await _wait_for_gone(row["entity_id"]):
-                    failure = (f"{row['entity_id']} is still in Home "
-                               "Assistant after the reload, so the "
-                               "automation was not really removed")
-            except Exception as exc:  # noqa: BLE001
-                failure = f"brAIn could not check whether it went: {exc}"
+        written, failure = await _remove_automation(
+            row["automation_id"], row.get("entity_id") or "")
         if failure:
-            reverted = await asyncio.to_thread(
-                automation_writer.revert, written)
-            try:
-                await ha_data.call_core_service("automation", "reload")
-            except Exception as exc:  # noqa: BLE001 — the file is back;
-                # a second failed reload is a log line.
-                log.warning("could not reload after putting it back: %s", exc)
-            if not reverted.get("ok"):
-                failure += (" — and putting automations.yaml back failed: "
-                            f"{reverted.get('error')}")
             return web.json_response(
                 {"error": failure,
                  **await asyncio.to_thread(_proposals_payload)}, status=409)
@@ -4915,34 +5377,42 @@ async def h_undo(request: web.Request) -> web.Response:
             "restore_total": len(entry["entries"]),
         })
 
-    def reverse() -> tuple[bool, dict]:
-        if entry["kind"] == "finding":
-            # The row may have been re-reported in the meantime, in which
-            # case the list already holds a newer version of it and putting
-            # this one back would throw away whatever has happened since.
-            restored = findings_store.restore(entry["finding"]) is not None
-            if entry.get("key"):
-                findings_store.unsettle(entry["key"])
-        else:
-            restored = hypotheses.reopen(entry["ts"]) is not None
-            # A rejected guess also went into the ask-history as a dead end.
-            # Leaving that behind would put the claim back on the list and
-            # make it un-proposable for ever after.
-            for q in knowledge_store.list_questions():
-                if (entry.get("question")
-                        and knowledge_store.normalize(q["text"])
-                        == knowledge_store.normalize(entry["question"])):
-                    knowledge_store.remove_question(q["ts"])
-        # The memory line has not been consolidated (the token is younger
-        # than any pass), so it is still a line in the inbox and comes out
-        # the same way a queued fact does from the Memory tab.
-        if entry.get("fact"):
-            _drop_from_inbox(_inbox_id(entry["fact_source"], entry["fact"]))
-        return restored, _findings_payload()
-
-    restored, payload = await asyncio.to_thread(reverse)
+    restored, payload = await asyncio.to_thread(_undo_finding, entry)
     payload["undone"] = restored
     return web.json_response(payload)
+
+
+def _undo_finding(entry: dict) -> tuple[bool, dict]:
+    """Reverse an ending: the row, the settled key and the memory line.
+
+    Module-level rather than a closure inside the route for the same
+    reason `_end_finding` is: the deep doctor drives this to prove an undo
+    round-trips, and a second implementation of putting a row back would
+    be exactly the thing worth catching rather than the thing catching it.
+    """
+    if entry["kind"] == "finding":
+        # The row may have been re-reported in the meantime, in which
+        # case the list already holds a newer version of it and putting
+        # this one back would throw away whatever has happened since.
+        restored = findings_store.restore(entry["finding"]) is not None
+        if entry.get("key"):
+            findings_store.unsettle(entry["key"])
+    else:
+        restored = hypotheses.reopen(entry["ts"]) is not None
+        # A rejected guess also went into the ask-history as a dead end.
+        # Leaving that behind would put the claim back on the list and
+        # make it un-proposable for ever after.
+        for q in knowledge_store.list_questions():
+            if (entry.get("question")
+                    and knowledge_store.normalize(q["text"])
+                    == knowledge_store.normalize(entry["question"])):
+                knowledge_store.remove_question(q["ts"])
+    # The memory line has not been consolidated (the token is younger
+    # than any pass), so it is still a line in the inbox and comes out
+    # the same way a queued fact does from the Memory tab.
+    if entry.get("fact"):
+        _drop_from_inbox(_inbox_id(entry["fact_source"], entry["fact"]))
+    return restored, _findings_payload()
 
 
 async def h_finding_unsettle(request: web.Request) -> web.Response:
@@ -6666,7 +7136,15 @@ def make_app() -> web.Application:
     app.router.add_get("/api/findings", h_findings)
     app.router.add_get("/api/checks", h_checks)
     app.router.add_post("/api/checks/run", h_checks_run)
+    app.router.add_get("/api/doctor/deep", h_doctor_deep_get)
+    app.router.add_post("/api/doctor/deep", h_doctor_deep_start)
+    app.router.add_get("/api/doctor/rehearse", h_rehearse_get)
+    app.router.add_post("/api/doctor/rehearse", h_rehearse_start)
     app.router.add_get("/api/diagnostics", h_diagnostics)
+    app.router.add_get("/api/capture", h_capture_list)
+    app.router.add_get("/api/capture/{run_id}", h_capture_get)
+    app.router.add_post("/api/capture/{run_id}/export", h_capture_export)
+    app.router.add_delete("/api/capture/{run_id}", h_capture_delete)
     app.router.add_get("/api/baselines", h_baselines)
     app.router.add_post("/api/baselines/run", h_baselines_run)
     app.router.add_get("/api/appliances", h_appliances)

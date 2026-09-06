@@ -208,8 +208,20 @@ def add(obj: dict) -> dict | None:
         # that stops growing.
         return None
 
+    # A millisecond is not unique and everything keys on this one. A
+    # checks pass files playbooks, conditions and routines in one loop,
+    # and a write plus a mirror publish takes well under a millisecond —
+    # measured, eight adds gave four ids. Two rows under one `ts` is not
+    # cosmetic: `get` and `decide` take the first, so pressing Accept on
+    # one card writes the other card's automation and settles the other
+    # card's key. `intents.note` has carried this guard since it was
+    # written, in this shape, for this reason.
+    stamp = int(_now() * 1000)
+    taken = {int(r.get("ts") or 0) for r in rows}
+    while stamp in taken:
+        stamp += 1
     row = {
-        "ts": int(_now() * 1000),
+        "ts": stamp,
         "key": key,
         "kind": str(obj.get("kind") or "automation")[:40],
         "title": str(obj.get("title") or "")[:TITLE_MAX],

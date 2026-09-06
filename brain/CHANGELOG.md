@@ -2,6 +2,477 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.47.0
+
+**No new capability, and that is the release.** The checks design page has
+five tiers and the last two are not features — they are the loop that
+tells you whether the first three work. Tier 4 asks *does each face of
+this add-on work end to end, right now, on this install*, and answers it
+by doing the thing rather than by checking that a pid exists. Tier 5 is
+the flywheel: capture what the analyst was sent and what a person made of
+it, freeze houses with their ground truth into a corpus, replay this
+release's prompts against them, and run a new check where nobody can see
+it until its numbers say it has earned a place on the list.
+
+The other half is a stabilisation pass over 1.44.0–1.46.0, which is where
+brAIn started writing to `/config` without a Claude run and without
+somebody pressing Fix it. Three releases of unattended writers is exactly
+long enough for the quiet failures to have accumulated and not nearly long
+enough for anybody to have hit them: every bullet under **Fixed** is a bug
+reproduced by a failing test before it was fixed, and every guard was
+mutation-verified by breaking it and watching the test go red.
+
+BRight's `detect_hits` is the reason the second half exists. That function
+returned **zero** results on every real track for its entire life, with a
+green suite behind it the whole time, because the only fixture it had was
+a synthetic stab loud enough to clear a threshold no real mix reaches.
+brAIn's analyst prompts have exactly that exposure — `_CARD_CONTRACT` is
+ten kilobytes of output rules shared by two prompt builders, and nothing
+in this repository has ever run either of them against a real house or a
+real model.
+
+### Added
+
+- **Every face of brAIn, one real round trip each** (`panel/doctor.py`,
+  `brain doctor --deep`, ⚙ → Diagnostics → Run deep check). `brain doctor`
+  answers *is the plumbing connected*: a token is present, the MCP server
+  completes a handshake, the panel answers, a daemon has a pid. Every one
+  of those can be true while the thing a person actually uses is broken —
+  a credential that expired on a Tuesday, a listener holding a folder open
+  with nothing behind it, an allow-list that stopped letting a read
+  through. This asks the other question, and asks it the only way that can
+  be trusted: by doing the thing.
+
+  Eight stages, each with its own budget and its own failure sentence
+  naming the switch or the log to look at. A no-tool Claude run whose
+  reply the JSON extractor has to be able to read (which is the step every
+  insight card depends on, and the one whose failure reads as "the card
+  didn't generate"); an analyst run that must read the house's areas
+  **and** must be refused `call_service`; a chat session that spawns,
+  speaks and closes; a task written in the integration bridge's own wire
+  format, claimed by rename inside the grace window and answered; a
+  `conversation/process` turn through Home Assistant's own front door with
+  brAIn's agent id; a synthetic fact queued, filed into `memory.md` and
+  taken out again; a finding filed, ended, undone and ended for good; and
+  one real `run_agent` renaming a helper and putting it back.
+
+  BRight's `director_check` is the shape — walk the chain, do a real
+  trivial round trip, make the sentence at the break name the switch — and
+  the two differences are because there are eight faces here rather than
+  one chain. **Every stage is reported**, because "the chat works and the
+  automation listener does not" is the answer and stopping at the first
+  break hides it; and **a stage whose precondition failed is skipped with
+  the reason**, because eight identical auth failures is a report nobody
+  reads past line one.
+
+  Six rules hold the rest of it up. It is **opt-in, costed and never on a
+  timer** — the design page's own words, and the auth re-check's rule for
+  the auth re-check's reason. **Every stage cleans up after itself and the
+  cleanup is verified**: the synthetic fact is not in `memory.md`
+  afterwards, the finding is in neither the store nor the settled ledger,
+  the helper is gone, and a leftover is a *failure of that stage*. **A
+  disabled face is skipped, not failed** (`health.py`'s "optional is not
+  broken"), and `fixer_dry` skips rather than fails when
+  `protected_entities` covers the helper it would rename, because the list
+  doing its job is not a fault. **The shipped configuration is what is
+  tested**: the allow list, the deny list and the protected patterns come
+  from the same environment the real runs read them from. **A timeout is
+  reported by name**, never as "not authenticated". And **every Claude
+  turn is journaled and counted** — the runs claim the new `doctor` source
+  before they start, so the Chats rail does not offer a probe as a
+  conversation somebody had, and the tokens go through `usage_store` so
+  the pill moves and the popover attributes the movement.
+
+  It rides the generation queue like a fix run, because one Claude
+  invocation in flight across the whole add-on is what keeps a
+  subscription's rate limit intact. `POST /api/doctor/deep` starts one and
+  answers 409 with the live run rather than a collision; `GET` returns the
+  stages as they land, which is what lets the CLI print each line as it
+  happens and the dialog fill in as it goes. The last run's verdict — when,
+  what, and which stage broke, never the transcript — rides in
+  `/api/diagnostics`, so `brain report` and Home Assistant's own Download
+  diagnostics button carry it.
+
+- **`_undo_finding` is a function now**, lifted out of the route's closure
+  for the same reason `_end_finding` was lifted out of `h_finding_verb`:
+  the deep check drives an undo to prove it round-trips, and a second
+  implementation of putting a row back would be the thing worth catching
+  rather than the thing catching it.
+
+- **A rehearsal on the house this actually is** (`panel/rehearsal.py`,
+  `brain doctor --rehearse`, ⚙ → Diagnostics → Rehearse…). Every house
+  check has a fixture test that asserts it silent on a clean house before
+  asserting it finds the planted row. What that cannot see is *this*
+  install — its Home Assistant version, its integrations, its data shapes
+  — and reading the CLAUDE.md history, that is where every late bug in
+  this add-on has lived: a rule that is right against a hand-built dict
+  and wrong against a real registry passes the suite for its whole life.
+
+  So a rehearsal plants a small set of defects under a `brain_test_`
+  prefix, runs the checks and the analyst against them, scores both, and
+  takes everything back out. What it produces is a number — *on this
+  house, this Home Assistant version, this model, the analyst found 3 of 4
+  planted defects and reported 1 thing that was not there* — and that
+  number is the point. It is what makes a prompt change measurable
+  somewhere other than the developer's own home.
+
+  **Consent is a named step, and it is a 428.** A call without
+  `{"consent": true}` is answered with the exact list of what would be
+  created — the ids, and what each is for — and nothing is created before
+  the answer comes back. Everything goes in through paths brAIn already
+  owns: automations through `automation_writer`'s write-reload-verify, so
+  the rehearsal is also a real round trip of the writer and of the splice
+  that removes one. The checks are run with **`checks.run_all`, never
+  `server.run_checks`** — the second files, notifies and clears, so it
+  would ring somebody's phone about a defect brAIn planted and let a
+  planted row clear a real one.
+
+  Three things make the score honest. **A check whose floor is measured in
+  days is named as not rehearsable rather than counted as missed** —
+  `auto.forgotten_off` needs thirty days switched off, `dev.frozen` a week
+  of statistics — because a rehearsal that scored those would report a
+  working check as broken on every single run. **The healthy planted row
+  is part of the score**: the helper is planted expecting nothing to fire
+  on it, and a check that reports it is a false positive worth knowing
+  about. And **both numbers are scoped to `brain_test_` rows**, because a
+  finding about the real house is not a false positive — folding one in
+  would make "precision" a measurement of how tidy somebody's house is.
+
+  **Removal is in a `finally` and is verified against a fresh snapshot**,
+  in all three places a leftover can survive: the automations file, the
+  entity registry and the states. A cleanup that fails is the loudest line
+  in the report, because the thing left behind is in somebody's config.
+
+- **And the free `brain doctor` is what catches the rehearsal that could
+  not clean up.** It warns on any `brain_test_*` automation, entity or
+  helper and names the command that removes it. That is the design page's
+  own recommendation for shipping the rehearsal at all, and it reads the
+  files rather than Core where it can — a doctor line that only works when
+  everything else does is a line that is absent exactly when it matters.
+  It is deliberately **not** a `health.py` `degraded` reason: a
+  left-behind test helper is a tidy-up, not brAIn failing to work, and the
+  health sensor's whole value is that its three states mean something.
+
+- **Capture: the prompt, the reply, and the ending that grades them**
+  (`panel/capture.py`, ⚙ → Diagnostics → *Capture runs for the corpus*).
+  With it on, every card run writes one file: what the analyst was given,
+  the card that came back, and what it cost. The half that makes it worth
+  anything is the third thing — **an ending on the Findings tab is already
+  a label.** "I've fixed it" and "Got it" say the report was right,
+  "Wrong" says it was not, and pairing that with the prompt that produced
+  it turns a house into a graded example.
+
+  It is hooked in `_end_finding` rather than in the tab's verb handler,
+  because that is the one door every ending comes through: the buttons, a
+  tick in the To-do app and a button on a notification all reach it, so
+  the label is a property of the *answer* rather than of the surface it
+  was given on.
+
+  Five rules, four of them refusals. **Off by default** — the design
+  page's own "not building" list says *any capture that is on by default*,
+  because a house's entity names are a floor plan. **Nothing leaves the
+  add-on until a person exports it**: the files are in `/data`, which Home
+  Assistant cannot see, and `backup_exclude` names the directory so the
+  one route out nobody presses is closed as well. **Redacted on the way
+  in, never at export** — a redaction applied on the way out is one that
+  never ran for the file somebody found by another route — by
+  `brain-report.sh`'s own rules, with the shell function and the Python
+  driven against the same fixture strings so the two cannot drift.
+  **Capped** at fifty runs, oldest first. And **a run id off the wire is
+  not a filename**, with `chat_session.transcript_path`'s barrier spelled
+  the same way for the same reason.
+
+  The id is the one Claude Code already minted. `engine._run_cli` mints a
+  session id and claims it in `run_sources` before every run, so a capture
+  file, a journal line (`run_id` is a column now), a transcript and a
+  Chats rail row all name the same run rather than four ids nothing can
+  join. A finding carries it too, which is what lets an ending find the
+  capture that raised it; a house check carries none, which is the honest
+  answer, because nothing was asked and there is no prompt to grade.
+
+- **A corpus of houses whose ground truth is arithmetic** (`tests/corpus/`).
+  An entry is a house *and what was true of it*, frozen. Two ship, and
+  neither is hand-written: `build.py` generates the clean house from the
+  suite's own healthy fixture — whose whole label is *nothing fires here*,
+  the strongest claim in the directory — and the rehearsal house from that
+  same house with `rehearsal.PLAN`'s defects planted in it, so the corpus
+  and `brain doctor --rehearse` cannot disagree about what a planted
+  defect is.
+
+  The output is frozen deliberately, and nothing asserts it still matches
+  what the builder would produce today: an entry whose expectations are
+  regenerated from the current code cannot fail when the code changes,
+  which is the one thing it exists to do. `schema.json` is the document a
+  contributor reads and it says out loud that nothing validates against it
+  — `jsonschema` is not a test dependency, and taking one so that two
+  files agree about a shape is a poor trade — while a test asserts that
+  the structural validator's required keys, kinds and ending words are the
+  *same lists* the schema publishes.
+
+  Contributing one from your own house is a switch, a look, a press and a
+  pull request, in that order, and the third step is reading the file:
+  `tests/corpus/README.md` is the whole procedure.
+
+- **A replay, in two halves that cost very different things**
+  (`tests/corpus/replay.py`, `.github/workflows/replay.yml`). The checks
+  half is `run_all` and nothing else — no model, no token — and rides
+  ordinary CI as `tests/test_corpus.py`. It is what fails when somebody
+  moves a floor, and it names *the house* that went quiet or loud rather
+  than a line number: a check that gains a condition stops finding a
+  defect that was planted for it, and one that loses a condition starts
+  firing on a house that is meant to be silent.
+
+  The analyst half rebuilds the prompt with the **current** builder — a
+  stored prompt would grade the release that captured it — and is capped
+  three ways, with `--max-tokens` checked *before* each run, because a cap
+  that stops once it has been passed has already spent the run that passed
+  it. **A `search`-mode entry is skipped rather than faked**: that run
+  read the house with Home Assistant tools, and replaying the prompt where
+  they reach nothing would grade a model that cannot look anything up and
+  report the result as the prompt's fault. The nightly workflow is never
+  required for a pull request, and with no `BRAIN_REPLAY_TOKEN` secret it
+  runs the free half and says why in words — a scheduled job that goes red
+  for want of a credential is a job people switch off, and then the real
+  failure is in the same stream.
+
+  One scorer, in `panel/scoring.py`, because `rehearsal.py` ships inside
+  the add-on and cannot import from the test tree while the test tree
+  already has `panel/` on its path. Both halves of the rehearsal call it
+  now. Nothing over nothing answers 0.0 rather than 1.0 — a number nobody
+  should trust that looks like the best possible one.
+
+- **Shadow mode: a check that runs and reaches nobody**
+  (`panel/shadow_findings.py`, `checks.SHADOW`). A new rule goes there
+  first. It files to a separate store, nothing renders it, and for a
+  fortnight its rows are compared with what was actually filed over the
+  same window; ⚙ → Diagnostics reads *"`dev.example`: 14 rows over 9 days,
+  11 agree with what was filed"*, and `brain report` inherits it.
+
+  **A separate store, not a status** — that is the whole design. A
+  `shadow` status would touch every `LIVE_STATUSES` site in
+  `findings_store`, and far worse, `add_many` dedupes by normalised text
+  across every status *and* the settled ledger, so a shadow row would
+  **suppress a real report** of the same problem: a rule nobody has agreed
+  to yet, silencing the analyst about something that is really wrong.
+
+  Agreement rather than precision, because nothing here has an ending on
+  it — nobody can press Wrong on a row they cannot see — and the count
+  reads the settled ledger as well as the list, or a check would look
+  worse the better the house is kept. Days ride with the count, because
+  fourteen rows over one day is one evening. Clearing is
+  `findings_store.resolve_clear`, extracted rather than copied, so a
+  trialled check cannot have a different lifecycle from the one it is
+  being compared against.
+
+  It ships **empty** — every check so far has earned its place, and a set
+  with something in it "for now" is how a trial becomes permanent — and
+  **there is no automatic promotion**: moving an id out is a code change
+  somebody makes while reading those two numbers, because a producer that
+  promoted itself on a threshold would be a threshold nobody can see
+  deciding what a house is told.
+
+### Fixed
+
+- **A signed-in terminal was reported signed out every few hours, and
+  nothing brAIn did could clear it.** Claude Code's own
+  `.credentials.json` records a short-lived `accessToken` and the
+  `refreshToken` it mints the next one from — the CLI does that renewal
+  itself, on its next run, which is why 1.44.0 refuses to publish that
+  file to the other add-ons. `_cli_credentials_present` read the lapsed
+  access token as a dead credential anyway. That file is the LAST store
+  `get_auth` consults, so for somebody who had only ever signed in through
+  the terminal it was the whole verdict: `/api/status` answered
+  `authenticated: false`, the panel put up the sign-in screen, and because
+  every Claude run in the server is gated on the same call, nothing ever
+  ran the CLI — which was the one thing that would have refreshed the
+  token. The only way out was opening the terminal and typing `claude`,
+  which a phone cannot do. `run.sh` carried the same test on the other
+  side of the same file and deleted the backup, so a container down
+  overnight came up having thrown a working sign-in away. Both now ask
+  whether the CLI can still *use* the credential rather than whether the
+  access token is live; a past expiry with no refresh token stays dead,
+  because that is the revoked session the check was written for and there
+  is nothing left in the file to renew. Liveness proper is still
+  `validate_auth`'s — a real run, where a revoked refresh token comes back
+  a 401. The terminal's rule (`brain-auth-env.sh`) is deliberately
+  unchanged and the comment now says why the two differ: it is the FIRST
+  store of the three, so a wrong "no" there falls through to two more and,
+  with those empty, emits nothing at all — exactly what deferring would
+  have done. The jq and the Python are driven over one fixture set and
+  compared, because a boot-time reader and a panel-time reader disagreeing
+  about one file is an add-on that deletes what it would have accepted.
+  `brain doctor`'s line about that credential is now three sentences
+  rather than one, because a lapsed access token is three states and the
+  warning was only ever true of one of them: it warns when another store
+  is behind it (the terminal falls through to that one, so the CLI never
+  gets the run that would refresh its own), says so as an `info` when the
+  file can renew itself, and keeps the warning for a past expiry with no
+  refresh token. The Fix it offered — delete the credential *and* its
+  backup — was the advice that threw the working sign-in away, and it is
+  gone.
+
+- **A protected entity written the old way was a protected entity nothing
+  could see.** `shadow.would_do` is the one reader of an action list, and
+  three writers ask it the only question that matters before a file is
+  written: does this touch something somebody said not to touch. It read
+  `target: {entity_id}` and a top-level `entity_id:` and stopped — so
+  `data: {entity_id: lock.front}`, the oldest of the three spellings and
+  what most automations written before 2021 use, arrived as an action with
+  no targets at all and passed the check vacuously. Same shape as the
+  `choose` that was missed a release ago: a spelling the reader does not
+  know is not a refusal, it is a silence. `label_id` and `floor_id` were
+  the other half — scopes brAIn has no registry to expand, refused
+  outright for areas and devices since 1.44.0 and never mentioned for the
+  two Home Assistant added afterwards. All three places an entity id can
+  be written are read now, and all four scopes are reported; the tests
+  drive the refusal through `choose`, `if/then`, `repeat` and `parallel`
+  with the entity in `data` each time.
+
+- **A device action names no service, and nothing looking for one saw it.**
+  `{device_id, domain, type}` is what Home Assistant's own editor writes
+  when somebody picks a device off a list, which makes it the commonest
+  shape in a UI-built automation — and it fell straight through the walk,
+  so `_protected_refusal` looked at an automation full of them and
+  reported an automation that does nothing. The producer it reaches is the
+  condition miner, which edits somebody's own rule rather than composing
+  one, and so is precisely the one whose input is full of them. It is
+  reported as the device target it is.
+
+- **An entity id brAIn cannot resolve is not an entity id it may write.**
+  `is_protected` compares a string against exact ids, `domain.*` and `*`,
+  so `entity_id: "{{ trigger.entity_id }}"` — a rule that acts on whatever
+  fired it — matched nothing and passed, as did the still-legal
+  `entity_id: all`. Neither is a decision that can be made from a config,
+  so while protected entities are set neither gets made: an unresolvable
+  target is refused in as many words, which is the answer an area target
+  has always had with the target spelled differently. An action naming
+  nothing at all — a notification, which is most of what a playbook does —
+  is untouched.
+
+- **Accepting one proposal wrote a different proposal's automation.** A
+  proposal's id is `int(time.time() * 1000)` and everything keys on it, but
+  one checks pass files up to three playbooks, three conditions and a
+  handful of routines through `add` in a loop, and a write plus a mirror
+  publish is well under a millisecond: measured on a real store, eight
+  adds produced **four** distinct ids. `get(ts)` returns the first row with
+  that stamp and `decide(ts)` ends the first, so pressing Accept on the
+  second of a pair wrote the *first* one's automation into
+  `automations.yaml`, reloaded, verified it, settled the first one's key,
+  and left the card that was pressed exactly where it was. `intents.note`
+  has carried the guard against this since it was written; `add` has it now.
+
+- **The self-healer's own window did not cross midnight.** Its quiet-hours
+  branch wraps, because `notify_router.in_quiet_hours` does. The other
+  branch — the one a house with no quiet hours set actually uses, an hour
+  after the settle time `rhythm` measured — was a plain subtraction, and a
+  settle time anywhere in the evening puts the target inside the last hour
+  of the day: 22:50 measured gives 23:50, so every minute after midnight
+  answered no. Forty-five minutes of window became nine on a five-minute
+  poll, and a panel restarted at 23:55 woke after the night had gone. From
+  outside it reads as a self-healer that has never run.
+
+- **A CRLF `automations.yaml` came back as LF, whole.** `Path.read_text`
+  opens in universal-newline mode, so the writer turned every `\r\n` into
+  `\n` and wrote the result straight back: one appended entry, or one
+  spliced one, and every line ending in somebody's file has changed — by
+  the module whose reason for existing is not to hand back a diff nobody
+  asked for. `revert` had it worse, reading the snapshot the same way, so
+  putting the file back did not put it back.
+
+- **An entry with a block-scalar `description:` could never be edited or
+  removed**, which is the shape Home Assistant writes for anything
+  multi-line. PyYAML ends a block scalar at the next token's line, which is
+  already a line boundary, so the span was cuttable and the refusal was
+  answering the wrong question — with a walk-back over the blank lines the
+  scanner ran on through, because swallowing somebody's spacing between
+  entries is the thing a byte splice must not do.
+
+- **A spliced file is read back before it is written.** Bytes cannot tell
+  you whether what is left is still a file Home Assistant can load:
+  removing the only entry from a document that ends with its own `...`
+  marker leaves `...`, which PyYAML refuses outright — so the reload
+  afterwards would have taken out every automation in the house.
+
+- **"Already deleted by hand" and "brAIn will not touch this file" were one
+  refusal.** An intent's Remove is the only ending its card has, so
+  somebody who took the one-off out of `automations.yaml` themselves — their
+  file, their right — met a 409 naming an id that is not there and a row
+  nothing could ever clear. The two answers are told apart now.
+
+- **A Remove on a one-off somebody had already deleted returned 409, and
+  Remove is an intent's only ending** — so the card stayed on the
+  Proposals tab with nothing that could ever clear it. "Already gone" is
+  read as the removal having happened: nothing to splice, nothing to
+  reload, nothing to put back, and the row leaves the list. The undo
+  token's intent branch already skipped the revert when there is nothing
+  to revert, so the row still comes back if the press was a mistake.
+
+- **"When did the boiler last run?" is a question, and it was being
+  answered with a refusal card.** It opens with the same word as "when the
+  guests leave, turn the porch light off", so `INTENT_RE` matched it and
+  the ask bar spent a Claude run producing a card that said brAIn could
+  not arm the one-off — for something a card would simply have answered.
+  The signal is one word further along: an auxiliary verb straight after
+  the opener is somebody asking, and an instruction never has one there.
+  `INTENT_QUESTION_RE` is that test, and the route negates it. Not
+  trailing-`?` detection, which nobody types on a phone.
+
+- **Four moods with two of the same name are three moods and a repeat.**
+  Home Assistant derives a scene's entity id from its name, and the one
+  optional thing Claude does on this path is choose the four names.
+  Nothing checked they were four different ones, and every guard
+  downstream passed: the file took both, the reload returned 200, the
+  verification was handed an id that really does exist, and the schedule
+  was then offered and walked the room through three moods and a repeat.
+  `read_names` keeps its "all four or none" contract over the slug now, and
+  the writer asks the batch about itself as well as about the file.
+
+- **Renaming a room re-offered a freeze playbook somebody had declined.**
+  `proposals.key_for` hashes the config, so nothing a rename can move may
+  be in one — which is why the smoke and leak playbooks name the room with
+  a template Home Assistant resolves when it fires. The freeze playbook
+  watches one room and wrote that room's name into its notification text.
+
+- **A `last_triggered` with no offset was read as local time.**
+  `datetime.timestamp()` resolves a naive value against the machine's own
+  zone and Core stamps that attribute in UTC, so the error is the house's
+  own offset in whichever direction it leans: east of Greenwich a real
+  firing resolves to before its own accept and the one-off reads as still
+  waiting for ever, west of it something that ran beforehand reads as this
+  intent firing.
+
+- **Closing the conversation on screen did not stop the registry holding
+  it.** Deleting a conversation is refused while anything holds it open,
+  and the refusal names the close route because a refusal with no way to
+  satisfy it is a dead end — but `close` removed a background session from
+  the listing and left the attached one in it, stopped but still held, so
+  the delete came back with the same sentence the person had just obeyed.
+  Reachable from the ✕ on the row you are looking at, which is the
+  commonest one to press.
+
+- **Two silent wrong answers in the replay.** Home Assistant applies
+  `cv.ensure_list` to a nested `conditions:`, so `condition: not` over a
+  single mapping is legal — and reading one as an empty list makes `not`
+  and `and` true at every instant and `or` false at every instant, which
+  is a confident wrong count in the one module whose whole promise is that
+  it never produces one. And a `time` condition whose `after:` names an
+  `input_datetime` raised `ValueError` where the trigger half already
+  refuses the same shape by name, which reached the Replay button as a 500
+  about nothing anybody could act on.
+
+- **Four `brain` commands printed a traceback on every interpreter except
+  the one the image happens to ship.** `brain doctor --deep`, `brain
+  check`, `brain check list`, `brain weekly` and `brain weekly send`
+  embedded their report blocks as `python3 -c '…'`, and shell single
+  quotes leave a backslash as the only way to put a `"` inside one — which
+  inside an f-string *expression* is a `SyntaxError` before Python 3.12.
+  Nothing noticed, because nothing had ever run them: they were written,
+  reviewed and shipped. They are heredocs now, and the payload is an
+  argument rather than something piped in, because **a heredoc is stdin**
+  and a pipe into one arrives empty — which reads as an empty week rather
+  than as an error, and is the quieter half of the same bug. Every block
+  is lifted out of the real file and driven by a test.
+
 ## 1.46.0
 
 **The last two items on the ranked twelve, and the change #9 named and

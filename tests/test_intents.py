@@ -392,6 +392,26 @@ class TestTheArmedStore(IntentCase):
                                                   "attributes": {}}), 0.0)
         self.assertEqual(self.intents.fired_from_state(entry, None), 0.0)
 
+    def test_a_stamp_with_no_timezone_is_read_as_UTC(self):
+        """`datetime.timestamp()` on a naive value reads it as LOCAL time.
+
+        Home Assistant stamps `last_triggered` in UTC with an offset on
+        it, so this is the shape of a Core that stopped bothering rather
+        than one anybody sees today — but the failure it produces is the
+        worst kind: on a house east of Greenwich the naive stamp resolves
+        *earlier* than it happened, which can put it back before the
+        accept and read a fired one-off as still waiting; west of it, it
+        resolves later and an automation that ran before the accept reads
+        as this one firing. Neither is a crash and neither is visible.
+        """
+        entry = self.arm()                       # accepted at 1_700_000_100
+        # 2023-11-14T22:20:00Z, written without its offset.
+        naive = {"attributes": {"last_triggered": "2023-11-14T22:20:00"}}
+        aware = {"attributes": {
+            "last_triggered": "2023-11-14T22:20:00+00:00"}}
+        self.assertEqual(self.intents.fired_from_state(entry, naive),
+                         self.intents.fired_from_state(entry, aware))
+
     def test_an_unreadable_stamp_is_not_a_firing(self):
         entry = self.arm()
         self.assertEqual(self.intents.fired_from_state(

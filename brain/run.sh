@@ -246,33 +246,44 @@ MEMORYMD
     local auth_backup_dir="/data/.brain_auth_backup"
     mkdir -p "$auth_backup_dir"
     chmod 700 "$auth_backup_dir"
-    # Only ever restore a credential that is still live. "Worst case the
+    # Only ever restore a credential the CLI can still use. "Worst case the
     # restored token is stale and the user logs in anyway" was the original
     # reasoning and it was wrong: the CLI's own file outranks every other
     # store for the terminal, so restoring a dead one puts the add-on back
     # into "the chat works but the terminal asks me to log in" on every
     # single boot, with no way for it to clear.
-    _credential_is_live() {
+    #
+    # Usable is not the same question as live, though, and reading it as
+    # one threw away working sign-ins. The `accessToken` is short-lived on
+    # purpose and the file carries the `refreshToken` the CLI mints the
+    # next one from by itself — so a backup whose access token lapsed
+    # while the container was down is a perfectly good credential, and
+    # deleting it forces a login nobody needed to do. What stays dead is a
+    # past expiry with no refresh token: that is the revoked session this
+    # check was written for, and nothing in the file can renew it.
+    _credential_is_usable() {
         jq -e --argjson now "$(date +%s)" '
             (.claudeAiOauth // {}) as $o
             | (($o.accessToken // "") | startswith("sk-ant-"))
               and (($o.expiresAt // 0) <= 0
-                   or (($o.expiresAt / 1000) > ($now + 60)))
+                   or (($o.expiresAt / 1000) > ($now + 60))
+                   or (($o.refreshToken // "")
+                       | (type == "string") and (length > 0)))
         ' "$1" > /dev/null 2>&1
     }
     if [ -s "$data_home/.claude/.credentials.json" ]; then
         cp -a "$data_home/.claude/.credentials.json" "$auth_backup_dir/.credentials.json"
     elif [ -s "$auth_backup_dir/.credentials.json" ]; then
-        if _credential_is_live "$auth_backup_dir/.credentials.json"; then
+        if _credential_is_usable "$auth_backup_dir/.credentials.json"; then
             cp -a "$auth_backup_dir/.credentials.json" "$data_home/.claude/.credentials.json"
             chmod 600 "$data_home/.claude/.credentials.json"
             bashio::log.warning "  - .credentials.json was missing — restored last known good copy"
         else
             rm -f "$auth_backup_dir/.credentials.json"
-            bashio::log.warning "  - Discarded an expired .credentials.json backup rather than restoring it"
+            bashio::log.warning "  - Discarded a dead .credentials.json backup (expired, no refresh token) rather than restoring it"
         fi
     fi
-    unset -f _credential_is_live
+    unset -f _credential_is_usable
 
     bashio::log.info "  - Auth symlinks refreshed for persistent OAuth"
 

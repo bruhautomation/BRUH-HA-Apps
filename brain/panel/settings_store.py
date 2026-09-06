@@ -22,6 +22,12 @@ the panel's ⚙ dialog edits at runtime — no add-on restart needed:
                     conversations you may have: past it, the least
                     recently active IDLE one is stopped and reopens with
                     --resume.
+  capture         — whether every card run writes what the analyst was
+                    sent and what it answered to /data/capture, so a
+                    prompt change can be scored against real houses. OFF
+                    by default: a house's entity names are a floor plan,
+                    and nothing leaves the add-on until a person exports
+                    one from ⚙ → Diagnostics.
   chat_model      — the chat terminal's own model, chosen from the chat
                     itself. None means "follow the global model option":
                     the chat is where a different model is most often
@@ -116,6 +122,11 @@ DEFAULTS = {
     "timeout_minutes": None,
     "chat_model": None,
     "chat_max_sessions": DEFAULT_CHAT_SESSIONS,
+    # See the module docstring. A settings key rather than a config.yaml
+    # option because it is switched on while looking at the panel, for a
+    # week, and then off again — a Configuration-tab option would cost a
+    # restart at each end of that.
+    "capture": False,
 }
 
 _TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
@@ -136,6 +147,8 @@ def load() -> dict:
         out["onboarded"] = data["onboarded"]
     if isinstance(data.get("auto_enabled"), bool):
         out["auto_enabled"] = data["auto_enabled"]
+    if isinstance(data.get("capture"), bool):
+        out["capture"] = data["capture"]
     if data.get("plan") in PLANS:
         out["plan"] = data["plan"]
     if data.get("terminal_ui") in TERMINAL_UIS:
@@ -222,6 +235,10 @@ def save(fields: dict) -> dict:
         elif key == "auto_enabled":
             if not isinstance(value, bool):
                 raise ValueError("auto_enabled must be a boolean")
+            clean[key] = value
+        elif key == "capture":
+            if not isinstance(value, bool):
+                raise ValueError("capture must be a boolean")
             clean[key] = value
         elif key == "plan":
             if value not in PLANS:

@@ -162,6 +162,28 @@ class TestTheWindow(unittest.TestCase):
         self.assertTrue(healing.window(self.at(0, 10), None, None, settles)[0])
         self.assertFalse(healing.window(self.at(23, 10), None, None, settles)[0])
 
+    def test_the_settle_window_crosses_midnight_too(self):
+        """The quiet-hours branch wraps and the settle branch did not.
+
+        `0 <= (minute_now - target) <= GRACE` is the same arithmetic
+        `notify_router.in_quiet_hours` was fixed for: a house that settles
+        at 22:50 gets a target of 23:50, and every minute of the window
+        after midnight answers `-1430` rather than a small number. On a
+        five-minute poll that leaves nine minutes of a forty-five minute
+        window — and a panel restarted at 23:55 (a quarter-hour first
+        delay) misses the whole night.
+        """
+        settles = 22 * 60 + 50                 # 22:50, so the target is 23:50
+        self.assertTrue(healing.window(self.at(23, 55), None, None,
+                                       settles)[0])
+        for hour, minute in ((0, 5), (0, 20), (0, 34)):
+            ok, why = healing.window(self.at(hour, minute), None, None,
+                                     settles)
+            self.assertTrue(ok, f"{hour:02d}:{minute:02d}: {why}")
+        # And it still closes: the grace is 45 minutes, not the night.
+        self.assertFalse(healing.window(self.at(0, 40), None, None,
+                                        settles)[0])
+
     def test_with_neither_it_does_not_run_and_says_why(self):
         # The mutation: fall back to a fixed hour. That is brAIn acting
         # unattended at a time nobody set, on a house whose quiet hours it

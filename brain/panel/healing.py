@@ -170,7 +170,12 @@ def window(local: dt.datetime, quiet_start: int | None, quiet_end: int | None,
 
     target = (int(settle_minute) + SETTLE_OFFSET_MIN) % 1440
     minute_now = local.hour * 60 + local.minute
-    if 0 <= (minute_now - target) <= SETTLE_GRACE_MIN:
+    # Modulo, because this window crosses midnight in the ordinary case:
+    # a house that settles at 22:50 has a target of 23:50 and a grace that
+    # runs into tomorrow, and a plain subtraction answers -1430 at every
+    # minute past the hour. Same arithmetic `notify_router.in_quiet_hours`
+    # already carries, and the same reason.
+    if (minute_now - target) % 1440 <= SETTLE_GRACE_MIN:
         return True, "an hour after this house settles"
     return False, (f"outside the window — an hour after this house settles, "
                    f"which is {target // 60:02d}:{target % 60:02d}")

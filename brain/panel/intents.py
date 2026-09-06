@@ -427,7 +427,8 @@ def build(sentence: str, answer: dict, ts: int,
             continue                 # brAIn's own, and not evidence of one
         raw = call.get("entity_id")
         named |= {str(e) for e in _listify(raw) if e}
-        if call.get("area_id") or call.get("device_id"):
+        if any(call.get(f"{k}_id")
+               for k in ("area", "device", "label", "floor")):
             named.add("a target")
     if not named:
         out["refused"] = ("that sentence did not name anything in this "
@@ -628,10 +629,17 @@ def fired_from_state(row: dict, state: dict | None) -> float:
     if not stamp:
         return 0.0
     try:
-        when = dt.datetime.fromisoformat(
-            str(stamp).replace("Z", "+00:00")).timestamp()
+        parsed = dt.datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
     except ValueError:
         return 0.0
+    if parsed.tzinfo is None:
+        # `.timestamp()` reads a naive value as LOCAL time, and Core
+        # stamps this in UTC. The error is the house's own offset, in
+        # whichever direction: east of Greenwich a fired one-off resolves
+        # to before its own accept and goes on reading as waiting, west
+        # of it something that ran before the accept reads as this firing.
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    when = parsed.timestamp()
     return when if when > (row.get("accepted_at") or 0) else 0.0
 
 

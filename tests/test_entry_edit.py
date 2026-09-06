@@ -340,5 +340,70 @@ class TestOnlyOneModuleEditsThatFile(unittest.TestCase):
         self.assertEqual(offenders, [], "a second writer to automations.yaml")
 
 
+class TestGoneIsNotTheSameAsUncuttable(unittest.TestCase):
+    """`locate` says None for three things and only one of them is "gone".
+
+    An intent's Remove is the only ending its card has, so a person who
+    deleted the automation from `automations.yaml` by hand — which is
+    their file and their right — met a 409 naming an id and a row that
+    could never be cleared. The refusal is the same one that has to stand
+    for a file brAIn will not touch, so the two have to be tellable
+    apart: `missing` says the entry is not there, and the server may end
+    the row on that where it may not on the other.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.file = root / "automations.yaml"
+        self._env = dict(os.environ)
+        os.environ["BRAIN_EDIT_JOURNAL"] = str(root / "edits")
+        self.addCleanup(self._restore)
+        sys.modules.pop("automation_writer", None)
+        self.w = importlib.import_module("automation_writer")
+
+    def _restore(self):
+        os.environ.clear()
+        os.environ.update(self._env)
+        sys.modules.pop("automation_writer", None)
+
+    def write(self, text):
+        self.file.write_text(text, encoding="utf-8")
+
+    def test_an_entry_taken_out_by_hand_is_reported_as_missing(self):
+        self.write("- id: other\n  alias: Other\n")
+        out = self.w.remove_entry(self.file, "brain_intent_1")
+        self.assertFalse(out["ok"])
+        self.assertTrue(out.get("missing"))
+        self.assertIn("already taken out by hand", out["error"])
+
+    def test_an_entry_that_is_there_twice_is_NOT_missing(self):
+        self.write("- id: a\n  alias: A\n- id: a\n  alias: B\n")
+        out = self.w.remove_entry(self.file, "a")
+        self.assertFalse(out["ok"])
+        self.assertFalse(out.get("missing"),
+                         "two entries under one id is a refusal to keep, "
+                         "not a row to clear")
+
+    def test_an_entry_that_cannot_be_cut_is_NOT_missing(self):
+        # A trailing comment on the entry's own last line: the span cannot
+        # end on a line boundary without taking somebody's words with it,
+        # so it is refused — and the entry is very much still there.
+        self.write("- id: a\n  alias: A  # why this one exists\n")
+        out = self.w.remove_entry(self.file, "a")
+        self.assertFalse(out["ok"])
+        self.assertFalse(out.get("missing"),
+                         "the entry is in the file; brAIn just will not cut "
+                         "it without taking a comment with it")
+        self.assertEqual(self.w.entry_ids(self.file.read_text()), ["a"])
+
+    def test_entry_ids_reads_the_top_level_only(self):
+        self.write("- id: a\n  data:\n    id: inner\n- id: b\n")
+        self.assertEqual(self.w.entry_ids(self.file.read_text()), ["a", "b"])
+        self.assertEqual(self.w.entry_ids("automation:\n  - id: a\n"), [])
+        self.assertEqual(self.w.entry_ids("{"), [])
+
+
 if __name__ == "__main__":                    # pragma: no cover
     unittest.main()

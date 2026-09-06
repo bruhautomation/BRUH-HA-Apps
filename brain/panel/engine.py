@@ -154,7 +154,7 @@ def _credentials_path() -> str:
 
 
 def _cli_credentials_present() -> bool:
-    """True when the Claude CLI holds a *live* OAuth credential of its own.
+    """True when the Claude CLI holds an OAuth credential it can still use.
 
     When this file exists under our HOME, `claude -p` authenticates by itself —
     no env token needed. It's also the most reliable SUCCESS signal for the
@@ -162,11 +162,26 @@ def _cli_credentials_present() -> bool:
     token to the terminal.
 
     Expiry is checked because being shaped like a credential is not being
-    one. A revoked session or a container that was down past the expiry
-    leaves a well-formed dead token behind, and reporting that as "signed
-    in" makes the panel's auth chip say the opposite of what the terminal
-    is telling the same person. A missing expiry means the file records
-    none, not that the token is past it.
+    one — but a lapsed `accessToken` is not by itself a dead credential.
+    That token is short-lived by design and the file carries the
+    `refreshToken` the CLI mints the next one from, entirely by itself, on
+    its next run. So the question here is not "is this token live" but
+    "can the CLI still get a live one from this file", and the two answers
+    differ for several hours out of every day.
+
+    Reading the first as the second is a loop with no way out: this is the
+    LAST store `get_auth` consults, so a wrong "no" reports a terminal
+    sign-in as `authenticated: false`, the panel shows the sign-in screen,
+    and every Claude run in the server is gated on that same answer — so
+    nothing brAIn does ever runs the CLI, which is the one thing that
+    would have refreshed the token. It clears only when somebody opens the
+    terminal and types `claude`, which a phone cannot do.
+
+    A past expiry with no refresh token stays dead: that is the revoked
+    session this check was written for, and there is nothing left in the
+    file to renew. A missing expiry means the file records none, not that
+    the token is past it. Liveness proper is `validate_auth`'s — a real
+    run, where a refresh token the account has revoked comes back a 401.
     """
     try:
         with open(_credentials_path(), "r", encoding="utf-8") as f:
@@ -177,7 +192,14 @@ def _cli_credentials_present() -> bool:
             return False
         expires = oauth.get("expiresAt")
         if isinstance(expires, (int, float)) and expires > 0:
-            return expires / 1000.0 > time.time() + 60
+            if expires / 1000.0 > time.time() + 60:
+                return True
+            refresh = oauth.get("refreshToken")
+            # A non-empty string, which is deliberately the same predicate
+            # `run.sh`'s jq applies to the same field on the same file:
+            # two answers to "can the CLI renew this" is one too many, and
+            # the one that runs at boot decides what this one then reads.
+            return isinstance(refresh, str) and refresh != ""
         return True
     except (OSError, ValueError, AttributeError):
         return False
@@ -399,7 +421,7 @@ def auth_overview() -> dict:
     """
     auth = get_auth()
     shared = _read_shared_auth()
-    cli_live = _cli_credentials_present()
+    cli_usable = _cli_credentials_present()
 
     def _saved_at(path: str) -> int | None:
         try:
@@ -420,13 +442,15 @@ def auth_overview() -> dict:
         "stores": {
             "local": {"present": os.path.exists(AUTH_FILE),
                       "saved_at": _saved_at(AUTH_FILE)},
-            # `present` is deliberately liveness and not existence for this
-            # one store: it is the only file of the three that records an
-            # expiry, so it is the only one where "there is a credential
-            # here" and "there is a working credential here" are separable
-            # questions — and reporting a dead token as a login is what sent
-            # people to fix a sign-in that had already been redone.
-            "cli": {"present": cli_live},
+            # `present` is deliberately usability and not existence for
+            # this one store: it is the only file of the three that records
+            # an expiry, so it is the only one where "there is a credential
+            # here" and "there is a credential here the CLI can use" are
+            # separable questions — and reporting a revoked session as a
+            # login is what sent people to fix a sign-in already redone.
+            # Usable, not live: an expired access token beside a refresh
+            # token is one `claude` run away from a new one.
+            "cli": {"present": cli_usable},
             "shared": {"present": bool(shared),
                        "type": shared["type"] if shared else None,
                        "saved_at": _saved_at(SHARED_AUTH_FILE)},
@@ -732,6 +756,7 @@ def _journal(source: str, result: dict, model: str, timeout_message: str,
         model=model or "",
         tokens=usage_store.tokens_from_meta(meta),
         turns=meta.get("num_turns") if isinstance(meta.get("num_turns"), int) else None,
+        run_id=str(meta.get("session_id") or "")[:64],
     )
 
 

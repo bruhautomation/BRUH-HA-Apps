@@ -402,6 +402,12 @@ def coldest_room(snap: dict) -> dict | None:
     return best
 
 
+def sensors_of(room: dict) -> list[dict]:
+    """The one sensor a freeze playbook watches, in `_where`'s shape."""
+    return [{"entity_id": room["entity_id"], "name": room["name"],
+             "area": room["area"]}]
+
+
 def _freeze(house: House, snap: dict, patterns: list[str],
             notify: list[str]) -> dict | None:
     room = coldest_room(snap)
@@ -413,16 +419,20 @@ def _freeze(house: House, snap: dict, patterns: list[str],
 
     unit = room["unit"].lower()
     below = FREEZE_F if "f" in unit and "c" not in unit else FREEZE_C
-    where = room["area"] or room["name"]
-    message = (f"{where} is below {below:g}° and the heating has been doing "
-               f"nothing for {IDLE_MINUTES} minutes. Pipes in an outside "
-               "wall are at risk.")
+    # The room is named by Home Assistant when it fires, never written
+    # into the config — exactly as `_where` does it for the other two,
+    # and for a reason that is not only tidiness: `proposals.key_for`
+    # hashes the config, so a name in one is a declined playbook that
+    # comes back the day somebody renames the area. `routines.to_config`
+    # drops its alias for the same reason.
+    message = (f"{_where(sensors_of(room))} is below {below:g}° and the "
+               f"heating has been doing nothing for {IDLE_MINUTES} minutes. "
+               "Pipes in an outside wall are at risk.")
     idle = ["idle", "off"]
     return {
         "class": "freeze",
         "title": "Emergency playbook: freezing with the heating stopped",
-        "sensors": [{"entity_id": room["entity_id"], "name": room["name"],
-                     "area": room["area"]}],
+        "sensors": sensors_of(room),
         "groups": [],
         "skipped": [],
         "notify": notify,

@@ -187,6 +187,13 @@ function openBox(sel) {
 function closeBox(sel) {
   $(sel).classList.remove("open");
   syncModalLock();
+  // A poll behind a dialog nobody has open is a request per viewer per
+  // interval for an answer nobody is reading — the same rule the
+  // Diagnostics section itself follows.
+  if (sel === "#setModal" && typeof stopDeepPoll === "function") {
+    stopDeepPoll();
+    stopRehearsePoll();
+  }
 }
 
 // How long an undoable toast stays up. Longer than a plain one, because a
@@ -1896,6 +1903,7 @@ function renderModelField(data) {
 
 function renderSettingsForm(data) {
   $("#setEnabled").checked = data.settings.auto_enabled !== false;
+  $("#setCapture").checked = data.settings.capture === true;
   $("#setTerminalUi").value = data.settings.terminal_ui || "chat";
   $("#setChatSessions").value = String(data.settings.chat_max_sessions || 3);
   $("#setGatherMode").value = data.settings.gather_mode || "search";
@@ -1920,6 +1928,9 @@ async function openSettings() {
   openBox("#setModal");
   loadAuth();
   loadDiagnostics();
+  loadCaptures();
+  loadDeep(true);
+  loadRehearsal(true);
   try {
     renderSettingsForm(await api("api/settings"));
   } catch (e) {
@@ -2109,6 +2120,28 @@ function renderDiagnostics(d) {
       rows.push(diagRow("Repairs that failed", `<ul>${bad.join("")}</ul>`, true));
     }
   }
+  // Checks that run and are not on the tab. One line per trialled check,
+  // because "14 rows over 9 days, 11 agree with what was filed" is the
+  // number somebody reads before moving an id out of `checks.SHADOW` —
+  // which is a code change, deliberately: a producer that promoted itself
+  // on a threshold would be a threshold nobody can see deciding what a
+  // house is told.
+  const sh = d.shadow_checks || {};
+  const trialled = sh.checks || [];
+  if (trialled.length || (sh.total || 0) > 0) {
+    const byCheck = sh.by_check || {};
+    const items = Object.keys(byCheck).sort().map((id) => {
+      const r = byCheck[id] || {};
+      if (!r.rows) {
+        return `<li><b>${esc(id)}</b> — nothing found yet</li>`;
+      }
+      return `<li><b>${esc(id)}</b> — ${r.rows} row`
+        + `${r.rows === 1 ? "" : "s"} over ${r.days} day`
+        + `${r.days === 1 ? "" : "s"}, ${r.agreed} agree with what was `
+        + "filed</li>";
+    });
+    rows.push(diagRow("Checks in shadow", `<ul>${items.join("")}</ul>`));
+  }
   if (failures.length) {
     const items = failures.slice(0, 5).map((f) =>
       `<li><b>${esc(f.source || "?")}</b> · ${esc(f.outcome || "?")}`
@@ -2155,6 +2188,289 @@ $("#diagCopy").addEventListener("click", async () => {
   }
 });
 $("#diagRefresh").addEventListener("click", loadDiagnostics);
+
+// ------------------------------------------------------------- captured runs
+// The list under the capture switch: what has been recorded, and the three
+// things a person may do with one. Fetched when the dialog opens and after
+// every press, never on a timer — nothing here changes unless a card runs.
+//
+// View is deliberately the first control. Everything else about capture is
+// designed so nothing leaves the add-on without a press, and a press you
+// make without being able to read what you are sending is not consent.
+function capRows(data) {
+  const rows = data.captures || [];
+  if (!data.enabled && !rows.length) {
+    return "<p class=\"hint tight\">Nothing recorded. Switch capture on above "
+         + "and the next card run writes the first one.</p>";
+  }
+  if (!rows.length) {
+    return "<p class=\"hint tight\">Capture is on; the next card run writes "
+         + "the first file. Nothing has run yet.</p>";
+  }
+  return rows.map((r) => {
+    const when = r.captured_at
+      ? timeAgo(new Date(r.captured_at * 1000).toISOString()) : "just now";
+    const what = r.question
+      ? `“${esc(r.question.slice(0, 70))}”`
+      : esc(r.category || r.source || "a card");
+    // The labels count is the number that says whether an entry is worth
+    // contributing: a capture with no ending on it is a prompt and a reply
+    // and nothing to score them against.
+    const labels = r.labels
+      ? `${r.labels} ending${r.labels === 1 ? "" : "s"} recorded`
+      : "no endings yet";
+    return `<div class="drow"><div class="dk">${esc(when)}</div>`
+      + `<div class="dv">${what} — ${r.findings} finding`
+      + `${r.findings === 1 ? "" : "s"}, ${esc(labels)}`
+      + `<div class="row tight">`
+      + `<button class="btn tiny" data-cap-view="${esc(r.run_id)}">View</button>`
+      + `<button class="btn tiny" data-cap-export="${esc(r.run_id)}">Export</button>`
+      + `<button class="btn tiny" data-cap-del="${esc(r.run_id)}">Delete</button>`
+      + `</div></div></div>`;
+  }).join("");
+}
+
+async function loadCaptures() {
+  const box = $("#capBody");
+  if (!box) return;
+  box.textContent = "Loading…";
+  try {
+    const data = await api("api/capture");
+    $("#capMax").textContent = String(data.max_files || 50);
+    box.innerHTML = capRows(data);
+  } catch (e) {
+    box.textContent = "Could not list captured runs: " + e.message;
+  }
+}
+
+// The same fallback `diagCopy` uses, and for the same reason: an ingress
+// iframe may be refused the clipboard outright, and a failure that only
+// says so leaves the text nowhere a person can reach it.
+async function copyOrSelect(text, okMessage) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(okMessage);
+    return;
+  } catch (e) { /* fall through to the textarea */ }
+  const box = document.createElement("textarea");
+  box.value = text;
+  box.style.cssText = "position:fixed;left:0;top:0;width:100%;height:60vh;z-index:99";
+  document.body.appendChild(box);
+  box.select();
+  let copied = false;
+  try { copied = document.execCommand("copy"); } catch (e2) { copied = false; }
+  if (copied) { box.remove(); toast(okMessage); return; }
+  toast("This browser will not let the panel copy — the text is selected, "
+        + "press Ctrl/Cmd+C, then Esc");
+  box.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") box.remove();
+  });
+  box.addEventListener("blur", () => box.remove());
+}
+
+// Delegated, because these rows are rebuilt on every load.
+$("#capBody").addEventListener("click", async (ev) => {
+  const view = ev.target.closest("[data-cap-view]");
+  const exp = ev.target.closest("[data-cap-export]");
+  const del = ev.target.closest("[data-cap-del]");
+  try {
+    if (view) {
+      const id = view.getAttribute("data-cap-view");
+      const entry = await api("api/capture/" + encodeURIComponent(id));
+      const text = JSON.stringify(entry, null, 2);
+      const pre = document.createElement("pre");
+      pre.className = "capview";
+      pre.textContent = text;
+      const holder = view.closest(".drow");
+      const already = holder.querySelector(".capview");
+      if (already) { already.remove(); return; }
+      holder.appendChild(pre);
+      const copy = document.createElement("button");
+      copy.className = "btn tiny";
+      copy.textContent = "Copy this run";
+      copy.addEventListener("click", () => copyOrSelect(text, "Capture copied"));
+      holder.appendChild(copy);
+      return;
+    }
+    if (exp) {
+      const id = exp.getAttribute("data-cap-export");
+      const out = await api("api/capture/" + encodeURIComponent(id) + "/export",
+                            { method: "POST" });
+      toast("Exported to " + out.path);
+      return;
+    }
+    if (del) {
+      const id = del.getAttribute("data-cap-del");
+      await api("api/capture/" + encodeURIComponent(id), { method: "DELETE" });
+      loadCaptures();
+    }
+  } catch (e) {
+    toast("That did not work: " + e.message);
+  }
+});
+
+// ------------------------------------------------------------- deep check
+// `brain doctor --deep` from the dialog. Fetched when pressed and while a
+// run is in flight, and NEVER on a timer once it is done: a deep run is a
+// handful of Claude turns, so a poll behind a closed dialog would be a
+// question nobody asked with a bill attached to it.
+const DEEP_MARK = { ok: "✓", failed: "✗", skipped: "–" };
+let deepPoll = null;
+
+function renderDeep(d) {
+  const stages = d.running ? (d.stages || []) : ((d.last || {}).stages || d.stages || []);
+  const body = $("#deepBody");
+  body.hidden = !stages.length && !d.running;
+  const rows = stages.map((s) => diagRow(
+    `${DEEP_MARK[s.state] || "·"} ${esc(s.title || s.name)}`,
+    `${esc(s.sentence || "")}`
+    + (s.detail ? `<div class="hint tight">${esc(s.detail)}</div>` : ""),
+    s.state === "failed"));
+  if (d.running) {
+    // The catalog is what lets a stage that has not started yet be a row
+    // rather than nothing: a list that grows from empty reads as a run
+    // that is stuck on whatever it is doing.
+    (d.stage_catalog || []).slice(stages.length).forEach((s) =>
+      rows.push(diagRow(`· ${esc(s.title)}`,
+        `<span class="hint">${esc(s.proves)}</span>`)));
+  }
+  body.innerHTML = rows.join("");
+  const last = d.last || {};
+  const c = last.counts || {};
+  $("#deepLast").textContent = d.running
+    ? "Running — this takes a few minutes."
+    : (last.finished_at
+      ? `Last run ${timeAgo(new Date(last.finished_at * 1000).toISOString())}: `
+        + `${c.ok || 0} passed, ${c.failed || 0} failed, ${c.skipped || 0} skipped`
+      : "Not run on this install yet.");
+  $("#deepRun").disabled = !!d.running;
+}
+
+function stopDeepPoll() {
+  clearTimeout(deepPoll);
+  deepPoll = null;
+}
+
+async function loadDeep(poll) {
+  try {
+    const d = await api("api/doctor/deep");
+    renderDeep(d);
+    if (d.running && poll) {
+      clearTimeout(deepPoll);
+      deepPoll = setTimeout(() => loadDeep(true), 3000);
+    } else {
+      clearTimeout(deepPoll);
+      deepPoll = null;
+    }
+  } catch (e) {
+    $("#deepLast").textContent = "Could not read the deep check: " + e.message;
+  }
+}
+
+$("#deepRun").addEventListener("click", async () => {
+  $("#deepRun").disabled = true;
+  try {
+    // A 409 means one is already going — which is an answer, not an error:
+    // both presses are watching the same run.
+    await api("api/doctor/deep", { method: "POST" });
+    toast("Deep check started — it spends a few Claude turns");
+  } catch (e) {
+    toast(e.message);
+  }
+  loadDeep(true);
+});
+
+// -------------------------------------------------------------- rehearsal
+// The consent step is the server's: a POST with no consent answers 428 with
+// the exact list of what would be created, and this renders that list as
+// the question. Nothing is created until the second POST.
+let rehearsePoll = null;
+
+function renderRehearsal(d) {
+  const last = d.last || {};
+  const body = $("#rehearseBody");
+  const c = last.checks || {};
+  const a = last.analyst || {};
+  const clean = last.cleanup || {};
+  const rows = [];
+  if (last.finished_at) {
+    rows.push(diagRow("Checks",
+      `${c.found || 0} of ${c.planted || 0} planted defects found`
+      + (c.extra ? `, ${c.extra} reported that were not planted` : ""),
+      (c.found || 0) < (c.planted || 0) || !!c.extra));
+    (c.rows || []).forEach((r) => rows.push(diagRow(
+      `&nbsp;&nbsp;${esc(r.id)}`,
+      `${esc(r.verdict)} <span class="hint">${esc(r.check || "")}</span>`,
+      r.verdict === "missed" || r.verdict === "false positive")));
+    rows.push(diagRow("Analyst", a.ran
+      ? `found ${a.found || 0} of ${a.planted || 0}`
+        + ` — recall ${Math.round((a.recall || 0) * 100)}%,`
+        + ` precision ${Math.round((a.precision || 0) * 100)}%`
+        + ` on ${esc(a.model || "the default model")}`
+      : `did not run — ${esc(a.error || "unknown")}`, !a.ran));
+    rows.push(diagRow("Cleanup", esc(clean.sentence || "?"), !clean.ok));
+    if (last.error) rows.push(diagRow("Error", esc(last.error), true));
+  }
+  body.innerHTML = rows.join("");
+  body.hidden = !rows.length;
+  const step = (d.progress || {}).step;
+  $("#rehearseLast").textContent = d.running
+    ? `Rehearsing — ${step || "starting"}…`
+    : (last.finished_at
+      ? `Last rehearsal ${timeAgo(new Date(last.finished_at * 1000).toISOString())}`
+      : "Not rehearsed on this install yet.");
+  $("#rehearseRun").disabled = !!d.running;
+}
+
+async function loadRehearsal(poll) {
+  try {
+    const d = await api("api/doctor/rehearse");
+    renderRehearsal(d);
+    clearTimeout(rehearsePoll);
+    rehearsePoll = d.running && poll
+      ? setTimeout(() => loadRehearsal(true), 3000) : null;
+  } catch (e) {
+    $("#rehearseLast").textContent = "Could not read the rehearsal: " + e.message;
+  }
+}
+
+function stopRehearsePoll() {
+  clearTimeout(rehearsePoll);
+  rehearsePoll = null;
+}
+
+$("#rehearseRun").addEventListener("click", async () => {
+  // The offer comes off the GET rather than off a POST this expects to
+  // fail: the 428 is the API's contract for every other caller, and a
+  // button that has to provoke an error to read a list is a button that
+  // cannot tell a refusal from a network problem.
+  let offer;
+  try {
+    offer = await api("api/doctor/rehearse");
+  } catch (e) {
+    toast(e.message);
+    return;
+  }
+  if (offer.refused) { toast(offer.refused); return; }
+  const lines = (offer.plan || []).map(
+    (r) => `• ${r.id}\n    ${r.what}`).join("\n");
+  const cannot = (offer.not_rehearsable || []).map(
+    (r) => `• ${r.check} — ${r.why}`).join("\n");
+  if (!window.confirm(
+    "A rehearsal creates these in your Home Assistant, runs the checks and "
+    + "the analyst against them, then removes them:\n\n" + lines
+    + (cannot ? "\n\nIt cannot rehearse these in one pass:\n" + cannot : "")
+    + "\n\nGo ahead?")) return;
+  $("#rehearseRun").disabled = true;
+  try {
+    await api("api/doctor/rehearse",
+      { method: "POST", body: JSON.stringify({ consent: true }) });
+    toast("Rehearsal started — it writes to automations.yaml and takes it back out");
+  } catch (e) {
+    toast(e.message);
+  }
+  loadRehearsal(true);
+});
 
 // ------------------------------------------------------- Claude account
 // The panel could sign you in and could never show you what it had signed
@@ -2346,6 +2662,13 @@ $("#authChip").addEventListener("click", openSignIn);
 
 $("#setEnabled").addEventListener("change", () =>
   saveSettings({ auto_enabled: $("#setEnabled").checked }));
+// Switching it on records nothing that has already happened: the next card
+// run is the first one captured, so the list is refreshed rather than
+// expected to change.
+$("#setCapture").addEventListener("change", async () => {
+  await saveSettings({ capture: $("#setCapture").checked });
+  loadCaptures();
+});
 $("#setPlan").addEventListener("change", () =>
   saveSettings({ plan: $("#setPlan").value }));
 $("#setGatherMode").addEventListener("change", () =>

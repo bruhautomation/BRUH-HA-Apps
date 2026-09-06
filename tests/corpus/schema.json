@@ -1,0 +1,88 @@
+{
+  "$comment": "JSON Schema for one corpus entry. Written as a schema because that is the form a contributor and a reviewer both already read — but NOTHING IN THIS REPOSITORY VALIDATES IT WITH A JSON SCHEMA LIBRARY. `jsonschema` is not in tests/requirements-dev.txt, and adding a dependency so that two files agree about a shape is a poor trade; `tests/test_corpus.py` carries a small structural validator that enforces exactly the constraints written here, and a test asserts the two lists of required keys are the same, so the document below cannot drift away from what is actually checked.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "brAIn corpus entry",
+  "type": "object",
+  "required": ["schema", "kind", "id", "captured_at", "labels"],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "type": "integer",
+      "const": 1,
+      "description": "The entry format. The same number panel/capture.py writes."
+    },
+    "kind": {
+      "enum": ["checks", "analyst"],
+      "description": "A `checks` entry carries a house snapshot and the check ids that should fire on it, and is replayed with no model at all — that half runs in ordinary CI and is what fails when a floor moves. An `analyst` entry carries the bundle a real run was given and the reply it produced, and needs a real model to replay."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "description": "Unique within the corpus. For a captured run this is the run id, which is Claude Code's own session id for it."
+    },
+    "title": {"type": "string", "description": "One line a person reads in a report."},
+    "note": {"type": "string", "description": "Why this entry is in the corpus, and what it is meant to catch."},
+    "captured_at": {"type": "integer", "description": "Epoch seconds. Never used for grading — every timestamp inside a snapshot is relative to the snapshot's own `now`, which is stored with it, so a replay a year from today grades exactly what a replay today does."},
+    "source": {"type": "string", "description": "Which face ran it: card, ask, or fixture for the two built by construction."},
+
+    "snapshot": {
+      "type": "object",
+      "description": "REQUIRED for kind=checks: the house, in the shape checks.snapshot.collect produces. `now` is the instant everything inside it is relative to; `available` says which keys were fetched, and a check whose key is missing is skipped rather than silent.",
+      "required": ["now", "available"],
+      "properties": {
+        "now": {"type": "number"},
+        "available": {"type": "object", "additionalProperties": {"type": "boolean"}}
+      }
+    },
+
+    "bundle": {
+      "description": "REQUIRED for kind=analyst: what the analyst was sent. The orientation map for a search run, the slimmed entity bundle for a snapshot one — `gather_mode` says which.",
+      "type": "object"
+    },
+    "gather_mode": {"enum": ["search", "snapshot", ""]},
+    "category": {"type": "string"},
+    "question": {"type": "string"},
+    "model": {"type": "string", "description": "What answered when this was captured. Recorded, never replayed with: a replay names its own model, because the point is to compare."},
+    "prompt_chars": {"type": "integer"},
+    "tokens": {"type": "object"},
+    "reply": {
+      "type": "object",
+      "description": "The parsed card. Never the rendered `html` — that is a picture of up to 200 KB, and what a corpus scores is the findings.",
+      "properties": {
+        "findings": {"type": "array", "items": {"type": "object"}},
+        "learned": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+
+    "labels": {
+      "type": "array",
+      "description": "The ground truth. Empty is a real answer for a checks entry — it means every check must be silent on this house — and is never a real answer for an analyst entry, which is unscoreable without one.",
+      "items": {
+        "type": "object",
+        "oneOf": [
+          {
+            "$comment": "A checks label: this check must fire, about this thing.",
+            "required": ["check"],
+            "properties": {
+              "check": {"type": "string", "pattern": "^[a-z]+\\.[a-z_]+$"},
+              "entity_id": {"type": "string", "description": "What the row has to be about. Omitted means any row from that check counts."},
+              "verdict": {"const": "found"},
+              "why": {"type": "string"}
+            }
+          },
+          {
+            "$comment": "An analyst label: somebody ended this finding, and which button they pressed is what it means. done/got_it = the report was right; wrong = it was not, and reporting it again is a false positive rather than a miss.",
+            "required": ["finding_key", "verb"],
+            "properties": {
+              "finding_key": {"type": "string", "description": "findings_store.normalize of the finding's text, as it was when the ending was given."},
+              "verb": {"enum": ["done", "wrong", "got_it"]},
+              "note": {"type": "string", "description": "The homeowner's own words, redacted like everything else in the entry."},
+              "entity_id": {"type": "string"},
+              "ended_at": {"type": "integer"}
+            }
+          }
+        ]
+      }
+    }
+  }
+}

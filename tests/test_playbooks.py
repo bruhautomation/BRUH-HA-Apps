@@ -329,6 +329,56 @@ class TestTheKeyFollowsTheSensors(unittest.TestCase):
         self.assertNotEqual(self.key(house()),
                             self.key(house(), patterns=["light.kitchen"]))
 
+    def test_renaming_the_area_does_not_change_the_freeze_key(self):
+        """`key_for` hashes the config, so nothing a rename moves may be
+        in one.
+
+        The smoke and leak playbooks say *where* with a template Home
+        Assistant resolves when it fires — `area_name(trigger.entity_id)`
+        — because a playbook watches every detector in the house and the
+        room cannot be known at compose time. Freeze watches ONE room, so
+        it wrote the room's name straight into the notification's text,
+        and a name is exactly what `routines.to_config` drops its alias
+        for: rename the area and a playbook somebody declined in March is
+        offered again in April, worded slightly differently.
+        """
+        renamed = house()
+        renamed["thermal"] = {
+            "unit": "°C",
+            "rooms": {"sensor.hall_temp": {
+                "k": 0.12, "coolest": 14.2, "warmest": 22.0,
+                "unit": "°C", "area": "Front hall"}},
+        }
+        renamed["areas"] = [{"area_id": "hall", "name": "Front hall"},
+                            {"area_id": "kitchen", "name": "Kitchen"}]
+        self.assertEqual(self.key(house(), "freeze"),
+                         self.key(renamed, "freeze"))
+
+    def test_the_freeze_card_still_says_which_room(self):
+        # The name belongs on the card, which is not hashed — dropping it
+        # from the config may not drop it from what a person reads.
+        freeze = by_class(playbooks.build(house()))["freeze"]
+        self.assertIn("Hall", freeze["why"] + freeze["title"]
+                      + freeze["playbook"]["sensors"][0]["name"])
+
+    def test_a_colder_room_still_changes_the_freeze_key(self):
+        # The other half: the key has to follow which room it is about.
+        other = house()
+        other["states"]["sensor.loft_temp"] = st(
+            "9.0", device_class="temperature", friendly_name="Loft")
+        other["thermal"]["rooms"]["sensor.loft_temp"] = {
+            "k": 0.3, "coolest": 6.0, "warmest": 18.0,
+            "unit": "°C", "area": "Loft"}
+        other["states"]["climate.loft"] = st("heat", friendly_name="Loft rad",
+                                             hvac_action="idle")
+        other["entities"] = list(other["entities"]) + [
+            {"entity_id": "sensor.loft_temp", "area_id": "loft"},
+            {"entity_id": "climate.loft", "area_id": "loft"}]
+        other["areas"] = list(other["areas"]) + [
+            {"area_id": "loft", "name": "Loft"}]
+        self.assertNotEqual(self.key(house(), "freeze"),
+                            self.key(other, "freeze"))
+
 
 class TestTheCardPayload(unittest.TestCase):
 

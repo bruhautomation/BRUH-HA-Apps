@@ -1909,5 +1909,262 @@ class TestBrainEnvIsSourcedBeforeItIsRead(unittest.TestCase):
                 )
 
 
+class TestCredentialBackupRestore(unittest.TestCase):
+    """`run.sh`'s backup restore, lifted out of the script and driven.
+
+    The block is the reason a bad verdict about the CLI's credential cannot
+    clear by itself: `.credentials.json` is copied to `/data` whenever it is
+    readable and copied back whenever it goes missing, so whatever this
+    decides is what the add-on wakes up with on every boot. It shipped
+    deleting a backup whose `accessToken` had lapsed — which is most
+    backups, most of the time, because that token is short-lived by design
+    and the file carries the `refreshToken` the CLI mints the next one from
+    by itself. A container down overnight came back having thrown away a
+    working sign-in.
+
+    Driven rather than grepped, the way `test_doctor_json` drives
+    `ha-selftest.sh`'s report block: a grep for a line is not a test of
+    what the line does, and this one is a jq expression whose precedence is
+    the whole of its meaning.
+    """
+
+    # The literal in run.sh. Rewritten to a temp directory below, and the
+    # rewrite is asserted — a rename in run.sh must fail loudly here rather
+    # than silently drive the block against the real /data.
+    BACKUP_DIR = "/data/.brain_auth_backup"
+
+    @classmethod
+    def setUpClass(cls):
+        src = (ADDON_DIR / "run.sh").read_text()
+        match = re.search(
+            r"^ {4}local auth_backup_dir=.*?^ {4}unset -f _credential_is_usable\n",
+            src, re.M | re.S)
+        assert match, "run.sh no longer defines the credential backup/restore block"
+        cls.block = match.group(0)
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.home = self.root / "home"
+        (self.home / ".claude").mkdir(parents=True)
+        self.backup = self.root / "backup"
+        self.live = self.home / ".claude" / ".credentials.json"
+        self.saved = self.backup / ".credentials.json"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run(self):
+        """Run the real block with `data_home` and the backup dir redirected."""
+        block = self.block.replace(f'"{self.BACKUP_DIR}"', f'"{self.backup}"')
+        self.assertNotIn(
+            self.BACKUP_DIR, block,
+            "the backup directory in run.sh is no longer the literal this "
+            "test redirects — the block would run against the real /data")
+        script = (
+            "set -u\n"
+            'bashio::log.warning() { echo "WARN: $*"; }\n'
+            'bashio::log.info() { echo "INFO: $*"; }\n'
+            "restore() {\n"
+            f'    local data_home="{self.home}"\n'
+            f"{block}"
+            "}\n"
+            "restore\n"
+        )
+        proc = subprocess.run(["bash", "-c", script],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout
+
+    @staticmethod
+    def _credential(offset_s=None, refresh=True):
+        oauth = {"accessToken": "sk-ant-" + "x" * 40}
+        if offset_s is not None:
+            oauth["expiresAt"] = int((time.time() + offset_s) * 1000)
+        if refresh:
+            oauth["refreshToken"] = "sk-ant-ort01-" + "r" * 30
+        return json.dumps({"claudeAiOauth": oauth})
+
+    def _put(self, path, body, mode=""):
+        """Write a fixture credential the way the container would: from the
+        shell. The test's own process never stores the token, which is the
+        distinction the scanner draws and a reasonable one to keep."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        script = 'printf "%s" "$1" > "$2"\n[ -n "$3" ] && chmod "$3" "$2"\ntrue\n'
+        proc = subprocess.run(["bash", "-c", script, "_", body, str(path), mode],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def _backup_only(self, body):
+        """The state the restore branch exists for: a backup and no live file."""
+        self.backup.mkdir()
+        self._put(self.saved, body)
+
+    # -- the four states, of which exactly one is dead --------------------
+
+    def test_an_expired_backup_with_a_refresh_token_is_restored(self):
+        """The bug. The CLI renews this file by itself on its next run, so
+        deleting it forces a login nobody needed to do — and because the
+        panel reports itself signed out off the same file, nothing brAIn
+        does ever runs the CLI to trigger that renewal."""
+        body = self._credential(offset_s=-3600)
+        self._backup_only(body)
+        out = self._run()
+        self.assertEqual(self.live.read_text(), body)
+        self.assertTrue(self.saved.exists(), "the backup was consumed")
+        self.assertIn("restored last known good copy", out)
+
+    def test_an_expired_backup_with_nothing_to_renew_it_is_discarded(self):
+        """The revoked session the check was written for. Restoring it puts
+        the add-on back into "the chat works but the terminal asks me to log
+        in" on every boot, with no way for it to clear."""
+        self._backup_only(self._credential(offset_s=-3600, refresh=False))
+        out = self._run()
+        self.assertFalse(self.live.exists())
+        self.assertFalse(self.saved.exists(), "a dead backup was kept")
+        self.assertIn("Discarded", out)
+
+    def test_a_live_backup_is_restored(self):
+        body = self._credential(offset_s=9000)
+        self._backup_only(body)
+        self._run()
+        self.assertEqual(self.live.read_text(), body)
+
+    def test_a_backup_recording_no_expiry_is_restored(self):
+        """No expiry means the file records none, not that the token is
+        past it."""
+        body = self._credential(offset_s=None, refresh=False)
+        self._backup_only(body)
+        self._run()
+        self.assertEqual(self.live.read_text(), body)
+
+    # -- and the states either side of those ------------------------------
+
+    def test_a_refresh_token_that_is_not_one_does_not_revive_a_dead_backup(self):
+        """jq's `//` fills in a null but not an empty string or a number, so
+        the value is checked for being a usable string rather than for the
+        key being there."""
+        past = int((time.time() - 3600) * 1000)
+        for junk in (None, "", 0, [], {}, 12345):
+            with self.subTest(refreshToken=repr(junk)):
+                self.tearDown()
+                self.setUp()
+                self._backup_only(json.dumps({"claudeAiOauth": {
+                    "accessToken": "sk-ant-" + "x" * 40,
+                    "expiresAt": past, "refreshToken": junk}}))
+                self._run()
+                self.assertFalse(self.live.exists())
+                self.assertFalse(self.saved.exists())
+
+    def test_a_backup_that_is_not_a_credential_is_discarded(self):
+        """Unparseable JSON, and JSON holding no token. jq exits non-zero
+        for both, which is the same answer as "dead" and the right one."""
+        for body in ("not json{", json.dumps({"claudeAiOauth": {}}),
+                     json.dumps({"claudeAiOauth": {"accessToken": "nope"}})):
+            with self.subTest(body=body[:30]):
+                self.tearDown()
+                self.setUp()
+                self._backup_only(body)
+                self._run()
+                self.assertFalse(self.live.exists())
+                self.assertFalse(self.saved.exists())
+
+    def test_a_live_file_is_backed_up_and_never_overwritten_by_the_backup(self):
+        """The other branch: while the real file is there it is the record,
+        whatever the backup says. A dead live credential is somebody's
+        current state and is not something this block may second-guess."""
+        self.backup.mkdir()
+        self._put(self.saved, self._credential(offset_s=9000))
+        current = self._credential(offset_s=-3600, refresh=False)
+        self._put(self.live, current)
+        self._run()
+        self.assertEqual(self.live.read_text(), current)
+        self.assertEqual(self.saved.read_text(), current, "the backup went stale")
+
+    def test_no_backup_and_no_live_file_does_nothing(self):
+        self.backup.mkdir()
+        out = self._run()
+        self.assertFalse(self.live.exists())
+        self.assertNotIn("WARN", out)
+
+    def test_the_shell_and_the_panel_answer_the_same_question_alike(self):
+        """One file, two readers, and the boot one decides what the other
+        then reads: `run.sh` restores or deletes `.credentials.json`, and
+        `engine._cli_credentials_present` reports whatever survives. A jq
+        expression and a Python branch drifting apart here is an add-on
+        that deletes at boot exactly what the panel would have accepted, so
+        they are driven over one fixture set and compared rather than each
+        being checked against its own idea of the answer."""
+        future = int((time.time() + 9000) * 1000)
+        past = int((time.time() - 3600) * 1000)
+        refresh = "sk-ant-ort01-" + "r" * 30
+        token = "sk-ant-" + "x" * 40
+        fixtures = {
+            "live, with a refresh token":
+                {"accessToken": token, "expiresAt": future, "refreshToken": refresh},
+            "live, without one":
+                {"accessToken": token, "expiresAt": future},
+            "expired, with a refresh token":
+                {"accessToken": token, "expiresAt": past, "refreshToken": refresh},
+            "expired, without one":
+                {"accessToken": token, "expiresAt": past},
+            "expired, refresh token empty":
+                {"accessToken": token, "expiresAt": past, "refreshToken": ""},
+            "expired, refresh token null":
+                {"accessToken": token, "expiresAt": past, "refreshToken": None},
+            "expired, refresh token not a string":
+                {"accessToken": token, "expiresAt": past, "refreshToken": 12345},
+            "no expiry recorded":
+                {"accessToken": token, "refreshToken": refresh},
+            "no expiry and no refresh token":
+                {"accessToken": token},
+            "zero expiry":
+                {"accessToken": token, "expiresAt": 0, "refreshToken": refresh},
+            "not shaped like a token":
+                {"accessToken": "nope", "expiresAt": future, "refreshToken": refresh},
+            "no token at all":
+                {"refreshToken": refresh},
+        }
+        for name, oauth in fixtures.items():
+            with self.subTest(case=name):
+                self.tearDown()
+                self.setUp()
+                body = json.dumps({"claudeAiOauth": oauth})
+                self._backup_only(body)
+                self._run()
+                shell_says = self.live.exists()
+
+                # The real panel function, in a subprocess: brain/panel and
+                # bright/panel both hold a `server.py`, so this file does
+                # not put either on sys.path (see TestTerminalProxy).
+                self._put(self.live, body)
+                probe = (
+                    "import sys; sys.path.insert(0, %r); import engine; "
+                    "engine.CLAUDE_HOME = %r; "
+                    "print(engine._cli_credentials_present())"
+                    % (str(PANEL), str(self.home))
+                )
+                out = subprocess.run([sys.executable, "-c", probe],
+                                     capture_output=True, text=True, timeout=60)
+                self.assertEqual(out.returncode, 0, out.stderr)
+                panel_says = out.stdout.strip() == "True"
+
+                self.assertEqual(
+                    shell_says, panel_says,
+                    f"{name}: run.sh would {'keep' if shell_says else 'delete'} "
+                    f"this credential and the panel calls it "
+                    f"{'usable' if panel_says else 'dead'}")
+
+    def test_the_restored_file_is_readable_only_by_its_owner(self):
+        """A credential is 0600. `cp -a` carries the backup's mode over, so
+        the chmod is what makes that true of a backup written before this
+        rule existed."""
+        self.backup.mkdir()
+        self._put(self.saved, self._credential(offset_s=-3600), mode="644")
+        self._run()
+        self.assertEqual(self.live.stat().st_mode & 0o777, 0o600)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -274,6 +274,13 @@ def _shape(entry: dict) -> dict:
         "entity_id": str(entry.get("entity_id") or "")[:255],
         "source": str(entry.get("source") or "")[:64],
         "source_title": str(entry.get("source_title") or "")[:120],
+        # Which Claude run raised it, when one did. Empty for a house
+        # check, which is the honest answer: nothing was asked. It is
+        # what `capture` joins an ENDING back to the prompt that earned
+        # it — the label half of the corpus — and it is deliberately not
+        # in the shared-volume mirror, because Home Assistant has no use
+        # for a session id.
+        "run_id": str(entry.get("run_id") or "")[:64],
         "status": status,
         "result": str(entry.get("result") or "")[:MAX_RESULT],
         "changed": _clean_changed(entry.get("changed")),
@@ -487,6 +494,7 @@ def coerce(obj: dict) -> dict | None:
         "entity_id": str(obj.get("entity_id") or "").strip()[:255],
         "source": str(obj.get("source") or "").strip()[:64],
         "source_title": str(obj.get("source_title") or "").strip()[:120],
+        "run_id": str(obj.get("run_id") or "").strip()[:64],
         "status": "open",
         "result": "",
         "changed": [],
@@ -877,6 +885,29 @@ def refresh_details(objs: list[dict]) -> int:
     return changed
 
 
+def resolve_clear(items: list[dict], sources: set[str],
+                  keep_keys: set[str]) -> tuple[list[dict], list[dict]]:
+    """Split rows into what survives a pass and what that pass cleared.
+
+    Pure over a list, so the shadow store can hold the *same* rule rather
+    than a copy of it: a shadow check earning its place has to clear
+    exactly the way a real one does, or the two numbers being compared are
+    measuring different lifecycles. :func:`clear_resolved` is this against
+    the real store; ``shadow_findings.clear_resolved`` is it against the
+    other one.
+    """
+    kept: list[dict] = []
+    gone: list[dict] = []
+    for f in items:
+        if (f.get("source") in sources
+                and f.get("status") in CLEARABLE
+                and normalize(f.get("text", "")) not in keep_keys):
+            gone.append(_shape(f))
+            continue
+        kept.append(f)
+    return kept, gone
+
+
 @_mutates
 def clear_resolved(sources: set[str], keep_keys: set[str]) -> list[dict]:
     """Drop open rows a producer no longer reports.
@@ -894,16 +925,7 @@ def clear_resolved(sources: set[str], keep_keys: set[str]) -> list[dict]:
     house, and if it comes back the check files it again. Returns the
     rows that were removed.
     """
-    items = _load()
-    kept: list[dict] = []
-    gone: list[dict] = []
-    for f in items:
-        if (f.get("source") in sources
-                and f.get("status") in CLEARABLE
-                and normalize(f.get("text", "")) not in keep_keys):
-            gone.append(_shape(f))
-            continue
-        kept.append(f)
+    kept, gone = resolve_clear(_load(), sources, keep_keys)
     if gone:
         _write(kept)
     return gone

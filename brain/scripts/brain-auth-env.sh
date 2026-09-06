@@ -26,6 +26,18 @@
 # allowed is preferring a CLI credential that is *dead*, which is what step
 # 1 used to do.
 #
+# The expiry rule here is deliberately stricter than the panel's, and the
+# asymmetry follows from the position. `_cli_credentials_present` is the
+# LAST store engine.get_auth consults, so a wrong "no" there is the whole
+# add-on reporting itself signed out; it therefore counts an expired access
+# token beside a refreshToken as usable, because the CLI mints a new one
+# from it on the next run. Step 1 here is the FIRST store, and a wrong "no"
+# costs nothing: it falls through to two more, and with those empty it
+# emits nothing at all — which is exactly what deferring would have done,
+# leaving the CLI to refresh itself unimpeded. So this end can afford to be
+# strict, and being strict is what stops a CLI credential whose refresh may
+# itself be revoked from shadowing a pasted token that works today.
+#
 # Emits nothing at all when there is no credential: an unset variable is
 # the correct state for "not signed in", and exporting an empty one makes
 # the CLI fail with a confusing auth error instead of prompting to log in.
@@ -52,6 +64,11 @@ _brain_auth_cli="${_brain_auth_home}/.claude/.credentials.json"
 #
 #    A missing or zero expiresAt is treated as live: it means the file does
 #    not record one, not that the token is past it.
+#
+#    A refreshToken does NOT rescue a lapsed access token here, and that is
+#    the one place this rule parts company with `_cli_credentials_present`
+#    — see the note at the top of this file for why the same fact answers
+#    the two questions differently.
 if [ -r "$_brain_auth_cli" ] \
     && jq -e --argjson now "$(date +%s)" '
         (.claudeAiOauth // {}) as $o
