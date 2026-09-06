@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.9.1
+
+**The wizard told you why before it told you what to look at.** 0.9.0 replaced
+four boxes with one measurement, and then asked for it in the voice the code
+comments are written in: every one of the six readings carried the reasoning
+that put it there — that a late start has nothing printed in the band it is
+being asked about, that two copies are the only way to tell one hypothesis
+from another — set in the same grey as the reading rule itself, run together
+in one span. That voice is right where somebody changing the arithmetic reads
+it. It is the wrong one for a person standing at a printer holding two labels,
+and the report was that the wizard was vague about what it wanted measured.
+
+A reading is now three things and nothing else: **what to look for**, in ink;
+**what to type**; and **what to do when the obvious thing is not there**.
+
+- **The top reading is drawn, because it is two procedures and not one
+  measurement.** Whether you type `0` or read a number off the ladder is
+  settled by one thing you can see in a second — is the heavy bar printed on
+  this label? — and prose has to give the test, the first answer and the
+  second answer in a single clause before it can say anything at all. There
+  are now two small pictures of the same label differing in exactly that,
+  each captioned with its own answer, and the second carrying the reading its
+  edge works out to.
+- **The drawing was arguing the opposite of the form.** The badge for that
+  reading was an arrow spanning the blank band at the top of the label — a
+  dimension line across a region, which means *measure this* — while the box
+  it named takes `0`. It points at the label's top edge now, the same way the
+  two across readings point at its side edges.
+- **Three things you cannot get off the paper are said before the first
+  box**: which end of a label is its top (the ladder counts downwards, so it
+  is the end with the small numbers, and the end that came out first), which
+  of the two labels you are holding, and that the marks are millimetres — a
+  number every 5, a tick every 1 — worked through on an example. Six readings
+  taken the wrong way up derive a confident wrong answer.
+- **The six boxes are grouped the way you pick things up**: the strip across
+  the paper, then one label, then the other. A flat list of six asks you to
+  hold both labels at once.
+- The instruction is set in ink rather than in the aside's grey, the "leave it
+  empty" cases say what they actually look like on the paper, and `DOCS.md`'s
+  own table of the six says the same new thing.
+
+No arithmetic changed. A roll lined up under 0.9.0 keeps its measurement.
+
 ## 0.9.0
 
 **Four boxes to type a millimetre into, and none of them could answer the
