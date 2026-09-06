@@ -628,10 +628,65 @@ class TestPanelUI(unittest.TestCase):
         back to asking for a distance there, this is the sentence that would
         have to change first."""
         app = (PANEL / "app.js").read_text()
-        self.assertIn("it is 0 whenever the ladder", app)
+        self.assertIn("It is 0 whenever the ladder", app)
         self.assertIn("print in the blank band at the top", app)
         # And the pre-skip is gone from the wire the wizard speaks.
         self.assertNotIn("pre_skip", app)
+
+    def test_the_top_reading_is_drawn_as_the_two_cases_it_is(self):
+        """C is not one measurement with an exception, it is two procedures
+        chosen by whether the heavy bar is on the paper — and prose has to
+        give the test, the first answer and the second answer before it says
+        anything, which is what made it read as vague. So it is drawn, and
+        the drawing is asserted for the two things that made the old one
+        actively misleading: the badge points at the label's top EDGE rather
+        than spanning the blank band (a dimension line across a region means
+        "measure this", and the depth of that band is the one number the box
+        may not carry), and each panel of the figure carries the answer for
+        the case it shows."""
+        app = (PANEL / "app.js").read_text()
+        self.assertIn("function calTopCases()", app)
+        self.assertIn("'Bar on the label', '\\u2192 type 0'", app)
+        self.assertIn("'\\u2192 read the top edge'", app)
+        # The arrow that used to run down the blank band from the label's
+        # top edge to the bar. Its two ends are what named it: y1 at the
+        # edge, y2 at the datum row the ladder starts on.
+        self.assertNotIn("y1: 14, x2: x + 34, y2: 30", app)
+        # And it is a leader onto the edge now, the same mark A and B use.
+        self.assertIn("x1: x + 38, y1: 14, x2: x + 38, y2: 11", app)
+
+    def test_the_wizard_says_which_way_up_and_which_label(self):
+        """The three things every one of the six readings needs and none of
+        them used to say: which end of a label is its top, which of the two
+        you are holding, and what the marks are a scale of. A person cannot
+        work any of them out from the paper — the first is only knowable from
+        the fact that the ladder counts away from the leading edge — and six
+        readings taken the wrong way up are six readings that derive a
+        confident wrong answer."""
+        app = (PANEL / "app.js").read_text()
+        self.assertIn("const CAL_HOLDING = [", app)
+        for wanted in ("Which way up", "Which label", "What the numbers are",
+                       "counts downwards", "Millimetres"):
+            with self.subTest(wanted=wanted):
+                self.assertIn(wanted, app)
+
+    def test_the_six_readings_are_grouped_by_what_you_pick_up(self):
+        """One strip across the paper, then one label, then the other. A flat
+        list of six asks somebody to hold both labels at once, and reads as
+        six unrelated questions rather than as three things to do."""
+        app = (PANEL / "app.js").read_text()
+        self.assertIn("const CAL_GROUPS = [", app)
+        for keys in ("['left', 'right']", "['top1', 'bottom1']",
+                     "['top2', 'bottom2']"):
+            with self.subTest(group=keys):
+                self.assertIn(keys, app)
+        # The instruction is set in ink and the aside under it is not, so
+        # the sentence that answers the box is the one that looks like it
+        # does. They were one grey span carrying both.
+        css = (PANEL / "style.css").read_text()
+        self.assertIn(".calfield > .calhow {", css)
+        self.assertLess(css.index(".calfield > .calhow {"),
+                        css.index("@media (pointer: coarse)"))
 
     def test_the_designer_draws_the_band_the_printer_cannot_reach(self):
         """And on the right edge of the canvas. The renderer turns the canvas

@@ -105,8 +105,8 @@ There are three ways a roll can be wrong and they look identical from a
 photograph, so lining up prints **two** labels and reads six numbers off them.
 
 1. Press **Line up this roll** on the bay that holds it, then **Print**.
-2. Type what you see. Each box says what it is and the drawing beside it shows
-   where on the label to look.
+2. Type what you see. Each box says what to look for, and the drawings beside
+   them show where on the label to look.
 3. Press **Apply**. BRUH Print says what your printer does with this roll, in
    one sentence.
 4. Press **Print a check label**. It draws a frame around everything the roll
@@ -114,18 +114,52 @@ photograph, so lining up prints **two** labels and reads six numbers off them.
    means the answer was right; a missing side says which way it is out, and you
    run the wizard again.
 
-**The six numbers.** Every one is read against a ladder printed on the same
-label, which is the only kind of measurement that cannot be wrong about its own
-scale.
+**Before you read anything, three things about the two labels in your hand.**
+None of them is guessable from the paper, and every one of the six readings is
+meaningless without all three.
+
+- **Which way up.** The ladder counts *downwards*, so the end with the small
+  numbers is the top — and it is the end that came out of the printer first.
+- **Which label.** One has a `1` in a little box and the other a `2`. That is
+  the only difference between them.
+- **What the numbers are.** Millimetres. The ladder down the label has a number
+  every 5mm and a tick every 1mm, so where an edge falls between two numbers
+  you count the ticks: an edge two ticks past the `25` reads `27`. Nothing here
+  is measured with a ruler — every number is read against a scale printed on
+  the same label, which is the only kind of measurement that cannot be wrong
+  about its own scale.
+
+**The six numbers**, in the order you physically pick things up: the strip
+across the paper, then one label, then the other.
+
+*Where the paper sits under the print head* — both off the **black strip**,
+white numbers on black, running across the label. There may be two strips down
+the label; they say the same thing.
 
 | | What to read |
 | --- | --- |
-| **A** | The white-on-black number where the label's **left** edge cuts the black band. That band is a scale across the whole 672-dot print head, so the part of it that misses the paper is the part telling you where the paper sits. |
-| **B** | The same at the **right** edge. Leave it empty if the band runs off the label — a label wider than the band has nothing to read there. |
-| **C** | On label 1: the first feed number you can see at the top, minus one for each short tick line above it — and **0** whenever the ladder's own `0` and its heavy bar are printed with blank label above them. |
-| **D** | On label 1: the last feed number you can see at the bottom, plus one for each short tick below it. |
-| **E** | **C** again, on the label with a 2 in the box. |
-| **F** | **D** again, on that same label. |
+| **A** | The white number where the strip **starts**, at the label's left-hand edge. Its numbers count up left to right; if they count down, turn the label round. The strip is a scale across the whole 672-dot print head, so the part of it that misses the paper is the part telling you where the paper sits. |
+| **B** | The white number where the strip **stops**, at the right-hand edge. Leave it empty if the strip stops short of the edge — the label is wider than the print head, so there is nothing printed out there to read. Everything else still works without it. |
+
+*Label 1 — where the printing starts and stops.* `C` is the one reading that is
+two procedures rather than a measurement with an exception, and which one you
+are in is settled by looking for **the heavy bar**: the one thick line, with a
+`0` printed beside it.
+
+| | What to read |
+| --- | --- |
+| **C** | **The bar is on the label** → type `0`, however much blank label sits above it. **It is not** — the smallest number you can see is 5 or more → the printing began before the label did, so read the ladder where the top edge crosses it and type that. |
+| **D** | The ladder reading at the label's **bottom** edge: the last number you can see, plus one for every tick between it and the edge. If the ladder stops short of the edge, type the last number that is printed — that is a real reading, not a missing one. |
+
+*Label 2 — the same two readings*, on the label with a `2` in its box. The
+wizard fills them in from `C` and `D` and stops as soon as you type in them: on
+most rolls they really are identical, and the one case where they are not is a
+printer that gets only the first label of a job wrong.
+
+| | What to read |
+| --- | --- |
+| **E** | Exactly as `C`, on that label. |
+| **F** | Exactly as `D`, on that label. |
 
 **Why a late start is read from the BOTTOM, and this is the whole shape of it.**
 Nothing can print before the point where the printer begins. So a printer that

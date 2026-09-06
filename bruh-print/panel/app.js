@@ -2106,31 +2106,87 @@ function lineUpBlock(roll, stock) {
  * drawing, the fields and the request all have to agree about which letter
  * names which number. Three copies of that mapping is three chances for the
  * label on screen to point at the wrong box.
+ *
+ * **What is on screen is the instruction; the argument for it is not.** Every
+ * one of these six used to carry the reasoning that put it there — that a
+ * late start has nothing printed in the band it is being asked about, that
+ * two copies are the only way to tell one hypothesis from another — and a
+ * person standing at a printer holding two labels does not need an argument,
+ * they need to be told what to look at. The argument is true and it is in
+ * `calibration.py`, where somebody changing the arithmetic will read it. What
+ * is left here is three things per reading and nothing else: what to look
+ * for, what to type, and what to do when the obvious thing is not there.
+ *
+ * The last of those is the one that was missing, and it is the whole of why
+ * the top readings were unanswerable. C has two completely different
+ * procedures depending on something a person can settle in a second —
+ * whether the heavy bar is on the paper — and the old sentence gave the
+ * rule for one of them, the exception for the other and the reason for both,
+ * in a single clause. `calTopCases` draws them instead.
  */
+
+/* `how` is the instruction and is set in ink; a string is one line and an
+ * array is a case per line, which is what a reading with two procedures
+ * needs. `note` is the aside underneath, and nothing a person has to do to
+ * get the number right may live in it. */
 const CAL_READINGS = [
-  ['left', 'A', 'Left edge, on the black band',
-    'The white-on-black number under the label’s left-hand edge. It is the '
-    + 'one reading that is not optional: the whole across axis is built on '
-    + 'it.'],
-  ['right', 'B', 'Right edge, on the same band',
-    'The same at the other edge. Leave it empty if the band runs off the '
-    + 'label — a label wider than the band has nothing to read there.'],
+  ['left', 'A', 'Left-hand end of the black strip',
+    'The white number where the black strip starts, at the label’s '
+    + 'left-hand edge.',
+    'The strip’s numbers count up from left to right. If they count down, '
+    + 'turn the label round.'],
+  ['right', 'B', 'Right-hand end of the same strip',
+    'The white number where the black strip stops, at the label’s '
+    + 'right-hand edge.',
+    'Leave it empty if the strip stops short of the edge — that means the '
+    + 'label is wider than the print head, so there is nothing printed out '
+    + 'there to read. Everything else still works without it.'],
   ['top1', 'C', 'Top of label 1',
-    'The first feed number you can see at the top, minus one for each short '
-    + 'tick line above it — and it is 0 whenever the ladder’s own 0 and its '
-    + 'heavy bar are printed with blank label above them, which is what a '
-    + 'printer that starts late looks like.'],
+    ['Find the heavy bar: the one thick line, with a 0 printed beside it.',
+     'It is on this label — type 0. It is 0 whenever the ladder’s own 0 '
+     + 'and its heavy bar are on the paper, however much blank label sits '
+     + 'above them.',
+     'It is not on this label, and the smallest number you can see is 5 or '
+     + 'more — the printing began before the label did. Read the ladder '
+     + 'where the top edge crosses it, and type that.'],
+    'A blank band above the bar is normal. Nothing can '
+    + 'print in the blank band at the top, so there is nothing inside it to '
+    + 'measure it with — how deep it is comes out of D.'],
   ['bottom1', 'D', 'Bottom of label 1',
-    'The last feed number you can see at the bottom, plus one for each short '
-    + 'tick below it. This is the one that carries a late start: nothing can '
-    + 'print in the blank band at the top, so the far edge against the '
-    + 'label’s own length is what measures it.'],
+    'Read the ladder where the label’s bottom edge crosses it — the last '
+    + 'number you can see, plus one for every tick between it and the edge.',
+    'If the ladder stops short of the edge, type the last number that is '
+    + 'printed. That is a real reading rather than a missing one: it is what '
+    + 'a printer that began before the label did leaves behind.'],
   ['top2', 'E', 'Top of label 2',
-    'C again, on the label with a 2 in the box.'],
+    'Exactly as C, on the label with a 2 in its box: the heavy bar on the '
+    + 'paper means 0, and no heavy bar means reading the ladder where the '
+    + 'top edge crosses it.',
+    'Copied across from C until you type in it.'],
   ['bottom2', 'F', 'Bottom of label 2',
-    'D again, on the same label. The two copies are the whole reason two '
-    + 'labels print: one alone cannot tell a roll that starts late from a '
-    + 'printer that only gets the first label of a job wrong.'],
+    'Exactly as D, on that same label.',
+    'Copied across from D until you type in it. The second label is the '
+    + 'whole reason two of them print: one alone cannot tell a roll that '
+    + 'starts late on every label from a printer that gets only the first '
+    + 'label of a job wrong, and the two want opposite answers.'],
+];
+
+/* The six boxes, in the order somebody physically picks things up: one strip
+ * across the paper, then one label, then the other. They were a flat list of
+ * six under one heading, which asks a person to hold both labels at once and
+ * reads as six unrelated questions rather than as three things to do. */
+const CAL_GROUPS = [
+  ['Where the paper sits under the print head', ['left', 'right'],
+    'Both of these come off the black strip — white numbers on black, '
+    + 'running across the label. There may be two strips down the label; '
+    + 'they say the same thing, so use whichever is easier to read.'],
+  ['Label 1 — where the printing starts and stops', ['top1', 'bottom1'],
+    'Where this label’s own top and bottom edges fall on the ladder '
+    + 'running down it.'],
+  ['Label 2 — the same two readings', ['top2', 'bottom2'],
+    'On most rolls these really are identical to C and D, which is why they '
+    + 'are filled in for you. Change them if what you are holding says '
+    + 'otherwise.'],
 ];
 
 function lineUpDialog(stock, side) {
@@ -2170,8 +2226,10 @@ function calPrintStep(state, wrap, variant, why) {
   wrap.innerHTML = '';
   wrap.append(el('h2', null, `Line up ${state.stock.name}`));
   wrap.append(el('p', 'lede', why
-    || 'Two labels will print. You read six numbers off them — nothing to '
-       + 'measure with.'));
+    || 'Where a printer starts laying ink on a roll is a property of that '
+       + 'roll, and nothing can work it out without printing something and '
+       + 'looking at it. Two labels print with rulers on them; you read six '
+       + 'numbers off those rulers and this roll is lined up for good.'));
   /* Said before the press and not after it: this label is drawn to the
    * whole print head, so on anything narrower than 2.25" part of it lands
    * on the liner. That is what makes the across ruler readable, and
@@ -2203,58 +2261,106 @@ function calPrintStep(state, wrap, variant, why) {
 /* Which copy-2 box follows which copy-1 box while it is untouched. */
 const MIRRORED = { top1: 'top2', bottom1: 'bottom2' };
 
+/* How to hold the two labels, said before the first box and not inside one.
+ *
+ * It is the step that was missing entirely, and it is the one a person
+ * cannot work out: which end of a label is its top, which of the two labels
+ * they are holding, and what the marks on it are a scale OF. Every one of
+ * the six readings is meaningless without all three, and every one of them
+ * used to be asked as though they were obvious. They are obvious only to
+ * somebody who has read the renderer. */
+const CAL_HOLDING = [
+  ['Which way up', 'Hold each label so the ladder counts downwards. The end '
+    + 'with the small numbers is the top, and it is the end that came out of '
+    + 'the printer first.'],
+  ['Which label', 'One of them has a 1 in a little box and the other a 2. '
+    + 'That is the only difference between them.'],
+  ['What the numbers are', 'Millimetres. The ladder down the label has a '
+    + 'number every 5mm and a tick every 1mm, so where an edge falls between '
+    + 'two numbers you count the ticks — an edge two ticks past the 25 reads '
+    + '27. Nothing here is measured with a ruler.'],
+];
+
 function calReadStep(state, wrap) {
   wrap.dataset.step = 'read';
   wrap.innerHTML = '';
   wrap.append(el('h2', null, 'Type what you see'));
   if (state.message) wrap.append(el('p', 'calsentence', state.message));
   wrap.append(el('p', 'lede',
-    'Six numbers off the two labels that just printed. Every one of them '
-    + 'is read against something printed on the same label, which is the '
-    + 'only kind of measurement that cannot be wrong about its own scale.'));
+    'Six numbers off the two labels that just printed. Every one of them is '
+    + 'a millimetre read off a scale printed on the same label, so there is '
+    + 'nothing to measure with and nothing to convert.'));
+
+  const holding = el('dl', 'calhold');
+  for (const [term, says] of CAL_HOLDING) {
+    holding.append(el('dt', null, term));
+    holding.append(el('dd', null, says));
+  }
+  wrap.append(holding);
 
   const split = el('div', 'calsplit');
   split.append(calDrawing());
 
   const fields = {};
   const list = el('div', 'calfields');
-  for (const [key, letter, name, hint] of CAL_READINGS) {
-    const field = el('label', 'field calfield');
-    const head = el('span', 'calhead');
-    head.append(el('i', 'calbadge', letter), el('b', null, name));
-    field.append(head);
-    const input = el('input');
-    input.type = 'number';
-    input.step = '0.1';
-    /* Every one of the six is a distance from an edge of the label to
-     * something printed on it, so none of them can be negative — and a
-     * minus sign here is somebody carrying over the old offset's
-     * convention, where it meant "the other way". There is no other way
-     * now: the derivation decides the sign, from where the two copies
-     * landed. The server refuses one too; this is the keyboard's half. */
-    input.min = '0';
-    input.inputMode = 'decimal';
-    input.id = `cal${letter}`;
-    input.value = state.readings[key];
-    if (key === 'right') input.placeholder = 'leave empty if it runs off';
-    input.oninput = () => {
-      state.readings[key] = input.value;
-      /* Copy 2 follows copy 1 until somebody types in it. The two are the
-       * same on every roll except the one hypothesis that needs them to
-       * differ, so mirroring saves two boxes of typing in the common case —
-       * and it stops the moment the box is touched, because the case where
-       * they differ is the whole reason both are asked for. */
-      const mirror = MIRRORED[key];
-      if (mirror && fields[mirror] && fields[mirror].dataset.touched !== '1') {
-        fields[mirror].value = input.value;
-        state.readings[mirror] = input.value;
-      }
-      if (key === 'top2' || key === 'bottom2') input.dataset.touched = '1';
-    };
-    field.append(input);
-    field.append(el('span', 'muted', hint));
-    fields[key] = input;
-    list.append(field);
+  const byKey = new Map(CAL_READINGS.map((row) => [row[0], row]));
+  for (const [title, keys, lede] of CAL_GROUPS) {
+    const group = el('div', 'calgroup');
+    group.append(el('h3', null, title));
+    group.append(el('p', null, lede));
+    list.append(group);
+    /* The two-case picture goes with the reading it is about, which is the
+     * top of a label — so it sits above C and not up beside the map of where
+     * the six points are. On a phone that is the one place it can be read
+     * without scrolling away from the box it explains. */
+    if (keys[0] === 'top1') list.append(calTopCases());
+    for (const [key, letter, name, how, note] of keys.map((k) => byKey.get(k))) {
+      const field = el('label', 'field calfield');
+      const head = el('span', 'calhead');
+      head.append(el('i', 'calbadge', letter), el('b', null, name));
+      field.append(head);
+      /* The instruction, in ink. An array is a case per line, which is what a
+       * reading with two procedures needs — and the old single grey span
+       * carrying the rule, the exception and the reason together is the whole
+       * of why this reading could not be answered. */
+      const steps = el('span', 'calhow');
+      for (const line of (Array.isArray(how) ? how : [how]))
+        steps.append(el('span', 'calcase', line));
+      field.append(steps);
+      const input = el('input');
+      input.type = 'number';
+      input.step = '0.1';
+      /* Every one of the six is a distance from an edge of the label to
+       * something printed on it, so none of them can be negative — and a
+       * minus sign here is somebody carrying over the old offset's
+       * convention, where it meant "the other way". There is no other way
+       * now: the derivation decides the sign, from where the two copies
+       * landed. The server refuses one too; this is the keyboard's half. */
+      input.min = '0';
+      input.inputMode = 'decimal';
+      input.id = `cal${letter}`;
+      input.value = state.readings[key];
+      if (key === 'right')
+        input.placeholder = 'empty if the strip stops short';
+      input.oninput = () => {
+        state.readings[key] = input.value;
+        /* Copy 2 follows copy 1 until somebody types in it. The two are the
+         * same on every roll except the one hypothesis that needs them to
+         * differ, so mirroring saves two boxes of typing in the common case —
+         * and it stops the moment the box is touched, because the case where
+         * they differ is the whole reason both are asked for. */
+        const mirror = MIRRORED[key];
+        if (mirror && fields[mirror] && fields[mirror].dataset.touched !== '1') {
+          fields[mirror].value = input.value;
+          state.readings[mirror] = input.value;
+        }
+        if (key === 'top2' || key === 'bottom2') input.dataset.touched = '1';
+      };
+      field.append(input);
+      if (note) field.append(el('span', 'muted', note));
+      fields[key] = input;
+      list.append(field);
+    }
   }
   split.append(list);
   wrap.append(split);
@@ -2337,8 +2443,9 @@ function calDoneStep(state, wrap, data) {
   };
   wrap.append(check);
   wrap.append(el('p', 'lede',
-    'If the frame reaches every edge you’re done; if not, run Line up '
-    + 'again.'));
+    'One label with a frame drawn around everything this roll can print on. '
+    + 'All four sides showing means the answer was right; a missing side '
+    + 'says which way it is still out, and Line up can be run again.'));
   calActions(wrap);
 }
 
@@ -2384,7 +2491,9 @@ function calDrawing() {
   });
 
   for (const [x, title] of [[8, 'Label 1'], [74, 'Label 2']]) {
-    svg.append(svgText(x + 22, 8, title, { class: 'calt' }));
+    /* Left of centre, because C's badge now sits above the label's own top
+     * right corner and a title centred over 44 units would run into it. */
+    svg.append(svgText(x + 14, 8, title, { class: 'calt' }));
     svg.append(svgEl('rect', { x, y: 14, width: 44, height: 68,
                                class: 'callabel' }));
     /* The BLANK BAND, drawn because it is the thing being measured and the
@@ -2393,6 +2502,10 @@ function calDrawing() {
      * the size comes from the far end. */
     svg.append(svgEl('rect', { x, y: 14, width: 44, height: 16,
                                class: 'calblank' }));
+    /* Named on the picture, because an unlabelled tint is a region a person
+     * assumes is the thing being measured — which is exactly the reading it
+     * sits behind, and exactly the wrong answer. */
+    svg.append(svgText(x + 22, 24, 'blank', { class: 'calt' }));
     /* The thick bar: raster line 0, the first row the printer lays, with
      * its own 0 beside it. The pair is the sign — seeing them with blank
      * label above is what a person types 0 for. */
@@ -2439,14 +2552,17 @@ function calDrawing() {
     svgBadge(svg, x, 89, letter);
   }
 
-  /* C and E: the blank band down to the bar, INSIDE the label, because that
-   * band is what the reading is about. On a late-starting printer there is
-   * nothing printed in it, which is exactly why the answer there is 0 and
-   * not a distance. */
+  /* C and E: the label's own TOP EDGE, pointed at from outside exactly as A
+   * and B point at its side edges — because that is where the reading is
+   * taken. They used to be drawn as an arrow spanning the blank band, which
+   * is a dimension line across a region, and a dimension line means "measure
+   * this": the picture asked for the depth of the band, the box takes 0, and
+   * a person following the drawing typed the one number the reading may not
+   * carry. Nothing can print in that band, so nothing in it can be read. */
   for (const [x, letter] of [[8, 'C'], [74, 'E']]) {
-    svg.append(svgEl('line', { x1: x + 34, y1: 14, x2: x + 34, y2: 30,
-                               class: 'calarrow' }));
-    svgBadge(svg, x + 34, 22, letter);
+    svg.append(svgEl('line', { x1: x + 38, y1: 14, x2: x + 38, y2: 11,
+                               class: 'calleader' }));
+    svgBadge(svg, x + 38, 6, letter);
   }
 
   /* D and F: the bar down to the trailing die cut, drawn OUTSIDE each label
@@ -2462,6 +2578,85 @@ function calDrawing() {
     svg.append(svgEl('line', { x1: x - 3, y1: 82, x2: x + 3, y2: 82,
                                class: 'calrung' }));
     svgBadge(svg, x, 45, letter);
+  }
+  return svg;
+}
+
+
+/* The two things the top of a label can look like, and what each one is
+ * worth.
+ *
+ * This is the picture the wizard was missing and the reason the top readings
+ * read as vague. C is not one measurement with an exception — it is two
+ * procedures, chosen by something a person settles in a second by looking at
+ * the paper, and prose has to give the test, the first answer and the second
+ * answer in one breath before it can say anything at all. A drawing gives
+ * all three at once and asks only "which of these am I holding?".
+ *
+ * Both panels are the same label at the same scale with one difference
+ * between them, which is the whole point: the ONLY thing being compared is
+ * whether the heavy bar is on the paper. A figure that also changed the
+ * ladder, the width or the tint would be inviting somebody to match on the
+ * wrong feature.
+ */
+function calTopCases() {
+  const svg = svgEl('svg', {
+    class: 'calsvg calcases', viewBox: '0 0 132 68',
+    role: 'img', 'aria-label':
+      'The two things the top of a calibration label can look like: the '
+      + 'heavy bar printed on it, which reads 0, or the ladder cut by the '
+      + 'top edge, which is read where it is cut',
+  });
+
+  /* `first` is the ladder value the label's own top edge falls at, which is
+   * the only difference between the two panels and the whole of what a
+   * person is being asked to recognise. 0 means the datum row itself is on
+   * the paper; 3 is an ordinary early start, drawn so the first number that
+   * survives is the 5 with two ticks above it — which is the case the
+   * instruction describes in words. */
+  for (const [x, first, base, caption] of [
+    [4, 0, 18, ['Bar on the label', '\u2192 type 0']],
+    [72, 3, 6, ['No heavy bar', '\u2192 read the top edge']],
+  ]) {
+    svg.append(svgEl('rect', { x: x + 4, y: 6, width: 40, height: 42,
+                               class: 'callabel' }));
+    if (first === 0) {
+      svg.append(svgEl('rect', { x: x + 4, y: 6, width: 40, height: 12,
+                                 class: 'calblank' }));
+      svg.append(svgText(x + 24, 14, 'blank', { class: 'calt' }));
+      svg.append(svgEl('rect', { x: x + 8, y: 18, width: 18, height: 1.8,
+                                 class: 'calbar' }));
+      svg.append(svgText(x + 32, 20.6, '0', { class: 'calnum' }));
+    } else {
+      /* The edge itself, marked the way the map marks the points it is read
+       * at. There is nothing else to point at on this panel — no bar, no
+       * band — and an unmarked edge is the panel saying only what is
+       * ABSENT. */
+      svg.append(svgEl('line', { x1: x + 4, y1: 6, x2: x + 44, y2: 6,
+                                 class: 'caledge' }));
+      /* The answer for the label drawn underneath it, which is what turns
+       * this panel from "here is the other case" into a worked example — the
+       * one thing a person reading a scale for the first time wants, and the
+       * thing prose about ticks and numbers is worst at giving. */
+      svg.append(svgText(x + 24, 4.4, `reads ${first}`, { class: 'calread' }));
+    }
+    for (let n = 1; n <= 14; n += 1) {
+      const y = base + n * 3.4;
+      if (y > 46) break;
+      const value = first + n;
+      const long = value % 5 === 0;
+      svg.append(svgEl('line', { x1: x + 8, y1: y, x2: x + (long ? 26 : 18),
+                                 y2: y, class: 'calrung' }));
+      if (long) svg.append(svgText(x + 32, y + 1.6, String(value),
+                                   { class: 'calnum' }));
+    }
+    /* Two short lines, because SVG text does not wrap: a caption wider than
+     * its panel runs on under its neighbour, and one wider than the viewBox
+     * loses its first letter off the edge — both of which this had before it
+     * was rendered and looked at. Sixteen characters at 4.8 units is about
+     * 42 of the 56 a panel has. */
+    svg.append(svgText(x + 24, 57, caption[0], { class: 'calcap' }));
+    svg.append(svgText(x + 24, 64, caption[1], { class: 'calcap' }));
   }
   return svg;
 }
