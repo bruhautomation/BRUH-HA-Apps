@@ -273,6 +273,35 @@ real model.
 
 ### Fixed
 
+- **A signed-in terminal was reported signed out every few hours, and
+  nothing brAIn did could clear it.** Claude Code's own
+  `.credentials.json` records a short-lived `accessToken` and the
+  `refreshToken` it mints the next one from — the CLI does that renewal
+  itself, on its next run, which is why 1.44.0 refuses to publish that
+  file to the other add-ons. `_cli_credentials_present` read the lapsed
+  access token as a dead credential anyway. That file is the LAST store
+  `get_auth` consults, so for somebody who had only ever signed in through
+  the terminal it was the whole verdict: `/api/status` answered
+  `authenticated: false`, the panel put up the sign-in screen, and because
+  every Claude run in the server is gated on the same call, nothing ever
+  ran the CLI — which was the one thing that would have refreshed the
+  token. The only way out was opening the terminal and typing `claude`,
+  which a phone cannot do. `run.sh` carried the same test on the other
+  side of the same file and deleted the backup, so a container down
+  overnight came up having thrown a working sign-in away. Both now ask
+  whether the CLI can still *use* the credential rather than whether the
+  access token is live; a past expiry with no refresh token stays dead,
+  because that is the revoked session the check was written for and there
+  is nothing left in the file to renew. Liveness proper is still
+  `validate_auth`'s — a real run, where a revoked refresh token comes back
+  a 401. The terminal's rule (`brain-auth-env.sh`) is deliberately
+  unchanged and the comment now says why the two differ: it is the FIRST
+  store of the three, so a wrong "no" there falls through to two more and,
+  with those empty, emits nothing at all — exactly what deferring would
+  have done. The jq and the Python are driven over one fixture set and
+  compared, because a boot-time reader and a panel-time reader disagreeing
+  about one file is an add-on that deletes what it would have accepted.
+
 - **A protected entity written the old way was a protected entity nothing
   could see.** `shadow.would_do` is the one reader of an action list, and
   three writers ask it the only question that matters before a file is

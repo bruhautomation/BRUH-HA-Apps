@@ -902,7 +902,12 @@ class TestSharedAuth(unittest.TestCase):
         """The one store that records an expiry is the one store where
         "there is a credential here" and "there is a working credential
         here" are separable — and reporting a dead token as a login is what
-        sent people to redo a sign-in that was already fine."""
+        sent people to redo a sign-in that was already fine.
+
+        With no refresh token in the file, an expiry in the past is the
+        revoked session this check exists for: there is nothing left to
+        renew it with. The case where there IS one is the test below.
+        """
         cli = Path(engine.CLAUDE_HOME) / ".claude"
         cli.mkdir(parents=True, exist_ok=True)
         creds = cli / ".credentials.json"
@@ -913,6 +918,72 @@ class TestSharedAuth(unittest.TestCase):
             with self.subTest(offset=offset):
                 self.assertEqual(
                     engine.auth_overview()["stores"]["cli"]["present"], expected)
+
+    def _write_cli_credential(self, **oauth):
+        cli = Path(engine.CLAUDE_HOME) / ".claude"
+        cli.mkdir(parents=True, exist_ok=True)
+        payload = {"accessToken": "sk-ant-" + "x" * 40}
+        payload.update(oauth)
+        (cli / ".credentials.json").write_text(
+            json.dumps({"claudeAiOauth": payload}))
+
+    def test_a_lapsed_access_token_beside_a_refresh_token_is_still_a_login(self):
+        """The `accessToken` is short-lived and the CLI renews it itself.
+
+        Reading a lapsed one as "no credential" is a loop with no way out.
+        This is the LAST store `get_auth` consults, so the answer is the
+        panel's whole verdict: `/api/status` reports `authenticated: false`,
+        the sign-in screen comes up, and every Claude run in the server is
+        gated on that same call — so nothing ever runs the CLI, which is
+        the only thing that would have refreshed the token. Somebody who
+        signed in through the terminal got logged out every few hours and
+        could only clear it by opening the terminal and typing `claude`.
+
+        Four states, because only one of them is dead.
+        """
+        cases = [
+            ("expired, with a refresh token", dict(
+                expiresAt=int((time.time() - 3600) * 1000),
+                refreshToken="sk-ant-ort01-" + "r" * 30), True),
+            ("expired, nothing to renew it with", dict(
+                expiresAt=int((time.time() - 3600) * 1000)), False),
+            ("live", dict(
+                expiresAt=int((time.time() + 9000) * 1000),
+                refreshToken="sk-ant-ort01-" + "r" * 30), True),
+            ("no expiry recorded at all", dict(
+                refreshToken="sk-ant-ort01-" + "r" * 30), True),
+        ]
+        for name, oauth, expected in cases:
+            with self.subTest(case=name):
+                self._write_cli_credential(**oauth)
+                self.assertEqual(engine._cli_credentials_present(), expected)
+                # And the verdict the panel actually renders, not just the
+                # helper underneath it: `get_auth` returning None is the
+                # sign-in screen, and it gates every run in the server.
+                auth = engine.get_auth()
+                self.assertEqual(bool(auth), expected, name)
+                if expected:
+                    self.assertEqual(auth["type"], "cli_login")
+                self.assertEqual(
+                    engine.auth_overview()["authenticated"], expected, name)
+
+    def test_a_refresh_token_that_is_not_one_does_not_revive_a_dead_login(self):
+        """`refreshToken` is read for a usable value, never for the key
+        being there. A null, an empty string, or something that is not a
+        string at all records no refresh token — and treating the key's
+        presence as the answer would make the revoked-session case
+        unreachable for any file that merely mentions it."""
+        past = int((time.time() - 3600) * 1000)
+        for junk in (None, "", 0, [], {}, 12345):
+            with self.subTest(refreshToken=repr(junk)):
+                self._write_cli_credential(expiresAt=past, refreshToken=junk)
+                self.assertFalse(engine._cli_credentials_present())
+        # A token that is not shaped like one is still refused outright,
+        # refresh token or no refresh token.
+        self._write_cli_credential(
+            accessToken="not-a-token", expiresAt=past,
+            refreshToken="sk-ant-ort01-" + "r" * 30)
+        self.assertFalse(engine._cli_credentials_present())
 
     # -- the routes the ⚙ dialog's Claude account section drives ----------
     # Driven through a real client rather than by calling the handlers, for
