@@ -1082,11 +1082,11 @@ async def h_printer_check(request: web.Request) -> web.Response:
 
     side, notes = state.resolve_side(entry.id, side)
     # Drawn to the full sheet, because the frame's whole job is to touch the
-    # die cut: a margin here would put a millimetre of white where the
-    # question is.
+    # edges of what this roll can print: a margin here would put a
+    # millimetre of white where the question is. What it must NOT drop is
+    # the four held bands — those are the area being checked.
     full = stock_store.replace(entry, margin_mm=0.0)
-    document = _check_label(full, entry.dead_leading_mm(
-        state.at_tear_off(side)), entry.hold_trailing_mm())
+    document = _check_label(full, state.at_tear_off(side))
     _, _, rendered = await asyncio.to_thread(
         _render, state, document, stock=full)
     result = await _send(state, rendered, stock=entry, side=side, copies=1)
@@ -1100,36 +1100,33 @@ CHECK_FRAME_MM = 1.0
 CHECK_WORDS = "Should reach every edge"
 
 
-def _check_label(stock, dead_mm: float, hold_mm: float = 0.0) -> dict:
+def _check_label(stock, first_after_tear: bool = False) -> dict:
     """A frame around everything this roll can print on, and a line of words.
 
-    The frame starts at the dead band rather than at row 0, because the crop
-    on the way to the printer takes those rows off the front of the sheet —
-    so a frame drawn from row 0 would have its top edge cut away and the
-    check would fail on a calibration that was right. Drawn where the ink can
-    land, it comes back whole.
+    It is drawn at the canvas's own 0,0 and to the canvas's own size, which
+    is the whole of what changed: the canvas IS the printable box now, so a
+    frame the full size of it is a frame around exactly the area this roll
+    gives you. It used to have to add the dead band back in by hand — the
+    crop takes those rows off the front of the sheet, so a frame drawn from
+    row 0 of a full-label canvas lost its top edge and the check failed on a
+    calibration that was right — and then subtract the held band again at
+    the other end. Both are inside the box now, along with the margin, the
+    head's shortfall and the two held edges the across axis grew.
 
-    `hold_mm` brings the bottom edge in by whatever the roll was asked to
-    keep clear, and it is what makes a chosen printable area checkable at
-    all: without it the frame would print into the band and the one way to
-    see the area you set would be to measure the blank paper under a label
-    that ignored it. The two bands are different kinds of thing — one the
-    printer refuses, one a person chose — and the frame does not distinguish
-    them, deliberately: what it draws is the area artwork gets, which is the
-    question a check label answers.
+    Which is the point: the frame does not distinguish a band the printer
+    refuses from one a person chose, deliberately. What it draws is the area
+    artwork gets, and that is the question a check label answers.
     """
-    across_mm, feed_mm = stock.drawable_mm
-    top = max(0.0, dead_mm)
-    height = max(2.0, feed_mm - top - max(0.0, hold_mm))
+    across_mm, feed_mm = stock.printable_box(first_after_tear=first_after_tear)[2:]
     return {"stock": stock.id, "rotate": 0, "name": "Check", "elements": [
-        {"type": "box", "x_mm": 0, "y_mm": top,
-         "w_mm": across_mm, "h_mm": height,
+        {"type": "box", "x_mm": 0, "y_mm": 0,
+         "w_mm": across_mm, "h_mm": max(2.0, feed_mm),
          "props": {"stroke_mm": CHECK_FRAME_MM, "fill": False,
                    "radius_mm": 0}},
         {"type": "text", "x_mm": CHECK_FRAME_MM * 3,
-         "y_mm": top + CHECK_FRAME_MM * 3,
+         "y_mm": CHECK_FRAME_MM * 3,
          "w_mm": max(1.0, across_mm - CHECK_FRAME_MM * 6),
-         "h_mm": max(1.0, height - CHECK_FRAME_MM * 6),
+         "h_mm": max(1.0, feed_mm - CHECK_FRAME_MM * 6),
          "props": {"text": CHECK_WORDS, "font": "sans-bold", "size_mm": 0,
                    "align": "center", "valign": "middle", "wrap": True}},
     ]}
@@ -1339,13 +1336,20 @@ async def h_stock_calibration(request: web.Request) -> web.Response:
 
     payload = await body(request)
     readings = payload.get("readings")
+    # 0.11.0 sent one trailing band as `hold`; a panel served before this
+    # update still does. One number, two spellings, and the newer one wins
+    # where both arrive — the same carry-over the stock row makes.
+    holds = payload.get("holds")
+    if not isinstance(holds, dict):
+        holds = {"trailing": payload.get("hold")}
     if not isinstance(readings, dict):
         return bad(
             "A calibration is the four coordinates of the label on the "
             "printed grid — post `readings` with `x1`, `y1` and `y2`, and "
             "`x2` unless the scale stops before the label's right-hand "
-            "edge. `hold` rides beside them and is optional: how much of "
-            "the bottom of the label to leave blank on purpose.")
+            "edge. `holds` rides beside them and is optional: how much of "
+            "each edge to leave blank on purpose, keyed `leading`, "
+            "`trailing`, `left` and `right`.")
 
     outcome = calibration.derive(
         calibration.Readings(
@@ -1355,12 +1359,13 @@ async def h_stock_calibration(request: web.Request) -> web.Response:
             x2=_reading(readings, "x2", optional=True),
         ),
         entry,
-        # Beside the readings rather than among them, because it is not one:
-        # the four coordinates say where the paper is and this says how much
-        # of it to leave blank. It comes off the same wire and through the
-        # same bounds check, and an empty box is 0.0 — which here is a real
-        # answer meaning "hold nothing back" rather than a missing reading.
-        hold=_reading(payload, "hold", optional=True) or 0.0,
+        # Beside the readings rather than among them, because they are not
+        # readings: the four coordinates say where the PAPER is and these
+        # say where to print on it. They come off the same wire and through
+        # the same bounds check, and an empty box is 0.0 — which here is a
+        # real answer meaning "hold nothing back" rather than a missing one.
+        holds={side: _reading(holds, side, optional=True) or 0.0
+               for side in calibration.HOLD_SIDES},
         now=time.time())
 
     updated = entry
@@ -1470,12 +1475,25 @@ async def h_preview(request: web.Request) -> web.Response:
     # out of the printer and a preview is for being believed.
     view = str(payload.get("view", "") or "sheet")
     turn = parsed.rotate if view == "canvas" else 0
-    png = await asyncio.to_thread(rendered.png, scale, turn=turn)
+    # And cropped to the printable box, which is the rest of "the way it is
+    # drawn": the sheet carries the stock's margin, the band this roll's
+    # printer cannot reach and any edge held clear as blank paper around the
+    # artwork, and a designer that showed them would be asking somebody to
+    # lay a label out and then move it off the parts that were never
+    # available. Cropped, the picture is exactly the canvas the overlay's
+    # millimetres describe.
+    # Taken off the render rather than re-derived here: `render` is what
+    # decided where the canvas went, and on continuous stock the sheet's
+    # length is the artwork's rather than the stock row's — a second
+    # computation would agree on every die-cut label and quietly disagree on
+    # those.
+    box = rendered.box_dots if view == "canvas" else None
+    png = await asyncio.to_thread(rendered.png, scale, turn=turn, box=box)
     return web.Response(
         body=png, content_type="image/png",
         headers={
             "Cache-Control": "no-store",
-            "X-Label-View": "canvas" if turn else "sheet",
+            "X-Label-View": "canvas" if view == "canvas" else "sheet",
             "X-Label-Dots": f"{rendered.across_dots}x{rendered.feed_dots}",
             "X-Label-Notes": json.dumps(rendered.notes),
             # The same messages with the element each belongs to, so the

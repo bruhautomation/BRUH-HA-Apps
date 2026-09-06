@@ -98,13 +98,28 @@ class TestRendering(unittest.TestCase):
         self.assertTrue(levels <= {0, 255},
                         f"the label carries grey: {sorted(levels - {0, 255})}")
 
-    def test_a_label_wider_than_the_head_is_clipped_and_says_so(self):
-        """Scaling to fit would shrink every element half a percent, which
-        makes a barcode's module width fractional — the one thing that must
-        not happen."""
+    def test_a_label_wider_than_the_head_loses_its_far_edge_off_the_canvas(self):
+        """A 2.25" label on a 2.24" head is three dot columns the printer
+        cannot reach, and the sheet is still clipped to the head — a sheet
+        wider than the head is not a thing.
+
+        What changed is where the answer is given. It used to be a NOTE,
+        which is the shape of answer that tells somebody about a region
+        after they have already laid artwork into it; it is an inset on the
+        printable box now, so the canvas simply stops where the head does
+        and there is nothing left to be told. Scaling to fit is still the
+        wrong answer for the reason it always was — it makes a barcode's
+        module width fractional, the one thing that must not happen.
+        """
         rendered = self.render({"stock": "edcc-082wh", "elements": []})
         self.assertEqual(672, rendered.across_dots)
-        self.assertTrue(any("print head" in note for note in rendered.notes))
+        self.assertFalse([n for n in rendered.notes if "print head" in n],
+                         "the head's reach is an inset now, not a note")
+        # The canvas ends inside the head, not inside the paper: 2.25" is
+        # 675 dots and the box's far edge lands at most at 672.
+        left, _, width, _ = rendered.box_dots
+        self.assertLessEqual(left + width, 672)
+        self.assertGreater(left + width, 672 - 24 - 4)
 
     def test_rotating_the_canvas_swaps_the_printed_dimensions(self):
         """A 0.56 x 3.44 tube wrap is designed as a long strip and printed

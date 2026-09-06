@@ -1090,15 +1090,54 @@ class TestTheDesignerSeesTheCanvasNotTheSheet(PanelCase):
             {"label": label, "view": "canvas"})
         self.assertEqual("canvas", view)
         self.assertGreater(canvas_w, canvas_h, "and is designed as a long strip")
-        # The same bitmap, turned — not a second render.
-        self.assertEqual((sheet_h, sheet_w), (canvas_w, canvas_h))
+        # The same bitmap, cropped to the printable box and then turned —
+        # not a second render. So it is the sheet's two dimensions swapped,
+        # each short by what the box takes off that axis.
+        self.assertLess(canvas_w, sheet_h)
+        self.assertLess(canvas_h, sheet_w)
 
-    async def test_an_unturned_label_is_the_same_picture_either_way(self):
+    async def test_the_canvas_is_the_printable_box_and_the_sheet_is_the_label(self):
+        """The crop is the whole of "the designer draws what prints".
+
+        The sheet carries the stock's margin, the band this roll's printer
+        cannot reach and any edge held clear as blank paper around the
+        artwork; the canvas is what is left, which is the area an element's
+        millimetres have always been measured in. A designer drawn on the
+        sheet asks somebody to lay a label out and then move it off the
+        parts that were never available — and its drag overlay was offset by
+        the margin in code to compensate, which is a millimetre of drift
+        waiting to be got wrong.
+        """
+        stock_store, = bruh_print_env.load("stores.stock")
+        entry = next(e for e in stock_store.BUILTIN if e.id == "edcc-082wh")
         label = self.label(text="Pantry")
-        sheet, _ = await self._size({"label": label})
+        (sheet_w, sheet_h), _ = await self._size({"label": label})
+        (canvas_w, canvas_h), view = await self._size(
+            {"label": label, "view": "canvas"})
+        self.assertEqual("canvas", view)
+        # The preview is rendered at 2x the printer's resolution, so the
+        # sheet is twice the 672 x 375 dots of a 2.25" x 1.25" label clipped
+        # to a 672-dot head.
+        self.assertEqual((1344, 750), (sheet_w, sheet_h))
+        width, height = entry.drawable_mm
+        self.assertAlmostEqual(canvas_w / (sheet_w / entry.across_mm),
+                               width, delta=0.2)
+        self.assertAlmostEqual(canvas_h / (sheet_h / entry.feed_mm),
+                               height, delta=0.2)
+
+    async def test_an_unturned_label_is_still_cropped_and_says_which_it_is(self):
+        """Nothing is turned here, so the two pictures differ by the crop
+        alone — which is what makes the header worth having: the view a
+        caller asked for and the view it got are separate claims, and only
+        the second says whether the millimetres under it are the canvas's.
+        """
+        label = self.label(text="Pantry")
+        sheet, sheet_view = await self._size({"label": label})
         canvas, view = await self._size({"label": label, "view": "canvas"})
-        self.assertEqual(sheet, canvas)
-        self.assertEqual("sheet", view, "nothing was turned, and the header says so")
+        self.assertEqual("sheet", sheet_view)
+        self.assertEqual("canvas", view)
+        self.assertLess(canvas[0], sheet[0])
+        self.assertLess(canvas[1], sheet[1])
 
 
 class CalibrationCase(PanelCase):
@@ -1200,8 +1239,12 @@ class TestTheDeadBandAtTheLeadingEdge(CalibrationCase):
     prints proved the shift could not reach it — everything on the label
     moved and the band did not. What reaches the printer now is a SHORTER
     sheet: the rows that would land in the band are cut off the front, so
-    the first row sent is the first row the printer can lay and everything
-    else stays where the document put it.
+    the first row sent is the first row the printer can lay.
+
+    The band is also an inset on the printable box, so the CANVAS begins
+    below it and the crop takes blank paper rather than artwork. That is
+    what makes the whole arrangement invisible from the paper: the two
+    cancel, and calibrating a roll moves nobody's ink.
     """
 
     async def test_the_sheet_that_reaches_the_printer_is_the_one_that_was_cut(self):
@@ -1217,23 +1260,37 @@ class TestTheDeadBandAtTheLeadingEdge(CalibrationCase):
         repeat = protocol.LINE_REPEAT["graphics"]
         self.assertEqual(56 * repeat,
                          len(self.rows(before)) - len(self.rows(after)))
-        self.assertEqual(56 * repeat,
-                         self.first_inked(before) - self.first_inked(after))
         self.assertEqual([], self.skips(after),
                          "a printer that starts late cannot be fed forwards")
 
     async def test_the_ink_does_not_move_relative_to_the_paper(self):
-        """The whole point of a crop rather than a shift. Row 82 of the
-        sheet was drawn for 82 lines in; the printer starts 56 lines in and
-        is handed the sheet from row 56, so that ink still lands 82 lines
-        down the label. A shift would have moved it to 26."""
+        """The whole point of a crop rather than a shift, and the reason it
+        is now paired with a canvas that starts below the band.
+
+        The paste and the crop are the same 4.7mm read at two layers — the
+        canvas begins 56 rows further down the sheet and the first 56 rows
+        of that sheet are cut off the front — so what is handed to the head
+        puts the ink exactly where an uncalibrated roll put it. Which is
+        also where it always physically landed: an uncalibrated sheet is
+        laid by a printer that starts 4.7mm in whether or not anything
+        knows, and what calibrating buys is the 4.7mm that used to run off
+        the far end, not a move.
+
+        Within one dot, because the two 4.7mms are rounded to dots in
+        different places — `render` rounds the box's top edge, which
+        carries the margin with it, and `_label_geometry` rounds the band
+        alone. 1/300" is a third the width of a hair and forcing them to
+        share a rounding would put the print path's dot arithmetic inside
+        the renderer.
+        """
         await self.loaded()
         _, before = await self.print_once()
         await self.calibrate(start_mm=4.7)
         _, after = await self.print_once()
-        dead = 56 * protocol.LINE_REPEAT["graphics"]
-        self.assertEqual(self.first_inked(before),
-                         dead + self.first_inked(after))
+        self.assertLessEqual(
+            abs(self.first_inked(before) - self.first_inked(after)),
+            protocol.LINE_REPEAT["graphics"],
+            "calibrating the roll moved the ink down the label")
 
     async def test_the_length_budget_is_unchanged_by_a_crop(self):
         """`ESC L` is about reaching the sense hole, which did not move
@@ -1269,28 +1326,45 @@ class TestTheDeadBandAtTheLeadingEdge(CalibrationCase):
         self.assertEqual(before, after)
         self.assertEqual([], self.skips(after))
 
-    async def test_a_crop_that_costs_ink_prints_and_says_so(self):
+    async def test_a_huge_dead_band_costs_no_ink_because_the_canvas_moved(self):
+        """The note this replaces was real and its cause has gone.
+
+        A 20mm band on a 31.75mm label used to cut 20mm off the front of a
+        sheet whose artwork started at 2mm, so the top 18mm of somebody's
+        label went with it and the print said so afterwards — which is the
+        shape of answer that reports a region after you have laid artwork
+        into it. The canvas starts below the band now, so the crop takes
+        blank paper: the label prints, it is shorter, and there is nothing
+        to report.
+        """
         await self.loaded()
         await self.calibrate(start_mm=20.0)
-        body, _ = await self.print_once()
+        body, payload = await self.print_once()
         self.assertEqual(1, body["printed"])
-        note = " ".join(body["notes"])
-        self.assertIn("20.0mm into every label", note)
-        self.assertIn("did not print", note)
+        self.assertNotIn("did not print", " ".join(body["notes"]))
+        # The crop still happened — this is not a band that stopped being
+        # taken off, it is one that stopped costing anything.
+        # 31.75mm is 375 rows and 20mm is 236, so 139 are left.
+        self.assertEqual(139 * protocol.LINE_REPEAT["graphics"],
+                         len(self.rows(payload)))
 
-    async def test_the_calibration_is_not_part_of_the_label(self):
-        """It is a correction to where the machine puts the paper. A preview
-        that drew it would be showing somebody their printer's registration
-        as if it were their own layout — and the design canvas is where
-        boxes get dragged against it."""
+    async def test_the_document_is_not_part_of_the_calibration(self):
+        """The document is somebody's; the calibration is the machine's.
+
+        A preview does change when a roll is lined up, and it should: the
+        canvas IS the printable box, so a roll that cannot print its first
+        4.7mm gives a shorter one. What may not change is the DOCUMENT —
+        every element keeps the millimetres it was saved with, and nothing
+        on the print path writes back into the label.
+        """
         await self.loaded()
-        first = await self.client.post("/api/preview",
-                                       json={"label": self.label(text="Rice")})
-        before = await first.read()
+        label = self.label(text="Rice")
+        before = json.loads(json.dumps(label))
         await self.calibrate(start_mm=4.7, across_mm=7.3)
-        second = await self.client.post("/api/preview",
-                                        json={"label": self.label(text="Rice")})
-        self.assertEqual(before, await second.read())
+        response = await self.client.post("/api/preview", json={"label": label})
+        self.assertEqual(200, response.status)
+        await response.read()
+        self.assertEqual(before, label)
 
 
 class TestTheFirstLabelOfAJob(CalibrationCase):
@@ -1962,19 +2036,25 @@ class TestSavingWhatWasRead(CalibrationCase):
 
     async def save(self, **changes):
         payload = {"readings": {**self.OWNER, **changes.pop("readings", {})}}
-        if "hold" in changes:
-            payload["hold"] = changes.pop("hold")
+        # Both spellings ride here on purpose. `holds` is the four-sided
+        # one the wizard sends; `hold` is 0.11.0's single trailing band,
+        # which a panel served before an update still sends and which the
+        # route still has to read.
+        for key in ("hold", "holds"):
+            if key in changes:
+                payload[key] = changes.pop(key)
         return await self.post("/api/stock/edcc-082wh/calibration", payload)
 
     async def test_a_band_held_at_the_bottom_reaches_the_store(self):
         """The area a person chose, beside the rectangle they measured.
 
         4.7mm the printer will not reach at the top; 4.7mm asked for at the
-        bottom; 22.35mm of a 31.75mm label left, centred on the paper. It is
-        the shape the whole field exists for and it is asserted through the
-        route rather than on the derivation alone, because `hold` rides
-        beside `readings` on the wire and a payload key nothing reads is the
-        drift this is here to catch.
+        bottom; the stock's own 2mm border off each end as well, leaving
+        18.35mm of a 31.75mm label centred on the paper. It is the shape the
+        whole field exists for and it is asserted through the route rather
+        than on the derivation alone, because the band rides beside
+        `readings` on the wire and a payload key nothing reads is the drift
+        this is here to catch.
         """
         await self.loaded()
         status, body = await self.save(hold=4.7)
@@ -1986,20 +2066,63 @@ class TestSavingWhatWasRead(CalibrationCase):
         _, state = await self.get("/api/state")
         row = next(s for s in state["stocks"] if s["id"] == "edcc-082wh")
         self.assertAlmostEqual(4.7, row["hold_trailing_mm"], places=1)
-        self.assertAlmostEqual(22.35, row["printable_feed_mm"], places=1)
+        self.assertAlmostEqual(18.35, row["printable_feed_mm"], places=1)
+        self.assertEqual([0.0, 4.7, 0.0, 0.0], row["holds_mm"])
 
-    async def test_a_held_band_changes_no_bytes(self):
-        """It is a statement about where artwork may be laid out, not about
-        the machine — so the job on the wire is the one a roll with the same
-        measured rectangle and no band sends, to the byte. The designer and
-        the check label are what make it visible; the printer never hears
-        about it."""
+    async def test_all_four_bands_reach_the_store(self):
+        """The wizard sends `holds`, and each of the four has to arrive
+        under its own name — four numbers on one wire key is exactly where a
+        top and a left get swapped, and a band subtracted from the wrong
+        edge is invisible until somebody prints one."""
+        await self.loaded()
+        status, body = await self.save(holds={"leading": 1.0, "trailing": 2.0,
+                                              "left": 3.0, "right": 4.0})
+        self.assertEqual(200, status, body)
+        cal = body["calibration"]
+        self.assertAlmostEqual(1.0, cal["hold_leading_mm"], places=1)
+        self.assertAlmostEqual(2.0, cal["hold_trailing_mm"], places=1)
+        self.assertAlmostEqual(3.0, cal["hold_left_mm"], places=1)
+        self.assertAlmostEqual(4.0, cal["hold_right_mm"], places=1)
+        _, state = await self.get("/api/state")
+        row = next(s for s in state["stocks"] if s["id"] == "edcc-082wh")
+        self.assertEqual([1.0, 2.0, 3.0, 4.0], row["holds_mm"])
+
+    async def test_the_older_single_band_is_still_read(self):
+        """A panel served before this update sends `hold` and means the
+        trailing one. It is one number that has not changed meaning, so the
+        route reads it rather than answering a request it understands with a
+        calibration that ignores half of it."""
+        await self.loaded()
+        status, body = await self.save(hold=4.7)
+        self.assertEqual(200, status, body)
+        self.assertAlmostEqual(4.7, body["calibration"]["hold_trailing_mm"],
+                               places=1)
+        self.assertEqual(0.0, body["calibration"]["hold_leading_mm"])
+
+    async def test_a_held_band_sends_the_same_commands_and_a_smaller_canvas(self):
+        """It is a statement about where artwork may be laid out, and 0.11.0
+        made that a statement about nothing on the wire at all — the band
+        was hatched on a canvas that still covered the whole label, so ink
+        could be drawn into it, printed, and reported afterwards.
+
+        The canvas IS the printable box now, so a held band takes the area
+        away rather than marking it: the artwork is composed smaller. What
+        must still be identical is everything the PRINTER is told — the
+        preamble, the roll select, the `ESC L` search budget, the feed —
+        because none of that is what a person asked for by typing a border.
+        """
         await self.loaded()
         await self.save()
         _, plain = await self.print_once()
         await self.save(hold=4.7)
         _, held = await self.print_once()
-        self.assertEqual(plain, held)
+        self.assertNotEqual(plain, held, "a held band drew the same canvas")
+        # Same commands, same length budget, same number of rows: only what
+        # is in them changed.
+        self.assertEqual(self.length(plain), self.length(held))
+        self.assertEqual(len(self.rows(plain)), len(self.rows(held)))
+        self.assertEqual(self.skips(plain), self.skips(held))
+        self.assertEqual(len(plain), len(held))
 
     async def test_an_absent_hold_is_the_calibration_that_shipped(self):
         await self.loaded()
@@ -2074,7 +2197,9 @@ class TestSavingWhatWasRead(CalibrationCase):
         row = next(s for s in body["stocks"] if s["id"] == "edcc-082wh")
         self.assertAlmostEqual(4.7, row["calibration"]["start_mm"], places=1)
         self.assertTrue(row["calibrated"])
-        self.assertAlmostEqual(27.05, row["printable_feed_mm"], places=1)
+        # 31.75mm of label, less the 4.7mm the printer will not reach and
+        # the stock's own 2mm border at each end.
+        self.assertAlmostEqual(23.05, row["printable_feed_mm"], places=1)
 
     async def test_clearing_it_gives_back_the_job_that_shipped(self):
         """A calibration is safe to try only if it is safe to undo, and the
@@ -2113,21 +2238,26 @@ class TestTheCheckPrint(CalibrationCase):
     """
 
     async def test_it_frames_what_the_calibration_says_is_printable(self):
-        """The frame is drawn at the printable rectangle, which starts at the
-        dead band and not at row 0 — so the crop on the way to the printer
-        takes the blank rows in front of it and the frame's top edge lands on
-        the first row the printer can lay. A frame drawn from row 0 would
-        have had its own top edge cropped away, and the check would fail on
-        a calibration that was right."""
+        """The frame is the canvas, at 0,0 and the full size of it.
+
+        That is what the printable box bought here: the canvas already
+        starts at the first row the printer can lay, so the frame's own top
+        edge lands there and the crop on the way out takes the blank rows in
+        front of it. Before the box the frame had to add the dead band back
+        in by hand — a frame drawn from row 0 of a full-label canvas had its
+        top edge cropped away, and the check failed on a calibration that
+        was right.
+        """
         await self.loaded()
         await self.calibrate(start_mm=4.7)
 
         entry = self.panel.stocks.require("edcc-082wh")
-        full = server.stock_store.replace(entry, margin_mm=0.0)
-        document = server._check_label(full, entry.dead_leading_mm())
+        document = server._check_label(entry)
         frame = next(e for e in document["elements"] if e["type"] == "box")
-        self.assertAlmostEqual(4.7, frame["y_mm"], places=2)
-        self.assertAlmostEqual(31.75, frame["y_mm"] + frame["h_mm"], places=1)
+        self.assertEqual((0, 0), (frame["x_mm"], frame["y_mm"]))
+        width, height = entry.drawable_mm
+        self.assertAlmostEqual(width, frame["w_mm"], places=2)
+        self.assertAlmostEqual(height, frame["h_mm"], places=2)
 
         status, body = await self.post("/api/printer/check", {})
         self.assertEqual(200, status, body)
@@ -2291,10 +2421,14 @@ class TestTheStoreRemembersWhatWasMeasured(unittest.TestCase):
                                                      after_tear_mm=2.0))
         self.assertAlmostEqual(4.7, entry.dead_leading_mm(), places=2)
         self.assertAlmostEqual(6.7, entry.dead_leading_mm(True), places=2)
-        self.assertAlmostEqual(31.75 - 4.7, entry.printable_feed_mm(),
+        # The box's height, so the stock's own 2mm border comes off each
+        # end as well: it is one rectangle and the margin is one of its four
+        # insets, which is what stops the designer's canvas and this number
+        # being two areas with one name.
+        self.assertAlmostEqual(31.75 - 4.7 - 4.0, entry.printable_feed_mm(),
                                places=2)
-        self.assertAlmostEqual(31.75 - 6.7, entry.printable_feed_mm(True),
-                               places=2)
+        self.assertAlmostEqual(31.75 - 6.7 - 4.0,
+                               entry.printable_feed_mm(True), places=2)
 
     def test_ink_before_the_die_cut_leaves_the_whole_label_printable(self):
         """A negative start is a pre-skip rather than a dead band, so there
@@ -2305,7 +2439,10 @@ class TestTheStoreRemembersWhatWasMeasured(unittest.TestCase):
             id="x", name="X", across_in=2.25, feed_in=1.25,
             calibration=self.stock_store.Calibration(start_mm=-2.0))
         self.assertEqual(0.0, entry.dead_leading_mm())
-        self.assertAlmostEqual(31.75, entry.printable_feed_mm(), places=2)
+        # The whole label less its own 2mm border at each end, and nothing
+        # for the calibration: a pre-feed gives the paper back.
+        self.assertAlmostEqual(31.75 - 4.0, entry.printable_feed_mm(),
+                               places=2)
 
     def test_a_measured_length_is_what_the_printer_is_told(self):
         entry = self.stock_store.Stock(

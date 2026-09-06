@@ -191,8 +191,38 @@ class Outcome:
         }
 
 
-def derive(readings: Readings, stock, *, hold: float | None = None,
-           now: float | None = None) -> Outcome:
+HOLD_SIDES = ("leading", "trailing", "left", "right")
+
+
+def _clamp_holds(asked, stock) -> tuple[dict, dict]:
+    """The four asked-for bands, floored and capped against their own axis.
+
+    Returns what will be stored and what was asked for, so the caller can
+    say which sides were cut down. Capping matters because
+    `printable_box`'s own floor would absorb an over-long band silently —
+    the canvas would come back a millimetre tall with nothing anywhere
+    saying why — and it is per AXIS because the two bands on one axis
+    share the label between them: 20mm held at each end of a 31.75mm label
+    is not two separate over-asks, it is one pair that does not fit.
+    """
+    asked = {side: max(0.0, float((asked or {}).get(side) or 0.0))
+             for side in HOLD_SIDES}
+    held = dict(asked)
+    for a, b, span in (("leading", "trailing", stock.feed_mm),
+                       ("left", "right", stock.across_mm)):
+        room = max(0.0, span - 1.0)
+        total = held[a] + held[b]
+        if total > room and total > 0:
+            # Scaled rather than truncated, so a pair asked for evenly stays
+            # even — the commonest reason to set two at once is to centre
+            # something, and cutting only the second would silently move it.
+            held[a] = round(held[a] * room / total, 2)
+            held[b] = round(held[b] * room / total, 2)
+    return {k: round(v, 2) for k, v in held.items()}, asked
+
+
+def derive(readings: Readings, stock, *, holds=None,
+           hold: float | None = None, now: float | None = None) -> Outcome:
     """Four coordinates and a stock, in; what this roll does, out.
 
     The order is the order the numbers are checked in and not the order they
@@ -201,13 +231,17 @@ def derive(readings: Readings, stock, *, hold: float | None = None,
     a note. A refusal short-circuits, because a sentence about a rectangle
     whose own arithmetic does not close is a sentence about nothing.
 
-    `hold` is the one input here that is not read off a label, and it is a
-    separate argument for exactly that reason: it is how much of the BOTTOM
-    of the label to leave blank because somebody said so, and it is carried
-    onto the `Calibration` untouched rather than derived from anything. It
-    is not a fifth reading and must never be confused with one — the four
-    coordinates say where the paper is, which is a fact this can check, and
-    this says what to do about it, which is a preference it may not.
+    `holds` is the four inputs here that are not read off a label, and they
+    are a separate argument for exactly that reason: they are how much of
+    each edge to leave blank because somebody said so, and they are carried
+    onto the `Calibration` untouched rather than derived from anything. They
+    are not readings and must never be confused with them — the four
+    coordinates say where the PAPER is, which is a fact this can check, and
+    these say where to print on it, which is a preference it may not.
+
+    `hold` is 0.11.0's single trailing band, kept because a panel served
+    before this update still sends it under that name. It is read only when
+    `holds` is absent, so the newer field always wins where both arrive.
 
     `now` is the clock the caller is already holding, not one read in here.
     It is the only other thing on a `Calibration` that is not derived from a
@@ -229,18 +263,18 @@ def derive(readings: Readings, stock, *, hold: float | None = None,
     # and a second copy is what drifts the day somebody corrects one.
     stored_length = (length if length is not None
                      and abs(length - catalog) > CATALOG_TOL_MM else None)
-    # Floored and capped against the label it is a band of. A hold longer
-    # than the paper is not a smaller printable area, it is a number typed
-    # into the wrong box, and `printable_feed_mm`'s own floor would absorb
-    # it silently — which is the shape of guard that leaves somebody
-    # wondering why nothing changed.
-    held = min(max(0.0, float(hold or 0.0)), max(0.0, catalog - 1.0))
+    if holds is None and hold is not None:
+        holds = {"trailing": hold}
+    held, asked = _clamp_holds(holds, stock)
     notes = _catalog_notes(stock, width, stored_length)
-    notes.extend(_hold_notes(held, hold))
+    notes.extend(_hold_notes(held, asked))
     swap = _looks_transposed(stock, width, length or catalog)
     cal = Calibration(
         across_mm=round(readings.x1, 2),
-        hold_trailing_mm=round(held, 2),
+        hold_leading_mm=held["leading"],
+        hold_trailing_mm=held["trailing"],
+        hold_left_mm=held["left"],
+        hold_right_mm=held["right"],
         # Inside the tolerance is stored as nothing at all rather than as the
         # tenths that were read. A person against a millimetre scale is not
         # accurate to a tenth, and 0.4mm saved as a correction crops a row
@@ -265,7 +299,7 @@ def derive(readings: Readings, stock, *, hold: float | None = None,
         measured_at=now,
     )
     return Outcome(cal,
-                   " ".join([_headline(start, length or catalog, held),
+                   " ".join([_headline(start, length or catalog),
                              *notes]),
                    _shape(start), swap_suggested=swap)
 
@@ -368,14 +402,14 @@ def _shape(start: float) -> str:
     return "dead_band" if start > 0 else "prints_early"
 
 
-def _headline(start: float, length: float, held: float = 0.0) -> str:
+def _headline(start: float, length: float) -> str:
     """What the printer does with this roll, in the roll's own words.
 
-    `held` is not part of what the printer does and is deliberately not in
-    this sentence: it gets its own, from `_hold_notes`, because a band the
-    machine refuses and a band a person reserved are two different facts and
-    reading them as one is how somebody concludes their printer is worse
-    than it is.
+    The held bands are not part of what the printer does and are
+    deliberately not in this sentence: they get their own, from
+    `_hold_notes`, because a band the machine refuses and a band a person
+    reserved are two different facts and reading them as one is how somebody
+    concludes their printer is worse than it is.
     """
     if abs(start) <= TOL_MM:
         return ("This printer prints from the die cut on this roll, so there "
@@ -393,34 +427,56 @@ def _headline(start: float, length: float, held: float = 0.0) -> str:
         f"{length:.1f}mm label is printable.")
 
 
-def _hold_notes(held: float, asked) -> list[str]:
-    """What a reserved trailing band does, and when it was not taken whole.
+# What each held side is called in a sentence a person reads. The keys are
+# the printer's own axes and these are the words for them on a label held
+# the way the wizard says to hold it.
+HOLD_WORDS = {"leading": "top", "trailing": "bottom",
+              "left": "left", "right": "right"}
 
-    Two sentences at most and usually none. The first says what was reserved
-    — worth saying every time, because it is the one number on the roll that
-    nothing measured and a person coming back to it in a month has no way to
-    tell it from one the grid produced. The second only appears when the ask
-    was cut down to fit, which is the case a silent floor would hide: a hold
-    longer than the label reaches `printable_feed_mm`'s own floor and comes
-    out as a one-millimetre canvas with nothing anywhere saying why.
+
+def _hold_notes(held: dict, asked: dict) -> list[str]:
+    """What the reserved bands do, and which of them were cut down to fit.
+
+    Two sentences at most and usually none. The first says what was
+    reserved — worth saying every time, because these are the only numbers
+    on the roll that nothing measured and a person coming back in a month
+    has no way to tell them from ones the grid produced. The second only
+    appears when an ask was cut down, which is the case a silent floor would
+    hide: a pair longer than the label reaches `printable_box`'s own floor
+    and comes out as a one-millimetre canvas with nothing anywhere saying
+    why.
+
+    One sentence for all four rather than one each, because four notes about
+    four boxes somebody has just filled in is a wall of text confirming what
+    they typed.
     """
-    wanted = 0.0 if asked is None else max(0.0, float(asked))
-    if held <= 0:
-        # An ask that rounded away to nothing still has to say so, or the
-        # box appears to have been ignored.
-        if wanted > 0:
-            return ["The band asked for at the bottom is smaller than a "
-                    "tenth of a millimetre, so nothing is held back."]
-        return []
-    notes = [
-        f"The bottom {held:.1f}mm of the label is held clear because you "
-        f"asked for it, not because the printer can’t reach it — labels are "
-        f"laid out above it and ink drawn into it still prints, with a note."]
-    if wanted - held > 0.05:
+    kept = [(side, held[side]) for side in HOLD_SIDES if held[side] > 0]
+    cut = [side for side in HOLD_SIDES if asked[side] - held[side] > 0.05]
+    notes = []
+    if kept:
+        where = ", ".join(f"{value:.1f}mm at the {HOLD_WORDS[side]}"
+                          for side, value in kept)
         notes.append(
-            f"You asked to hold back {wanted:.1f}mm, which is more than "
-            f"this label is long — it is {held:.1f}mm instead, which leaves "
-            f"a millimetre to print on.")
+            f"Held clear because you asked for it, not because the printer "
+            f"can’t reach it: {where}. Labels are laid out inside what is "
+            f"left, and the check label’s frame comes in to meet it.")
+    elif any(asked[side] > 0 for side in HOLD_SIDES):
+        # An ask that rounded away to nothing still has to say so, or the
+        # boxes appear to have been ignored.
+        notes.append("The bands asked for are smaller than a tenth of a "
+                     "millimetre, so nothing is held back.")
+    if cut:
+        # Both numbers, per side: what was typed and what it became. A note
+        # that only reports the new value leaves somebody re-typing the same
+        # 99 to find out why it did not take, which is the guard refusing
+        # without changing the next attempt — and the pair is also the only
+        # way to see that a PAIR was scaled rather than one side truncated.
+        where = " and ".join(
+            f"{asked[side]:.1f}mm at the {HOLD_WORDS[side]} came down to "
+            f"{held[side]:.1f}mm" for side in cut)
+        notes.append(
+            f"More was asked for than this label has room for, so {where} — "
+            f"what is left is a millimetre to print on.")
     return notes
 
 

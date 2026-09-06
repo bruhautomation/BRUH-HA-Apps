@@ -166,30 +166,38 @@ label is printable, and every job now feeds that far before it prints. Both
 edges are then on the grid, so `Y2 − Y1` is the label's real length, measured
 rather than taken from the catalog.
 
-**Choosing a shorter printable area.** Everything above says where the *paper*
-is. **Keep clear at the bottom** says how much of it to leave blank on purpose,
-and it is the one number here that nothing on the label answers — you decide
-it.
+**Choosing where to print on it.** Everything above says where the *paper* is
+— what the printer can reach. **Where to print on it** is the area to use
+inside that, one number per edge: **Top**, **Bottom**, **Left** and
+**Right**. They are the only numbers in the wizard that nothing on the label
+answers, which is why they are ruled off under their own heading — the four
+readings work precisely because none of them is a preference.
 
-It exists because the other end is not a choice. The printer starts where it
-starts, so a roll with a 4.7mm dead band prints inside 4.7 → 31.75 and the
-blank edge at the top is deeper than the one at the bottom however carefully
-the artwork is centred. Hold 4.7mm back at the bottom and they match. **Match
-the top** fills in that number for you once the roll has been lined up, and any
-other number is yours to type.
+Leave them at nothing and labels use everything the printer can give them.
 
-Two things it does not do. It **changes no bytes** — the job on the wire is
-exactly the one the same roll sends without it, and what changes is where
-labels are laid out: the designer hatches the band and a check label's frame
-comes in to meet it. And it **does not clip** — the printer can reach there, so
-ink drawn into the band still prints and is reported as a note. That is the
-difference from the band at the leading edge, which the printer genuinely
-cannot lay and which is cut off the job on the way out.
+The clearest case is the feed axis. The printer starts where it starts, so a
+roll with a 4.7mm dead band prints inside 4.7 → 31.75 and the blank edge at
+the top is deeper than the one at the bottom however carefully the artwork is
+centred. **Even up the ends** fills the bottom box in for you — with the dead
+band *plus* anything you have asked for at the top, since that is what the
+top edge really loses. Any other number is yours to type.
 
-There is deliberately no box for the other end. Holding more back at the *top*
-would only push the artwork further from the middle, and an even border on all
-four sides is the stock's **Margin**, which is a different control that already
-exists.
+They are on top of what the printer already cannot reach: the band at the
+leading edge on a roll that starts late, and the far edge of a label wider
+than the print head. The two bands on one axis are capped against that axis
+together — 20mm at each end of a 31.75mm label is one pair that does not fit,
+and it is scaled evenly rather than truncating whichever came second, because
+the commonest reason to set two at once is to centre something.
+
+An even border on all four sides is a different control that already exists:
+the stock's own **Margin**, under **Edit**. This is the uneven one.
+
+0.11.0 shipped one of these, at the bottom, on the argument that holding more
+back at the *top* would only push the artwork further from the middle. True
+of the feed axis, and it answers the wrong question — somebody setting a
+border is saying where on the label the printing goes rather than
+compensating for a machine, and the across axis has no dead band to
+compensate for at all.
 
 **What this deliberately stopped measuring.** Two earlier hypotheses — a first
 label of a job that starts later than the rest, and a printer not re-syncing on
@@ -205,9 +213,8 @@ up under 0.9.x keeps whatever it measured; nothing derives them any more.
   state from *nobody has measured this roll* — the panel says which.
 - **A dead band on every label.** Both copies read the same. The first few
   millimetres of every label cannot carry ink, so labels are laid out inside
-  what is left; the designer draws that band hatched at the leading edge and
-  outlines anything you put in it. It still prints — ink lost to the band is a
-  note beside the label, never a refusal.
+  what is left — the designer's canvas simply stops where the band does, so
+  there is nothing to be warned about and nothing to lose ink to.
 - **The first label after a tear-off.** Copy 2 comes out on the die cut and copy
   1 does not: that is the reverse feed a form feed owes the next label not
   happening, and it costs exactly one label per job. It takes a second print to
@@ -250,13 +257,20 @@ Adding your own takes a name and the two measurements; the margin and the
 labels-per-roll count are optional. Editing a built-in saves an override — a
 future release correcting one cannot undo your measurement.
 
-### The 2.25″ note
+### The 2.25″ label on a 2.24″ head
 
 The LabelWriter 450's print head is 672 dots at 300 dpi, which is 2.24″. A
-2.25″ label is three dot columns wider than the printer can reach. BRUH Print
-clips rather than scaling, and says so in a note: scaling every element down
-by half a percent to hide it would make a barcode's module width fractional,
-and a barcode whose bars are 1.4 dots wide does not scan.
+2.25″ label is three dot columns wider than the printer can reach, so the
+canvas stops at the head rather than at the paper. BRUH Print clips rather
+than scaling: scaling every element down by half a percent to hide it would
+make a barcode's module width fractional, and a barcode whose bars are 1.4
+dots wide does not scan.
+
+Through 0.11.0 this was a *note* on the render — a sentence about the
+printer's margin, printed under a canvas somebody had already laid artwork
+across. It is an inset on the printable area now, which is the whole
+difference: you cannot draw there, so there is nothing to be told about
+afterwards.
 
 ## What is loaded
 
@@ -354,10 +368,18 @@ a note saying so rather than a barcode that does not scan.
 Everything under the canvas is the server's own render — the same renderer
 that packs the printer's bytes — so what is on screen is what comes out.
 
-**The printable area is drawn.** A dashed rectangle with the margin tinted
-outside it, and, on a stock wider than the head (2.25″ on a 672-dot head), a
-hatched strip marking the columns the printer cannot reach. It is drawn wide
-enough to see; it is really about a hundredth of an inch.
+**The canvas IS the printable area.** The stock's margin, the band a roll's
+printer cannot reach, the far dot columns a 2.25″ label loses to a 2.24″ head
+and any edge you asked to keep clear all come off before the picture is
+drawn, so everything on the canvas prints. The caption under it says how big
+that is, and names the label's own size when the two differ — *Drawing on
+48.2 × 16.7mm of a 57.2 × 31.8mm label*.
+
+Up to 0.11.0 the canvas was the whole label with three things drawn on it to
+aim away from — a dashed rectangle around the margin, a hatched strip at the
+head's reach and a hatched band at the leading edge. Each was honest and each
+asked you to lay a label out and then move it off the parts that were never
+yours.
 
 **Boxes line up as you drag.** Edges and centres catch on the printable
 area's edges and centre lines, on the other boxes' edges and centres, and on
@@ -770,11 +792,10 @@ right shape and the words are simply lying the wrong way along it, that is
 **Text direction** on the same row, and it is one press.
 
 **The label comes out blank, or half of it does.** Print a check label. If
-the frame reaches every edge, the artwork is outside the drawable area — the
-designer draws that area as a dashed rectangle with the margin tinted, and
-clamps boxes to it, so this usually means the stock is wrong rather than the
-label. If the frame is missing a side, or lands across the liner on a narrow
-roll, the roll needs lining up.
+the frame reaches every edge, the artwork is outside the printable area — the
+designer's canvas *is* that area and clamps boxes to it, so this usually
+means the stock is wrong rather than the label. If the frame is missing a
+side, or lands across the liner on a narrow roll, the roll needs lining up.
 
 **The words sit too close to the edge.** They should not: text is fitted and
 placed by its ink, inside a 2mm border and a little breathing room inside its

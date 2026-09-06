@@ -127,11 +127,40 @@ const checkFontPicker = async (p, name) => {
 const dragToTheEdge = async (p, name) => {
   const box = await p.$('#overlay .el');
   if (!box) return problems.push(`${name}: no element box to drag`);
-  const safe = await p.$('#overlay .safe');
-  const safeBox = safe && await safe.boundingBox();
-  if (!safeBox || safeBox.width < 4 || safeBox.height < 4)
-    problems.push(`${name}: the printable area is not drawn — nothing on `
-      + 'screen says where the printer’s margin is');
+  /* The canvas IS the printable area, so there is no rectangle drawn
+     inside it any more and nothing on it to aim away from — what has to be
+     true instead is that the picture and the overlay share an origin. The
+     overlay's millimetres have always been the canvas's; the image under
+     them used to be the whole sheet, and every box was offset by the stock's
+     margin in code to compensate. If that offset were still there, an
+     element at 0,0 would draw a margin's width in from the corner. */
+  const originGap = await p.evaluate(() => {
+    const image = document.getElementById('designPreview');
+    const first = document.querySelector('#overlay .el');
+    if (!image || !first) return null;
+    const a = image.getBoundingClientRect();
+    const b = first.getBoundingClientRect();
+    const s = window.__bruhPrintState;
+    const el = s && s.label && s.label.elements[0];
+    if (!el) return null;
+    const perMm = a.width / (s.stocks.find((r) => r.id === s.label.stock)
+      .drawable_mm[(s.label.rotate === 90 || s.label.rotate === 270) ? 1 : 0]);
+    return { drawn: b.x - a.x, want: el.x_mm * perMm, perMm };
+  });
+  if (!originGap)
+    problems.push(`${name}: no element box to measure the overlay against`);
+  else if (Math.abs(originGap.drawn - originGap.want) > 2)
+    problems.push(`${name}: the overlay is offset from the picture by `
+      + `${(originGap.drawn - originGap.want).toFixed(1)}px — the box being `
+      + 'dragged and the ink it describes are in different places');
+
+  /* And the caption says how big that canvas is, which is the one fact the
+     tab cannot show any other way now the marks are gone. */
+  const legend = await p.$eval('#canvasLegend', (n) => n.textContent.trim())
+    .catch(() => '');
+  if (!/Drawing on [\d.]+ × [\d.]+mm/.test(legend))
+    problems.push(`${name}: the canvas caption does not say how big it is `
+      + `("${legend.slice(0, 60)}")`);
 
   /* Scrolled into view first, and re-measured after. On a phone the design
    * view stacks and the Print bar is `position: sticky; bottom: 0` — so the
@@ -366,7 +395,8 @@ const lineUpWizard = async (p, name, width) => {
                y2: value('calY2'), y1: value('calY1'),
                again: !!document.getElementById('calPrintAgain'),
                check: !!document.getElementById('calCheckHere'),
-               hold: value('calHold') };
+               holds: ['Leading', 'Trailing', 'Left', 'Right']
+                 .map((side) => value('calHold' + side)) };
     });
     if (kept.step !== 'read')
       problems.push(`${name}: "Change the numbers" left the wizard on `
@@ -384,38 +414,90 @@ const lineUpWizard = async (p, name, width) => {
     if (!kept.check)
       problems.push(`${name}: a lined-up roll is offered no check label from `
         + 'the step that reads it');
-    if (kept.hold === null)
-      problems.push(`${name}: there is no box for the area to print on`);
+    /* One box per edge, and their ids are built from the side key rather
+       than written down — so this is the only place they can be checked at
+       all. A grep in the Python suite can see the table; only a rendered
+       form can see the four inputs it produced. */
+    if (kept.holds.some((v) => v === null))
+      problems.push(`${name}: the area to print on has boxes for `
+        + `${kept.holds.filter((v) => v !== null).length} of its four edges`);
 
-    /* The band held at the bottom: type it, apply it, and the roll's
-       printable length has to come down by exactly that much. This is the
-       thing that was refused — an area shorter than the one the printer can
-       reach — so a run that only checked the box existed would pass on a
-       field that stored nothing. */
-    const hold = await p.$('#calHold');
+    /* Then type all four, apply, and read the stored bands back. This is
+       the thing that was refused — an area smaller than the one the printer
+       can reach — so a run that only checked the boxes existed would pass
+       on four fields that stored nothing, or on four that all wrote the
+       same one. */
     const apply2 = await p.$('#calApply');
-    if (hold && apply2) {
-      await hold.fill('4.8');
+    const want = { Leading: 1.5, Trailing: 4.8, Left: 3.0, Right: 2.0 };
+    if (apply2 && !kept.holds.some((v) => v === null)) {
+      for (const [side, value] of Object.entries(want))
+        await (await p.$('#calHold' + side)).fill(String(value));
       await apply2.click();
       await p.waitForTimeout(1200);
       const held = await p.evaluate(() => {
         const s = window.__bruhPrintState;
         const row = (s?.stocks || []).find((x) => x.id === 'edcc-082wh');
-        return row ? { hold: row.hold_trailing_mm, dead: row.dead_leading_mm,
-                       printable: row.printable_feed_mm, feed: row.feed_mm }
+        return row ? { holds: row.holds_mm, dead: row.dead_leading_mm,
+                       printable: row.printable_feed_mm, feed: row.feed_mm,
+                       across: row.printable_across_mm,
+                       label: row.across_mm }
                    : null;
       });
       if (!held) problems.push(`${name}: the stock row vanished after Apply`);
       else {
-        if (Math.abs(held.hold - 4.8) > 0.11)
-          problems.push(`${name}: asked to keep 4.8mm clear and the roll `
-            + `holds ${held.hold}`);
-        /* Both blank edges the same, which is what it is for. */
-        const bottom = held.feed - held.dead - held.printable;
-        if (Math.abs(bottom - held.dead) > 0.11)
-          problems.push(`${name}: the blank edges do not match — `
-            + `${held.dead}mm at the top, ${bottom.toFixed(2)}mm at the `
-            + 'bottom');
+        const got = held.holds || [];
+        const expect = [want.Leading, want.Trailing, want.Left, want.Right];
+        expect.forEach((value, index) => {
+          if (Math.abs((got[index] ?? -1) - value) > 0.11)
+            problems.push(`${name}: asked for ${value}mm at `
+              + `${['the top', 'the bottom', 'the left', 'the right'][index]} `
+              + `and the roll holds ${got[index]}`);
+        });
+        /* And each comes off its own axis. The feed axis loses the dead
+           band, the two feed holds and the stock's 2mm border either end;
+           the across axis loses the two across holds and the same border,
+           and nothing else — a band subtracted from the wrong edge is
+           invisible until somebody prints one. */
+        const feed = held.feed - held.dead - want.Leading - want.Trailing - 4;
+        if (Math.abs(held.printable - feed) > 0.11)
+          problems.push(`${name}: the printable length is ${held.printable}mm `
+            + `where the four insets down the label leave ${feed.toFixed(2)}`);
+        const across = held.label - want.Left - want.Right - 4;
+        if (Math.abs(held.across - across) > 0.11)
+          problems.push(`${name}: the printable width is ${held.across}mm `
+            + `where the bands across the label leave ${across.toFixed(2)}`);
+      }
+
+      /* And the one press that does arithmetic on those bands. The top of a
+         label loses the printer's own dead band AND anything held at the
+         top; the bottom loses only what is held there — so evening them up
+         is an addition, and a button that typed the dead band alone would
+         leave them uneven on exactly the roll somebody had set a top band
+         on. Driven rather than read, because both halves are numbers this
+         script must not compute for itself: what is asserted is that the
+         two blank edges of the stored box come out the same. */
+      const even = await p.$('#calEven');
+      if (!even)
+        problems.push(`${name}: a roll whose ends do not match is offered no `
+          + 'way to even them up');
+      else {
+        await even.click();
+        await p.waitForTimeout(1400);
+        const box = await p.evaluate(() => {
+          const s = window.__bruhPrintState;
+          const row = (s?.stocks || []).find((x) => x.id === 'edcc-082wh');
+          if (!row) return null;
+          return { feed: row.feed_mm, printable: row.printable_feed_mm,
+                   dead: row.dead_leading_mm, holds: row.holds_mm };
+        });
+        if (!box) problems.push(`${name}: the stock row vanished after Even`);
+        else {
+          const above = 2 + box.dead + box.holds[0];
+          const below = box.feed - box.printable - above;
+          if (Math.abs(above - below) > 0.11)
+            problems.push(`${name}: the blank edges still do not match — `
+              + `${above.toFixed(2)}mm above, ${below.toFixed(2)}mm below`);
+        }
       }
     }
   }
@@ -434,6 +516,13 @@ const lineUpWizard = async (p, name, width) => {
   if (!/4\.8 mm in/.test(after))
     problems.push(`${name}: the bay does not name the dead zone that was `
       + `just measured ("${after}")`);
+  /* And it names every edge that is held, in the person's own words. A
+     sentence that reported only one of four would be a roll reading back
+     less than it is doing. */
+  for (const edge of ['top', 'bottom', 'left', 'right'])
+    if (!new RegExp(`at the ${edge}`).test(after))
+      problems.push(`${name}: the bay does not say what is held at the `
+        + `${edge} ("${after}")`);
 };
 
 /* ── The phone budget ──────────────────────────────────────────────────
@@ -549,19 +638,36 @@ const designStockFits = async (p, name, width) => {
 const phoneBudget = async (p, name) => {
   /* Persistent chrome is measured SCROLLED, because that is the only state
    * in which "persistent" means anything: the bar is sticky with a negative
-   * top, so what is left pinned is the tab strip and nothing else. */
+   * top, so what is left pinned is the tab strip and nothing else.
+   *
+   * But the NUMBER comes from the geometry rather than from where the page
+   * happened to stop, and that distinction cost a real debugging session.
+   * A page has to be a screenful taller than its own chrome before it can
+   * scroll the status row all the way off, and a tab whose content got
+   * SHORTER — which is a good thing — stops half way and reads as chrome
+   * that would not pin. Measured off `tabs.bottom` this run reported 134px
+   * against a 110px budget on a bar that had not moved at all since the run
+   * before, because a note had been deleted from the page beneath it.
+   *
+   * The bar is `position: sticky; top: -(status row)`, so what stays is its
+   * own height less that row, whatever is under it. The scroll is still
+   * driven, and what it is asked is the question it can actually answer:
+   * the tabs are still there afterwards. */
   await p.evaluate(() => scrollTo(0, 4000));
   await p.waitForTimeout(400);
   const pinned = await p.evaluate(() => {
     const tabs = document.querySelector('.tabs').getBoundingClientRect();
-    const bar = document.querySelector('.topbar').getBoundingClientRect();
-    return { bottom: tabs.bottom, top: tabs.top, barTop: bar.top,
+    const bar = document.querySelector('.topbar');
+    const style = getComputedStyle(bar);
+    return { bottom: tabs.bottom, top: tabs.top,
+             stays: bar.getBoundingClientRect().height
+                    + parseFloat(style.top || '0'),
              scrolled: window.scrollY };
   });
+  if (pinned.stays > CHROME_PINNED_MAX)
+    problems.push(`${name}: ${pinned.stays.toFixed(0)}px of chrome stays `
+      + `pinned (budget ${CHROME_PINNED_MAX})`);
   if (pinned.scrolled > 4) {
-    if (pinned.bottom > CHROME_PINNED_MAX)
-      problems.push(`${name}: ${pinned.bottom.toFixed(0)}px of chrome stays `
-        + `pinned (budget ${CHROME_PINNED_MAX})`);
     /* The tabs must still BE there. A bar that scrolled the navigation away
      * with the status row would pass a height budget by disappearing. */
     if (pinned.top < -1 || pinned.bottom < 40)

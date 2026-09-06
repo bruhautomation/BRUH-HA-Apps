@@ -35,6 +35,13 @@ calibration, stock_store = bruh_print_env.load("calibration", "stores.stock")
 # label, 31.75mm along the roll, whose printer starts 4.75mm late.
 LENGTH = 31.75
 OWNER_START = 4.75
+# The stock's own blank border, on all four sides. It is inside the printable
+# box now — `printable_box` is the ONE rectangle and the margin is one of its
+# four insets — so every "how much of this label can carry ink" number below
+# is a label less its dead band, its held bands AND this. 0.11.0's answer left
+# the margin out, which made the designer's canvas and this number two
+# different areas with one name.
+MARGIN = 2.0
 
 
 def cryo(**changes):
@@ -141,14 +148,18 @@ class TestTheRectangleIsTheAnswer(unittest.TestCase):
         stock = cryo(calibration=calibration.derive(
             readings(*grid(-3.0)), cryo(), now=1.0).calibration)
         self.assertEqual(stock.dead_leading_mm(), 0.0)
-        self.assertAlmostEqual(stock.printable_feed_mm(), LENGTH, places=2)
+        # The whole label less its own border, and nothing else: a pre-feed
+        # gives the printer the paper back, so there is no dead band left in
+        # the box.
+        self.assertAlmostEqual(stock.printable_feed_mm(),
+                               LENGTH - 2 * MARGIN, places=2)
 
     def test_the_dead_band_is_what_the_print_path_lays_out_inside(self):
         stock = cryo(calibration=calibration.derive(
             readings(*grid(OWNER_START)), cryo(), now=1.0).calibration)
         self.assertAlmostEqual(stock.dead_leading_mm(), OWNER_START, places=2)
         self.assertAlmostEqual(stock.printable_feed_mm(),
-                               LENGTH - OWNER_START, places=2)
+                               LENGTH - OWNER_START - 2 * MARGIN, places=2)
 
 
 class TestReadingsThatCannotBeARectangle(unittest.TestCase):
@@ -331,15 +342,24 @@ class TestTheOutcomeIsWhatThePanelSends(unittest.TestCase):
 
 
 class TestAnAreaSomebodyChoseRatherThanMeasured(unittest.TestCase):
-    """The band held clear at the bottom, which is the one number here that
+    """The four bands held clear, which are the only numbers here that
     nothing on the label says.
 
-    It exists because the OTHER end is not a choice. The printer starts where
-    it starts, so a roll with a 4.75mm dead band prints inside 4.75 -> 31.75
-    and the blank edges come out uneven however carefully the artwork is
-    centred — and the only way anybody had to shorten the printable area was
-    to type a Y2 that was not where the paper ended, which is a lie the
-    arithmetic reads as a worse registration fault.
+    The reason the first one existed is still the clearest case: the printer
+    starts where it starts, so a roll with a 4.75mm dead band prints inside
+    4.75 -> 31.75 and the blank edges come out uneven however carefully the
+    artwork is centred — and the only way anybody had to shorten the
+    printable area was to type a Y2 that was not where the paper ended, which
+    is a lie the arithmetic reads as a worse registration fault.
+
+    0.11.0 shipped that one alone, at the bottom, on the argument that a band
+    held at the TOP only pushes artwork further from the middle. That is true
+    of the feed axis and it answers the wrong question: a person setting a
+    border is saying where on the label the printing goes, not compensating
+    for a machine, and the across axis has no dead band to compensate for at
+    all. So there are four, they are checked per AXIS because the two on one
+    share the label between them, and `margin_mm` remains the even border
+    that this is deliberately not.
     """
 
     def test_nothing_held_back_is_the_calibration_that_shipped(self):
@@ -362,12 +382,18 @@ class TestAnAreaSomebodyChoseRatherThanMeasured(unittest.TestCase):
         entry = stock_store.replace(cryo(), calibration=out.calibration)
         self.assertAlmostEqual(entry.dead_leading_mm(), OWNER_START, places=2)
         self.assertAlmostEqual(entry.hold_trailing_mm(), OWNER_START, places=2)
-        top = entry.dead_leading_mm()
-        bottom = entry.feed_mm - top - entry.printable_feed_mm()
+        # Read off the box itself rather than rebuilt from three numbers:
+        # `top` is where the box starts and `bottom` is what is left under
+        # it, and the whole reason the box exists is that those two are one
+        # answer. Both carry the stock's own margin, which is why they can
+        # match at all — the margin is even by definition and what this
+        # field evens out is the dead band above it.
+        _, top, _, height = entry.printable_box()
+        bottom = entry.feed_mm - top - height
         self.assertAlmostEqual(top, bottom, places=2,
                                msg="the two blank edges do not match")
-        self.assertAlmostEqual(entry.printable_feed_mm(),
-                               LENGTH - 2 * OWNER_START, places=2)
+        self.assertAlmostEqual(height, LENGTH - 2 * OWNER_START - 2 * MARGIN,
+                               places=2)
 
     def test_the_printable_area_can_be_shorter_than_the_paper_allows(self):
         """Said plainly because it is what was asked for and refused: a
@@ -381,7 +407,7 @@ class TestAnAreaSomebodyChoseRatherThanMeasured(unittest.TestCase):
                 self.assertIsNotNone(out.calibration, "a chosen area refused")
                 got = stock_store.replace(entry, calibration=out.calibration)
                 self.assertAlmostEqual(got.printable_feed_mm(),
-                                       LENGTH - hold, places=2)
+                                       LENGTH - hold - 2 * MARGIN, places=2)
 
     def test_a_hold_longer_than_the_label_is_cut_down_and_says_so(self):
         """`printable_feed_mm`'s floor would absorb this silently, which is
@@ -391,8 +417,13 @@ class TestAnAreaSomebodyChoseRatherThanMeasured(unittest.TestCase):
                                  now=1.0)
         self.assertIsNotNone(out.calibration)
         self.assertLess(out.calibration.hold_trailing_mm, LENGTH)
+        # Both numbers: what was typed and what it became. A note carrying
+        # only the new value leaves somebody re-typing the same 99 to find
+        # out why it did not take.
         self.assertIn("99", out.sentence)
-        self.assertIn("more than", out.sentence)
+        self.assertIn("more was asked for", out.sentence.lower())
+        self.assertIn(f"{out.calibration.hold_trailing_mm:.1f}mm",
+                      out.sentence)
 
     def test_it_is_not_reported_as_something_the_printer_does(self):
         """A band the machine refuses and a band a person reserved are two
@@ -455,8 +486,84 @@ class TestAnAreaSomebodyChoseRatherThanMeasured(unittest.TestCase):
                                honest.calibration.start_mm, places=2)
         for out in (pulled_in, held):
             got = stock_store.replace(entry, calibration=out.calibration)
-            self.assertAlmostEqual(got.printable_feed_mm(),
-                                   LENGTH - OWNER_START - 5.0, places=2)
+            self.assertAlmostEqual(
+                got.printable_feed_mm(),
+                LENGTH - OWNER_START - 5.0 - 2 * MARGIN, places=2)
+
+    def test_each_of_the_four_comes_off_its_own_edge_of_the_box(self):
+        """One band per side, and each takes it off the edge it names.
+
+        Driven through the box rather than through four field reads, because
+        a field stored under the right name and subtracted from the wrong
+        edge is exactly the mistake four numbers invite, and it is invisible
+        until somebody prints one.
+        """
+        entry = cryo()
+        left, top, width, height = entry.printable_box()
+        # Per side: what the box should be once that one band is held. A
+        # NEAR band moves the corner and shrinks the box, because both are
+        # the same 3mm read from opposite ends; a FAR one only shrinks it.
+        # Written out rather than computed, so a wrong sign in the store
+        # cannot be reproduced by a wrong sign here.
+        expect = {
+            "leading": (left, top + 3.0, width, height - 3.0),
+            "trailing": (left, top, width, height - 3.0),
+            "left": (left + 3.0, top, width - 3.0, height),
+            "right": (left, top, width - 3.0, height),
+        }
+        for side, want in expect.items():
+            with self.subTest(side=side):
+                out = calibration.derive(readings(*grid(0.0)), entry,
+                                         holds={side: 3.0}, now=1.0)
+                got = stock_store.replace(
+                    entry, calibration=out.calibration).printable_box()
+                for index, (a, b) in enumerate(zip(want, got)):
+                    self.assertAlmostEqual(
+                        a, b, places=2,
+                        msg=f"{side} put index {index} at {b}, not {a}")
+
+    def test_a_pair_that_does_not_fit_is_scaled_rather_than_truncated(self):
+        """20mm at each end of a 31.75mm label is one pair that does not fit,
+        not two separate over-asks — and the commonest reason to set two at
+        once is to centre something, which truncating only the second would
+        silently undo."""
+        out = calibration.derive(readings(*grid(0.0)), cryo(),
+                                 holds={"leading": 20.0, "trailing": 20.0},
+                                 now=1.0)
+        cal = out.calibration
+        self.assertAlmostEqual(cal.hold_leading_mm, cal.hold_trailing_mm,
+                               places=2, msg="an even pair came back uneven")
+        self.assertGreater(cal.hold_leading_mm, 0.0)
+        entry = stock_store.replace(cryo(), calibration=cal)
+        self.assertGreaterEqual(entry.printable_feed_mm(), 0.0)
+        self.assertIn("20.0mm", out.sentence)
+
+    def test_the_two_axes_are_capped_apart(self):
+        """A wide label has room across it that it does not have down it, so
+        a band that fits on one axis must not be cut down by the other's
+        arithmetic. Checked on the cryo label, which is 57.2mm across and
+        31.75mm down."""
+        out = calibration.derive(readings(*grid(0.0)), cryo(),
+                                 holds={"left": 20.0, "right": 20.0,
+                                        "leading": 20.0, "trailing": 20.0},
+                                 now=1.0)
+        cal = out.calibration
+        self.assertAlmostEqual(cal.hold_left_mm, 20.0, places=2,
+                               msg="the across pair fits and was cut anyway")
+        self.assertAlmostEqual(cal.hold_right_mm, 20.0, places=2)
+        self.assertLess(cal.hold_leading_mm, 20.0)
+
+    def test_the_sentence_names_every_side_that_is_held(self):
+        """One clause for the four, and it says which edges. Four separate
+        notes about four boxes somebody has just filled in is a wall of text
+        confirming what they typed."""
+        out = calibration.derive(readings(*grid(0.0)), cryo(),
+                                 holds={"leading": 2.0, "left": 3.0},
+                                 now=1.0)
+        for word in ("top", "left"):
+            self.assertIn(f"at the {word}", out.sentence)
+        for word in ("at the bottom", "at the right"):
+            self.assertNotIn(word, out.sentence)
 
     def test_a_swap_drops_it_because_the_feed_axis_is_a_different_edge(self):
         """It is a choice rather than a measurement and still cannot survive:

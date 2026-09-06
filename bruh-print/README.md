@@ -23,8 +23,9 @@ dragged and resized on the label itself. Everything is in millimetres and
 every preview is the printer's own render — the picture you
 see is the bitmap that goes to the head. Boxes snap to the label's edges and
 centre lines, to each other and to a 1mm grid, with a line drawn at whatever
-they caught; the printable area and the printer's own margin are drawn on the
-canvas, so you can see what you are aiming at; nothing can be dragged, typed
+they caught; the canvas *is* the printable area — the margin, the band a roll
+cannot print on and any edge you asked to keep clear are already off it, so
+everything you can see prints; nothing can be dragged, typed
 or nudged off the label; and text re-fits as you resize its box rather than
 after you let go. The bar above the label is the add strip and one **⋯ Label
 setup** button — which stock, what it is called, which way its text runs and
@@ -87,9 +88,11 @@ that does nothing.
    **Change the numbers** and adjust one — both prints are at the top of the
    step you type into, and re-opening a roll that is already lined up brings
    its numbers back filled in, so a small correction is one box.
-   **Keep clear at the bottom** on that step is the other half: it holds a
-   band of the label blank on purpose, which is what makes the top and bottom
-   edges match on a printer that starts a few millimetres in.
+   **Where to print on it** on that step is the other half: a number per edge
+   — top, bottom, left and right — holding that much of the label blank on
+   purpose. **Even up the ends** fills the bottom one in for you, which is
+   what makes the top and bottom edges match on a printer that starts a few
+   millimetres in.
 6. Check **Text direction** on the stock row. A label much longer than it is
    wide reads along the roll automatically and the picker says so; anything
    else is one press, once, for that stock. Nothing asks again per print.

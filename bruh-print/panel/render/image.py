@@ -62,8 +62,15 @@ class Rendered:
     # outline on the barcode that will not fit rather than a line of prose
     # under a canvas with six boxes on it.
     problems: list = field(default_factory=list)
+    # Where the printable box sits on this sheet, in dots: (left, top, width,
+    # height). Computed once, by the render that laid the canvas there, so
+    # the designer's crop cannot disagree with the paste — the server used to
+    # re-derive it from the stock, which is right for die-cut stock and wrong
+    # for continuous, whose length is the artwork's rather than the row's.
+    box_dots: tuple[int, int, int, int] = (0, 0, 0, 0)
 
-    def png(self, scale: int = 1, *, turn: int = 0) -> bytes:
+    def png(self, scale: int = 1, *, turn: int = 0,
+            box: tuple[int, int, int, int] | None = None) -> bytes:
         """A PNG of the label as it will print.
 
         Scaled with NEAREST, always. Any smoothing filter would show the
@@ -81,10 +88,29 @@ class Rendered:
         wrap-around label undesignable. Turning the finished sheet back by
         +rotate recovers the canvas exactly, margins and clipping included,
         without a second render: same bitmap, held the way you drew it.
+
+        `box` is for the designer too, and it is the other half of the same
+        argument. The sheet carries the margin, the dead band and any held
+        edges as blank paper around the artwork, and a designer showing them
+        is a designer asking somebody to lay a label out and then move it
+        away from the parts that were never available. Cropped to the
+        printable box the picture IS the canvas — which is also what makes
+        the drag overlay exact rather than nearly right, since the overlay's
+        millimetres have always been the canvas's and the image underneath
+        them was the whole sheet.
+
+        Cropped BEFORE the turn, because the box is in sheet coordinates and
+        the turn is what leaves them.
         """
         from PIL import Image  # noqa: PLC0415
 
         image = self.image.convert("L")
+        if box:
+            left, top, width, height = (max(0, int(v)) for v in box)
+            image = image.crop((min(left, image.width - 1),
+                                min(top, image.height - 1),
+                                min(left + max(1, width), image.width),
+                                min(top + max(1, height), image.height)))
         if turn % 360:
             image = image.rotate(turn % 360, expand=True)
         if scale > 1:
@@ -587,26 +613,52 @@ def render(label: Label, stock, *, dpi: int = 300,
     notes: list[str] = list(label.notes)
     across_dots, feed_dots = stock.dots(dpi)
 
-    if across_dots > max_across_dots:
-        notes.append(
-            f"This stock is {stock.across_in}\" across and the print head "
-            f"reaches {max_across_dots / dpi:.2f}\" — the outer "
-            f"{across_dots - max_across_dots} dot columns are the printer's "
-            f"margin.")
-        across_dots = max_across_dots
+    # A label wider than the head loses its far edge, and that used to be a
+    # NOTE — a sentence about the printer's margin, printed under a canvas
+    # somebody had already laid artwork across. It is an inset on the
+    # printable box now, so the canvas simply stops where the head does and
+    # there is nothing to be told about afterwards. The SHEET is still
+    # clipped here, because a sheet cannot be wider than the head.
+    head_mm = max_across_dots / dpi * 25.4
+    across_dots = min(across_dots, max_across_dots)
 
+    sheet_length_mm = None
     if feed_dots <= 1:
         # Continuous stock: the label is as long as its artwork, with the
-        # drawn content plus the margin deciding where it ends.
+        # drawn content plus whatever is inset around it deciding where it
+        # ends. The extent is measured in CANVAS millimetres, so the sheet
+        # has to carry the box's own insets on top of it — and the box then
+        # has to be built from that derived length rather than from a stock
+        # whose label length is zero by definition.
         extent = max((e.y_mm + e.h_mm for e in label.elements), default=25.0)
-        feed_dots = max(mm_to_dots(extent + 2 * stock.margin_mm, dpi), 32)
+        top_inset = stock.printable_box(head_mm=head_mm, length_mm=1e6)[1]
+        sheet_length_mm = extent + top_inset + max(0.0, stock.margin_mm)
+        feed_dots = max(mm_to_dots(sheet_length_mm, dpi), 32)
+        sheet_length_mm = feed_dots / dpi * 25.4
         notes.append(
             f"Continuous stock: length taken from the artwork "
             f"({feed_dots / dpi:.2f}\").")
 
-    margin_dots = mm_to_dots(stock.margin_mm, dpi)
-    draw_w = max(1, across_dots - 2 * margin_dots)
-    draw_h = max(1, feed_dots - 2 * margin_dots)
+    # The canvas IS the printable box: the stock's margin, the band this
+    # roll's printer will not reach, the head's own shortfall and the four
+    # bands somebody asked to keep clear all come off before an element is
+    # drawn. So an element's coordinates are relative to the first dot that
+    # can carry ink, and laying a box at 0,0 puts it there rather than in a
+    # region the designer then has to warn about.
+    left_mm, top_mm, draw_mm_w, draw_mm_h = stock.printable_box(
+        head_mm=head_mm, length_mm=sheet_length_mm)
+    # A box on a raster is two EDGES, and each is rounded once. Rounding the
+    # left edge and the width separately rounds twice and leaves the far
+    # margin a dot different from the near one — measured on the 0.56" wrap,
+    # a 2mm border either side came out 24 dots and 23. Taking the width as
+    # the difference between two rounded edges cannot do that: what is left
+    # at the far side is exactly the sheet less the near inset and the width.
+    left_dots = mm_to_dots(left_mm, dpi)
+    top_dots = mm_to_dots(top_mm, dpi)
+    draw_w = max(1, min(across_dots, mm_to_dots(left_mm + draw_mm_w, dpi))
+                 - left_dots)
+    draw_h = max(1, min(feed_dots, mm_to_dots(top_mm + draw_mm_h, dpi))
+                 - top_dots)
 
     canvas_w, canvas_h = ((draw_h, draw_w) if label.rotate in (90, 270)
                           else (draw_w, draw_h))
@@ -646,7 +698,7 @@ def render(label: Label, stock, *, dpi: int = 300,
         canvas = canvas.point(lambda v: 255 - v)
 
     sheet = _new(across_dots, feed_dots, 255)
-    sheet.paste(canvas, (margin_dots, margin_dots))
+    sheet.paste(canvas, (left_dots, top_dots))
     return Rendered(
         image=sheet.point(lambda v: 0 if v < 128 else 255).convert("1"),
         across_dots=across_dots,
@@ -654,6 +706,7 @@ def render(label: Label, stock, *, dpi: int = 300,
         dpi=dpi,
         notes=notes,
         problems=problems,
+        box_dots=(left_dots, top_dots, draw_w, draw_h),
     )
 
 
