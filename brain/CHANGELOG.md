@@ -301,6 +301,15 @@ real model.
   have done. The jq and the Python are driven over one fixture set and
   compared, because a boot-time reader and a panel-time reader disagreeing
   about one file is an add-on that deletes what it would have accepted.
+  `brain doctor`'s line about that credential is now three sentences
+  rather than one, because a lapsed access token is three states and the
+  warning was only ever true of one of them: it warns when another store
+  is behind it (the terminal falls through to that one, so the CLI never
+  gets the run that would refresh its own), says so as an `info` when the
+  file can renew itself, and keeps the warning for a past expiry with no
+  refresh token. The Fix it offered — delete the credential *and* its
+  backup — was the advice that threw the working sign-in away, and it is
+  gone.
 
 - **A protected entity written the old way was a protected entity nothing
   could see.** `shadow.would_do` is the one reader of an action list, and

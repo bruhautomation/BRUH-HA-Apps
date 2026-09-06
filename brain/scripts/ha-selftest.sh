@@ -648,10 +648,21 @@ if [ -n "$auth_where" ]; then
 else
     warn "No Claude credentials found — sign in from the panel, run 'claude', or use 'ha login'"
 fi
-# The CLI's own credential outranks the others for the terminal, so a dead
-# one there is worth naming even when a working credential exists elsewhere:
-# that combination is exactly "the chat works but the terminal asks me to
-# log in", and nothing else in the output would say so.
+# The CLI's own credential outranks the others for the terminal, so its
+# state is worth naming even when a working credential exists elsewhere.
+# But a lapsed `accessToken` is three different situations wearing one
+# sentence, and for a long time it got the worst of the three. That token
+# is short-lived by design and the file carries the `refreshToken` the CLI
+# mints the next one from, by itself, on its next run — so on an install
+# whose only credential is this one, a lapsed token is not a fault at all,
+# and telling somebody it "will keep asking you to log in" sent them to
+# redo a sign-in that was about to renew itself.
+#
+# What does deserve a warning is a lapsed token with another store behind
+# it. `brain-auth-env.sh` is deliberately strict there: it falls through
+# and exports the panel or `ha login` credential, so the terminal runs on
+# that one and the CLI never gets the unimpeded run that would refresh its
+# own. Nothing else in the output would say so.
 cli_cred="${CLAUDE_CONFIG_DIR:-${HOME:-/data/home}/.claude}/.credentials.json"
 [ -r "$cli_cred" ] || cli_cred="${HOME:-/data/home}/.claude/.credentials.json"
 if [ -r "$cli_cred" ]; then
@@ -659,11 +670,35 @@ if [ -r "$cli_cred" ]; then
     case "$exp" in
         ''|0|null) info "Claude CLI credential records no expiry" ;;
         *)
+            cli_when=$(date -d "@$((exp / 1000))" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "at ${exp}")
             if [ "$((exp / 1000))" -le "$(date +%s)" ]; then
-                warn "The Claude CLI's own credential EXPIRED $(date -d "@$((exp / 1000))" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "at ${exp}") — the terminal prefers this one, so it will keep asking you to log in"
-                info "Fix: rm -f '$cli_cred' /data/.brain_auth_backup/.credentials.json && restart (the backup restores it otherwise)"
+                # Which of the other two stores would carry the terminal
+                # instead — the same paths and labels as the roll-call above.
+                cli_shadow=""
+                for candidate in \
+                    "${BRAIN_SECRETS:-/data/secrets}/claude_auth.json:panel sign-in" \
+                    "${BRAIN_SHARED_AUTH:-/config/.brain/secrets/claude_auth.json}:ha login"; do
+                    if [ -s "${candidate%:*}" ]; then
+                        cli_shadow="${candidate##*:}"
+                        break
+                    fi
+                done
+                # A usable string, which is the same predicate
+                # engine._cli_credentials_present and run.sh's restore apply
+                # to this field: a null, an empty string or a number records
+                # no refresh token.
+                cli_refresh=$(jq -r '.claudeAiOauth.refreshToken // "" | if type == "string" then . else "" end' "$cli_cred" 2>/dev/null)
+                if [ -n "$cli_shadow" ]; then
+                    warn "The Claude CLI's own credential EXPIRED ${cli_when} — the terminal falls through to the ${cli_shadow} credential, so that is what a 'claude' run there uses and the CLI never refreshes its own"
+                    info "Fix: run 'claude' in the terminal and sign in again, which puts the CLI's own credential back in front"
+                elif [ -n "$cli_refresh" ]; then
+                    info "Claude CLI access token lapsed ${cli_when} — the file carries a refresh token, so the CLI mints a new one on its next run"
+                else
+                    warn "The Claude CLI's own credential EXPIRED ${cli_when} and records no refresh token — nothing can renew it"
+                    info "Fix: run 'claude' in the terminal, sign in from the panel, or use 'ha login'"
+                fi
             else
-                info "Claude CLI credential valid until $(date -d "@$((exp / 1000))" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "${exp}")"
+                info "Claude CLI credential valid until ${cli_when}"
             fi
             ;;
     esac
