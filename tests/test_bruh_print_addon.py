@@ -798,56 +798,107 @@ class TestPanelUI(unittest.TestCase):
         self.assertIn("calStoredReadings(state.stock)", done)
 
     def test_the_area_to_print_on_is_a_choice_and_says_so(self):
-        """Everything above it is a coordinate of the PAPER; this is a choice
-        about where to print on it. The four readings work precisely because
-        none of them is a preference, and mixing one in among them would undo
-        that at the moment it stops being obvious."""
+        """Everything above it is a coordinate of the PAPER; these are a
+        choice about where to print on it. The four readings work precisely
+        because none of them is a preference, and mixing one in among them
+        would undo that at the moment it stops being obvious."""
         app = (PANEL / "app.js").read_text()
         read = app.split("function calReadStep(")[1].split("\nfunction ")[0]
-        self.assertIn("calHold", read)
-        self.assertIn("Keep clear at the bottom", read)
+        self.assertIn("Where to print on it", read)
         # Its own group, ruled off, after the two groups of readings.
         self.assertIn("calgroup calchoice", read)
         self.assertGreater(read.index("calchoice"), read.index("CAL_GROUPS"))
         css = (PANEL / "style.css").read_text()
         self.assertIn(".calchoice { margin-top:", css)
         self.assertIn("border-top: 1px solid var(--line); }", css)
-        # There is deliberately no box for the other end: the printer starts
-        # where it starts, and holding MORE back at the top would only push
-        # the artwork further from the middle.
-        self.assertNotIn("calHoldLeading", app)
-        self.assertNotIn("Keep clear at the top", app)
 
-    def test_the_two_bands_are_drawn_alike_and_named_apart(self):
-        """One the printer refuses and one a person chose. Same hatching,
-        because both are areas to aim away from; different words, because
-        ink in the first is lost on the way out and ink in the second prints
-        and is reported."""
+    def test_there_is_a_box_for_every_edge(self):
+        """0.11.0 shipped one, at the bottom, on the argument that holding
+        more back at the top only pushes artwork further from the middle.
+        That is true of the feed axis and answers the wrong question: a
+        person setting a border is saying where on the label the printing
+        goes, and the across axis has no dead band to compensate for at all.
+        """
         app = (PANEL / "app.js").read_text()
-        self.assertIn("function holdBand()", app)
-        self.assertIn("hold_trailing_mm", app)
-        self.assertIn("[[dead, 'unreachable'], [hold, 'kept clear']]", app)
-        # One geometry helper, so a hatch and an outline cannot disagree
-        # about which boxes are in trouble.
-        self.assertIn("function edgeGaps(", app)
-        crossings = app.split("function deadCrossings(")[1].split("\nfunction ")[0]
-        self.assertIn("[deadBand(), holdBand()]", crossings)
-        self.assertIn("edgeGaps(", crossings)
+        table = app.split("const CAL_SIDES = [")[1].split("];")[0]
+        for key in ("'leading'", "'trailing'", "'left'", "'right'"):
+            with self.subTest(key=key):
+                self.assertIn(key, table)
+        for name in ("'Top'", "'Bottom'", "'Left'", "'Right'"):
+            with self.subTest(name=name):
+                self.assertIn(name, table)
+        # The four are one table read by the form, the prefill and the
+        # sentence alike — the boxes themselves are `measure-print-panel`'s
+        # to find, because their ids are built from the key and a grep
+        # cannot see a name that is never written down.
+        self.assertIn("CAL_SIDES.forEach", app)
+        # And the payload carries four, not one.
+        self.assertIn("holds:", app)
 
-    def test_the_designer_draws_the_band_the_printer_cannot_reach(self):
-        """And on the right edge of the canvas. The renderer turns the canvas
-        by -rotate on its way to the sheet, so the sheet's leading edge
-        arrives from a different canvas edge each quarter — a band on the
-        wrong one points at a part of the label that prints perfectly."""
-        app = (PANEL / "app.js").read_text()
-        self.assertIn(
-            "const LEAD_EDGE = { 0: 'top', 90: 'left', 180: 'bottom', "
-            "270: 'right' };", app)
-        self.assertIn("deadCrossings()", app)
+    def test_the_four_boxes_are_two_pairs_and_fit_a_phone(self):
+        """A pair per axis, so the two halves of one are not three rows
+        apart — and `minmax(0, 1fr)` rather than `1fr`, because a grid
+        track's floor is its content's min-content and a number input
+        carries a placeholder, which is what takes a row past 390px."""
         css = (PANEL / "style.css").read_text()
-        for edge in ("top", "bottom", "left", "right"):
-            with self.subTest(edge=edge):
-                self.assertIn(f".deadband.{edge} {{", css)
+        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr))", css)
+        self.assertIn("@media (max-width: 379px) { .calsides", css)
+
+    def test_the_designer_draws_only_what_prints(self):
+        """The canvas IS the printable box, so there is nothing on it to aim
+        away from.
+
+        Four marks used to sit over the preview — a tinted band the width of
+        the stock's margin, a dashed rectangle inside it, a hatched strip
+        where a 2.25" label overhangs a 2.24" head, and a hatched band where
+        this roll's printer lays no ink. Each was honest and each asked the
+        same thing of a person: lay a label out, then move it off the parts
+        that were never yours. They are one inset on the box now and the
+        preview is cropped to it, so all four describe paper that is not on
+        screen.
+        """
+        app = (PANEL / "app.js").read_text()
+        css = (PANEL / "style.css").read_text()
+        for gone in ("deadBand(", "holdBand(", "deadCrossings(", "edgeGaps(",
+                     "LEAD_EDGE", "TRAIL_EDGE", "CLIP_EDGE", "headReach("):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, app)
+        for gone in (".marginband", ".deadband", ".clipped {", ".safe {"):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, css)
+        # The head's shortfall was a NOTE, which is the shape of answer that
+        # tells somebody about a region after they have laid artwork into
+        # it. It is an inset on the box now, and the sentence goes with it.
+        for source in (app, (PANEL / "render" / "image.py").read_text()):
+            self.assertNotIn("dot columns are the", source)
+
+    def test_the_overlay_and_the_picture_share_one_origin(self):
+        """The overlay's millimetres have always been the canvas's while the
+        image underneath was the whole sheet, so every box was offset by the
+        margin in code to compensate — a millimetre of drift that only
+        showed on the smallest labels and had to be got right in five
+        places. The crop removes the offset rather than fixing it."""
+        app = (PANEL / "app.js").read_text()
+        draw = app.split("function drawOverlay(")[1].split("\nfunction ")[0]
+        self.assertIn("frame.width / mm.w", draw)
+        self.assertIn("frame.height / mm.h", draw)
+        self.assertNotIn("margin +", draw)
+        self.assertNotIn("2 * margin", draw)
+
+    def test_the_caption_says_how_big_the_canvas_is(self):
+        """A size, in the millimetres every position box on that tab is
+        already in — and the label's own size after it only when the two
+        differ. Not a sentence about margins, dead bands and held edges: the
+        difference is visible, and what makes it up is named where it is
+        set."""
+        app = (PANEL / "app.js").read_text()
+        legend = app.split("function canvasLegendText(")[1].split("\nfunction ")[0]
+        self.assertIn("Drawing on", legend)
+        for word in ("margin", "dead band", "hatched", "unreachable"):
+            with self.subTest(word=word):
+                self.assertNotIn(word, legend)
+        page = (PANEL / "index.html").read_text()
+        self.assertNotIn("dashed line", page)
 
     def test_the_wizard_sits_above_the_touch_floor_in_the_stylesheet(self):
         """Everything it adds is ordinary `.field`/`.btn` markup, which the

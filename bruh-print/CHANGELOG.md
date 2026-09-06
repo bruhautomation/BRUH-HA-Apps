@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.12.0
+
+**The designer draws what prints, and nothing else.** The canvas used to be
+the whole label with three things drawn on it to aim away from: a dashed
+rectangle around the stock's own margin, a hatched strip where a 2.25" label
+overhangs a 2.24" print head, and a hatched band where a roll's printer lays
+no ink at all. Each was honest and each asked the same thing of a person —
+lay a label out, then move it off the parts that were never yours. They are
+one inset on **one printable rectangle** now, the preview is cropped to it,
+and the caption under the canvas says how big that is (`Drawing on 48.2 ×
+16.7mm of a 57.2 × 31.8mm label`). Everything on the canvas prints.
+
+It also fixes something that was wrong for as long as the designer existed:
+the drag overlay's millimetres have always been the canvas's while the image
+under them was the whole sheet, so every box was offset by the margin in code
+to compensate. There is no offset to get wrong any more.
+
+And the note the head's own reach used to produce — *"This stock is 2.25"
+across and the print head reaches 2.24" — the outer 3 dot columns are the
+printer's margin"* — is gone. A note is the shape of answer that tells you
+about a region after you have already laid artwork into it.
+
+**Where to print on the label now has all four edges.** 0.11.0 shipped one
+band, at the bottom, on the argument that holding more back at the *top* only
+pushes artwork further from the middle. That is true of the feed axis and it
+answers the wrong question: somebody setting a border is saying where on the
+label the printing goes, not compensating for a machine, and the across axis
+has no dead band to compensate for at all. **Top, Bottom, Left** and
+**Right** sit under *Where to print on it* in the line-up wizard, each pair
+capped against its own axis — 20mm at each end of a 31.75mm label is one pair
+that does not fit, and it is scaled evenly rather than truncating whichever
+came second. The bay's own sentence names every edge that is held.
+
+**Even up the ends** does the addition it always should have: the top of a
+label loses the printer's dead band *and* anything held at the top, so
+matching it at the bottom is both, not just the dead band.
+
+Fixed along the way:
+
+- A box on a raster is two edges, and each is rounded once. Rounding the
+  left edge and the width separately left a 2mm border coming out 24 dots on
+  one side of a narrow label and 23 on the other.
+- A calibration that could not be honoured used to report only the number it
+  had been cut down to. It names what was asked for as well, because a guard
+  that refuses has to change the next attempt.
+- `measure-print-panel` measured the pinned top bar by where the page
+  happened to stop scrolling, so a tab whose content got *shorter* read as
+  chrome that would not pin. It reads the bar's own geometry now.
+
 ## 0.11.0
 
 **Lining a roll up is a loop, and it shipped as a form.** 0.10.0 got the

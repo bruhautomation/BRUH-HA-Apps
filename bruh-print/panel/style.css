@@ -594,72 +594,16 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .fontrow .fsample { height: 24px; }
 .fontrow .fname { color: var(--ink-2); font-size: 13px; }
 
-/* ── The drawable area, and what is outside it ───────────────────────── */
-/* The safe area and the margin band take NO pointer, because they cover the
- * whole label and a person aiming at a box near the edge must not hit the
- * picture of the margin instead — which also means neither can carry a
- * tooltip, since the delegated listener finds nothing under a
- * `pointer-events: none` element. What explains them is the caption under
- * the canvas, which is always there.
+/* ── The canvas ─────────────────────────────────────────────────────────
  *
- * The clipped strip is the exception and can be hovered: it is five pixels
- * at the very outer edge, inside the margin band, where no element box can
- * be dragged — so its tooltip costs nothing and it is the one mark here
- * whose meaning is not guessable. */
-/* Two elements rather than one with a huge spread shadow: a shadow big
- * enough to tint the band would also tint the rest of the page, and the
- * overlay cannot be given `overflow: hidden` because an element's name tag
- * hangs above its box on purpose. The band IS a border, so a border is what
- * draws it — its widths are the margin, set from the millimetres. */
-.marginband {
-  position: absolute; inset: 0; pointer-events: none; border-style: solid;
-  border-color: color-mix(in srgb, var(--warn) 16%, transparent);
-}
-.safe {
-  position: absolute; pointer-events: none;
-  border: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
-}
-.clipped {
-  position: absolute;
-  background: repeating-linear-gradient(
-    45deg, color-mix(in srgb, var(--bad) 45%, transparent) 0 3px,
-    transparent 3px 6px);
-  border: 1px solid color-mix(in srgb, var(--bad) 50%, transparent);
-}
-.clipped.right { top: 0; bottom: 0; right: 0; width: 5px; }
-.clipped.left { top: 0; bottom: 0; left: 0; width: 5px; }
-.clipped.top { left: 0; right: 0; top: 0; height: 5px; }
-.clipped.bottom { left: 0; right: 0; bottom: 0; height: 5px; }
-
-/* The band at the sheet's LEADING edge that this roll's printer will not
- * reach. Its thickness is a real measurement — `dead_leading_mm` off the
- * stock, in the canvas's own scale — where `.clipped` above is drawn wide
- * enough to see and says so in its tooltip, because three dot columns is a
- * hundredth of an inch. Hatched the other way round from `.clipped` so two
- * different losses do not read as one, and it takes no pointer: it lies
- * over the whole leading edge of the label, which is where boxes are
- * dragged. */
-.deadband {
-  position: absolute; pointer-events: none; z-index: 2;
-  background: repeating-linear-gradient(
-    -45deg, color-mix(in srgb, var(--warn) 42%, transparent) 0 3px,
-    transparent 3px 7px);
-  border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
-  display: flex; align-items: center; justify-content: center;
-  overflow: hidden;
-}
-.deadband.top { left: 0; right: 0; top: 0; }
-.deadband.bottom { left: 0; right: 0; bottom: 0; }
-.deadband.left { top: 0; bottom: 0; left: 0; }
-.deadband.right { top: 0; bottom: 0; right: 0; }
-.deadband .dbt {
-  font-size: 9px; letter-spacing: .04em; text-transform: uppercase;
-  color: var(--warn); background: var(--panel); padding: 0 3px;
-  border-radius: 3px; white-space: nowrap;
-}
-/* Turned with the band on the two edges where it is a tall sliver, or the
- * word is one letter per line and unreadable. */
-.deadband.left .dbt, .deadband.right .dbt { transform: rotate(-90deg); }
+ * There is nothing drawn here but the element boxes and the guides, and
+ * that is the feature. Four marks used to live over the preview — a tinted
+ * band the width of the stock's margin, a dashed rectangle inside it, a
+ * hatched strip where a 2.25" label overhangs a 2.24" head, and a hatched
+ * band where this roll's printer lays no ink — each one an area to aim away
+ * from on a canvas that was the whole sheet. The preview is cropped to the
+ * printable box now, so all four describe paper that is not on screen. What
+ * is left is the caption, which says how big the canvas is. */
 
 /* Guides live above the boxes: they are drawn while something is being
  * dragged and are the one thing on the canvas that must not be hidden by
@@ -783,6 +727,23 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .calchoice { margin-top: 16px; padding-top: 14px;
   border-top: 1px solid var(--line); }
 .calchoice + .calfield .btn.tiny { align-self: flex-start; margin-top: 6px; }
+/* Four boxes, two to a row, because they are two PAIRS — top/bottom down the
+   label and left/right across it — and one column of four would put a pair's
+   two halves three rows apart. `minmax(0, 1fr)` rather than `1fr`: a grid
+   track's floor is its content's min-content and a number input carries a
+   placeholder, which is what took this row past a 390px screen before it was
+   measured. One column below 380px, where two would be two boxes too narrow
+   to read a decimal in. */
+.calsides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px; margin: 8px 0 2px; }
+@media (max-width: 379px) { .calsides { grid-template-columns: 1fr; } }
+/* Every cell the same height, so the two columns line up whatever is in
+   them. There is deliberately nothing but a name and a box in one: a note
+   under two of the four left the rows ragged, and what those notes said is
+   the same fact about all four, which is what `.calsidenote` under the grid
+   carries. */
+.calsides .calside { margin-bottom: 0; min-width: 0; }
+.calsidenote { margin: 6px 0 10px; line-height: 1.45; }
 /* Three things to do rather than six questions: one strip across the paper,
    then one label, then the other. The heading is what tells somebody they
    may put a label down and pick the other one up. */

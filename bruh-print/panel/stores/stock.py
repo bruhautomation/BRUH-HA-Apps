@@ -113,24 +113,37 @@ class Calibration:
     would be asked for before the die cut, which `ESC f` can fix by feeding
     that far first, and the whole label is printable.
 
-    `hold_trailing_mm` — how much of the BOTTOM of the label to leave blank,
-    because somebody said so. It is the one number here that is not a
-    measurement of anything, and it exists because the other end of the
-    label is not a choice: the printer starts where it starts, so a roll
-    with a 4.7mm dead band prints inside 4.7 → 31.75 and the blank edges
-    come out uneven however carefully the artwork is centred. Holding the
-    same amount back at the trailing edge is what makes them match, and
-    there is no `hold_leading_mm` beside it precisely because the leading
-    band is involuntary — asking for more of it would move the artwork
-    further from centre, and an even border on all four sides is what
-    `margin_mm` already is.
+    `hold_leading_mm` / `hold_trailing_mm` / `hold_left_mm` /
+    `hold_right_mm` — **the four sides of where to print**, and the only
+    numbers here that measure nothing. Everything else on this dataclass
+    says what the printer does; these say what to do about it.
 
-    **It changes no bytes.** A held band is a statement about where artwork
+    They arrived one at a time and that was the mistake. 0.11.0 shipped the
+    trailing one alone, reasoning that the leading edge is involuntary — the
+    printer starts where it starts — so the only thing worth asking for was
+    a matching band at the other end. That is true of the ONE case it was
+    built for and false as a rule: a person looking at a printed label is
+    not making the machine symmetric, they are saying where their artwork
+    goes, and the machine's own dead band is just the floor under one of the
+    four answers. **There are two rectangles**: what the printer can reach,
+    which is measured off the grid, and where to print inside it, which is
+    chosen — and a chosen rectangle has four sides or it is not one.
+
+    `margin_mm` is not this, and the difference is which thing it belongs
+    to. A margin is a property of the STOCK — an even border somebody wants
+    on that label, on any printer — and it is applied to the drawable area
+    everywhere the stock is used. These belong to the ROLL on this machine,
+    they are per-side, and they are what a look at a printed label produces.
+    A stock loaded on two printers has one margin and two calibrations.
+
+    **They change no bytes.** A held band is a statement about where artwork
     may be laid out — the designer hatches it and the check label's frame
-    comes in to meet it — and the crop, the feed and `ESC L` are all exactly
-    what they were. That is what lets it be a free choice rather than a
-    second thing the print path has to be right about: `start_mm` is what
-    the printer does and this is what we do about it.
+    comes in to meet it — and the crop, the feed, the lateral placement and
+    `ESC L` are all exactly what they were. That is what lets four free
+    choices cost nothing the print path has to be right about, and it is
+    why the leading one is safe to offer beside a dead band it can only ever
+    add to: the crop is still the printer's own number, and a band asked for
+    on top of it is blank paper the sheet already carried.
 
     `after_tear_mm` — how much LATER still the first copy of a job starts
     when the paper is sitting at the tear bar. The manual says an `ESC E`
@@ -178,7 +191,10 @@ class Calibration:
 
     across_mm: float = 0.0
     start_mm: float = 0.0
+    hold_leading_mm: float = 0.0
     hold_trailing_mm: float = 0.0
+    hold_left_mm: float = 0.0
+    hold_right_mm: float = 0.0
     after_tear_mm: float = 0.0
     length_mm: float | None = None
     gap_mm: float | None = None
@@ -198,9 +214,20 @@ class Calibration:
         """
         return bool(self.measured_at
                     or self.across_mm or self.start_mm or self.after_tear_mm
-                    or self.hold_trailing_mm
+                    or any(self.holds())
                     or self.length_mm is not None or self.gap_mm is not None
                     or self.job_start != "plain" or self.ending != "tear")
+
+    def holds(self) -> tuple[float, float, float, float]:
+        """The four chosen bands, floored, in one fixed order.
+
+        Leading, trailing, left, right — the printer's own axes, which is
+        what every other field here is in, and the order the wizard asks
+        them in. One accessor because four call sites each flooring four
+        fields is sixteen chances to forget one.
+        """
+        return (max(0.0, self.hold_leading_mm), max(0.0, self.hold_trailing_mm),
+                max(0.0, self.hold_left_mm), max(0.0, self.hold_right_mm))
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -228,9 +255,13 @@ class Calibration:
                 start_mm=_number(raw.get("start_mm"), 0.0),
                 # Floored rather than trusted: a negative hold would read as
                 # "print past the die cut", which is not a thing, and it
-                # would make `printable_feed_mm` longer than the label.
+                # would make the printable area longer than the label.
+                hold_leading_mm=max(
+                    0.0, _number(raw.get("hold_leading_mm"), 0.0)),
                 hold_trailing_mm=max(
                     0.0, _number(raw.get("hold_trailing_mm"), 0.0)),
+                hold_left_mm=max(0.0, _number(raw.get("hold_left_mm"), 0.0)),
+                hold_right_mm=max(0.0, _number(raw.get("hold_right_mm"), 0.0)),
                 after_tear_mm=_number(raw.get("after_tear_mm"), 0.0),
                 length_mm=_optional(raw.get("length_mm")),
                 gap_mm=_optional(raw.get("gap_mm")),
@@ -330,18 +361,76 @@ class Stock:
     def feed_mm(self) -> float:
         return self.feed_in * MM_PER_IN
 
+    def printable_box(self, *, head_mm: float | None = None,
+                      length_mm: float | None = None,
+                      first_after_tear: bool = False) -> tuple[
+                          float, float, float, float]:
+        """`(left, top, width, height)` in mm: where artwork may go, on the
+        sheet, in the sheet's own coordinates.
+
+        **This is the one rectangle**, and making it one is the whole of the
+        change. It used to be three things a person had to hold at once: a
+        drawable area that was the label less its margin, a hatched band at
+        the leading edge the printer could not reach, and a note saying the
+        outer dot columns of a 2.25" label are the head running out. Every
+        one of those is a region you may not draw in, and the designer drew
+        the first as a canvas and the other two as things to avoid — so
+        designing meant laying artwork out and then moving it away from the
+        parts that were not really there.
+
+        Four insets, and they are two kinds of thing that a person laying
+        out a label has no reason to tell apart:
+
+          the MARGIN      — the stock's own, all four sides
+          the DEAD BAND   — rows the printer will not lay, leading edge only
+          the HEAD        — a label wider than 672 dots loses its far edge
+          the HOLDS       — the four bands somebody asked to keep clear
+
+        `head_mm` is the print head's reach and is optional because a stock
+        does not know which printer it is on: given, the shortfall comes off
+        the far edge and the label simply cannot be drawn there; omitted,
+        the box is the paper's own and the caller that clips is `render`.
+
+        `length_mm` overrides how long the label is, and it exists for the
+        one stock that has no length: continuous paper has no die cut, so
+        `render` derives a sheet from the artwork's own extent and hands
+        that back here. Without it the box would be built from a label
+        length of zero and every continuous print would get a canvas one
+        millimetre tall.
+
+        Never negative on either axis. A stock narrower than twice its
+        margin is a stock somebody mistyped, and a dead band longer than the
+        label is a calibration read off the wrong one — a canvas of a
+        millimetre is recoverable and a negative one raises a long way from
+        the field that caused it.
+        """
+        margin = max(0.0, self.margin_mm)
+        lead, trail, left_hold, right_hold = self.holds_mm()
+        short = (0.0 if head_mm is None
+                 else max(0.0, self.across_mm - max(0.0, head_mm)))
+        left = margin + left_hold
+        top = margin + self.dead_leading_mm(first_after_tear) + lead
+        # `measured_feed_mm`, not the catalog: where a roll's real length was
+        # read off the grid it is the one that says how much label there is
+        # to lay out on. The SHEET `render` builds is still the catalog's —
+        # they differ only on a roll that measured more than a millimetre
+        # from its stock row, and on that roll the artwork stopping at the
+        # real die cut is the half worth having.
+        length = self.measured_feed_mm if length_mm is None else length_mm
+        return (left, top,
+                max(1.0, self.across_mm - left - margin - right_hold - short),
+                max(1.0, length - top - margin - trail))
+
     @property
     def drawable_mm(self) -> tuple[float, float]:
         """(width, height) in mm of the area artwork may occupy.
 
-        Width is across the head. Never negative: a stock narrower than
-        twice the margin is a stock somebody mistyped, and returning a
-        negative canvas would raise somewhere far away from the field they
-        got wrong.
+        The printable box's size, and the name every caller already asks by.
+        What changed under it is that it is now the area that can really
+        carry ink rather than the paper less a border — see `printable_box`.
         """
-        margin = max(0.0, self.margin_mm)
-        return (max(1.0, self.across_mm - 2 * margin),
-                max(1.0, self.feed_mm - 2 * margin))
+        _, _, width, height = self.printable_box()
+        return (width, height)
 
     @property
     def continuous(self) -> bool:
@@ -401,39 +490,47 @@ class Stock:
         extra = cal.after_tear_mm if first_after_tear else 0.0
         return max(0.0, cal.start_mm + extra)
 
-    def hold_trailing_mm(self) -> float:
-        """How much of the bottom of this label to leave blank, by choice.
+    def holds_mm(self) -> tuple[float, float, float, float]:
+        """The four bands this roll was asked to keep clear, in printer axes.
 
-        Positive only, and a method rather than a bare read of the field for
-        the reason `dead_leading_mm` is one: every caller that asks "how much
-        of this label may I use" has to get its answer from the same place,
-        or the designer lays a box where the check label's frame says
-        nothing may go.
+        Leading, trailing, left, right. A method rather than four bare field
+        reads for the reason `dead_leading_mm` is one: every caller that asks
+        "how much of this label may I use" has to get its answer from the
+        same place, or the designer lays a box where the check label's frame
+        says nothing may go.
         """
-        return max(0.0, self.calibration.hold_trailing_mm)
+        return self.calibration.holds()
+
+    def hold_trailing_mm(self) -> float:
+        """The trailing band alone.
+
+        Kept as its own accessor because 0.11.0 shipped it alone and the
+        stock row still publishes it under that name — dropping it would
+        break a panel served before this update against a store written
+        after it, over a number that has not changed meaning.
+        """
+        return self.holds_mm()[1]
 
     def printable_feed_mm(self, first_after_tear: bool = False) -> float:
-        """How much of this label's length can carry ink.
+        """How much of this label's LENGTH can carry ink.
 
-        Two bands come off it and they are different KINDS of thing. The
-        leading one is the printer's: it cannot lay ink there, and the rows
-        are cropped off the job on the way out. The trailing one is
-        somebody's: the printer can print there perfectly well and has been
-        asked not to, so nothing is cropped and ink that lands in it is a
-        note rather than a loss. Both come off here because this one number
-        is what the designer, the wizard and the check label all mean by
-        "the printable area", and three answers to that is three chances for
-        a box to be laid out where the frame says it may not go.
-
-        Floored at a millimetre rather than allowed to go negative: a dead
-        band longer than the label is a calibration read off the wrong label
-        or a roll nothing can print on, and a negative canvas would raise
-        somewhere a long way from either. That floor is also what keeps a
-        hold of any size safe — it can shrink the area, never invert it.
+        The box's height, so the wizard's sentence, the check label's frame
+        and the designer's canvas cannot give three answers to one question.
+        It keeps its own name because it is what the stock row publishes and
+        what the panel reads.
         """
-        return max(1.0, self.measured_feed_mm
-                   - self.dead_leading_mm(first_after_tear)
-                   - self.hold_trailing_mm())
+        return self.printable_box(first_after_tear=first_after_tear)[3]
+
+    def printable_across_mm(self, *, head_mm: float | None = None) -> float:
+        """And how much of its WIDTH, which had no answer before.
+
+        There was no helper for the across axis because until the holds
+        arrived nothing was ever taken off it but the margin — the far dot
+        columns a 2.25" label loses to a 2.24" head were a NOTE on the
+        render, which is the shape of answer that tells somebody about a
+        region after they have laid artwork into it.
+        """
+        return self.printable_box(head_mm=head_mm)[2]
 
     def dots(self, dpi: int = 300) -> tuple[int, int]:
         """(across, feed) in printer dots."""
@@ -502,13 +599,18 @@ class Stock:
         # agree to the dot.
         data["calibrated"] = self.calibration.measured
         data["dead_leading_mm"] = round(self.dead_leading_mm(), 2)
-        # The band at the other end, published beside it and separately,
-        # because the two are different claims: one is the printer refusing
-        # and one is a person choosing, and the designer draws them the same
-        # way for different reasons. Adding them into one number would make
-        # a held band look like a machine somebody has to work around.
-        data["hold_trailing_mm"] = round(self.hold_trailing_mm(), 2)
+        # The four chosen bands, published beside the measured one and
+        # separately from it: one is the printer refusing and four are a
+        # person choosing, and a panel that added them together would make a
+        # held edge read as a machine somebody has to work around.
+        holds = [round(v, 2) for v in self.holds_mm()]
+        data["holds_mm"] = holds
+        # 0.11.0 published the trailing one under its own name and a panel
+        # served before this update still asks for it. One number, two
+        # spellings, and the newer one is derived from the same accessor.
+        data["hold_trailing_mm"] = holds[1]
         data["printable_feed_mm"] = round(self.printable_feed_mm(), 2)
+        data["printable_across_mm"] = round(self.printable_across_mm(), 2)
         data["first_label_dead_mm"] = round(self.dead_leading_mm(True), 2)
         return data
 

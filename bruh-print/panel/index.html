@@ -188,12 +188,13 @@
           <div class="overlay" id="overlay"></div>
         </div>
       </div>
-      <!-- Survives, shortened. A caption rather than a tooltip because the
-           dashed rectangle and the tinted band cover the whole label and
-           take no pointer, so there is nothing to hover — and what they
-           mean is available nowhere else on the screen. -->
-      <p class="canvaslegend" id="canvasLegend">Inside the dashed line prints.
-         The band outside it is the printer’s own margin.</p>
+      <!-- How big the canvas is, and the label's own size when the two
+           differ. A caption rather than a tooltip because there is nothing
+           on the canvas to hover: the preview is cropped to the printable
+           box, so everything on it prints. `drawOverlay` fills it in, and
+           this is what it says before a label is open. -->
+      <p class="canvaslegend" id="canvasLegend">Everything on the canvas
+         prints.</p>
       <ul class="notes" id="designNotes"></ul>
     </div>
 

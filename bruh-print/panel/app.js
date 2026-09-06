@@ -702,32 +702,28 @@ async function refreshPreview() {
   }
 }
 
-/* Which boxes are outlined in red, from two places that are not the same
- * kind of answer.
+/* Which boxes are outlined in red, and there is exactly one source for it.
  *
  * `S.problems` comes off the render — a barcode that will not fit, a fixed
- * size that clips — and is the server's. The dead band's is CLIENT-side and
- * has to be: it is a fact about the roll rather than about the drawing, the
- * renderer draws the whole label on purpose (the crop happens in `_send` and
- * nowhere else, so the designer and the preview show the label somebody
- * drew), and the note the print path writes only appears once ink has
- * actually been lost — which is after the label has come out.
+ * size that clips. There used to be a second, client-side source: the band
+ * this roll's printer cannot reach and the band somebody asked to keep
+ * clear, both hatched on a canvas that was the whole sheet, with anything
+ * lying in one outlined here. The canvas IS the printable box now, so a box
+ * cannot lie in either — the areas are not on the canvas to reach into, and
+ * a rule about them would be a rule about nothing.
  *
  * Applied to the boxes already on screen rather than by rebuilding them:
  * this lands mid-drag, and rebuilding the overlay would take the element out
  * from under the finger holding it. */
 function markProblems() {
   const bad = new Set((S.problems || []).map((p) => p.index));
-  for (const index of deadCrossings()) bad.add(index);
   const boxes = $('overlay').querySelectorAll('.el');
   boxes.forEach((box, index) => box.classList.toggle('bad', bad.has(index)));
   const print = $('designPrint');
   const count = bad.size;
-  /* Still enabled, and the dead band is no exception: the rule here is that
-   * a print is refused only when it cannot be right, and a box reaching into
-   * a band the printer will not lay ink on is a label with one element
-   * clipped — usually still the label somebody wanted, and always their
-   * decision rather than this one's. */
+  /* Still enabled: the rule here is that a print is refused only when it
+   * cannot be right, and a barcode that will not fit is usually still the
+   * label somebody wanted — always their decision rather than this one's. */
   print.setAttribute('data-tip', count
     ? (count === 1
         ? 'One box has a problem — it is outlined in red, and the notes under '
@@ -735,81 +731,6 @@ function markProblems() {
         : `${count} boxes have a problem — they are outlined in red, and the `
           + 'notes under the label say what. It will still print.')
     : 'Send this label to the printer.');
-}
-
-/* Which edge of the DESIGN canvas is the sheet's LEADING one — the edge that
- * leaves the printer first, and the one a dead band is measured from.
- *
- * `render` turns the canvas by `-rotate` on its way to the sheet, which is a
- * clockwise turn by `rotate`, so the sheet's own top arrives from a
- * different canvas edge each quarter: `CLIP_EDGE` above is this same table
- * read for the sheet's right-hand edge. A band on the wrong edge is worse
- * than none, because it points at a part of the label that prints perfectly.
- */
-const LEAD_EDGE = { 0: 'top', 90: 'left', 180: 'bottom', 270: 'right' };
-
-/* How far in from that edge this roll's printer lays no ink, and which edge.
- *
- * In SHEET millimetres — the margin included — because the crop on the way
- * to the printer takes rows off the whole sheet, die cut inward. A band
- * measured from the drawable corner would be short by exactly the margin,
- * which is the size of the thing it is drawing. */
-const TRAIL_EDGE = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' };
-
-function deadBand() {
-  const stock = stockById(S.label && S.label.stock);
-  return {
-    mm: stock ? Number(stock.dead_leading_mm) || 0 : 0,
-    edge: LEAD_EDGE[(S.label && S.label.rotate) || 0] || 'top',
-  };
-}
-
-/* The band at the other end, which the printer CAN reach and has been asked
- * not to use. Same geometry, same hatching, opposite edge — and a separate
- * function rather than a flag on `deadBand`, because the two are different
- * claims and only one of them is about the machine: the leading band is
- * cropped off the job on the way out, and ink in this one prints and is
- * reported. Everything downstream keeps them apart on purpose, right down
- * to the word drawn in each. */
-function holdBand() {
-  const stock = stockById(S.label && S.label.stock);
-  const lead = LEAD_EDGE[(S.label && S.label.rotate) || 0] || 'top';
-  return {
-    mm: stock ? Number(stock.hold_trailing_mm) || 0 : 0,
-    edge: TRAIL_EDGE[lead] || 'bottom',
-  };
-}
-
-/* How far in from an edge each element's box reaches, in SHEET millimetres.
- * Shared by both bands so a hatch and an outline cannot disagree about which
- * boxes are in trouble — which is the same reason they were one function
- * when there was one band. */
-function edgeGaps(element, margin, mm) {
-  return {
-    top: margin + element.y_mm,
-    left: margin + element.x_mm,
-    bottom: margin + (mm.h - (element.y_mm + element.h_mm)),
-    right: margin + (mm.w - (element.x_mm + element.w_mm)),
-  };
-}
-
-/* Every element whose box reaches into it. Measured from the same edge the
- * band is drawn on, in the same millimetres, so the outline and the hatch
- * cannot disagree about which boxes are in trouble. */
-function deadCrossings() {
-  const out = new Set();
-  if (!S.label) return out;
-  const stock = stockById(S.label.stock);
-  const margin = stock ? stock.margin_mm : 2;
-  const mm = canvasMm();
-  for (const band of [deadBand(), holdBand()]) {
-    if (!(band.mm > 0)) continue;
-    S.label.elements.forEach((element, index) => {
-      if (edgeGaps(element, margin, mm)[band.edge] < band.mm - 0.001)
-        out.add(index);
-    });
-  }
-  return out;
 }
 
 /* The preview is rendered at 2x the printer's resolution for crispness, which
@@ -842,31 +763,48 @@ function fitCanvas() {
 
 addEventListener('resize', () => { if (S.label) fitCanvas(); });
 
-/* ── The drawable area, drawn ───────────────────────────────────────────
+/* What the caption under the canvas says.
  *
- * The margin is the printer's, not yours: a LabelWriter's head does not
- * start at the liner's edge and its registration wanders as the roll
- * unwinds. Nothing on screen said so, so people put boxes flush to the edge
- * and then found the label had lost a letter. It is one dashed rectangle and
- * a tinted band, which is a thing you can aim at.
+ * A size, in the millimetres every position and nudge box on this tab is
+ * already in — and the label's own size after it only when the canvas is
+ * smaller, which it is on any roll with a margin. Two numbers rather than a
+ * sentence about margins, dead bands and held edges: the difference is
+ * visible, and what makes it up is named where it is set.
  *
- * `headDots` is the second half of the same honesty: a 2.25" stock on a
- * 672-dot head is three dot columns the printer physically cannot reach. */
-const HEAD_DOTS = 672;
-const HEAD_DPI = 300;
-
-function headReach() {
-  const dots = Number(S.printer?.dots) || HEAD_DOTS;
-  const dpi = Number(S.printer?.dpi) || HEAD_DPI;
-  return { inches: dots / dpi, dots, dpi };
+ * Continuous stock has no label length, so there is nothing to compare
+ * against and the canvas size stands alone. */
+function canvasLegendText(stock, mm) {
+  const canvas = `${round1(mm.w)} × ${round1(mm.h)}mm`;
+  if (!stock || !(stock.feed_mm > 0)) return `Drawing on ${canvas}.`;
+  const turned = S.label.rotate === 90 || S.label.rotate === 270;
+  const w = turned ? stock.feed_mm : stock.across_mm;
+  const h = turned ? stock.across_mm : stock.feed_mm;
+  if (Math.abs(w - mm.w) < 0.05 && Math.abs(h - mm.h) < 0.05)
+    return `Drawing on ${canvas} — all of the label.`;
+  return `Drawing on ${canvas} of a ${round1(w)} × ${round1(h)}mm label.`;
 }
 
-/* Which edge of the DESIGN canvas is the sheet's clipped one. The renderer
- * turns the canvas by -rotate on its way to the sheet, so the sheet's
- * trailing across-edge arrives from a different side each quarter — and a
- * hatch on the wrong edge is worse than none, because it points at a part of
- * the label that prints perfectly. */
-const CLIP_EDGE = { 0: 'right', 90: 'top', 180: 'left', 270: 'bottom' };
+function round1(value) {
+  return Math.round(Number(value) * 10) / 10;
+}
+
+/* ── The printable area, and nothing else ──────────────────────────────
+ *
+ * The canvas used to be the whole sheet with three things drawn on it to
+ * aim away from: a dashed rectangle around the stock's own margin, a hatched
+ * strip where a 2.25" label overhangs a 2.24" head, and a hatched band where
+ * this roll's printer lays no ink. Each was honest and each asked the same
+ * thing of a person — lay a label out, then move it off the parts that were
+ * never yours. They are one inset on the printable box now (`printable_box`
+ * in `stores/stock.py`, applied by `render` and cropped to by the designer's
+ * own preview), so the picture IS the canvas: everything on it prints, and
+ * there is nothing left to warn about.
+ *
+ * That also makes the drag overlay exact rather than nearly right. Its
+ * millimetres were always the canvas's while the image underneath was the
+ * sheet, which is why every box was offset by the margin in code — and why
+ * getting that offset wrong was a millimetre of drift that only showed on
+ * the smallest labels. There is no offset to get wrong. */
 
 function drawOverlay() {
   const overlay = $('overlay');
@@ -874,76 +812,19 @@ function drawOverlay() {
   const frame = image.getBoundingClientRect();
   const mm = canvasMm();
   const stock = stockById(S.label.stock);
-  const margin = stock ? stock.margin_mm : 2;
-  /* The overlay is positioned over the whole label PNG, but element
-   * coordinates are measured from the DRAWABLE area's corner — the margin
-   * is the printer's, not the designer's. Forgetting to add it back is a
-   * millimetre of drift that only shows on the smallest labels. */
-  const scaleX = frame.width ? frame.width / (mm.w + 2 * margin) : 4;
-  const scaleY = frame.height ? frame.height / (mm.h + 2 * margin) : 4;
+  const scaleX = frame.width ? frame.width / mm.w : 4;
+  const scaleY = frame.height ? frame.height / mm.h : 4;
 
   overlay.innerHTML = '';
 
-  const band = el('div', 'marginband');
-  band.style.borderWidth = `${margin * scaleY}px ${margin * scaleX}px`;
-  overlay.append(band);
-
-  const safe = el('div', 'safe');
-  safe.style.left = margin * scaleX + 'px';
-  safe.style.top = margin * scaleY + 'px';
-  safe.style.width = mm.w * scaleX + 'px';
-  safe.style.height = mm.h * scaleY + 'px';
-  /* Deliberately no tooltip: it covers the whole label and takes no pointer,
-   * so there is nothing to hover. The caption under the canvas says what it
-   * is, and it says it without being asked. */
-  overlay.append(safe);
-
-  const reach = headReach();
-  if (stock && stock.across_in > reach.inches + 0.001) {
-    const lost = Math.round((stock.across_in - reach.inches) * reach.dpi);
-    const strip = el('div', 'clipped ' + (CLIP_EDGE[S.label.rotate] || 'right'));
-    strip.setAttribute('data-tip',
-      `This stock is ${stock.across_in}" across and the head reaches `
-      + `${reach.inches.toFixed(2)}" — the outer ${lost} dot columns are the `
-      + 'printer\u2019s, not yours. Drawn wide enough to see; it is really '
-      + 'about a hundredth of an inch.');
-    overlay.append(strip);
-  }
-
-  /* The band this roll's printer will not reach, at the sheet's LEADING
-   * edge. It is drawn rather than refused: the crop happens in `_send` and
-   * nowhere else, so what is on screen is the label somebody drew — and a
-   * designer that quietly shortened the canvas would be showing them their
-   * printer's registration as if it were their layout. What it does instead
-   * is make the band something you can aim away from, and outline anything
-   * lying in it. */
-  const dead = deadBand();
-  const hold = holdBand();
+  /* One line, and it is the size of the thing you are drawing on. The label
+   * is named beside it only when the two differ, because that difference is
+   * the one fact this tab cannot show any other way — WHY they differ is a
+   * margin, a lined-up roll and any held edges, all of which are the
+   * Printer tab's and none of which belongs on a caption you read every
+   * time you open the designer. */
   const legend = $('canvasLegend');
-  /* One word each, and they are different words on purpose. The band is a
-   * few millimetres on a phone and a sentence in it would be a sentence
-   * nobody can read; what each one means is on the legend under the canvas,
-   * which is where the dashed rectangle's meaning already lives. */
-  for (const [band, word] of [[dead, 'unreachable'], [hold, 'kept clear']]) {
-    if (!(band.mm > 0)) continue;
-    const node = el('div', 'deadband ' + band.edge);
-    const across = band.edge === 'top' || band.edge === 'bottom';
-    node.style[across ? 'height' : 'width'] =
-      band.mm * (across ? scaleY : scaleX) + 'px';
-    node.append(el('span', 'dbt', word));
-    overlay.append(node);
-  }
-  if (legend) {
-    const parts = ['Inside the dashed line prints. The band outside it is '
-      + 'the printer’s own margin.'];
-    if (dead.mm > 0)
-      parts.push(`The hatched ${dead.mm}mm at the leading edge is where `
-        + 'this roll’s printer lays no ink at all.');
-    if (hold.mm > 0)
-      parts.push(`The ${hold.mm}mm at the other end is kept clear because `
-        + 'you asked for it — ink there prints, and is reported.');
-    legend.textContent = parts.join(' ');
-  }
+  if (legend) legend.textContent = canvasLegendText(stock, mm);
 
   const guides = el('div', 'guides');
   guides.id = 'guides';
@@ -951,14 +832,14 @@ function drawOverlay() {
 
   S.label.elements.forEach((element, index) => {
     const box = el('div', 'el' + (index === S.selected ? ' sel' : ''));
-    box.style.left = (margin + element.x_mm) * scaleX + 'px';
-    box.style.top = (margin + element.y_mm) * scaleY + 'px';
+    box.style.left = element.x_mm * scaleX + 'px';
+    box.style.top = element.y_mm * scaleY + 'px';
     box.style.width = Math.max(6, element.w_mm * scaleX) + 'px';
     box.style.height = Math.max(6, element.h_mm * scaleY) + 'px';
     box.append(el('span', 'tag', describe(element)));
     const grip = el('span', 'grip');
     box.append(grip);
-    dragging(box, grip, index, scaleX, scaleY, mm, margin);
+    dragging(box, grip, index, scaleX, scaleY, mm);
     overlay.append(box);
   });
   markProblems();
@@ -1023,12 +904,12 @@ function snap(edges, targets, tol) {
   return best;
 }
 
-function showGuide(axis, at, margin, scaleX, scaleY) {
+function showGuide(axis, at, scaleX, scaleY) {
   const guides = $('guides');
   if (!guides) return;
   const line = el('div', 'guide ' + axis);
-  if (axis === 'x') line.style.left = (margin + at) * scaleX + 'px';
-  else line.style.top = (margin + at) * scaleY + 'px';
+  if (axis === 'x') line.style.left = at * scaleX + 'px';
+  else line.style.top = at * scaleY + 'px';
   guides.append(line);
 }
 const clearGuides = () => { const g = $('guides'); if (g) g.innerHTML = ''; };
@@ -1043,7 +924,7 @@ let liveAt = 0;
  * after you let go means letting go to find out. */
 const LIVE_MS = 150;
 
-function dragging(box, grip, index, scaleX, scaleY, mm, margin) {
+function dragging(box, grip, index, scaleX, scaleY, mm) {
   let mode = null, startX = 0, startY = 0, origin = null, moved = false;
 
   const begin = (event, which) => {
@@ -1074,13 +955,13 @@ function dragging(box, grip, index, scaleX, scaleY, mm, margin) {
                          snapTargets('x', index, mm), tolX);
         if (hit) {
           x = clamp(x + hit.delta, 0, mm.w - element.w_mm);
-          if (!hit.grid) showGuide('x', hit.at, margin, scaleX, scaleY);
+          if (!hit.grid) showGuide('x', hit.at, scaleX, scaleY);
         }
         const down = snap([y, y + element.h_mm / 2, y + element.h_mm],
                           snapTargets('y', index, mm), tolY);
         if (down) {
           y = clamp(y + down.delta, 0, mm.h - element.h_mm);
-          if (!down.grid) showGuide('y', down.at, margin, scaleX, scaleY);
+          if (!down.grid) showGuide('y', down.at, scaleX, scaleY);
         }
       }
       element.x_mm = x;
@@ -1092,20 +973,20 @@ function dragging(box, grip, index, scaleX, scaleY, mm, margin) {
         const hit = snap([element.x_mm + w], snapTargets('x', index, mm), tolX);
         if (hit) {
           w = clamp(w + hit.delta, 1, mm.w - element.x_mm);
-          if (!hit.grid) showGuide('x', hit.at, margin, scaleX, scaleY);
+          if (!hit.grid) showGuide('x', hit.at, scaleX, scaleY);
         }
         const down = snap([element.y_mm + h], snapTargets('y', index, mm), tolY);
         if (down) {
           h = clamp(h + down.delta, 1, mm.h - element.y_mm);
-          if (!down.grid) showGuide('y', down.at, margin, scaleX, scaleY);
+          if (!down.grid) showGuide('y', down.at, scaleX, scaleY);
         }
       }
       element.w_mm = w;
       element.h_mm = h;
     }
     clampElement(element, mm);
-    box.style.left = (margin + element.x_mm) * scaleX + 'px';
-    box.style.top = (margin + element.y_mm) * scaleY + 'px';
+    box.style.left = element.x_mm * scaleX + 'px';
+    box.style.top = element.y_mm * scaleY + 'px';
     box.style.width = Math.max(6, element.w_mm * scaleX) + 'px';
     box.style.height = Math.max(6, element.h_mm * scaleY) + 'px';
 
@@ -2075,6 +1956,34 @@ const mmText = (value) => `${Number(value).toFixed(1)} mm`;
  * needs no correction stores seven default numbers, and a panel that could
  * not tell it from one nobody has measured would offer the wizard for ever
  * to the person who least needs it. */
+/* The held-edge half of `calibrationSentence`, or '' where nothing is held.
+ *
+ * Reads `holds_mm` — the four-list the store publishes — and falls back to
+ * the older `hold_trailing_mm` spelling, because a panel is served once and
+ * then answers requests from an add-on that may have been updated under it. */
+function calHoldClause(stock) {
+  const raw = Array.isArray(stock.holds_mm)
+    ? stock.holds_mm
+    : [0, Number(stock.hold_trailing_mm) || 0, 0, 0];
+  const held = CAL_SIDES
+    .map(([, name], index) => [name, Number(raw[index]) || 0])
+    .filter(([, value]) => value > 0);
+  if (!held.length) return '';
+  const same = held.every(([, value]) => value === held[0][1]);
+  const names = listWords(held.map(([name]) => name.toLowerCase()));
+  if (same)
+    return `you asked for ${mmText(held[0][1])} clear at the ${names}`;
+  return 'you asked to keep clear ' + listWords(
+    held.map(([name, value]) => `${mmText(value)} at the ${name.toLowerCase()}`));
+}
+
+/* `a, b and c` — an English list, because this lands mid-sentence in prose
+ * somebody reads rather than in a table. */
+function listWords(words) {
+  if (words.length < 2) return words[0] || '';
+  return words.slice(0, -1).join(', ') + ' and ' + words[words.length - 1];
+}
+
 function calibrationSentence(stock) {
   if (!stock) return 'Nothing is in this bay, so there is nothing to line up.';
   if (!stock.calibrated) return 'Not lined up yet.';
@@ -2092,10 +2001,15 @@ function calibrationSentence(stock) {
   /* Said in the person's own words — "you asked" — because it is the one
    * thing in this sentence nothing measured, and a roll reading back a
    * choice as though it were a fact about the printer is how somebody
-   * concludes their machine is worse than it is. */
-  if (stock.hold_trailing_mm)
-    bits.push(`you asked for ${mmText(stock.hold_trailing_mm)} clear at the `
-      + 'bottom');
+   * concludes their machine is worse than it is.
+   *
+   * All four in ONE clause, named by side, in `CAL_SIDES`' order so the
+   * sentence reads in the order the boxes are laid out. Four clauses would
+   * push a roll with a border on every edge into a sentence nobody finishes,
+   * and the sizes are usually the same number anyway — which the joined form
+   * shows and four separate clauses would hide. */
+  const held = calHoldClause(stock);
+  if (held) bits.push(held);
   if (cal.after_tear_mm)
     bits.push('the first label after a tear-off starts '
       + `${mmText(stock.first_label_dead_mm)} in`);
@@ -2271,6 +2185,25 @@ const CAL_READINGS = [
     + 'sheet is longer than a label.'],
 ];
 
+/* The four edges of the area to print in, in the order they are asked.
+ *
+ * A separate table from `CAL_READINGS` and deliberately so: those four are
+ * COORDINATES a person reads off a printed grid, and these four are
+ * DISTANCES they choose. Sharing one table would put a preference among the
+ * measurements at the moment it stops being obvious which is which — and
+ * the readings work precisely because none of them is a preference.
+ *
+ * `leading`/`trailing` rather than `top`/`bottom` in the key, because that
+ * is what the printer's own axes call them and what the stored field is;
+ * the NAME is top and bottom, because that is what a person holding the
+ * label is looking at. */
+const CAL_SIDES = [
+  ['leading', 'Top'],
+  ['trailing', 'Bottom'],
+  ['left', 'Left'],
+  ['right', 'Right'],
+];
+
 /* Two things to do rather than four questions: one pair across the label,
  * one pair down it. They are also the two scales, so the grouping is what
  * says which scale each pair is read from. */
@@ -2337,6 +2270,36 @@ function calStoredReadings(stock) {
   return { x1: mm(Number(cal.across_mm) || 0), x2: '', y1: mm(y1), y2: mm(y2) };
 }
 
+/* The four bands this roll is set to keep clear, as strings for the boxes.
+ *
+ * Unlike the readings these need no reconstruction — they are stored
+ * exactly as they were typed, because nothing derived them. What they still
+ * need is the same rule the readings follow: a zero comes back as an EMPTY
+ * box rather than as "0", because the placeholder already says `nothing`
+ * and a form of four zeroes reads as four decisions somebody made. */
+/* What the trailing band has to be for the two blank edges to match.
+ *
+ * The top of a label loses the printer's own dead band AND whatever was
+ * asked for at the top; the bottom loses only what was asked for there. So
+ * evening them up is one addition — and it lives here rather than in the two
+ * buttons that press it, because a control on the reading step and a control
+ * on the done step giving different answers to "make these match" is the
+ * kind of disagreement nobody would think to look for. The stock's own
+ * margin is on both ends by definition and cancels. */
+function evenTrailing(dead, leading) {
+  return Math.round(((Number(dead) || 0) + (Number(leading) || 0)) * 100) / 100;
+}
+
+function calStoredHolds(stock) {
+  const held = (stock && stock.holds_mm) || [];
+  const out = {};
+  CAL_SIDES.forEach(([side], index) => {
+    const value = Number(held[index]) || 0;
+    out[side] = value ? String(value) : '';
+  });
+  return out;
+}
+
 function lineUpDialog(stock, side) {
   if (!stock) return;
   /* No `stock &&` here, unlike `lineUpBlock` one function up: that one is
@@ -2349,7 +2312,7 @@ function lineUpDialog(stock, side) {
   const state = {
     stock, side, notes: [], message: '',
     readings: calStoredReadings(stock),
-    hold: Number(cal.hold_trailing_mm) ? String(cal.hold_trailing_mm) : '',
+    holds: calStoredHolds(stock),
   };
   const body = $('modalBody');
   body.innerHTML = '';
@@ -2565,44 +2528,65 @@ function calReadStep(state, wrap) {
       list.append(field);
     }
   }
-  /* The one number on this screen that is not read off anything.
+  /* The four numbers on this screen that are not read off anything.
    *
-   * It is in its own group, under its own heading, because everything above
-   * it is a coordinate of the PAPER and this is a choice about where to
-   * print on it — and the whole reason the four readings work is that none
-   * of them is a preference. Mixing a preference in among them would undo
-   * that at the moment it stops being obvious.
+   * They are in their own group, under their own heading, because
+   * everything above is a coordinate of the PAPER and these are a choice
+   * about where to print on it — and the whole reason the four readings
+   * work is that none of them is a preference. Mixing a preference in among
+   * them would undo that at the moment it stops being obvious.
    *
-   * There is deliberately no box for the other end. The printer starts
-   * where it starts and nothing can ask it to start earlier, so a band held
-   * at the TOP would only push the artwork further from the middle — and an
-   * even border on all four sides is the stock's margin, which is a
-   * different control that already exists. What is missing without this is
-   * the case where the two ends disagree BECAUSE of the machine, and one
-   * number answers it. */
+   * 0.11.0 shipped ONE of these, at the bottom, and the argument for that
+   * was wrong in a way worth writing down: it said a band held at the top
+   * only pushes artwork further from the middle, so the only band worth
+   * having is the one that evens out a printer starting late. True of the
+   * feed axis, and it answers the wrong question — a person setting a
+   * border is not compensating for a machine, they are saying where on the
+   * label the printing goes, and the across axis has no dead band to
+   * compensate for at all. `margin_mm` is the even border on all four
+   * sides; this is the uneven one, which is the only kind a stock row
+   * cannot express. */
   const choice = el('div', 'calgroup calchoice');
-  choice.append(el('h3', null, 'What to print on'));
+  choice.append(el('h3', null, 'Where to print on it'));
   choice.append(el('p', null,
-    'Everything above says where the paper is. This says how much of it to '
-    + 'leave blank on purpose, at the bottom — which is what makes the top '
-    + 'and bottom edges match on a printer that starts a few millimetres '
-    + 'in. Leave it at nothing and labels use everything they can.'));
+    'Everything above says where the PAPER is — what the printer can reach. '
+    + 'This is the area to use inside that, one number per edge. Leave them '
+    + 'at nothing and labels use everything the printer can give them.'));
   list.append(choice);
 
-  const holdField = el('label', 'field calfield');
-  const holdHead = el('span', 'calhead');
-  holdHead.append(el('b', null, 'Keep clear at the bottom'));
-  holdField.append(holdHead);
-  const holdInput = el('input');
-  holdInput.type = 'number';
-  holdInput.step = '0.1';
-  holdInput.min = '0';
-  holdInput.inputMode = 'decimal';
-  holdInput.id = 'calHold';
-  holdInput.placeholder = 'nothing';
-  holdInput.value = state.hold;
-  holdInput.oninput = () => { state.hold = holdInput.value; };
-  holdField.append(holdInput);
+  const holdInputs = {};
+  const grid = el('div', 'calsides');
+  for (const [side, name] of CAL_SIDES) {
+    const field = el('label', 'field calfield calside');
+    const head = el('span', 'calhead');
+    head.append(el('b', null, name));
+    field.append(head);
+    const input = el('input');
+    input.type = 'number';
+    input.step = '0.1';
+    input.min = '0';
+    input.inputMode = 'decimal';
+    input.id = `calHold${side[0].toUpperCase()}${side.slice(1)}`;
+    input.placeholder = 'nothing';
+    input.value = state.holds[side] || '';
+    input.oninput = () => { state.holds[side] = input.value; };
+    field.append(input);
+    holdInputs[side] = input;
+    grid.append(field);
+  }
+  list.append(grid);
+  /* One sentence under the four rather than a note per box, and that is a
+   * measurement rather than a preference: two of the four had one, which
+   * left the grid's rows different heights and its two columns ragged — a
+   * form that looks like a mistake before anybody has typed in it. What
+   * those notes said is the same fact about all four anyway. */
+  list.append(el('p', 'muted small calsidenote',
+    'These are on top of what the printer already cannot reach: the band at '
+    + 'the leading edge on a roll that starts late, and the far edge of a '
+    + 'label wider than the print head. The designer draws the label without '
+    + 'any of it, so what you lay out is what comes back, and a check '
+    + 'label’s frame comes in to meet it.'));
+
   /* Offered only where the number it would type is known, which is after an
    * Apply. It reads the roll's OWN dead band off the stock row rather than
    * working it out from the boxes above — that arithmetic lives in
@@ -2610,24 +2594,25 @@ function calReadStep(state, wrap) {
    * printing starts. */
   const dead = Number(state.stock.dead_leading_mm) || 0;
   if (dead > 0) {
-    const match = el('button', 'btn tiny', `Match the top (${mmText(dead)})`);
+    const match = el('button', 'btn tiny', 'Even up the ends');
     match.id = 'calHoldMatch';
     match.type = 'button';
     match.setAttribute('data-tip',
       'The printer can’t reach the first ' + mmText(dead) + ' of this '
-      + 'label, so holding the same back at the bottom leaves the same '
-      + 'blank edge at each end.');
+      + 'label, so the bottom is set to that plus whatever you asked for at '
+      + 'the top — which leaves the same blank edge at each end.');
+    /* Read when it is PRESSED, not when it is drawn: the top box is one
+     * control away and this is the number it changes. A figure baked into
+     * the label would go stale the moment somebody typed in it, which on a
+     * button whose whole job is to agree with that box is worse than no
+     * figure at all. */
     match.onclick = () => {
-      holdInput.value = String(dead);
-      state.hold = holdInput.value;
+      holdInputs.trailing.value =
+        String(evenTrailing(dead, holdInputs.leading.value));
+      state.holds.trailing = holdInputs.trailing.value;
     };
-    holdField.append(match);
+    list.append(match);
   }
-  holdField.append(el('span', 'muted',
-    'The printer can print here — this is a band you are asking it not to '
-    + 'use, so ink drawn into it still prints and is reported. The designer '
-    + 'hatches it, and a check label’s frame comes in to meet it.'));
-  list.append(holdField);
 
   split.append(list);
   wrap.append(split);
@@ -2649,15 +2634,18 @@ function calReadStep(state, wrap) {
        * would be a different rectangle. */
       readings[key] = typed === '' ? null : Number(typed);
     }
-    /* The hold is the one field where an empty box and a typed 0 mean the
-     * same thing — hold nothing back — so it may become a number here,
-     * where a reading may not. */
-    const held = String(holdInput.value).trim();
+    /* A hold is the one kind of field here where an empty box and a typed
+     * 0 mean the same thing — keep nothing clear — so it may become a
+     * number, where a reading may not. */
+    const holds = {};
+    for (const [side] of CAL_SIDES) {
+      const typed = String(holdInputs[side].value).trim();
+      holds[side] = typed === '' ? null : Number(typed);
+    }
     apply.disabled = true;
     try {
       const data = await post(
-        `/api/stock/${state.stock.id}/calibration`,
-        { readings, hold: held === '' ? null : Number(held) });
+        `/api/stock/${state.stock.id}/calibration`, { readings, holds });
       await loadState(); renderPrinter(); fillPickers();
       state.stock = stockById(state.stock.id) || state.stock;
       state.message = data.sentence;
@@ -2707,18 +2695,24 @@ function calDoneStep(state, wrap, data) {
    * it — and it is not a default, because a roll somebody wants printed
    * edge to edge is a roll that should get every millimetre it has. */
   const dead = Number(state.stock.dead_leading_mm) || 0;
-  const held = Number((state.stock.calibration || {}).hold_trailing_mm) || 0;
-  if (dead > 0 && Math.abs(held - dead) > 0.05) {
+  const holds = calStoredHolds(state.stock);
+  const want = evenTrailing(dead, holds.leading);
+  const held = Number(holds.trailing) || 0;
+  if (dead > 0 && Math.abs(held - want) > 0.05) {
     wrap.append(el('p', 'lede',
       `The printer can’t reach the first ${mmText(dead)} of this label, so `
       + 'the blank edge at the top is that much deeper than the one at the '
-      + 'bottom. Holding the same back at the bottom makes them match — it '
-      + 'costs that much printable length and nothing else.'));
+      + `bottom. Keeping ${mmText(want)} clear at the bottom makes them `
+      + 'match — it costs that much printable length and nothing else.'));
     const even = el('button', 'btn wide', 'Make the blank edges match');
     even.id = 'calEven';
     even.onclick = async () => {
       even.disabled = true;
-      state.hold = String(dead);
+      /* The other three carried over rather than cleared: this press is
+       * about the two ends of the feed axis and must not quietly drop a
+       * band somebody set on the across one — which is also why the number
+       * it types is `dead` PLUS whatever is held at the top. */
+      state.holds = { ...holds, trailing: String(want) };
       try {
         const readings = {};
         for (const [key] of CAL_READINGS) {
@@ -2726,8 +2720,9 @@ function calDoneStep(state, wrap, data) {
           readings[key] = value === '' ? null : Number(value);
         }
         const answer = await post(
-          `/api/stock/${state.stock.id}/calibration`,
-          { readings, hold: dead });
+          `/api/stock/${state.stock.id}/calibration`, {
+            readings, holds: state.holds,
+          });
         await loadState(); renderPrinter(); fillPickers();
         state.stock = stockById(state.stock.id) || state.stock;
         state.message = answer.sentence;
@@ -2763,7 +2758,7 @@ function calDoneStep(state, wrap, data) {
     'Back to the four coordinates, filled in with what is stored now.');
   back.onclick = () => {
     state.readings = calStoredReadings(state.stock);
-    state.hold = held ? String(held) : '';
+    state.holds = calStoredHolds(state.stock);
     state.message = '';
     calReadStep(state, wrap);
   };
