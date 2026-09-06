@@ -594,9 +594,8 @@ class TestPanelUI(unittest.TestCase):
                        "/api/printer/feed"):
             with self.subTest(wanted=wanted):
                 self.assertIn(wanted, app)
-        for key, letter in [("left", "A"), ("right", "B"), ("top1", "C"),
-                            ("bottom1", "D"), ("top2", "E"),
-                            ("bottom2", "F")]:
+        for key, letter in [("x1", "X1"), ("x2", "X2"), ("y1", "Y1"),
+                            ("y2", "Y2")]:
             with self.subTest(reading=key):
                 self.assertIn(f"['{key}', '{letter}'", app)
 
@@ -620,64 +619,60 @@ class TestPanelUI(unittest.TestCase):
         self.assertIn("readings[key] = typed === '' ? null : Number(typed);",
                       app)
 
-    def test_a_late_start_is_read_from_the_bottom_and_says_so(self):
-        """The reading rule the pre-skip's removal left, asserted where a
-        person meets it. Nothing can print before where the printer begins,
-        so the top of a late-starting label is blank and the box for it takes
-        a 0 — a reading rather than a missing one. If the panel ever went
-        back to asking for a distance there, this is the sentence that would
-        have to change first."""
+    def test_the_top_edge_is_a_coordinate_and_zero_is_a_reading(self):
+        """The one boundary the grid has, asserted where a person meets it.
+        Nothing can print before the first row the printer lays, so a label
+        whose top edge is above that row has no scale up there — and 0 is
+        both the honest reading and the useful one, because the printable
+        area starts at the grid's own origin whatever is above it. If the
+        panel ever went back to asking for a DISTANCE there, this is the
+        sentence that would have to change first."""
         app = (PANEL / "app.js").read_text()
-        self.assertIn("It is 0 whenever the ladder", app)
-        self.assertIn("print in the blank band at the top", app)
-        # And the pre-skip is gone from the wire the wizard speaks.
-        self.assertNotIn("pre_skip", app)
+        self.assertIn("then Y1 is 0", app)
+        self.assertIn("nothing can be printed higher up than that", app)
+        # And the two things a second printed copy was for are gone from the
+        # wire the wizard speaks, along with the second print.
+        for gone in ("pre_skip", "esc_l_mm", "next.variant"):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, app)
 
-    def test_the_top_reading_is_drawn_as_the_two_cases_it_is(self):
-        """C is not one measurement with an exception, it is two procedures
-        chosen by whether the heavy bar is on the paper — and prose has to
-        give the test, the first answer and the second answer before it says
-        anything, which is what made it read as vague. So it is drawn, and
-        the drawing is asserted for the two things that made the old one
-        actively misleading: the badge points at the label's top EDGE rather
-        than spanning the blank band (a dimension line across a region means
-        "measure this", and the depth of that band is the one number the box
-        may not carry), and each panel of the figure carries the answer for
-        the case it shows."""
+    def test_the_reading_is_one_picture_and_not_two(self):
+        """0.9.1 needed a map of six read points AND a second figure for the
+        two procedures the top reading was, because it asked for an offset —
+        a distance and a direction, which is not a thing drawn on a label.
+        Four coordinates on a grid need neither: the label lies on the grid
+        and its edges are read off it, so the case that used to need its own
+        figure is drawn as the ordinary thing it is."""
         app = (PANEL / "app.js").read_text()
-        self.assertIn("function calTopCases()", app)
-        self.assertIn("'Bar on the label', '\\u2192 type 0'", app)
-        self.assertIn("'\\u2192 read the top edge'", app)
-        # The arrow that used to run down the blank band from the label's
-        # top edge to the bar. Its two ends are what named it: y1 at the
-        # edge, y2 at the datum row the ladder starts on.
-        self.assertNotIn("y1: 14, x2: x + 34, y2: 30", app)
-        # And it is a leader onto the edge now, the same mark A and B use.
-        self.assertIn("x1: x + 38, y1: 14, x2: x + 38, y2: 11", app)
+        self.assertNotIn("calTopCases", app)
+        self.assertIn("function calDrawing()", app)
+        # The label overlaps the top of the grid, which is the common roll —
+        # a picture that drew it tidily inside would show the rarer case and
+        # leave the ordinary one to prose.
+        self.assertIn("'no ink here'", app)
 
-    def test_the_wizard_says_which_way_up_and_which_label(self):
-        """The three things every one of the six readings needs and none of
+    def test_the_wizard_says_which_way_up_and_which_scale(self):
+        """The three things every one of the four readings needs and none of
         them used to say: which end of a label is its top, which of the two
-        you are holding, and what the marks are a scale of. A person cannot
+        scales is which, and what the marks are a scale of. A person cannot
         work any of them out from the paper — the first is only knowable from
-        the fact that the ladder counts away from the leading edge — and six
-        readings taken the wrong way up are six readings that derive a
-        confident wrong answer."""
+        the fact that the scale counts away from the leading edge — and four
+        readings taken the wrong way up derive a confident wrong answer."""
         app = (PANEL / "app.js").read_text()
         self.assertIn("const CAL_HOLDING = [", app)
-        for wanted in ("Which way up", "Which label", "What the numbers are",
-                       "counts downwards", "Millimetres"):
+        for wanted in ("Which way up", "Which scale is which",
+                       "What the numbers are", "count downwards",
+                       "Millimetres"):
             with self.subTest(wanted=wanted):
                 self.assertIn(wanted, app)
 
-    def test_the_six_readings_are_grouped_by_what_you_pick_up(self):
-        """One strip across the paper, then one label, then the other. A flat
-        list of six asks somebody to hold both labels at once, and reads as
-        six unrelated questions rather than as three things to do."""
+    def test_the_four_readings_are_grouped_by_the_scale_they_come_off(self):
+        """One pair across the label, one pair down it — which is also the
+        two scales, so the grouping is what says which one each pair is read
+        from."""
         app = (PANEL / "app.js").read_text()
         self.assertIn("const CAL_GROUPS = [", app)
-        for keys in ("['left', 'right']", "['top1', 'bottom1']",
-                     "['top2', 'bottom2']"):
+        for keys in ("['x1', 'x2']", "['y1', 'y2']"):
             with self.subTest(group=keys):
                 self.assertIn(keys, app)
         # The instruction is set in ink and the aside under it is not, so

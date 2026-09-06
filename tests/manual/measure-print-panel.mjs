@@ -272,7 +272,7 @@ const lineUpWizard = async (p, name, width) => {
     if (!svg) out.push('there is no drawing on the reading step');
     else if (svg.getBoundingClientRect().height < 60)
       out.push('the drawing is drawn but has no height');
-    for (const letter of ['A', 'B', 'C', 'D', 'E', 'F']) {
+    for (const letter of ['X1', 'X2', 'Y1', 'Y2']) {
       const input = document.getElementById(`cal${letter}`);
       if (!input) { out.push(`reading ${letter} has no box`); continue; }
       const box = input.getBoundingClientRect();
@@ -293,22 +293,22 @@ const lineUpWizard = async (p, name, width) => {
   }, width);
   for (const bad of shape) problems.push(`${name}: ${bad}`);
 
-  /* The owner's own roll, in the reading rule the pre-skip's removal left:
-     both tops 0 (the ladder's 0 and its heavy bar with blank label above
-     them, which is what a late start looks like) and both bottoms 27 of a
-     31.75mm label, which is the 4.7mm dead zone read from the end that has
-     ink on it. B is blank on purpose: a label wider than the across band has
-     nothing to read there, and an empty box has to reach the server as null
-     rather than as the zero `Number('')` would make it. */
+  /* The owner's own roll, as coordinates on the grid: the label's top edge
+     is above the grid — the printer starts 4.7mm after the die cut, so
+     there is no scale up there to read — which is Y1 = 0, and its bottom
+     edge falls at 27 of a 31.75mm label. That is the same 4.7mm, derived
+     rather than asked for. X2 is blank on purpose: a label wider than the
+     print head has nothing printed at its right edge, and an empty box has
+     to reach the server as null rather than as the zero `Number('')` would
+     make it. */
   const apply = await p.$('#calApply');
   const boxes = await Promise.all(
-    ['calA', 'calC', 'calD', 'calE', 'calF'].map((id) => p.$(`#${id}`)));
+    ['calX1', 'calY1', 'calY2'].map((id) => p.$(`#${id}`)));
   if (!apply || boxes.some((box) => !box))
     return problems.push(`${name}: the reading step is missing a box or the `
       + 'Apply, so there is nothing to drive');
   for (const [box, value] of [[boxes[0], '0'], [boxes[1], '0'],
-                              [boxes[2], '27'], [boxes[3], '0'],
-                              [boxes[4], '27']])
+                              [boxes[2], '27']])
     await box.fill(value);
   await apply.click();
   await p.waitForTimeout(1200);
@@ -324,9 +324,9 @@ const lineUpWizard = async (p, name, width) => {
     problems.push(`${name}: Apply left the wizard on "${done.step}"`);
   if (!done.sentence)
     problems.push(`${name}: nothing said what the readings meant`);
-  /* And it has to be the RIGHT answer: 0 at the top with 27 at the bottom of
-     a 31.75mm label is a 4.75mm dead zone, which is the owner's own roll read
-     to the whole millimetre a printed ladder actually offers — 4.8 to the one
+  /* And it has to be the RIGHT answer: Y1 = 0 with Y2 = 27 on a 31.75mm
+     label is a 4.75mm dead zone, which is the owner's own roll read to the
+     whole millimetre a printed scale actually offers — 4.8 to the one
      decimal place every sentence here uses. A wizard that stored something
      else would still render a sentence. */
   else if (!/can.t put ink on the first 4\.8mm/i.test(done.sentence))

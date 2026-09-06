@@ -101,89 +101,69 @@ feeds *forward*, and the printer will not reverse paper on request. What BRUH
 Print can do is know where the printable part starts and lay labels out inside
 it.
 
-There are three ways a roll can be wrong and they look identical from a
-photograph, so lining up prints **two** labels and reads six numbers off them.
+**The question is where the printable area is, so the calibration prints a
+numbered grid over it and you read off where the label sits.** Four
+coordinates, one rectangle, no signs.
 
-1. Press **Line up this roll** on the bay that holds it, then **Print**.
-2. Type what you see. Each box says what to look for, and the drawings beside
-   them show where on the label to look.
+1. Press **Line up this roll** on the bay that holds it, then **Print**. One
+   label comes out with a grid on it — drawn to the full width of the print
+   head and run on past the end of the label, so some of the ink lands on the
+   backing and on the next label. That overrun is the instrument.
+2. Type where the label's four edges fall on the grid. The drawing beside the
+   boxes shows which edge is which.
 3. Press **Apply**. BRUH Print says what your printer does with this roll, in
    one sentence.
 4. Press **Print a check label**. It draws a frame around everything the roll
-   can print on, with "Should reach every edge" inside it. A complete frame
-   means the answer was right; a missing side says which way it is out, and you
-   run the wizard again.
+   can print on. A complete frame means the answer was right; a missing side
+   says which way it is out, and you run the wizard again.
 
-**Before you read anything, three things about the two labels in your hand.**
-None of them is guessable from the paper, and every one of the six readings is
+**Before you read anything, three things about the label in your hand.** None
+of them is guessable from the paper, and every one of the four readings is
 meaningless without all three.
 
-- **Which way up.** The ladder counts *downwards*, so the end with the small
-  numbers is the top — and it is the end that came out of the printer first.
-- **Which label.** One has a `1` in a little box and the other a `2`. That is
-  the only difference between them.
-- **What the numbers are.** Millimetres. The ladder down the label has a number
-  every 5mm and a tick every 1mm, so where an edge falls between two numbers
-  you count the ticks: an edge two ticks past the `25` reads `27`. Nothing here
-  is measured with a ruler — every number is read against a scale printed on
-  the same label, which is the only kind of measurement that cannot be wrong
-  about its own scale.
+- **Which way up.** The plain columns count *downwards*, so the end with the
+  small numbers is the top — and it is the end that came out of the printer
+  first.
+- **Which scale is which.** The white numbers on the black strips run
+  **across** the label; those are X. The black numbers in the plain columns
+  run **down** it; those are Y.
+- **What the numbers are.** Millimetres, counting from the corner the printer
+  starts at. Every scale has a number every 5mm and a tick every 1mm, so where
+  an edge falls between two numbers you count the ticks: an edge two ticks past
+  the `25` reads `27`.
 
-**The six numbers**, in the order you physically pick things up: the strip
-across the paper, then one label, then the other.
-
-*Where the paper sits under the print head* — both off the **black strip**,
-white numbers on black, running across the label. There may be two strips down
-the label; they say the same thing.
+**The four numbers.**
 
 | | What to read |
 | --- | --- |
-| **A** | The white number where the strip **starts**, at the label's left-hand edge. Its numbers count up left to right; if they count down, turn the label round. The strip is a scale across the whole 672-dot print head, so the part of it that misses the paper is the part telling you where the paper sits. |
-| **B** | The white number where the strip **stops**, at the right-hand edge. Leave it empty if the strip stops short of the edge — the label is wider than the print head, so there is nothing printed out there to read. Everything else still works without it. |
+| **X1** | The number on a black strip where the label's **left-hand** edge falls. The strip's numbers count up from left to right; if they count down, turn the label round. It is a scale across the whole 672-dot print head, so the part of it that misses the paper is the part telling you where the paper sits. |
+| **X2** | The number on that same strip where the **right-hand** edge falls. Leave it empty if the strip stops short of the edge — the label is wider than the print head, so there is nothing printed out there to read. Everything else still works without it. |
+| **Y1** | The number in a plain column where the label's **top** edge falls — **and 0 if the top edge is above the grid**, which is what it looks like when the grid's own `0` is printed with blank label above it. |
+| **Y2** | The number in that same column where the **bottom** edge falls. The grid runs on past the end of the label, so this edge is always on it. |
 
-*Label 1 — where the printing starts and stops.* `C` is the one reading that is
-two procedures rather than a measurement with an exception, and which one you
-are in is settled by looking for **the heavy bar**: the one thick line, with a
-`0` printed beside it.
+**Why `Y1` is 0 so often, and why that costs nothing.** Nothing can print
+before the first row the printer lays, so a printer that starts *after* the die
+cut has the label's leading edge above the grid entirely — there is no scale up
+there, because there is no ink up there. `0` is both the honest reading and the
+useful one: the printable area starts at the first row that can carry ink,
+which is the grid's own `0`, and labels are laid out from there. How much of
+the label is lost above it is `catalogued length − (Y2 − Y1)`, worked out and
+reported rather than asked for.
 
-| | What to read |
-| --- | --- |
-| **C** | **The bar is on the label** → type `0`, however much blank label sits above it. **It is not** — the smallest number you can see is 5 or more → the printing began before the label did, so read the ladder where the top edge crosses it and type that. |
-| **D** | The ladder reading at the label's **bottom** edge: the last number you can see, plus one for every tick between it and the edge. If the ladder stops short of the edge, type the last number that is printed — that is a real reading, not a missing one. |
+The other sign is the directly measurable one. A printer that begins *before*
+the leading die cut has its first rows land on the paper ahead, so the die cut
+falls partway down the grid and `Y1` is the number it falls at — the whole
+label is printable, and every job now feeds that far before it prints. Both
+edges are then on the grid, so `Y2 − Y1` is the label's real length, measured
+rather than taken from the catalog.
 
-*Label 2 — the same two readings*, on the label with a `2` in its box. The
-wizard fills them in from `C` and `D` and stops as soon as you type in them: on
-most rolls they really are identical, and the one case where they are not is a
-printer that gets only the first label of a job wrong.
-
-| | What to read |
-| --- | --- |
-| **E** | Exactly as `C`, on that label. |
-| **F** | Exactly as `D`, on that label. |
-
-**Why a late start is read from the BOTTOM, and this is the whole shape of it.**
-Nothing can print before the point where the printer begins. So a printer that
-starts late leaves a blank band at the top of the label with the ladder's own
-`0` and its heavy bar at the *bottom* of that band — and there is nothing
-inside the band to measure the band with. `C` is therefore `0`, which is a
-reading rather than a missing one: it says *the printer began at or after the
-die cut*. The size comes from the far end, where the trailing die cut falls on
-the ladder short of the label's own catalogued length, and that shortfall is
-exactly how late the printing started.
-
-The other sign is the one that is directly measurable. A printer that begins
-*before* the leading die cut has its first rows land on the paper ahead, so the
-die cut cuts the ladder part-way down and the number it cuts it at **is** the
-distance — that is `C` being something other than zero. Both die cuts are then
-on the ladder, so `D − C` is the label's real length, measured rather than
-taken from the catalog. On a late roll no length can be measured at all, and
-the check label is what confirms it instead.
-
-An earlier release fed 5mm before the first row on the theory that it made a
-negative start measurable. It did the opposite: the skip only pushes the
-ladder's `0` further down a band that is blank either way, so both signs read
-`0` at the top and the one number that separated them was the one nothing
-printed. The calibration job now feeds nothing.
+**What this deliberately stopped measuring.** Two earlier hypotheses — a first
+label of a job that starts later than the rest, and a printer not re-syncing on
+the sense hole at all — each needed two printed copies compared against one
+another, and neither has ever been confirmed on a real printer. Chasing them is
+what made the wizard ask six numbers across two labels with two of them read
+from the opposite end of the label to the thing they were about. A roll lined
+up under 0.9.x keeps whatever it measured; nothing derives them any more.
 
 **The three outcomes.**
 

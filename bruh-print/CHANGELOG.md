@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.10.0
+
+**The calibration was asking for an offset, and an offset is not a thing
+drawn on a label.** That is the failure under every version of this feature,
+and it survived two rewrites that were each about the right thing. 0.6.0 to
+0.8.x met a misaligned label by adding a box to type a millimetre into until
+there were four, with four signs. 0.9.0 replaced them with one measurement.
+0.9.1 rewrote the instructions for reading it. None of them changed the shape
+of the question, which was always: *how far is the first row the printer lays
+from the die cut, and which way?*
+
+Nothing on the label answers that. It has to be **inferred** — from which end
+of a ladder got cut, from whether a heavy bar is on the paper, from one copy
+compared against another — and the direction is exactly the part nobody can
+see. Hence three hypotheses that look identical from a photograph, six
+readings, two printed labels, and two of the six read from the opposite end of
+the label to the thing they were about. No amount of better wording could have
+reached that: the instructions were vague because the question was.
+
+**A rectangle IS drawn on a label.** So the calibration now prints a numbered
+grid over the whole area the printer can reach, the label lies on it, and you
+read off where its four edges fall:
+
+| | |
+| --- | --- |
+| **X1**, **X2** | where the left and right edges fall on the scale running **across** |
+| **Y1**, **Y2** | where the top and bottom edges fall on the scale running **down** |
+
+Four numbers, one shape, no signs — a coordinate has none. Where the printing
+starts is decided by which side of the grid's own zero the top edge landed on,
+not by anything you have to work out.
+
+- **The sheet is longer than the label, and the overrun is the instrument.** A
+  sheet exactly one label long begins at the die cut, which is what made the
+  leading edge unreadable in the first place. Running on past the trailing die
+  cut is what puts it on a scale.
+- **`Y1` is 0 whenever the label's top edge is above the grid**, which is the
+  common roll — the printer starts a few millimetres after the die cut, so
+  there is no scale up there because there is no ink up there. That is not an
+  exception to be explained; it is what reading a coordinate off a scale does
+  at the end of the scale, and it is the useful answer too, because the
+  printable area starts at the first row that can carry ink. How much of the
+  label is lost above it is worked out and reported rather than asked for.
+- **The across scale repeats every 15mm down the sheet** instead of twice and
+  then every 30. An across coordinate is read *at* a vertical edge, and a 4"
+  shipping label had its whole middle with no across scale on it at all.
+- **One picture instead of two.** The map of read points and the separate
+  figure for the two procedures the top reading used to be are one drawing of
+  the label lying on the grid. The label is drawn as an outline so the grid —
+  and the black strip the across readings come off — runs straight through it.
+- **Two things it deliberately stops measuring.** A first label of a job that
+  starts later than the rest, and a printer not re-syncing on the sense hole at
+  all: both needed two printed copies compared against each other, neither has
+  ever been confirmed on a real printer, and chasing them is what made the
+  wizard ask six numbers across two labels. A roll lined up under 0.9.x keeps
+  whatever it measured.
+
+**Nothing about printing changed.** The stored calibration and the whole send
+path are byte-for-byte what 0.9.1 shipped — which is the measure of how much
+of this was the question rather than the answer.
+
 ## 0.9.1
 
 **The wizard told you why before it told you what to look at.** 0.9.0 replaced

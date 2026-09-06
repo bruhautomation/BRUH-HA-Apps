@@ -826,26 +826,29 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
    there. Heavier than `.calarrow` because it is drawn ON a rule the label
    already has — at .9 it is a box outline in a different colour, which is
    not a mark. */
-.caledge { stroke: var(--accent); stroke-width: 1.8; }
-/* What that edge reads, on the panel that is read there. In the accent so it
-   is plainly the mark's own answer and not another number on the ladder. */
-.calread { fill: var(--accent); font-size: 4.6px; font-weight: 700;
-  text-anchor: middle; }
+/* The two edges Y1 and Y2 are read at, drawn on the label rather than beside
+   it: a coordinate is read AT an edge, and a dimension line floating in a
+   region means "measure this region", which is the mark 0.9.1 had to delete
+   from this drawing once already. */
+.caledge { stroke: var(--accent); stroke-width: 1.4; }
 .calt { fill: var(--ink-2); font-size: 5px; font-weight: 700;
   text-anchor: middle; }
 .calnum { fill: var(--ink-2); font-size: 4.5px; text-anchor: middle; }
 .calb { fill: var(--accent); }
 .calbt { fill: var(--accent-ink); font-size: 5.5px; font-weight: 800;
   text-anchor: middle; }
-/* The caption under each panel of the two-case figure, which is the answer
-   rather than a name — so it is set in ink where `.calt` labels a part of a
-   drawing in grey. */
-.calcap { fill: var(--ink); font-size: 4.8px; font-weight: 700;
-  text-anchor: middle; }
-/* Narrower than the map above it: two labels side by side with a caption
-   each is a wide, short figure, and stretched to the column it becomes a
-   band of whitespace with a drawing in the middle. */
-.calcases { max-width: 340px; margin: 4px 0 8px; }
+/* The grid itself: the whole area the printer can reach, and the one thing
+   on the drawing that is a REGION rather than a mark. Its rules are the
+   faintest thing in the picture on purpose — they say "this is a coordinate
+   system" and nothing more, and a grid drawn at the weight of the label's
+   own edges would be a second rectangle competing with the one being read. */
+.calgrid { fill: var(--panel-2); stroke: var(--ink-3); stroke-width: .7; }
+.calrule { stroke: var(--line); stroke-width: .5; }
+/* The paper, drawn as an OUTLINE so the grid runs through it. A filled
+   label hides the marks the four readings are taken from — and the black
+   strip, which is the one thing X1 and X2 are read against, would be
+   visible only on the parts of the sheet that miss the paper. */
+.calpaper { fill: none; stroke: var(--ink); stroke-width: 1.1; }
 
 @media (min-width: 640px) {
   .calsplit { grid-template-columns: minmax(0, 44%) minmax(0, 1fr);
