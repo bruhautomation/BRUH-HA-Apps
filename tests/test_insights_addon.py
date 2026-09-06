@@ -15,6 +15,7 @@ import datetime
 import importlib
 import json
 import os
+import shutil
 import stat
 import sys
 import tempfile
@@ -221,14 +222,16 @@ class TestClaudeClient(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self._old = (engine.SECRETS_DIR, engine.AUTH_FILE,
-                     engine.CLAUDE_HOME)
+                     engine.CLAUDE_HOME, engine.AUTH_BACKUP_FILE)
         engine.SECRETS_DIR = self.tmp.name
         engine.AUTH_FILE = os.path.join(self.tmp.name, "claude_auth.json")
         engine.CLAUDE_HOME = os.path.join(self.tmp.name, "home")
+        engine.AUTH_BACKUP_FILE = os.path.join(
+            self.tmp.name, "auth_backup", ".credentials.json")
 
     def tearDown(self):
         (engine.SECRETS_DIR, engine.AUTH_FILE,
-         engine.CLAUDE_HOME) = self._old
+         engine.CLAUDE_HOME, engine.AUTH_BACKUP_FILE) = self._old
         self.tmp.cleanup()
 
     def _write_cli_credentials(self, token="sk-ant-oat01-" + "x" * 30):
@@ -368,13 +371,101 @@ class TestClaudeClient(unittest.TestCase):
 
     def test_setup_flow_credentials_file_completes_working_phase(self):
         """Some CLI versions save the credential without printing a token —
-        the appearing credentials file must count as sign-in success."""
+        the appearing credentials file must count as sign-in success.
+
+        The fingerprint is taken first and the file written after, which is
+        the order `start()` and a real exchange happen in. Leaving it to a
+        fresh flow's default would pass without ever exercising it.
+        """
         flow = engine.SetupTokenFlow()
+        flow._cred_before = engine._credential_fingerprint()
         flow.phase = "working"
         flow._code_from = 0
         self._write_cli_credentials()
         flow._scan("some output without a token or retry prompt")
         self.assertEqual(flow.phase, "done")
+
+    def test_a_credential_that_was_already_there_is_not_a_sign_in(self):
+        """The flow may only call a credential success if IT produced one.
+
+        `_cli_credentials_present` answers "can the CLI still use this file",
+        which is right for `get_auth` and wrong here — a credential sitting
+        on disk before the flow ran answers it too. Since a lapsed access
+        token beside a refresh token counts as usable, a stale file (renewed
+        from a refresh token the account has since revoked) made the flow
+        report success the instant a code was submitted, having exchanged
+        nothing: "Connected!", then every real run 401s, and every retry
+        re-reads the same file and says Connected again. A sign-in that
+        cannot be completed because it insists it already was.
+        """
+        # The exact state 1.47.0 made "usable": an access token that lapsed
+        # weeks ago, beside a refresh token. Whether the account has since
+        # revoked that refresh token is not knowable from the file — which
+        # is why `validate_auth` exists and why this flow may not guess.
+        cli = Path(engine.CLAUDE_HOME) / ".claude"
+        cli.mkdir(parents=True, exist_ok=True)
+        stale = cli / ".credentials.json"
+        stale.write_text(json.dumps({"claudeAiOauth": {
+            "accessToken": "sk-ant-oat01-" + "x" * 30,
+            "refreshToken": "sk-ant-ort01-" + "r" * 30,
+            "expiresAt": int((time.time() - 14 * 86400) * 1000)}}))
+        # Backdated so the fingerprint below cannot coincide with the one
+        # the rewrite takes, on a filesystem with a coarse mtime.
+        os.utime(stale, (1, 1))
+        self.assertTrue(engine._cli_credentials_present(),
+                        "precondition: the stale file reads as usable")
+
+        flow = engine.SetupTokenFlow()
+        flow._cred_before = engine._credential_fingerprint()
+        flow.phase = "working"
+        flow._code_from = 0
+        flow._code_sent_at = time.time()
+
+        flow._scan("some output without a token or retry prompt")
+        self.assertEqual(flow.phase, "working",
+                         "a file that was already there is not this sign-in")
+
+        # ...and the same flow still completes the moment the CLI really
+        # writes one, which is the property the check may not cost.
+        self._write_cli_credentials(token="sk-ant-oat01-" + "n" * 30)
+        flow._scan("some output without a token or retry prompt")
+        self.assertEqual(flow.phase, "done")
+
+    def test_signing_out_reaches_the_backup_the_next_boot_restores_from(self):
+        """Sign out has to reach every store, and there are four.
+
+        run.sh keeps the last known good copy of the CLI credential in
+        /data and copies it back whenever the live file has gone. So a sign
+        out that clears the three stores `get_auth` reads is undone by the
+        next restart — the dead credential returns, `get_auth` reports it as
+        a login again, and the one action left to somebody locked out (sign
+        out, restart, sign in) is the one that cannot work.
+        """
+        os.makedirs(os.path.dirname(engine.AUTH_BACKUP_FILE), exist_ok=True)
+        self._write_cli_credentials()
+        live = os.path.join(engine.CLAUDE_HOME, ".claude", ".credentials.json")
+        shutil.copy(live, engine.AUTH_BACKUP_FILE)
+        self.assertIsNotNone(engine.get_auth())
+
+        engine.clear_auth()
+
+        self.assertIsNone(engine.get_auth())
+        self.assertFalse(os.path.exists(engine.AUTH_BACKUP_FILE),
+                         "the copy run.sh restores from outlived the sign-out")
+
+    def test_the_backup_path_is_the_one_run_sh_writes(self):
+        """One path, spelled in a shell script and in Python. Nothing can
+        drive run.sh's `auth_backup_dir` from here, so the honest check is
+        that the two strings still name the same directory — the failure
+        this guards against is a rename on one side only, which is silent."""
+        root = Path(__file__).resolve().parents[1] / "brain"
+        run_sh = (root / "run.sh").read_text()
+        engine_py = (root / "panel" / "engine.py").read_text()
+        self.assertIn('auth_backup_dir="/data/.brain_auth_backup"', run_sh)
+        # The default in the source, not the attribute — setUp redirects that
+        # one into a tmpdir, so reading it here would test the harness.
+        self.assertIn('"BRAIN_AUTH_BACKUP", "/data/.brain_auth_backup/.credentials.json"',
+                      engine_py)
 
     def test_setup_flow_status_masks_token_in_detail(self):
         flow = engine.SetupTokenFlow()

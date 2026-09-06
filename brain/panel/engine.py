@@ -58,6 +58,15 @@ AUTH_FILE = os.path.join(SECRETS_DIR, "claude_auth.json")
 # ever READS this file — logout must never touch it.
 SHARED_AUTH_FILE = os.environ.get(
     "BRAIN_SHARED_AUTH", "/config/.brain/secrets/claude_auth.json")
+# run.sh keeps the last known good copy of the CLI's own credential here and
+# restores it whenever the live file has vanished. That is a fourth store in
+# everything but name: it is not read to authenticate anything, but it is
+# what the next boot puts back, so a sign-out that does not reach it is a
+# sign-out the next restart undoes. The path is spelled here and in run.sh's
+# `auth_backup_dir`, and `test_the_backup_path_is_the_one_run_sh_writes`
+# holds the two together — a rename on one side only is otherwise silent.
+AUTH_BACKUP_FILE = os.environ.get(
+    "BRAIN_AUTH_BACKUP", "/data/.brain_auth_backup/.credentials.json")
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|[\r\x08]")
 URL_RE = re.compile(r"https://[^\s\"'\x1b]+")
@@ -205,6 +214,21 @@ def _cli_credentials_present() -> bool:
         return False
 
 
+def _credential_fingerprint() -> tuple | None:
+    """Identity of the CLI's credential file — (mtime_ns, size) — or None.
+
+    Deliberately not its contents. This value is only ever compared against
+    another taken from the same file, to answer "has the CLI rewritten this
+    since we started"; reading a credential into memory to answer a question
+    about a timestamp buys a copy of the secret for nothing.
+    """
+    try:
+        st = os.stat(_credentials_path())
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
 def _read_shared_auth() -> dict | None:
     """The credential the terminal shares via `ha login`.
 
@@ -297,7 +321,7 @@ def clear_auth(include_shared: bool = False) -> None:
     been published from the terminal by somebody else — and it is the one
     credential of the three that other add-ons read.
     """
-    paths = [AUTH_FILE, _credentials_path()]
+    paths = [AUTH_FILE, _credentials_path(), AUTH_BACKUP_FILE]
     if include_shared:
         paths.append(SHARED_AUTH_FILE)
     for path in paths:
@@ -886,6 +910,11 @@ class SetupTokenFlow:
         self._code_from = 0       # scan offset: only look for errors after the code
         self._code_sent_at = 0.0
         self._nudges = 0
+        # The credential file as it looked before this flow ran. Written once
+        # in start(), before the reader thread exists, and never mutated
+        # after — so the reader may read it without the lock, and the
+        # `finally` block (which already holds it) cannot deadlock on it.
+        self._cred_before = None
 
     # -- public API --------------------------------------------------------
 
@@ -919,6 +948,7 @@ class SetupTokenFlow:
             self._reset_locked()
             self.phase = "starting"
             self._deadline = time.time() + 600
+            self._cred_before = _credential_fingerprint()
         try:
             leader, follower = pty.openpty()
             # ultra-wide terminal so the OAuth URL is never hard-wrapped
@@ -987,6 +1017,28 @@ class SetupTokenFlow:
 
     # -- internals ---------------------------------------------------------
 
+    def _signed_in_here(self) -> bool:
+        """True when the CLI wrote a usable credential *during this flow*.
+
+        `_cli_credentials_present` answers "can the CLI still use the file
+        on disk", which is the right question for `get_auth` and the wrong
+        one here. A credential that was already there answers it too — so a
+        stale file (an access token lapsed weeks ago beside a refresh token
+        the account has since revoked) made this flow report success the
+        instant a code was submitted, having exchanged nothing. The panel
+        said "Connected!", `get_auth` went on returning that same dead file,
+        and every real Claude run 401'd: a sign-in that cannot be completed
+        because it claims to have completed already, and one no amount of
+        retrying clears, because each retry re-reads the file that caused it.
+
+        A successful exchange REWRITES that file, so the honest question is
+        whether it has changed since we started. The presence test stays in
+        front of it: a file deleted or corrupted mid-flow has changed too,
+        and a change is only success when what is there now is usable.
+        """
+        return _cli_credentials_present() and (
+            _credential_fingerprint() != self._cred_before)
+
     def _reader(self) -> None:
         fd = self._fd
         proc = self._proc
@@ -1023,8 +1075,8 @@ class SetupTokenFlow:
                 elapsed = time.time() - sent_at
                 # some CLI versions save the credential without printing the
                 # token — the credentials file appearing IS success
-                if _cli_credentials_present():
-                    log.info("setup-token: credentials file detected — success")
+                if self._signed_in_here():
+                    log.info("setup-token: credentials file written — success")
                     with self._lock:
                         self.phase = "done"
                     break
@@ -1062,7 +1114,7 @@ class SetupTokenFlow:
                 if self.phase not in ("done", "idle"):
                     if self.phase == "error":
                         pass
-                    elif OAUTH_TOKEN_RE.search(buf) or _cli_credentials_present():
+                    elif OAUTH_TOKEN_RE.search(buf) or self._signed_in_here():
                         self.phase = "done"
                     else:
                         self.phase = "error"
@@ -1102,7 +1154,7 @@ class SetupTokenFlow:
         if phase == "working":
             # success may arrive as a saved credentials file instead of a
             # token printed to the terminal
-            if _cli_credentials_present():
+            if self._signed_in_here():
                 with self._lock:
                     self.phase = "done"
                 return

@@ -2,6 +2,47 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.47.1
+
+1.47.0 loosened what counts as a usable CLI credential, correctly: a lapsed
+`accessToken` beside a `refreshToken` is one `claude` run away from a live
+one, and reading it as dead locked the panel out. That answer is right for
+`get_auth`. It was then read by two things asking a *different* question,
+and between them they turned a stale file into a sign-in nobody could
+finish.
+
+### Fixed
+
+- **A credential that was already there is not the sign-in you just did**
+  (`panel/engine.py`). The guided flow took `_cli_credentials_present()` as
+  its success signal in three places — the reader's per-tick check, `_scan`,
+  and the settle in `finally`. That function answers "can the CLI still use
+  the file on disk", which a *stale* file answers too as of 1.47.0. So on
+  any install carrying one — an access token lapsed weeks ago beside a
+  refresh token the account has since revoked — the flow went to `done` on
+  the first tick after a code was submitted, having exchanged nothing: the
+  panel said **Connected! 🎉**, `get_auth` went on serving that same dead
+  file, and every real Claude run 401'd. Retrying could not clear it,
+  because each retry re-read the file that caused it. A sign-in that cannot
+  be completed because it insists it already was. The flow now fingerprints
+  the credential file in `start()` and requires it to have **changed** — a
+  successful exchange rewrites it — so the question it asks is "did *this*
+  flow produce a credential" rather than "is there one".
+- **Signing out has to reach every store, and there are four**
+  (`engine.clear_auth`). `run.sh` keeps the last known good copy of the CLI
+  credential in `/data/.brain_auth_backup` and copies it back whenever the
+  live file has gone; 1.47.0 changed that restore from *discard a lapsed
+  backup* to *restore anything with a refresh token*, which is right on its
+  own. But `clear_auth` only ever cleared the three stores `get_auth`
+  reads, so signing out and restarting — the one recovery anybody locked
+  out will try, and the one the add-on's own docs point at — put the dead
+  credential straight back. It is cleared with the others now.
+
+Neither is a revert: an expired access token beside a live refresh token is
+still a login, and the backup is still restored. What changed is that two
+places asking "has somebody just signed in" and "is this credential gone"
+stopped answering with "is there a file".
+
 ## 1.47.0
 
 **No new capability, and that is the release.** The checks design page has
