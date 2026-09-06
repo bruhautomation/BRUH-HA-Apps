@@ -1449,63 +1449,55 @@ class TestWhereThePaperSitsUnderTheHead(CalibrationCase):
 
 
 class TestTheCalibrationPrint(CalibrationCase):
-    """The two labels a person reads, and what the route reports sending.
+    """One grid, longer than the label, and what the route reports sending.
 
     The ruler cannot do this job and neither could the 0.7.0 calibration
     label: both are drawn to the stock's own sheet, which on a 0.56" wrap is
     168 dots, so every mark they make is inside the very thing whose
-    position is in question. This one is drawn to the whole head.
+    position is in question. This one is drawn to the whole head — and
+    further down the roll than one label, which is what puts the trailing
+    die cut on a scale instead of leaving it to be inferred.
     """
 
-    async def test_it_prints_two_labels_and_says_what_it_sent(self):
-        """Hypothesis C divides by the budget that went out, so a report
-        that left it out would leave a drift meaning nothing — it is the
-        distance the printer fed when it never found a hole."""
+    async def test_it_prints_one_sheet_longer_than_the_label(self):
+        """The overrun IS the instrument. A sheet exactly one label long
+        starts at the die cut and ends at the next one, so a printer that
+        starts late has the label's own top edge above every mark on it —
+        which is the reading 0.9.x could not take and spent three
+        hypotheses inferring."""
         await self.loaded()
         status, body = await self.post("/api/printer/calibrate", {})
         self.assertEqual(200, status, body)
-        self.assertEqual(2, body["printed"])
-        self.assertEqual(2, body["copies"])
+        self.assertEqual(1, body["printed"])
         self.assertEqual("left", body["side"])
-        self.assertEqual("plain", body["variant"])
-        # 375 lines plus 25%, in millimetres. No pre-skip term.
-        self.assertAlmostEqual(
-            protocol.budget_dots(375, None, 0) / 300 * 25.4,
-            body["esc_l_mm"], places=1)
+        self.assertAlmostEqual(31.75 + server.CAL_OVERRUN_MM,
+                               body["sheet_mm"], places=1)
+        self.assertGreater(body["sheet_mm"], 31.75,
+                           "a sheet one label long cannot show the far edge")
+        # The two-print vocabulary is gone from the wire with the second
+        # print: there is one job, one grid and one answer.
+        self.assertNotIn("variant", body)
+        self.assertNotIn("esc_l_mm", body)
 
-    async def test_the_pre_skip_is_gone_from_the_wire_and_from_the_report(self):
-        """It was added to make a NEGATIVE start measurable and it made the
-        reading it was added for impossible instead: nothing can print
-        before where the printer begins, so a late start leaves a blank band
-        at the top with the ladder's 0 at the bottom of it — and feeding 5mm
-        first only pushes that 0 further down. It also lengthened the sheet
-        past one label, which lands copy 1's tail on copy 2's leading edge,
-        where `top2` is read."""
-        await self.loaded()
-        await self.post("/api/printer/calibrate", {})
-        status, body = await self.post("/api/printer/calibrate", {})
-        self.assertNotIn("pre_skip_mm", body)
-        self.assertEqual([], self.skips(self.sent[-1]),
-                         "the calibration job feeds before its first row")
-
-    async def test_the_two_copies_carry_different_ink(self):
-        """Which is the whole reason a job is a list of pages: copy 2 is the
-        entire evidence for the hypothesis that only the first label of a
-        job is wrong, and telling the two apart by the order somebody picked
-        them up is not evidence."""
+    async def test_it_is_one_page_and_not_two(self):
+        """A second copy existed to be compared against the first, and both
+        things that comparison could see needed two printed labels to say
+        anything. Neither has ever been confirmed on a real printer, and
+        chasing them is what made the wizard ask six numbers across two
+        sheets with two of them read from the opposite end."""
         await self.loaded()
         await self.post("/api/printer/calibrate", {})
         payload = self.sent[-1]
-        self.assertEqual(1, payload.count(protocol.short_form_feed()))
+        self.assertEqual(0, payload.count(protocol.short_form_feed()),
+                         "a short feed between copies means two pages")
         self.assertTrue(payload.endswith(protocol.form_feed()))
-        halves = payload.split(protocol.short_form_feed())
-        self.assertNotEqual(halves[0][-2000:], halves[1][-2000:])
 
-    async def test_the_budget_is_the_label_and_nothing_it_fed_first(self):
-        """"Print lines and lines fed both count towards this total", so the
-        budget and the skip are one sum — and with nothing fed, the sum is
-        the label plus its headroom. A budget carrying a skip the job no
-        longer sends would search 5mm past the hole on every calibration."""
+    async def test_the_budget_is_the_LABEL_and_never_the_over_long_sheet(self):
+        """`ESC L` is a question about where the next sense hole is, and the
+        sheet being longer than the label did not move it. The two are
+        different quantities — one is the paper and the other is what we
+        chose to draw on it — and this is the one print where they visibly
+        differ."""
         await self.loaded()
         await self.post("/api/printer/calibrate", {})
         payload = self.sent[-1]
@@ -1524,24 +1516,37 @@ class TestTheCalibrationPrint(CalibrationCase):
         await self.post("/api/printer/calibrate", {})
         self.assertEqual(first, self.sent[-1])
 
-    async def test_the_reset_variant_is_the_one_command_that_differs(self):
+    async def test_the_pre_skip_is_gone_from_the_wire(self):
+        """It was added to make a NEGATIVE start measurable and it made the
+        reading it was added for impossible instead: nothing can print
+        before where the printer begins, so a skip only pushes the scale's
+        own zero further down a band that is blank either way."""
         await self.loaded()
-        await self.post("/api/printer/calibrate", {"variant": "plain"})
-        plain = self.sent[-1]
-        _, body = await self.post("/api/printer/calibrate",
-                                  {"variant": "reset"})
-        reset = self.sent[-1]
-        self.assertEqual("reset", body["variant"])
-        self.assertNotIn(b"\x1b@", plain)
-        self.assertIn(b"\x1b@", reset)
-        self.assertEqual(len(plain) + 2, len(reset))
+        await self.post("/api/printer/calibrate", {})
+        self.assertEqual([], self.skips(self.sent[-1]),
+                         "the calibration job feeds before its first row")
 
-    async def test_a_variant_nobody_has_is_refused(self):
+    async def test_a_variant_is_no_longer_something_the_route_takes(self):
+        """`ESC @` was a candidate fix for a hypothesis that needed two
+        prints to state and was never confirmed. The field stays on a
+        `Calibration` so a roll measured under 0.9.x keeps it and the print
+        path is unchanged; nothing derives it any more, so nothing prints a
+        second sheet to ask about it."""
         await self.loaded()
         status, body = await self.post("/api/printer/calibrate",
-                                       {"variant": "hold"})
+                                       {"variant": "reset"})
+        self.assertEqual(200, status, body)
+        self.assertNotIn(b"\x1b@", self.sent[-1])
+
+    async def test_continuous_paper_is_refused_rather_than_gridded(self):
+        """There are no die cuts on it, so the two Y coordinates have
+        nothing to be read at — said here rather than after a sheet of
+        paper and a form with two boxes nothing on the label can fill."""
+        await self.post("/api/roll/left", {"stock": "continuous-2-25"})
+        status, body = await self.post("/api/printer/calibrate",
+                                       {"stock": "continuous-2-25"})
         self.assertEqual(400, status)
-        self.assertIn("hold", body["error"])
+        self.assertIn("no die cuts", body["error"])
         self.assertEqual([], self.sent)
 
     async def test_it_is_drawn_across_the_whole_head(self):
@@ -1593,15 +1598,22 @@ class TestTheCalibrationLabelItself(unittest.TestCase):
     CLEAR_MM = 11.4
 
     def head(self, across_in=2.25, feed_in=1.25):
+        """The sheet the route really renders: head-wide, zero-margin, and
+        `CAL_OVERRUN_MM` longer than the label so the grid runs past the
+        trailing die cut. Built here the way `h_printer_calibrate` builds it,
+        because a harness that drew one label long would be measuring an
+        instrument the add-on does not print."""
         stock_store, = bruh_print_env.load("stores.stock")
         entry = stock_store.Stock(id="c", name="c", across_in=across_in,
                                   feed_in=feed_in)
-        return stock_store.replace(entry, across_in=672 / 300, margin_mm=0.0)
+        sheet = entry.feed_mm + server.CAL_OVERRUN_MM
+        return stock_store.replace(entry, across_in=672 / 300,
+                                   feed_in=sheet / 25.4, margin_mm=0.0)
 
-    def rendered(self, stock, copy_no=1):
+    def rendered(self, stock):
         render_image, label_doc = bruh_print_env.load("render.image",
                                                       "render.label")
-        document = server._calibration_label(stock, copy_no)
+        document = server._calibration_label(stock)
         return render_image.render(label_doc.Label.from_dict(document), stock,
                                    max_across_dots=672)
 
@@ -1645,16 +1657,21 @@ class TestTheCalibrationLabelItself(unittest.TestCase):
         The wizard's rule is "the first number you can see, less one per
         short tick above it", which is true only if the numbers really do
         start at the datum."""
-        document = server._calibration_label(self.head(), 1)
+        document = server._calibration_label(self.head())
         values = sorted({int(e["props"]["text"])
                          for e in self.feed_numbers(document)})
-        self.assertEqual([0, 5, 10, 15, 20, 25, 30], values)
+        self.assertEqual(list(range(0, values[-1] + 1, 5)), values)
+        # And it runs PAST the label, which is the whole reason the sheet is
+        # longer than one: the trailing die cut is only a coordinate if the
+        # scale reaches beyond it.
+        self.assertGreater(values[-1], 31.75,
+                           "the grid stops before the label's own end")
 
     def test_the_first_three_numbers_are_inside_the_reading_band(self):
         """0, 5 and 10 have to be whole and above 12.5mm, because that is
         where a die cut falls on the roll this was built for (9.7mm) and on
         any roll whose printer starts anywhere near it."""
-        document = server._calibration_label(self.head(), 1)
+        document = server._calibration_label(self.head())
         for value in (0, 5, 10):
             boxes = [e for e in self.feed_numbers(document)
                      if e["props"]["text"] == str(value)]
@@ -1671,7 +1688,7 @@ class TestTheCalibrationLabelItself(unittest.TestCase):
         dead zone typed in wrong. The 0 is the one exception and it is
         clamped rather than centred, because half of it would be off the top
         of the sheet — the tick at row 0 is what it names."""
-        document = server._calibration_label(self.head(), 1)
+        document = server._calibration_label(self.head())
         for box in self.feed_numbers(document):
             value = int(box["props"]["text"])
             middle = box["y_mm"] + box["h_mm"] / 2
@@ -1686,7 +1703,7 @@ class TestTheCalibrationLabelItself(unittest.TestCase):
         every element that reaches into the band is a feed tick or a feed
         number — because that is the rule, and then on the ink, because the
         rule is only worth what the renderer does with it."""
-        document = server._calibration_label(self.head(), 1)
+        document = server._calibration_label(self.head())
         for element in document["elements"]:
             if element["y_mm"] >= self.CLEAR_MM:
                 continue
@@ -1751,7 +1768,7 @@ class TestTheCalibrationLabelItself(unittest.TestCase):
         three numbers inside it. Both have to hold at once, or a wrap sitting
         at 3.2mm shows a ladder with nothing to count from in the only band
         that matters."""
-        document = server._calibration_label(self.head(), 1)
+        document = server._calibration_label(self.head())
         for value in (0, 5, 10):
             boxes = [(e["x_mm"], e["x_mm"] + e["w_mm"])
                      for e in self.feed_numbers(document)
@@ -1788,7 +1805,7 @@ class TestTheCalibrationLabelItself(unittest.TestCase):
         axis entirely and the reading it would be confused with is the one
         the label exists for. The first version drew it in ordinary black
         ticks and digits, in the gap where somebody looks for a number."""
-        document = server._calibration_label(self.head(), 1)
+        document = server._calibration_label(self.head())
         digits = self.across_digits(document)
         self.assertTrue(digits)
         self.assertEqual([str(m) for m in range(0, 57, 5)],
@@ -1804,7 +1821,7 @@ class TestTheCalibrationLabelItself(unittest.TestCase):
         one would be white-on-black ink through a number somebody is reading
         to the millimetre — and worse, it would be in the band the top
         reading is taken in if it crept up far enough."""
-        document = server._calibration_label(self.head(0.56, 3.44), 1)
+        document = server._calibration_label(self.head(0.56, 3.44))
         numbers = [(e["y_mm"], e["y_mm"] + e["h_mm"])
                    for e in self.feed_numbers(document)]
         for digit in self.across_digits(document):
@@ -1820,7 +1837,7 @@ class TestTheCalibrationLabelItself(unittest.TestCase):
     def test_the_across_ruler_is_measured_from_head_dot_zero(self):
         """It reads where the paper is, so its own zero has to be the head's
         — a ruler starting at the sheet's margin would report the margin."""
-        document = server._calibration_label(self.head(), 1)
+        document = server._calibration_label(self.head())
         zeros = [e for e in self.across_digits(document)
                  if e["props"]["text"] == "0"]
         self.assertTrue(zeros)
@@ -1834,45 +1851,20 @@ class TestTheCalibrationLabelItself(unittest.TestCase):
         self.assertEqual([], server.across_band_tops(12.0))
         self.assertEqual([11.4], server.across_band_tops(20.0))
         self.assertEqual([11.4, 26.4], server.across_band_tops(31.75))
-        self.assertEqual([11.4, 26.4, 56.4], server.across_band_tops(87.0))
-        short = self.head(2.25, 0.5)
+        # Every 15mm rather than 0.9.x's pair-then-every-30: an across
+        # coordinate is read AT a vertical edge, and a 4" shipping label had
+        # its whole middle with no across scale on it at all.
+        self.assertEqual([11.4, 26.4, 41.4, 56.4, 71.4, 86.4],
+                         server.across_band_tops(89.0))
+        # Built without the overrun on purpose: `head()` adds it, and a
+        # sheet that is short after it is added is the case the route's note
+        # is about.
+        stock_store, = bruh_print_env.load("stores.stock")
+        short = stock_store.replace(
+            stock_store.Stock(id="c", name="c", across_in=2.25, feed_in=0.5),
+            across_in=672 / 300, margin_mm=0.0)
         self.assertEqual([], self.across_digits(
-            server._calibration_label(short, 1)))
-
-    # -- the copy number ---------------------------------------------------
-    def test_the_copy_number_is_boxed_in_a_gap_and_repeats(self):
-        """Two labels out of one job seconds apart are otherwise told apart
-        by the order somebody picked them up in. It is in a box so it is not
-        read as a measurement, in the gap under 15 so it is not in one, and
-        on the ladder's own period so a narrow roll cannot miss it."""
-        first = server._calibration_label(self.head(), 1)
-        second = server._calibration_label(self.head(), 2)
-        ones = [e for e in first["elements"] if e["type"] == "text"
-                and e["props"]["text"] == "1"
-                and e["y_mm"] >= server.CAL_COPY_TOP_MM]
-        twos = [e for e in second["elements"] if e["type"] == "text"
-                and e["props"]["text"] == "2"
-                and e["y_mm"] >= server.CAL_COPY_TOP_MM]
-        self.assertEqual(len(ones), len(twos))
-        self.assertEqual(len(self.periods()), len(ones))
-        for element in ones:
-            self.assertGreaterEqual(element["y_mm"], self.CLEAR_MM)
-
-    def test_the_copy_box_never_crosses_a_tick(self):
-        """It is drawn in a number column and is never wider than one: a box
-        that reached into the tick stretch beside it would be ink across a
-        ladder somebody is counting."""
-        document = server._calibration_label(self.head(), 1)
-        boxes = [e for e in document["elements"]
-                 if e["type"] == "box" and not e["props"].get("fill")]
-        self.assertTrue(boxes)
-        columns = [column for column, _ticks in self.periods()]
-        for box in boxes:
-            span = (box["x_mm"], box["x_mm"] + box["w_mm"])
-            self.assertTrue(
-                any(left - 1e-9 <= span[0] and span[1] <= right + 1e-9
-                    for left, right in columns),
-                f"the copy box {span} reaches outside its column")
+            server._calibration_label(short)))
 
     # -- and the rules the first version already had -----------------------
     def test_no_number_is_printed_on_top_of_another(self):
@@ -1883,7 +1875,7 @@ class TestTheCalibrationLabelItself(unittest.TestCase):
         the bug whether or not the glyphs inside them happen to touch."""
         for across_in, feed_in in ((2.25, 1.25), (0.56, 3.44), (2.3125, 4.0)):
             document = server._calibration_label(
-                self.head(across_in, feed_in), 1)
+                self.head(across_in, feed_in))
             boxes = [(e["x_mm"], e["y_mm"], e["x_mm"] + e["w_mm"],
                       e["y_mm"] + e["h_mm"])
                      for e in document["elements"] if e["type"] == "text"]
@@ -1902,7 +1894,7 @@ class TestTheCalibrationLabelItself(unittest.TestCase):
         whole band has to fit in the gap between two feed numbers — and they
         are white on black, which is the compensation as well as the reason
         they cannot be confused with one."""
-        document = server._calibration_label(self.head(), 1)
+        document = server._calibration_label(self.head())
         inverted = {id(e) for e in self.across_digits(document)}
         for element in document["elements"]:
             if element["type"] != "text":
@@ -1912,6 +1904,29 @@ class TestTheCalibrationLabelItself(unittest.TestCase):
                 self.assertGreaterEqual(size, 1.5)
             else:
                 self.assertGreaterEqual(size, 2.0)
+
+    def test_the_grid_runs_past_the_label_on_every_stock(self):
+        """The overrun is the instrument, not a margin. A sheet exactly one
+        label long begins at the die cut, so a printer that starts after it
+        has the label's own top edge above every mark — which is the reading
+        0.9.x could not take, and the whole of why it needed three
+        hypotheses and two printed copies to infer instead."""
+        stock_store, = bruh_print_env.load("stores.stock")
+        for entry in stock_store.BUILTIN:
+            if entry.continuous:
+                continue
+            with self.subTest(stock=entry.id):
+                sheet = self.head(entry.across_in, entry.feed_in)
+                self.assertGreater(sheet.feed_mm,
+                                   entry.feed_mm + server.MAX_LATE_MM
+                                   if hasattr(server, "MAX_LATE_MM")
+                                   else entry.feed_mm)
+                values = sorted({int(e["props"]["text"]) for e
+                                 in self.feed_numbers(
+                                     server._calibration_label(sheet))})
+                self.assertGreater(
+                    values[-1], entry.feed_mm - server.CAL_NUMBER_STEP_MM,
+                    f"the scale stops before {entry.id}'s trailing die cut")
 
     def test_it_draws_without_a_complaint_on_every_stock_in_the_catalog(self):
         """Including the narrow wrap, where 0.7.0's version had to drop its
@@ -1929,26 +1944,24 @@ class TestTheCalibrationLabelItself(unittest.TestCase):
 
 
 class TestSavingWhatWasRead(CalibrationCase):
-    """The route between the six readings and the store.
+    """The route between the four coordinates and the store.
 
     The panel does no arithmetic: `calibration.derive` is pure and is tested
-    on its own with the numbers the owner measured. What is asserted here is
-    that the readings reach it, that what comes back is stored, and that the
-    two answers which are not answers store nothing.
+    on its own with the coordinates the owner read. What is asserted here is
+    that they reach it, that what comes back is stored, and that the one
+    answer which is not an answer stores nothing.
     """
 
-    # The owner's own roll, in the reading rule that replaced the pre-skip:
-    # the ladder's 0 is on both labels with blank above it, so both tops are
-    # 0, and the trailing die cut falls at 27.05 of a 31.75mm label — which
-    # is the 4.7mm the printer starts late by, read from the one end that
-    # has ink on it.
-    OWNER = {"left": 0.0, "right": 57.0, "top1": 0.0, "bottom1": 27.05,
-             "top2": 0.0, "bottom2": 27.05}
-    SENT = {"esc_l_mm": 39.7, "variant": "plain"}
+    # The owner's own roll, as coordinates on the grid. The label's top edge
+    # is above the grid — the printer starts 4.7mm after the die cut, so
+    # there is no scale up there — which reads 0, and its bottom edge falls
+    # at 27.05 of a 31.75mm label. That is the same 4.7mm, derived rather
+    # than asked for, and the whole of what four coordinates buy over six
+    # signed readings.
+    OWNER = {"x1": 0.0, "x2": 57.0, "y1": 0.0, "y2": 27.05}
 
     async def save(self, **changes):
-        payload = {"readings": {**self.OWNER, **changes.pop("readings", {})},
-                   "printed": {**self.SENT, **changes.pop("printed", {})}}
+        payload = {"readings": {**self.OWNER, **changes.pop("readings", {})}}
         return await self.post("/api/stock/edcc-082wh/calibration", payload)
 
     async def test_the_measured_case_is_stored_and_reaches_the_wire(self):
@@ -1957,70 +1970,54 @@ class TestSavingWhatWasRead(CalibrationCase):
         self.assertEqual(200, status, body)
         self.assertAlmostEqual(4.7, body["calibration"]["start_mm"], places=1)
         self.assertIn("4.7mm", body["sentence"])
-        self.assertIsNone(body["next"])
+        self.assertEqual("dead_band", body["shape"])
         _, payload = await self.print_once()
         repeat = protocol.LINE_REPEAT["graphics"]
         self.assertEqual((375 - 56) * repeat, len(self.rows(payload)))
 
-    async def test_the_first_label_hypothesis_stores_nothing_and_asks_again(self):
-        """The one answer that is not an answer. `ESC @` is a real candidate
-        and whether a firmware honours it is not knowable from here, so the
-        route says print again rather than recording a fault one command
-        might not have."""
-        await self.loaded()
-        _, body = await self.save(readings={"bottom2": 31.75})
-        self.assertIsNone(body["calibration"])
-        self.assertEqual("reset", body["next"]["variant"])
-        _, stocks = await self.get("/api/stocks")
-        row = next(s for s in stocks["stocks"] if s["id"] == "edcc-082wh")
-        self.assertEqual(0.0, row["calibration"]["start_mm"])
-
     async def test_a_reading_that_is_not_a_number_is_refused(self):
         await self.loaded()
-        status, body = await self.save(readings={"bottom1": "about 27"})
+        status, body = await self.save(readings={"y2": "about 27"})
         self.assertEqual(400, status)
         self.assertIn("millimetres", body["error"])
 
     async def test_a_missing_reading_is_refused_by_name(self):
-        """Not defaulted to zero: every branch turns on differences of less
-        than a millimetre, so a field that quietly became zero would not be
-        a slightly wrong calibration, it would be a different hypothesis."""
+        """Not defaulted to zero, because zero is a real coordinate here —
+        it is what the top edge reads when the label starts above the grid —
+        so a field that quietly became it would not be a slightly wrong
+        calibration, it would be a different rectangle."""
         await self.loaded()
         status, body = await self.post(
             "/api/stock/edcc-082wh/calibration",
-            {"readings": {k: v for k, v in self.OWNER.items()
-                          if k != "bottom2"},
-             "printed": self.SENT})
+            {"readings": {k: v for k, v in self.OWNER.items() if k != "y2"}})
         self.assertEqual(400, status)
-        self.assertIn("bottom2", body["error"])
+        self.assertIn("Y2", body["error"])
 
     async def test_a_negative_reading_is_refused(self):
-        """Every one is a distance from an edge of the label. A minus sign
-        here is somebody carrying over the old offset's convention, where it
-        meant "the other way" — there is no other way now, and the
-        derivation decides the sign from where the two copies landed."""
+        """Every one is a coordinate on a scale that starts at zero. A minus
+        sign here is somebody carrying over the old offset's convention,
+        where it meant "the other way" — there is no other way now, and the
+        rectangle decides the sign from which side of the grid's own zero
+        its top edge fell."""
         await self.loaded()
-        status, body = await self.save(readings={"bottom1": -4.7})
+        status, body = await self.save(readings={"y2": -4.7})
         self.assertEqual(400, status)
         self.assertIn("cannot be negative", body["error"])
 
     async def test_a_label_wider_than_the_head_may_omit_the_right_edge(self):
-        """Not a failure: the across ladder runs out at the head's last dot,
+        """Not a failure: the across scale runs out at the head's last dot,
         so a wider label has nothing printed at its right edge to read."""
         await self.loaded()
-        status, body = await self.save(readings={"right": ""})
+        status, body = await self.save(readings={"x2": ""})
         self.assertEqual(200, status, body)
         self.assertIsNotNone(body["calibration"])
 
-    async def test_the_readings_and_what_was_printed_go_together(self):
-        """A drift between the two copies is only a measurement against the
-        search budget that went out, so half a payload is refused rather than
-        assumed."""
+    async def test_a_payload_with_no_readings_names_the_four(self):
         await self.loaded()
         status, body = await self.post("/api/stock/edcc-082wh/calibration",
-                                       {"readings": self.OWNER})
+                                       {"printed": {"variant": "plain"}})
         self.assertEqual(400, status)
-        self.assertIn("six readings", body["error"])
+        self.assertIn("four coordinates", body["error"])
 
     async def test_it_rides_in_the_state_the_panel_opens_with(self):
         await self.loaded()

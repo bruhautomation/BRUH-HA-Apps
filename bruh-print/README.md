@@ -74,13 +74,13 @@ that does nothing.
 2. Open the panel. The Printer tab should show your LabelWriter.
 3. Tell it what is loaded. Pick the stock for each roll — the two cryo
    stocks are already in the list, along with the common DYMO part numbers.
-4. **Line up this roll**, once per roll, on the bay that holds it. Two
-   calibration labels print; you read six numbers off them — where each edge of
-   the label cuts the black scale, and where each label's top and bottom edges
-   fall on the feed ladder — and type them in. Nothing to measure with: every
-   number is read against a ladder printed on the same label. BRUH Print then
-   says what your printer does with that roll in one sentence, and every print
-   on it uses the answer.
+4. **Line up this roll**, once per roll, on the bay that holds it. One label
+   prints with a numbered grid over the whole area the printer can reach; you
+   read off where the label's four edges fall on it — X1 and X2 across, Y1 and
+   Y2 down — and type them in. Nothing to measure with and no signs to get
+   right: every number is a coordinate read off a scale printed on the same
+   label. BRUH Print then says what your printer does with that roll in one
+   sentence, and every print on it uses the answer.
 5. Press **Print a check label** on that bay. It prints a frame around
    everything the roll can print on with "Should reach every edge" inside it.
    If the frame is complete you are done; if a side is missing, run

@@ -721,68 +721,57 @@ async def h_printer_usb(request: web.Request) -> web.Response:
     return ok(**report)
 
 
-# **The calibration job feeds NOTHING before raster line 0, and the 5mm
-# pre-skip that used to sit here is the one mistake this rewrite made twice.**
-# It was added on the theory that it made a negative start measurable — that
-# without it, a printer laying its first row on the die cut and one asked for
-# ink 2mm before it both print their first row at the die cut. The second half
-# of that is true; the conclusion is backwards. Nothing can print before where
-# the printer begins, so a LATE start leaves a blank band at the top of the
-# label with the ladder's own 0 at the bottom of it and nothing inside the
-# band to measure it with — and a skip only pushes that 0 further down, adding
-# a millimetre to every reading and no new information to any of them. The
-# reading that separates the two signs was always at the far end, where the
-# trailing die cut falls on the ladder against a length the catalog holds.
-# See `calibration._one_copy`.
+# **The calibration grid is ONE sheet and it is longer than the label.**
 #
-# It cost the label as well: a sheet fed 5mm and then printed one label long
-# overruns the die cut by five millimetres more than the printer's own late
-# start does, and copy 1's tail then lands on copy 2's leading edge — which
-# is exactly where `top2` is read.
+# 0.9.x printed two copies, each exactly one label long, and asked six
+# numbers about them. Two copies were the entire evidence for two hypotheses
+# — a first label of a job that starts later than the rest, and a printer not
+# re-syncing on the sense hole at all — and one label long was what made the
+# leading edge unreadable whenever the printing started after it, because a
+# sheet that begins at the die cut has nothing above the die cut on it.
 #
-# Two copies, because copy 2 is the entire evidence for the hypothesis that
-# only the first label of a job is wrong — the reverse feed a tear-off owes
-# and does not always make. One copy cannot tell that from a roll that starts
-# late on every label, and they want opposite answers.
-CAL_COPIES = 2
+# Both of those go away by making the sheet longer than the label. The grid
+# then runs past the trailing die cut and on into the next label, so the
+# edges of a label are marks ON a scale rather than quantities inferred from
+# which end of one got cut — which is the whole of `calibration.py`'s rewrite
+# and the reason four coordinates replaced six signed readings.
+#
+# It still feeds NOTHING before row 0, and the 5mm pre-skip that was here
+# once is the mistake this file has now made and unmade twice. Nothing can
+# print before where the printer begins, so a skip only pushes the scale's
+# own zero further down a band that is blank either way: a millimetre added
+# to every reading and no new information in any of them.
+CAL_OVERRUN_MM = 18.0
 
-# The calibration ladders, in millimetres.
+# The feed scale, in millimetres. It owns the sheet from row 0 to the end.
 #
-# **The first version of this label put the copy number and an across ruler in
-# the first 14mm of the sheet and started the feed numbers at 15.** That is
-# precisely the band the top reading is taken in — the roll this was built for
-# lands its first row 9.7mm down — so the first number a person could read was
-# 15, and a 4.7mm dead zone would have been typed in as 10. The across ruler's
-# own "0 5 10" sat exactly where they would look for it and reads as a feed
-# number. An instrument that is unreadable in the one place it is read is
-# worse than no instrument, because a wrong reading is stored and printed
+# **The first version of this label put a copy number and an across ruler in
+# the first 14mm and started the feed numbers at 15.** That is precisely the
+# band the top reading is taken in — the roll this was built for lands its
+# first row 9.7mm down — so the first number a person could read was 15, and
+# the across ruler's own "0 5 10" sat exactly where they would look for a
+# feed number. An instrument that is unreadable in the one place it is read
+# is worse than no instrument, because a wrong reading is stored and printed
 # against for ever.
 #
-# So the layout is now one rule: **the feed ladder owns the sheet**, from row
-# 0 to the end, numbered every 5mm including 0, and everything else lives in
-# the gaps BETWEEN those numbers — below the band where the reading happens.
+# So the layout is one rule: **the feed scale owns the sheet**, from row 0 to
+# the end, numbered every 5mm including 0, and the across scale lives in the
+# gaps BETWEEN those numbers.
 CAL_TICK_MM = 0.2           # a feed tick
 CAL_BAR_MM = 0.5            # the tick AT raster line 0, heavy so it is the datum
 CAL_DIGIT_MM = 2.0          # a feed number: the floor for reading one is 2mm
 CAL_NUMBER_STEP_MM = 5      # ...and one every 5mm, starting at 0
 
-# The band that is the measurement: rows 0 to here carry the feed ladder and
-# nothing else. It is 11.4 because the number for 10 ends at 11.0 and the
-# reading being taken there is the whole point of the label — a person holding
-# a die cut against this looks at one place, and the only thing that may be in
-# it is the scale they are reading.
-CAL_CLEAR_MM = 11.4
-
-# How the feed ladder repeats across the head, and why these two numbers are
+# How the feed scale repeats across the head, and why these two numbers are
 # what they are. The label may sit anywhere under a 672-dot head and the
-# ladder has to be readable on whatever part of it the paper covers — so a
+# scale has to be readable on whatever part of it the paper covers — so a
 # number column is repeated, and a window as wide as the paper must always
 # contain a WHOLE one. An interval of length `period` always contains a
 # multiple of `period`, so the guarantee is `period <= width - column`.
 #
 # Both numbers are pinned by something measured. The column is 4.5 because
 # "100" at 2mm is 4.23mm of ink plus the renderer's own inset, and a 4"
-# shipping label's ladder counts past a hundred — at 4.0 every one of those
+# shipping label's scale counts past a hundred — at 4.0 every one of those
 # numbers came back as a note saying it had been clipped, which is the label
 # telling you it cannot be read. The period is then 6.5 because the narrowest
 # stock in the catalog is the 0.4375" jewellery label at 11.1mm, and
@@ -793,174 +782,140 @@ CAL_CLEAR_MM = 11.4
 CAL_COLUMN_MM = 4.5
 CAL_COLUMN_PERIOD_MM = 6.5
 
-# The across ruler, which measures a different axis and must never be read as
-# the feed ladder. It is drawn INVERTED — white marks on a solid black band —
-# so the difference is visible before anything is read, and it is short enough
-# to sit whole in the gap between two feed numbers.
+# The across scale, which measures a different axis and must never be read as
+# the feed scale. It is drawn INVERTED — white marks on a solid black band —
+# so the difference is visible before anything is read, and it is short
+# enough to sit whole in the gap between two feed numbers.
 CAL_ACROSS_BAND_MM = 2.5
 CAL_ACROSS_TICK_MM = 0.7      # the notched bar: white gaps in black
 CAL_ACROSS_DIGIT_MM = 1.8     # what is left, and 21 dots is legible
 CAL_ACROSS_NOTCH_MM = 0.3     # one millimetre
 CAL_ACROSS_NOTCH5_MM = 0.6    # every fifth, so a numbered one stands out
 
-# Where those bands go: the gap under the feed number 10, then the one under
-# 25, then every 30mm of sheet after that. Never above `CAL_CLEAR_MM`, and
-# never on a sheet with no room for the first one — a roll too short says so
-# in the route's notes rather than getting a band squeezed into a reading.
-CAL_ACROSS_TOPS = (11.4, 26.4)
-CAL_ACROSS_REPEAT_MM = 30.0
-
-# The copy number, in the gap under 15. Small because it is a label rather
-# than a measurement — you need to know which of two labels you are holding,
-# and 2.4mm of bold digit in a box says that from across a bench.
-#
-# It repeats on the LADDER's period and sits inside a number column, for two
-# reasons found by rendering it any other way. A mark wider than the column
-# crosses the tick dashes beside it, which is ink on a ladder somebody is
-# counting; and one repeated every 14mm is missing entirely from about a
-# quarter of the positions a 14mm wrap can sit at, which is the same
-# arithmetic the column period exists to satisfy. Re-using the period means
-# there is one number to keep true rather than two.
-CAL_COPY_DIGIT_MM = 2.4
-CAL_COPY_TOP_MM = 16.4
-CAL_COPY_BOX_MM = 0.2
+# Where those bands go, and the number that changed when the readings became
+# coordinates. **An across reading is taken at a vertical edge**, so the band
+# has to be near one wherever the label happens to sit — 0.9.x put two of
+# them on a sheet one label long and then repeated at 30mm, which on a 4"
+# shipping label leaves the whole middle of the label with no across scale on
+# it at all. Every 15mm is close enough that one is always beside an edge,
+# and 15 is a multiple of the feed numbering step, so every band lands in the
+# same gap between two feed numbers rather than walking into one.
+CAL_ACROSS_FIRST_MM = 11.4
+CAL_ACROSS_REPEAT_MM = 15.0
 
 
 async def h_printer_calibrate(request: web.Request) -> web.Response:
-    """Print the two calibration labels.
+    """Print the grid: one sheet, the whole print head, past the label's end.
 
     It replaces the ruler, which was a label of millimetre ticks drawn
     INSIDE the stock's own margin — so on a roll somebody had given a 5mm
     border there was nothing within 5mm of the die cut to hold anything
-    against, and the one question it could answer ("are these two
-    measurements the right way round?") is answered here as a by-product:
-    the readings measure both dimensions of the actual paper, and
-    `calibration._looks_transposed` says so. This answers "what does this
-    printer do with this roll", and to do that it is drawn to the FULL PRINT
-    HEAD with no margin: the across ladder has to be able to say where paper
-    narrower than the head is sitting, and every mark a label-wide sheet
-    makes is inside the very thing whose position is the question.
+    against — and then the two-copy ladder, which could draw a scale but
+    could not put the label's leading edge on it. This one answers "where is
+    the printable area", which is the question, by covering the printable
+    area: the FULL PRINT HEAD across, with no margin, and `CAL_OVERRUN_MM`
+    further down the roll than one label.
 
     **None of the roll's own calibration is applied to it**, which is the
-    opposite of what every other print here does and is the point. A ladder
+    opposite of what every other print here does and is the point. A scale
     that moved with the numbers it measures reads the same thing however
     wrong they are: print it twice and it says the same thing twice. Left
-    alone it is an absolute instrument, and printing it again after saving
-    an answer is a check rather than a ritual. **Nothing at all is applied**,
-    not even a feed before the first row — see the note above `CAL_COPIES`
-    for why the pre-skip that used to be there made the reading it was added
-    for impossible rather than possible.
+    alone it is an absolute instrument, and printing it again after saving an
+    answer is a check rather than a ritual.
 
     It deliberately prints outside the media, and the control that offers it
     says so before anybody presses it: where there is no thermal paper the
     heat goes into the liner and, past the web, into the platen roller. Three
     things make it acceptable — it is line work rather than fill, so the dots
-    fired off the paper are a small fraction of a pass; it is two labels
+    fired off the paper are a small fraction of a pass; it is one sheet
     rather than a habit; and the firmware treats it as entirely ordinary, the
     manual being explicit that "the printer does not check for inter-label
     gap when printing. It is the responsibility of the host computer to avoid
     overrunning the label area", which is the machine saying this is the
-    host's call to make.
+    host's call to make — and here the overrun IS the instrument, because the
+    trailing die cut is only a coordinate if the scale reaches past it.
     """
     state = panel(request)
     payload = await body(request)
     stock_id = str(payload.get("stock") or state.settings.get("default_stock"))
     side = str(payload.get("side", "") or "")
-    variant = str(payload.get("variant", "plain") or "plain")
-    if variant not in protocol.JOB_STARTS:
-        return bad(
-            f"A calibration print is either {' or '.join(protocol.JOB_STARTS)}"
-            f" — the second one opens the job with the printer's own reset. "
-            f"There is no {variant!r}.")
 
     try:
         entry = state.stocks.require(stock_id)
     except stock_store.UnknownStock as exc:
         return bad(exc.detail, 404)
+    if not entry.feed_in:
+        return bad(
+            "Continuous paper has no die cuts, so there is no top of form to "
+            "line up to and nothing for the grid's coordinates to be read "
+            "against.")
 
     side, notes = state.resolve_side(entry.id, side)
     printer = state.chosen()
     model = printer.model if printer else dymo_printers.UNKNOWN
-    # A copy of the roll drawn to the head with no margin, and never saved:
-    # the point of the calibration label is to measure the roll a person
-    # actually has, not to change it.
+    # A copy of the roll drawn to the head with no margin and run on past the
+    # label's end, and never saved: the point of the grid is to measure the
+    # roll a person actually has, not to change it.
+    sheet_mm = entry.feed_mm + CAL_OVERRUN_MM
     head = stock_store.replace(
-        entry, across_in=model.dots / model.dpi, margin_mm=0.0,
-        calibration=stock_store.Calibration(), builtin=False)
+        entry, across_in=model.dots / model.dpi, feed_in=sheet_mm / 25.4,
+        margin_mm=0.0, calibration=stock_store.Calibration(), builtin=False)
 
-    sheets = []
-    for copy_no in range(1, CAL_COPIES + 1):
-        _, _, rendered = await asyncio.to_thread(
-            _render, state, _calibration_label(head, copy_no), stock=head)
-        sheets.append(rendered)
+    _, _, rendered = await asyncio.to_thread(
+        _render, state, _calibration_label(head), stock=head)
 
-    if not across_band_tops(head.feed_mm):
-        # The across ruler lives in a gap between two feed numbers, and a
-        # label shorter than the first of those gaps has none. Said here
+    if not across_band_tops(sheet_mm):
+        # The across scale lives in a gap between two feed numbers, and a
+        # sheet shorter than the first of those gaps has none. Said here
         # rather than left to be noticed: the wizard asks for a left and a
-        # right reading, and "there is no ruler on my label" is a person
-        # stuck at a question with no answer on the paper.
+        # right coordinate, and "there is no scale across my label" is a
+        # person stuck at a question with no answer on the paper.
         notes.append(
-            f"This label is {head.feed_mm:.0f}mm along the roll, which is "
-            f"too short to carry the across ruler as well as the ladder — so "
-            f"it has the ladder only, and the left and right readings cannot "
-            f"be taken from it. Everything about where the printing starts "
-            f"still can.")
+            f"This sheet is {sheet_mm:.0f}mm along the roll, which is too "
+            f"short to carry the across scale as well as the feed one — so "
+            f"it has the feed scale only, and X1 and X2 cannot be read from "
+            f"it. Everything about where the printing starts still can.")
 
-    # A zeroed calibration carrying only the variant, so the job that goes
-    # out is this printer's own behaviour and nothing else's: the readings
-    # have to be of the machine, not of a correction somebody saved an hour
-    # ago.
-    fresh = stock_store.Calibration(job_start=variant, ending="tear")
-    result = await _send_copies(state, sheets, stock=entry, side=side,
+    # A zeroed calibration, so the job that goes out is this printer's own
+    # behaviour and nothing else's: the coordinates have to be of the
+    # machine, not of a correction somebody saved an hour ago.
+    fresh = stock_store.Calibration(job_start="plain", ending="tear")
+    result = await _send_copies(state, [rendered], stock=entry, side=side,
                                 cal=fresh)
-    state.consume(side, CAL_COPIES)
+    # One sheet, but it is longer than a label and the form feed after it
+    # takes another: two labels of roll for one press, which is what the
+    # count has always said and is still what it costs.
+    state.consume(side, 2)
     state.mirror_state()
 
-    feed_dots, gap_dots, lead_dots = _label_geometry(entry, fresh, model)
-    return ok(printed=CAL_COPIES, copies=CAL_COPIES, side=side,
-              stock=entry.id, variant=variant,
-              # What the printer was told to search within, reported so the
-              # derivation reads the number that was actually sent rather
-              # than one it works out for itself. It is the distance the
-              # printer feeds when it never finds a hole, which is the whole
-              # of how a drift becomes a measured pitch.
-              esc_l_mm=round(
-                  protocol.budget_dots(feed_dots, gap_dots, max(0, lead_dots))
-                  / model.dpi * 25.4, 2),
-              notes=notes + [n for sheet in sheets for n in sheet.notes],
+    return ok(printed=1, copies=1, side=side, stock=entry.id,
+              sheet_mm=round(sheet_mm, 2),
+              notes=notes + list(rendered.notes),
               **result)
 
 
-def _calibration_label(stock, copy_no: int) -> dict:
-    """One ladder that owns the sheet, and everything else in its gaps.
+def _calibration_label(stock) -> dict:
+    """A numbered grid over the whole printable area, in two scales.
 
-    `stock` is a head-wide, zero-margin copy, so (0, 0) in this document is
-    head dot 0 and the first row the printer lays. Everything on it is a
-    scale away from one of those two edges, which is what makes the readings
-    unarguable: the ladder and the thing it measures are printed side by
-    side, on the same pass, at the same scale.
+    `stock` is a head-wide, zero-margin, over-long copy, so (0, 0) in this
+    document is head dot 0 and the first row the printer lays. Every mark on
+    it is a coordinate away from one of those two, which is what makes the
+    readings unarguable: the scale and the thing it measures are printed side
+    by side, on the same pass, at the same resolution.
 
-    **The feed ladder runs from row 0 to the end and is numbered every 5mm
-    from 0.** The reading a person takes is where the leading die cut falls
-    on it, and on the roll this was built for that is 9.7mm — so a ladder
-    whose first number is 15, with the top of the sheet given over to a copy
-    number and an across ruler, is an instrument that cannot be read where it
-    is read. Each number is centred on its own tick (the first is clamped to
+    **The feed scale runs from row 0 to the end and is numbered every 5mm
+    from 0.** Each number is centred on its own tick (the first is clamped to
     the sheet, because half of it would be off the top), which is what makes
-    the rule "the first number you can see, less one per short tick above it"
-    true rather than approximately true.
+    "the last number you can see, plus one for each tick past it" true rather
+    than approximately true.
 
-    The other two marks live in the gaps between those numbers, which is the
-    only place anything else may be:
-
-      * The ACROSS ruler measures the other axis entirely — where the label's
-        edges sit on a 672-dot head — so it is drawn as white marks on a
-        solid black band. A person looking for a feed number cannot mistake
-        it, which the first version's ordinary black ticks and digits could
-        not promise.
-      * The COPY NUMBER, because two labels out of one job seconds apart are
-        otherwise told apart by the order somebody picked them up in.
+    **The across scale repeats every `CAL_ACROSS_REPEAT_MM` down the sheet**,
+    because an across coordinate is read at a vertical edge and a scale
+    fifteen millimetres away is one somebody has to hold a straight edge
+    against. It measures the other axis entirely, so it is drawn as white
+    marks on a solid black band: a person looking for a feed number cannot
+    mistake it, which the first version's ordinary black ticks and digits
+    could not promise.
 
     Both repeat across the head, because paper narrower than the head sits
     somewhere nobody here knows and a mark it does not cover is not there.
@@ -969,16 +924,15 @@ def _calibration_label(stock, copy_no: int) -> dict:
     columns = _frange(0.0, across_mm - CAL_COLUMN_MM, CAL_COLUMN_PERIOD_MM)
     # Where a tick may be drawn: the part of each period the number column
     # does not own. Numbers and ticks never share a stretch of head, so a
-    # digit is never drawn over a line it is meant to name — and rows 0 to
-    # `CAL_CLEAR_MM` then carry ink in these two places and nowhere else.
+    # digit is never drawn over a line it is meant to name.
     ticks = [(x + CAL_COLUMN_MM + 0.2,
               min(across_mm, x + CAL_COLUMN_PERIOD_MM)) for x in columns]
 
     elements: list[dict] = []
     for millimetre in range(0, int(feed_mm) + 1):
         numbered = millimetre % CAL_NUMBER_STEP_MM == 0
-        # Row 0 gets the heavy one: it is the datum every feed reading is
-        # taken from, and a tick like all the others is a datum somebody
+        # Row 0 gets the heavy one: it is the origin every feed coordinate is
+        # read from, and a tick like all the others is an origin somebody
         # counts past.
         weight = CAL_BAR_MM if millimetre == 0 else CAL_TICK_MM
         for first, last in ticks:
@@ -1001,30 +955,23 @@ def _calibration_label(stock, copy_no: int) -> dict:
     for top in across_band_tops(feed_mm):
         elements.extend(_across_band(top, across_mm))
 
-    if CAL_COPY_TOP_MM + CAL_COPY_DIGIT_MM <= feed_mm:
-        for x in columns:
-            elements.extend(_copy_mark(x, copy_no))
-
-    return {"stock": stock.id, "rotate": 0,
-            "name": f"Calibration {copy_no}", "elements": elements}
+    return {"stock": stock.id, "rotate": 0, "name": "Calibration grid",
+            "elements": elements}
 
 
-def across_band_tops(feed_mm: float) -> list[float]:
-    """Which gaps between feed numbers carry an across ruler.
+def across_band_tops(sheet_mm: float) -> list[float]:
+    """Which gaps between feed numbers carry an across scale.
 
     One implementation, because the route has to say when a sheet is too
     short for even the first one — and a label that draws a band the route
     does not know about, or a note about a band the label drew, is two
-    answers to where the across reading comes from.
+    answers to where the across coordinates come from.
     """
-    tops = [top for top in CAL_ACROSS_TOPS
-            if top + CAL_ACROSS_BAND_MM <= feed_mm]
-    if not tops:
-        return []
-    nxt = CAL_ACROSS_TOPS[-1] + CAL_ACROSS_REPEAT_MM
-    while nxt + CAL_ACROSS_BAND_MM <= feed_mm:
-        tops.append(nxt)
-        nxt += CAL_ACROSS_REPEAT_MM
+    tops: list[float] = []
+    top = CAL_ACROSS_FIRST_MM
+    while top + CAL_ACROSS_BAND_MM <= sheet_mm:
+        tops.append(round(top, 3))
+        top += CAL_ACROSS_REPEAT_MM
     return tops
 
 
@@ -1033,7 +980,7 @@ def _across_band(top: float, across_mm: float) -> list[dict]:
 
     Inverted because it is the one thing on this label that measures the
     other axis, and the reading it would be confused with — the feed number
-    a person takes the top measurement from — is the reading the whole label
+    a person takes a Y coordinate from — is the reading the whole label
     exists for. Black ticks and digits are what the first version had, and
     they sat in the gap where somebody looks for a number.
 
@@ -1083,34 +1030,14 @@ def _across_band(top: float, across_mm: float) -> list[dict]:
     return out
 
 
-def _copy_mark(x: float, copy_no: int) -> list[dict]:
-    """Which of the two labels this is, in a box so it is not a measurement.
-
-    In the gap under the feed number 15, in a number column and never wider
-    than one: a box that reaches into the tick stretch beside it is ink drawn
-    across a ladder somebody is counting.
-    """
-    width = CAL_COLUMN_MM
-    return [
-        {"type": "box", "x_mm": x, "y_mm": CAL_COPY_TOP_MM,
-         "w_mm": width, "h_mm": CAL_COPY_DIGIT_MM,
-         "props": {"fill": False, "stroke_mm": CAL_COPY_BOX_MM,
-                   "radius_mm": 0}},
-        _cal_text(x + CAL_COPY_BOX_MM * 2, CAL_COPY_TOP_MM + CAL_COPY_BOX_MM,
-                  width - CAL_COPY_BOX_MM * 4,
-                  CAL_COPY_DIGIT_MM - CAL_COPY_BOX_MM * 2, copy_no,
-                  CAL_COPY_DIGIT_MM - CAL_COPY_BOX_MM * 2),
-    ]
-
-
 def _cal_text(x: float, y: float, width: float, height: float, value,
               size: float, *, align: str = "center",
               invert: bool = False) -> dict:
-    """One number on the calibration label, at a stated size.
+    """One number on the calibration grid, at a stated size.
 
     `size_mm` is set rather than fitted on purpose: an autofitted digit is
-    whatever size its box allows, and two ladders whose numbers came out at
-    different sizes are two ladders somebody has to work out the scale of.
+    whatever size its box allows, and two scales whose numbers came out at
+    different sizes are two scales somebody has to work out the scale of.
     """
     return {"type": "text", "x_mm": x, "y_mm": y, "w_mm": width,
             "h_mm": height,
@@ -1345,31 +1272,33 @@ def _reading(payload: dict, key: str, *, optional: bool = False):
         if optional:
             return None
         raise _refuse(
-            f"The calibration needs the {key!r} reading — it is one of the "
-            f"six numbers printed on the two labels, in millimetres.")
+            f"The calibration needs {key.upper()} — it is one of the four "
+            f"coordinates of the label on the printed grid, in millimetres.")
     try:
         value = float(raw)
     except (TypeError, ValueError):
         raise _refuse(
-            f"{key!r} has to be a number of millimetres — read it off the "
-            f"ladder printed on the calibration label.")
+            f"{key.upper()} has to be a number of millimetres — read it off "
+            f"the scale printed on the calibration grid.")
     if math.isnan(value) or math.isinf(value):
-        raise _refuse(f"{key!r} is not a measurement.")
+        raise _refuse(f"{key.upper()} is not a measurement.")
     if abs(value) > MAX_READING_MM:
         raise _refuse(
-            f"{value}mm is longer than any label this printer takes, so "
-            f"{key!r} is a ladder read on the wrong axis or a decimal point "
-            f"in the wrong place.")
+            f"{value}mm is further than this printer can reach, so "
+            f"{key.upper()} is a scale read on the wrong axis or a decimal "
+            f"point in the wrong place.")
     if value < 0:
-        # Every one of these is a distance from an edge to something printed
-        # on the same label, so none of them can be negative — and a minus
-        # sign here is somebody carrying over the old offset's convention,
-        # where it meant "the other way". There is no other way now: the
-        # derivation decides the sign, from where the two copies landed.
+        # Every one of these is a COORDINATE on a scale that starts at zero
+        # — the head's first dot across, the first row the printer lays down
+        # — so none of them can be negative, and a minus sign here is
+        # somebody carrying over the old offset's convention, where it meant
+        # "the other way". There is no other way now: the rectangle decides
+        # the sign, from which side of the grid's own zero its top edge fell.
         raise _refuse(
-            f"{key!r} is a distance measured from an edge of the label, so "
-            f"it cannot be negative. Read it off the ladder printed on the "
-            f"calibration label and type what it says.")
+            f"{key.upper()} is a coordinate on a scale that starts at 0, so "
+            f"it cannot be negative. Read it off the printed grid and type "
+            f"what it says — and if the label's top edge is above the grid "
+            f"altogether, Y1 is 0.")
     return value
 
 
@@ -1380,21 +1309,18 @@ MAX_READING_MM = 305.0
 
 
 async def h_stock_calibration(request: web.Request) -> web.Response:
-    """Five readings in; what this roll does, in the roll's own words.
+    """Four coordinates in; what this roll does, in the roll's own words.
 
     The panel does no arithmetic on the way in and none on the way out: the
-    numbers a person read go straight to `calibration.derive`, which is pure
-    and is where all three hypotheses live. That split is the whole reason
-    this can be tested with the numbers the owner actually measured — a
-    derivation spread across a request handler is one that can only be
-    checked by printing.
+    numbers a person read go straight to `calibration.derive`, which is pure.
+    That split is the whole reason this can be tested with the coordinates
+    the owner actually read — a derivation spread across a request handler is
+    one that can only be checked by printing.
 
-    Two answers do NOT store anything, and both are the honest kind of
-    nothing. The first half of the "only the first label" hypothesis needs a
-    second print before it can say which of two firmware behaviours this
-    printer has; a set of readings whose arithmetic is impossible is a
-    misread ladder. Storing half of either would leave a roll calibrated by a
-    guess, which is the thing this replaced.
+    One answer stores nothing, and it is the honest kind of nothing: a
+    rectangle whose own arithmetic does not close is a misread grid. 0.9.x
+    had a second — the first half of a two-print hypothesis — and it is gone
+    with the second print. There is one job, one grid and one answer.
     """
     state = panel(request)
     try:
@@ -1404,29 +1330,19 @@ async def h_stock_calibration(request: web.Request) -> web.Response:
 
     payload = await body(request)
     readings = payload.get("readings")
-    printed = payload.get("printed")
-    if not isinstance(readings, dict) or not isinstance(printed, dict):
+    if not isinstance(readings, dict):
         return bad(
-            "A calibration is the six readings off the two labels plus what "
-            "the calibration print reported it sent — post `readings` and "
-            "`printed` together, because a drift between the copies is only "
-            "a measurement against the search budget that went out.")
+            "A calibration is the four coordinates of the label on the "
+            "printed grid — post `readings` with `x1`, `y1` and `y2`, and "
+            "`x2` unless the scale stops before the label's right-hand "
+            "edge.")
 
-    variant = str(printed.get("variant", "plain") or "plain")
-    if variant not in protocol.JOB_STARTS:
-        return bad(f"There is no {variant!r} calibration print.")
     outcome = calibration.derive(
         calibration.Readings(
-            left=_reading(readings, "left"),
-            top1=_reading(readings, "top1"),
-            bottom1=_reading(readings, "bottom1"),
-            top2=_reading(readings, "top2"),
-            bottom2=_reading(readings, "bottom2"),
-            right=_reading(readings, "right", optional=True),
-        ),
-        calibration.Printed(
-            esc_l_mm=_reading(printed, "esc_l_mm"),
-            variant=variant,
+            x1=_reading(readings, "x1"),
+            y1=_reading(readings, "y1"),
+            y2=_reading(readings, "y2"),
+            x2=_reading(readings, "x2", optional=True),
         ),
         entry, now=time.time())
 
