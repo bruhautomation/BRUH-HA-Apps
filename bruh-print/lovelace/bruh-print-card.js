@@ -31,7 +31,7 @@
  * reloaded it.
  */
 
-const CARD_VERSION = '0.10.0';
+const CARD_VERSION = '0.11.0';
 
 /* The integration's domain: the name on the services and the string every
  * entity id this card looks for carries. */
@@ -518,7 +518,11 @@ class BruhPrintCard extends HTMLElement {
     label.textContent = 'What should it say?';
     const input = document.createElement('textarea');
     input.rows = 2;
-    input.placeholder = 'Chest freezer — chili';
+    /* The panel's own box says the same thing, for the same reason: a
+     * greyed-out example in an empty field reads as content, not as a
+     * demonstration. Both are changed together or the dashboard and the
+     * panel prompt for different things. */
+    input.placeholder = 'Enter label text here...';
     input.value = this._form.text;
     input.addEventListener('input', () => { this._form.text = input.value; });
     input.addEventListener('keydown', (event) => {

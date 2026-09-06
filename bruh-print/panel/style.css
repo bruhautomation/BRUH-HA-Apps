@@ -300,26 +300,62 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 }
 
 /* ── Designer ────────────────────────────────────────────────────────── */
-/* One row: the add strip and ⋯. Everything else about the label is in the
- * sheet, so this cannot wrap into the five rows it used to and cannot push
- * the label off the bottom of a phone. */
+/* The add strip, which label you are on, and ⋯. One row wherever they fit
+ * and two where they do not, which measured is 1440 and 900 on one row and
+ * 390 on two.
+ *
+ * The row is what gives way, and that is a rule rather than a taste: at
+ * 390px the three of them want 428px of a 362px row, and letting the add
+ * strip absorb the difference — which `min-width: 0` did — took it to 32px
+ * with its own buttons laid out under the picker beside it, where a click
+ * on one hits the picker. A primary control rendered as a sliver under a
+ * secondary one is the compromise shape brAIn's own top bar refuses; the
+ * label being designed starting 40px lower on a phone is the cheaper
+ * failure, and it is measured rather than assumed (canvas top 254 -> 294 of
+ * 780, with the label itself ending at 485). What must never come back is
+ * the five-row bar this replaced, which put the canvas at y=590. */
 .design-bar {
-  display: flex; gap: 10px; align-items: center; flex-wrap: nowrap;
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
   padding: 8px 10px; margin-bottom: 10px;
   background: var(--panel); border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow);
 }
 /* `width: auto` sizes a <select> to its WIDEST OPTION, and the stock names
- * are long ("Chemical-Resistant Cryo Labels — 2.25" × 1.25""), so the
- * picker laid out 431px wide inside a 390px window and took the page with
- * it. The stock picker lives in the sheet now, where the same cap applies
- * for the same reason — a dialog is `max-width: min(560px, 94vw)` and a
- * select sized to its widest option ignores it. */
+ * are long ("2.25" × 1.25" — Chemical-Resistant Cryo Labels"), so an
+ * uncapped picker laid out 431px wide inside a 390px window and took the
+ * page with it. Every one of them is capped: a dialog is
+ * `max-width: min(560px, 94vw)` and a select sized to its widest option
+ * ignores it, and the design bar is one nowrap row that would grow the same
+ * way. */
 .modal select, .modal input { max-width: 100%; }
-/* The strip is what gives way: it scrolls inside itself rather than taking
- * the page sideways, and its buttons keep their words (a row of bare glyphs
- * is the shape nobody can learn) and their 44px targets. */
-.addbar { display: flex; gap: 6px; flex: 1 1 auto; min-width: 0;
+/* The bar's stock picker, which is a button because a <select> could not
+ * be made to fit. Measured at 390px: capped to 116px the select still laid
+ * out at 164px with its label, and with ⋯ beside it the add strip came out
+ * fifteen pixels wide with its own buttons rendering underneath the picker.
+ * The button says the size and the dialog it opens says the names, which is
+ * also the better split — the size is what identifies a roll.
+ *
+ * `flex: none` because the add strip is what gives way in this row: it
+ * scrolls inside itself and is built to. */
+.designstock { flex: none; white-space: nowrap; }
+/* One row per stock in the dialog, full name under the size. A grid rather
+ * than a flex row so a long vendor name wraps under the measurement instead
+ * of pushing it off the side. */
+.stocklist { display: grid; gap: 8px; margin: 4px 0 12px; }
+.stockrow { display: grid; gap: 2px; justify-items: start; text-align: left;
+  height: auto; min-height: 48px; padding: 8px 12px; }
+.stockrow .muted { font-size: 12px; }
+.stockrow.on { border-color: var(--accent); }
+/* The strip scrolls inside itself rather than taking the page sideways, and
+ * its buttons keep their words (a row of bare glyphs is the shape nobody
+ * can learn) and their 44px targets.
+ *
+ * `min-width` is what makes the fit BINARY, which is the whole of the rule
+ * above: with a floor of 0 the strip silently shrinks to nothing and the
+ * row stays one row, so the failure is a sliver nobody measured rather than
+ * a wrap a test can see. 150px is a little over one add button plus the
+ * next one's edge — enough to read as a strip that scrolls. */
+.addbar { display: flex; gap: 6px; flex: 1 1 auto; min-width: 150px;
   flex-wrap: nowrap; overflow-x: auto;
   scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .addbar::-webkit-scrollbar { display: none; }
@@ -734,6 +770,19 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
   border-radius: 10px; }
 .calfields { display: grid; gap: 4px; }
 .calfield { margin-bottom: 6px; }
+/* The two prints, at the top of the step that reads them. `wrap` rather
+   than the nowrap the design bar uses, because there is no strip here to
+   scroll and two full-width buttons stacked on a phone is a better answer
+   than two half-width ones with their words cut. */
+.calprints { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.calprints .btn { flex: 1 1 auto; min-width: 0; }
+/* The one group that is a choice rather than a reading, ruled off from the
+   four above it. The line is the whole signal: everything above says where
+   the paper is and this says what to do about it, and a person who reads it
+   as a fifth measurement will look for it on the label. */
+.calchoice { margin-top: 16px; padding-top: 14px;
+  border-top: 1px solid var(--line); }
+.calchoice + .calfield .btn.tiny { align-self: flex-start; margin-top: 6px; }
 /* Three things to do rather than six questions: one strip across the paper,
    then one label, then the other. The heading is what tells somebody they
    may put a label down and pick the other one up. */

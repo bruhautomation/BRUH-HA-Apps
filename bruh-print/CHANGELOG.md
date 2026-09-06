@@ -1,5 +1,81 @@
 # Changelog
 
+## 0.11.0
+
+**Lining a roll up is a loop, and it shipped as a form.** 0.10.0 got the
+question right — print a grid, read where the label's four edges fall on it —
+and then made every correction start from scratch: the only route back to a
+printed label was to close the dialog, find the bay, press a button on the
+card and open the wizard again to an empty form. So a reading that came out
+a millimetre wrong meant reading all four again.
+
+Both prints are now at the top of the step you type into — **Print the grid
+again** and **Print a check label** — and neither leaves the step or clears a
+box. Opening the wizard on a roll that is already lined up goes straight to
+the numbers, **filled in with what that roll is set to now**, and the end of
+the wizard has a **Change the numbers** button back to them. The prefill is
+worth one sentence about why it is safe: three of the four coordinates fall
+straight out of the stored answer, and re-applying them is a *fixed point* —
+measured over four passes, for every shape a roll can be in, a person who
+changes nothing and presses Apply changes nothing. The fourth is the
+right-hand edge, which sets nothing on a calibration (it is read to check the
+stock's own measurements) and honestly starts empty.
+
+**And you can now choose a printable area smaller than the one the printer
+can reach**, which is what somebody tried to do by typing a short `Y2` and
+got refused for. That refusal was the *visible* half of the problem. The
+quiet half was worse: `Y2` is where the paper's bottom edge falls, so pulling
+it in is read as a printer that starts further into the label — the area
+comes out the right size in the wrong place, on every label, with nothing on
+screen saying so.
+
+So it is a field of its own, **Keep clear at the bottom**, under its own
+heading and ruled off from the four readings — because everything above it is
+a coordinate of the paper and this is the one number nothing on the label
+answers. It exists because the *other* end is not a choice: the printer
+starts where it starts, so a roll with a 4.7mm dead band prints inside
+4.7 → 31.75 and the blank edge at the top is deeper than the one at the
+bottom however carefully the artwork is centred. **Match the top** fills in
+the number that makes them match. There is deliberately no box for the top,
+because holding more back there would only push the artwork further from the
+middle, and an even border on all four sides is the stock's own **Margin**.
+
+Two things it does not do. It **changes no bytes** — the job on the wire is
+the one the same roll sends without it — and it **does not clip**: the
+printer can reach there and has been asked not to, so ink drawn into the band
+still prints and is reported. The designer hatches it (`KEPT CLEAR`, beside
+the leading band's `UNREACHABLE`, drawn alike because both are areas to aim
+away from and named apart because only one of them is the machine), and a
+check label's frame comes in to meet it. The three refusals that remain now
+name that box, so a guard that says no also says what to do instead.
+
+**Which label you are drawing on moved to the design bar.** It is not a
+setting, it is the paper — it decides the size of the canvas, which way the
+text runs and which boxes are off the edge — and somebody switching between a
+freezer label and a tube wrap was opening **⋯ Label setup**, changing it and
+pressing Done three times a session.
+
+It is a **button** showing the size (`2.25" × 1.25" ▾`) that opens a list,
+rather than the drop-down it was in the sheet, and the reason is a
+measurement: a `<select>` lays out to its widest option, and these run to
+`2.25" × 1.25" — Chemical-Resistant Cryo Labels`. Capped hard enough to fit a
+390px row it still took 164px, which with **⋯** beside it left the add strip —
+the primary control on that tab — *32 pixels wide* with its own buttons
+rendering underneath the picker, where a click on one hits the picker. The
+bar takes a second row on a narrow phone instead, which costs the canvas 40px
+and is the cheaper failure; the desktop shape is unchanged. Stocks are now
+named size-first everywhere for the same reason, in one place rather than
+two: the size is the half that says which roll this is, and it is the half a
+width-bounded control has to keep.
+
+**The Quick tab's placeholder is an instruction.** `Chest freezer — chili`
+was a worked example chosen to show the autofit breaking a phrase across two
+lines, and what it actually did was have somebody ask why their label said
+chest freezer. A greyed-out sentence in an empty box reads as content, on the
+one box in the panel whose emptiness must not need explaining. It says
+`Enter label text here...` — on the panel and on the dashboard card, which
+are the same control in two places.
+
 ## 0.10.0
 
 **The calibration was asking for an offset, and an offset is not a thing

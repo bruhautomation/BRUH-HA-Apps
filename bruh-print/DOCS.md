@@ -115,7 +115,16 @@ coordinates, one rectangle, no signs.
    one sentence.
 4. Press **Print a check label**. It draws a frame around everything the roll
    can print on. A complete frame means the answer was right; a missing side
-   says which way it is out, and you run the wizard again.
+   says which way it is out.
+
+**It is a loop, not a form.** Both prints live at the top of the step you type
+into — **Print the grid again** and **Print a check label** — so reading a
+label, changing one number and printing again never leaves the dialog. And
+opening the wizard on a roll that is already lined up takes you straight to the
+numbers, **filled in with what that roll is set to now**: change one, press
+Apply, and nothing else moves. (The right-hand edge is the exception and starts
+empty. It sets nothing — it is read to check the stock's own measurements —
+so there is nothing stored to show back.)
 
 **Before you read anything, three things about the label in your hand.** None
 of them is guessable from the paper, and every one of the four readings is
@@ -156,6 +165,31 @@ falls partway down the grid and `Y1` is the number it falls at — the whole
 label is printable, and every job now feeds that far before it prints. Both
 edges are then on the grid, so `Y2 − Y1` is the label's real length, measured
 rather than taken from the catalog.
+
+**Choosing a shorter printable area.** Everything above says where the *paper*
+is. **Keep clear at the bottom** says how much of it to leave blank on purpose,
+and it is the one number here that nothing on the label answers — you decide
+it.
+
+It exists because the other end is not a choice. The printer starts where it
+starts, so a roll with a 4.7mm dead band prints inside 4.7 → 31.75 and the
+blank edge at the top is deeper than the one at the bottom however carefully
+the artwork is centred. Hold 4.7mm back at the bottom and they match. **Match
+the top** fills in that number for you once the roll has been lined up, and any
+other number is yours to type.
+
+Two things it does not do. It **changes no bytes** — the job on the wire is
+exactly the one the same roll sends without it, and what changes is where
+labels are laid out: the designer hatches the band and a check label's frame
+comes in to meet it. And it **does not clip** — the printer can reach there, so
+ink drawn into the band still prints and is reported as a note. That is the
+difference from the band at the leading edge, which the printer genuinely
+cannot lay and which is cut off the job on the way out.
+
+There is deliberately no box for the other end. Holding more back at the *top*
+would only push the artwork further from the middle, and an even border on all
+four sides is the stock's **Margin**, which is a different control that already
+exists.
 
 **What this deliberately stopped measuring.** Two earlier hypotheses — a first
 label of a job that starts later than the rest, and a printer not re-syncing on
@@ -357,11 +391,22 @@ a quarter at a time, taking the box with it so the words still have room.
 Text and barcodes only — a QR code, a box and a rule look the same whichever
 way up they are, so the button is there and greyed out rather than missing.
 
-**The bar is the add strip and one button.** Everything about the label
-rather than about a box on it — which stock it is on, what it is called,
-which way its text runs, and whether boxes line up as you drag — is behind
-**⋯ Label setup**. On a phone the bar used to be five rows and the label
-being designed started below the fold.
+**The bar is the add strip, which label you are on, and one button.** The
+label picker shows the size you are drawing on (`2.25" × 1.25" ▾`) and opens
+a list of what is loaded; it is on the bar rather than in the sheet because
+it is not a setting, it is the paper — it decides the size of the canvas,
+which way the text runs and which boxes are off the edge. Everything else
+about the label rather than about a box on it — what it is called, which way
+its text runs, and whether boxes line up as you drag — is behind **⋯ Label
+setup**.
+
+It is a button and not a drop-down for a measured reason: a `<select>` is
+laid out to its widest option, and the stock names run to `2.25" × 1.25" —
+Chemical-Resistant Cryo Labels`. At 390px that left the add strip — the
+primary control on this tab — 32 pixels wide with its own buttons rendering
+underneath the picker. The bar takes a second row on a narrow phone instead;
+what must never come back is the five-row bar this replaced, which put the
+label being designed below the fold.
 
 ## Templates
 

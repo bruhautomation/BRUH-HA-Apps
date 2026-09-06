@@ -450,32 +450,87 @@ class TestPanelUI(unittest.TestCase):
                          "Rotate is back in the design bar, where it spends "
                          "its life disabled")
 
-    def test_the_design_bar_is_the_add_strip_and_one_button(self):
+    def test_the_design_bar_is_the_add_strip_the_stock_and_one_button(self):
         """269px in five rows on a phone put the label being designed at
-        y=590 of a 780px screen. Everything that is not "put something on
-        the label" is one press away in the sheet."""
+        y=590 of a 780px screen, so everything that is not about the label
+        in front of you went one press away into the sheet.
+
+        Which stock came back, and it is the only one that did. It is not a
+        setting — it is the paper: it decides the canvas, the direction the
+        text runs and which boxes are off the edge, and somebody moving
+        between a freezer label and a tube wrap was opening the sheet for it
+        three times a session. What stays in the sheet is a name, a sentence
+        and a mode, none of which is answered by looking at the label."""
         page = re.sub(r"<!--.*?-->", "",
                       (PANEL / "index.html").read_text(), flags=re.S)
         bar = page.split('<div class="design-bar">')[1].split("</div>\n\n")[0]
         self.assertIn('id="addBar"', bar)
+        self.assertIn('id="designStock"', bar)
         self.assertIn('id="designMore"', bar)
-        for gone in ("designStock", "designName", "designTurnLine",
-                     "designSnap"):
+        for gone in ("designName", "designTurnLine", "designSnap"):
             with self.subTest(control=gone):
                 self.assertNotIn(gone, bar)
 
+    def test_the_bar_picker_is_a_button_because_a_select_could_not_fit(self):
+        """`width: auto` sizes a <select> to its WIDEST OPTION, and the stock
+        names run to "2.25" × 1.25" — Chemical-Resistant Cryo Labels". That
+        is what put this control in the sheet in the first place, and capping
+        it was not enough: measured at 390px the capped select still laid out
+        at 164px, and with ⋯ beside it the add strip — the primary control on
+        this tab — came out FIFTEEN pixels wide with its own buttons
+        rendering underneath the picker.
+
+        So the bar carries a button showing the size, and the names live in
+        the dialog it opens. That is the font picker's pattern one control
+        over, and it is also the better split: the size is the half that
+        says which roll this is."""
+        page = (PANEL / "index.html").read_text()
+        self.assertRegex(page, r'<button[^>]*class="btn designstock"'
+                               r'[^>]*id="designStock"')
+        self.assertNotIn('<select id="designStock">', page)
+        app = (PANEL / "app.js").read_text()
+        self.assertIn("function setStockButton(", app)
+        self.assertIn("function openStockPicker(", app)
+        # State on the button, under the same id every reader already asks.
+        self.assertIn("button.dataset.value = chosen ? chosen.id : '';", app)
+        self.assertNotIn("$('designStock').value", app)
+        # The dialog lists what is loaded, exactly as every other picker
+        # outside the Printer tab does.
+        picker = app.split("function openStockPicker(")[1].split("\nfunction ")[0]
+        self.assertIn("loadedStocks()", picker)
+        css = (PANEL / "style.css").read_text()
+        self.assertIn(".designstock { flex: none;", css)
+        self.assertIn(".stockrow {", css)
+
+    def test_a_stock_is_named_one_way_and_the_size_leads(self):
+        """Three pickers read this — the Quick tab's, the Printer tab's bays
+        and the design bar's dialog — and three copies of a join is three
+        chances for two of them to disagree about what one roll is called.
+        The size leads because every one of them is width-bounded and the
+        tail is what a narrow window loses; two rolls of the same brand
+        truncated name-first come out as the same string."""
+        app = (PANEL / "app.js").read_text()
+        self.assertIn("const stockOptionText = (stock) => "
+                      "`${stock.label} — ${stock.name}`;", app)
+        self.assertNotIn("${stock.name} — ${stock.label}", app)
+        # Two call sites: the shared `fillPickers` one and the bays.
+        self.assertEqual(app.count("stockOptionText("), 2)
+
     def test_the_sheet_is_static_markup(self):
-        """#designStock and #designName are read and written from a dozen
-        places, so a control that only exists while a dialog is open is a
-        control every one of them has to check for. A closed <dialog> lays
-        nothing out, which is the whole saving."""
+        """#designName is read and written from a dozen places, so a control
+        that only exists while a dialog is open is a control every one of
+        them has to check for. A closed <dialog> lays nothing out, which is
+        the whole saving — and it is also why #designStock could move to the
+        bar without one of its readers changing: same id, same static
+        markup, different place on the page."""
         page = (PANEL / "index.html").read_text()
         sheet = page.split('<dialog class="modal" id="designSheet">')[1]
         sheet = sheet.split("</dialog>")[0]
-        for control in ('id="designStock"', 'id="designName"',
-                        'id="designTurnLine"', 'id="designSnap"'):
+        for control in ('id="designName"', 'id="designTurnLine"',
+                        'id="designSnap"'):
             with self.subTest(control=control):
                 self.assertIn(control, sheet)
+        self.assertNotIn('id="designStock"', sheet)
 
     def test_the_wordmark_is_in_the_markup_and_hidden_on_a_phone(self):
         """Home Assistant's own header says "BRUH Print" one row above this
@@ -529,6 +584,27 @@ class TestPanelUI(unittest.TestCase):
                 self.assertNotIn(gone, visible)
         self.assertIn("A LabelWriter cannot tell what stock is in it", visible)
         self.assertIn("Which measurement is which?", visible)
+
+    def test_the_empty_box_asks_rather_than_demonstrates(self):
+        """A greyed-out example in an empty field is read as CONTENT, not as
+        a demonstration. `Chest freezer — chili` was chosen to show the
+        autofit breaking a phrase across two lines, and what it actually did
+        was have somebody ask why their label said chest freezer — on the
+        one box in the panel whose emptiness must not need understanding.
+
+        Both surfaces or neither: the card is the same control on a
+        dashboard, and two prompts for one thing is how they drift."""
+        page = (PANEL / "index.html").read_text()
+        card = (ADDON / "lovelace" / "bruh-print-card.js").read_text()
+        self.assertIn('placeholder="Enter label text here..."', page)
+        self.assertIn("input.placeholder = 'Enter label text here...';", card)
+        visible = re.sub(r"<!--.*?-->", "", page, flags=re.S)
+        self.assertNotIn("Chest freezer", visible)
+        # The comment in the card carries the reason, so the source is read
+        # with its own explanation stripped for the same reason the panel's
+        # is: a test that greps prose fails on the note about the change.
+        code = re.sub(r"/\*.*?\*/", "", card, flags=re.S)
+        self.assertNotIn("Chest freezer", code)
 
     def test_nothing_is_declared_after_the_touch_floor(self):
         """The sibling of the `.btn.tiny` check above, asked the other way
@@ -682,6 +758,81 @@ class TestPanelUI(unittest.TestCase):
         self.assertIn(".calfield > .calhow {", css)
         self.assertLess(css.index(".calfield > .calhow {"),
                         css.index("@media (pointer: coarse)"))
+
+    def test_the_wizard_prints_from_the_step_that_reads(self):
+        """Lining a roll up is a LOOP — read, apply, look, change one number
+        — and it shipped as a line: the only route back to a printed label
+        was to close the dialog, find the bay, press a button on the card and
+        open the wizard again, which lost every number on the way."""
+        app = (PANEL / "app.js").read_text()
+        row = app.split("function calPrintRow(")[1].split("\nfunction ")[0]
+        self.assertIn("'/api/printer/calibrate'", row)
+        self.assertIn("'/api/printer/check'", row)
+        # It stays on the step and keeps what was typed.
+        self.assertIn("calReadStep(state, wrap)", row)
+        read = app.split("function calReadStep(")[1].split("\nfunction ")[0]
+        self.assertIn("calPrintRow(state, wrap)", read)
+        # Above the boxes, not under them: it is the thing you reach for
+        # before reading, and the step is long on a phone.
+        self.assertLess(read.index("calPrintRow(state, wrap)"),
+                        read.index("calfields"))
+
+    def test_the_wizard_shows_the_answer_it_already_has(self):
+        """An empty form makes a small adjustment a re-measurement, which is
+        what "I cannot see what I entered" was. Three of the four fall out of
+        the stored numbers; the fourth sets nothing and honestly cannot."""
+        app = (PANEL / "app.js").read_text()
+        fn = app.split("function calStoredReadings(")[1].split("\nfunction ")[0]
+        self.assertIn("cal.across_mm", fn)
+        self.assertIn("cal.start_mm", fn)
+        self.assertIn("cal.length_mm", fn)
+        self.assertIn("x2: ''", fn)
+        dialog = app.split("function lineUpDialog(")[1].split("\nfunction ")[0]
+        self.assertIn("calStoredReadings(stock)", dialog)
+        # A calibrated roll opens on the numbers; a fresh one opens on the
+        # press that prints the grid it has not got yet.
+        self.assertIn("if (stock.calibrated) calReadStep(state, wrap);", dialog)
+        self.assertIn("else calPrintStep(state, wrap, '');", dialog)
+        # And there is a way back to them from the end of the wizard.
+        done = app.split("function calDoneStep(")[1].split("\nfunction ")[0]
+        self.assertIn("calStoredReadings(state.stock)", done)
+
+    def test_the_area_to_print_on_is_a_choice_and_says_so(self):
+        """Everything above it is a coordinate of the PAPER; this is a choice
+        about where to print on it. The four readings work precisely because
+        none of them is a preference, and mixing one in among them would undo
+        that at the moment it stops being obvious."""
+        app = (PANEL / "app.js").read_text()
+        read = app.split("function calReadStep(")[1].split("\nfunction ")[0]
+        self.assertIn("calHold", read)
+        self.assertIn("Keep clear at the bottom", read)
+        # Its own group, ruled off, after the two groups of readings.
+        self.assertIn("calgroup calchoice", read)
+        self.assertGreater(read.index("calchoice"), read.index("CAL_GROUPS"))
+        css = (PANEL / "style.css").read_text()
+        self.assertIn(".calchoice { margin-top:", css)
+        self.assertIn("border-top: 1px solid var(--line); }", css)
+        # There is deliberately no box for the other end: the printer starts
+        # where it starts, and holding MORE back at the top would only push
+        # the artwork further from the middle.
+        self.assertNotIn("calHoldLeading", app)
+        self.assertNotIn("Keep clear at the top", app)
+
+    def test_the_two_bands_are_drawn_alike_and_named_apart(self):
+        """One the printer refuses and one a person chose. Same hatching,
+        because both are areas to aim away from; different words, because
+        ink in the first is lost on the way out and ink in the second prints
+        and is reported."""
+        app = (PANEL / "app.js").read_text()
+        self.assertIn("function holdBand()", app)
+        self.assertIn("hold_trailing_mm", app)
+        self.assertIn("[[dead, 'unreachable'], [hold, 'kept clear']]", app)
+        # One geometry helper, so a hatch and an outline cannot disagree
+        # about which boxes are in trouble.
+        self.assertIn("function edgeGaps(", app)
+        crossings = app.split("function deadCrossings(")[1].split("\nfunction ")[0]
+        self.assertIn("[deadBand(), holdBand()]", crossings)
+        self.assertIn("edgeGaps(", crossings)
 
     def test_the_designer_draws_the_band_the_printer_cannot_reach(self):
         """And on the right edge of the canvas. The renderer turns the canvas

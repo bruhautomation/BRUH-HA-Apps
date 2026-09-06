@@ -12,7 +12,7 @@
     GET  /api/stocks                 the label catalog
     POST /api/stock                  add or correct a stock
     POST /api/stock/{id}/swap        the two dimensions, exchanged
-    POST /api/stock/{id}/calibration six readings -> what this roll does
+    POST /api/stock/{id}/calibration four coordinates -> what this roll does
     DEL  /api/stock/{id}/calibration forget them and print as shipped
     DEL  /api/stock/{id}             delete a custom stock / hide a built-in
     POST /api/roll/{side}            say what is in a bay
@@ -1086,7 +1086,7 @@ async def h_printer_check(request: web.Request) -> web.Response:
     # question is.
     full = stock_store.replace(entry, margin_mm=0.0)
     document = _check_label(full, entry.dead_leading_mm(
-        state.at_tear_off(side)))
+        state.at_tear_off(side)), entry.hold_trailing_mm())
     _, _, rendered = await asyncio.to_thread(
         _render, state, document, stock=full)
     result = await _send(state, rendered, stock=entry, side=side, copies=1)
@@ -1100,7 +1100,7 @@ CHECK_FRAME_MM = 1.0
 CHECK_WORDS = "Should reach every edge"
 
 
-def _check_label(stock, dead_mm: float) -> dict:
+def _check_label(stock, dead_mm: float, hold_mm: float = 0.0) -> dict:
     """A frame around everything this roll can print on, and a line of words.
 
     The frame starts at the dead band rather than at row 0, because the crop
@@ -1108,10 +1108,19 @@ def _check_label(stock, dead_mm: float) -> dict:
     so a frame drawn from row 0 would have its top edge cut away and the
     check would fail on a calibration that was right. Drawn where the ink can
     land, it comes back whole.
+
+    `hold_mm` brings the bottom edge in by whatever the roll was asked to
+    keep clear, and it is what makes a chosen printable area checkable at
+    all: without it the frame would print into the band and the one way to
+    see the area you set would be to measure the blank paper under a label
+    that ignored it. The two bands are different kinds of thing — one the
+    printer refuses, one a person chose — and the frame does not distinguish
+    them, deliberately: what it draws is the area artwork gets, which is the
+    question a check label answers.
     """
     across_mm, feed_mm = stock.drawable_mm
     top = max(0.0, dead_mm)
-    height = max(2.0, feed_mm - top)
+    height = max(2.0, feed_mm - top - max(0.0, hold_mm))
     return {"stock": stock.id, "rotate": 0, "name": "Check", "elements": [
         {"type": "box", "x_mm": 0, "y_mm": top,
          "w_mm": across_mm, "h_mm": height,
@@ -1335,7 +1344,8 @@ async def h_stock_calibration(request: web.Request) -> web.Response:
             "A calibration is the four coordinates of the label on the "
             "printed grid — post `readings` with `x1`, `y1` and `y2`, and "
             "`x2` unless the scale stops before the label's right-hand "
-            "edge.")
+            "edge. `hold` rides beside them and is optional: how much of "
+            "the bottom of the label to leave blank on purpose.")
 
     outcome = calibration.derive(
         calibration.Readings(
@@ -1344,7 +1354,14 @@ async def h_stock_calibration(request: web.Request) -> web.Response:
             y2=_reading(readings, "y2"),
             x2=_reading(readings, "x2", optional=True),
         ),
-        entry, now=time.time())
+        entry,
+        # Beside the readings rather than among them, because it is not one:
+        # the four coordinates say where the paper is and this says how much
+        # of it to leave blank. It comes off the same wire and through the
+        # same bounds check, and an empty box is 0.0 — which here is a real
+        # answer meaning "hold nothing back" rather than a missing reading.
+        hold=_reading(payload, "hold", optional=True) or 0.0,
+        now=time.time())
 
     updated = entry
     if outcome.calibration is not None:

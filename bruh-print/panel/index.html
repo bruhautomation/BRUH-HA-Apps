@@ -58,13 +58,22 @@
     <div class="pane quick-say">
       <h2>Type it. Print it.</h2>
       <!-- No lede. It said BRUH Print picks the biggest arrangement that
-           fits — which the heading says, the placeholder shows, and the fit
-           line under the preview reports for the label actually in front of
-           you. Three sayings of one thing, and the one with no fact in it
-           is the one that cost 63px above the box you type in. -->
+           fits — which the heading says and the fit line under the preview
+           reports for the label actually in front of you. Two sayings of one
+           thing, and the one with no fact in it is the one that cost 63px
+           above the box you type in.
+
+           The placeholder used to be a third: a worked example, `Chest
+           freezer — chili`, chosen to show the autofit breaking a phrase
+           across two lines. It is an instruction now, because a greyed-out
+           sentence in an empty box is read as CONTENT rather than as a
+           demonstration — the person using it asked why their label said
+           chest freezer — and a box whose emptiness has to be understood
+           before it can be typed in is the one box on this tab that must
+           not need understanding. -->
       <label class="field">
         <span>What should it say?</span>
-        <textarea id="quickText" rows="2" placeholder="Chest freezer — chili"
+        <textarea id="quickText" rows="2" placeholder="Enter label text here..."
                   autocomplete="off" spellcheck="false"></textarea>
       </label>
     </div>
@@ -145,9 +154,29 @@
        hold of and every other per-box control is already there. -->
   <div class="design-bar">
     <div class="addbar" id="addBar"></div>
+    <!-- Which label you are drawing on is not a setting, it is the paper.
+         It decides the size of the canvas, the direction the text runs and
+         which boxes are off the edge, so it is the one thing in the sheet
+         that is answered by LOOKING at the label rather than by opening a
+         dialog about it — and a person switching between a freezer label
+         and a tube wrap was pressing ⋯, changing it, and pressing Done,
+         three times a session.
+
+         A BUTTON rather than the <select> it was in the sheet, and the
+         reason is measured: a <select> is sized to its widest option, and
+         the stock names run to "2.25" × 1.25" — Chemical-Resistant Cryo
+         Labels". Capped to fit a 390px row it laid out at 164px, which with
+         ⋯ beside it left the add strip — the primary control on this tab —
+         fifteen pixels wide with its buttons underneath the picker. This
+         shows the SIZE, which is what is being switched and what a person
+         recognises, and the full names live in the dialog it opens. It is
+         the font picker's own pattern one control over. -->
+    <button type="button" class="btn designstock" id="designStock"
+            data-tip="Which label this design is drawn on. It sets the size
+              of the canvas and the direction the text runs."></button>
     <button type="button" class="btn designmore" id="designMore"
-            data-tip="Which stock this label is on, what it is called, which
-              way its text runs, and whether boxes line up as you drag.">⋯
+            data-tip="What this label is called, which way its text runs,
+              and whether boxes line up as you drag.">⋯
       Label setup</button>
   </div>
 
@@ -286,20 +315,21 @@
 <dialog class="modal" id="modal"><div id="modalBody"></div></dialog>
 
 <!-- The design bar's sheet. Static markup rather than something app.js
-     builds on open, because #designStock and #designName are read and
-     written from a dozen places and a control that only exists while a
-     dialog is open is a control every one of them has to check for. A
-     closed <dialog> lays nothing out, so the sheet costs the design tab
-     nothing until it is asked for. -->
+     builds on open, because #designName is read and written from a dozen
+     places and a control that only exists while a dialog is open is a
+     control every one of them has to check for. A closed <dialog> lays
+     nothing out, so the sheet costs the design tab nothing until it is
+     asked for. The same rule is why #designStock could move to the bar
+     without any of its readers changing: it is still one static control,
+     one id, in a different place on the page. -->
 <dialog class="modal" id="designSheet">
   <div>
     <h2>This label</h2>
-    <label class="field">
-      <span>Stock</span><select id="designStock"></select>
-    </label>
     <!-- Which way the text sits is the STOCK's answer and it is set on the
          Printer tab. Kept because it is the one fact here you cannot read
-         off the picture — where to change it. -->
+         off the picture — where to change it. It stays in the sheet even
+         though the stock picker left, because it is a sentence rather than
+         a control: the bar is for things you press. -->
     <p class="turnline muted" id="designTurnLine"></p>
     <label class="field">
       <span>Name</span><input id="designName" placeholder="Pantry jar">

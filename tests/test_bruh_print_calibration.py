@@ -330,5 +330,227 @@ class TestTheOutcomeIsWhatThePanelSends(unittest.TestCase):
         self.assertFalse(hasattr(calibration, "Printed"))
 
 
+class TestAnAreaSomebodyChoseRatherThanMeasured(unittest.TestCase):
+    """The band held clear at the bottom, which is the one number here that
+    nothing on the label says.
+
+    It exists because the OTHER end is not a choice. The printer starts where
+    it starts, so a roll with a 4.75mm dead band prints inside 4.75 -> 31.75
+    and the blank edges come out uneven however carefully the artwork is
+    centred — and the only way anybody had to shorten the printable area was
+    to type a Y2 that was not where the paper ended, which is a lie the
+    arithmetic reads as a worse registration fault.
+    """
+
+    def test_nothing_held_back_is_the_calibration_that_shipped(self):
+        """The promise every measurement here is added under: a roll that
+        asks for nothing gets byte-for-byte what it got before."""
+        out = calibration.derive(readings(*grid(OWNER_START)), cryo(), now=1.0)
+        self.assertEqual(out.calibration.hold_trailing_mm, 0.0)
+        held = calibration.derive(readings(*grid(OWNER_START)), cryo(),
+                                  hold=0.0, now=1.0)
+        self.assertEqual(out.calibration, held.calibration)
+
+    def test_the_blank_edges_can_be_made_to_match(self):
+        """The case the whole field is for, in the numbers it is for.
+
+        4.75mm the printer will not reach at the top; ask for 4.75mm at the
+        bottom and what is left is centred on the paper.
+        """
+        out = calibration.derive(readings(*grid(OWNER_START)), cryo(),
+                                 hold=OWNER_START, now=1.0)
+        entry = stock_store.replace(cryo(), calibration=out.calibration)
+        self.assertAlmostEqual(entry.dead_leading_mm(), OWNER_START, places=2)
+        self.assertAlmostEqual(entry.hold_trailing_mm(), OWNER_START, places=2)
+        top = entry.dead_leading_mm()
+        bottom = entry.feed_mm - top - entry.printable_feed_mm()
+        self.assertAlmostEqual(top, bottom, places=2,
+                               msg="the two blank edges do not match")
+        self.assertAlmostEqual(entry.printable_feed_mm(),
+                               LENGTH - 2 * OWNER_START, places=2)
+
+    def test_the_printable_area_can_be_shorter_than_the_paper_allows(self):
+        """Said plainly because it is what was asked for and refused: a
+        person may choose an area smaller than the one the printer can reach,
+        for no reason the arithmetic is entitled to ask about."""
+        entry = cryo()
+        for hold in (1.0, 5.0, 12.0, 20.0):
+            with self.subTest(hold=hold):
+                out = calibration.derive(readings(*grid(0.0)), entry,
+                                         hold=hold, now=1.0)
+                self.assertIsNotNone(out.calibration, "a chosen area refused")
+                got = stock_store.replace(entry, calibration=out.calibration)
+                self.assertAlmostEqual(got.printable_feed_mm(),
+                                       LENGTH - hold, places=2)
+
+    def test_a_hold_longer_than_the_label_is_cut_down_and_says_so(self):
+        """`printable_feed_mm`'s floor would absorb this silently, which is
+        the shape of guard that leaves somebody wondering why nothing
+        changed."""
+        out = calibration.derive(readings(*grid(0.0)), cryo(), hold=99.0,
+                                 now=1.0)
+        self.assertIsNotNone(out.calibration)
+        self.assertLess(out.calibration.hold_trailing_mm, LENGTH)
+        self.assertIn("99", out.sentence)
+        self.assertIn("more than", out.sentence)
+
+    def test_it_is_not_reported_as_something_the_printer_does(self):
+        """A band the machine refuses and a band a person reserved are two
+        different facts, and reading them as one is how somebody concludes
+        their printer is worse than it is."""
+        out = calibration.derive(readings(*grid(0.0)), cryo(),
+                                 hold=OWNER_START, now=1.0)
+        self.assertIn("because you asked for it", out.sentence)
+        self.assertIn("not because the printer", out.sentence)
+        # And the headline still reports the printer honestly: this roll
+        # prints from the die cut, whatever was held back below.
+        self.assertIn("prints from the die cut", out.sentence)
+
+    def test_a_negative_hold_is_nothing_rather_than_extra_paper(self):
+        out = calibration.derive(readings(*grid(0.0)), cryo(), hold=-5.0,
+                                 now=1.0)
+        self.assertEqual(out.calibration.hold_trailing_mm, 0.0)
+
+    def test_the_refusals_name_the_box_that_does_what_was_wanted(self):
+        """A guard that refuses has to change the next attempt. Typing a
+        short Y2 to shrink the area is exactly what somebody tries, and the
+        old refusal answered it by talking about their stock row."""
+        # Y2 far short of the label: reads as a printer starting 16mm in.
+        out = calibration.derive(readings(0.0, LENGTH - 16.0), cryo(), now=1.0)
+        self.assertIsNone(out.calibration)
+        self.assertIn("keep clear at the bottom", out.sentence)
+        # Both coordinates on the grid but describing a much shorter label.
+        short = calibration.derive(readings(3.0, 15.0), cryo(), now=1.0)
+        self.assertIsNone(short.calibration)
+        self.assertIn("keep clear at the bottom", short.sentence)
+
+    def test_why_this_is_a_field_and_not_a_relaxed_guard(self):
+        """The refusal was the VISIBLE half of what typing a short Y2 did,
+        and the quiet half is worse.
+
+        A Y2 pulled in by 5mm is read as a printer that starts 5mm further
+        into the label — which is what the coordinate means — so `start_mm`
+        grows, the crop on the way out grows with it, and the artwork is
+        drawn from a row the printer lays 5mm earlier than the document
+        thinks. The area comes out the right SIZE in the wrong PLACE, on
+        every label, with nothing on screen saying so. Relaxing the bound
+        would have made that reachable for the cases it still catches
+        instead of fixing it, which is why the choice got a field of its own
+        and the readings kept their meaning.
+        """
+        entry = cryo()
+        honest = calibration.derive(readings(*grid(OWNER_START)), entry,
+                                    now=1.0)
+        pulled_in = calibration.derive(readings(0.0, LENGTH - OWNER_START - 5.0),
+                                       entry, now=1.0)
+        # Both store. The second reports a dead band 5mm deeper than the one
+        # the printer really has, and the crop follows it.
+        self.assertAlmostEqual(pulled_in.calibration.start_mm,
+                               honest.calibration.start_mm + 5.0, places=2)
+        # The field says the same thing about the area and nothing at all
+        # about where the printing starts, which is the whole difference.
+        held = calibration.derive(readings(*grid(OWNER_START)), entry,
+                                  hold=5.0, now=1.0)
+        self.assertAlmostEqual(held.calibration.start_mm,
+                               honest.calibration.start_mm, places=2)
+        for out in (pulled_in, held):
+            got = stock_store.replace(entry, calibration=out.calibration)
+            self.assertAlmostEqual(got.printable_feed_mm(),
+                                   LENGTH - OWNER_START - 5.0, places=2)
+
+    def test_a_swap_drops_it_because_the_feed_axis_is_a_different_edge(self):
+        """It is a choice rather than a measurement and still cannot survive:
+        the swap has just changed which physical dimension the feed axis
+        is."""
+        out = calibration.derive(readings(*grid(OWNER_START)), cryo(),
+                                 hold=OWNER_START, now=1.0)
+        entry = stock_store.replace(cryo(), calibration=out.calibration)
+        self.assertEqual(entry.swapped().calibration.hold_trailing_mm, 0.0)
+
+    def test_a_roll_that_only_holds_a_band_still_reads_as_calibrated(self):
+        """`measured` is what decides whether the panel goes on offering the
+        wizard, and a roll whose printer needs no correction but whose owner
+        asked for a band has been answered."""
+        cal = stock_store.Calibration(hold_trailing_mm=3.0)
+        self.assertTrue(cal.measured)
+
+
+class TestTheStoredAnswerCanBeShownBackAsReadings(unittest.TestCase):
+    """The prefill the panel does, driven through the real derivation.
+
+    The panel reconstructs three of the four coordinates from what is stored
+    so a return visit is a nudge rather than a re-measurement, and the claim
+    that makes it safe is that re-applying them changes nothing. It is
+    asserted here rather than described in `app.js`, because a comment cannot
+    fail.
+    """
+
+    @staticmethod
+    def shown(entry):
+        """`calStoredReadings` in `app.js`, in Python. Deliberately a second
+        implementation: the point is that the ARITHMETIC round-trips, and a
+        test that called the panel's own copy could only agree with it."""
+        cal = entry.calibration
+        catalog = entry.feed_mm
+        length = catalog if cal.length_mm is None else cal.length_mm
+        start = cal.start_mm
+        y1 = -start if start < 0 else 0.0
+        y2 = (y1 + length) if start < 0 else max(0.0, catalog - start)
+        tenth = lambda value: round(value * 10) / 10  # noqa: E731
+        return tenth(cal.across_mm), tenth(y1), tenth(y2)
+
+    def apply(self, entry, hold=0.0):
+        x1, y1, y2 = self.shown(entry)
+        out = calibration.derive(readings(y1, y2, x1=x1), entry, hold=hold,
+                                 now=2.0)
+        self.assertIsNotNone(out.calibration,
+                             f"the shown readings were refused: {out.sentence}")
+        return stock_store.replace(entry, calibration=out.calibration)
+
+    def test_applying_what_is_shown_changes_nothing(self):
+        """Four times over, for every shape a roll can be in. A prefill that
+        moved the answer by looking at it would be worse than an empty form,
+        because the drift would be invisible and would compound."""
+        for name, typed in (("late", grid(OWNER_START)),
+                            ("early", grid(-3.0)),
+                            ("from the die cut", grid(0.0))):
+            with self.subTest(roll=name):
+                first = calibration.derive(readings(*typed), cryo(), now=1.0)
+                entry = stock_store.replace(cryo(),
+                                            calibration=first.calibration)
+                seen = [entry.calibration.start_mm]
+                for _ in range(4):
+                    entry = self.apply(entry)
+                    seen.append(entry.calibration.start_mm)
+                self.assertEqual(len(set(seen)), 1,
+                                 f"re-applying walked start_mm: {seen}")
+
+    def test_the_band_is_carried_and_not_re_derived(self):
+        """It is not one of the four, so it rides beside them — and a return
+        visit that dropped it would silently give the label back its bottom
+        edge."""
+        first = calibration.derive(readings(*grid(OWNER_START)), cryo(),
+                                   hold=OWNER_START, now=1.0)
+        entry = stock_store.replace(cryo(), calibration=first.calibration)
+        again = self.apply(entry, hold=entry.calibration.hold_trailing_mm)
+        self.assertAlmostEqual(again.calibration.hold_trailing_mm,
+                               OWNER_START, places=2)
+        self.assertAlmostEqual(again.calibration.start_mm,
+                               entry.calibration.start_mm, places=2)
+
+    def test_the_right_edge_is_the_one_that_cannot_come_back(self):
+        """Not an oversight: X2 sets nothing on a `Calibration`. It is read
+        to say whether the roll measures what its stock row claims, which is
+        a sentence rather than a stored number — so an empty box is the
+        honest answer and the panel says so."""
+        out = calibration.derive(readings(*grid(OWNER_START), x1=0.0, x2=57.0),
+                                 cryo(), now=1.0)
+        stored = out.calibration.as_dict()
+        self.assertNotIn("x2", stored)
+        for value in stored.values():
+            self.assertNotEqual(value, 57.0)
+            self.assertNotEqual(value, 57.15)
+
+
 if __name__ == "__main__":
     unittest.main()

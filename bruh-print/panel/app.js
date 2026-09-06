@@ -278,13 +278,85 @@ function loadedStocks() {
   return on.length ? on : S.stocks;
 }
 
+/* How a stock is named in a picker, in one place because there are three of
+ * them — the Quick tab's, the design bar's and the Printer tab's bays — and
+ * three copies of a join is three chances for two pickers to disagree about
+ * what the same roll is called.
+ *
+ * The SIZE leads. A closed <select> shows the front of its option and every
+ * one of these is capped in width, so the tail is what a narrow window
+ * loses; leading with the name meant two rolls of the same brand truncated
+ * to the same string, which is the one thing a picker may not do. The name
+ * is still there and still the vendor's own — it is what you reorder by,
+ * and renaming somebody's stock to something friendlier is a different and
+ * worse mistake. */
+const stockOptionText = (stock) => `${stock.label} — ${stock.name}`;
+
+/* The design bar's own picker: a button that says what is loaded and opens
+ * a list, the way the font picker already works one control over.
+ *
+ * It is not a <select> because of a number rather than a preference. A
+ * <select> lays out to its widest option, and these run to `2.25" × 1.25" —
+ * Chemical-Resistant Cryo Labels`; capped hard enough to fit a 390px row it
+ * still took 164px, which with ⋯ beside it left the add strip 15px wide
+ * with its own buttons rendering underneath the picker — measured, and the
+ * click that found it timed out on a control that was there and covered.
+ * What the button shows is the SIZE, which is the half that identifies a
+ * roll and the half a truncated <select> would have lost.
+ *
+ * `dataset.value` rather than `.value`, and the id is unchanged: every
+ * reader asks this control which stock is on screen and still does. */
+function setStockButton(button, id) {
+  if (!button) return;
+  const rows = loadedStocks();
+  const chosen = rows.find((s) => s.id === id)
+    || rows.find((s) => s.id === S.settings.default_stock) || rows[0];
+  button.dataset.value = chosen ? chosen.id : '';
+  button.textContent = chosen ? `${chosen.label} \u25be` : 'No label \u25be';
+  button.title = chosen ? chosen.name : '';
+}
+
+const designStockValue = () => $('designStock').dataset.value || '';
+
+/* One row per stock, full name and size, because this is where the names
+ * live now — the button has room for one of the two and takes the one that
+ * says which roll. `loadedStocks` is what fills it, so the design tab
+ * offers exactly what the Quick tab does: what is in the printer. */
+function openStockPicker(current, onPick) {
+  const body = $('modalBody');
+  body.innerHTML = '';
+  body.append(el('h2', null, 'Which label'));
+  body.append(el('p', 'lede',
+    'What this design is drawn on. It sets the size of the canvas, which '
+    + 'way the text runs, and which boxes end up off the edge.'));
+  const list = el('div', 'stocklist');
+  for (const stock of loadedStocks()) {
+    const row = el('button', 'btn stockrow' + (stock.id === current ? ' on' : ''));
+    row.append(el('b', null, stock.label));
+    row.append(el('span', 'muted', stock.name));
+    row.onclick = () => { $('modal').close(); onPick(stock.id); };
+    list.append(row);
+  }
+  if (!list.childElementCount)
+    list.append(el('p', 'muted', 'Nothing is recorded as loaded, so there is '
+      + 'nothing to choose. The Printer tab is where you say what is in each '
+      + 'bay.'));
+  body.append(list);
+  const actions = el('div', 'actions');
+  const close = el('button', 'btn', 'Close');
+  close.onclick = () => $('modal').close();
+  actions.append(close);
+  body.append(actions);
+  $('modal').showModal();
+}
+
 function fillPickers() {
   const options = (select, keep) => {
     const previous = keep ?? select.value;
     const rows = loadedStocks();
     select.innerHTML = '';
     for (const stock of rows) {
-      const option = el('option', null, `${stock.name} — ${stock.label}`);
+      const option = el('option', null, stockOptionText(stock));
       option.value = stock.id;
       select.append(option);
     }
@@ -294,7 +366,7 @@ function fillPickers() {
     else select.value = (rows[0] || {}).id || '';
   };
   options($('quickStock'), prefGet('bruhprint.stock', null));
-  options($('designStock'), S.label ? S.label.stock : null);
+  setStockButton($('designStock'), S.label ? S.label.stock : null);
 
   const quickFont = $('quickFont');
   const keptFont = quickFontValue() || S.settings.default_font;
@@ -547,7 +619,7 @@ function buildAddBar() {
 }
 
 function blankLabel() {
-  const id = $('designStock').value || S.settings.default_stock;
+  const id = designStockValue() || S.settings.default_stock;
   const stock = stockById(id);
   return {
     stock: id,
@@ -564,7 +636,7 @@ function loadLabel(label) {
   S.label = label || blankLabel();
   S.selected = -1;
   S.problems = [];
-  $('designStock').value = S.label.stock;
+  setStockButton($('designStock'), S.label.stock);
   $('designName').value = S.label.name || '';
   updateTurnLines();
   renderDesign();
@@ -682,6 +754,8 @@ const LEAD_EDGE = { 0: 'top', 90: 'left', 180: 'bottom', 270: 'right' };
  * to the printer takes rows off the whole sheet, die cut inward. A band
  * measured from the drawable corner would be short by exactly the margin,
  * which is the size of the thing it is drawing. */
+const TRAIL_EDGE = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' };
+
 function deadBand() {
   const stock = stockById(S.label && S.label.stock);
   return {
@@ -690,25 +764,51 @@ function deadBand() {
   };
 }
 
+/* The band at the other end, which the printer CAN reach and has been asked
+ * not to use. Same geometry, same hatching, opposite edge — and a separate
+ * function rather than a flag on `deadBand`, because the two are different
+ * claims and only one of them is about the machine: the leading band is
+ * cropped off the job on the way out, and ink in this one prints and is
+ * reported. Everything downstream keeps them apart on purpose, right down
+ * to the word drawn in each. */
+function holdBand() {
+  const stock = stockById(S.label && S.label.stock);
+  const lead = LEAD_EDGE[(S.label && S.label.rotate) || 0] || 'top';
+  return {
+    mm: stock ? Number(stock.hold_trailing_mm) || 0 : 0,
+    edge: TRAIL_EDGE[lead] || 'bottom',
+  };
+}
+
+/* How far in from an edge each element's box reaches, in SHEET millimetres.
+ * Shared by both bands so a hatch and an outline cannot disagree about which
+ * boxes are in trouble — which is the same reason they were one function
+ * when there was one band. */
+function edgeGaps(element, margin, mm) {
+  return {
+    top: margin + element.y_mm,
+    left: margin + element.x_mm,
+    bottom: margin + (mm.h - (element.y_mm + element.h_mm)),
+    right: margin + (mm.w - (element.x_mm + element.w_mm)),
+  };
+}
+
 /* Every element whose box reaches into it. Measured from the same edge the
  * band is drawn on, in the same millimetres, so the outline and the hatch
  * cannot disagree about which boxes are in trouble. */
 function deadCrossings() {
-  const dead = deadBand();
   const out = new Set();
-  if (!(dead.mm > 0) || !S.label) return out;
+  if (!S.label) return out;
   const stock = stockById(S.label.stock);
   const margin = stock ? stock.margin_mm : 2;
   const mm = canvasMm();
-  S.label.elements.forEach((element, index) => {
-    const near = {
-      top: margin + element.y_mm,
-      left: margin + element.x_mm,
-      bottom: margin + (mm.h - (element.y_mm + element.h_mm)),
-      right: margin + (mm.w - (element.x_mm + element.w_mm)),
-    }[dead.edge];
-    if (near < dead.mm - 0.001) out.add(index);
-  });
+  for (const band of [deadBand(), holdBand()]) {
+    if (!(band.mm > 0)) continue;
+    S.label.elements.forEach((element, index) => {
+      if (edgeGaps(element, margin, mm)[band.edge] < band.mm - 0.001)
+        out.add(index);
+    });
+  }
   return out;
 }
 
@@ -818,25 +918,31 @@ function drawOverlay() {
    * is make the band something you can aim away from, and outline anything
    * lying in it. */
   const dead = deadBand();
+  const hold = holdBand();
   const legend = $('canvasLegend');
-  if (dead.mm > 0) {
-    const band = el('div', 'deadband ' + dead.edge);
-    const across = dead.edge === 'top' || dead.edge === 'bottom';
-    band.style[across ? 'height' : 'width'] =
-      dead.mm * (across ? scaleY : scaleX) + 'px';
-    /* One word. The band is a few millimetres on a phone and a sentence in
-     * it would be a sentence nobody can read; what it means is on the
-     * legend under the canvas, which is where the dashed rectangle's
-     * meaning already lives. */
-    band.append(el('span', 'dbt', 'unreachable'));
-    overlay.append(band);
-    if (legend) legend.textContent =
-      'Inside the dashed line prints. The band outside it is the printer’s '
-      + `own margin, and the hatched ${dead.mm}mm at the leading edge is `
-      + 'where this roll’s printer lays no ink at all.';
-  } else if (legend) {
-    legend.textContent = 'Inside the dashed line prints. The band outside it '
-      + 'is the printer’s own margin.';
+  /* One word each, and they are different words on purpose. The band is a
+   * few millimetres on a phone and a sentence in it would be a sentence
+   * nobody can read; what each one means is on the legend under the canvas,
+   * which is where the dashed rectangle's meaning already lives. */
+  for (const [band, word] of [[dead, 'unreachable'], [hold, 'kept clear']]) {
+    if (!(band.mm > 0)) continue;
+    const node = el('div', 'deadband ' + band.edge);
+    const across = band.edge === 'top' || band.edge === 'bottom';
+    node.style[across ? 'height' : 'width'] =
+      band.mm * (across ? scaleY : scaleX) + 'px';
+    node.append(el('span', 'dbt', word));
+    overlay.append(node);
+  }
+  if (legend) {
+    const parts = ['Inside the dashed line prints. The band outside it is '
+      + 'the printer’s own margin.'];
+    if (dead.mm > 0)
+      parts.push(`The hatched ${dead.mm}mm at the leading edge is where `
+        + 'this roll’s printer lays no ink at all.');
+    if (hold.mm > 0)
+      parts.push(`The ${hold.mm}mm at the other end is kept clear because `
+        + 'you asked for it — ink there prints, and is reported.');
+    legend.textContent = parts.join(' ');
   }
 
   const guides = el('div', 'guides');
@@ -1340,16 +1446,19 @@ function drawLayers() {
   });
 }
 
-$('designStock').addEventListener('change', () => {
-  S.label.stock = $('designStock').value;
-  /* Changing the stock is choosing a different label, so the direction comes
-   * with it — a tube wrap reads along the roll and an address label reads
-   * across it, and carrying the old answer over is how you get a design laid
-   * out sideways on a stock that never reads that way. */
-  const stock = stockById(S.label.stock);
-  if (stock) S.label.rotate = Number(stock.turn) || 0;
-  updateTurnLines();
-  markDirty(); drawOverlay(); drawProps();
+$('designStock').addEventListener('click', () => {
+  openStockPicker(designStockValue(), (id) => {
+    setStockButton($('designStock'), id);
+    S.label.stock = id;
+    /* Changing the stock is choosing a different label, so the direction
+     * comes with it — a tube wrap reads along the roll and an address label
+     * reads across it, and carrying the old answer over is how you get a
+     * design laid out sideways on a stock that never reads that way. */
+    const stock = stockById(S.label.stock);
+    if (stock) S.label.rotate = Number(stock.turn) || 0;
+    updateTurnLines();
+    markDirty(); drawOverlay(); drawProps();
+  });
 });
 $('designMore').addEventListener('click', () => {
   syncDesignSheet();
@@ -1664,7 +1773,7 @@ function renderPrinter() {
     const none = el('option', null, '— empty —'); none.value = '';
     select.append(none);
     for (const stock of S.stocks) {
-      const option = el('option', null, `${stock.name} — ${stock.label}`);
+      const option = el('option', null, stockOptionText(stock));
       option.value = stock.id;
       select.append(option);
     }
@@ -1980,6 +2089,13 @@ function calibrationSentence(stock) {
     bits.push(`the printer starts ${mmText(stock.dead_leading_mm)} in`);
   else if (cal.start_mm < 0)
     bits.push(`every job feeds ${mmText(-cal.start_mm)} before it prints`);
+  /* Said in the person's own words — "you asked" — because it is the one
+   * thing in this sentence nothing measured, and a roll reading back a
+   * choice as though it were a fact about the printer is how somebody
+   * concludes their machine is worse than it is. */
+  if (stock.hold_trailing_mm)
+    bits.push(`you asked for ${mmText(stock.hold_trailing_mm)} clear at the `
+      + 'bottom');
   if (cal.after_tear_mm)
     bits.push('the first label after a tear-off starts '
       + `${mmText(stock.first_label_dead_mm)} in`);
@@ -2017,8 +2133,9 @@ function lineUpBlock(roll, stock) {
   go.id = `lineUp-${roll.side}`;
   go.disabled = !rollable;
   go.setAttribute('data-tip', rollable
-    ? 'Prints two labels and asks you for six numbers off them. Once per '
-      + 'roll — after that every print on this roll uses the answer.'
+    ? 'Prints one label with a numbered grid and asks where the label\u2019s '
+      + 'four edges fall on it. Re-open it any time — the numbers come back '
+      + 'filled in, so a small change is one box.'
     : (stock
         ? 'Nothing to measure: the printer finds the top of a label by the '
           + 'hole punched between two of them, and continuous paper has '
@@ -2167,18 +2284,85 @@ const CAL_GROUPS = [
     + 'label, counting from 0 at the first row the printer laid.'],
 ];
 
+/* The readings that would produce the calibration this roll already has.
+ *
+ * Not "what you typed last time" — nothing keeps that, and it would be the
+ * wrong thing to keep anyway: what matters is the answer in force, and this
+ * is the only honest way to show it back in the units it was given in. Three
+ * of the four fall straight out of the stored numbers, because `derive` is
+ * arithmetic and arithmetic runs backwards:
+ *
+ *   X1  IS `across_mm`. The left edge is stored as it was read.
+ *   Y1  is 0 for a roll whose printer starts late (the leading edge was
+ *       above the grid), and `-start_mm` for one that starts early, which
+ *       is the coordinate the die cut cut the scale at.
+ *   Y2  is Y1 plus the label's own length for the early roll, and the
+ *       catalogued length less the dead band for the late one.
+ *
+ * X2 is the one that cannot come back, and that is not an oversight: the
+ * right edge sets NOTHING on a `Calibration` — it is read to say whether
+ * the roll measures what its stock row claims, and that is a sentence
+ * rather than a stored number. An empty box is the honest answer, and the
+ * field already explains what leaving it empty means.
+ *
+ * `derive` is what proves this, and the claim is worth stating exactly:
+ * handed these four it returns the calibration they came from, so a person
+ * who changes nothing and presses Apply changes nothing. Measured over four
+ * applications it is a FIXED POINT for every answer this wizard stored —
+ * which is not free, and is the reason the display rounds to a tenth: a
+ * reading is a tenth of a millimetre, `start_mm` is derived as
+ * `catalog - Y2` and carries two, and showing back a number nobody could
+ * have read off the scale is what would make each visit move it. The one
+ * case that is not exact is a roll calibrated by an older release, where
+ * `start_mm` came from somewhere other than a reading; there it settles on
+ * its nearest tenth at the first Apply, which is under a millimetre and
+ * under one dot of the print head. That is the whole point — it is what
+ * makes changing ONE number a small adjustment rather than a
+ * re-measurement. */
+function calStoredReadings(stock) {
+  const blank = { x1: '', x2: '', y1: '', y2: '' };
+  if (!stock || !stock.calibrated) return blank;
+  const cal = stock.calibration || {};
+  const catalog = Number(stock.feed_mm) || 0;
+  const start = Number(cal.start_mm) || 0;
+  const length = (cal.length_mm === null || cal.length_mm === undefined)
+    ? catalog : (Number(cal.length_mm) || 0);
+  /* One decimal, because that is what the boxes step in and what a person
+   * reading a printed millimetre scale can honestly claim. A stored 4.7
+   * that came back as 4.7000000000000002 would read as a machine number
+   * somebody is not allowed to touch. */
+  const mm = (value) => (Number.isFinite(value) ? String(Math.round(value * 10) / 10) : '');
+  const y1 = start < 0 ? -start : 0;
+  const y2 = start < 0 ? y1 + length : Math.max(0, catalog - start);
+  return { x1: mm(Number(cal.across_mm) || 0), x2: '', y1: mm(y1), y2: mm(y2) };
+}
+
 function lineUpDialog(stock, side) {
   if (!stock) return;
+  /* No `stock &&` here, unlike `lineUpBlock` one function up: that one is
+   * drawn for an EMPTY bay too and really can be handed nothing, and this
+   * one has just returned on it. Carrying the guard across was CodeQL's
+   * "useless conditional", and it is worth the fix rather than a dismissal —
+   * a redundant test reads as "this might be null", which contradicts the
+   * line above it and is how the next reader adds a second one. */
+  const cal = stock.calibration || {};
   const state = {
     stock, side, notes: [], message: '',
-    readings: { x1: '', x2: '', y1: '', y2: '' },
+    readings: calStoredReadings(stock),
+    hold: Number(cal.hold_trailing_mm) ? String(cal.hold_trailing_mm) : '',
   };
   const body = $('modalBody');
   body.innerHTML = '';
   const wrap = el('div', 'calwiz');
   wrap.id = 'lineUp';
   body.append(wrap);
-  calPrintStep(state, wrap, '');
+  /* A roll that has been lined up already opens on the numbers rather than
+   * on the press that prints. Coming back to this is almost always a
+   * nudge — one edge read again, or a band held at the bottom — and making
+   * that start with a wasted label is what made it a thing people put off.
+   * The grid is one press away at the top of that step. */
+  if (stock.calibrated) calReadStep(state, wrap);
+  else calPrintStep(state, wrap, '');
   $('modal').showModal();
 }
 
@@ -2255,16 +2439,80 @@ const CAL_HOLDING = [
     + 'ticks — an edge two ticks past the 25 reads 27.'],
 ];
 
+/* The two labels this step can print, at the top of it.
+ *
+ * Lining a roll up is a LOOP — read, apply, look at what came out, change
+ * one number — and the wizard shipped as a line: the only route back to a
+ * printed label was to close the dialog, find the bay, press a button on
+ * the card, and open the wizard again, which lost every number on the way.
+ * So both prints live where the numbers are typed, each named for what it
+ * puts out rather than for what it is for.
+ *
+ * The check label is offered only for a roll that has an answer stored,
+ * because that is what it draws: a frame around the printable area as this
+ * roll is currently set, which on a roll nobody has measured is a frame
+ * around the whole label and tells you nothing. `Forget`'s rule — a button
+ * that would do nothing is a control asking to be understood.
+ *
+ * Neither one leaves the step or clears a box. That is the whole feature. */
+function calPrintRow(state, wrap) {
+  const row = el('div', 'calprints');
+  const again = el('button', 'btn', 'Print the grid again');
+  again.id = 'calPrintAgain';
+  again.setAttribute('data-tip',
+    'One label with the numbered grid on it — the same sheet you read '
+    + 'these numbers off. Nothing you have typed is cleared.');
+  again.onclick = async () => {
+    again.disabled = true;
+    try {
+      const data = await post('/api/printer/calibrate',
+        { stock: state.stock.id, side: state.side });
+      state.notes = data.notes || [];
+      toast('Grid printed. Read it and change what needs changing.', 'good');
+      calReadStep(state, wrap);
+    } catch (error) { fail(error); } finally { again.disabled = false; }
+  };
+  row.append(again);
+
+  if (state.stock.calibrated) {
+    const check = el('button', 'btn', 'Print a check label');
+    check.id = 'calCheckHere';
+    check.setAttribute('data-tip',
+      'One label with a frame around the area this roll prints in AS IT IS '
+      + 'SET NOW — not as the boxes below say. Press Apply first to check '
+      + 'a change.');
+    check.onclick = async () => {
+      check.disabled = true;
+      try {
+        await post('/api/printer/check',
+                   { stock: state.stock.id, side: state.side });
+        toast('Check label printed.', 'good');
+      } catch (error) { fail(error); } finally { check.disabled = false; }
+    };
+    row.append(check);
+  }
+  wrap.append(row);
+}
+
 function calReadStep(state, wrap) {
   wrap.dataset.step = 'read';
   wrap.innerHTML = '';
   wrap.append(el('h2', null, 'Where the label sits on the grid'));
   if (state.message) wrap.append(el('p', 'calsentence', state.message));
+  calPrintRow(state, wrap);
   wrap.append(el('p', 'lede',
-    'Four numbers off the label that just printed: where each of its edges '
-    + 'falls on the grid. Every one is a millimetre read off a scale printed '
-    + 'on the same label, so there is nothing to measure with and nothing to '
-    + 'convert.'));
+    'Four numbers off the label with the grid on it: where each of its edges '
+    + 'falls. Every one is a millimetre read off a scale printed on the same '
+    + 'label, so there is nothing to measure with and nothing to convert.'));
+  /* Said once, above the boxes, and only where they are not empty. A person
+   * who does not know a field was filled in for them is a person who reads
+   * a number they never measured as one they did. */
+  if (state.stock.calibrated)
+    wrap.append(el('p', 'muted small',
+      'These are filled in from what this roll is set to now, so you can '
+      + 'change one and press Apply. The right-hand edge is the exception '
+      + 'and starts empty: it is read to check the stock’s own measurements '
+      + 'and is not part of the answer.'));
 
   const holding = el('dl', 'calhold');
   for (const [term, says] of CAL_HOLDING) {
@@ -2317,6 +2565,70 @@ function calReadStep(state, wrap) {
       list.append(field);
     }
   }
+  /* The one number on this screen that is not read off anything.
+   *
+   * It is in its own group, under its own heading, because everything above
+   * it is a coordinate of the PAPER and this is a choice about where to
+   * print on it — and the whole reason the four readings work is that none
+   * of them is a preference. Mixing a preference in among them would undo
+   * that at the moment it stops being obvious.
+   *
+   * There is deliberately no box for the other end. The printer starts
+   * where it starts and nothing can ask it to start earlier, so a band held
+   * at the TOP would only push the artwork further from the middle — and an
+   * even border on all four sides is the stock's margin, which is a
+   * different control that already exists. What is missing without this is
+   * the case where the two ends disagree BECAUSE of the machine, and one
+   * number answers it. */
+  const choice = el('div', 'calgroup calchoice');
+  choice.append(el('h3', null, 'What to print on'));
+  choice.append(el('p', null,
+    'Everything above says where the paper is. This says how much of it to '
+    + 'leave blank on purpose, at the bottom — which is what makes the top '
+    + 'and bottom edges match on a printer that starts a few millimetres '
+    + 'in. Leave it at nothing and labels use everything they can.'));
+  list.append(choice);
+
+  const holdField = el('label', 'field calfield');
+  const holdHead = el('span', 'calhead');
+  holdHead.append(el('b', null, 'Keep clear at the bottom'));
+  holdField.append(holdHead);
+  const holdInput = el('input');
+  holdInput.type = 'number';
+  holdInput.step = '0.1';
+  holdInput.min = '0';
+  holdInput.inputMode = 'decimal';
+  holdInput.id = 'calHold';
+  holdInput.placeholder = 'nothing';
+  holdInput.value = state.hold;
+  holdInput.oninput = () => { state.hold = holdInput.value; };
+  holdField.append(holdInput);
+  /* Offered only where the number it would type is known, which is after an
+   * Apply. It reads the roll's OWN dead band off the stock row rather than
+   * working it out from the boxes above — that arithmetic lives in
+   * `derive` and a second copy of it here is a second answer to where the
+   * printing starts. */
+  const dead = Number(state.stock.dead_leading_mm) || 0;
+  if (dead > 0) {
+    const match = el('button', 'btn tiny', `Match the top (${mmText(dead)})`);
+    match.id = 'calHoldMatch';
+    match.type = 'button';
+    match.setAttribute('data-tip',
+      'The printer can’t reach the first ' + mmText(dead) + ' of this '
+      + 'label, so holding the same back at the bottom leaves the same '
+      + 'blank edge at each end.');
+    match.onclick = () => {
+      holdInput.value = String(dead);
+      state.hold = holdInput.value;
+    };
+    holdField.append(match);
+  }
+  holdField.append(el('span', 'muted',
+    'The printer can print here — this is a band you are asking it not to '
+    + 'use, so ink drawn into it still prints and is reported. The designer '
+    + 'hatches it, and a check label’s frame comes in to meet it.'));
+  list.append(holdField);
+
   split.append(list);
   wrap.append(split);
 
@@ -2337,10 +2649,15 @@ function calReadStep(state, wrap) {
        * would be a different rectangle. */
       readings[key] = typed === '' ? null : Number(typed);
     }
+    /* The hold is the one field where an empty box and a typed 0 mean the
+     * same thing — hold nothing back — so it may become a number here,
+     * where a reading may not. */
+    const held = String(holdInput.value).trim();
     apply.disabled = true;
     try {
       const data = await post(
-        `/api/stock/${state.stock.id}/calibration`, { readings });
+        `/api/stock/${state.stock.id}/calibration`,
+        { readings, hold: held === '' ? null : Number(held) });
       await loadState(); renderPrinter(); fillPickers();
       state.stock = stockById(state.stock.id) || state.stock;
       state.message = data.sentence;
@@ -2384,6 +2701,43 @@ function calDoneStep(state, wrap, data) {
     wrap.append(swap);
   }
 
+  /* The moment the asymmetry becomes a known number, which is the only
+   * moment it can be offered as one press. It is not on the reading step's
+   * own terms — nothing there knows the dead band until Apply has derived
+   * it — and it is not a default, because a roll somebody wants printed
+   * edge to edge is a roll that should get every millimetre it has. */
+  const dead = Number(state.stock.dead_leading_mm) || 0;
+  const held = Number((state.stock.calibration || {}).hold_trailing_mm) || 0;
+  if (dead > 0 && Math.abs(held - dead) > 0.05) {
+    wrap.append(el('p', 'lede',
+      `The printer can’t reach the first ${mmText(dead)} of this label, so `
+      + 'the blank edge at the top is that much deeper than the one at the '
+      + 'bottom. Holding the same back at the bottom makes them match — it '
+      + 'costs that much printable length and nothing else.'));
+    const even = el('button', 'btn wide', 'Make the blank edges match');
+    even.id = 'calEven';
+    even.onclick = async () => {
+      even.disabled = true;
+      state.hold = String(dead);
+      try {
+        const readings = {};
+        for (const [key] of CAL_READINGS) {
+          const value = String(state.readings[key] ?? '').trim();
+          readings[key] = value === '' ? null : Number(value);
+        }
+        const answer = await post(
+          `/api/stock/${state.stock.id}/calibration`,
+          { readings, hold: dead });
+        await loadState(); renderPrinter(); fillPickers();
+        state.stock = stockById(state.stock.id) || state.stock;
+        state.message = answer.sentence;
+        if (answer.calibration === null) calReadStep(state, wrap);
+        else calDoneStep(state, wrap, answer);
+      } catch (error) { even.disabled = false; fail(error); }
+    };
+    wrap.append(even);
+  }
+
   const check = el('button', 'btn primary big wide', 'Print a check label');
   check.id = 'calCheck';
   check.onclick = async () => {
@@ -2397,7 +2751,23 @@ function calDoneStep(state, wrap, data) {
   wrap.append(el('p', 'lede',
     'One label with a frame drawn around everything this roll can print on. '
     + 'All four sides showing means the answer was right; a missing side '
-    + 'says which way it is still out, and Line up can be run again.'));
+    + 'says which way it is still out.'));
+
+  /* The way back, which the wizard did not have. Every ending here used to
+   * be Close, so a frame that came back short of one edge meant closing the
+   * dialog, finding the bay and starting again from an empty form — which
+   * is what "I cannot see the old settings" was, one step further on. */
+  const back = el('button', 'btn wide', 'Change the numbers');
+  back.id = 'calBack';
+  back.setAttribute('data-tip',
+    'Back to the four coordinates, filled in with what is stored now.');
+  back.onclick = () => {
+    state.readings = calStoredReadings(state.stock);
+    state.hold = held ? String(held) : '';
+    state.message = '';
+    calReadStep(state, wrap);
+  };
+  wrap.append(back);
   calActions(wrap);
 }
 

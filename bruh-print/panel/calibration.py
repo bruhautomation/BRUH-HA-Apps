@@ -191,7 +191,8 @@ class Outcome:
         }
 
 
-def derive(readings: Readings, stock, *, now: float | None = None) -> Outcome:
+def derive(readings: Readings, stock, *, hold: float | None = None,
+           now: float | None = None) -> Outcome:
     """Four coordinates and a stock, in; what this roll does, out.
 
     The order is the order the numbers are checked in and not the order they
@@ -200,10 +201,18 @@ def derive(readings: Readings, stock, *, now: float | None = None) -> Outcome:
     a note. A refusal short-circuits, because a sentence about a rectangle
     whose own arithmetic does not close is a sentence about nothing.
 
+    `hold` is the one input here that is not read off a label, and it is a
+    separate argument for exactly that reason: it is how much of the BOTTOM
+    of the label to leave blank because somebody said so, and it is carried
+    onto the `Calibration` untouched rather than derived from anything. It
+    is not a fifth reading and must never be confused with one — the four
+    coordinates say where the paper is, which is a fact this can check, and
+    this says what to do about it, which is a preference it may not.
+
     `now` is the clock the caller is already holding, not one read in here.
-    It is the only thing on a `Calibration` that is not derived from a label,
-    and it is passed rather than taken so this stays a function the same
-    readings can be handed twice.
+    It is the only other thing on a `Calibration` that is not derived from a
+    label, and it is passed rather than taken so this stays a function the
+    same readings can be handed twice.
     """
     catalog = stock.feed_mm
     start, length, refusal = _feed_axis(readings.y1, readings.y2, catalog)
@@ -220,10 +229,18 @@ def derive(readings: Readings, stock, *, now: float | None = None) -> Outcome:
     # and a second copy is what drifts the day somebody corrects one.
     stored_length = (length if length is not None
                      and abs(length - catalog) > CATALOG_TOL_MM else None)
+    # Floored and capped against the label it is a band of. A hold longer
+    # than the paper is not a smaller printable area, it is a number typed
+    # into the wrong box, and `printable_feed_mm`'s own floor would absorb
+    # it silently — which is the shape of guard that leaves somebody
+    # wondering why nothing changed.
+    held = min(max(0.0, float(hold or 0.0)), max(0.0, catalog - 1.0))
     notes = _catalog_notes(stock, width, stored_length)
+    notes.extend(_hold_notes(held, hold))
     swap = _looks_transposed(stock, width, length or catalog)
     cal = Calibration(
         across_mm=round(readings.x1, 2),
+        hold_trailing_mm=round(held, 2),
         # Inside the tolerance is stored as nothing at all rather than as the
         # tenths that were read. A person against a millimetre scale is not
         # accurate to a tenth, and 0.4mm saved as a correction crops a row
@@ -247,7 +264,9 @@ def derive(readings: Readings, stock, *, now: float | None = None) -> Outcome:
         ending=stock.calibration.ending,
         measured_at=now,
     )
-    return Outcome(cal, " ".join([_headline(start, length or catalog), *notes]),
+    return Outcome(cal,
+                   " ".join([_headline(start, length or catalog, held),
+                             *notes]),
                    _shape(start), swap_suggested=swap)
 
 
@@ -290,7 +309,10 @@ def _feed_axis(y1: float, y2: float, catalog: float):
                 f"That would have the printer laying ink {y1:.1f}mm before "
                 f"the label even begins, which is most of the label before "
                 f"it onto the floor. Check that Y1 came off the scale "
-                f"running DOWN the label rather than the one across it.")
+                f"running DOWN the label rather than the one across it — "
+                f"and if you are trying to leave a margin at the top rather "
+                f"than saying where the paper is, Y1 is the paper's own edge "
+                f"and the margin belongs to the stock.")
         length = y2 - y1
         if abs(length - catalog) > catalog * LENGTH_SANITY:
             return 0.0, None, (
@@ -298,7 +320,9 @@ def _feed_axis(y1: float, y2: float, catalog: float):
                 f"where this stock says {catalog:.1f}mm. That is not a "
                 f"registration fault, it is a different label — check the "
                 f"roll in the printer is the one this stock describes, and "
-                f"that both numbers came off the scale running down it.")
+                f"that both numbers came off the scale running down it. "
+                f"These two are where the PAPER's edges fall; the area to "
+                f"print inside is \u201ckeep clear at the bottom\u201d.")
         return -y1, length, ""
 
     # Zero, which is the reading at the end of the scale: the leading edge is
@@ -311,7 +335,10 @@ def _feed_axis(y1: float, y2: float, catalog: float):
             f"label, which is further than any top-of-form fault goes. The "
             f"far likelier answer is that this roll is not {catalog:.1f}mm "
             f"long — check the stock's own measurements, and that the roll "
-            f"in the printer is the one this stock describes.")
+            f"in the printer is the one this stock describes. If you are "
+            f"trying to make the printable area SHORTER on purpose, Y2 is "
+            f"where the paper's bottom edge really falls and the box that "
+            f"does it is \u201ckeep clear at the bottom\u201d.")
     return max(0.0, late), None, ""
 
 
@@ -341,8 +368,15 @@ def _shape(start: float) -> str:
     return "dead_band" if start > 0 else "prints_early"
 
 
-def _headline(start: float, length: float) -> str:
-    """What the printer does with this roll, in the roll's own words."""
+def _headline(start: float, length: float, held: float = 0.0) -> str:
+    """What the printer does with this roll, in the roll's own words.
+
+    `held` is not part of what the printer does and is deliberately not in
+    this sentence: it gets its own, from `_hold_notes`, because a band the
+    machine refuses and a band a person reserved are two different facts and
+    reading them as one is how somebody concludes their printer is worse
+    than it is.
+    """
     if abs(start) <= TOL_MM:
         return ("This printer prints from the die cut on this roll, so there "
                 "is nothing to correct.")
@@ -357,6 +391,37 @@ def _headline(start: float, length: float) -> str:
         f"On this roll the printing would start {abs(start):.1f}mm before "
         f"the die cut, so every job now feeds that far first and the whole "
         f"{length:.1f}mm label is printable.")
+
+
+def _hold_notes(held: float, asked) -> list[str]:
+    """What a reserved trailing band does, and when it was not taken whole.
+
+    Two sentences at most and usually none. The first says what was reserved
+    — worth saying every time, because it is the one number on the roll that
+    nothing measured and a person coming back to it in a month has no way to
+    tell it from one the grid produced. The second only appears when the ask
+    was cut down to fit, which is the case a silent floor would hide: a hold
+    longer than the label reaches `printable_feed_mm`'s own floor and comes
+    out as a one-millimetre canvas with nothing anywhere saying why.
+    """
+    wanted = 0.0 if asked is None else max(0.0, float(asked))
+    if held <= 0:
+        # An ask that rounded away to nothing still has to say so, or the
+        # box appears to have been ignored.
+        if wanted > 0:
+            return ["The band asked for at the bottom is smaller than a "
+                    "tenth of a millimetre, so nothing is held back."]
+        return []
+    notes = [
+        f"The bottom {held:.1f}mm of the label is held clear because you "
+        f"asked for it, not because the printer can’t reach it — labels are "
+        f"laid out above it and ink drawn into it still prints, with a note."]
+    if wanted - held > 0.05:
+        notes.append(
+            f"You asked to hold back {wanted:.1f}mm, which is more than "
+            f"this label is long — it is {held:.1f}mm instead, which leaves "
+            f"a millimetre to print on.")
+    return notes
 
 
 def _catalog_notes(stock, width, length) -> list[str]:

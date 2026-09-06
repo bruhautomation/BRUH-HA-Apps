@@ -113,6 +113,25 @@ class Calibration:
     would be asked for before the die cut, which `ESC f` can fix by feeding
     that far first, and the whole label is printable.
 
+    `hold_trailing_mm` — how much of the BOTTOM of the label to leave blank,
+    because somebody said so. It is the one number here that is not a
+    measurement of anything, and it exists because the other end of the
+    label is not a choice: the printer starts where it starts, so a roll
+    with a 4.7mm dead band prints inside 4.7 → 31.75 and the blank edges
+    come out uneven however carefully the artwork is centred. Holding the
+    same amount back at the trailing edge is what makes them match, and
+    there is no `hold_leading_mm` beside it precisely because the leading
+    band is involuntary — asking for more of it would move the artwork
+    further from centre, and an even border on all four sides is what
+    `margin_mm` already is.
+
+    **It changes no bytes.** A held band is a statement about where artwork
+    may be laid out — the designer hatches it and the check label's frame
+    comes in to meet it — and the crop, the feed and `ESC L` are all exactly
+    what they were. That is what lets it be a free choice rather than a
+    second thing the print path has to be right about: `start_mm` is what
+    the printer does and this is what we do about it.
+
     `after_tear_mm` — how much LATER still the first copy of a job starts
     when the paper is sitting at the tear bar. The manual says an `ESC E`
     "places the next label beyond the starting print position. Therefore, a
@@ -159,6 +178,7 @@ class Calibration:
 
     across_mm: float = 0.0
     start_mm: float = 0.0
+    hold_trailing_mm: float = 0.0
     after_tear_mm: float = 0.0
     length_mm: float | None = None
     gap_mm: float | None = None
@@ -178,6 +198,7 @@ class Calibration:
         """
         return bool(self.measured_at
                     or self.across_mm or self.start_mm or self.after_tear_mm
+                    or self.hold_trailing_mm
                     or self.length_mm is not None or self.gap_mm is not None
                     or self.job_start != "plain" or self.ending != "tear")
 
@@ -205,6 +226,11 @@ class Calibration:
             return cls(
                 across_mm=_number(raw.get("across_mm"), 0.0),
                 start_mm=_number(raw.get("start_mm"), 0.0),
+                # Floored rather than trusted: a negative hold would read as
+                # "print past the die cut", which is not a thing, and it
+                # would make `printable_feed_mm` longer than the label.
+                hold_trailing_mm=max(
+                    0.0, _number(raw.get("hold_trailing_mm"), 0.0)),
                 after_tear_mm=_number(raw.get("after_tear_mm"), 0.0),
                 length_mm=_optional(raw.get("length_mm")),
                 gap_mm=_optional(raw.get("gap_mm")),
@@ -375,16 +401,39 @@ class Stock:
         extra = cal.after_tear_mm if first_after_tear else 0.0
         return max(0.0, cal.start_mm + extra)
 
+    def hold_trailing_mm(self) -> float:
+        """How much of the bottom of this label to leave blank, by choice.
+
+        Positive only, and a method rather than a bare read of the field for
+        the reason `dead_leading_mm` is one: every caller that asks "how much
+        of this label may I use" has to get its answer from the same place,
+        or the designer lays a box where the check label's frame says
+        nothing may go.
+        """
+        return max(0.0, self.calibration.hold_trailing_mm)
+
     def printable_feed_mm(self, first_after_tear: bool = False) -> float:
         """How much of this label's length can carry ink.
+
+        Two bands come off it and they are different KINDS of thing. The
+        leading one is the printer's: it cannot lay ink there, and the rows
+        are cropped off the job on the way out. The trailing one is
+        somebody's: the printer can print there perfectly well and has been
+        asked not to, so nothing is cropped and ink that lands in it is a
+        note rather than a loss. Both come off here because this one number
+        is what the designer, the wizard and the check label all mean by
+        "the printable area", and three answers to that is three chances for
+        a box to be laid out where the frame says it may not go.
 
         Floored at a millimetre rather than allowed to go negative: a dead
         band longer than the label is a calibration read off the wrong label
         or a roll nothing can print on, and a negative canvas would raise
-        somewhere a long way from either.
+        somewhere a long way from either. That floor is also what keeps a
+        hold of any size safe — it can shrink the area, never invert it.
         """
         return max(1.0, self.measured_feed_mm
-                   - self.dead_leading_mm(first_after_tear))
+                   - self.dead_leading_mm(first_after_tear)
+                   - self.hold_trailing_mm())
 
     def dots(self, dpi: int = 300) -> tuple[int, int]:
         """(across, feed) in printer dots."""
@@ -410,8 +459,16 @@ class Stock:
         for a reason nobody could find. Printing the calibration label again
         is one press, and it is the only honest answer.
 
+        `hold_trailing_mm` goes too, and it is the one that is NOT a
+        measurement — it is a choice about how much of the bottom of the
+        label to leave blank. It still cannot survive, because the swap has
+        just changed which physical dimension the feed axis is: a 4.7mm hold
+        chosen against a 31.75mm label is a different fraction of a 57.15mm
+        one, and carrying it over would silently reserve a band of the wrong
+        size on a label of the wrong shape.
+
         `measured_at` goes with them, which is what makes the panel ask for
-        that press: a roll left holding a stamp over four zeroed measurements
+        that press: a roll left holding a stamp over five zeroed numbers
         would read as calibrated for ever, and a verdict nothing re-earns is
         a verdict nothing can correct.
         """
@@ -445,6 +502,12 @@ class Stock:
         # agree to the dot.
         data["calibrated"] = self.calibration.measured
         data["dead_leading_mm"] = round(self.dead_leading_mm(), 2)
+        # The band at the other end, published beside it and separately,
+        # because the two are different claims: one is the printer refusing
+        # and one is a person choosing, and the designer draws them the same
+        # way for different reasons. Adding them into one number would make
+        # a held band look like a machine somebody has to work around.
+        data["hold_trailing_mm"] = round(self.hold_trailing_mm(), 2)
         data["printable_feed_mm"] = round(self.printable_feed_mm(), 2)
         data["first_label_dead_mm"] = round(self.dead_leading_mm(True), 2)
         return data
