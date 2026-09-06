@@ -2,6 +2,43 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.47.2
+
+The guided sign-in captured the token **and four letters of the sentence
+after it**. `setup-token` prints a long-lived token and writes no
+`.credentials.json` — what the panel scrapes off the terminal IS the
+credential — so the stored one was `sk-ant-oat01-…Store`: the right shape,
+accepted by `classify_credential`, and refused by Anthropic on every run.
+That is the 401s and the failed auth pill, on a sign-in the flow correctly
+reported as complete.
+
+### Fixed
+
+- **A token is cut where its line ends, not where the prose starts**
+  (`engine.find_oauth_token` / `strip_ansi`). The CLI renders the token as
+  its own Ink element and `Store this token securely.` as the next one, and
+  Ink separates them by **positioning the cursor** rather than writing a
+  newline. `ANSI_RE.sub("")` deleted that escape, gluing the two together —
+  and every character of `Store` is legal in the token's own alphabet, so
+  the greedy match ran straight on into the sentence. The reader keeps a
+  second accumulation in which each escape becomes a **separator**, and the
+  token is read only from that; everything else (the authorize URL, the
+  retry prompt, the status detail) still reads the joined-up copy, which is
+  what puts a sentence back together when the CLI draws its spaces as
+  cursor movements.
+
+  Not a length bound: `sk-ant-oat` appears nowhere in the CLI bundle, so the
+  prefix and the length come from the server and any number here would be
+  one we invented. The boundary is real and it was the escape being deleted.
+
+- **A token split across two reads reached the log in the clear.** The
+  redaction ran over each chunk, and a token that arrives in two pieces
+  matches neither half. It runs over the accumulation now, logging only
+  what is new in it.
+
+Nothing else changes: `setup-token` still prints rather than writing a
+credentials file, and the paste tab was never affected.
+
 ## 1.47.1
 
 1.47.0 loosened what counts as a usable CLI credential, correctly: a lapsed

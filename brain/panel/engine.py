@@ -69,6 +69,18 @@ AUTH_BACKUP_FILE = os.environ.get(
     "BRAIN_AUTH_BACKUP", "/data/.brain_auth_backup/.credentials.json")
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|[\r\x08]")
+
+
+def strip_ansi(text: str, sep: str = "") -> str:
+    """Remove the terminal's own control sequences.
+
+    `sep` is what each sequence becomes, and the two callers want different
+    answers. For anything a person reads, "" is right: the CLI draws a run
+    of spaces as one cursor-forward, so joining is what puts the sentence
+    back together. For finding a TOKEN it is fatally wrong — see
+    `find_oauth_token`.
+    """
+    return ANSI_RE.sub(sep, text)
 URL_RE = re.compile(r"https://[^\s\"'\x1b]+")
 # characters legal inside the OAuth authorize URL (used to stitch hard-wrapped lines)
 URL_CHARS_RE = re.compile(r"^[A-Za-z0-9&?=%._~:/#+\-]+$")
@@ -123,6 +135,28 @@ MODEL_CHOICES = [
     {"id": "claude-sonnet-4-6", "group": "Previous generation",
      "label": "Claude Sonnet 4.6", "hint": ""},
 ]
+
+
+def find_oauth_token(buf: str) -> str:
+    """The `sk-ant-oat…` token from pty output, cut where its line ends.
+
+    `buf` must be the output with escape sequences turned into SEPARATORS
+    (`strip_ansi(text, "\n")`), never the display copy. `setup-token` prints
+    the token as its own Ink element and the sentence "Store this token
+    securely." as the next one, and Ink separates them by POSITIONING the
+    cursor rather than by writing a newline. Stripping that escape to
+    nothing glues the two together, and every character of `Store` is legal
+    in the token's own alphabet — so the greedy match ran straight on into
+    the prose and saved `sk-ant-oat01-…Store`.
+
+    Nothing about the token itself can catch that: `sk-ant-oat` appears
+    nowhere in the CLI bundle (the prefix and the length come from the
+    server), so a length bound would be a number we invented, and it would
+    be wrong the day the server changes one. The boundary is real and it is
+    the escape sequence we were deleting.
+    """
+    match = OAUTH_TOKEN_RE.search(buf)
+    return match.group(0) if match else ""
 
 
 def extract_oauth_url(buf: str) -> str:
@@ -1043,6 +1077,12 @@ class SetupTokenFlow:
         fd = self._fd
         proc = self._proc
         buf = ""
+        # The same bytes with every escape sequence kept as a boundary. Only
+        # the token is read from here; everything else reads `buf`, whose
+        # joined-up text is what the URL, the retry prompt and the status
+        # detail are all written against.
+        tokens = ""
+        logged = 0       # how much of the redacted accumulation is in the log
         try:
             while proc and proc.poll() is None and time.time() < self._deadline:
                 ready, _, _ = select.select([fd], [], [], 1.0)
@@ -1053,14 +1093,24 @@ class SetupTokenFlow:
                         break
                     if not chunk:
                         break
-                    text = ANSI_RE.sub("", chunk.decode("utf-8", "replace"))
+                    raw = chunk.decode("utf-8", "replace")
+                    text = strip_ansi(raw)
                     buf += text
-                    stripped = OAUTH_TOKEN_RE.sub("sk-ant-oat…", text).strip()
-                    if stripped:
-                        log.info("setup-token: %s", stripped[:400])
+                    tokens += strip_ansi(raw, "\n")
+                    # Redact the ACCUMULATION and log what is new in it,
+                    # never this chunk on its own: a token split across two
+                    # reads matches neither half, and both halves would go
+                    # to the log in the clear. A completed token makes the
+                    # redacted text shorter than what we have already
+                    # logged, and that read is skipped rather than risked.
+                    redacted = OAUTH_TOKEN_RE.sub("sk-ant-oat…", tokens)
+                    fresh = redacted[logged:] if logged <= len(redacted) else ""
+                    logged = len(redacted)
+                    if fresh.strip():
+                        log.info("setup-token: %s", fresh.strip()[:400])
                     with self._lock:
                         self.output = buf
-                    self._scan(buf)
+                    self._scan(buf, tokens)
                     with self._lock:
                         if self.phase == "done":
                             break
@@ -1109,12 +1159,12 @@ class SetupTokenFlow:
                     break
         finally:
             # process ended (or timed out) — one final scan, then settle state
-            self._scan(buf)
+            self._scan(buf, tokens)
             with self._lock:
                 if self.phase not in ("done", "idle"):
                     if self.phase == "error":
                         pass
-                    elif OAUTH_TOKEN_RE.search(buf) or self._signed_in_here():
+                    elif find_oauth_token(tokens) or self._signed_in_here():
                         self.phase = "done"
                     else:
                         self.phase = "error"
@@ -1133,11 +1183,17 @@ class SetupTokenFlow:
                     # Already closed.
                     pass
 
-    def _scan(self, buf: str) -> None:
-        token = OAUTH_TOKEN_RE.search(buf)
+    def _scan(self, buf: str, tokens: str | None = None) -> None:
+        """`buf` is the display text; `tokens` the boundary-preserving copy.
+
+        They are two readings of one stream and the token may only ever come
+        from the second — `find_oauth_token` says why. `tokens` defaults to
+        `buf` for a caller that has neither escapes nor anything glued.
+        """
+        token = find_oauth_token(buf if tokens is None else tokens)
         if token:
             try:
-                save_auth(token.group(0), "oauth_token")
+                save_auth(token, "oauth_token")
                 with self._lock:
                     self.phase = "done"
             except Exception as exc:  # noqa: BLE001

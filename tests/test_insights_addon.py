@@ -467,6 +467,141 @@ class TestClaudeClient(unittest.TestCase):
         self.assertIn('"BRAIN_AUTH_BACKUP", "/data/.brain_auth_backup/.credentials.json"',
                       engine_py)
 
+    # -- capturing the token off the pty ---------------------------------
+    # `setup-token` prints the token and does NOT write .credentials.json —
+    # it mints a long-lived token to export — so what this flow scrapes out
+    # of the terminal IS the credential, and one wrong character is a 401 on
+    # every run brAIn makes afterwards.
+
+    #: The real shape, from a 1.47.1 install's own log. `Store` is glued to
+    #: the token because Ink separates the two elements by positioning the
+    #: cursor, and the display copy strips that escape to nothing.
+    _GLUED = ("\x1b[32m✓ Long-lived authentication token created successfully!"
+              "\x1b[39m\x1b[3;1H\x1b[33mYour OAuth token (valid for 1 year):"
+              "\x1b[39m\x1b[5;1H\x1b[33m{token}\x1b[39m\x1b[7;1H\x1b[2m"
+              "Store this token securely. You won't be able to see it again."
+              "\x1b[22m")
+
+    def test_the_token_is_cut_where_its_line_ends_not_where_the_prose_starts(self):
+        """A capture that runs on into "Store" is a 401 on every later run.
+
+        Every character of `Store` is legal in the token's own alphabet, so
+        the greedy match had nothing to stop it — and the only real boundary,
+        the escape sequence Ink positions the next element with, was being
+        stripped to nothing before the match ever ran. The saved credential
+        was `sk-ant-oat01-…Store`: shaped right, accepted by
+        `classify_credential`, and refused by Anthropic every time.
+        """
+        token = "sk-ant-oat01-" + "Ab3_x9Qz" * 8
+        raw = self._GLUED.format(token=token)
+
+        # The display copy is what the old code searched, and it is glued.
+        self.assertIn(token + "Store", engine.strip_ansi(raw))
+        self.assertNotIn(token + "Store", engine.strip_ansi(raw, "\n"))
+
+        self.assertEqual(engine.find_oauth_token(engine.strip_ansi(raw, "\n")),
+                         token)
+        # ...and the old recipe really did produce the broken one, so this is
+        # measured against a demonstrated failure rather than a described one.
+        self.assertEqual(
+            engine.OAUTH_TOKEN_RE.search(engine.strip_ansi(raw)).group(0),
+            token + "Store")
+
+    def test_the_flow_saves_the_token_the_cli_printed(self):
+        """Through `_scan`, which is the door the reader loop uses."""
+        token = "sk-ant-oat01-" + "Ab3_x9Qz" * 8
+        raw = self._GLUED.format(token=token)
+        flow = engine.SetupTokenFlow()
+        flow.phase = "working"
+        flow._code_from = 0
+
+        flow._scan(engine.strip_ansi(raw), engine.strip_ansi(raw, "\n"))
+
+        self.assertEqual(flow.phase, "done")
+        self.assertEqual(engine.get_auth()["value"], token)
+
+    def test_a_token_split_across_two_reads_is_not_logged_in_the_clear(self):
+        """The redaction ran per CHUNK, and a token that arrives in two
+        matches neither half — so both halves reached the log as plain text.
+        It runs over the accumulation now."""
+        token = "sk-ant-oat01-" + "Ab3_x9Qz" * 8
+        first, second = token[:20], token[20:]
+        self.assertIsNone(engine.OAUTH_TOKEN_RE.search(first))
+        self.assertIsNone(engine.OAUTH_TOKEN_RE.search(second))
+        whole = engine.OAUTH_TOKEN_RE.sub("sk-ant-oat…", first + second)
+        self.assertNotIn(token, whole)
+        self.assertNotIn(first, whole)
+
+    def test_a_real_run_over_a_real_pty_stores_a_usable_token(self):
+        """The whole path: a stub CLI drawing the way Ink draws, through the
+        real pty, the real reader loop and the real save.
+
+        `_scan` answering correctly proves nothing on its own — the loop is
+        what decides which of the two buffers it is handed, and that was the
+        line that was wrong. So this drives `start()` and reads the stored
+        credential back, which is what every later Claude run reads.
+        """
+        token = "sk-ant-oat01-" + "Ab3_x9Qz" * 8
+        stub = Path(self.tmp.name) / "claude-setup"
+        stub.write_text(
+            "#!/bin/bash\n"
+            "printf 'Use the url below to sign in\\n'\n"
+            "printf 'https://claude.com/cai/oauth/authorize"
+            "?code=true&client_id=x&redirect_uri=y&state=z\\n'\n"
+            "printf 'Paste code here if prompted > '\n"
+            "read -r line\n"
+            # Ink's own layout: colour in, the token, colour out, then the
+            # next element POSITIONED rather than newline-separated.
+            "printf '\\033[32m\\xe2\\x9c\\x93 Long-lived authentication token "
+            "created successfully!\\033[39m\\033[3;1H\\033[33m"
+            "Your OAuth token (valid for 1 year):\\033[39m\\033[5;1H\\033[33m"
+            f"{token}"
+            "\\033[39m\\033[7;1H\\033[2mStore this token securely. "
+            "You won'\"'\"'t be able to see it again.\\033[22m'\n"
+            "sleep 5\n"
+        )
+        stub.chmod(0o755)
+        old_argv = engine._claude_argv
+        old_save = engine.save_auth
+        saved = []
+
+        def _spy(value, cred_type=None):
+            saved.append(value)
+            return old_save(value, cred_type)
+
+        engine._claude_argv = lambda: [str(stub)]
+        engine.save_auth = _spy
+        flow = engine.SetupTokenFlow()
+        try:
+            flow.start()
+            for _ in range(40):
+                if flow.status()["phase"] == "awaiting_code":
+                    break
+                time.sleep(0.25)
+            self.assertEqual(flow.status()["phase"], "awaiting_code")
+            flow.submit_code("some-code#state")
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                if flow.status()["phase"] in ("done", "error"):
+                    break
+                time.sleep(0.25)
+            self.assertEqual(flow.status()["phase"], "done", flow.status())
+
+            auth = engine.get_auth()
+            self.assertEqual(auth["type"], "oauth_token")
+            self.assertEqual(auth["value"], token)
+
+            # EVERY write, not just the last one. The reader scans on each
+            # read and the `finally` scans once more, so a bad capture that
+            # a later pass overwrites still spent time in a file `get_auth`
+            # serves to every route in the panel.
+            self.assertTrue(saved, "the flow stored nothing")
+            self.assertEqual(set(saved), {token}, saved)
+        finally:
+            flow.cancel()
+            engine._claude_argv = old_argv
+            engine.save_auth = old_save
+
     def test_setup_flow_status_masks_token_in_detail(self):
         flow = engine.SetupTokenFlow()
         flow.output = "some line\nyour token: sk-ant-oat01-" + "z" * 30
