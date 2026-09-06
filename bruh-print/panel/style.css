@@ -734,6 +734,53 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
   border-radius: 10px; }
 .calfields { display: grid; gap: 4px; }
 .calfield { margin-bottom: 6px; }
+/* Three things to do rather than six questions: one strip across the paper,
+   then one label, then the other. The heading is what tells somebody they
+   may put a label down and pick the other one up. */
+.calgroup { margin: 12px 0 2px; }
+.calgroup:first-child { margin-top: 0; }
+.calgroup h3 { margin: 0 0 3px; font-size: 13.5px; color: var(--ink); }
+.calgroup p { margin: 0; font-size: 12.5px; color: var(--ink-2);
+  line-height: 1.4; }
+/* Which way up, which label, and what the numbers are: the three things
+   every one of the six readings needs and none of them used to say. It is a
+   `dl` because each is a term with an answer, and it is above the fields
+   because you settle all three once and then read six numbers. */
+.calhold { margin: 0; padding: 10px 12px; border-radius: 10px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  display: grid; grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 10px; font-size: 13px; line-height: 1.4; }
+.calhold dt { font-weight: 700; color: var(--ink); }
+.calhold dd { margin: 0; color: var(--ink-2); }
+@media (max-width: 480px) {
+  /* One column on a phone: "What the numbers are" is a third of a 390px row
+     on its own, which leaves the answer beside it laying out four words
+     wide. */
+  .calhold { grid-template-columns: minmax(0, 1fr); gap: 0 0; }
+  .calhold dd { margin-bottom: 6px; }
+  .calhold dd:last-child { margin-bottom: 0; }
+}
+/* The instruction, in ink and not in the aside's grey. What a person has to
+   DO used to be set in the same colour and size as the reason it is asked
+   for, run together in one span — so the sentence that answers the box was
+   never the sentence that looked like it did.
+
+   It undoes `.field > span` in as many words, exactly as `.calhead` and
+   `span.muted` above it do: that rule is 12px uppercase 600 with letter
+   spacing, which is right for "Copies" and renders a two-sentence
+   instruction as SHOUTED SMALL CAPS. Every span this dialog puts inside a
+   `.field` has to say so, and that is the third of them. */
+.calfield > .calhow { display: block; margin: 3px 0 6px; font-size: 14px;
+  font-weight: 400; text-transform: none; letter-spacing: 0;
+  color: var(--ink); line-height: 1.45; }
+/* A case per line, for the one reading that is two procedures rather than a
+   measurement with an exception. The marker is what says these are
+   alternatives to choose between and not steps to follow in turn. */
+.calfield .calcase { display: block; }
+.calfield .calcase + .calcase { margin-top: 4px; padding-left: 14px;
+  position: relative; }
+.calfield .calcase + .calcase::before { content: "\2022"; position: absolute;
+  left: 2px; color: var(--accent); font-weight: 800; }
 /* A sentence, not a field label. `.field > span` is uppercase with letter
    spacing, which is right for "Copies" and shouts at a five-word
    instruction — and these five names ARE the instruction. */
@@ -775,12 +822,30 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .calleader { stroke: var(--ink-3); stroke-width: .6;
   stroke-dasharray: 2 2; }
 .calarrow { stroke: var(--accent); stroke-width: .9; }
+/* The label's own top edge, on the panel of the two-case figure that is read
+   there. Heavier than `.calarrow` because it is drawn ON a rule the label
+   already has — at .9 it is a box outline in a different colour, which is
+   not a mark. */
+.caledge { stroke: var(--accent); stroke-width: 1.8; }
+/* What that edge reads, on the panel that is read there. In the accent so it
+   is plainly the mark's own answer and not another number on the ladder. */
+.calread { fill: var(--accent); font-size: 4.6px; font-weight: 700;
+  text-anchor: middle; }
 .calt { fill: var(--ink-2); font-size: 5px; font-weight: 700;
   text-anchor: middle; }
 .calnum { fill: var(--ink-2); font-size: 4.5px; text-anchor: middle; }
 .calb { fill: var(--accent); }
 .calbt { fill: var(--accent-ink); font-size: 5.5px; font-weight: 800;
   text-anchor: middle; }
+/* The caption under each panel of the two-case figure, which is the answer
+   rather than a name — so it is set in ink where `.calt` labels a part of a
+   drawing in grey. */
+.calcap { fill: var(--ink); font-size: 4.8px; font-weight: 700;
+  text-anchor: middle; }
+/* Narrower than the map above it: two labels side by side with a caption
+   each is a wide, short figure, and stretched to the column it becomes a
+   band of whitespace with a drawing in the middle. */
+.calcases { max-width: 340px; margin: 4px 0 8px; }
 
 @media (min-width: 640px) {
   .calsplit { grid-template-columns: minmax(0, 44%) minmax(0, 1fr);
