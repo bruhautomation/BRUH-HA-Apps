@@ -2339,7 +2339,13 @@ function calStoredReadings(stock) {
 
 function lineUpDialog(stock, side) {
   if (!stock) return;
-  const cal = (stock && stock.calibration) || {};
+  /* No `stock &&` here, unlike `lineUpBlock` one function up: that one is
+   * drawn for an EMPTY bay too and really can be handed nothing, and this
+   * one has just returned on it. Carrying the guard across was CodeQL's
+   * "useless conditional", and it is worth the fix rather than a dismissal —
+   * a redundant test reads as "this might be null", which contradicts the
+   * line above it and is how the next reader adds a second one. */
+  const cal = stock.calibration || {};
   const state = {
     stock, side, notes: [], message: '',
     readings: calStoredReadings(stock),
