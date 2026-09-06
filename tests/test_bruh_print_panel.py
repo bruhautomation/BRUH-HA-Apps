@@ -1962,7 +1962,55 @@ class TestSavingWhatWasRead(CalibrationCase):
 
     async def save(self, **changes):
         payload = {"readings": {**self.OWNER, **changes.pop("readings", {})}}
+        if "hold" in changes:
+            payload["hold"] = changes.pop("hold")
         return await self.post("/api/stock/edcc-082wh/calibration", payload)
+
+    async def test_a_band_held_at_the_bottom_reaches_the_store(self):
+        """The area a person chose, beside the rectangle they measured.
+
+        4.7mm the printer will not reach at the top; 4.7mm asked for at the
+        bottom; 22.35mm of a 31.75mm label left, centred on the paper. It is
+        the shape the whole field exists for and it is asserted through the
+        route rather than on the derivation alone, because `hold` rides
+        beside `readings` on the wire and a payload key nothing reads is the
+        drift this is here to catch.
+        """
+        await self.loaded()
+        status, body = await self.save(hold=4.7)
+        self.assertEqual(200, status, body)
+        self.assertAlmostEqual(4.7, body["calibration"]["hold_trailing_mm"],
+                               places=1)
+        # And it did NOT move where the printing starts.
+        self.assertAlmostEqual(4.7, body["calibration"]["start_mm"], places=1)
+        _, state = await self.get("/api/state")
+        row = next(s for s in state["stocks"] if s["id"] == "edcc-082wh")
+        self.assertAlmostEqual(4.7, row["hold_trailing_mm"], places=1)
+        self.assertAlmostEqual(22.35, row["printable_feed_mm"], places=1)
+
+    async def test_a_held_band_changes_no_bytes(self):
+        """It is a statement about where artwork may be laid out, not about
+        the machine — so the job on the wire is the one a roll with the same
+        measured rectangle and no band sends, to the byte. The designer and
+        the check label are what make it visible; the printer never hears
+        about it."""
+        await self.loaded()
+        await self.save()
+        _, plain = await self.print_once()
+        await self.save(hold=4.7)
+        _, held = await self.print_once()
+        self.assertEqual(plain, held)
+
+    async def test_an_absent_hold_is_the_calibration_that_shipped(self):
+        await self.loaded()
+        _, without = await self.save()
+        _, zero = await self.save(hold=0)
+        # Everything but the stamp, which is the clock and is meant to move.
+        drop = lambda cal: {k: v for k, v in cal.items()  # noqa: E731
+                            if k != "measured_at"}
+        self.assertEqual(drop(without["calibration"]),
+                         drop(zero["calibration"]))
+        self.assertEqual(0.0, without["calibration"]["hold_trailing_mm"])
 
     async def test_the_measured_case_is_stored_and_reaches_the_wire(self):
         await self.loaded()

@@ -83,8 +83,13 @@ that does nothing.
    sentence, and every print on it uses the answer.
 5. Press **Print a check label** on that bay. It prints a frame around
    everything the roll can print on with "Should reach every edge" inside it.
-   If the frame is complete you are done; if a side is missing, run
-   **Line up this roll** again.
+   If the frame is complete you are done; if a side is missing, press
+   **Change the numbers** and adjust one — both prints are at the top of the
+   step you type into, and re-opening a roll that is already lined up brings
+   its numbers back filled in, so a small correction is one box.
+   **Keep clear at the bottom** on that step is the other half: it holds a
+   band of the label blank on purpose, which is what makes the top and bottom
+   edges match on a printer that starts a few millimetres in.
 6. Check **Text direction** on the stock row. A label much longer than it is
    wide reads along the roll automatically and the picker says so; anything
    else is one press, once, for that stock. Nothing asks again per print.

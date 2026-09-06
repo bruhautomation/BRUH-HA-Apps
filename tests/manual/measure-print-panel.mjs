@@ -184,14 +184,24 @@ const dragToTheEdge = async (p, name) => {
  * described were drawn sideways somewhere else, which is invisible from the
  * code (both the overlay and the image are "right", in different frames)
  * and obvious from a screenshot. */
-const checkTurnedCanvas = async (p, name) => {
-  /* The stock picker lives in the ⋯ sheet now — the design bar is the add
-   * strip and one button, because five rows of bar put the label being
-   * designed at y=590 of a 780px phone. */
-  await p.click('#designMore');
+/* The design bar's picker is a button and a dialog, not a <select>, so
+ * `selectOption` has nothing to drive. Two presses, through the real
+ * control — which is also what makes this a test OF the control rather than
+ * of `S.label.stock`. */
+const pickStock = async (p, id) => {
+  await p.click('#designStock');
   await p.waitForTimeout(300);
-  await p.selectOption('#designStock', 'ed1f-060wh');
-  await p.click('#designSheetDone');
+  await p.click(`#modalBody .stockrow:nth-child(${id === 'ed1f-060wh' ? 2 : 1})`);
+  await p.waitForTimeout(300);
+};
+
+const checkTurnedCanvas = async (p, name) => {
+  /* Switched on the design bar. It went into the ⋯ sheet when the bar was
+   * five rows tall, and came back when the person using it pointed out that
+   * which label you are drawing on is the paper rather than a setting —
+   * driven here rather than clicked through the sheet, because a run that
+   * still opened the sheet would pass whichever place the control was in. */
+  await pickStock(p, 'ed1f-060wh');
   await p.waitForTimeout(900);
   const shape = await p.evaluate(() => {
     const s = window.__bruhPrintState;
@@ -336,6 +346,80 @@ const lineUpWizard = async (p, name, width) => {
     problems.push(`${name}: no check label to print, which is the only way `
       + 'to see whether the answer was right');
 
+  /* Back to the numbers from the end of the wizard, which is the half of
+     the loop that did not exist: every ending used to be Close, so a check
+     label that came back short of an edge meant closing the dialog, finding
+     the bay and starting again from an empty form. */
+  const back = await p.$('#calBack');
+  if (!back) problems.push(`${name}: the wizard ends with no way back to the `
+    + 'numbers, so a wrong reading is a fresh start');
+  else {
+    await back.click();
+    await p.waitForTimeout(500);
+    const kept = await p.evaluate(() => {
+      const wrap = document.getElementById('lineUp');
+      const value = (id) => {
+        const node = document.getElementById(id);
+        return node ? node.value : null;
+      };
+      return { step: wrap && wrap.dataset.step,
+               y2: value('calY2'), y1: value('calY1'),
+               again: !!document.getElementById('calPrintAgain'),
+               check: !!document.getElementById('calCheckHere'),
+               hold: value('calHold') };
+    });
+    if (kept.step !== 'read')
+      problems.push(`${name}: "Change the numbers" left the wizard on `
+        + `"${kept.step}"`);
+    /* Filled in from what is STORED, which is the whole complaint: an empty
+       form makes a small adjustment a re-measurement. Y1 is 0 and Y2 is
+       27 — the readings that produced the answer in force. */
+    if (kept.y1 !== '0' || kept.y2 !== '27')
+      problems.push(`${name}: the readings came back as Y1=${kept.y1} `
+        + `Y2=${kept.y2}, not the 0 and 27 that produced the stored answer`);
+    /* And both prints are on that step, which is what makes it a loop. */
+    if (!kept.again)
+      problems.push(`${name}: no way to print the grid again without closing `
+        + 'the wizard');
+    if (!kept.check)
+      problems.push(`${name}: a lined-up roll is offered no check label from `
+        + 'the step that reads it');
+    if (kept.hold === null)
+      problems.push(`${name}: there is no box for the area to print on`);
+
+    /* The band held at the bottom: type it, apply it, and the roll's
+       printable length has to come down by exactly that much. This is the
+       thing that was refused — an area shorter than the one the printer can
+       reach — so a run that only checked the box existed would pass on a
+       field that stored nothing. */
+    const hold = await p.$('#calHold');
+    const apply2 = await p.$('#calApply');
+    if (hold && apply2) {
+      await hold.fill('4.8');
+      await apply2.click();
+      await p.waitForTimeout(1200);
+      const held = await p.evaluate(() => {
+        const s = window.__bruhPrintState;
+        const row = (s?.stocks || []).find((x) => x.id === 'edcc-082wh');
+        return row ? { hold: row.hold_trailing_mm, dead: row.dead_leading_mm,
+                       printable: row.printable_feed_mm, feed: row.feed_mm }
+                   : null;
+      });
+      if (!held) problems.push(`${name}: the stock row vanished after Apply`);
+      else {
+        if (Math.abs(held.hold - 4.8) > 0.11)
+          problems.push(`${name}: asked to keep 4.8mm clear and the roll `
+            + `holds ${held.hold}`);
+        /* Both blank edges the same, which is what it is for. */
+        const bottom = held.feed - held.dead - held.printable;
+        if (Math.abs(bottom - held.dead) > 0.11)
+          problems.push(`${name}: the blank edges do not match — `
+            + `${held.dead}mm at the top, ${bottom.toFixed(2)}mm at the `
+            + 'bottom');
+      }
+    }
+  }
+
   const close = await p.$('#lineUpClose');
   if (!close) return problems.push(`${name}: the wizard has no way out but Escape`);
   await close.click();
@@ -370,8 +454,17 @@ const PHONE = { w: 390, h: 780 };
 const CHROME_PINNED_MAX = 110;
 /* Everything above the first content, unscrolled. */
 const CHROME_TOP_MAX = 165;
-/* Where the design workspace starts. */
-const CANVAS_TOP_MAX = 280;
+/* Where the design workspace starts.
+ *
+ * 300 rather than 280 since the design bar gained the label picker. At 390px
+ * the bar's three controls want 428px of a 362px row, so it wraps to two —
+ * measured at 306 with an element on the label and the label itself
+ * ending at y=497 of 780, against 266 and 457 before. The 40px is bought deliberately: the alternative was the
+ * add strip absorbing the whole difference, which took it to 32px with its
+ * own buttons laid out underneath the picker. Both numbers are a long way
+ * from the failure this budget exists for, which was a canvas starting at
+ * y=590 with 166px of height left. */
+const CANVAS_TOP_MAX = 315;
 
 /* A control behind a disclosure is fine; a control behind nothing is a
  * control that is gone. Every secondary thing moved on a phone is opened
@@ -392,6 +485,65 @@ const reachable = async (p, name, open, ids) => {
     return null;
   }), ids);
   for (const bad of found.filter(Boolean)) problems.push(`${name}: ${bad}`);
+};
+
+/* The one thing that put the stock picker in the sheet in the first place.
+ *
+ * `width: auto` sizes a <select> to its WIDEST OPTION, and the stock names
+ * run to "2.25" × 1.25" — Chemical-Resistant Cryo Labels". Uncapped, that
+ * laid out 431px inside a 390px window and took the page with it — so the
+ * cap is the price of having the control on the bar, and this is what
+ * proves it is being paid. The row it sits in is measured too: a flex
+ * item's floor is its max-content, so a capped select inside an uncapped
+ * label is the same bug one element out. */
+const designStockFits = async (p, name, width) => {
+  const out = await p.evaluate((w) => {
+    const bad = [];
+    const pick = document.getElementById('designStock');
+    if (!pick) return ['#designStock is not in the page'];
+    const bar = document.querySelector('.design-bar');
+    for (const [what, node] of [['the picker', pick],
+                                ['the design bar', bar]]) {
+      const box = node.getBoundingClientRect();
+      if (box.right > w + 1 || box.left < -1)
+        bad.push(`${what} runs from ${box.left.toFixed(0)} to `
+          + `${box.right.toFixed(0)}px of ${w}`);
+    }
+    if (document.documentElement.scrollWidth > w + 1)
+      bad.push('the design tab scrolls sideways with the picker on the bar '
+        + `(${document.documentElement.scrollWidth} > ${w})`);
+    /* The measurement that sent the <select> away, kept as the check.
+     * The add strip is the PRIMARY control on this tab and it is what gives
+     * way in the row, so a picker beside it has to leave it something to
+     * scroll — at 15px its own buttons rendered underneath the picker and a
+     * click on one timed out on a control that was there and covered. */
+    const strip = document.getElementById('addBar').getBoundingClientRect();
+    if (strip.width < 120)
+      bad.push(`the add strip is down to ${strip.width.toFixed(0)}px, so the `
+        + 'primary control on this tab is a sliver');
+    /* The FIRST button has to be inside the strip and reachable. Deliberately
+     * only the first: the strip scrolls, so every button past its right edge
+     * is laid out beyond it and covered by the page at every width — that is
+     * what a scroller does, and a check that read it as a fault would fail on
+     * a healthy 340px strip exactly as loudly as on the broken 32px one. The
+     * width floor above is what separates them; this is what proves the
+     * strip's own content starts inside it. */
+    const first = document.querySelector('#addBar .btn');
+    if (first) {
+      const box = first.getBoundingClientRect();
+      if (box.right > strip.right + 1)
+        bad.push('the first add button does not fit inside the strip');
+      else {
+        const on = document.elementFromPoint(box.left + box.width / 2,
+                                             box.top + box.height / 2);
+        if (on && !on.closest('#addBar'))
+          bad.push('the first add button is covered by '
+            + `${on.id || on.className || on.tagName}`);
+      }
+    }
+    return bad;
+  }, width);
+  for (const bad of out) problems.push(`${name}: ${bad}`);
 };
 
 const phoneBudget = async (p, name) => {
@@ -570,11 +722,16 @@ await run(PHONE.w, PHONE.h, 'phone-design', true, async (p) => {
   await p.waitForTimeout(900);
   await canvasBudget(p, 'phone-design', PHONE.h);
   await phoneBudget(p, 'phone-design');
-  /* Stock, name, the text-direction sentence and the snap toggle all left
-   * the design bar for the ⋯ sheet, and Rotate went to the props pane where
-   * every other per-box control already lives. */
+  /* The stock picker is on the bar and has to be usable there at 390px —
+   * which is the whole risk of putting it back, because a <select> sized to
+   * its widest option is what took the page sideways the first time. */
+  await reachable(p, 'phone-design', async () => {}, ['designStock']);
+  await designStockFits(p, 'phone-design', PHONE.w);
+  /* Name, the text-direction sentence and the snap toggle stayed in the ⋯
+   * sheet, and Rotate went to the props pane where every other per-box
+   * control already lives. */
   await reachable(p, 'phone-design', () => p.click('#designMore'),
-    ['designStock', 'designName', 'designSnap']);
+    ['designName', 'designSnap']);
   await p.click('#designSheetDone');
   await p.waitForTimeout(300);
   await reachable(p, 'phone-design', async () => {}, ['designRotateEl']);
