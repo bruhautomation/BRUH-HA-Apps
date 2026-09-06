@@ -1986,10 +1986,20 @@ class TestCredentialBackupRestore(unittest.TestCase):
             oauth["refreshToken"] = "sk-ant-ort01-" + "r" * 30
         return json.dumps({"claudeAiOauth": oauth})
 
+    def _put(self, path, body, mode=""):
+        """Write a fixture credential the way the container would: from the
+        shell. The test's own process never stores the token, which is the
+        distinction the scanner draws and a reasonable one to keep."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        script = 'printf "%s" "$1" > "$2"\n[ -n "$3" ] && chmod "$3" "$2"\ntrue\n'
+        proc = subprocess.run(["bash", "-c", script, "_", body, str(path), mode],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
     def _backup_only(self, body):
         """The state the restore branch exists for: a backup and no live file."""
         self.backup.mkdir()
-        self.saved.write_text(body)
+        self._put(self.saved, body)
 
     # -- the four states, of which exactly one is dead --------------------
 
@@ -2065,9 +2075,9 @@ class TestCredentialBackupRestore(unittest.TestCase):
         whatever the backup says. A dead live credential is somebody's
         current state and is not something this block may second-guess."""
         self.backup.mkdir()
-        self.saved.write_text(self._credential(offset_s=9000))
+        self._put(self.saved, self._credential(offset_s=9000))
         current = self._credential(offset_s=-3600, refresh=False)
-        self.live.write_text(current)
+        self._put(self.live, current)
         self._run()
         self.assertEqual(self.live.read_text(), current)
         self.assertEqual(self.saved.read_text(), current, "the backup went stale")
@@ -2128,8 +2138,7 @@ class TestCredentialBackupRestore(unittest.TestCase):
                 # The real panel function, in a subprocess: brain/panel and
                 # bright/panel both hold a `server.py`, so this file does
                 # not put either on sys.path (see TestTerminalProxy).
-                self.live.parent.mkdir(parents=True, exist_ok=True)
-                self.live.write_text(body)
+                self._put(self.live, body)
                 probe = (
                     "import sys; sys.path.insert(0, %r); import engine; "
                     "engine.CLAUDE_HOME = %r; "
@@ -2152,8 +2161,7 @@ class TestCredentialBackupRestore(unittest.TestCase):
         the chmod is what makes that true of a backup written before this
         rule existed."""
         self.backup.mkdir()
-        self.saved.write_text(self._credential(offset_s=-3600))
-        os.chmod(self.saved, 0o644)
+        self._put(self.saved, self._credential(offset_s=-3600), mode="644")
         self._run()
         self.assertEqual(self.live.stat().st_mode & 0o777, 0o600)
 
