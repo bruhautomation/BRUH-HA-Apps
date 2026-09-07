@@ -302,6 +302,12 @@ tab lists the rolls that are actually in the printer. The Printer tab is
 where the whole catalog lives, because that is where the question is "what
 did I just load".
 
+**You pick a roll by its name**, with its size under it — the question a
+picker answers is *which of my rolls is this*, and once a roll can be
+renamed the answer to that is the name you gave it. A built-in row arrives
+called what is printed on the box you reorder by; **Rename or resize** on
+the Printer tab is where you change it to whatever you call the roll.
+
 The remaining count is an **estimate**, counted down from prints — nothing on
 a LabelWriter reports a real level, so it is only as good as the last time
 you set it. Press the bar on the Printer tab to correct it, or turn
@@ -378,9 +384,12 @@ that packs the printer's bytes — so what is on screen is what comes out.
 **The canvas IS the printable area.** The stock's margin, the band a roll's
 printer cannot reach, the far dot columns a 2.25″ label loses to a 2.24″ head
 and any edge you asked to keep clear all come off before the picture is
-drawn, so everything on the canvas prints. The caption under it says how big
-that is, and names the label's own size when the two differ — *Drawing on
-48.2 × 16.7mm of a 57.2 × 31.8mm label*.
+drawn, so everything on the canvas prints. Nothing is written under it: the
+picture is the answer, and the two numbers a caption there could quote —
+what you are drawing on, and the label it came off — differ by a margin, a
+lined-up roll and any held edges, all of which are set on the Printer tab.
+The **Left / Top / Width / Height** boxes in the properties pane are the
+millimetres you work in.
 
 Up to 0.11.0 the canvas was the whole label with three things drawn on it to
 aim away from — a dashed rectangle around the margin, a hatched strip at the
@@ -429,8 +438,8 @@ a QR code, a box and a rule look the same whichever way up they are, so the
 button is there and greyed out rather than missing.
 
 **The bar is the add strip, which label you are on, and one button.** The
-label picker shows the size you are drawing on (`2.25" × 1.25" ▾`) and opens
-a list of what is loaded; it is on the bar rather than in the sheet because
+label picker shows what the roll is called (`Address Labels ▾`, its size in
+the list it opens) and offers what is loaded; it is on the bar rather than in the sheet because
 it is not a setting, it is the paper — it decides the size of the canvas,
 which way the text runs and which boxes are off the edge. Everything else
 about the label rather than about a box on it — what it is called, which way
@@ -438,12 +447,15 @@ its text runs, and whether boxes line up as you drag — is behind **⋯ Label
 setup**.
 
 It is a button and not a drop-down for a measured reason: a `<select>` is
-laid out to its widest option, and the stock names run to `2.25" × 1.25" —
-Chemical-Resistant Cryo Labels`. At 390px that left the add strip — the
-primary control on this tab — 32 pixels wide with its own buttons rendering
-underneath the picker. The bar takes a second row on a narrow phone instead;
-what must never come back is the five-row bar this replaced, which put the
-label being designed below the fold.
+laid out to its widest option, and the stock names run to `Chemical-Resistant
+Cryo Labels — 2.25" × 1.25"`. At 390px that left the add strip — the primary
+control on this tab — 32 pixels wide with its own buttons rendering
+underneath the picker. The button is capped for the same reason and a long
+name loses its tail rather than the row: the bar is one line whose controls
+size to their own text, and one that grows pushes the add strip onto a row
+of its own. The bar takes a second row on a narrow phone anyway; what must
+never come back is the five-row bar this replaced, which put the label being
+designed below the fold.
 
 ## Templates
 

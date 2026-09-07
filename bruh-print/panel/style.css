@@ -358,7 +358,26 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
  *
  * `flex: none` because the add strip is what gives way in this row: it
  * scrolls inside itself and is built to. */
-.designstock { flex: none; white-space: nowrap; }
+/* Capped, because this row is one flex line and a control that grows with
+ * its text is what pushes the add strip onto a row of its own — measured,
+ * and asserted by `designStockFits`. The NAME truncates inside the cap; the
+ * caret never does.
+ *
+ * 150px is measured at 390px, and the width it is measured at is the point.
+ * 180 was tried first, off a sweep that started at 900px — where the bar
+ * holds one row up to 220 — and 390 takes a THIRD row at 180: the phone is
+ * the binding width even though its bar has already given way to two rows,
+ * because those two rows are what the canvas budget was measured against.
+ * The break there is between 175 and 180, so this leaves 25px for a device
+ * whose font is wider than this one's, and the ten pixels between 150 and
+ * 160 are about one character of a name. `designStockFits` is what caught
+ * it, one release after it was written. */
+.designstock {
+  flex: none; max-width: 150px;
+  white-space: nowrap; overflow: hidden;
+}
+.designstockname { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.designstock .caret { flex: none; }
 /* One row per stock in the dialog, full name under the size. A grid rather
  * than a flex row so a long vendor name wraps under the measurement instead
  * of pushing it off the side. */
@@ -392,7 +411,6 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
  * own box, so a box at the very top of the label had its tag cut in half by
  * this container's own padding — and the tag is how you tell which of six
  * identical rectangles you have hold of. */
-.canvaslegend { font-size: 12px; color: var(--ink-3); margin: 0; }
 .canvas-scroll { overflow: auto; display: flex; justify-content: center;
   align-items: flex-start;
   padding: 24px 14px 14px; border-radius: 10px; border: 1px solid var(--line);

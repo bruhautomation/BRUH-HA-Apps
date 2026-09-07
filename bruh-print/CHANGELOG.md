@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.13.1
+
+**You pick a roll by its name, and the size is underneath it.** The picker
+led with `2.25" × 1.25"` and put the name below in grey, on the argument
+that these controls are width-bounded so the tail is what a narrow window
+loses. That is true of the catalog's own names and beside the point: a
+person opening this list is not shopping, they are asking *which of my rolls
+is this* — and 0.13.0 made a roll something you can rename, so the answer is
+the name you gave it. `Address Labels` and `Removable 3/4" x 2"` are two
+rolls; `2.25" × 1.25"` and `1.0" × 2.0"` are two measurements to compare
+before you have chosen anything. The size is still on every surface, a line
+down or a press away.
+
+The design bar's button says the name too, capped so it cannot grow the row
+— **150px, measured at 390px**, where the bar takes a third row at 180. The
+first cut of that cap swept from 900px, where one row holds up to 220, and
+the row-count check added last release caught it on the phone.
+
+**Deleted:** the caption under the design canvas — *Drawing on 34 × 12.4mm
+of a 50.8 × 25.4mm label*. It quoted two measurements and no relationship
+between them, and what makes them differ is a margin, a lined-up roll and
+any held edges, none of which is on that tab — so it could only raise the
+question it could not answer. The canvas *is* the printable area, which is
+what the caption was there to say; the picture says it already. Same
+reasoning that removed the hatched bands and the head-margin note in 0.12.0,
+applied to the sentence that outlived them.
+
 ## 0.13.0
 
 **The tab strip is one row on a phone.** Five names beside five glyphs need

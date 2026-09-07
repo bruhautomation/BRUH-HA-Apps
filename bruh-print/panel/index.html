@@ -188,13 +188,12 @@
           <div class="overlay" id="overlay"></div>
         </div>
       </div>
-      <!-- How big the canvas is, and the label's own size when the two
-           differ. A caption rather than a tooltip because there is nothing
-           on the canvas to hover: the preview is cropped to the printable
-           box, so everything on it prints. `drawOverlay` fills it in, and
-           this is what it says before a label is open. -->
-      <p class="canvaslegend" id="canvasLegend">Everything on the canvas
-         prints.</p>
+      <!-- No caption under the canvas. It said `Drawing on 34 × 12.4mm of a
+           50.8 × 25.4mm label`, which is two measurements a person has to
+           work out the relationship between before it means anything — and
+           the answer is a margin, a lined-up roll and any held edges, none
+           of which is on this tab. The canvas IS the printable area, so the
+           picture already says everything that caption was for. -->
       <ul class="notes" id="designNotes"></ul>
     </div>
 

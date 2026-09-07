@@ -154,13 +154,20 @@ const dragToTheEdge = async (p, name) => {
       + `${(originGap.drawn - originGap.want).toFixed(1)}px — the box being `
       + 'dragged and the ink it describes are in different places');
 
-  /* And the caption says how big that canvas is, which is the one fact the
-     tab cannot show any other way now the marks are gone. */
-  const legend = await p.$eval('#canvasLegend', (n) => n.textContent.trim())
-    .catch(() => '');
-  if (!/Drawing on [\d.]+ × [\d.]+mm/.test(legend))
-    problems.push(`${name}: the canvas caption does not say how big it is `
-      + `("${legend.slice(0, 60)}")`);
+  /* And nothing under the canvas explains it. The caption that used to sit
+     there quoted two measurements whose relationship is set on another tab,
+     so it raised a question it could not answer; the picture is the
+     printable area and says everything it was for. What remains under the
+     canvas is the notes list, which is empty on a label with no problems. */
+  const chatter = await p.evaluate(() => {
+    const pane = document.querySelector('.canvas-pane');
+    const notes = document.getElementById('designNotes');
+    return [...(pane ? pane.querySelectorAll('p') : [])]
+      .filter((n) => n.textContent.trim() && !notes?.contains(n))
+      .map((n) => n.textContent.trim().slice(0, 60));
+  });
+  for (const line of chatter)
+    problems.push(`${name}: prose under the canvas — "${line}"`);
 
   /* Scrolled into view first, and re-measured after. On a phone the design
    * view stacks and the Print bar is `position: sticky; bottom: 0` — so the
