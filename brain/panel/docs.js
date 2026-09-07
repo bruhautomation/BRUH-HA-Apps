@@ -1491,6 +1491,14 @@ usage endpoint itself, which is nothing to do with your account's quota and clea
 its own. The \`sensor.brain_usage_tracker\` diagnostic entity carries the same status
 for automations.
 
+One reason is worth knowing in advance, because it looks like a broken sign-in and is
+not. A **long-lived token** — the kind \`ha login\` mints, and the only kind that can be
+shared with other add-ons — is allowed to run Claude and is not allowed to read your
+usage. There is nothing to fix in the token and re-running \`ha login\` will not change
+it. If you want the real figures, open the **Terminal** tab and run \`claude /login\`:
+the interactive sign-in asks for the extra permission, it does not replace your shared
+login, and the numbers come back on the next poll a few minutes later.
+
 ## What a card costs, and where to see it
 
 A card is not a chat message. Generating one posts a snapshot of your home to Claude and

@@ -737,10 +737,61 @@ class TestBackoffSurvivesRestart(unittest.TestCase):
                      "next_attempt_at": self._in(-5)})
         self.assertEqual(self.mod._resume_backoff(), (0.0, 0))
 
-    def test_only_a_rate_limit_is_resumed(self):
+    def test_a_cheap_failure_is_re_asked_immediately(self):
+        """A network error or a 500 costs nothing to retry, and somebody
+        restarting the add-on has usually just fixed one — so its wait is
+        deliberately NOT resumed, whatever the file promised."""
         self._write({"last_error": "network_error",
                      "next_attempt_at": self._in(3000)})
         self.assertEqual(self.mod._resume_backoff(), (0.0, 0))
+
+    def test_an_auth_problem_is_deliberately_re_asked(self):
+        """The tempting generalisation — resume every wait asking again
+        cannot help — is wrong here, because a restart is not a timer
+        expiring: it is a person acting, and the thing they most often did
+        first is sign in again. A rate limit is the one failure a restart
+        cannot have changed."""
+        for code in self.mod.AUTH_PROBLEMS:
+            self._write({"error": code, "next_attempt_at": self._in(3000)})
+            self.assertEqual(self.mod._resume_backoff(), (0.0, 0), code)
+
+    def test_a_promise_a_restart_will_not_keep_is_corrected(self):
+        """`next_attempt_at` is rendered to a person by the clock, and a
+        restart re-asks sooner than most of those promises — which left the
+        file claiming a wait that was never going to happen."""
+        self._write({"updated_at": self._in(-600),
+                     "five_hour": {"utilization": 12},
+                     "last_error": "http_401",
+                     "next_attempt_at": self._in(3000),
+                     "rate_limit_strikes": 4})
+        self.mod._restate_next_attempt(10, 0)
+        with open(self.mod.USAGE_FILE) as fh:
+            data = json.load(fh)
+        when = datetime.fromisoformat(data["next_attempt_at"])
+        self.assertLess((when - datetime.now(timezone.utc)).total_seconds(), 60)
+        # ...and the reading it rides beside is still untouched.
+        self.assertEqual(data["five_hour"]["utilization"], 12)
+        self.assertNotIn("rate_limit_strikes", data)
+
+    def test_a_resumed_promise_is_restated_as_itself(self):
+        self._write({"error": "http_429", "next_attempt_at": self._in(3000),
+                     "rate_limit_strikes": 2})
+        wait, strikes = self.mod._resume_backoff()
+        self.mod._restate_next_attempt(wait, strikes)
+        with open(self.mod.USAGE_FILE) as fh:
+            data = json.load(fh)
+        when = datetime.fromisoformat(data["next_attempt_at"])
+        left = (when - datetime.now(timezone.utc)).total_seconds()
+        self.assertGreater(left, 2900)
+        self.assertEqual(data["rate_limit_strikes"], 2)
+
+    def test_a_good_reading_has_no_promise_to_correct(self):
+        reading = {"updated_at": self._in(0),
+                   "five_hour": {"utilization": 12}}
+        self._write(reading)
+        self.mod._restate_next_attempt(10, 0)
+        with open(self.mod.USAGE_FILE) as fh:
+            self.assertEqual(json.load(fh), reading)
 
     def test_an_error_status_file_resumes_too(self):
         """Once the reading has aged out the file is the error-status shape
@@ -762,6 +813,321 @@ class TestBackoffSurvivesRestart(unittest.TestCase):
         with open(self.mod.USAGE_FILE, "w") as fh:
             fh.write("{nope")
         self.assertEqual(self.mod._resume_backoff(), (0.0, 0))
+
+
+class TestTheBodyIsWhatNamesTheRefusal(unittest.TestCase):
+    """A 403 arrived as a bare `http_403`: in no table, with no gloss, in
+    nothing's documented vocabulary — and retried hourly forever against a
+    condition that can never clear. The status alone cannot tell a scope
+    refusal from any other permission verdict. The body says it outright.
+    """
+
+    def setUp(self):
+        self.mod = load_tracker({})
+
+    SCOPE_BODY = json.dumps({
+        "type": "permission_error",
+        "message": "OAuth token does not meet scope requirement user:profile",
+        "details": {"required_scopes": ["user:profile"],
+                    "error_code": "oauth_scope_insufficient"},
+    })
+
+    def test_the_scope_refusal_is_named_rather_than_numbered(self):
+        self.assertEqual(self.mod._error_code(403, self.SCOPE_BODY),
+                         self.mod.SCOPE_ERROR)
+
+    def test_an_unrecognised_code_leaves_the_status_alone(self):
+        """It narrows and never invents: a verdict made up from a string
+        this file has never seen reads exactly like a real one."""
+        body = json.dumps({"details": {"error_code": "something_new"}})
+        self.assertEqual(self.mod._error_code(403, body), "http_403")
+
+    def test_an_unreadable_body_leaves_the_status_alone(self):
+        for body in ("", "not json", "[]", '"a string"',
+                     json.dumps({"details": "not a dict"}),
+                     json.dumps({"details": {"error_code": 7}}),
+                     json.dumps({})):
+            self.assertEqual(self.mod._error_code(403, body), "http_403", body)
+
+    def test_a_top_level_code_is_read_too(self):
+        body = json.dumps({"error_code": "oauth_scope_insufficient"})
+        self.assertEqual(self.mod._error_code(403, body), self.mod.SCOPE_ERROR)
+
+    def test_the_body_is_not_truncated_before_it_is_parsed(self):
+        """The log line keeps 200 characters and for a while that was the
+        whole read. The refusal seen in the field clears it by fifty —
+        `error_code` at character 150 of 191 — so this is a near miss
+        rather than a hit, and one more scope named in the message is what
+        turns it into one. Driven through the HTTP path, because the
+        truncation lived in the caller and not in the parser."""
+        import io
+        import urllib.error
+
+        body = json.dumps({
+            "type": "permission_error",
+            "message": ("OAuth token does not meet scope requirements "
+                        "user:profile, user:sessions:claude_code"),
+            "details": {"required_scopes": ["user:profile",
+                                            "user:sessions:claude_code"],
+                        "error_code": "oauth_scope_insufficient"},
+        })
+        self.assertGreater(body.index("error_code"), self.mod.ERROR_BODY_LOG)
+        self.assertLess(len(body), self.mod.ERROR_BODY_MAX)
+
+        def raise_403(req, timeout=None):
+            raise urllib.error.HTTPError(
+                self.mod.ANTHROPIC_USAGE_URL, 403, "Forbidden", {},
+                io.BytesIO(body.encode()))
+
+        self.mod.urllib.request.urlopen = raise_403
+        self.assertEqual(self.mod.fetch_usage_limits("sk-ant-oat01-x")[1],
+                         self.mod.SCOPE_ERROR)
+
+    def test_the_real_response_is_narrowed_end_to_end(self):
+        """Driven through the HTTP path rather than the parser, because the
+        truncation that would have broken this lived in the caller."""
+        import io
+        import urllib.error
+
+        def raise_403(req, timeout=None):
+            raise urllib.error.HTTPError(
+                self.mod.ANTHROPIC_USAGE_URL, 403, "Forbidden", {},
+                io.BytesIO(self.SCOPE_BODY.encode()))
+
+        self.mod.urllib.request.urlopen = raise_403
+        data, error = self.mod.fetch_usage_limits("sk-ant-oat01-scoped")
+        self.assertIsNone(data)
+        self.assertEqual(error, self.mod.SCOPE_ERROR)
+
+    def test_it_is_in_both_tables_with_the_actual_fix_in_the_text(self):
+        self.assertIn(self.mod.SCOPE_ERROR, self.mod.AUTH_PROBLEMS)
+        detail = self.mod.ERROR_DETAIL[self.mod.SCOPE_ERROR]
+        self.assertIn("claude /login", detail)
+        # And it must not send somebody back to the command that caused it
+        # without saying so.
+        self.assertIn("ha login", detail)
+
+    def test_an_unattributed_403_never_blanks_a_working_reading(self):
+        """"I could not tell why" and "the token is under-scoped" are
+        different claims, and only the second is settled enough to
+        overwrite four readings that are still true."""
+        self.assertNotIn("http_403", self.mod.AUTH_PROBLEMS)
+        self.assertIn("http_403", self.mod.ERROR_DETAIL)
+
+
+class TestASettledRefusalStopsAsking(unittest.TestCase):
+    """The tracker retried a scope refusal at the failure cadence forever:
+    a request per hour, for the life of the add-on, against a verdict that
+    cannot change until somebody signs in differently."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.shared = os.path.join(self.tmp.name, "shared.json")
+        self.mod = load_tracker({
+            "BRAIN_HOME": os.path.join(self.tmp.name, "home"),
+            "BRAIN_SECRETS": os.path.join(self.tmp.name, "secrets"),
+            "BRAIN_SHARED_AUTH": self.shared,
+            "CLAUDE_CONFIG_DIR": None,
+        })
+
+    def _share(self, token):
+        with open(self.shared, "w") as fh:
+            json.dump({"type": "oauth_token", "value": token}, fh)
+
+    def test_the_refused_credential_is_never_sent_again(self):
+        self._share("sk-ant-oat01-scoped")
+        tried = []
+        self.mod.fetch_usage_limits = lambda t: (tried.append(t),
+                                                 (None, self.mod.SCOPE_ERROR))[1]
+        state = {}
+        for _ in range(5):
+            data, error = self.mod._fetch_with_any_credential(state)
+            self.assertIsNone(data)
+            self.assertEqual(error, self.mod.SCOPE_ERROR)
+        self.assertEqual(tried, ["sk-ant-oat01-scoped"])
+
+    def test_a_new_sign_in_is_tried_on_the_very_next_poll(self):
+        """The memory is keyed on the credential, not on the poll, so it
+        costs nothing the moment a real login lands — which is the whole
+        reason it is safe to stop asking."""
+        self._share("sk-ant-oat01-scoped")
+        tried = []
+
+        def fake(token):
+            tried.append(token)
+            if token == "sk-ant-oat01-scoped":
+                return None, self.mod.SCOPE_ERROR
+            return {"five_hour": {"utilization": 9}}, None
+
+        self.mod.fetch_usage_limits = fake
+        state = {}
+        self.mod._fetch_with_any_credential(state)
+        self.mod._fetch_with_any_credential(state)
+        self._share("sk-ant-oat01-real")
+        data, error = self.mod._fetch_with_any_credential(state)
+        self.assertIsNone(error)
+        self.assertEqual(data["five_hour"]["utilization"], 9)
+        self.assertEqual(tried, ["sk-ant-oat01-scoped", "sk-ant-oat01-real"])
+
+    def test_a_poll_that_sends_nothing_is_not_a_failed_request(self):
+        """The failure ladder exists to stop hammering an endpoint, and a
+        pass with nothing left to try hammers nothing. Charging it would
+        put the poll that notices a *new* sign-in an hour away — on exactly
+        the recovery the error message tells somebody to perform."""
+        self._share("sk-ant-oat01-scoped")
+        self.mod.fetch_usage_limits = lambda t: (None, self.mod.SCOPE_ERROR)
+        state = {}
+        self.mod._fetch_with_any_credential(state)
+        self.assertTrue(state["asked"])
+        self.mod._fetch_with_any_credential(state)
+        self.assertFalse(state["asked"])
+
+    def test_nothing_signed_in_sends_nothing_either(self):
+        state = {}
+        _, error = self.mod._fetch_with_any_credential(state)
+        self.assertEqual(error, "no_oauth_token")
+        self.assertFalse(state["asked"])
+
+    def test_the_ladder_is_not_charged_for_a_pass_that_sent_nothing(self):
+        self.assertEqual(self.mod._next_failure_count(4, True), 5)
+        self.assertEqual(self.mod._next_failure_count(4, False), 0)
+        self.assertEqual(self.mod._next_failure_count(9, None), 0)
+
+    def test_a_401_is_not_remembered(self):
+        """An expired token and a five-minute server hiccup are refused
+        identically, so blacklisting a credential over the second is how a
+        working sign-in stays unread for the life of the process."""
+        self._share("sk-ant-oat01-flaky")
+        tried = []
+        self.mod.fetch_usage_limits = lambda t: (tried.append(t),
+                                                 (None, "http_401"))[1]
+        state = {}
+        self.mod._fetch_with_any_credential(state)
+        self.mod._fetch_with_any_credential(state)
+        self.assertEqual(tried, ["sk-ant-oat01-flaky", "sk-ant-oat01-flaky"])
+
+
+class TestTheRemedyIsSaidOnceAndSaidAgain(unittest.TestCase):
+    """The line naming the fix was gated on `state["auth"]` — the same key
+    _note_source writes the answering store's *name* into on every pass
+    that yields a credential. The two overwrote each other, so the remedy
+    came back every poll for the whole life of the problem."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.shared = os.path.join(self.tmp.name, "shared.json")
+        self.mod = load_tracker({
+            "BRAIN_HOME": os.path.join(self.tmp.name, "home"),
+            "BRAIN_SECRETS": os.path.join(self.tmp.name, "secrets"),
+            "BRAIN_SHARED_AUTH": self.shared,
+            "CLAUDE_CONFIG_DIR": None,
+        })
+        self.mod.USAGE_FILE = os.path.join(self.tmp.name, "usage.json")
+        with open(self.shared, "w") as fh:
+            json.dump({"type": "oauth_token", "value": "sk-ant-oat01-x"}, fh)
+        self.said = []
+        self.mod.sys = type("S", (), {"stderr": type("E", (), {
+            "write": lambda _self, line: self.said.append(line)})()})()
+
+    def _remedies(self):
+        return [ln for ln in self.said if "no usable OAuth credential" in ln]
+
+    def test_the_remedy_is_said_once_not_every_poll(self):
+        self.mod.fetch_usage_limits = lambda t: (None, self.mod.SCOPE_ERROR)
+        state = {}
+        for _ in range(4):
+            self.mod.run_once(state)
+        self.assertEqual(len(self._remedies()), 1)
+
+    def test_it_names_the_login_that_can_actually_help(self):
+        self.mod.fetch_usage_limits = lambda t: (None, self.mod.SCOPE_ERROR)
+        self.mod.run_once({})
+        line = self._remedies()[0]
+        self.assertIn("claude /login", line)
+        self.assertIn("cannot mint", line)
+
+    def test_the_ordinary_remedy_is_unchanged(self):
+        self.mod.fetch_usage_limits = lambda t: (None, "http_401")
+        self.mod.run_once({})
+        self.assertIn("`ha login`", self._remedies()[0])
+
+    def test_a_problem_that_comes_back_is_news_again(self):
+        """A ledger nothing clears would swallow the second outage."""
+        state = {}
+        self.mod.fetch_usage_limits = lambda t: (None, "http_401")
+        self.mod.run_once(state)
+        self.mod.fetch_usage_limits = lambda t: ({"five_hour": {}}, None)
+        self.mod.run_once(state)
+        self.mod.fetch_usage_limits = lambda t: (None, "http_401")
+        self.mod.run_once(state)
+        self.assertEqual(len(self._remedies()), 2)
+
+
+class TestAScopeRefusalMovesTheSearchAlong(unittest.TestCase):
+    """Same shape as the 401-stops-the-search bug oauth_tokens() was
+    written to end. A scope-insufficient token is as much "wrong
+    credential, try the next store" as a refused one — and keying that rule
+    on the literal `http_401` is what left the other half of it in."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.panel_dir = os.path.join(self.tmp.name, "secrets")
+        os.makedirs(self.panel_dir)
+        self.shared = os.path.join(self.tmp.name, "shared.json")
+        self.mod = load_tracker({
+            "BRAIN_HOME": os.path.join(self.tmp.name, "home"),
+            "BRAIN_SECRETS": self.panel_dir,
+            "BRAIN_SHARED_AUTH": self.shared,
+            "CLAUDE_CONFIG_DIR": None,
+        })
+        with open(os.path.join(self.panel_dir, "claude_auth.json"), "w") as fh:
+            json.dump({"type": "oauth_token", "value": "sk-ant-oat01-scoped"}, fh)
+        with open(self.shared, "w") as fh:
+            json.dump({"type": "oauth_token", "value": "sk-ant-oat01-good"}, fh)
+
+    def _drive(self, first_error):
+        tried = []
+
+        def fake(token):
+            tried.append(token)
+            if token == "sk-ant-oat01-scoped":
+                return None, first_error
+            return {"five_hour": {"utilization": 4}}, None
+
+        self.mod.fetch_usage_limits = fake
+        data, error = self.mod._fetch_with_any_credential({})
+        return tried, data, error
+
+    def test_a_scope_refusal_falls_through_to_the_next_store(self):
+        tried, data, error = self._drive(self.mod.SCOPE_ERROR)
+        self.assertEqual(tried, ["sk-ant-oat01-scoped", "sk-ant-oat01-good"])
+        self.assertIsNone(error)
+        self.assertEqual(data["five_hour"]["utilization"], 4)
+
+    def test_an_unattributed_403_falls_through_too(self):
+        tried, data, error = self._drive("http_403")
+        self.assertEqual(tried, ["sk-ant-oat01-scoped", "sk-ant-oat01-good"])
+        self.assertIsNone(error)
+
+    def test_a_rate_limit_still_stops_the_search(self):
+        """Retrying a 429 on a second token proves nothing and costs a
+        request on the endpoint that just asked for quiet."""
+        tried, _, error = self._drive("http_429")
+        self.assertEqual(tried, ["sk-ant-oat01-scoped"])
+        self.assertEqual(error, "http_429")
+
+    def test_the_verdict_survives_a_pass_that_sends_nothing(self):
+        """Once every credential is a remembered refusal the poll makes no
+        request at all, and it must still report the reason rather than
+        falling through to "nobody has signed in"."""
+        self.mod.fetch_usage_limits = lambda t: (None, self.mod.SCOPE_ERROR)
+        state = {}
+        self.mod._fetch_with_any_credential(state)
+        _, error = self.mod._fetch_with_any_credential(state)
+        self.assertEqual(error, self.mod.SCOPE_ERROR)
 
 
 if __name__ == "__main__":

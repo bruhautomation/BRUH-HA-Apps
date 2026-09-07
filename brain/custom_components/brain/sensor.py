@@ -301,6 +301,17 @@ class BrainUsageTrackerSensor(SensorEntity):
       ``api_key_has_no_usage_limits``   signed in with an API key, which
                                         bills per token and has no window
       ``http_401``                      the token was found and refused
+      ``oauth_token_lacks_usage_scope``
+                                        the token runs Claude but may not
+                                        read usage limits — `ha login` is
+                                        built on `claude setup-token`,
+                                        which mints a token without the
+                                        `user:profile` scope this endpoint
+                                        requires; only the interactive
+                                        `claude /login` asks for it
+      ``http_403``                      refused permission, no reason
+                                        given — usually the same thing,
+                                        unattributed
       ``http_429``                      the usage endpoint is rate-limiting
                                         the poll — nothing to do with the
                                         account's own usage; brAIn backs off
@@ -311,7 +322,10 @@ class BrainUsageTrackerSensor(SensorEntity):
 
     A status the tracker can gloss arrives with a ``detail`` attribute, and
     the codes that most need one are the codes people read as something
-    else: ``http_429`` is the endpoint's limit, not a usage cap.
+    else: ``http_429`` is the endpoint's limit, not a usage cap, and
+    ``oauth_token_lacks_usage_scope`` is a sign-in that works everywhere
+    except here — retrying it, or re-running the command that created it,
+    can never clear it.
 
     A reading that went stale *because* the tracker is waiting out a
     failure reports that failure, not ``stale``: the tracker leaves

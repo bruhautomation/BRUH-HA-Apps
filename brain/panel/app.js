@@ -529,6 +529,18 @@ function limitsNote(u) {
       return say("Anthropic refused the saved credential.",
         `The sign-in has expired or been revoked, so the figure above is an `
         + `estimate. Signing in again restores the real numbers.`);
+    case "oauth_token_lacks_usage_scope":
+      return say("This sign-in cannot read your usage.",
+        `The saved token runs Claude perfectly, but <b>ha login</b> is built `
+        + `on <b>claude setup-token</b>, which mints a token without the `
+        + `permission this figure needs — so running it again will not help. `
+        + `Open the <b>Terminal</b> tab and run <b>claude /login</b>; the `
+        + `real numbers come back on the next poll.`);
+    case "http_403":
+      return say("Anthropic refused to show your usage.",
+        `It did not say why. The figure above is an estimate; signing in `
+        + `again with <b>claude /login</b> in the Terminal tab is what `
+        + `usually fixes it.`);
     case "http_429":
       return say("Anthropic is rate-limiting the usage endpoint itself.",
         `This is not your account's usage and no amount of quota clears it. `

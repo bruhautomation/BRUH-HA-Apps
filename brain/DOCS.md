@@ -1218,6 +1218,13 @@ shareable: the shared file records no refresh token, so a copy would work for a 
 hours and then break every add-on reading it with nothing to say why. Sign in from
 the panel (or run `ha login`) to mint a long-lived token that can be shared.
 
+A long-lived token has one thing it cannot do: **read your account's usage limits.**
+The permission for that is only asked for by the interactive sign-in, so a box whose
+only credential came from `ha login` or the panel will show the usage pill as an
+estimate and report `oauth_token_lacks_usage_scope`. That is not a broken sign-in and
+running `ha login` again cannot change it — run `claude /login` in the **Terminal**
+tab as well, which does not replace the shared file.
+
 From a terminal, `ha login` and `brain login` are the same command:
 
 ```bash
