@@ -43,8 +43,8 @@ A stock is two measurements and they are not interchangeable:
 Nothing can work this out for you. A LabelWriter feeds to the next die-cut
 gap and has no idea what shape the label it just printed was, so if a label
 comes out rotated with the text running off the edge, the two numbers are the
-wrong way round. Press **Edit** on the Printer tab and then **"These are the
-wrong way round"**. Lining the roll up is what tells you: it measures both
+wrong way round. Press **Rename or resize** on the Printer tab and then **"These are
+the wrong way round"**. Lining the roll up is what tells you: it measures both
 edges of the real paper, and if the two measurements match the catalog's the
 other way round it says so and offers the swap.
 
@@ -56,8 +56,14 @@ Quick tab and the designer both follow it and neither asks again — a
 direction that could be set in three places is three controls that can
 disagree about a property of the roll.
 
-**Edit** opens the rest: the two measurements, the swap, **the blank border
-kept clear of the edge** and how many labels are on a full roll. The border
+**Rename or resize** opens the rest: what the roll is **called**, the two
+measurements, the swap, **the blank border kept clear of the edge** and how
+many labels are on a full roll. The name is yours — a built-in row arrives
+called what is printed on the box you reorder by, which is the right thing to
+search a supplier for and the wrong thing to read on a picker six months
+later; rename it to whatever you call the roll and every label picker says
+so. Editing a built-in saves an override, so a future release correcting the
+catalog cannot take your name back off it. The border
 sits beside the two measurements because it is the third number that decides
 how big anything printed on this roll comes out, and the dialog says how much
 of the label the artwork actually gets once it is taken off.
@@ -75,7 +81,7 @@ where the next letter would start rather than where this one ends.
 
 A stock you have added or corrected keeps whatever margin it was saved with,
 so raising the default does not undo your measurement. Change one roll's
-margin under **Edit**. It is also shown on the stock row, next to the two
+margin under **Rename or resize**. It is also shown on the stock row, next to the two
 measurements: a roll carrying a 5mm border prints artwork a centimetre
 smaller than the label, and that is worth being able to see without opening
 anything.
@@ -190,7 +196,8 @@ and it is scaled evenly rather than truncating whichever came second, because
 the commonest reason to set two at once is to centre something.
 
 An even border on all four sides is a different control that already exists:
-the stock's own **Margin**, under **Edit**. This is the uneven one.
+the stock's own **Margin**, under **Rename or resize**. This is the uneven
+one.
 
 0.11.0 shipped one of these, at the bottom, on the argument that holding more
 back at the *top* would only push the artwork further from the middle. True
@@ -405,13 +412,21 @@ renderer, because a list of family names shows the one thing a font choice is
 not about — and a CSS preview would show your browser's idea of "Monospace"
 beside a label that prints in DejaVu Sans Mono.
 
-**Align, nudge and rotate.** The buttons under the geometry fields put a box
-against an edge, centre it, or fill the width or the height of the printable
-area; the arrows move it half a millimetre, which is a thumb-sized way to do
-something a number field asks for a keyboard; and **⟳ Rotate** turns the box
-a quarter at a time, taking the box with it so the words still have room.
-Text and barcodes only — a QR code, a box and a rule look the same whichever
-way up they are, so the button is there and greyed out rather than missing.
+**Where the box sits, in three named rows.** Under the **Left / Top / Width /
+Height** boxes are **Across** (against the left edge, centred, against the
+right, or fill the width), **Down** (the same four down the label) and
+**Nudge 1 mm** (four arrows). The arrows are a thumb-sized way to do
+something a number field asks for a keyboard, and they round to the
+millimetre before they move — an arrow that carried the fraction a drag left
+behind could never reach a round number, which is the whole reason you reach
+for one. Everything on this pane steps in whole millimetres; the drag is what
+offers finer.
+
+**⟳ Rotate** sits with **Duplicate** and **Delete**, which is the row of
+verbs that act on the selected box. It turns the box a quarter at a time,
+taking the box with it so the words still have room. Text and barcodes only —
+a QR code, a box and a rule look the same whichever way up they are, so the
+button is there and greyed out rather than missing.
 
 **The bar is the add strip, which label you are on, and one button.** The
 label picker shows the size you are drawing on (`2.25" × 1.25" ▾`) and opens
@@ -786,8 +801,8 @@ cannot own one LabelWriter.
 
 **The label comes out sideways.** Two different things wear that sentence.
 If the *whole* label is turned — the text running off the long edge — the
-stock's two measurements are the wrong way round: press **Edit** on the
-Printer tab and then **"These are the wrong way round"**. If the label is the
+stock's two measurements are the wrong way round: press **Rename or resize**
+on the Printer tab and then **"These are the wrong way round"**. If the label is the
 right shape and the words are simply lying the wrong way along it, that is
 **Text direction** on the same row, and it is one press.
 
@@ -800,7 +815,7 @@ side, or lands across the liner on a narrow roll, the roll needs lining up.
 **The words sit too close to the edge.** They should not: text is fitted and
 placed by its ink, inside a 2mm border and a little breathing room inside its
 own box. If a particular roll needs more, raise **the blank border kept clear
-of the edge** under **Edit** on the Printer tab — it is per stock, so nothing
+of the edge** under **Rename or resize** on the Printer tab — it is per stock, so nothing
 else changes.
 
 **Everything is printed too far down the label (or too far to one side), the

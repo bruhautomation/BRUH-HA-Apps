@@ -1058,6 +1058,58 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class TestTheRowSaysWhatCanBeDrawnOn(PanelCase):
+    """`drawable_mm` on the state row is the box the RENDERER built.
+
+    The designer lays every element out in it and the preview is cropped to
+    it, so the two have to be one measurement. A `Stock` cannot know which
+    printer it is on, so its own `as_dict` answers without the head's
+    shortfall — and the panel is the layer that does know.
+    """
+
+    async def test_the_head_comes_off_a_label_wider_than_it_is(self):
+        """2.25" is 57.15mm and a 672-dot head reaches 56.9mm, so the row has
+        to be a quarter of a millimetre narrower than the store's own answer.
+        A quarter of a millimetre is nothing to look at and is exactly the
+        class of error the one-rectangle change exists to remove: the
+        overlay's millimetres and the picture under them are the same
+        number or they are not."""
+        _, body = await self.get("/api/state")
+        row = next(s for s in body["stocks"] if s["id"] == "edcc-082wh")
+        entry = self.panel.stocks.require("edcc-082wh")
+        head_mm = 672 / 300 * 25.4
+        want = entry.printable_box(head_mm=head_mm)[2]
+        self.assertAlmostEqual(want, row["drawable_mm"][0], places=2)
+        self.assertLess(row["drawable_mm"][0], entry.drawable_mm[0])
+        self.assertAlmostEqual(row["drawable_mm"][0],
+                               row["printable_across_mm"], places=2)
+
+    async def test_a_narrow_stock_is_untouched_by_it(self):
+        """The head only takes something off a label wider than itself."""
+        _, body = await self.get("/api/state")
+        row = next(s for s in body["stocks"] if s["id"] == "ed1f-060wh")
+        entry = self.panel.stocks.require("ed1f-060wh")
+        self.assertAlmostEqual(entry.drawable_mm[0], row["drawable_mm"][0],
+                               places=2)
+
+    async def test_the_bands_a_person_held_come_off_it_too(self):
+        """The reported case: a 1.25" label held to half an inch across gives
+        a half-inch canvas, and the label's own width does not come into
+        it."""
+        await self.post("/api/stock", {
+            "id": "held", "name": "Held", "across_in": 1.25, "feed_in": 3.44,
+            "margin_mm": 2.0})
+        status, _ = await self.post("/api/stock/held/calibration", {
+            "readings": {"x1": 0.0, "x2": 31.7, "y1": 0.0, "y2": 87.4},
+            "holds": {"left": 7.5, "right": 7.5}})
+        self.assertEqual(200, status)
+        _, body = await self.get("/api/state")
+        row = next(s for s in body["stocks"] if s["id"] == "held")
+        # 31.75mm of label, less 2mm of border and 7.5mm held at each side.
+        self.assertAlmostEqual(12.75, row["drawable_mm"][0], places=2)
+        self.assertAlmostEqual(0.5, row["drawable_mm"][0] / 25.4, places=2)
+
+
 class TestTheDesignerSeesTheCanvasNotTheSheet(PanelCase):
     """A label drawn at 90° is designed as the strip it reads as.
 

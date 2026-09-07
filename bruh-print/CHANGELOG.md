@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.13.0
+
+**The tab strip is one row on a phone.** Five names beside five glyphs need
+485px of strip — measured — so at 390px they came out on two rows and at
+320px on three: a third of the screen spent on navigation, above a tab whose
+whole job is type, look, print. The glyphs are what give way, because a word
+is the only thing on a tab that says what the tab is and `▦` is not a name
+for Templates. One row from about 352px up. Two things were in the way and
+both are worth naming: the tabs were pinned to 16px by the touch-floor block,
+whose rule is about iOS zooming a control that takes **focus** — a `<button>`
+never does, so a tab was never one of them; and the row is what wraps, so the
+44px targets and the five names both survive at every width.
+
+**The designer's place-it tools are three named rows.** They were two rows of
+glyphs — eight in the first, four in the second — with what each did in a
+tooltip, on the pane whose commonest device has no hover. `⇤ ⇔ ⇥ ⤒ ⇕ ⤓ ↔ ↕` in
+a line is not eight controls, it is one illegible strip. Same eight actions,
+now under the word that says which question each answers: **Across**, **Down**
+and **Nudge 1 mm**.
+
+- The four number boxes are **Left / Top / Width / Height** rather than
+  X / Y / W / H, with the unit said once above them instead of four times.
+- Everything steps in **whole millimetres**. The arrows moved half a
+  millimetre and left boxes sitting at 6.5mm; they round to the millimetre
+  *before* they move, so four presses from a dragged 6.4 land on a round
+  number rather than on 2.4.
+- **⟳ Rotate** moved down beside Duplicate and Delete, which is the row of
+  verbs that act on the selected box, and the duplicate `Rotate` dropdown in
+  the element's own fields is gone. The two disagreed: a quarter turn swaps
+  which dimension the contents run along and only the button swapped the box
+  with it, so the dropdown left turned text in a box that stayed wide.
+
+**A roll is yours to name.** Renaming has worked since the Printer tab had an
+Edit dialog and nothing on the screen said so — the button was called `Edit`,
+which is a verb with no object, and its tooltip listed the measurements and
+never the name. It is **Rename or resize** now, and the Name field says what
+it is for: a catalog row arrives called what is printed on the box you
+reorder by, and the roll in the bay is the freezer labels.
+
+**Cut from the Quick tab:** the closed disclosure said `Label, copies, font —
+1.25" × 3.44" · printer starts 2.4 mm`. Both extras were answered better one
+line further down — the picker inside names the stock and the picture beside
+it *is* that label — and the leading dead band stopped being a fact about the
+job at all in 0.12.0, when the canvas became the printable box. It says the
+nouns.
+
+**Fixed:** a stock row reported a drawable width a quarter of a millimetre
+wider than the renderer's own on a label wider than the print head. A `Stock`
+cannot know which printer it is on, so it answered without one while the
+preview was cropped to the box the renderer built — the class of disagreement
+between the overlay's millimetres and the picture under them that 0.12.0
+exists to remove.
+
 ## 0.12.0
 
 **The designer draws what prints, and nothing else.** The canvas used to be

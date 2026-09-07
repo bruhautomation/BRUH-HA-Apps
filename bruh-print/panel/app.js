@@ -312,6 +312,17 @@ function setStockButton(button, id) {
   const chosen = rows.find((s) => s.id === id)
     || rows.find((s) => s.id === S.settings.default_stock) || rows[0];
   button.dataset.value = chosen ? chosen.id : '';
+  /* The SIZE, and the name in the dialog this opens.
+   *
+   * Showing the name here too was tried, once somebody renamed a roll and
+   * could not see it in the designer, and it was measured and reverted: the
+   * bar is one flex line whose base sizes are the controls' own content, so
+   * a picker wide enough for a name pushes the add strip past the row and
+   * the bar goes from one row to two at 900px and from two to three at
+   * 390px — 52px of chrome above the label being designed, on the tab whose
+   * whole point is the label being designed. 147px is what the row has.
+   * The name is a press away in the picker, on the Quick tab's own list and
+   * on the Printer tab, all of which have the width for it. */
   button.textContent = chosen ? `${chosen.label} \u25be` : 'No label \u25be';
   button.title = chosen ? chosen.name : '';
 }
@@ -497,20 +508,22 @@ $('quickFont').addEventListener('click', () => {
  * so it is the thing you check every time — and how many. The font, the
  * capitals and the direction are all in the picture. */
 function quickSummary() {
+  /* The nouns, and nothing else.
+   *
+   * This line is the CLOSED state of a disclosure, so every word in it is
+   * paid for on every visit to the tab whether or not anybody wanted it —
+   * and the two things it used to add were both answered better one line
+   * further down. The stock's name is on the picker inside, and the picture
+   * beside it is that label; the leading dead band stopped being a fact
+   * about the job at all in 0.12.0, when the canvas became the printable
+   * box, so it was describing a correction that no longer moves anybody's
+   * artwork. What a summary owes is what is behind the fold. */
   const line = $('quickMoreSummary');
   if (!line) return;
-  const stock = stockById($('quickStock').value);
   const copies = Number($('quickCopies').value) || 1;
-  let text = `Label, copies, font \u2014 ${stock ? stock.label : 'none picked'}`;
-  if (copies > 1) text += ` \u00b7 ${copies} copies`;
-  /* And the one thing about this roll that changes what comes out and is
-   * visible nowhere on the Quick tab: the band at the leading edge this
-   * printer will not lay ink on. Only when there is one — a "starts 0 mm in"
-   * on every label is a fact nobody needs and the row is already three
-   * nouns long. */
-  if (stock && stock.dead_leading_mm)
-    text += ` \u00b7 printer starts ${mmText(stock.dead_leading_mm)} in`;
-  line.textContent = text;
+  line.textContent = copies > 1
+    ? `Label, copies, font \u00b7 ${copies} copies`
+    : 'Label, copies, font';
 }
 
 let quickTimer = 0;
@@ -1083,17 +1096,40 @@ function clampElement(element, mm) {
   element.y_mm = clamp(element.y_mm, 0, down(mm.h - element.h_mm));
 }
 
-/* Half a millimetre, which is about the smallest move worth making on a
- * label and small enough that holding the button is a fine adjustment. The
- * arrows exist because a thumb cannot place a box to half a millimetre and a
- * number field is a keyboard away on a phone. */
-const NUDGE_MM = 0.5;
+/* One millimetre.
+ *
+ * It was half, on the argument that half is the smallest move worth making;
+ * what that produced was a box sitting at 6.5mm and a person asking for
+ * whole millimetres. A label is a few centimetres of paper read at arm's
+ * length and nothing on one is placed to half a millimetre — the drag
+ * already offers finer than that, so it is the ARROWS that are the coarse,
+ * exact control. The nudge also rounds to the millimetre BEFORE it moves,
+ * or four presses from a dragged 6.4 land on 2.4: an arrow that carries the
+ * fraction it started from can never reach a round number, which is the
+ * whole reason somebody reaches for one. */
+const NUDGE_MM = 1;
 
 function alignTools(element, mm) {
+  /* Three named rows, and the name is the half that was missing.
+   *
+   * This was two rows of glyphs — eight in the first, four in the second —
+   * with what each one did in a tooltip, on a pane whose commonest device
+   * has no hover. `⇤ ⇔ ⇥ ⤒ ⇕ ⤓ ↔ ↕` in a line is not eight controls, it is
+   * one illegible strip, and the person using it said so. What separates
+   * them is the question each answers: the first row is where the box sits
+   * ACROSS the label, the second where it sits DOWN it, the third moves it
+   * by a millimetre. The same eight actions, each under the word that says
+   * which axis it is about — which is also what lets the two `Fill`s be
+   * called Fill rather than `↔ Fill` and `↕ Fill`. */
   const holder = el('div', 'tools');
 
-  const bar = el('div', 'toolrow');
-  const put = (label, tip, run) => {
+  const group = (caption) => {
+    const row = el('div', 'toolgroup');
+    row.append(el('span', null, caption));
+    holder.append(row);
+    return row;
+  };
+  const put = (row, label, tip, run) => {
     const button = el('button', 'btn', label);
     button.type = 'button';
     button.setAttribute('data-tip', tip);
@@ -1102,62 +1138,42 @@ function alignTools(element, mm) {
       clampElement(element, mm);
       markDirty(); drawOverlay(); drawProps();
     };
-    bar.append(button);
+    row.append(button);
+    return button;
   };
-  put('⇤', 'Against the left of the printable area',
-      () => { element.x_mm = 0; });
-  put('⇔', 'Centred across the label',
-      () => { element.x_mm = (mm.w - element.w_mm) / 2; });
-  put('⇥', 'Against the right of the printable area',
-      () => { element.x_mm = mm.w - element.w_mm; });
-  put('⤒', 'Against the top of the printable area',
-      () => { element.y_mm = 0; });
-  put('⇕', 'Centred down the label',
-      () => { element.y_mm = (mm.h - element.h_mm) / 2; });
-  put('⤓', 'Against the bottom of the printable area',
-      () => { element.y_mm = mm.h - element.h_mm; });
-  put('↔ Fill', 'As wide as the printable area',
-      () => { element.x_mm = 0; element.w_mm = mm.w; });
-  put('↕ Fill', 'As tall as the printable area',
-      () => { element.y_mm = 0; element.h_mm = mm.h; });
-  holder.append(bar);
 
-  const nudges = el('div', 'toolrow');
+  const across = group('Across');
+  put(across, '⇤', 'Against the left of the printable area',
+      () => { element.x_mm = 0; });
+  put(across, '⇔', 'Centred across the label',
+      () => { element.x_mm = (mm.w - element.w_mm) / 2; });
+  put(across, '⇥', 'Against the right of the printable area',
+      () => { element.x_mm = mm.w - element.w_mm; });
+  put(across, 'Fill', 'As wide as the printable area',
+      () => { element.x_mm = 0; element.w_mm = mm.w; });
+
+  const down = group('Down');
+  put(down, '⤒', 'Against the top of the printable area',
+      () => { element.y_mm = 0; });
+  put(down, '⇕', 'Centred down the label',
+      () => { element.y_mm = (mm.h - element.h_mm) / 2; });
+  put(down, '⤓', 'Against the bottom of the printable area',
+      () => { element.y_mm = mm.h - element.h_mm; });
+  put(down, 'Fill', 'As tall as the printable area',
+      () => { element.y_mm = 0; element.h_mm = mm.h; });
+
+  const nudges = group('Nudge 1 mm');
   for (const [label, tip, dx, dy] of [
-    ['←', 'Half a millimetre left', -NUDGE_MM, 0],
-    ['→', 'Half a millimetre right', NUDGE_MM, 0],
-    ['↑', 'Half a millimetre up', 0, -NUDGE_MM],
-    ['↓', 'Half a millimetre down', 0, NUDGE_MM],
+    ['←', 'A millimetre left', -NUDGE_MM, 0],
+    ['→', 'A millimetre right', NUDGE_MM, 0],
+    ['↑', 'A millimetre up', 0, -NUDGE_MM],
+    ['↓', 'A millimetre down', 0, NUDGE_MM],
   ]) {
-    const button = el('button', 'btn', label);
-    button.type = 'button';
-    button.setAttribute('data-tip', tip);
-    button.onclick = () => {
-      element.x_mm += dx;
-      element.y_mm += dy;
-      clampElement(element, mm);
-      markDirty(); drawOverlay(); drawProps();
-    };
-    nudges.append(button);
+    put(nudges, label, tip, () => {
+      if (dx) element.x_mm = Math.round(element.x_mm) + dx;
+      if (dy) element.y_mm = Math.round(element.y_mm) + dy;
+    });
   }
-  /* Rotate lives here, with the align and nudge tools, because it acts on
-   * the SELECTED box and so does every other control in this pane. It was
-   * in the design bar, where it was permanently on screen and disabled for
-   * most of what you can select — a control that spends its life greyed out
-   * teaches people it is not for them. It keeps the id the design bar gave
-   * it because that is the name every handler and test already uses. */
-  const rotate = el('button', 'btn', '⟳ Rotate');
-  rotate.type = 'button';
-  rotate.id = 'designRotateEl';
-  rotate.disabled = !canTurn(element);
-  rotate.setAttribute('data-tip', canTurn(element)
-    ? 'Turn this box a quarter — the box turns with it, so the words still '
-      + 'have room.'
-    : `A ${S.catalog.elements[element.type]?.name || element.type} looks the `
-      + 'same whichever way up it is, so there is nothing to turn.');
-  rotate.onclick = rotateSelected;
-  nudges.append(rotate);
-  holder.append(nudges);
   return holder;
 }
 
@@ -1207,12 +1223,22 @@ function drawProps() {
   if (spec.help) holder.append(el('p', 'lede', spec.help));
 
   const mm = canvasMm();
+  /* Named, and stepped in whole millimetres.
+   *
+   * `X (mm)` and `W (mm)` are the axes' names and not the box's: what a
+   * person is placing is a rectangle on a label, and Left/Top/Width/Height
+   * are what that rectangle's four numbers are called everywhere else they
+   * are met. The unit moves to the caption above the row, which is where it
+   * belongs — it is the same unit four times. The step is 1 for the reason
+   * `NUDGE_MM` is: a spinner that walks in halves is a spinner that walks
+   * off a round number and cannot get back to one. */
   const geometry = el('div', 'row');
-  for (const [key, label] of [['x_mm', 'X'], ['y_mm', 'Y'], ['w_mm', 'W'], ['h_mm', 'H']]) {
+  for (const [key, label] of [['x_mm', 'Left'], ['y_mm', 'Top'],
+                              ['w_mm', 'Width'], ['h_mm', 'Height']]) {
     const field = el('label', 'field');
-    field.append(el('span', null, `${label} (mm)`));
+    field.append(el('span', null, label));
     const input = el('input');
-    input.type = 'number'; input.step = '0.5'; input.value = element[key];
+    input.type = 'number'; input.step = '1'; input.value = round1(element[key]);
     input.oninput = () => {
       /* Typed values are clamped the same way dragged ones are. Without it
        * the one route into the designer that could put a box off the label
@@ -1220,21 +1246,46 @@ function drawProps() {
        * only sign was a label that came out different from the screen. */
       element[key] = Number(input.value) || 0;
       clampElement(element, mm);
-      input.value = element[key];
+      input.value = round1(element[key]);
       markDirty(); drawOverlay();
     };
     field.append(input);
     geometry.append(field);
   }
+  holder.append(el('p', 'toolcap', 'Where it sits on the label, in millimetres'));
   holder.append(geometry);
 
   holder.append(alignTools(element, mm));
 
   for (const [name, meta] of Object.entries(spec.fields)) {
+    /* Except `rotate`, which the ⟳ button below already is — and is the
+     * better of the two, because turning a box a quarter swaps which
+     * dimension its contents run along and the button swaps the box with
+     * it, where a plain `<select>` of 0/90/180/270 left a turned line of
+     * text in a box that stayed wide. Two controls for one thing is one
+     * too many, and this pair disagreed about what the thing was. */
+    if (name === 'rotate') continue;
     holder.append(propField(element, name, meta));
   }
 
+  /* The three verbs that act on this box, in one row.
+   *
+   * Rotate was down with the align and nudge tools, which are all about
+   * WHERE the box is; turning it is the same kind of thing as copying it or
+   * deleting it, and this is the row those live in. It keeps the id the
+   * design bar gave it, because that is the name every handler and test
+   * already uses. */
   const row = el('div', 'actions');
+  const rotate = el('button', 'btn', '⟳ Rotate');
+  rotate.type = 'button';
+  rotate.id = 'designRotateEl';
+  rotate.disabled = !canTurn(element);
+  rotate.setAttribute('data-tip', canTurn(element)
+    ? 'Turn this box a quarter — the box turns with it, so the words still '
+      + 'have room.'
+    : `A ${S.catalog.elements[element.type]?.name || element.type} looks the `
+      + 'same whichever way up it is, so there is nothing to turn.');
+  rotate.onclick = rotateSelected;
   const duplicate = el('button', 'btn', 'Duplicate');
   duplicate.onclick = () => {
     const copy = structuredClone(element);
@@ -1251,7 +1302,7 @@ function drawProps() {
     S.selected = -1;
     markDirty(); drawOverlay(); drawProps(); drawLayers();
   };
-  row.append(duplicate, remove);
+  row.append(rotate, duplicate, remove);
   holder.append(row);
 }
 
@@ -1807,10 +1858,18 @@ function renderPrinter() {
     turnWrap.append(turn);
     row.append(turnWrap);
 
-    const edit = el('button', 'btn tiny', 'Edit');
+    /* "Edit" is a verb with no object, which is the pattern that already
+     * cost this panel two controls nobody could name — and the object here
+     * is the one people came looking for and could not find. The first
+     * thing behind this button is what the roll is CALLED: a catalog row
+     * says "Chemical-Resistant Cryo Labels" and the roll in the bay is the
+     * freezer labels, and nothing on the screen suggested that was
+     * somebody's to change. */
+    const edit = el('button', 'btn tiny', 'Rename or resize');
     edit.setAttribute('data-tip',
-      'The two measurements, the margin and how many are on a roll. This is '
-      + 'also where you say the two numbers are the wrong way round.');
+      'What this roll is called, the two measurements, the margin and how '
+      + 'many are on a roll. This is also where you say the two numbers are '
+      + 'the wrong way round.');
     edit.onclick = () => editStockDialog(stock);
     const remove = el('button', 'btn tiny danger', stock.builtin ? 'Hide' : 'Delete');
     remove.onclick = async () => {
@@ -2935,11 +2994,21 @@ function editStockDialog(stock) {
     return wrap;
   };
 
+  /* The name is yours, and saying so is the point.
+   *
+   * A built-in row arrives called what is printed on the box you reorder by
+   * — which is the right default and the wrong thing to read on a picker
+   * six months later, when the roll is the freezer labels. Editing one
+   * saves an override, so a future release correcting the catalog cannot
+   * take a name back off somebody. */
   const name = el('label', 'field');
   name.append(el('span', null, 'Name'));
   const nameInput = el('input');
   nameInput.value = stock.name;
   name.append(nameInput);
+  name.append(el('span', 'muted',
+    'Call it whatever you call the roll. It is the name every label picker '
+    + 'shows, here and on the Quick tab and in the designer.'));
   body.append(name);
 
   const sizes = el('div', 'row');

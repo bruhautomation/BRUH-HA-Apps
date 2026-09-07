@@ -437,10 +437,12 @@ const lineUpWizard = async (p, name, width) => {
       const held = await p.evaluate(() => {
         const s = window.__bruhPrintState;
         const row = (s?.stocks || []).find((x) => x.id === 'edcc-082wh');
+        const printer = s?.printer;
         return row ? { holds: row.holds_mm, dead: row.dead_leading_mm,
                        printable: row.printable_feed_mm, feed: row.feed_mm,
                        across: row.printable_across_mm,
-                       label: row.across_mm }
+                       label: row.across_mm,
+                       head: printer ? printer.dots / printer.dpi * 25.4 : null }
                    : null;
       });
       if (!held) problems.push(`${name}: the stock row vanished after Apply`);
@@ -462,7 +464,14 @@ const lineUpWizard = async (p, name, width) => {
         if (Math.abs(held.printable - feed) > 0.11)
           problems.push(`${name}: the printable length is ${held.printable}mm `
             + `where the four insets down the label leave ${feed.toFixed(2)}`);
-        const across = held.label - want.Left - want.Right - 4;
+        /* The across axis also loses whatever of the label the print head
+           does not reach — this stock is 2.25" and the 450's head is 2.24",
+           so the two differ by a quarter of a millimetre and a check written
+           without it is a check that passes on the wrong number. The head is
+           read off the attached printer rather than written down here, or
+           this becomes a second copy of the geometry. */
+        const paper = held.head ? Math.min(held.label, held.head) : held.label;
+        const across = paper - want.Left - want.Right - 4;
         if (Math.abs(held.across - across) > 0.11)
           problems.push(`${name}: the printable width is ${held.across}mm `
             + `where the bands across the label leave ${across.toFixed(2)}`);
@@ -606,6 +615,20 @@ const designStockFits = async (p, name, width) => {
      * way in the row, so a picker beside it has to leave it something to
      * scroll — at 15px its own buttons rendered underneath the picker and a
      * click on one timed out on a control that was there and covered. */
+    /* And the bar's ROW COUNT, which is the cost the picker is paid for
+       out of. The bar is one flex line whose base sizes are the controls'
+       own content, so anything that widens the picker pushes the add strip
+       onto a row of its own — 52px of chrome above the label being
+       designed, and nothing else on this page would notice. Measured: one
+       row from 900px up, two at 390px. Putting the roll's NAME on the
+       picker button is what this caught, and why it is the dialog that
+       carries the names. */
+    const rows = new Set([...bar.children]
+      .map((child) => Math.round(child.getBoundingClientRect().top))).size;
+    const allowed = w >= 900 ? 1 : 2;
+    if (rows > allowed)
+      bad.push(`the design bar lays out on ${rows} rows at ${w}px `
+        + `(${allowed} is what the canvas budget is measured against)`);
     const strip = document.getElementById('addBar').getBoundingClientRect();
     if (strip.width < 120)
       bad.push(`the add strip is down to ${strip.width.toFixed(0)}px, so the `
@@ -681,6 +704,28 @@ const phoneBudget = async (p, name) => {
   if (top > CHROME_TOP_MAX)
     problems.push(`${name}: ${top.toFixed(0)}px of chrome above the first `
       + `content (budget ${CHROME_TOP_MAX})`);
+  /* And the strip is ONE row, which is the half of that budget a person
+   * actually sees: five tabs on two rows is 46px of navigation nobody asked
+   * for above every tab, and the height budget alone would pass a strip that
+   * wrapped and a tab that had lost its name. So all three are asked — one
+   * row, every name still rendered, every target still a thumb's. */
+  const strip = await p.evaluate(() => {
+    const tabs = [...document.querySelectorAll('#tabs .tab')];
+    return {
+      rows: new Set(tabs.map((t) => Math.round(t.getBoundingClientRect().top))).size,
+      nameless: tabs.filter((t) => !t.textContent.trim()).length,
+      short: tabs.filter((t) => t.getBoundingClientRect().height < 44).length,
+      count: tabs.length,
+    };
+  });
+  if (strip.rows > 1)
+    problems.push(`${name}: the ${strip.count} tabs lay out on `
+      + `${strip.rows} rows — the strip is one row on a phone`);
+  if (strip.nameless)
+    problems.push(`${name}: ${strip.nameless} tabs render no name — a glyph `
+      + 'is not what a tab is called');
+  if (strip.short)
+    problems.push(`${name}: ${strip.short} tabs under 44px tall`);
 };
 
 const run = async (w, h, name, touch, steps) => {
@@ -792,6 +837,7 @@ await run(1100, 820, 'laptop-design-dark', false, async (p) => {
   await p.waitForTimeout(700);
   await dragToTheEdge(p, 'laptop-design-dark');
   await checkTurnedCanvas(p, 'laptop-design-dark');
+  await designStockFits(p, 'laptop-design-dark', 1100);
 });
 await run(820, 900, 'tablet-printer', true, (p) => p.click('[data-view="printer"]'));
 /* The Printer tab at a phone's width, which nothing measured until now — and

@@ -308,8 +308,29 @@ class Panel:
         self.rolls.consume(side, count)
 
     def _stock_row(self, entry) -> dict:
-        """A stock, plus which bay holds it."""
+        """A stock, plus which bay holds it and how much of it can be drawn on.
+
+        `drawable_mm` is the printable box's size and the designer lays every
+        element out in it — so it has to be the box the RENDERER built, and
+        that one carries the head's own shortfall. A `Stock` cannot know
+        which printer it is on, so `as_dict` answers without it and every
+        row on a 2.25" stock over a 2.24" head came back a quarter of a
+        millimetre too wide. Small, and exactly the class of error 0.12.0's
+        one-rectangle change exists to remove: the overlay's millimetres and
+        the picture under them have to be the same measurement.
+
+        Recomputed here rather than in the store because this is the layer
+        that knows what is plugged in. With no printer found the geometry is
+        the 450's, which is what the renderer falls back to as well.
+        """
         row = entry.as_dict()
+        printer = self.chosen()
+        model = printer.model if printer else dymo_printers.UNKNOWN
+        head_mm = model.dots / model.dpi * 25.4
+        width, height = entry.printable_box(head_mm=head_mm)[2:]
+        row["drawable_mm"] = [round(width, 2), round(height, 2)]
+        row["printable_across_mm"] = row["drawable_mm"][0]
+        row["printable_feed_mm"] = row["drawable_mm"][1]
         side = self.rolls.side_for(entry.id)
         row["loaded"] = side is not None
         row["loaded_side"] = side or ""
