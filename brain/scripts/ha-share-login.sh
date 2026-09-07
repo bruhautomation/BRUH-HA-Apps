@@ -129,6 +129,17 @@ write_auth_file() {
     echo -e "${GREEN}Shared login saved to ${AUTH_FILE}${NC}"
     if [ "$kind" = "api_key" ]; then
         echo -e "${YELLOW}That is an API key: it bills per token and has no subscription window.${NC}"
+    else
+        # Said at mint time because this is the one moment somebody is
+        # looking. A long-lived token is scoped for inference and nothing
+        # else, so the usage sensors will report a permission refusal and
+        # go unavailable — which, discovered later and on its own, reads as
+        # a broken sign-in and sends people back here to run this again.
+        echo -e "${YELLOW}Note: this token runs Claude, but cannot read your account's usage limits.${NC}"
+        echo -e "${DIM}\`claude setup-token\` mints a token scoped for inference only; the usage"
+        echo -e "endpoint needs a permission that only the interactive sign-in asks for. If you"
+        echo -e "want the usage sensors, also run \`claude /login\` in the Terminal tab — it does"
+        echo -e "not replace this shared file.${NC}"
     fi
     echo -e "${GREEN}Other BRUH add-ons will now use this login automatically.${NC}"
 }

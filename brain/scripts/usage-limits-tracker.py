@@ -94,7 +94,22 @@ EXPIRY_SKEW_S = 60
 # These overwrite a good reading; a network blip does not. A 429 is
 # deliberately absent: it says nothing about the sign-in, so it must not
 # blank four working sensors — it lets the last reading age out instead.
-AUTH_PROBLEMS = ("no_oauth_token", "api_key_has_no_usage_limits", "http_401")
+# The scope refusal, which is a settled fact about *which sign-in was used*
+# rather than about the account: `claude setup-token` — what `ha login` is
+# built on, deliberately, because a session credential refreshes itself and
+# cannot be published to a shared file — mints a token whose scopes are
+# `user:inference user:ccr_inference user:file_upload`. The usage endpoint
+# requires `user:profile`, which only the interactive `claude /login` flow
+# asks for. So the token runs Claude perfectly and can never read a usage
+# figure, and no amount of retrying, backing off or re-running `ha login`
+# changes that.
+SCOPE_ERROR = "oauth_token_lacks_usage_scope"
+AUTH_PROBLEMS = ("no_oauth_token", "api_key_has_no_usage_limits", "http_401",
+                 SCOPE_ERROR)
+# A bare `http_403` is deliberately NOT in that list. The narrowed code above
+# is a verdict we can read; an unattributed 403 is "I could not tell why",
+# and "I could not tell" must not blank four readings that are still true.
+# It gets a gloss and a vocabulary entry instead, so it is never bare.
 # What to wait after consecutive 429s. Being rate-limited is not an error to
 # retry at the ordinary cadence: retrying is what sustains it, so each strike
 # buys real quiet, and the last value repeats forever rather than growing
@@ -115,12 +130,54 @@ FAILURE_BACKOFF_S = 3600
 # an unavailable entity's attributes, so a code with no gloss is a code the
 # one person who needs it reads on a support thread instead.
 ERROR_DETAIL = {
+    SCOPE_ERROR: (
+        "The signed-in token can run Claude but is not allowed to read "
+        "usage limits: `claude setup-token`, which `ha login` is built on, "
+        "mints a token without the `user:profile` scope this endpoint "
+        "requires. Retrying cannot clear it and neither can running "
+        "`ha login` again. Run `claude /login` in the Terminal tab — the "
+        "interactive sign-in asks for that scope — and the numbers come "
+        "back on the next poll."
+    ),
+    "http_403": (
+        "Anthropic refused this credential permission to read usage limits "
+        "and did not say why. Signing in again with `claude /login` in the "
+        "Terminal tab is what usually fixes it."
+    ),
     "http_429": (
         "Anthropic rate-limited the usage endpoint itself — this is not your "
         "account's usage, and no amount of quota clears it. brAIn has backed "
         "off and will pick the reading up again on its own."
     ),
 }
+
+# How much of an error body to keep. The log line takes 200 characters of
+# it, and for a while that truncation was the whole read — which the scope
+# refusal survives by fifty characters and nothing more: its `error_code`
+# sits at character 150 of a 191-character body, and one extra required
+# scope named in the message pushes it past the cut. A parse that works on
+# the bodies short enough to fit is the shape of bug this file keeps
+# finding, so the parse gets the whole (bounded) body and the log its 200.
+ERROR_BODY_MAX = 4096
+ERROR_BODY_LOG = 200
+# The API's own `error_code`, where it names one, mapped to this tracker's
+# vocabulary. It only ever *narrows* a status we already have: a code that
+# is not on this list leaves `http_<status>` exactly as it was, because a
+# verdict invented from an unrecognised string is worse than the status.
+API_ERROR_CODES = {
+    "oauth_scope_insufficient": SCOPE_ERROR,
+}
+# A refusal that ends this credential and moves the search to the next
+# store. A 403 is as much "wrong credential, try the other one" as a 401 —
+# same shape as the 401-stops-the-search bug oauth_tokens() was written to
+# end, and it took a scope refusal to notice the other half of it.
+CREDENTIAL_REFUSALS = ("http_401", "http_403", SCOPE_ERROR)
+# ...and the subset that can never answer differently while the credential
+# itself is unchanged. A 401 is not on this list on purpose: an expired
+# token and a five-minute server hiccup are refused identically, and
+# blacklisting a credential for the life of the process over the second is
+# how a working sign-in stays unread. A scope verdict is structural.
+SETTLED_REFUSALS = (SCOPE_ERROR,)
 
 ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 
@@ -186,10 +243,13 @@ def user_agent():
 
     The version is the installed CLI's, probed from `claude --version`.
     Note it is an approximation on purpose: the CLI stamps a build-time
-    constant into its own UA, which lags the released version (2.1.42 in a
-    2.1.252 bundle), and there is no way to read that constant without
-    parsing the bundle. The product prefix is what the bucket is keyed on;
-    a real, current version behind it is the honest way to fill the rest.
+    constant into its own UA, which can lag the released version, and there
+    is no way to read that constant without parsing the binary. (The figure
+    once quoted here — 2.1.42 stamped inside a 2.1.252 bundle — came from a
+    stale npm copy left on the box, not from the CLI the add-on runs: the
+    shipped native binary stamps its own version, and the UA this sends has
+    been checked against it.) The product prefix is what the bucket is keyed
+    on; a real, current version behind it is the honest way to fill the rest.
 
     Cached because the probe spawns the CLI binary, and once per process is
     all the answer can change: run.sh updates the CLI before starting this
@@ -330,6 +390,22 @@ def _note_source(state, label):
         state["auth"] = label
 
 
+def _say_once(state, key, message):
+    """Write a line the first time this state has something new to say.
+
+    Same job as _note_source and a separate ledger from it: what answered
+    and what refused are different facts, and one key holding both would
+    make each of them re-announce the other.
+    """
+    if state is None:
+        sys.stderr.write(message)
+        return
+    said = state.setdefault("said", set())
+    if key not in said:
+        said.add(key)
+        sys.stderr.write(message)
+
+
 def _oauth_expired(oauth):
     """True when this credential's own expiry has already passed.
 
@@ -455,6 +531,43 @@ def _parse_retry_after(headers):
     return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
 
 
+def _error_code(status, body):
+    """`http_<status>`, narrowed by the API's own error_code where it has one.
+
+    The bug this exists for: a 403 arrived as a bare `http_403` — a code in
+    no table, with no gloss, in nothing's documented vocabulary — and the
+    tracker retried it hourly forever against a condition that can never
+    clear. The status alone genuinely cannot tell those apart; the body can,
+    and says `oauth_scope_insufficient` in as many words.
+
+    It only ever narrows. An unreadable body, a body that is not JSON, a
+    shape that carries no code, or a code this does not recognise all leave
+    the status untouched — an invented verdict reads exactly like a real one
+    and is the harder failure to notice.
+    """
+    fallback = f"http_{status}"
+    if not body:
+        return fallback
+    try:
+        parsed = json.loads(body)
+    except (ValueError, TypeError):
+        return fallback
+    if not isinstance(parsed, dict):
+        return fallback
+    # `details.error_code` is where this endpoint puts it; the top level is
+    # read too because neither placement is documented and one file guessing
+    # at both is cheaper than a release that misses the day it moves.
+    details = parsed.get("details")
+    code = None
+    if isinstance(details, dict):
+        code = details.get("error_code")
+    if not isinstance(code, str) or not code:
+        code = parsed.get("error_code")
+    if not isinstance(code, str):
+        return fallback
+    return API_ERROR_CODES.get(code, fallback)
+
+
 def fetch_usage_limits(token):
     """Fetch account usage limits from the Anthropic API.
 
@@ -481,21 +594,24 @@ def fetch_usage_limits(token):
         status = exc.code
         body = ""
         try:
-            body = exc.read().decode("utf-8", errors="replace")[:200]
+            body = exc.read().decode("utf-8", errors="replace")[:ERROR_BODY_MAX]
         except Exception:
             # An error body we cannot read leaves the status code to speak for
             # itself, which the line below prints.
             pass
         sys.stderr.write(
-            f"usage-limits-tracker: HTTP {status} from Anthropic API: {body}\n"
+            "usage-limits-tracker: HTTP "
+            f"{status} from Anthropic API: {body[:ERROR_BODY_LOG]}\n"
         )
         if status == 429:
             _retry_after["seconds"] = _parse_retry_after(
                 getattr(exc, "headers", None)
             )
         # 401 is its own answer: the token was found and refused, which is a
-        # different thing to fix than a token that was never there.
-        return None, f"http_{status}"
+        # different thing to fix than a token that was never there. A 403
+        # answers a third question again — the token is real, live and
+        # refused *this endpoint* — and only the body says which.
+        return None, _error_code(status, body)
     except (urllib.error.URLError, OSError) as exc:
         sys.stderr.write(f"usage-limits-tracker: network error: {exc}\n")
         return None, "network_error"
@@ -574,6 +690,32 @@ def _record_failure(error, delay_s, strikes=0):
         pass
 
 
+def _restate_next_attempt(delay_s, strikes):
+    """Correct `next_attempt_at` to what this process will actually do.
+
+    Every failure records when the tracker will ask again, and the panel's
+    popover renders that to a person by the clock ("not broken, waiting,
+    back at 9:40"). A restart deliberately re-asks sooner than most of
+    those promises — see _resume_backoff — which left the file claiming a
+    wait that was never going to happen, and left it there for as long as
+    the next poll took. Restating it costs one write at boot and is the
+    difference between a clock somebody can read and one they learn to
+    ignore. Nothing is restated when there is no failure on record: a good
+    reading has no promise to correct.
+    """
+    try:
+        with open(USAGE_FILE) as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(data, dict):
+        return
+    error = data.get("last_error") or data.get("error")
+    if not isinstance(error, str) or not error:
+        return
+    _record_failure(error, delay_s, strikes)
+
+
 def _resume_backoff():
     """(seconds still owed to a pre-restart 429 backoff, strikes to resume).
 
@@ -581,8 +723,16 @@ def _resume_backoff():
     first thing anyone does when sensors go unavailable — polled the
     endpoint immediately and restarted the ladder from its first rung,
     which against a daily meter is retrying straight back into the limit.
-    Only a rate limit's quiet is resumed: every other failure is cheap to
-    re-ask about, and a restart asking straight away is the right default.
+
+    Only a rate limit's quiet is resumed, and the tempting generalisation
+    — every failure asking again cannot help, which would take in the auth
+    problems — is **wrong**, because a restart is not a timer expiring: it
+    is a person acting, and the thing they most often did first is sign in
+    again. A rate limit is the one failure a restart cannot have changed;
+    every other one it plausibly did, so re-asking once is right and the
+    promise on disk has to be re-earned rather than served (see
+    _restate_next_attempt, which stops that promise being a lie in the
+    meantime).
     """
     try:
         with open(USAGE_FILE) as fh:
@@ -591,7 +741,8 @@ def _resume_backoff():
         return 0.0, 0
     if not isinstance(data, dict):
         return 0.0, 0
-    if "http_429" not in (data.get("last_error"), data.get("error")):
+    error = data.get("last_error") or data.get("error")
+    if error != "http_429":
         return 0.0, 0
     raw = data.get("next_attempt_at")
     if not isinstance(raw, str):
@@ -670,23 +821,58 @@ def _last_reading_is_fresh():
 def _fetch_with_any_credential(state):
     """Try each credential in turn until one is accepted → (data, error).
 
-    A 401 ends that credential, not the search. brAIn can hold a stale
+    A refusal ends that credential, not the search. brAIn can hold a stale
     token in one store and a working sign-in in another, and stopping at
-    the first refusal is what let the dead one speak for all of them.
-    Anything other than a 401 is about the request rather than the
-    credential, so it stops here.
+    the first refusal is what let the dead one speak for all of them. That
+    was written for a 401 and keyed on one; a 403 is the same claim — this
+    credential is the wrong one — so it moves the search along too.
+
+    Anything else is about the request rather than the credential (a
+    network error, a 500, a rate limit), so it stops here: retrying it on a
+    second token proves nothing and costs a request on an endpoint that
+    counts them.
+
+    **A settled refusal is remembered against the token that earned it.**
+    A scope verdict cannot answer differently until the credential itself
+    changes, so asking again with it is a request nobody will ever answer
+    — which is exactly what the tracker did, hourly, for as long as the
+    add-on ran. The memory is keyed on the credential rather than on the
+    poll, so it costs nothing the moment a real sign-in lands: a new token
+    is not in it and is tried on the very next poll. It holds one entry per
+    distinct credential this box has ever offered, which is a handful.
     """
     _retry_after["seconds"] = None
-    data = error = None
+    unusable = state.setdefault("unusable", {}) if state is not None else {}
+    if state is not None:
+        # Whether this pass put a request on the wire at all — see main().
+        state["asked"] = False
+    data = error = settled = None
     for token in oauth_tokens(state):
+        if token in unusable:
+            # Not a request. The verdict stands until the credential moves.
+            settled = settled or unusable[token]
+            continue
+        if state is not None:
+            state["asked"] = True
         data, error = fetch_usage_limits(token)
-        if error != "http_401":
+        if error not in CREDENTIAL_REFUSALS:
             return data, error
-        sys.stderr.write(
-            "usage-limits-tracker: that credential was refused, "
-            "trying the next store\n"
-        )
-    return data, (error or credential_problem())
+        if error in SETTLED_REFUSALS:
+            unusable[token] = error
+            settled = settled or error
+            # Keyed apart from run_once's remedy line: "I have stopped
+            # asking with this" and "here is what to do about it" are two
+            # facts, and one key holding both prints whichever fires first.
+            _say_once(state, f"skipping:{error}",
+                      "usage-limits-tracker: that credential cannot read "
+                      f"usage limits ({error}) — brAIn will not ask with it "
+                      "again until a different sign-in lands\n")
+        else:
+            sys.stderr.write(
+                "usage-limits-tracker: that credential was refused, "
+                "trying the next store\n"
+            )
+    return data, (error or settled or credential_problem())
 
 
 def run_once(state):
@@ -699,12 +885,26 @@ def run_once(state):
     data, error = _fetch_with_any_credential(state)
 
     if data is None:
-        if error in AUTH_PROBLEMS and state.get("auth") != error:
-            sys.stderr.write(
+        if error in AUTH_PROBLEMS:
+            # Said once, on its own ledger. It used to be gated on
+            # `state["auth"]` — which _note_source writes the answering
+            # store's name into on every pass that yields a credential, so
+            # the two keys overwrote each other and this line came back
+            # every poll for the whole life of the problem.
+            #
+            # The remedy is per-error, because for one of them the general
+            # advice is the wrong advice: `ha login` is what mints the
+            # under-scoped token in the first place, so telling somebody to
+            # run it again is telling them to reproduce the fault.
+            _say_once(
+                state, error,
                 f"usage-limits-tracker: no usable OAuth credential ({error}) — "
-                "sign in from the panel, the terminal, or with `ha login`\n"
+                + ("run `claude /login` in the Terminal tab; `ha login` "
+                   "cannot mint a token with the usage scope"
+                   if error == SCOPE_ERROR else
+                   "sign in from the panel, the terminal, or with `ha login`")
+                + "\n"
             )
-            state["auth"] = error
         # A settled fact about the sign-in is worth saying even over good
         # numbers; a blip waits for the reading to age out instead.
         if error in AUTH_PROBLEMS or not _last_reading_is_fresh():
@@ -719,6 +919,10 @@ def run_once(state):
         return False, str(data.get("error"))
 
     write_usage(data)
+    # A working poll re-arms every once-only line: a problem that comes
+    # back is news again, and a ledger nothing clears would swallow it.
+    if state is not None:
+        state.pop("said", None)
     return True, None
 
 
@@ -737,6 +941,19 @@ def _rate_limit_delay(strikes, retry_after):
     return float(step)
 
 
+def _next_failure_count(count, asked):
+    """The consecutive-failure count after a poll that did not succeed.
+
+    The ladder exists to stop hammering an endpoint, and a pass that put no
+    request on the wire — nothing signed in, or every credential already
+    refused for good — hammered nothing and has nothing to back off from.
+    Charging it would slide the poll to the hourly rung, which is to say it
+    would put the one poll that notices a *new* sign-in an hour away, on
+    exactly the recovery the failure message tells somebody to perform.
+    """
+    return count + 1 if asked else 0
+
+
 def main():
     sys.stderr.write(
         f"usage-limits-tracker: starting (interval={POLL_INTERVAL}s)\n"
@@ -746,10 +963,11 @@ def main():
     resumed_delay, rate_limit_strikes = _resume_backoff()
     # Initial backoff for first attempt — give Claude Code time to authenticate
     initial_delay = max(10, resumed_delay)
+    _restate_next_attempt(initial_delay, rate_limit_strikes)
     if resumed_delay:
         sys.stderr.write(
-            "usage-limits-tracker: resuming the rate-limit backoff from "
-            f"before the restart — waiting {initial_delay / 60:.0f} minutes\n"
+            "usage-limits-tracker: resuming the backoff promised before the "
+            f"restart — waiting {initial_delay / 60:.0f} minutes\n"
         )
     else:
         sys.stderr.write(
@@ -794,7 +1012,8 @@ def main():
                     # Logging a change in utilisation must not end the poll loop.
                     pass
             else:
-                consecutive_failures += 1
+                consecutive_failures = _next_failure_count(
+                    consecutive_failures, state.get("asked"))
                 if error == "http_429":
                     rate_limit_strikes += 1
                 else:

@@ -707,6 +707,12 @@ if [ -f "$USAGE_FILE" ]; then
     uerr=$(jq -r '.error // empty' "$USAGE_FILE" 2>/dev/null)
     if [ "$uerr" = "api_key_has_no_usage_limits" ]; then
         warn "Usage sensors need a subscription login — an API key bills per token and has no usage window"
+    elif [ "$uerr" = "oauth_token_lacks_usage_scope" ]; then
+        # The general "sign in again" advice is the wrong advice here: the
+        # sign-in worked, and the command that performed it is what cannot
+        # mint a token the usage endpoint accepts.
+        warn "Usage sensors: this sign-in has no permission to read usage limits"
+        info "Fix: run 'claude /login' in the Terminal tab — 'ha login' is built on 'claude setup-token', which cannot ask for that permission"
     elif [ -n "$uerr" ]; then
         warn "Usage sensors unavailable: ${uerr}"
         udetail=$(jq -r '.detail // empty' "$USAGE_FILE" 2>/dev/null)

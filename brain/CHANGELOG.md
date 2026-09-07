@@ -2,6 +2,85 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.47.3
+
+The usage sensors were dead for a reason nothing in brAIn could say. The
+endpoint answered **403 `oauth_scope_insufficient`** — the token is real,
+live and simply not allowed to read a usage figure — and `http_403` was in
+no table: not in `AUTH_PROBLEMS`, no gloss for the diagnostic sensor, not
+in the vocabulary `sensor.py` documents, nothing for the pill's popover.
+So it showed as a bare `http_403` and was retried hourly, forever, against
+a verdict that can never clear.
+
+**Why it can never clear.** `ha login` is built on `claude setup-token`
+deliberately — a session credential refreshes itself and cannot be
+published to a shared file — and the token that mints is scoped
+`user:inference user:ccr_inference user:file_upload`. The usage endpoint
+requires `user:profile`, which only the interactive `claude /login` asks
+for. The sign-in works; every Claude run brAIn makes works; the one thing
+that cannot work is this figure. Running `ha login` again reproduces it.
+
+- **The body is what names the refusal.** The status alone cannot tell a
+  scope verdict from any other permission refusal, and the body says
+  `oauth_scope_insufficient` in as many words. `_error_code` narrows
+  `http_<status>` by the API's own code where it recognises one and leaves
+  it exactly as it was otherwise — an unreadable body, a shape with no
+  code, or a code this has never seen all keep the status, because a
+  verdict invented from an unrecognised string reads exactly like a real
+  one. The parse reads the whole (bounded) body rather than the log line's
+  200 characters: the refusal seen in the field clears that cut by fifty
+  characters and one more scope named in its message would not.
+- **`oauth_token_lacks_usage_scope` is in both tables**, and every place a
+  person might read it names the actual fix — the tracker's log, the
+  diagnostic sensor's `detail`, the usage pill's popover, and `brain
+  doctor` — including the half that matters most, which is that
+  re-running `ha login` cannot help. A bare `http_403` is deliberately
+  *not* in `AUTH_PROBLEMS`: "I could not tell why" and "the token is
+  under-scoped" are different claims, and only the second is settled
+  enough to blank four readings that are still true. It gets a gloss and a
+  vocabulary entry, so it is never bare either.
+- **A settled refusal stops being asked.** The verdict is remembered
+  against the credential that earned it, so the tracker makes no request
+  at all rather than one an hour forever — and because the memory is keyed
+  on the credential and not on the poll, a real sign-in is tried on the
+  very next pass. A 401 is deliberately not remembered: an expired token
+  and a five-minute server hiccup are refused identically, and
+  blacklisting a credential over the second is how a working sign-in stays
+  unread.
+- **A poll that sent no request did not fail one.** The consecutive-failure
+  ladder exists to stop hammering an endpoint, and once every credential is
+  a remembered refusal — or nothing is signed in at all — nothing is being
+  hammered. Charging it slid the poll to the hourly rung, which is to say
+  it put the one poll that notices a **new** sign-in an hour away, on
+  exactly the recovery the message tells somebody to perform.
+- **A 403 moves the search to the next store**, exactly as a 401 does. It
+  is the same claim — this is the wrong credential — and keying that rule
+  on the literal `http_401` is what left the other half of the
+  401-stops-the-search bug in.
+- **`ha login` says so at mint time.** It already warned that an API key
+  has no usage window; a long-lived token gets the same courtesy, at the
+  one moment somebody is looking, rather than leaving them to discover it
+  as four sensors going dark a day later.
+- **The line naming the fix is said once, and said again if the problem
+  comes back.** It was gated on `state["auth"]` — the same key
+  `_note_source` writes the answering *store's name* into on every pass
+  that yields a credential — so the two overwrote each other and the
+  remedy came back on every poll for the whole life of the problem. It has
+  its own ledger now, which a working poll clears.
+- **A restart makes `next_attempt_at` true again.** Every failure records
+  when the tracker will ask next and the popover renders it by the clock
+  ("not broken, waiting, back at 9:40") — and a restart deliberately
+  re-asks sooner than most of those promises, leaving the file claiming a
+  wait that was never going to happen. It is restated at boot to what this
+  process will actually do. Only a rate limit's quiet is still *resumed*,
+  and the tempting generalisation — resume every wait asking again cannot
+  help, which would take in the sign-in problems — is wrong: a restart is
+  not a timer expiring, it is a person acting, and the thing they most
+  often did first is sign in again.
+- The User-Agent is correct and unchanged; the docstring's parenthetical
+  about a version lag was measured against a stale npm copy left on the
+  box rather than the native binary the add-on runs, and says so now.
+
 ## 1.47.2
 
 The guided sign-in captured the token **and four letters of the sentence
