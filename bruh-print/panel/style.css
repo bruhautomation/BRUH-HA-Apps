@@ -177,6 +177,27 @@ p { margin: 0 0 12px; }
 .tab:hover { background: var(--line-2); color: var(--ink); }
 .tab.is-on { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
 
+/* On a phone the glyph goes and the word stays.
+ *
+ * Five names beside five glyphs need 485px of strip, measured — so at 390px
+ * they came out on two rows and at 320px on three, which is a third of the
+ * screen spent on navigation above a tab whose whole job is type, look,
+ * print. A glyph is 23px of that row (the icon plus its gap) and a word is
+ * the only thing on a tab that says what the tab is, so the glyphs are what
+ * give way: `▦` is not a name for Templates, and a strip of five pictures is
+ * a strip people press to find out what they are.
+ *
+ * 500px is the measured fit point with a little headroom (485px in this
+ * browser, and a phone's own font is not this one). Below it the strip lays
+ * out in one row from about 352px; 320px still wraps to two, which is the
+ * one width that pays and is cheaper than shrinking a name. Re-measure with
+ * tests/manual/measure-print-panel.mjs rather than guessing at the number. */
+@media (max-width: 499px) {
+  .tabs { gap: 1px; }
+  .tab { padding: 0 7px; gap: 0; }
+  .tab .ti { display: none; }
+}
+
 /* One row at >=1100px, two below it. There is no third shape: the tabs keep
  * their words at every width, and what gives way is the row. The 1100px
  * number is measured, not guessed — see tests/manual/measure-topbar.mjs. */
@@ -624,6 +645,22 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .tools { display: grid; gap: 6px; }
 .toolrow { display: flex; gap: 5px; flex-wrap: wrap; }
 .toolrow .btn { padding: 0 9px; }
+/* A row of place-it buttons under the word that says which axis it is
+ * about. The caption is a fixed column so the three rows line up as a
+ * block rather than as three ragged strips, and it is the field label's own
+ * type because it is the same kind of thing: a name for what is beside it. */
+.toolgroup { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.toolgroup > span {
+  flex: 0 0 auto; width: 90px;
+  font-size: 12px; font-weight: 600; color: var(--ink-2);
+  text-transform: uppercase; letter-spacing: .05em;
+}
+/* Wide enough to be a target rather than a glyph with a hitbox drawn round
+ * it. `min-width` and not `width`, because `Fill` is a word. */
+.toolgroup .btn { padding: 0 9px; min-width: 42px; justify-content: center; }
+/* The caption over the four number boxes: what they are, and the unit once
+ * rather than four times. */
+.toolcap { margin: 4px 0 0; font-size: 12px; color: var(--ink-2); }
 
 /* The direction line under a stock picker: a sentence, not a control. */
 .turnline { font-size: 13px; margin: -6px 0 12px; }
@@ -878,7 +915,13 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
  * which inside an ingress iframe strands the panel at an arbitrary scale
  * with no way back. */
 @media (pointer: coarse) {
-  input, select, textarea, .btn, .chip, .tab { font-size: 16px; }
+  /* The floor is on what iOS ZOOMS, which is a control that takes focus and
+   * shows a caret. A tab is a <button>: it never takes text focus, so it was
+   * never one of them — and pinning it to 16px is what put the five tab
+   * names on two rows and then three, on the phone where the whole strip has
+   * to fit. It keeps the 44px target, which is the rule that is about a
+   * thumb. */
+  input, select, textarea, .btn, .chip { font-size: 16px; }
   .btn, .chip, .tab, input, select, textarea { min-height: 44px; }
   .btn.tiny { min-height: 44px; padding: 0 13px; font-size: 15px; }
   /* The box itself stays small; the label around it is the 44px target. */

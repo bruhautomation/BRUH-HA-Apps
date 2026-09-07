@@ -31,7 +31,7 @@
  * reloaded it.
  */
 
-const CARD_VERSION = '0.12.0';
+const CARD_VERSION = '0.13.0';
 
 /* The integration's domain: the name on the services and the string every
  * entity id this card looks for carries. */
