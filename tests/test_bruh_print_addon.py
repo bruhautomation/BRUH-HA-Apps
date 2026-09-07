@@ -480,10 +480,11 @@ class TestPanelUI(unittest.TestCase):
         this tab — came out FIFTEEN pixels wide with its own buttons
         rendering underneath the picker.
 
-        So the bar carries a button showing the size, and the names live in
-        the dialog it opens. That is the font picker's pattern one control
-        over, and it is also the better split: the size is the half that
-        says which roll this is."""
+        So the bar carries a button and the sizes live in the dialog it
+        opens — the font picker's pattern one control over. The button says
+        what the roll is CALLED, capped: the fix for a control that must not
+        grow is a cap, not a shorter fact, so a long catalog name loses its
+        tail inside the cap rather than taking the row."""
         page = (PANEL / "index.html").read_text()
         self.assertRegex(page, r'<button[^>]*class="btn designstock"'
                                r'[^>]*id="designStock"')
@@ -499,22 +500,37 @@ class TestPanelUI(unittest.TestCase):
         picker = app.split("function openStockPicker(")[1].split("\nfunction ")[0]
         self.assertIn("loadedStocks()", picker)
         css = (PANEL / "style.css").read_text()
-        self.assertIn(".designstock { flex: none;", css)
+        rule = css.split(".designstock {")[1].split("}")[0]
+        self.assertIn("flex: none", rule)
+        # The cap is what stops the name growing the row, and the ellipsis
+        # is what it costs a long one.
+        self.assertIn("max-width", rule)
+        self.assertIn("text-overflow: ellipsis", css.split(".designstockname")[1])
         self.assertIn(".stockrow {", css)
 
-    def test_a_stock_is_named_one_way_and_the_size_leads(self):
+    def test_a_stock_is_named_one_way_and_the_name_leads(self):
         """Three pickers read this — the Quick tab's, the Printer tab's bays
         and the design bar's dialog — and three copies of a join is three
         chances for two of them to disagree about what one roll is called.
-        The size leads because every one of them is width-bounded and the
-        tail is what a narrow window loses; two rolls of the same brand
-        truncated name-first come out as the same string."""
+
+        The NAME leads. The size led first, on the argument that these
+        controls are width-bounded so the tail is what a narrow window
+        loses — true of the catalog's names and beside the point, because a
+        person picking a label is not shopping. They are asking which of
+        their rolls this is, and once a roll can be renamed the answer is
+        the name they gave it; the size is a line down or a press away on
+        every surface, which is where a detail belongs."""
         app = (PANEL / "app.js").read_text()
         self.assertIn("const stockOptionText = (stock) => "
-                      "`${stock.label} — ${stock.name}`;", app)
-        self.assertNotIn("${stock.name} — ${stock.label}", app)
+                      "`${stock.name} — ${stock.label}`;", app)
+        self.assertNotIn("${stock.label} — ${stock.name}", app)
         # Two call sites: the shared `fillPickers` one and the bays.
         self.assertEqual(app.count("stockOptionText("), 2)
+        # And the dialog's rows carry the same order: the name is the
+        # heading, the size is what it is a size OF.
+        picker = app.split("function openStockPicker(")[1].split("\nfunction ")[0]
+        self.assertIn("el('b', null, stock.name)", picker)
+        self.assertIn("el('span', 'muted', stock.label)", picker)
 
     def test_the_sheet_is_static_markup(self):
         """#designName is read and written from a dozen places, so a control
@@ -885,19 +901,26 @@ class TestPanelUI(unittest.TestCase):
         self.assertNotIn("margin +", draw)
         self.assertNotIn("2 * margin", draw)
 
-    def test_the_caption_says_how_big_the_canvas_is(self):
-        """A size, in the millimetres every position box on that tab is
-        already in — and the label's own size after it only when the two
-        differ. Not a sentence about margins, dead bands and held edges: the
-        difference is visible, and what makes it up is named where it is
-        set."""
+    def test_there_is_no_caption_under_the_canvas(self):
+        """`Drawing on 34 × 12.4mm of a 50.8 × 25.4mm label` is two
+        measurements and no relationship between them: what makes them
+        differ is a margin, a lined-up roll and any held edges, none of
+        which is on this tab, so the caption could only ever raise the
+        question it could not answer. The canvas IS the printable area, so
+        the picture already says what it was for — the same reasoning that
+        deleted the hatched bands and the head-margin note, applied to the
+        sentence that survived them.
+
+        Deleting prose is the sort of change that quietly comes back, which
+        is why this asserts the absence rather than describing it."""
         app = (PANEL / "app.js").read_text()
-        legend = app.split("function canvasLegendText(")[1].split("\nfunction ")[0]
-        self.assertIn("Drawing on", legend)
-        for word in ("margin", "dead band", "hatched", "unreachable"):
-            with self.subTest(word=word):
-                self.assertNotIn(word, legend)
         page = (PANEL / "index.html").read_text()
+        css = (PANEL / "style.css").read_text()
+        for gone in ("canvasLegendText", "canvasLegend", "Drawing on"):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, app)
+        self.assertNotIn("canvasLegend", page)
+        self.assertNotIn("canvaslegend", css)
         self.assertNotIn("dashed line", page)
 
     def test_the_wizard_sits_above_the_touch_floor_in_the_stylesheet(self):

@@ -283,14 +283,19 @@ function loadedStocks() {
  * three copies of a join is three chances for two pickers to disagree about
  * what the same roll is called.
  *
- * The SIZE leads. A closed <select> shows the front of its option and every
- * one of these is capped in width, so the tail is what a narrow window
- * loses; leading with the name meant two rolls of the same brand truncated
- * to the same string, which is the one thing a picker may not do. The name
- * is still there and still the vendor's own — it is what you reorder by,
- * and renaming somebody's stock to something friendlier is a different and
- * worse mistake. */
-const stockOptionText = (stock) => `${stock.label} — ${stock.name}`;
+ * The NAME leads, and it took shipping the other order to see why.
+ *
+ * The size led, on the argument that a closed <select> shows the front of
+ * its option and two rolls of one brand would truncate to the same string.
+ * True of the CATALOG's names, which are what is printed on the box you
+ * reorder by — and beside the point, because a person picking a label is
+ * not shopping. They are asking *which of my rolls is this*, and once a
+ * roll can be renamed (0.13.0) the answer to that is the name they gave it.
+ * `2.25" × 1.25"` and `1.0" × 2.0"` are two measurements to compare before
+ * you have chosen anything; `Address Labels` and `Removable 3/4" x 2"` are
+ * the two rolls. The size is still on every surface, one line down or one
+ * press away, which is where a detail belongs. */
+const stockOptionText = (stock) => `${stock.name} — ${stock.label}`;
 
 /* The design bar's own picker: a button that says what is loaded and opens
  * a list, the way the font picker already works one control over.
@@ -312,27 +317,38 @@ function setStockButton(button, id) {
   const chosen = rows.find((s) => s.id === id)
     || rows.find((s) => s.id === S.settings.default_stock) || rows[0];
   button.dataset.value = chosen ? chosen.id : '';
-  /* The SIZE, and the name in the dialog this opens.
+  /* The NAME, capped, with the size in the dialog this opens.
    *
-   * Showing the name here too was tried, once somebody renamed a roll and
-   * could not see it in the designer, and it was measured and reverted: the
-   * bar is one flex line whose base sizes are the controls' own content, so
-   * a picker wide enough for a name pushes the add strip past the row and
-   * the bar goes from one row to two at 900px and from two to three at
-   * 390px — 52px of chrome above the label being designed, on the tab whose
-   * whole point is the label being designed. 147px is what the row has.
-   * The name is a press away in the picker, on the Quick tab's own list and
-   * on the Printer tab, all of which have the width for it. */
-  button.textContent = chosen ? `${chosen.label} \u25be` : 'No label \u25be';
-  button.title = chosen ? chosen.name : '';
+   * It said the size, and the measurement that justified that is still
+   * true: the design bar is one flex line whose base sizes are its
+   * controls' own content, so a picker that grows with its text pushes the
+   * add strip onto a row of its own — one row to two at 900px, two to three
+   * at 390px. What was wrong was the conclusion. The fix for a control that
+   * must not grow is a CAP, not a shorter fact: `.designstock` is capped
+   * and the name ellipsises inside it, so a long catalog name loses its
+   * tail rather than taking the row, and the caret sits outside the
+   * truncation because a picker with no caret is not a picker.
+   *
+   * `designStockFits` asserts the row count at 390 and at 1100, which is
+   * what keeps that cap honest — re-run it rather than reasoning about the
+   * number, and note that 900px is the tightest width rather than the
+   * narrowest: below it the bar has already given way to two rows. */
+  const name = el('span', 'designstockname', chosen ? chosen.name : 'No label');
+  button.textContent = '';
+  button.append(name, el('span', 'caret', '\u25be'));
+  button.title = chosen ? `${chosen.name} — ${chosen.label}` : '';
 }
 
 const designStockValue = () => $('designStock').dataset.value || '';
 
-/* One row per stock, full name and size, because this is where the names
- * live now — the button has room for one of the two and takes the one that
- * says which roll. `loadedStocks` is what fills it, so the design tab
- * offers exactly what the Quick tab does: what is in the printer. */
+/* One row per stock: what the roll is called, and its size under it.
+ *
+ * A row has two lines and so does not have to choose, which is what makes
+ * this the surface that settles the order for the two that do — the name is
+ * the heading because the name is what you are picking, and the size reads
+ * as what it is, a fact about the thing named above it. `loadedStocks` is
+ * what fills it, so the design tab offers exactly what the Quick tab does:
+ * what is in the printer. */
 function openStockPicker(current, onPick) {
   const body = $('modalBody');
   body.innerHTML = '';
@@ -343,8 +359,8 @@ function openStockPicker(current, onPick) {
   const list = el('div', 'stocklist');
   for (const stock of loadedStocks()) {
     const row = el('button', 'btn stockrow' + (stock.id === current ? ' on' : ''));
-    row.append(el('b', null, stock.label));
-    row.append(el('span', 'muted', stock.name));
+    row.append(el('b', null, stock.name));
+    row.append(el('span', 'muted', stock.label));
     row.onclick = () => { $('modal').close(); onPick(stock.id); };
     list.append(row);
   }
@@ -776,27 +792,6 @@ function fitCanvas() {
 
 addEventListener('resize', () => { if (S.label) fitCanvas(); });
 
-/* What the caption under the canvas says.
- *
- * A size, in the millimetres every position and nudge box on this tab is
- * already in — and the label's own size after it only when the canvas is
- * smaller, which it is on any roll with a margin. Two numbers rather than a
- * sentence about margins, dead bands and held edges: the difference is
- * visible, and what makes it up is named where it is set.
- *
- * Continuous stock has no label length, so there is nothing to compare
- * against and the canvas size stands alone. */
-function canvasLegendText(stock, mm) {
-  const canvas = `${round1(mm.w)} × ${round1(mm.h)}mm`;
-  if (!stock || !(stock.feed_mm > 0)) return `Drawing on ${canvas}.`;
-  const turned = S.label.rotate === 90 || S.label.rotate === 270;
-  const w = turned ? stock.feed_mm : stock.across_mm;
-  const h = turned ? stock.across_mm : stock.feed_mm;
-  if (Math.abs(w - mm.w) < 0.05 && Math.abs(h - mm.h) < 0.05)
-    return `Drawing on ${canvas} — all of the label.`;
-  return `Drawing on ${canvas} of a ${round1(w)} × ${round1(h)}mm label.`;
-}
-
 function round1(value) {
   return Math.round(Number(value) * 10) / 10;
 }
@@ -824,20 +819,10 @@ function drawOverlay() {
   const image = $('designPreview');
   const frame = image.getBoundingClientRect();
   const mm = canvasMm();
-  const stock = stockById(S.label.stock);
   const scaleX = frame.width ? frame.width / mm.w : 4;
   const scaleY = frame.height ? frame.height / mm.h : 4;
 
   overlay.innerHTML = '';
-
-  /* One line, and it is the size of the thing you are drawing on. The label
-   * is named beside it only when the two differ, because that difference is
-   * the one fact this tab cannot show any other way — WHY they differ is a
-   * margin, a lined-up roll and any held edges, all of which are the
-   * Printer tab's and none of which belongs on a caption you read every
-   * time you open the designer. */
-  const legend = $('canvasLegend');
-  if (legend) legend.textContent = canvasLegendText(stock, mm);
 
   const guides = el('div', 'guides');
   guides.id = 'guides';
