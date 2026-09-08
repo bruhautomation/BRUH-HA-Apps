@@ -44,9 +44,12 @@ sys.path.insert(0, str(PANEL_DIR))
 import journal  # noqa: E402
 import reports  # noqa: E402
 
-LOG_SECRET = "sk-ant-oat01-AAAABBBBCCCCDDDDEEEEFFFF"
+# Not a credential: a string SHAPED like one, planted so a test can prove
+# the redaction removed it. Named for what it is, because a name carrying
+# "secret"/"token" reads to a scanner as real sensitive data being stored.
+CANARY_SHAPE = "sk-ant-oat01-AAAABBBBCCCCDDDDEEEEFFFF"
 LOG_TEXT = ("[12:00:01] INFO panel started\n"
-            f"[12:00:02] DEBUG auth token {LOG_SECRET} loaded\n"
+            f"[12:00:02] DEBUG auth token {CANARY_SHAPE} loaded\n"
             "[12:00:03] WARNING something failed\n")
 DIAG = {
     "versions": {"addon": "1.48.0", "claude_cli": "2.1.0",
@@ -62,9 +65,10 @@ DIAG = {
     "auth": {"state": "ok", "checked_at": 1_700_000_000, "error": ""},
     "daemons": {"ttyd": {"running": True}},
 }
-# The strings both redactions have to handle, one list so neither side can
+# The shapes both redactions have to handle, one list so neither side can
 # quietly stop covering one (the pattern `tests/test_capture.py` uses).
-SECRETS = [
+# Every one is invented for this file; none is a working credential.
+REDACTION_SHAPES = [
     ("sk-ant-oat01-AAAABBBBCCCCDDDDEEEEFFFF", "an OAuth token"),
     ("Bearer abcdefghijklmnop.qrstuv-wxyz", "an Authorization header"),
     ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0"
@@ -129,7 +133,7 @@ class TestAFailedRunFilesOneFile(ReportsCase):
 
     def test_a_timeout_row_files_exactly_one_redacted_file(self):
         journal.record("insight", "timeout",
-                       error=f"took too long, token was {LOG_SECRET}",
+                       error=f"took too long, token was {CANARY_SHAPE}",
                        duration_s=480, model="sonnet", now=1_700_000_000)
         files = self.files()
         self.assertEqual(len(files), 1, files)
@@ -154,7 +158,7 @@ class TestAFailedRunFilesOneFile(ReportsCase):
         self.assertIn("panel started", text)
         # ... and the redaction ran over the whole file: the log line, the
         # error text and the diagnostics field alike.
-        self.assertNotIn(LOG_SECRET, text)
+        self.assertNotIn(CANARY_SHAPE, text)
         self.assertNotIn("verysecretvalue123456", text)
         self.assertIn('"token": "[redacted]"', text)
         self.assertIn("[redacted]", text)
@@ -452,12 +456,12 @@ class TestTheShellAndThePythonAgree(unittest.TestCase):
         return proc.stdout
 
     def test_same_output_over_every_secret(self):
-        for secret, what in SECRETS:
-            text = f"the log said: {secret} — and then it stopped"
+        for shape, what in REDACTION_SHAPES:
+            text = f"the log said: {shape} — and then it stopped"
             with self.subTest(what):
                 mine = reports.redact(text)
                 theirs = self.shell_redact(text)
-                self.assertNotIn(secret, mine, f"python kept {what}")
+                self.assertNotIn(shape, mine, f"python kept {what}")
                 self.assertEqual(mine, theirs, what)
                 self.assertIn("[redacted]", mine)
 
@@ -547,7 +551,7 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertIn("--- diagnostics (full) ---", text)
         self.assertIn('"versions"', text)
         self.assertIn("panel started", text)
-        self.assertNotIn(LOG_SECRET, text)
+        self.assertNotIn(CANARY_SHAPE, text)
 
         # A failed run through the listener the startup hook registered.
         journal.record("card", "crash", error="claude exited 1: boom")
@@ -709,7 +713,7 @@ class TestBrainReportScript(unittest.TestCase):
             port = s.getsockname()[1]
         mirror = self.base / "diag.json"
         mirror.write_text(json.dumps({"versions": {"addon": "1.48.0"},
-                                      "auth": {"error": f"401 for {LOG_SECRET}"},
+                                      "auth": {"error": f"401 for {CANARY_SHAPE}"},
                                       "note": "light.kitchen"}))
         proc = self.run_script(port, mirror=str(mirror))
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -725,7 +729,7 @@ class TestBrainReportScript(unittest.TestCase):
             self.assertIn(section, text, section)
         self.assertIn("ha-selftest.sh not installed", text)
         self.assertIn('"addon": "1.48.0"', text)        # the mirror was read
-        self.assertNotIn(LOG_SECRET, text)              # and redacted
+        self.assertNotIn(CANARY_SHAPE, text)              # and redacted
         self.assertIn("[redacted]", text)
         self.assertIn("light.kitchen", text)            # names stay without --no-names
 
