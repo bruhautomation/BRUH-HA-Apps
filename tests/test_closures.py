@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import os
+from pathlib import Path
 import sys
 import tempfile
 import unittest
@@ -314,7 +315,7 @@ class TestARefusedFetchLeavesTheStore(unittest.TestCase):
                          "asked": 1, "entities": {"binary_sensor.back": {
                              "buckets": {}, "name": "Back door"}}}
         closures.save(self.previous, self.path)
-        self.before = open(self.path, "rb").read()
+        self.before = Path(self.path).read_bytes()
         self.states = {"binary_sensor.back": {
             "state": "off", "attributes": {"device_class": "door",
                                            "friendly_name": "Back door"}}}
@@ -335,7 +336,7 @@ class TestARefusedFetchLeavesTheStore(unittest.TestCase):
 
     def test_a_failed_fetch_writes_nothing_and_says_so(self):
         got = self._build(RuntimeError("503 from Core"))
-        self.assertEqual(open(self.path, "rb").read(), self.before,
+        self.assertEqual(Path(self.path).read_bytes(), self.before,
                          "the store was rewritten over a failed fetch")
         self.assertEqual(got["built_at"], self.previous["built_at"])
         self.assertIn("binary_sensor.back", got["entities"])

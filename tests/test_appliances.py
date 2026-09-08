@@ -565,7 +565,7 @@ class TestARefusedFetchLeavesTheStore(unittest.TestCase):
                              "idle_w": 0.6, "busy_w": 1800.0,
                              "name": "Dishwasher power"}}}
         appliances.save(self.previous, self.path)
-        self.before = open(self.path, "rb").read()
+        self.before = Path(self.path).read_bytes()
         self.states = {"sensor.dishwasher_power": {
             "state": "0.6",
             "attributes": {"device_class": "power",
@@ -586,7 +586,7 @@ class TestARefusedFetchLeavesTheStore(unittest.TestCase):
 
     def test_a_refusal_writes_nothing_and_says_so(self):
         got = self._build(None)
-        self.assertEqual(open(self.path, "rb").read(), self.before,
+        self.assertEqual(Path(self.path).read_bytes(), self.before,
                          "the store was rewritten over a refused fetch")
         self.assertEqual(got["built_at"], self.previous["built_at"])
         self.assertIn("sensor.dishwasher_power", got["entities"])

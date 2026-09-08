@@ -882,7 +882,7 @@ class TestARefusedFetchLeavesTheStore(unittest.TestCase):
             {"sensor.hall": "Hall"},
             {"sensor.garden": out, "sensor.hall": room}, self.path))
         self.assertIn("sensor.hall", self.previous["rooms"])
-        self.before = open(self.path, "rb").read()
+        self.before = Path(self.path).read_bytes()
 
     def _build_with_ws(self, answer):
         import ha_data
@@ -904,7 +904,7 @@ class TestARefusedFetchLeavesTheStore(unittest.TestCase):
 
     def test_a_refusal_writes_nothing_and_says_so(self):
         got = self._build_with_ws(None)
-        self.assertEqual(open(self.path, "rb").read(), self.before,
+        self.assertEqual(Path(self.path).read_bytes(), self.before,
                          "the store was rewritten over a refused fetch")
         self.assertEqual(got["built_at"], self.previous["built_at"])
         self.assertIn("sensor.hall", got["rooms"])

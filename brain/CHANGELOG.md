@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.48.0
+
+_In progress: this entry is completed before the release is cut. The
+work so far closes the security and logic gaps found in the 1.47.3
+audit and retires the three `*_max_turns` options — a tripped turn
+guard now lands the run with two more turns instead of truncating it._
+
 ## 1.47.3
 
 The usage sensors were dead for a reason nothing in brAIn could say. The
