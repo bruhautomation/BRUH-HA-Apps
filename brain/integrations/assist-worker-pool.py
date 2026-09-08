@@ -96,10 +96,12 @@ def mint_claimed_session(source: str) -> tuple[str, list[str]]:
     claim_session(session_id, source)
     return session_id, ["--session-id", session_id]
 
-# Fallback matches config.yaml's default — a fallback that disagrees with
-# the shipped default is a second answer that wins exactly when nobody is
-# looking (run.sh exports the real value; this only applies without it).
-MAX_TURNS = os.environ.get("BRAIN_ASSIST_MAX_TURNS", "8")
+# The runaway guard on a one-shot voice turn — not a budget, and not an
+# add-on option: the timeout is what bounds a voice answer, and a cap tight
+# enough to matter truncated real commands. BRAIN_ASSIST_MAX_TURNS is an
+# override for somebody who sets it by hand. The persistent worker's cap is
+# derived from it below (it spans the process, not one request).
+MAX_TURNS = os.environ.get("BRAIN_ASSIST_MAX_TURNS", "40")
 DEFAULT_TIMEOUT = int(os.environ.get("BRAIN_ASSIST_TIMEOUT", "105"))
 TIMEOUT_MARGIN = 15
 LIMIT_FLOOR = int(os.environ.get("BRAIN_ASSIST_LIMIT_FLOOR", "30"))

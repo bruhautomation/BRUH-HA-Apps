@@ -380,6 +380,15 @@ function renderAuth() {
   $("#onboard").classList.toggle("hidden", signIn || obState.onboarded);
   $("#dash").classList.toggle("hidden", !ready);
   $("#settingsBtn").classList.toggle("hidden", !s.authenticated);
+  // `enable_insights: false` takes the two tabs that are only ever filled
+  // by a Claude run the scheduler would have queued; Findings stays, since
+  // the house checks cost nothing and still file there.
+  const insightsOn = s.insights_enabled !== false;
+  document.querySelectorAll('.viewtab[data-view="insights"], .viewtab[data-view="proposals"]')
+    .forEach((b) => b.classList.toggle("hidden", !insightsOn));
+  if (!insightsOn && (currentView === "insights" || currentView === "proposals")) {
+    switchView("findings");
+  }
   renderUsageChip();
   renderPausedChip();
   syncTermMode();

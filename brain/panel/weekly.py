@@ -48,9 +48,10 @@ import energy
 MAX_WORDS = 150
 MIN_CHARS = 60
 # Four sections and a couple of lookups. This is the least time-critical
-# thing the add-on runs, so it gets room rather than a race.
+# thing the add-on runs, so it gets room rather than a race; the timeout
+# is the budget and the turn cap only a runaway guard.
 TIMEOUT_S = 300
-MAX_TURNS = 10
+MAX_TURNS = 24
 
 # The change log the memory consolidator writes, which is the only
 # record of what actually reached `memory.md` and when.

@@ -237,7 +237,8 @@ def save(payload: dict, path: str | None = None) -> None:
         log.warning("could not write the closure store: %s", exc)
 
 
-async def fetch_history(session, ids: list[str], start: dt.datetime) -> dict:
+async def fetch_history(session, ids: list[str],
+                        start: dt.datetime) -> dict | None:
     """Raw state changes per entity — not the bundle's downsampled shape.
 
     `ha_data.get_history` keeps only the newest `MAX_STATE_CHANGES` of a
@@ -246,7 +247,10 @@ async def fetch_history(session, ids: list[str], start: dt.datetime) -> dict:
     """
     import ha_data  # noqa: PLC0415
 
+    if not ids:
+        return {}
     out: dict[str, list] = {}
+    answered = 0
     for i in range(0, len(ids), BATCH):
         batch = ids[i:i + BATCH]
         try:
@@ -258,7 +262,11 @@ async def fetch_history(session, ids: list[str], start: dt.datetime) -> dict:
             # batch that failed; the rest of the house still gets measured.
             log.info("closure history batch failed: %s", exc)
             continue
-        for series in raw or []:
+        if not isinstance(raw, list):
+            log.info("closure history batch answered with no list")
+            continue
+        answered += 1
+        for series in raw:
             if not series:
                 continue
             eid = series[0].get("entity_id", "")
@@ -268,12 +276,20 @@ async def fetch_history(session, ids: list[str], start: dt.datetime) -> dict:
                 [(p.get("last_changed") or p.get("last_updated") or ""),
                  p.get("state")]
                 for p in series]
-    return out
+    # None is "Core did not answer for any batch"; {} is a house whose
+    # history holds nothing for these ids. `build` writes on the second
+    # and refuses on the first.
+    return out if answered else None
 
 
 async def build(session, states: dict, now: float | None = None,
                 path: str | None = None) -> dict:
-    """Measure every closure and write the store. Returns the payload."""
+    """Measure every closure and write the store. Returns the payload.
+
+    A fetch nothing answered writes nothing and hands back the previous
+    store with `error` beside it (`baselines.refused`); a house with no
+    closures still writes an empty store.
+    """
     now = time.time() if now is None else now
     import baselines  # noqa: PLC0415
 
@@ -288,6 +304,11 @@ async def build(session, states: dict, now: float | None = None,
     start = dt.datetime.fromtimestamp(now - HISTORY_DAYS * 86400,
                                       tz=dt.timezone.utc)
     series = await fetch_history(session, ids, start)
+    if series is None:
+        return baselines.refused(
+            "closures", load(path),
+            f"Home Assistant did not answer for any of the {len(ids)} "
+            "closures asked about")
     for eid, points in series.items():
         built = build_entity(points, tz, now)
         if built:

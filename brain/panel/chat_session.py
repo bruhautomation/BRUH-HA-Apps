@@ -353,9 +353,12 @@ def context_window(model: str) -> int:
 MAX_RESULT_CHARS = 4000
 MAX_TEXT_CHARS = 60000
 
-# In stream-json mode the turn cap spans the life of the process rather than
-# one exchange, so it is a runaway guard, not a per-answer budget.
-MAX_TURNS = int(os.environ.get("BRAIN_CHAT_MAX_TURNS", "400"))
+# No turn cap by default. In stream-json mode a cap spans the life of the
+# process rather than one exchange, so it was never a per-answer budget —
+# and a person is in front of this face, which is the runaway guard: they
+# can press Stop. BRAIN_CHAT_MAX_TURNS is an opt-in for somebody who wants
+# one anyway; 0 (or unset) passes no flag at all.
+MAX_TURNS = int(os.environ.get("BRAIN_CHAT_MAX_TURNS", "0") or 0)
 
 # How long to wait for a polite interrupt before killing the process.
 INTERRUPT_GRACE = 5.0
@@ -794,8 +797,9 @@ class ChatSession:
             "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--include-partial-messages",
-            "--max-turns", str(MAX_TURNS),
         ]
+        if MAX_TURNS > 0:
+            argv += ["--max-turns", str(MAX_TURNS)]
         if self._prompt_tool_ok:
             # "stdio" routes permission questions back up this pipe as
             # `can_use_tool` control requests — the same wire the Agent SDK's
@@ -1608,7 +1612,9 @@ def _session_info(event: dict) -> dict:
 def _error_text(event: dict) -> str:
     subtype = event.get("subtype") or ""
     if subtype == "error_max_turns":
-        return ("Claude reached this session's turn limit. Your next message "
+        # Rare now that the chat passes no cap of its own (an opt-in env
+        # var, or an older CLI's own ceiling). No setting is named.
+        return ("Claude reached a session turn limit. Your next message "
                 "restarts the session and the conversation carries on.")
     result = event.get("result")
     if isinstance(result, str) and result.strip():

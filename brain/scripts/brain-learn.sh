@@ -37,7 +37,7 @@ NC='\033[0m'
 # value lands afterwards and nothing looks at it again. Study sessions reach
 # this script two ways (the watcher, which exports these already, and a direct
 # `/learn` from the terminal, which does not), so only one of the two routes
-# ever honoured study_max_turns / study_timeout_minutes.
+# ever honoured the study timeout.
 if [ -r /data/.brain_env ]; then
     # shellcheck disable=SC1091
     . /data/.brain_env
@@ -51,16 +51,15 @@ FINDINGS_INBOX="${BRAIN_FINDINGS_INBOX:-/config/.brain/findings/inbox}"
 REPORTS_DIR="$MEMORY_DIR/reports"
 MEMORY_FILE="$MEMORY_DIR/memory.md"
 
-# Turns are the budget for THOROUGHNESS here, not a safety valve. A study
-# session reads the registry, then history for a dozen entities, then
-# long-term statistics — it can spend a lot of turns before it has anything
-# worth saying. And --max-turns does not degrade gracefully: it truncates
-# mid-thought, so a run that hits it produces no parseable JSON at all and
-# the whole session is wasted after paying for every token.
-#
-# So the real guard is wall-clock (and the account's own usage budget), not
-# turn count. Set BRAIN_LEARN_MAX_TURNS=0 to remove the cap entirely.
-MAX_TURNS="${BRAIN_LEARN_MAX_TURNS:-60}"
+# No turn cap. Depth is the deliverable of a study session — it reads the
+# registry, then history for a dozen entities, then long-term statistics,
+# and can spend a lot of turns before it has anything worth saying — so
+# the guard is the wall clock (BRAIN_LEARN_TIMEOUT) and the account's own
+# usage budget, never a turn count. This is not an add-on option.
+# BRAIN_LEARN_MAX_TURNS is an override for somebody who sets one by hand,
+# and a session that trips it is LANDED (brain-landing.sh) rather than
+# thrown away: resumed with two turns and told to file what it has.
+MAX_TURNS="${BRAIN_LEARN_MAX_TURNS:-0}"
 TIMEOUT="${BRAIN_LEARN_TIMEOUT:-1800}"
 MODEL="${BRAIN_LEARN_MODEL:-${BRAIN_MODEL:-}}"
 MEMORY_BUDGET=4000
@@ -294,12 +293,31 @@ echo -e "${DIM}This runs a bounded agentic session and may take a minute…${NC}
 # Name the session up front so the Chats rail can file the transcript this
 # leaves behind under Study. A study session is a study session however it
 # was asked for — by you here, or by the watcher on the panel's behalf.
+#
+# Both libraries are looked for in /opt/scripts and then beside this script,
+# which is where a checkout runs it from.
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
+brain_lib() {  # brain_lib <file> -> its path, or nothing
+    local f
+    for f in "/opt/scripts/$1" "${here:-.}/$1"; do
+        [ -r "$f" ] && { printf '%s' "$f"; return 0; }
+    done
+    return 1
+}
 session_args=()
-if [ -r /opt/scripts/brain-run-source.sh ]; then
+learn_session=""
+if lib=$(brain_lib brain-run-source.sh); then
     # shellcheck disable=SC1091
-    . /opt/scripts/brain-run-source.sh
+    . "$lib"
     learn_session=$(brain_new_session study)
     [ -n "$learn_session" ] && session_args=(--session-id "$learn_session")
+fi
+# A run that ends on a turn cap is landed on that session (see the
+# library); without a session there is nothing to resume and the run keeps
+# the ending it had.
+if lib=$(brain_lib brain-landing.sh); then
+    # shellcheck disable=SC1091
+    . "$lib"
 fi
 
 # stderr is kept, not swallowed: a study session can fail for more than
@@ -319,6 +337,7 @@ run_study() {
 # retried a full (expensive) second session, and the messages below were
 # unreachable. Capture rc directly.
 rc=0
+study_started=$(date +%s)
 output=$(run_study "${session_args[@]}") || rc=$?
 # An older CLI rejects --session-id outright — usage text and a non-zero
 # exit. The label is optional; the study session is not. Only that failure
@@ -327,8 +346,24 @@ output=$(run_study "${session_args[@]}") || rc=$?
 if [ "$rc" -ne 0 ] && [ "${#session_args[@]}" -gt 0 ] \
     && grep -qi "unknown option\|unrecognized option" "$err_file" 2>/dev/null; then
     session_args=()
+    learn_session=""   # a CLI without --session-id has no --resume either
     rc=0
     output=$(run_study) || rc=$?
+fi
+# A session that ended on a turn cap (BRAIN_LEARN_MAX_TURNS, or the CLI's
+# own ceiling) is landed rather than reported: resumed on its session with
+# two turns and told to emit the JSON with what it has, inside whatever is
+# left of the wall clock the session was given. A landing that fails leaves
+# the run's own ending below.
+if [ -n "$learn_session" ] && command -v brain_hit_turn_cap > /dev/null 2>&1 \
+    && brain_hit_turn_cap "$output" "$err_file"; then
+    echo -e "${DIM}Ran out of room — landing the session with what it has found…${NC}" >&2
+    # shellcheck disable=SC2086
+    if landed=$(brain_land "$learn_session" "$((TIMEOUT - ($(date +%s) - study_started)))" \
+            "$err_file" -- $claude_cmd -p ${MODEL:+--model "$MODEL"}); then
+        output="$landed"
+        rc=0
+    fi
 fi
 if [ "$rc" -ne 0 ]; then
     if [ "$rc" -eq 124 ]; then
@@ -349,14 +384,7 @@ json=$(printf '%s' "$output" | sed -e 's/^```\(json\)\?$//' -e 's/^```$//' \
     | jq -c 'if type == "object" then . else empty end' 2>/dev/null | head -1)
 
 if [ -z "$json" ]; then
-    if [ "${MAX_TURNS:-0}" -gt 0 ] \
-        && printf '%s' "$output" | grep -qi "max.turns\|turn limit\|reached the maximum"; then
-        echo -e "${RED}Study session hit its ${MAX_TURNS}-turn limit before it finished.${NC}" >&2
-        echo -e "${DIM}Nothing was written — a truncated run has no result to file.${NC}" >&2
-        echo -e "${DIM}Raise it with BRAIN_LEARN_MAX_TURNS, or set 0 to remove the cap.${NC}" >&2
-    else
-        echo -e "${RED}Study session returned something unparseable — nothing written.${NC}" >&2
-    fi
+    echo -e "${RED}Study session returned something unparseable — nothing written.${NC}" >&2
     exit 1
 fi
 

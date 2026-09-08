@@ -21,7 +21,12 @@ and so cannot clear anything):
                     for every numeric measurement sensor
     battery_stats  {entity_id: [{start, mean}]} — 60 daily rows for every
                     battery sensor
-    dashboards     [{url_path, title, config}]
+    dashboards     [{url_path, title, config}] — the storage-mode ones.
+                    Empty on a house with only the Overview, and that IS
+                    available; unavailable only when Core would not list
+                    them. `stats`/`battery_stats` follow the same rule: a
+                    recorder with nothing for these ids answers {} and is
+                    available, a recorder that refused the command is not
     supervisor     {backups, addons, host, core} — the Supervisor's own
                     view: what has been backed up, which add-ons are
                     running, how full the disk is. Each add-on row carries
@@ -327,21 +332,49 @@ async def collect(now: float | None = None) -> dict:
             _mark("services", False, str(exc))
 
         # Statistics: daily min/max/mean for numeric sensors, and a longer
-        # mean-only window for batteries.
+        # mean-only window for batteries. Two keys, two fetches, two try
+        # blocks: they used to share one, so a battery window that failed
+        # blanked the daily statistics beside it — and a command the
+        # recorder REFUSED (`success: false`, which `_ws_commands` hands
+        # back as None) was folded into `{}` and marked available, which
+        # is "the recorder has no statistics for anything" and let
+        # `clear_resolved` delete every `dev.frozen` and
+        # `forecast.battery` row the previous pass had filed. The shape
+        # of the answer is what says whether it was one: None is a
+        # refusal, `{}` is a recorder with nothing to say.
+        numeric, batteries = _stat_candidates(snap.get("states") or {})
         try:
-            stats, battery = await _statistics(session, snap.get("states") or {}, now)
-            snap["stats"] = stats
-            snap["battery_stats"] = battery
-            _mark("stats", True)
-            _mark("battery_stats", True)
+            stats = await _fetch_stats(session, numeric, now, STATS_DAYS,
+                                       ["mean", "min", "max"])
+            snap["stats"] = stats or {}
+            _mark("stats", stats is not None,
+                  "" if stats is not None else
+                  "the recorder did not answer for daily statistics")
         except Exception as exc:  # noqa: BLE001
-            snap["stats"], snap["battery_stats"] = {}, {}
+            snap["stats"] = {}
             _mark("stats", False, str(exc))
-            _mark("battery_stats", False, str(exc))
 
         try:
-            snap["dashboards"] = await _dashboards(session)
-            _mark("dashboards", True)
+            battery = await _fetch_stats(session, batteries, now,
+                                         BATTERY_DAYS, ["mean"])
+            snap["battery_stats"] = battery or {}
+            _mark("battery_stats", battery is not None,
+                  "" if battery is not None else
+                  "the recorder did not answer for battery statistics")
+        except Exception as exc:  # noqa: BLE001
+            snap["battery_stats"] = {}
+            _mark("battery_stats", False, str(exc))
+
+        # A house with no storage dashboards answers with an empty list
+        # and that IS available; a Core that would not list them answers
+        # None, and only the second may leave `org.dashboard_dead_ref`'s
+        # rows alone rather than clearing them.
+        try:
+            boards = await _dashboards(session)
+            snap["dashboards"] = boards or []
+            _mark("dashboards", boards is not None,
+                  "" if boards is not None else
+                  "Home Assistant did not list its dashboards")
         except Exception as exc:  # noqa: BLE001
             snap["dashboards"] = []
             _mark("dashboards", False, str(exc))
@@ -395,6 +428,11 @@ async def collect(now: float | None = None) -> dict:
                 start = dt.datetime.fromtimestamp(
                     now - APPLIANCE_HOURS * 3600, tz=dt.timezone.utc)
                 live = await appliances.fetch(session, ids, start)
+                if live is None:
+                    # The recorder refused every batch: what each machine
+                    # is doing now is unknown, which is not "idle".
+                    raise RuntimeError(
+                        "the recorder did not answer for the appliance sensors")
             snap["appliances"] = {"entities": shapes.get("entities") or {},
                                   "built_at": shapes.get("built_at", 0),
                                   "recent": live}
@@ -595,48 +633,60 @@ def _stat_candidates(states: dict) -> tuple[list[str], list[str]]:
     return numeric, batteries
 
 
-async def _statistics(session, states: dict, now: float) -> tuple[dict, dict]:
+async def _fetch_stats(session, ids: list[str], now: float, days: int,
+                       types: list[str]) -> dict | None:
+    """Daily statistics for `ids`, keyed by id — or None when the recorder
+    refused.
+
+    The distinction is the whole point of the function. `_ws_commands`
+    answers None for a command Core rejected and `{}` for one it answered
+    with nothing, and a caller that reads both as "no rows" turns a
+    recorder that is down into a house whose sensors are all fine. No
+    ids is an empty answer, not a refusal: there was nothing to ask.
+    """
     import ha_data
 
-    numeric, batteries = _stat_candidates(states)
-    stats: dict[str, list] = {}
-    battery: dict[str, list] = {}
-
-    async def fetch(ids: list[str], days: int, types: list[str]) -> dict:
-        start = dt.datetime.fromtimestamp(now - days * 86400, tz=dt.timezone.utc)
-        out: dict[str, list] = {}
-        for i in range(0, len(ids), STATS_BATCH):
-            batch = ids[i:i + STATS_BATCH]
-            results = await ha_data._ws_commands(session, [{
-                "type": "recorder/statistics_during_period",
-                "start_time": start.isoformat(),
-                "statistic_ids": batch,
-                "period": "day",
-                "types": types,
-            }])
-            for sid, rows in (results[0] or {}).items():
-                clean = []
-                for row in rows or []:
-                    start_ts = row.get("start")
-                    if isinstance(start_ts, (int, float)):
-                        start_ts = start_ts / 1000.0
-                    clean.append({"start": start_ts, "mean": row.get("mean"),
-                                  "min": row.get("min"), "max": row.get("max")})
-                out[sid] = clean
-        return out
-
-    if numeric:
-        stats = await fetch(numeric, STATS_DAYS, ["mean", "min", "max"])
-    if batteries:
-        battery = await fetch(batteries, BATTERY_DAYS, ["mean"])
-    return stats, battery
+    if not ids:
+        return {}
+    start = dt.datetime.fromtimestamp(now - days * 86400, tz=dt.timezone.utc)
+    out: dict[str, list] = {}
+    answered = 0
+    for i in range(0, len(ids), STATS_BATCH):
+        batch = ids[i:i + STATS_BATCH]
+        results = await ha_data._ws_commands(session, [{
+            "type": "recorder/statistics_during_period",
+            "start_time": start.isoformat(),
+            "statistic_ids": batch,
+            "period": "day",
+            "types": types,
+        }])
+        rows_by_id = results[0] if results else None
+        if not isinstance(rows_by_id, dict):
+            continue
+        answered += 1
+        for sid, rows in rows_by_id.items():
+            clean = []
+            for row in rows or []:
+                start_ts = row.get("start")
+                if isinstance(start_ts, (int, float)):
+                    start_ts = start_ts / 1000.0
+                clean.append({"start": start_ts, "mean": row.get("mean"),
+                              "min": row.get("min"), "max": row.get("max")})
+            out[sid] = clean
+    if answered == 0:
+        return None
+    return out
 
 
-async def _dashboards(session) -> list[dict]:
+async def _dashboards(session) -> list[dict] | None:
     import ha_data
 
     listed = (await ha_data._ws_commands(session, [
-        {"type": "lovelace/dashboards/list"}]))[0] or []
+        {"type": "lovelace/dashboards/list"}]))[0]
+    if not isinstance(listed, list):
+        # The list command itself was refused. An empty list is a house
+        # with only the Overview, which is a different answer.
+        return None
     targets: list[dict] = [{"url_path": None, "title": "Overview"}]
     for d in listed:
         if isinstance(d, dict) and d.get("mode") == "storage" and d.get("url_path"):

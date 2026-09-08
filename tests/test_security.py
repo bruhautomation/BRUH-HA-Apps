@@ -278,6 +278,38 @@ class TestAnalystCanOnlyRead(unittest.TestCase):
             if f"{self.engine.MCP}{n}" not in self.engine.ANALYST_DENIED)
         self.assertEqual(missing, [], f"acting MCP tools not denied: {missing}")
 
+    def test_every_mcp_tool_is_in_exactly_one_list(self):
+        """The partition, driven off the server's own tool table.
+
+        The prefix regex above catches an acting tool that was forgotten;
+        it says nothing about a READ tool in neither list, and a tool in
+        neither is not forbidden — it fails when the analyst reaches for it,
+        which from a card reads as a broken tool rather than a policy. So
+        every name the server registers has to be allowed or denied, and
+        never both: a tool on both lists is a policy nobody can read.
+        """
+        import sys
+        sys.path.insert(0, os.path.join(ADDON_DIR, "ha-mcp-server"))
+        import ha_mcp_server
+        registered = set(ha_mcp_server.TOOL_IMPLEMENTATIONS)
+        self.assertGreater(len(registered), 30, "did the tool table move?")
+        prefix = self.engine.MCP
+        allowed = {n[len(prefix):] for n in self.engine.ANALYST_TOOLS
+                   if n.startswith(prefix)}
+        denied = {n[len(prefix):] for n in self.engine.ANALYST_DENIED
+                  if n.startswith(prefix)}
+        self.assertEqual(sorted(allowed & denied), [],
+                         "a tool cannot be both allowed and denied")
+        self.assertEqual(sorted(registered - allowed - denied), [],
+                         "MCP tools in neither list: neither allowed nor "
+                         "forbidden, so the analyst's call fails instead")
+        self.assertEqual(sorted((allowed | denied) - registered), [],
+                         "the analyst lists name tools the server does not have")
+        # And the three the analyst leans on for "unusual" and "why" are on
+        # the reading side — a rename there would silently blind every card.
+        for name in ("get_baseline", "get_activity", "explain_change"):
+            self.assertIn(name, allowed, name)
+
     def test_the_analyst_is_not_told_it_has_no_tools(self):
         """The two preambles differ in exactly this, and share the rest."""
         import categories

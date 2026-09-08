@@ -860,3 +860,60 @@ class TestTheChecksAreRegistered(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestARefusedFetchLeavesTheStore(unittest.TestCase):
+    """A recorder that refused is not a house with no rooms.
+
+    `fetch_hourly` answered `{}` for a refused command and for a room with
+    no statistics alike, and `build` wrote the result either way: one busy
+    recorder replaced a month of measured rooms with `rooms: {}` and a
+    `reason` claiming nothing could be fitted, stamped tonight.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, "thermal.json")
+        room, out = simulate()
+        self.previous = asyncio.run(_build(
+            {"sensor.garden": state("Outside", "4"),
+             "sensor.hall": state("Hall", "20")},
+            {"sensor.hall": "Hall"},
+            {"sensor.garden": out, "sensor.hall": room}, self.path))
+        self.assertIn("sensor.hall", self.previous["rooms"])
+        self.before = open(self.path, "rb").read()
+
+    def _build_with_ws(self, answer):
+        import ha_data
+
+        async def ws(session, commands):
+            return [answer]
+        real = ha_data._ws_commands
+        ha_data._ws_commands = ws
+        registries = {"areas": [{"area_id": "hall", "name": "Hall"}],
+                      "devices": [],
+                      "entities": [{"entity_id": "sensor.hall", "area_id": "hall"}]}
+        try:
+            return asyncio.run(thermal.build(
+                None, {"sensor.garden": state("Outside", "4"),
+                       "sensor.hall": state("Hall", "20")},
+                registries, NOW + 86400, self.path))
+        finally:
+            ha_data._ws_commands = real
+
+    def test_a_refusal_writes_nothing_and_says_so(self):
+        got = self._build_with_ws(None)
+        self.assertEqual(open(self.path, "rb").read(), self.before,
+                         "the store was rewritten over a refused fetch")
+        self.assertEqual(got["built_at"], self.previous["built_at"])
+        self.assertIn("sensor.hall", got["rooms"])
+        self.assertIn("did not answer", got["error"])
+        self.assertEqual(thermal.load(self.path), self.previous)
+
+    def test_an_empty_answer_is_a_measurement_and_is_written(self):
+        got = self._build_with_ws({})
+        self.assertNotIn("error", got)
+        self.assertEqual(got["rooms"], {})
+        self.assertTrue(got["reason"])
+        self.assertEqual(thermal.load(self.path)["built_at"], int(NOW + 86400))

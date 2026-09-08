@@ -61,7 +61,7 @@ PRODUCER_URGENCY = {
     "check:dev.unavailable": "now",
     "check:dev.implausible": "now",
     "check:sys.addon_down": "now",
-    "check:sys.disk_low": "now",
+    "check:sys.disk_space": "now",
     # This one fires INSIDE quiet hours by construction — it only speaks
     # around the hour this house goes to bed, which is the hour the
     # window starts. Anything but `now` holds it until morning, which is

@@ -599,6 +599,25 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         got = await task
         notice = next(e for e in got if e["type"] == "notice")
         self.assertIn("turn limit", notice["text"])
+        # Nothing on that notice names a setting: the chat passes no cap
+        # of its own, so there is nothing for a person to go and raise.
+        for word in ("BRAIN_", "setting", "option", "max_turns"):
+            self.assertNotIn(word, notice["text"])
+
+    async def test_the_chat_passes_no_turn_cap_unless_asked(self):
+        """A turn cap is a runaway guard, and a person is in front of this
+        face: they can press Stop. A cap here only ever ended a working
+        conversation, so the argv carries none — unless somebody opts in
+        by hand with BRAIN_CHAT_MAX_TURNS, which is then passed as given."""
+        self.assertNotIn("--max-turns", self.session._argv())
+        import chat_session
+        os.environ["BRAIN_CHAT_MAX_TURNS"] = "50"
+        try:
+            capped = importlib.reload(chat_session).ChatSession()._argv()
+        finally:
+            os.environ.pop("BRAIN_CHAT_MAX_TURNS", None)
+            importlib.reload(chat_session)
+        self.assertEqual(capped[capped.index("--max-turns") + 1], "50")
 
     async def test_the_session_reports_what_the_cli_says_about_itself(self):
         """The model, the version, and two facts that are load-bearing: the

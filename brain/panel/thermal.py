@@ -642,12 +642,20 @@ def build_room(room_rows: list, outdoor_rows: list, tz: dt.tzinfo,
 
 
 async def fetch_hourly(session, ids: list[str], now: float,
-                       days: int = HISTORY_DAYS) -> dict:
-    """Hourly means per entity for the window, or {} if nothing answered."""
+                       days: int = HISTORY_DAYS) -> dict | None:
+    """Hourly means per entity for the window.
+
+    `{}` is the recorder holding nothing for these ids; None is the
+    recorder refusing every batch, which `build` answers by leaving the
+    store alone rather than writing a house with no rooms over it.
+    """
     import ha_data  # noqa: PLC0415 — see the checks snapshot's own note
 
+    if not ids:
+        return {}
     start = dt.datetime.fromtimestamp(now - days * 86400, tz=dt.timezone.utc)
     out: dict[str, list] = {}
+    answered = 0
     for i in range(0, len(ids), BATCH):
         batch = ids[i:i + BATCH]
         try:
@@ -662,14 +670,24 @@ async def fetch_hourly(session, ids: list[str], now: float,
             # batch that failed; the rest of the house still gets a model.
             log.info("thermal statistics batch failed: %s", exc)
             continue
-        for sid, rows in (results[0] or {}).items():
+        rows_by_id = results[0] if results else None
+        if not isinstance(rows_by_id, dict):
+            log.info("thermal statistics batch refused by the recorder")
+            continue
+        answered += 1
+        for sid, rows in rows_by_id.items():
             out[sid] = rows or []
-    return out
+    return out if answered else None
 
 
 async def build(session, states: dict, registries: dict | None = None,
                 now: float | None = None, path: str | None = None) -> dict:
-    """Measure every room and write the store. Returns the payload."""
+    """Measure every room and write the store. Returns the payload.
+
+    A fetch the recorder refused writes nothing and hands back the
+    previous store with `error` beside it (`baselines.refused`). A house
+    with nothing to measure still writes, with `reason` saying why.
+    """
     import baselines  # noqa: PLC0415
 
     now = time.time() if now is None else now
@@ -701,6 +719,11 @@ async def build(session, states: dict, registries: dict | None = None,
         return payload
 
     rows = await fetch_hourly(session, [outdoor] + ids, now)
+    if rows is None:
+        return baselines.refused(
+            "thermal", load(path),
+            f"the recorder did not answer for any of the {len(ids) + 1} "
+            "thermometers asked about")
     outdoor_rows = rows.get(outdoor) or []
     outdoor_map = _hourly_map(outdoor_rows)
     if outdoor_map:

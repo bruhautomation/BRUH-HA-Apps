@@ -783,6 +783,73 @@ class TestPanelServer(unittest.TestCase):
         files = list(Path(self.tmp.name).glob("custom-*.json"))
         self.assertLessEqual(len(files), self.server.MAX_CUSTOM_KEPT)
 
+    def test_the_insights_switch_stops_the_scheduler(self):
+        """`enable_insights: false` — run.sh exported BRAIN_ENABLE_INSIGHTS
+        for two releases and nothing read it, so the face switched off in
+        the docs and the scheduler went on queueing a Claude run per card.
+        One tick of the real `_scheduler`, driven both ways: with the switch
+        on it queues (which is what proves the harness reaches `_enqueue`),
+        with it off it queues nothing and says why in the gate."""
+        from unittest.mock import patch
+        server = self.server
+        settings_store.save({"onboarded": True, "auto_enabled": True})
+
+        async def one_tick():
+            queued = []
+            ticks = {"n": 0}
+
+            async def sleep_once(_seconds):
+                ticks["n"] += 1
+                if ticks["n"] > 1:
+                    raise asyncio.CancelledError
+
+            with patch.object(asyncio, "sleep", sleep_once), \
+                 patch.object(server.findings_store, "sweep_inbox", lambda: []), \
+                 patch.object(server.engine, "get_auth",
+                              lambda: {"type": "oauth", "value": "x"}), \
+                 patch.object(server.usage_store, "budget_state",
+                              lambda _s: {"blocked": False}), \
+                 patch.object(server, "_enqueue",
+                              lambda job_id, *a, **k: queued.append(job_id) or True):
+                try:
+                    await server._scheduler()
+                except asyncio.CancelledError:
+                    # The loop never returns; the second sleep raising this
+                    # is how one tick is ended, so it is the expected exit.
+                    pass
+            return queued
+
+        with patch.dict(os.environ, {"BRAIN_ENABLE_INSIGHTS": "true"}):
+            queued = asyncio.run(one_tick())
+        self.assertTrue(queued, "with the face on, a first boot queues every card")
+        self.assertIsNone(server.AUTO_STATE["gate"])
+
+        with patch.dict(os.environ, {"BRAIN_ENABLE_INSIGHTS": "false"}):
+            queued = asyncio.run(one_tick())
+        self.assertEqual(queued, [], "with the face off nothing may be queued")
+        self.assertEqual(server.AUTO_STATE["gate"], "insights_off")
+
+    def test_status_says_whether_the_insights_face_is_on(self):
+        """The panel hides the Insights and Proposals tabs off this field."""
+        from unittest.mock import patch
+        from aiohttp.test_utils import TestClient, TestServer
+
+        async def status(value):
+            self.server.QUEUE = asyncio.Queue()  # one per loop, as above
+            app = self.server.make_app()
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                with patch.dict(os.environ, {"BRAIN_ENABLE_INSIGHTS": value}):
+                    resp = await client.get("/api/status")
+                return (await resp.json())["insights_enabled"]
+            finally:
+                await client.close()
+
+        self.assertIs(asyncio.run(status("false")), False)
+        self.assertIs(asyncio.run(status("true")), True)
+        self.assertIs(asyncio.run(status("")), True)
+
     def test_http_routes(self):
         from aiohttp.test_utils import TestClient, TestServer
 

@@ -93,6 +93,87 @@ class TestEntityTargets(ProtectedCase):
         self.assertEqual(mock_api.call_count, 2)
 
 
+class TestTargetsThisProcessCannotResolve(ProtectedCase):
+    """Two more ways to reach a protected entity without naming it.
+
+    Both used to pass: an event is not a service call and never reached
+    `_protected_target`, and a meta-call with no target at all came back
+    None from it, while `_meta_call_denied` — one function up, about the
+    deny-list — has always read that same payload as "every entity".
+    """
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_an_event_is_refused_while_anything_is_protected(self, mock_api):
+        """An event reaches the house through whichever automations listen
+        for it, and one of those may act on the lock — nothing here can
+        tell which, so it is the label/floor rule: unresolvable, refused."""
+        for event, data in (("custom_event", {"x": 1}),
+                            ("unlock_the_door", None),
+                            ("nothing_to_do_with_locks", {"room": "kitchen"})):
+            with self.subTest(event=event):
+                result = ha_mcp_server.fire_event(event, data)
+                self.assertIn("error", result)
+                self.assertIn("protected", result["error"])
+        mock_api.assert_not_called()
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_the_event_goes_through_with_nothing_protected(self, mock_api):
+        ha_mcp_server.PROTECTED_ENTITIES = []
+        mock_api.return_value = {"ok": True}
+        result = ha_mcp_server.fire_event("custom_event", {"x": 1})
+        self.assertNotIn("error", result)
+        mock_api.assert_called_once()
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_the_event_is_refused_through_the_dispatcher_too(self, mock_api):
+        """The tool table is what a Claude run reaches, not the function."""
+        fn = getattr(ha_mcp_server, ha_mcp_server.TOOL_IMPLEMENTATIONS["fire_event"])
+        result = fn("custom_event", {"x": 1})
+        self.assertIn("error", result)
+        mock_api.assert_not_called()
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_a_meta_call_with_no_target_is_every_entity(self, mock_api):
+        """`homeassistant.turn_off` with nothing named is the whole house,
+        and the whole house includes the front door."""
+        for payload in (None, {}, {"transition": 2}, {"target": {}}):
+            with self.subTest(payload=payload):
+                result = ha_mcp_server.call_service("homeassistant", "turn_off", payload)
+                self.assertIn("error", result, payload)
+                self.assertIn("protected", result["error"], payload)
+        mock_api.assert_not_called()
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_the_two_meta_checks_now_agree(self, mock_api):
+        """`_meta_call_denied` (deny-list) and `_protected_target` (protected
+        list) are asked about the same payload at the same chokepoint; a
+        payload one refuses as "all entities" the other may not wave on."""
+        ha_mcp_server.DENIED_SERVICES = ["lock.unlock"]
+        try:
+            self.assertIsNotNone(ha_mcp_server._meta_call_denied({}))
+            self.assertIsNotNone(
+                ha_mcp_server._protected_target({}, empty_is_all=True))
+        finally:
+            ha_mcp_server.DENIED_SERVICES = []
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_a_service_that_takes_no_entity_still_works(self, mock_api):
+        """The empty-target rule is the meta-services' and nobody else's:
+        notify, reload and the brain.* registry services legitimately name
+        no entity, and refusing them would take brAIn's own tooling away
+        the moment anything is protected."""
+        mock_api.return_value = {"ok": True}
+        for domain, service, data in (
+            ("notify", "mobile_app_phone", {"message": "hi"}),
+            ("automation", "reload", None),
+            ("brain", "create_area", {"name": "Loft"}),
+        ):
+            with self.subTest(service=f"{domain}.{service}"):
+                result = ha_mcp_server.call_service(domain, service, data)
+                self.assertNotIn("error", result)
+        self.assertEqual(mock_api.call_count, 3)
+
+
 class TestAreaAndDeviceTargets(ProtectedCase):
     REGISTRY = [
         {"entity_id": "lock.front_door", "device_id": "dev-lock", "area_id": None},

@@ -690,6 +690,55 @@ def test_a_failed_write_does_not_archive_the_inbox(tmp_path):
     assert inbox_lines(memory_dir) != [], "the facts were archived after a failed write"
 
 
+def test_a_pass_gives_way_to_an_edit_made_while_it_ran(tmp_path):
+    """The pass reads memory.md, spends minutes in a Claude call, and
+    writes it back. A person who saved an edit in between — the Memory
+    tab's editor, `brain memory edit` — had it replaced by a document
+    rewritten from the copy before their edit, silently.
+
+    The fake claude IS the person here: it edits the document while it is
+    "thinking", then answers. The answer must be discarded, the edit must
+    stand, and the queue must stay for the next pass.
+    """
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    original = "# Home Memory\n\n## Preferences\n- The hall light is on a timer\n"
+    (memory_dir / "memory.md").write_text(original)
+
+    fake = tmp_path / "editing_claude.sh"
+    fake.write_text(
+        "#!/bin/bash\n"
+        "cat > /dev/null\n"
+        # somebody saves an edit while the pass is in flight
+        'printf -- "- Person: the porch light stays on for guests\\n" '
+        '>> "$BRAIN_MEMORY_DIR/memory.md"\n'
+        "cat << 'OUT'\n" + FAKE_MERGED_MEMORY + "-----VOICE-----\n"
+        + FAKE_VOICE + "OUT\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+
+    result = run_consolidator(memory_dir, fake)
+    assert result.returncode == 76, result.stdout + result.stderr
+    assert "edited while this pass was running" in result.stdout
+    memory = (memory_dir / "memory.md").read_text()
+    assert memory == original + "- Person: the porch light stays on for guests\n", memory
+    assert "'the beacon'" not in memory, "the pass overwrote a concurrent edit"
+    assert inbox_lines(memory_dir) != [], "the queue was consumed by a pass that wrote nothing"
+    assert not (memory_dir / "voice.md").exists()
+    assert not list((memory_dir / "snapshots").glob("*")) if (memory_dir / "snapshots").exists() else True
+
+
+def test_an_unedited_document_is_still_written(tmp_path):
+    """The control for the guard: the same fake, minus the edit, lands."""
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    (memory_dir / "memory.md").write_text("# Home Memory\n\n## Preferences\n")
+    fake = write_fake_consolidation_claude(
+        tmp_path, FAKE_MERGED_MEMORY + "-----VOICE-----\n" + FAKE_VOICE)
+    result = run_consolidator(memory_dir, fake)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "'the beacon'" in (memory_dir / "memory.md").read_text()
+
+
 def write_busybox_flock(tmp_path: Path) -> Path:
     """A stand-in for BusyBox's flock, which is what Alpine ships.
 
@@ -1597,7 +1646,12 @@ def test_integration_answer_question_helper(tmp_path):
     assert isinstance(answers[0]["ts"], int)
 
     record = assert_contract_line(inbox_lines(memory_dir)[0])
-    assert record["fact"] == "Q: Holiday thermostat schedule? → A: Like weekends"
+    # The answer as a statement with the question as its subject — the
+    # same shape the panel's `_submit_answer` queues. A "Q: … → A: …" pair
+    # is what made memory.md a document of questions.
+    assert record["fact"] == "Holiday thermostat schedule: Like weekends"
+    assert not record["fact"].startswith("Q:")
+    assert "→ A:" not in record["fact"]
     assert record["confidence"] == "high"
 
 
@@ -1916,3 +1970,157 @@ def test_context_gen_does_not_promise_git_backups():
     assert "auto_backup" not in content
     assert "git" not in content.lower().replace("github", "")
     assert "brain undo" in content
+
+
+# ---------------------------------------------------------------------------
+# brain memory confirm/reject go through the panel, like brain findings
+# ---------------------------------------------------------------------------
+
+
+class _PanelStub:
+    """Just enough of the panel: GET /api/findings lists the open guesses,
+    POST /api/hypothesis/{ts}/{verb} records what arrived."""
+
+    def __init__(self, hypotheses: list[dict]):
+        import http.server
+        import threading
+
+        stub = self
+        stub.posts: list[tuple[str, dict]] = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):  # quiet
+                pass
+
+            def do_GET(self):
+                body = json.dumps({"findings": [], "hypotheses": hypotheses,
+                                   "open": len(hypotheses)}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                payload = json.loads(self.rfile.read(n) or b"{}")
+                stub.posts.append((self.path, payload))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+        self.httpd = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+def _closed_port_url() -> str:
+    import socket
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    return f"http://127.0.0.1:{port}"
+
+
+def run_memory_cli(memory_dir: Path, panel_url: str, *args: str):
+    env = dict(os.environ, BRAIN_MEMORY_DIR=str(memory_dir),
+               BRAIN_PANEL_URL=panel_url)
+    return subprocess.run(["bash", str(HA_MEMORY), *args], env=env,
+                          capture_output=True, text=True, check=False)
+
+
+GUESS = {"ts": 1_700_000_123, "text": "The freezer in the garage cycles all night",
+         "topic": "", "status": "open"}
+
+
+def _seed_hypotheses(memory_dir: Path) -> Path:
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    path = memory_dir / "hypotheses.jsonl"
+    path.write_text(json.dumps(GUESS) + "\n")
+    return path
+
+
+def test_reject_goes_through_the_panel_and_carries_the_reason(tmp_path):
+    """The panel's /reject is what records the dead end in the knowledge
+    ledger the analyst reads back; a reject that only flipped the JSONL
+    retired the guess here and left the analyst free to make it again."""
+    memory_dir = tmp_path / "memory"
+    path = _seed_hypotheses(memory_dir)
+    stub = _PanelStub([GUESS])
+    try:
+        result = run_memory_cli(memory_dir, stub.url, "reject", "freezer",
+                                "it is a beer fridge")
+    finally:
+        stub.close()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert stub.posts == [(f"/api/hypothesis/{GUESS['ts']}/reject",
+                           {"note": "it is a beer fridge"})]
+    assert "Rejected" in result.stdout
+    # The panel settled it; the CLI did not ALSO flip the file — one writer.
+    assert json.loads(path.read_text())["status"] == "open"
+    assert "not answering" not in result.stderr
+
+
+def test_confirm_goes_through_the_panel(tmp_path):
+    memory_dir = tmp_path / "memory"
+    _seed_hypotheses(memory_dir)
+    stub = _PanelStub([GUESS])
+    try:
+        result = run_memory_cli(memory_dir, stub.url, "confirm",
+                                GUESS["text"])
+    finally:
+        stub.close()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert stub.posts == [(f"/api/hypothesis/{GUESS['ts']}/confirm", {"note": ""})]
+    assert "Confirmed" in result.stdout
+    # The panel queues the memory line; a second one from here would be
+    # the same fact filed twice.
+    assert inbox_lines(memory_dir) == []
+
+
+def test_the_panel_is_the_authority_on_what_is_open(tmp_path):
+    """A guess only the local file knows about is one the panel has
+    already settled: with the panel answering, its list is the list."""
+    memory_dir = tmp_path / "memory"
+    path = _seed_hypotheses(memory_dir)
+    stub = _PanelStub([])
+    try:
+        result = run_memory_cli(memory_dir, stub.url, "reject", "freezer")
+    finally:
+        stub.close()
+    assert result.returncode != 0
+    assert "No open guess matches" in result.stderr
+    assert stub.posts == []
+    assert json.loads(path.read_text())["status"] == "open"
+
+
+def test_a_panel_that_is_down_falls_back_to_the_file_and_says_so(tmp_path):
+    memory_dir = tmp_path / "memory"
+    path = _seed_hypotheses(memory_dir)
+    result = run_memory_cli(memory_dir, _closed_port_url(), "reject", "freezer",
+                            "it is a beer fridge")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(path.read_text())["status"] == "rejected"
+    assert "not answering" in result.stderr
+    assert "hypotheses.jsonl only" in result.stderr
+    # offline, the reason still reaches the queue the panel would have used
+    queued = [json.loads(l) for l in inbox_lines(memory_dir)]
+    assert len(queued) == 1
+    assert queued[0]["source"] == "correction"
+    assert "beer fridge" in queued[0]["fact"]
+
+
+def test_a_panel_that_is_down_still_confirms_locally(tmp_path):
+    memory_dir = tmp_path / "memory"
+    path = _seed_hypotheses(memory_dir)
+    result = run_memory_cli(memory_dir, _closed_port_url(), "confirm", "freezer")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(path.read_text())["status"] == "confirmed"
+    assert "not answering" in result.stderr
+    record = json.loads(inbox_lines(memory_dir)[0])
+    assert record["fact"] == GUESS["text"]
+

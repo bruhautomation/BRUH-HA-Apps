@@ -13,6 +13,14 @@ Behavior switches via env:
   FAKE_MODE        ok (default) | hang (never answer) | crash (die after read)
                    | autherror (reply with the CLI's OAuth-expired error, the
                      way the real CLI does when a token refresh fails)
+                   | max_turns (one-shot: end every call on the CLI's own
+                     turn cap — the `error_max_turns` envelope under
+                     --output-format json, "Error: Reached max turns" on
+                     stderr with exit 1 otherwise)
+                   | max_turns_then_land (one-shot: as max_turns for a call
+                     that is not a --resume, and a normal answer prefixed
+                     "LANDED: " for one that is — the shape of a run that
+                     tripped the guard and was landed on its own session)
 """
 
 import json
@@ -88,8 +96,38 @@ else:
     data = sys.stdin.read()
     if mode == "hang":
         time.sleep(60)
+    json_out = "--output-format" in argv and \
+        argv[argv.index("--output-format") + 1] == "json"
+    # The session id the real CLI would report: a --resume names it, a
+    # --session-id mints it, and otherwise the CLI picks its own.
+    sid = "22222222-2222-2222-2222-222222222222"
+    for flag in ("--resume", "--session-id"):
+        if flag in argv:
+            sid = argv[argv.index(flag) + 1]
+    tripped = mode == "max_turns" or (
+        mode == "max_turns_then_land" and "--resume" not in argv)
+    if tripped:
+        if json_out:
+            print(json.dumps({
+                "type": "result", "subtype": "error_max_turns",
+                "is_error": True, "result": "", "session_id": sid,
+                "num_turns": 5, "duration_ms": 50,
+            }))
+        else:
+            print("Error: Reached max turns (5)", file=sys.stderr)
+        sys.exit(1)
     if mode == "autherror":
         # -p mode prints the auth error to stdout as the whole "response"
         print(AUTH_ERROR)
+    elif mode == "max_turns_then_land":
+        text = os.environ.get("FAKE_LANDING_TEXT") or f"LANDED: {data}"
+        if json_out:
+            print(json.dumps({
+                "type": "result", "subtype": "success", "is_error": False,
+                "result": text, "session_id": sid, "num_turns": 1,
+                "duration_ms": 30,
+            }))
+        else:
+            print(text)
     else:
         print(f"ONESHOT: {data}")

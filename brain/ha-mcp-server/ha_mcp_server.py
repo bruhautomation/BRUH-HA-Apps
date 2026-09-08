@@ -260,8 +260,18 @@ def _protected_scopes():
     return areas, devices, ok
 
 
-def _protected_target(payload):
-    """Why a service call's targets touch a protected entity, or None."""
+def _protected_target(payload, empty_is_all=False):
+    """Why a service call's targets touch a protected entity, or None.
+
+    ``empty_is_all`` is the meta-service rule: a ``homeassistant.turn_off``
+    that names no entity, area or device addresses every entity Core has,
+    which certainly includes the protected ones — `_meta_call_denied`
+    has read it that way since it was written, and this did not, so the
+    two chokepoint checks disagreed about the same payload. It is opt-in
+    because most services legitimately take no entity target at all
+    (notify, reload, the brain.* registry services), and refusing those
+    while a protected list exists would take the add-on's own tooling away.
+    """
     if not PROTECTED_ENTITIES:
         return None
     payload = payload if isinstance(payload, dict) else {}
@@ -286,6 +296,8 @@ def _protected_target(payload):
             if scope.get(key):
                 return ("it targets a label or floor, whose member entities "
                         "cannot be checked against the protected list")
+    if empty_is_all and not (entity_ids or area_ids or device_ids):
+        return "it names no target, which addresses all entities, including protected ones"
     for eid in entity_ids:
         if eid.lower() == "all":
             return "it addresses all entities, including protected ones"
@@ -465,7 +477,10 @@ def call_service(domain, service, data=None, return_response=False):
                 "if that is also refused, tell the user the action is "
                 "restricted and do not retry."
             )}
-    protected = _protected_target(data)
+    protected = _protected_target(
+        data,
+        empty_is_all=(domain.lower() == "homeassistant"
+                      and service.lower() in _META_SERVICES))
     if protected:
         return {"error": (
             f"{domain}.{service} is refused because {protected}. The "
@@ -1762,6 +1777,21 @@ def fire_event(event_type, event_data=None):
             "restrictions cannot be enforced on events, which can trigger "
             "any automation. Tell the user this action is restricted; "
             "do not retry."
+        )}
+    # The protected list gets the same answer for the same reason. A
+    # protected entity is refused at call_service for every channel, and an
+    # event reaches the house through whatever automations listen for it —
+    # one of which may act on exactly that entity — with nothing here able
+    # to see which. That is the label/floor rule in `_protected_target`:
+    # a target this process cannot resolve is refused while the list is
+    # non-empty, not waved through because it could not be checked.
+    if PROTECTED_ENTITIES:
+        return {"error": (
+            "fire_event is refused while brAIn has protected entities: an "
+            "event can reach a protected entity through any automation "
+            "that listens for it, and which automations do cannot be "
+            "checked from here. Tell the user; do not retry or look for "
+            "another route."
         )}
     result = ha_api_request(
         f"/api/events/{event_type}",

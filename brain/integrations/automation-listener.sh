@@ -47,13 +47,13 @@ TASKS_DIR="$SHARED_DIR/tasks"
 RESULTS_DIR="$SHARED_DIR/task_results"
 LOG_DIR="$SHARED_DIR/logs"
 
-# Automation tasks may need more turns than conversation requests (e.g.
-# multi-step config edits), so allow a higher limit than the assist listener.
-# Configurable via the add-on's automation_max_turns option; the fallback
-# matches that option's default in config.yaml on purpose. A fallback that
-# disagrees with the shipped default is a second answer to one question, and
-# the one that wins is the one nobody configured.
-MAX_TURNS="${BRAIN_AUTOMATION_MAX_TURNS:-30}"
+# The runaway guard on one task — not a budget, and not an add-on option:
+# the task's own timeout is what bounds it, and a multi-step config edit
+# truncated mid-way leaves the house half-changed, which is worse than a
+# slow one. BRAIN_AUTOMATION_MAX_TURNS is an override for somebody who sets
+# it by hand. A run that trips it is landed (brain-landing.sh) rather than
+# reported as a failure.
+MAX_TURNS="${BRAIN_AUTOMATION_MAX_TURNS:-200}"
 
 # Default process-level timeout for claude -p commands (seconds), used when a
 # task doesn't carry its own timeout. The integration's task default (300s)
@@ -72,6 +72,13 @@ mkdir -p "$TASKS_DIR" "$RESULTS_DIR" "$LOG_DIR"
 if [ -r /opt/scripts/brain-run-source.sh ]; then
     # shellcheck disable=SC1091
     source /opt/scripts/brain-run-source.sh
+fi
+# A task that ends on the turn cap is landed on its own session rather than
+# answered with an error (see the library for why). Optional, like the
+# ledger above: without it a tripped cap is what it was before.
+if [ -r /opt/scripts/brain-landing.sh ]; then
+    # shellcheck disable=SC1091
+    source /opt/scripts/brain-landing.sh
 fi
 
 # Resolve the claude binary (see assist-listener.sh for details).
@@ -328,6 +335,27 @@ process_task() {
     # lines). See extract_claude_result().
     # shellcheck disable=SC2086
     (cd /config && printf '%s' "$prompt" | timeout "$claude_limit" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} > "$output_file" 2>"$stderr_file") || true
+
+    # A task that ended on the turn cap is landed, not failed: resumed on
+    # the session the envelope names, with two turns and a prompt to answer
+    # with what it has. The landing's envelope replaces the run's.
+    if command -v brain_hit_turn_cap > /dev/null 2>&1 \
+        && brain_hit_turn_cap "$(cat "$output_file" 2>/dev/null)" "$stderr_file"; then
+        local land_sid land_left
+        land_sid=$(brain_session_from_output "$(cat "$output_file" 2>/dev/null)")
+        land_left=$(( claude_limit - ( $(date +%s) - start_time ) ))
+        bashio::log.info "Task [$task_id] ran out of room — landing it (${land_left}s left)"
+        # Into a scratch file, moved over only on success: a landing refused
+        # for want of time or a session must not take the run's own
+        # envelope (and the session id it names) with it.
+        # shellcheck disable=SC2086
+        if (cd /config && brain_land "$land_sid" "$land_left" "$stderr_file" -- \
+            ${CLAUDE_BIN} -p --output-format json ${model_flag} > "${output_file}.land"); then
+            mv -f "${output_file}.land" "$output_file"
+        else
+            rm -f "${output_file}.land"
+        fi
+    fi
 
     local end_time duration
     end_time=$(date +%s)

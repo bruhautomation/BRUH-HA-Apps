@@ -8,6 +8,7 @@ know which one it is looking at when it does not.
 """
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import os
 import sys
@@ -293,3 +294,61 @@ class TestTheBedtimeCheck(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestARefusedFetchLeavesTheStore(unittest.TestCase):
+    """Core not answering the history call is not a house with no doors.
+
+    The nightly build wrote whatever `fetch_history` returned, and it
+    returned `{}` for a failed batch exactly as for a door with no history
+    — so a Core busy at 3am replaced a month of measured closures with an
+    empty store stamped tonight, and `evening.left_open` went quiet for a
+    day with nothing saying why.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, "closures.json")
+        self.previous = {"built_at": int(NOW - 86400), "tz": "UTC", "days": 28,
+                         "asked": 1, "entities": {"binary_sensor.back": {
+                             "buckets": {}, "name": "Back door"}}}
+        closures.save(self.previous, self.path)
+        self.before = open(self.path, "rb").read()
+        self.states = {"binary_sensor.back": {
+            "state": "off", "attributes": {"device_class": "door",
+                                           "friendly_name": "Back door"}}}
+
+    def _build(self, answer):
+        import ha_data
+
+        async def rest(session, path, timeout=30, params=None):
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
+        real = ha_data._rest_get
+        ha_data._rest_get = rest
+        try:
+            return asyncio.run(closures.build(None, self.states, NOW, self.path))
+        finally:
+            ha_data._rest_get = real
+
+    def test_a_failed_fetch_writes_nothing_and_says_so(self):
+        got = self._build(RuntimeError("503 from Core"))
+        self.assertEqual(open(self.path, "rb").read(), self.before,
+                         "the store was rewritten over a failed fetch")
+        self.assertEqual(got["built_at"], self.previous["built_at"])
+        self.assertIn("binary_sensor.back", got["entities"])
+        self.assertIn("did not answer", got["error"])
+
+    def test_an_empty_history_is_a_measurement_and_is_written(self):
+        got = self._build([])
+        self.assertNotIn("error", got)
+        self.assertEqual(got["built_at"], int(NOW))
+        self.assertEqual(closures.load(self.path)["built_at"], int(NOW))
+
+    def test_a_house_with_no_closures_still_writes(self):
+        """A fresh install with no doors must not keep a stale store."""
+        got = asyncio.run(closures.build(None, {}, NOW, self.path))
+        self.assertEqual(got["entities"], {})
+        self.assertEqual(closures.load(self.path)["built_at"], int(NOW))

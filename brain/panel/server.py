@@ -172,6 +172,17 @@ HISTORY_DAYS = int(os.environ.get("BRAIN_HISTORY_DAYS", "7") or 7)
 # Dated per-run copies of each category insight (0 for either disables history)
 HISTORY_KEEP_RUNS = int(os.environ.get("BRAIN_HISTORY_KEEP_RUNS", "40") or 40)
 HISTORY_KEEP_DAYS = int(os.environ.get("BRAIN_HISTORY_KEEP_DAYS", "30") or 30)
+
+
+def insights_enabled() -> bool:
+    """The `enable_insights` option, as run.sh exports it.
+
+    Read at call time the way `terminal_proxy._enabled` reads its twin,
+    so a test can drive the scheduler either way without reloading the
+    module. run.sh exported this for two releases and nothing read it:
+    the option switched off a face in the docs and nowhere else.
+    """
+    return os.environ.get("BRAIN_ENABLE_INSIGHTS", "true").lower() != "false"
 # Candidate facts wait here for the consolidator. Same directory the
 # terminal, voice reflection, and study sessions write to — one queue.
 MEMORY_INBOX_DIR = Path(os.environ.get(
@@ -423,12 +434,11 @@ MAX_CUSTOM_KEPT = 12
 # count comes back in the result envelope and is what everything downstream
 # reports — so anywhere this is shown it is prefixed with "~".
 CHARS_PER_TOKEN = 4
-# Turns a searching run may take. Generous rather than tight, for the reason
-# the docs give about every other cap here: a run that hits its limit stops
-# mid-thought and produces nothing, so you pay for every token and get no
-# card — which makes a tight cap the most expensive setting there is. Twelve
-# is room for a handful of searches, a couple of history pulls, and the write.
-ANALYST_MAX_TURNS = 12
+# The runaway guard on a searching run — not a budget. The timeout is what
+# bounds a card; this only ends a run that has stopped converging, and a run
+# that trips it is landed (engine._run_cli) rather than thrown away, so the
+# number is large and nobody is asked about it.
+ANALYST_MAX_TURNS = 40
 
 logging.basicConfig(
     level=getattr(logging, os.environ.get("BRAIN_LOG_LEVEL", "info").upper(), logging.INFO),
@@ -2258,6 +2268,12 @@ async def _scheduler() -> None:
                 await _announce_findings(swept)
         except Exception as exc:  # never let this kill the loop
             log.debug("findings sweep failed: %s", exc)
+        # The face is off: nothing is queued, ever. Checked before the
+        # auth gate on purpose — a switched-off face is the answer to "why
+        # are my cards not updating" whatever the sign-in says.
+        if not insights_enabled():
+            _set_gate("insights_off")
+            continue
         if not engine.get_auth():
             _set_gate("no_auth")
             continue
@@ -2490,6 +2506,8 @@ async def h_status(request: web.Request) -> web.Response:
         # Why auto-refresh is idle, when it is — the same gates the chips
         # and the pill's dot report, readable as one field.
         "auto": dict(AUTO_STATE),
+        # `enable_insights` off hides the Insights and Proposals tabs.
+        "insights_enabled": insights_enabled(),
         "categories": [_category_status(c, insights) for c in all_categories()],
         # The Findings tab's badge: everything still waiting on a decision —
         # problems to settle and guesses to confirm, which are one list now.
@@ -3765,18 +3783,48 @@ BASELINE_STATE: dict = {"running": False, "last": None}
 
 
 async def build_baselines(reason: str = "schedule") -> dict:
-    """Measure what is normal in this house, and write the store.
+    """Measure what is normal in this house, and write the stores.
 
     Separate from the checks pass on purpose: this reads hourly
     statistics for a month over every numeric sensor, which is minutes of
     recorder work, and the answer changes over weeks. The checks pass
     only ever *reads* what this leaves.
+
+    Four builders, four try blocks. They used to share one, so a thermal
+    fit that raised threw away the baselines, closures and appliances
+    measured a minute before it — three good stores unwritten over one
+    bad one. Each is now its own attempt, the summary says which measured
+    and which did not (`builders`), and a builder that refused to
+    overwrite its store (`error` in its payload, see `baselines.refused`)
+    is reported as a failure of that builder and nothing else.
     """
     if BASELINE_STATE["running"]:
         return {"error": "a baseline pass is already running",
                 **(BASELINE_STATE["last"] or {})}
     BASELINE_STATE["running"] = True
     started = time.time()
+    builders: dict[str, dict] = {}
+    payload: dict = {}
+    shut: dict = {}
+    machines: dict = {}
+    rooms: dict = {}
+
+    def _done(name: str, result: dict) -> dict:
+        err = str(result.get("error") or "")[:300]
+        builders[name] = {"ok": not err, "error": err}
+        if err:
+            log.warning("baseline pass: %s did not measure: %s", name, err)
+            journal.record("baselines", "error", error=err,
+                           extra={"builder": name})
+        return result
+
+    def _failed(name: str, exc: BaseException) -> None:
+        err = str(exc)[:300]
+        builders[name] = {"ok": False, "error": err}
+        log.warning("baseline pass: %s failed: %s", name, exc)
+        journal.record("baselines", "error", error=err,
+                       extra={"builder": name})
+
     try:
         import aiohttp
 
@@ -3785,30 +3833,54 @@ async def build_baselines(reason: str = "schedule") -> dict:
             states = await ha_data._rest_get(session, "/states", timeout=60)
             by_id = {s["entity_id"]: s for s in (states or [])
                      if isinstance(s, dict) and s.get("entity_id")}
-            payload = await baselines.build(session, by_id, started)
+            try:
+                payload = _done("baselines",
+                                await baselines.build(session, by_id, started))
+            except Exception as exc:  # noqa: BLE001 — one builder, not the pass
+                _failed("baselines", exc)
             # The same pass, because it is the same claim about the same
             # house over the same month — and it has already paid for the
             # one /states fetch both halves need.
-            shut = await closures.build(session, by_id, started)
+            try:
+                shut = _done("closures",
+                             await closures.build(session, by_id, started))
+            except Exception as exc:  # noqa: BLE001
+                _failed("closures", exc)
             # And the third: one /states fetch, three measurements of the
             # same house over the same nights. This one reads FIVE-MINUTE
             # statistics rather than hourly ones, because a dishwasher's
             # dry phase is twenty minutes and an hour cannot see it —
             # which is more rows per entity than the baselines read, and
             # is bounded by asking only power sensors and only ten days.
-            machines = await appliances.build(session, by_id, started)
+            try:
+                machines = _done("appliances",
+                                 await appliances.build(session, by_id, started))
+            except Exception as exc:  # noqa: BLE001
+                _failed("appliances", exc)
             # And the fourth. This one needs the registries as well as the
             # states — a room has to be nameable before it is worth
             # measuring, and "which thermometer is outdoors" is largely
-            # "the one in no area at all".
-            areas, devices, ents = await ha_data._ws_commands(session, [
-                {"type": "config/area_registry/list"},
-                {"type": "config/device_registry/list"},
-                {"type": "config/entity_registry/list"}])
-            rooms = await thermal.build(
-                session, by_id,
-                {"areas": areas or [], "devices": devices or [],
-                 "entities": ents or []}, started)
+            # "the one in no area at all". A registry that did not answer
+            # is a skipped builder, never `areas or []`: with no areas
+            # every room is unnameable and the store would be written as
+            # a house with no rooms in it.
+            try:
+                areas, devices, ents = await ha_data._ws_commands(session, [
+                    {"type": "config/area_registry/list"},
+                    {"type": "config/device_registry/list"},
+                    {"type": "config/entity_registry/list"}])
+                if ents is None or areas is None:
+                    raise RuntimeError(
+                        "the registries did not answer — the thermal store "
+                        "was left as it was")
+                rooms = _done("thermal", await thermal.build(
+                    session, by_id,
+                    {"areas": areas, "devices": devices or [],
+                     "entities": ents}, started))
+            except Exception as exc:  # noqa: BLE001
+                _failed("thermal", exc)
+        errors = [f"{name}: {b['error']}" for name, b in builders.items()
+                  if not b["ok"]]
         summary = {"reason": reason, "started_at": int(started),
                    "finished_at": int(time.time()),
                    "duration_s": round(time.time() - started, 1),
@@ -3817,17 +3889,20 @@ async def build_baselines(reason: str = "schedule") -> dict:
                    "closures": len(shut.get("entities") or {}),
                    "appliances": len(machines.get("entities") or {}),
                    "rooms": len(rooms.get("rooms") or {}),
-                   "tz": payload.get("tz", ""), "error": ""}
-        journal.record("baselines", "ok", duration_s=summary["duration_s"],
-                       extra={"measured": summary["measured"],
-                              "asked": summary["asked"]})
+                   "tz": payload.get("tz", ""),
+                   "builders": builders,
+                   "error": "; ".join(errors)[:300]}
+        if builders.get("baselines", {}).get("ok"):
+            journal.record("baselines", "ok", duration_s=summary["duration_s"],
+                           extra={"measured": summary["measured"],
+                                  "asked": summary["asked"]})
     except Exception as exc:  # noqa: BLE001 — a bad pass must not take the loop down
         log.warning("baseline pass failed: %s", exc)
         journal.record("baselines", "error", error=str(exc))
         summary = {"reason": reason, "started_at": int(started),
                    "finished_at": int(time.time()), "measured": 0, "asked": 0,
                    "closures": 0, "appliances": 0, "rooms": 0, "tz": "",
-                   "error": str(exc)[:300]}
+                   "builders": builders, "error": str(exc)[:300]}
     finally:
         BASELINE_STATE["running"] = False
     BASELINE_STATE["last"] = summary
@@ -5666,7 +5741,7 @@ async def h_onboarding_recommend(request: web.Request) -> web.Response:
     # brAIn sent to Claude about the house" should include it.
     result = await asyncio.to_thread(
         engine.run_claude, prompt, onboarding.RECOMMEND_SYSTEM, eff_model(),
-        TIMEOUT_S, 4, "card")
+        TIMEOUT_S, 8, "card")
     _record_usage(result, "onboarding")
     if not result["ok"]:
         raise web.HTTPBadGateway(text=result.get("error") or "recommendation failed")

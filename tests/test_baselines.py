@@ -18,6 +18,7 @@ confidently, invisibly wrong:
 Each is asserted against the failure, not just the fix.
 """
 
+import asyncio
 import datetime as dt
 import json
 import math
@@ -652,3 +653,228 @@ class TestOneLeastSquaresFit(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestARefusedFetchLeavesTheStore(unittest.TestCase):
+    """A recorder that would not answer is not a house with nothing normal.
+
+    `fetch_hourly` answered `{}` for a refused command and for a house
+    with no statistics alike, and `build` wrote the result either way —
+    stamped tonight — so one busy recorder replaced a month of measured
+    bands with an empty store, `base.unusual` went silent, and `base.stale`
+    could not say so because the stamp was fresh.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = os.path.join(self.dir, "baselines.json")
+        built = baselines.build_buckets(hourly([20.0, 21.0, 19.0] * 60),
+                                        dt.timezone.utc)
+        self.previous = {"built_at": 1_700_000_000, "tz": "UTC", "days": 28,
+                         "asked": 1, "entities": {"sensor.hall": built}}
+        baselines.save(self.previous, self.path)
+        self.before = Path(self.path).read_bytes()
+        self.states = {"sensor.hall": {
+            "state": "20.5",
+            "attributes": {"state_class": "measurement",
+                           "unit_of_measurement": "°C"}}}
+
+    def _build(self, answer):
+        import ha_data
+
+        async def ws(session, commands):
+            return [answer]
+        real = ha_data._ws_commands
+        ha_data._ws_commands = ws
+        try:
+            return asyncio.run(baselines.build(
+                None, self.states, 1_700_100_000.0, self.path))
+        finally:
+            ha_data._ws_commands = real
+
+    def test_a_refusal_writes_nothing_and_says_so(self):
+        got = self._build(None)
+        self.assertEqual(Path(self.path).read_bytes(), self.before,
+                         "the store was rewritten over a refused fetch")
+        self.assertEqual(got["built_at"], self.previous["built_at"])
+        self.assertIn("sensor.hall", got["entities"])
+        self.assertIn("did not answer", got["error"])
+        self.assertEqual(baselines.load(self.path)["entities"].keys(),
+                         self.previous["entities"].keys())
+
+    def test_an_empty_answer_is_a_measurement_and_is_written(self):
+        got = self._build({})
+        self.assertNotIn("error", got)
+        self.assertEqual(got["built_at"], 1_700_100_000)
+        self.assertEqual(baselines.load(self.path)["built_at"], 1_700_100_000)
+
+    def test_a_house_with_no_candidates_still_writes(self):
+        """A fresh install with no sensors must not keep a stale store."""
+        got = asyncio.run(baselines.build(None, {}, 1_700_100_000.0, self.path))
+        self.assertEqual(got["entities"], {})
+        self.assertEqual(baselines.load(self.path)["built_at"], 1_700_100_000)
+
+    def test_the_fetch_says_which_it_was(self):
+        import ha_data
+
+        async def refused(session, commands):
+            return [None]
+        real = ha_data._ws_commands
+        ha_data._ws_commands = refused
+        try:
+            self.assertIsNone(asyncio.run(
+                baselines.fetch_hourly(None, ["sensor.hall"], 1_700_100_000.0)))
+            self.assertEqual(asyncio.run(
+                baselines.fetch_hourly(None, [], 1_700_100_000.0)), {})
+        finally:
+            ha_data._ws_commands = real
+
+
+class TestTheNightlyPassIsFourAttempts(unittest.IsolatedAsyncioTestCase):
+    """`server.build_baselines` ran the four builders in one try block, so
+    a thermal fit that raised threw away the three stores measured before
+    it — and a registry that did not answer was passed on as `areas or []`,
+    which is a house with no areas and therefore no nameable rooms,
+    written over the thermal store as a measurement."""
+
+    async def asyncSetUp(self):
+        import importlib
+        import os as _os
+        # An earlier class puts `panel/checks` at the front of sys.path, and
+        # `checks/thermal.py` shares its name with `panel/thermal.py`: the
+        # panel has to be first again or `import thermal` below is the
+        # check and not the store it reads.
+        sys.path.insert(0, str(PANEL_DIR))
+        self.tmp = tempfile.TemporaryDirectory()
+        base = self.tmp.name
+        (Path(base) / "config").mkdir()
+        self._env = {}
+        for key, value in {
+            "BRAIN_CONFIG_DIR": os.path.join(base, "config"),
+            "BRAIN_FINDINGS_FILE": os.path.join(base, "findings.json"),
+            "BRAIN_FINDINGS_SETTLED": os.path.join(base, "settled.json"),
+            "BRAIN_FINDINGS_STATE": os.path.join(base, "state.json"),
+            "BRAIN_FINDINGS_INBOX": os.path.join(base, "finbox"),
+            "BRAIN_JOURNAL_FILE": os.path.join(base, "journal.jsonl"),
+            "BRAIN_MEMORY_DIR": os.path.join(base, "memory"),
+            "BRAIN_MEMORY_INBOX": os.path.join(base, "memory", "inbox"),
+            "BRAIN_DIR": os.path.join(base, "insights"),
+            "BRAIN_SETTINGS_FILE": os.path.join(base, "settings.json"),
+            "BRAIN_KNOWLEDGE_FILE": os.path.join(base, "knowledge.json"),
+            "BRAIN_DIAGNOSTICS_FILE": os.path.join(base, "diag.json"),
+            "BRAIN_PROPOSALS_FILE": os.path.join(base, "proposals.json"),
+            "BRAIN_EDIT_JOURNAL": os.path.join(base, "edits"),
+        }.items():
+            self._env[key] = _os.environ.get(key)
+            _os.environ[key] = value
+        import server
+        self.server = importlib.reload(server)
+        import journal
+        journal.JOURNAL_FILE = _os.environ["BRAIN_JOURNAL_FILE"]
+        self.journal = journal
+        import appliances
+        import closures
+        import ha_data
+        import thermal
+        self.mods = (baselines, closures, appliances, thermal)
+        self._real = ([m.build for m in self.mods],
+                      ha_data._rest_get, ha_data._ws_commands)
+        self.ha_data = ha_data
+        self.calls: list[str] = []
+
+        async def states(session, path, timeout=30, params=None):
+            return [{"entity_id": "sensor.hall", "state": "20",
+                     "attributes": {"state_class": "measurement"}}]
+        ha_data._rest_get = states
+        self.registries = [[{"area_id": "hall", "name": "Hall"}], [], []]
+
+        async def ws(session, commands):
+            return list(self.registries)
+        ha_data._ws_commands = ws
+        self.server.BASELINE_STATE["last"] = None
+        self.server.BASELINE_STATE["running"] = False
+
+    async def asyncTearDown(self):
+        import os as _os
+        for m, real in zip(self.mods, self._real[0]):
+            m.build = real
+        self.ha_data._rest_get, self.ha_data._ws_commands = self._real[1:]
+        for key, value in self._env.items():
+            if value is None:
+                _os.environ.pop(key, None)
+            else:
+                _os.environ[key] = value
+        self.tmp.cleanup()
+
+    def _fake(self, name: str, result=None, raises=None):
+        async def build(session, states, *args, **kwargs):
+            self.calls.append(name)
+            if raises:
+                raise raises
+            return result
+        return build
+
+    def _journal(self):
+        path = self.journal.JOURNAL_FILE
+        if not os.path.exists(path):
+            return []
+        return [json.loads(l) for l in Path(path).read_text().splitlines() if l]
+
+    async def test_one_builder_raising_does_not_stop_the_others(self):
+        baselines.build = self._fake("baselines", {"entities": {"a": {}}, "asked": 1, "tz": "UTC"})
+        self.mods[1].build = self._fake("closures", raises=RuntimeError("boom"))
+        self.mods[2].build = self._fake("appliances", {"entities": {"p": {}}})
+        self.mods[3].build = self._fake("thermal", {"rooms": {"r": {}}})
+        summary = await self.server.build_baselines("test")
+        self.assertEqual(self.calls, ["baselines", "closures", "appliances", "thermal"])
+        self.assertEqual((summary["measured"], summary["appliances"], summary["rooms"]),
+                         (1, 1, 1))
+        self.assertEqual(summary["closures"], 0)
+        self.assertTrue(summary["builders"]["baselines"]["ok"])
+        self.assertFalse(summary["builders"]["closures"]["ok"])
+        self.assertIn("boom", summary["builders"]["closures"]["error"])
+        self.assertIn("closures: boom", summary["error"])
+        errors = [r for r in self._journal() if r.get("outcome") == "error"]
+        self.assertEqual([r.get("extra", {}).get("builder") for r in errors],
+                         ["closures"])
+
+    async def test_a_builder_that_refused_to_write_is_reported_as_such(self):
+        """`baselines.refused` hands back the old store with `error`
+        beside it — the pass has to read that as this builder not
+        measuring, not as a measurement of whatever the old store held."""
+        baselines.build = self._fake("baselines", {"entities": {"a": {}}, "asked": 1,
+                                                   "tz": "UTC",
+                                                   "error": "the recorder did not answer"})
+        self.mods[1].build = self._fake("closures", {"entities": {}})
+        self.mods[2].build = self._fake("appliances", {"entities": {}})
+        self.mods[3].build = self._fake("thermal", {"rooms": {}})
+        summary = await self.server.build_baselines("test")
+        self.assertFalse(summary["builders"]["baselines"]["ok"])
+        self.assertIn("recorder", summary["error"])
+        outcomes = [r.get("outcome") for r in self._journal()]
+        self.assertEqual(outcomes, ["error"])
+
+    async def test_a_registry_that_did_not_answer_skips_thermal(self):
+        """Never `areas or []`: with no areas every room is unnameable and
+        the store would be written as a house with no rooms."""
+        baselines.build = self._fake("baselines", {"entities": {}, "asked": 0})
+        self.mods[1].build = self._fake("closures", {"entities": {}})
+        self.mods[2].build = self._fake("appliances", {"entities": {}})
+        self.mods[3].build = self._fake("thermal", {"rooms": {"r": {}}})
+        self.registries = [None, None, None]
+        summary = await self.server.build_baselines("test")
+        self.assertNotIn("thermal", self.calls)
+        self.assertFalse(summary["builders"]["thermal"]["ok"])
+        self.assertIn("registries did not answer", summary["builders"]["thermal"]["error"])
+        for name in ("baselines", "closures", "appliances"):
+            self.assertTrue(summary["builders"][name]["ok"], name)
+
+    async def test_a_clean_pass_records_one_ok_line(self):
+        baselines.build = self._fake("baselines", {"entities": {"a": {}}, "asked": 1})
+        self.mods[1].build = self._fake("closures", {"entities": {}})
+        self.mods[2].build = self._fake("appliances", {"entities": {}})
+        self.mods[3].build = self._fake("thermal", {"rooms": {}})
+        summary = await self.server.build_baselines("test")
+        self.assertEqual(summary["error"], "")
+        self.assertTrue(all(b["ok"] for b in summary["builders"].values()))
+        self.assertEqual([r.get("outcome") for r in self._journal()], ["ok"])

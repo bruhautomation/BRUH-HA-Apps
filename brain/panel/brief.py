@@ -36,11 +36,12 @@ MAX_WORDS = 80
 # The floor under it too: a model that answers in four words has not
 # answered, and sending that is worse than the silence it replaced.
 MIN_CHARS = 40
-# One turn, and a short one. The reasons are already gathered; what is
-# left is a paragraph, and a brief that takes eight minutes to write has
-# missed the morning it was for.
+# A short run. The reasons are already gathered; what is left is a
+# paragraph, and a brief that takes eight minutes to write has missed the
+# morning it was for — so the timeout is the budget, and the turn cap is
+# only the runaway guard behind it.
 TIMEOUT_S = 180
-MAX_TURNS = 8
+MAX_TURNS = 24
 
 SYSTEM = """You write one short morning message about somebody's home.
 

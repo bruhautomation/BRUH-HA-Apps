@@ -331,11 +331,20 @@ def age_days(payload: dict, now: float | None = None) -> float | None:
 
 
 async def fetch(session, ids: list[str], start: dt.datetime,
-                end: dt.datetime | None = None) -> dict:
-    """Five-minute means per entity, or {} when nothing answered."""
+                end: dt.datetime | None = None) -> dict | None:
+    """Five-minute means per entity.
+
+    `{}` is the recorder holding nothing for these ids; None is the
+    recorder refusing every batch (`_ws_commands` answers None for a
+    command Core rejected). The nightly `build` and the checks snapshot
+    both branch on the difference.
+    """
     import ha_data  # noqa: PLC0415
 
+    if not ids:
+        return {}
     out: dict[str, list] = {}
+    answered = 0
     command: dict = {
         "type": "recorder/statistics_during_period",
         "start_time": start.isoformat(),
@@ -353,14 +362,26 @@ async def fetch(session, ids: list[str], start: dt.datetime,
             # batch that failed; the rest of the house still gets a profile.
             log.info("appliance statistics batch failed: %s", exc)
             continue
-        for sid, rows in (results[0] or {}).items():
+        rows_by_id = results[0] if results else None
+        if not isinstance(rows_by_id, dict):
+            log.info("appliance statistics batch refused by the recorder")
+            continue
+        answered += 1
+        for sid, rows in rows_by_id.items():
             out[sid] = rows or []
-    return out
+    return out if answered else None
 
 
 async def build(session, states: dict, now: float | None = None,
                 path: str | None = None) -> dict:
-    """Measure every power sensor's shape and write the store."""
+    """Measure every power sensor's shape and write the store.
+
+    A fetch the recorder refused writes nothing and hands back the
+    previous store with `error` beside it (`baselines.refused`); a house
+    with no power sensors still writes an empty one.
+    """
+    import baselines  # noqa: PLC0415
+
     now = time.time() if now is None else now
     ids = candidates(states)
     payload: dict = {"built_at": int(now), "days": HISTORY_DAYS,
@@ -372,6 +393,11 @@ async def build(session, states: dict, now: float | None = None,
     start = dt.datetime.fromtimestamp(now - HISTORY_DAYS * 86400,
                                       tz=dt.timezone.utc)
     series = await fetch(session, ids, start)
+    if series is None:
+        return baselines.refused(
+            "appliances", load(path),
+            f"the recorder did not answer for any of the {len(ids)} power "
+            "sensors asked about")
     for eid, points in series.items():
         shape = profile(points, now)
         if not shape:

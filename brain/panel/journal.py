@@ -76,7 +76,12 @@ def classify(result: dict, timeout_message: str = "") -> str:
         return "timeout"
     if "timed out" in low or "timeout" in low:
         return "timeout"
-    if "turn limit" in low or "max_turns" in low or "max turns" in low:
+    # The CLI's own verdict is on the envelope; the words are for a result
+    # that arrived without one (a shell path's stderr, an older shape).
+    if (result.get("meta") or {}).get("subtype") == "error_max_turns":
+        return "max_turns"
+    if ("turn limit" in low or "max_turns" in low or "max turns" in low
+            or "ran out of room" in low):
         return "max_turns"
     if "cli not found" in low:
         return "no_cli"

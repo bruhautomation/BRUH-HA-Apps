@@ -424,12 +424,22 @@ def candidates(states: dict) -> list[str]:
 
 
 async def fetch_hourly(session, ids: list[str], now: float,
-                       days: int = HISTORY_DAYS) -> dict:
-    """Hourly means per entity for the window, or {} if nothing answered."""
+                       days: int = HISTORY_DAYS) -> dict | None:
+    """Hourly means per entity for the window.
+
+    `{}` is the recorder answering that it holds nothing for these ids;
+    None is the recorder not answering at all — every batch refused or
+    failed. The two used to be one return value, and a `build` that read
+    them the same way wrote an empty store over a good one whenever the
+    recorder was busy, stamped as tonight's measurement.
+    """
     import ha_data  # noqa: PLC0415 — see the checks snapshot's own note
 
+    if not ids:
+        return {}
     start = dt.datetime.fromtimestamp(now - days * 86400, tz=dt.timezone.utc)
     out: dict[str, list] = {}
+    answered = 0
     for i in range(0, len(ids), BATCH):
         batch = ids[i:i + BATCH]
         try:
@@ -444,7 +454,12 @@ async def fetch_hourly(session, ids: list[str], now: float,
             # batch that failed; the rest of the house still gets a baseline.
             log.info("baseline statistics batch failed: %s", exc)
             continue
-        for sid, rows in (results[0] or {}).items():
+        rows_by_id = results[0] if results else None
+        if not isinstance(rows_by_id, dict):
+            log.info("baseline statistics batch refused by the recorder")
+            continue
+        answered += 1
+        for sid, rows in rows_by_id.items():
             clean = []
             for row in rows or []:
                 if not isinstance(row, dict):
@@ -455,12 +470,35 @@ async def fetch_hourly(session, ids: list[str], now: float,
                     start_ts = start_ts / 1000.0
                 clean.append({"start": start_ts, "mean": row.get("mean")})
             out[sid] = clean
-    return out
+    return out if answered else None
+
+
+def refused(kind: str, prev: dict, reason: str) -> dict:
+    """What a nightly `build` hands back when the fetch did not answer.
+
+    The store on disk is left exactly as it was — a good measurement from
+    last night beats no measurement stamped tonight — and the caller gets
+    the store it would have read anyway with `error` beside it, so the
+    summary can say the pass did not measure rather than that it measured
+    nothing. Shared by the four nightly builders because a rule that lives
+    in one and not its siblings is a rule nobody can see is missing.
+    """
+    log.warning("%s: %s — keeping the store from %s",
+                kind, reason,
+                time.strftime("%Y-%m-%d %H:%M",
+                              time.gmtime(prev.get("built_at") or 0))
+                if prev.get("built_at") else "before (none yet)")
+    return {**prev, "error": reason}
 
 
 async def build(session, states: dict, now: float | None = None,
                 path: str | None = None) -> dict:
-    """Measure the house and write the store. Returns the payload."""
+    """Measure the house and write the store. Returns the payload.
+
+    A fetch the recorder refused writes nothing: see `refused`. A house
+    with no candidates still writes, because a fresh install with no
+    sensors must not keep a stale store forever.
+    """
     now = time.time() if now is None else now
     tz, tz_name = house_timezone()
     ids = candidates(states)
@@ -470,6 +508,10 @@ async def build(session, states: dict, now: float | None = None,
         save(payload, path)
         return payload
     rows = await fetch_hourly(session, ids, now)
+    if rows is None:
+        return refused("baselines", load(path),
+                       "the recorder did not answer for any of the "
+                       f"{len(ids)} sensors asked about")
     for eid, series in rows.items():
         built = build_buckets(series, tz)
         if not built:

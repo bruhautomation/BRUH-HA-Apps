@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import engine
 
-# Turn budget for one fix. Generous rather than tight: a truncated agentic
-# run leaves the house half-changed, which is far worse than a slow one.
-DEFAULT_MAX_TURNS = 30
+# The runaway guard on one fix — not a budget. Large on purpose: a truncated
+# agentic run leaves the house half-changed, which is far worse than a slow
+# one, and the wall clock (FIX_TIMEOUT_S) is what actually bounds a fix.
+DEFAULT_MAX_TURNS = 60
 
 FIX_SYSTEM = """You are brAIn, the AI that looks after one specific Home Assistant home. The homeowner has looked at a problem you reported and pressed "Fix it". You are now going to fix that one problem, in their real house.
 
