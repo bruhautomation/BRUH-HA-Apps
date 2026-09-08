@@ -1198,6 +1198,10 @@
           }
         }
       }
+    },
+    "health_degraded": {
+      "title": "brAIn hit a problem",
+      "description": "{reason} A report is ready under ⚙ → Problems in the brAIn panel."
     }
   }
 }

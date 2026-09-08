@@ -1949,6 +1949,7 @@ async function openSettings() {
   openBox("#setModal");
   loadAuth();
   loadDiagnostics();
+  loadReports();
   loadCaptures();
   loadDeep(true);
   loadRehearsal(true);
@@ -2182,33 +2183,120 @@ async function loadDiagnostics() {
   }
 }
 
-// An ingress iframe may be refused the clipboard outright, and there is no
-// way to ask in advance — so the failure has to leave the text somewhere a
-// person can still get at it rather than just saying it did not work.
+// "Copy for a bug report" writes a report file first and copies THAT: the
+// same single text file a failure would have written (with the full
+// diagnostics appended), so what lands in an issue is one readable file
+// rather than raw JSON, and the same file `brain report` produces.
+// `copyOrSelect` carries the textarea fallback: an ingress iframe may be
+// refused the clipboard outright, and there is no way to ask in advance.
 $("#diagCopy").addEventListener("click", async () => {
-  if (!diagPayload) { toast("Nothing to copy yet"); return; }
-  const text = JSON.stringify(diagPayload, null, 2);
+  const btn = $("#diagCopy");
+  btn.disabled = true;
   try {
-    await navigator.clipboard.writeText(text);
-    toast("Diagnostics copied — paste it into the issue");
+    const made = await api("api/reports/run", { method: "POST", body: "{}" });
+    const text = await reportText(made.name);
+    await copyOrSelect(text, `Report copied — ${made.name} is under `
+                             + `/share/brain/reports too`);
+    loadReports();
   } catch (e) {
-    const box = document.createElement("textarea");
-    box.value = text;
-    box.style.cssText = "position:fixed;left:0;top:0;width:100%;height:60vh;z-index:99";
-    document.body.appendChild(box);
-    box.select();
-    let copied = false;
-    try { copied = document.execCommand("copy"); } catch (e2) { copied = false; }
-    if (copied) { box.remove(); toast("Diagnostics copied"); return; }
-    toast("This browser will not let the panel copy — the text is selected, "
-          + "press Ctrl/Cmd+C, then Esc");
-    box.addEventListener("keydown", (ev) => {
-      if (ev.key === "Escape") box.remove();
-    });
-    box.addEventListener("blur", () => box.remove());
+    // The report could not be written (no /share, or the write failed):
+    // the raw payload is still the honest thing to hand over.
+    if (!diagPayload) { toast("Could not write a report: " + e.message); return; }
+    await copyOrSelect(JSON.stringify(diagPayload, null, 2),
+                       "Report could not be written; diagnostics copied instead");
+  } finally {
+    btn.disabled = false;
   }
 });
-$("#diagRefresh").addEventListener("click", loadDiagnostics);
+$("#diagRefresh").addEventListener("click", () => { loadDiagnostics(); loadReports(); });
+
+// ------------------------------------------------------------ problem reports
+// One row per file under /share/brain/reports, newest first, with a
+// checkbox so the two or three about the thing being reported can be
+// copied as one text. Fetched when the dialog opens and on Refresh, never
+// on a timer: nothing here changes unless something fails.
+function reportRows(data) {
+  const rows = data.reports || [];
+  if (!rows.length) {
+    return "<p class=\"hint tight probempty\">No problems recorded. When a run fails "
+         + "or brAIn's health changes, one text file appears here.</p>";
+  }
+  return rows.map((r) => {
+    const when = r.ts ? timeAgo(new Date(r.ts * 1000).toISOString()) : "";
+    const count = r.count > 1 ? ` <span class="probcount">×${r.count}</span>` : "";
+    return `<div class="prow" data-report="${esc(r.name)}">`
+      + `<label class="probpick"><input type="checkbox" class="probcheck" `
+      + `value="${esc(r.name)}" aria-label="Select ${esc(r.name)}">`
+      + `<span class="probwhen">${esc(when)}</span>`
+      + `<span class="probhead">${esc(r.headline || r.name)}${count}</span></label>`
+      + `<button class="btn tiny probdel" data-prob-del="${esc(r.name)}" `
+      + `aria-label="Delete ${esc(r.name)}" data-tip="Delete this report">✕</button>`
+      + `</div>`;
+  }).join("");
+}
+
+async function loadReports() {
+  const box = $("#probBody");
+  if (!box) return;
+  box.textContent = "Loading…";
+  try {
+    box.innerHTML = reportRows(await api("api/reports"));
+  } catch (e) {
+    box.textContent = "Could not list problem reports: " + e.message;
+  }
+}
+
+async function reportText(name) {
+  const resp = await fetch(`api/reports/${encodeURIComponent(name)}`);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.text();
+}
+
+async function copyReports(names) {
+  if (!names.length) { toast("Nothing to copy"); return; }
+  const resp = await fetch("api/reports/copy", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ names }),
+  });
+  if (!resp.ok) { toast(`Could not read the reports (HTTP ${resp.status})`); return; }
+  const text = await resp.text();
+  await copyOrSelect(text, `${names.length} report${names.length === 1 ? "" : "s"} `
+                           + "copied — paste into the issue");
+}
+
+$("#probCopySel").addEventListener("click", () => {
+  copyReports([...document.querySelectorAll("#probBody .probcheck:checked")]
+    .map((el) => el.value));
+});
+$("#probCopyAll").addEventListener("click", () => {
+  copyReports([...document.querySelectorAll("#probBody .probcheck")]
+    .map((el) => el.value));
+});
+$("#probWrite").addEventListener("click", async () => {
+  const btn = $("#probWrite");
+  btn.disabled = true;
+  try {
+    const made = await api("api/reports/run", { method: "POST", body: "{}" });
+    toast(`Written: ${made.name}`);
+    await loadReports();
+  } catch (e) {
+    toast("Could not write a report: " + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+$("#probBody").addEventListener("click", async (ev) => {
+  const del = ev.target.closest("[data-prob-del]");
+  if (!del) return;
+  const name = del.dataset.probDel;
+  try {
+    await api(`api/reports/${encodeURIComponent(name)}`, { method: "DELETE" });
+    del.closest(".prow")?.remove();
+    if (!$("#probBody").querySelector(".prow")) loadReports();
+  } catch (e) {
+    toast("Could not delete: " + e.message);
+  }
+});
 
 // ------------------------------------------------------------- captured runs
 // The list under the capture switch: what has been recorded, and the three
@@ -5302,6 +5390,8 @@ const chatState = {
   convs: [],       // past conversations, for the wide-screen sidebar
   liveSessions: {},  // session id -> {live, busy, needs_ok} for the rail's marks
   maxSessions: 0,    // how many may hold a process at once (chat_max_sessions)
+  composer: null,    // {state, label, hint}: what sending into this chat will do
+  record: null,      // {id, title, text} while a card/fix run is open to be read
   commands: [],      // its slash commands, as it advertises them
   cli: [],           // the brain/ha dispatchers, parsed from their own help
   cmdIndex: 0,       // highlighted row in the command palette
@@ -5429,6 +5519,7 @@ function chatStatus(verb) {
 }
 
 function chatStatusTick() {
+  chatComposerTick();
   const node = chatState.working;
   if (!node) return;
   const s = Math.round((Date.now() - chatState.busyStart) / 1000);
@@ -5780,6 +5871,7 @@ function chatRender(ev) {
       // only ever changes when something else already had an event to send.
       chatState.liveSessions = {};
       (ev.sessions || []).forEach((s) => { chatState.liveSessions[s.session_id] = s; });
+      chatComposerFromSessions(ev.sessions || []);
       renderChatRail();
       renderConvModal();
       break;
@@ -5869,6 +5961,7 @@ function chatReset() {
   chatState.permCard = null;
   chatState.tools.clear();
   $("#chatEmpty").classList.remove("hidden");
+  renderComposerState();
 }
 
 function chatSetState(runState, error) {
@@ -5891,6 +5984,7 @@ function chatSetState(runState, error) {
   const box = $("#chatErr");
   box.textContent = error || "";
   box.classList.toggle("hidden", !error);
+  chatComposerOnState(runState);
 }
 
 // One stream, reopened on drop. EventSource retries by itself, but only
@@ -5926,6 +6020,10 @@ function chatConnect() {
       chatState.liveSessions = {};
       (ev.sessions || []).forEach((s) => { chatState.liveSessions[s.session_id] = s; });
       chatState.maxSessions = ev.max_sessions || chatState.maxSessions;
+      // What sending will do, derived server-side by the same function
+      // the rows use. Set BEFORE chatSetState, which only ever flips it
+      // between answering and ready off a `state` it has no history for.
+      chatState.composer = ev.composer_state || chatState.composer;
       chatMeta();
       chatState.cli = ev.cli || chatState.cli;
       (ev.events || []).forEach(chatRender);
@@ -6114,6 +6212,166 @@ $("#chatNew").addEventListener("click", async () => {
   refreshChatRail();
 });
 
+// ------------------------------------------------- what sending will do
+//
+// The line above the message box. A conversation whose process the cap
+// paused, one whose context Claude Code no longer holds, and a live one
+// look identical from the transcript alone — and the moment that matters
+// is the one just before Send. So the server says which it is
+// (`composer_state`, the same derivation every row in the rail gets) and
+// this draws the sentence and the ONE control that fits it. Nothing here
+// decides a state: the two local flips below (a `state` event landing
+// before the `sessions` event that follows it) only ever move between
+// "answering" and "live", and the server's next word replaces them.
+const COMPOSER_LOCAL = {
+  answering: { state: "answering", label: "Answering…", hint: "Claude is answering" },
+  live: { state: "live", label: "Live", hint: "Ready" },
+};
+const COMPOSER_ACTION = {
+  live: "New chat",
+  answering: "Stop",
+  needs_ok: "",
+  paused: "Resume now",
+  paused_room: "Resume now",
+  context_lost: "Start fresh",
+  record: "Ask about it",
+};
+
+function composerCurrent() {
+  if (chatState.record) return { state: "record", ...composerRecordText() };
+  return chatState.composer || COMPOSER_LOCAL.live;
+}
+
+function composerRecordText() {
+  // The record's hint is the server's wording for the state, when a
+  // snapshot has ever carried one; the record itself only names the run.
+  return { label: "Record",
+           hint: "A card run, shown to be read. It cannot be continued" };
+}
+
+function renderComposerState() {
+  const host = $("#chatState");
+  if (!host) return;
+  const cs = composerCurrent();
+  // A fresh chat with nothing in it says nothing: "Ready · New chat" on
+  // an empty conversation offers a no-op (the server reuses the empty
+  // session), and the line costs 44px that a 320px phone does not have.
+  // Every other state is worth its sentence whatever is on screen.
+  const blank = cs.state === "live" && !chatState.record
+    && chatLog().childElementCount === 0;
+  host.classList.toggle("hidden", blank);
+  host.dataset.state = cs.state || "";
+  host.querySelector(".cs-pill").textContent = cs.label || "";
+  host.querySelector(".cs-text").textContent = cs.hint || "";
+  const act = $("#chatStateAct");
+  act.textContent = COMPOSER_ACTION[cs.state] || "";
+  act.classList.toggle("primary", cs.state === "paused" || cs.state === "paused_room"
+    || cs.state === "context_lost");
+  chatComposerTick();
+}
+
+// The elapsed seconds on "Claude is answering", kept by the same 1s tick
+// as the status line in the log — one clock, two readouts.
+function chatComposerTick() {
+  const host = $("#chatState");
+  if (!host || host.dataset.state !== "answering") return;
+  const cs = composerCurrent();
+  const s = chatState.busyStart
+    ? Math.round((Date.now() - chatState.busyStart) / 1000) : 0;
+  host.querySelector(".cs-text").textContent =
+    (cs.hint || "Claude is answering") + (s >= 1 ? ` · ${s} s` : "");
+}
+
+// A `state` event: busy is answering, and ready after answering is live.
+// Anything historical (paused, context lost) is left for the server's
+// `sessions` event, which follows every state change and carries the
+// derived answer — this only bridges the gap for a chat the CLI has not
+// named yet, which `sessions` skips.
+function chatComposerOnState(runState) {
+  const was = (chatState.composer || {}).state;
+  if (runState === "busy") {
+    if (was !== "answering" && was !== "needs_ok") {
+      chatState.composer = COMPOSER_LOCAL.answering;
+    }
+    if (!chatState.busyStart) chatState.busyStart = Date.now();
+  } else if (was === "answering" || was === "needs_ok") {
+    chatState.composer = COMPOSER_LOCAL.live;
+  }
+  renderComposerState();
+}
+
+function chatComposerFromSessions(rows) {
+  const mine = rows.find((s) => s.attached && s.row_state);
+  if (mine) chatState.composer = mine.row_state;
+  renderComposerState();
+}
+
+$("#chatStateAct").addEventListener("click", () => {
+  const state = composerCurrent().state;
+  if (state === "answering") $("#chatStop").click();
+  else if (state === "live") $("#chatNew").click();
+  else if (state === "paused" || state === "paused_room") resumeNow();
+  else if (state === "context_lost") startFresh();
+  else if (state === "record") askAboutRecord();
+});
+
+// Resume now: the same route a click on the rail takes, for the
+// conversation already on screen — so the process comes back before you
+// have typed anything, and the line says what happened.
+async function resumeNow() {
+  if (!chatState.sessionId) return;
+  const btn = $("#chatStateAct");
+  btn.disabled = true;
+  try {
+    const out = await api("api/chat/resume", {
+      method: "POST", body: JSON.stringify({ session_id: chatState.sessionId }) });
+    if (out && out.row_state) chatState.composer = out.row_state;
+    renderComposerState();
+    if (out && out.resumed === false) {
+      toast("Claude Code no longer has that conversation — the transcript "
+        + "is shown, but the next message starts fresh without its context.");
+    } else {
+      toast("Resumed");
+    }
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Start fresh: the new-chat path without its confirm. The confirm asks
+// whether you are sure about leaving a conversation Claude still holds,
+// and this one it does not.
+async function startFresh() {
+  try { await api("api/chat/new", { method: "POST" }); }
+  catch (e) { toast(e.message); }
+  refreshChatRail();
+}
+
+// Ask about it: a record cannot be continued, so the honest offer is a
+// NEW conversation with the record quoted into the composer — pre-filled
+// and never sent, because what you want to ask about it is yours to type.
+async function askAboutRecord() {
+  const rec = chatState.record;
+  if (!rec) return;
+  closeBox("#convViewModal");
+  chatState.record = null;
+  try { await api("api/chat/new", { method: "POST" }); }
+  catch (e) { toast(e.message); return; }
+  refreshChatRail();
+  const input = $("#chatInput");
+  const quoted = (rec.text || "").trim();
+  input.value = `About the run ${rec.title} (${rec.id}): `
+    + (quoted ? `\n\n> ${quoted.split("\n").join("\n> ")}\n\n` : "");
+  chatGrow();
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+  renderComposerState();
+}
+
+$("#convViewAsk").addEventListener("click", askAboutRecord);
+
 document.querySelectorAll(".chatseeds .seed").forEach((btn) =>
   btn.addEventListener("click", () => chatSend(btn.textContent)));
 
@@ -6235,23 +6493,46 @@ function setConvFilter(source) {
   if ($("#convModal").classList.contains("open")) openConversations();
 }
 
-// Whether this conversation is holding a live Claude Code process, and
-// what that process is doing. Three states and only two of them draw
-// anything: nothing at all (no process, which is most rows and is not
-// news), a quiet "answering…" while a turn it is writing runs on in the
-// background, and a badge when it is waiting on a person — which is the
-// one that has to be visible, because the approval card behind it declines
-// itself if nobody ever comes.
+// What a conversation row says about itself: the pill for its
+// `row_state`, which the server derives once for the rail, the ⋯ dialog,
+// the composer line and the resume route alike. Seven states, six pills:
+// a plain "paused" conversation — no process, the ordinary case — draws
+// nothing, because most rows are that and it is not news. Everything
+// that IS news is a word on the row: a live process ("Live", quiet), one
+// answering, one waiting on a person (the loudest, because the approval
+// card behind it declines itself if nobody comes), one the cap paused
+// ("Paused to make room" — opening it is what picks it back up), one
+// whose context Claude Code no longer holds, and a record.
 //
 // The stream's listing wins over the fetched row: it is refreshed the
 // moment anything moves, where the row is as old as the last request.
+const CONV_PILLS = {
+  live: "crlive",
+  answering: "crbusy",
+  needs_ok: "crask",
+  paused_room: "crpaused",
+  context_lost: "crlost",
+  record: "crrecord",
+};
+
+function convRowState(row) {
+  const pushed = chatState.liveSessions[row.id];
+  if (pushed && pushed.row_state) return pushed.row_state;
+  if (row.row_state) return row.row_state;
+  // A row from before the server said: the three flags it did carry.
+  const live = pushed || (row.live ? { busy: row.busy, needs_ok: row.needs_ok } : null);
+  if (row.view_only) return { state: "record", label: "Record" };
+  if (!live) return { state: "paused", label: "" };
+  if (live.needs_ok) return { state: "needs_ok", label: "Needs your OK" };
+  if (live.busy) return { state: "answering", label: "Answering…" };
+  return { state: "live", label: "Live" };
+}
+
 function convMark(row) {
-  const live = chatState.liveSessions[row.id]
-    || (row.live ? { busy: row.busy, needs_ok: row.needs_ok } : null);
-  if (!live) return null;
-  if (live.needs_ok) return el("span", "crask", "Needs your OK");
-  if (live.busy) return el("span", "crbusy", "answering…");
-  return null;
+  const rs = convRowState(row);
+  const cls = CONV_PILLS[rs.state];
+  if (!cls || !rs.label) return null;
+  return el("span", cls, rs.label);
 }
 
 // One row's "who ran this", as a chip. Yours get none: a label on every
@@ -6573,6 +6854,13 @@ async function resumeConversation(conv) {
   try {
     const out = await api("api/chat/resume", {
       method: "POST", body: JSON.stringify({ session_id: conv.id }) });
+    // The row's state rides back so the composer line is right before the
+    // reconnect's snapshot lands — and a fallback is a state on the line
+    // ("Context lost") rather than only the toast below, which vanishes.
+    if (out && out.row_state) {
+      chatState.composer = out.row_state;
+      renderComposerState();
+    }
     // The server verified the spawn: `resumed: false` means Claude Code no
     // longer holds this conversation (its store prunes old sessions) and a
     // fresh session opened instead. The transcript is on screen either
@@ -6597,6 +6885,11 @@ async function viewConversation(conv) {
   $("#convViewMeta").textContent = `${conv.title} · ${conv.age}`;
   const log = $("#convViewLog");
   log.textContent = "Loading…";
+  // While a record is open the composer says so and offers the one thing
+  // that fits: asking a new chat about it. Set before the fetch, so the
+  // line is right even if the replay is slow or fails.
+  chatState.record = { id: conv.id, title: conv.title || "", text: "" };
+  renderComposerState();
   let data;
   try {
     data = await api(`api/chat/conversation/${encodeURIComponent(conv.id)}/view`);
@@ -6605,7 +6898,21 @@ async function viewConversation(conv) {
     return;
   }
   log.textContent = "";
-  renderReplayInto(log, data.events || []);
+  const events = data.events || [];
+  renderReplayInto(log, events);
+  // What "Ask about it" quotes: the run's last words, bounded — a card
+  // run's final text is its verdict, and 600 characters of it is context
+  // for a question, not a second copy of the transcript.
+  const last = events.filter((ev) => ev.type === "text" && ev.text).pop();
+  if (chatState.record && chatState.record.id === conv.id) {
+    chatState.record.text = last ? String(last.text).slice(0, 600) : "";
+  }
+}
+
+function closeConvView() {
+  closeBox("#convViewModal");
+  chatState.record = null;
+  renderComposerState();
 }
 
 // The replay's five event shapes, drawn with the same nodes the chat uses —
@@ -6649,9 +6956,9 @@ function renderReplayInto(host, events) {
   }
 }
 
-$("#convViewClose").addEventListener("click", () => closeBox("#convViewModal"));
+$("#convViewClose").addEventListener("click", closeConvView);
 $("#convViewModal").addEventListener("click", (ev) => {
-  if (ev.target === $("#convViewModal")) closeBox("#convViewModal");
+  if (ev.target === $("#convViewModal")) closeConvView();
 });
 
 $("#chatOpen").addEventListener("click", openConversations);

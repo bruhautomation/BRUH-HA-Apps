@@ -104,6 +104,9 @@ jobs:
       - name: Measure the Claude account surfaces
         run: node tests/manual/measure-account.mjs
 
+      - name: Measure the Problems section
+        run: node tests/manual/measure-problems.mjs
+
       - name: Measure BRight's light map
         run: node tests/manual/measure-lightmap.mjs
 

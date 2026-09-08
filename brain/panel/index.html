@@ -459,6 +459,16 @@
          Not a list we maintain: a command someone adds to
          /config/.claude/commands appears here without brAIn being told. -->
     <div id="chatCmds" class="chatcmds hidden" role="listbox" aria-label="Commands"></div>
+    <!-- What sending will do, and the one control that fits. Above the box
+         rather than in a toast: a conversation whose process was paused,
+         or whose context Claude Code no longer holds, looks exactly like a
+         live one from the transcript alone, and the moment that matters is
+         the one just before you press Send. -->
+    <div id="chatState" class="chatstate hidden" data-state="">
+      <span class="cs-pill"></span>
+      <span class="cs-text"></span>
+      <button type="button" id="chatStateAct" class="btn small"></button>
+    </div>
     <form id="chatForm" class="chatbar">
       <textarea id="chatInput" rows="1" enterkeyhint="send" autocomplete="off"
                 placeholder="Message brAIn…" aria-label="Message brAIn"></textarea>
@@ -724,6 +734,12 @@
     </header>
     <div class="edit-body">
       <p class="hint tight" id="convViewMeta"></p>
+      <!-- A record cannot be continued; what you CAN do is ask the chat
+           about it. The same press the composer line offers, here because
+           the dialog is over the composer while a record is open. -->
+      <div class="viewacts">
+        <button type="button" id="convViewAsk" class="btn small">Ask about it</button>
+      </div>
       <div id="convViewLog" class="viewlog"></div>
     </div>
   </div>
@@ -905,6 +921,21 @@
       <div class="row">
         <button id="diagCopy" class="btn">Copy for a bug report</button>
         <button id="diagRefresh" class="btn">Refresh</button>
+      </div>
+
+      <h4 class="sethead">Problems</h4>
+      <p class="hint">When a run fails or brAIn's health changes, one plain-text file is
+        written under <code>/share/brain/reports</code> — what happened, where to look,
+        the run, the last 80 lines of the add-on log and the diagnostics above, with
+        anything credential-shaped removed. A repeat inside a day adds a line to the
+        file it already has. Tick the ones about the thing you are reporting and
+        <b>Copy selected</b>; <b>Write a report now</b> makes one with the full
+        diagnostics in it.</p>
+      <div id="probBody" class="diag prob">Loading…</div>
+      <div class="row probbtns">
+        <button id="probCopySel" class="btn">Copy selected</button>
+        <button id="probCopyAll" class="btn">Copy all</button>
+        <button id="probWrite" class="btn">Write a report now</button>
       </div>
 
       <h4 class="sethead">Capture runs for the corpus</h4>

@@ -255,6 +255,69 @@ class SessionCapReached(RuntimeError):
         self.live = live
         self.cap = cap
 
+
+# What a row says about itself, and what the composer says sending will do.
+#
+# Seven states and ONE function decides them (``SessionRegistry.row_state``),
+# because the rail, the ⋯ dialog, the composer line and the resume route
+# used to each derive their own — a live-but-quiet row was unmarked, an
+# evicted one said nothing until you opened it, and a resume that fell back
+# was a toast that vanished. The label is the pill; the hint is the sentence
+# above the message box. ``paused_room``'s hint is formatted with the cap.
+ROW_STATES: dict[str, dict] = {
+    "live": {
+        "label": "Live",
+        "hint": "Ready"},
+    "answering": {
+        "label": "Answering…",
+        "hint": "Claude is answering"},
+    "needs_ok": {
+        "label": "Needs your OK",
+        "hint": "Claude is waiting for your approval"},
+    "paused": {
+        # No pill: a conversation with no process is the ordinary case and
+        # is not news. The composer still says what sending does.
+        "label": "",
+        "hint": "Your next message resumes this conversation with its context"},
+    "paused_room": {
+        "label": "Paused to make room",
+        "hint": "brAIn keeps {cap} chats running at once. Sending resumes "
+                "this one and pauses the quietest"},
+    "context_lost": {
+        "label": "Context lost",
+        "hint": "Claude Code no longer has this conversation. You can read "
+                "it; a new message starts fresh from here"},
+    "record": {
+        "label": "Record",
+        "hint": "A card run, shown to be read. It cannot be continued"},
+}
+
+def _clean_meta(meta: object) -> dict:
+    """The keys a transcript's `meta` may carry, and nothing else: it is
+    read back off disk, and a stray key there is a stray key in every
+    listing."""
+    if not isinstance(meta, dict):
+        return {}
+    out = {}
+    if isinstance(meta.get("evicted_at"), (int, float)):
+        out["evicted_at"] = float(meta["evicted_at"])
+    if meta.get("context_lost") is True:
+        out["context_lost"] = True
+        lost_from = meta.get("lost_from")
+        if isinstance(lost_from, str) and safe_id(lost_from):
+            out["lost_from"] = lost_from
+    return out
+
+
+def row_state_payload(state: str, cap: int | None = None) -> dict:
+    """``{state, label, hint}`` for one of ``ROW_STATES``."""
+    spec = ROW_STATES.get(state) or ROW_STATES["paused"]
+    state = state if state in ROW_STATES else "paused"
+    return {"state": state, "label": spec["label"],
+            "hint": spec["hint"].format(cap=cap if cap is not None
+                                        else max_sessions())}
+
+
 # Published context windows. Used ONLY to turn a token count into a
 # percentage — an unknown model reports its tokens and no percentage, rather
 # than a percentage of a window we guessed at.
@@ -567,6 +630,15 @@ class ChatSession:
         # Bumped by every event rather than by sends alone, so a session
         # answering in the background is not the one evicted for idleness.
         self.last_activity = time.time()
+        # What a row has to say about itself that no event carries: that
+        # the cap stopped its process (``evicted_at``) or that a --resume
+        # fell back and the CLI no longer holds the conversation on screen
+        # (``context_lost``, with ``lost_from`` naming the id that failed).
+        # Persisted with the transcript rather than kept on the registry
+        # alone, because a reload has to show the same row it showed before
+        # — a "Paused to make room" that reads as plain "Paused" after a
+        # restart is a pill that changes its story overnight.
+        self.meta: dict = {}
         self._load()
 
     # -- transcript ------------------------------------------------------
@@ -584,6 +656,7 @@ class ChatSession:
             if isinstance(events, list):
                 self.events = [e for e in events if isinstance(e, dict)][-MAX_EVENTS:]
                 self._seq = max((e.get("seq") or 0) for e in self.events) if self.events else 0
+            self.meta = _clean_meta(data.get("meta"))
 
     def _persist(self) -> None:
         """Write this conversation's scrollback, if it has a name yet.
@@ -604,7 +677,8 @@ class ChatSession:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write.write_json(
-                path, {"session_id": self.session_id, "events": self.events})
+                path, {"session_id": self.session_id, "events": self.events,
+                       "meta": _clean_meta(self.meta)})
         except OSError:
             pass  # a lost scrollback is not worth failing a turn over
 
@@ -870,6 +944,10 @@ class ChatSession:
                 # session rather than leaving a chat tab that cannot open.
                 self.resume_fell_back = True
                 self.session_id = None
+                # The row's version of the notice below: what the composer
+                # says until the next message, and what a reload repaints.
+                self.meta["context_lost"] = True
+                self.meta["lost_from"] = attempted
                 self._emit({"type": "notice", "text":
                             "Claude Code could not resume this conversation"
                             + (f" ({detail})" if detail else "")
@@ -888,7 +966,16 @@ class ChatSession:
                 self._set_state(
                     "error", detail or "Claude exited before it was ready.")
                 return
+            # A process is running again, however it came to be: whatever
+            # the cap did to this row is over.
+            self.meta.pop("evicted_at", None)
             self._set_state("ready")
+            if self.resume_fell_back:
+                # The fresh process has named itself by now, so the notice
+                # and the row's `context_lost` land under the id a reload
+                # will look them up by — the persist inside the fallback
+                # branch had no id to write to.
+                self._persist()
 
     async def _spawn_watched(self) -> bool:
         """Spawn, then wait for the CLI's first event, its death, or a
@@ -1107,6 +1194,11 @@ class ChatSession:
                 raise RuntimeError("Claude is still answering — stop it first")
 
             self._emit({"type": "user", "text": text})
+            # The first message after a fallback IS the fresh start the
+            # notice promised; from here the conversation on screen is the
+            # one the process holds, and the row stops saying otherwise.
+            self.meta.pop("context_lost", None)
+            self.meta.pop("lost_from", None)
             self._persist()
             payload = json.dumps({
                 "type": "user",
@@ -1397,6 +1489,7 @@ class ChatSession:
             self.info = {}
             self.context = {}
             self.events = []
+            self.meta = {}
             self._seq = 0
             # Live viewers repaint from here: clear first, then the history.
             self._emit({"type": "cleared"}, keep=False)
@@ -1476,6 +1569,7 @@ class ChatSession:
             self.events = []
             self.info = {}
             self.context = {}
+            self.meta = {}
             self._seq = 0
             self._persist()
             self._emit({"type": "cleared"}, keep=False)
@@ -1737,6 +1831,15 @@ class SessionRegistry:
         # How many processes the cap has stopped this run. A session that
         # was evicted and one that crashed look identical from outside.
         self._evicted = 0
+        # Which conversations the cap has stopped and nobody has reopened
+        # since: id -> when. The in-memory index for `row_state`; the same
+        # fact rides in each transcript's `meta` so it survives a restart.
+        self._evicted_ids: dict[str, float] = {}
+        # Transcript meta read off disk for rows this registry is not
+        # holding, keyed by id and guarded by the file's mtime: a listing is
+        # thirty rows and a rail refresh is frequent, and re-parsing thirty
+        # scrollbacks for a flag each time is the wrong price for it.
+        self._meta_cache: dict[str, tuple[float, dict]] = {}
         # What a session spawned from here runs. Kept on the registry
         # rather than read from settings inside it, so this module still
         # never depends on the web layer — the server refreshes it on every
@@ -1799,6 +1902,88 @@ class SessionRegistry:
     def sessions(self) -> list[ChatSession]:
         return list(self._sessions)
 
+    # -- what a row says about itself ------------------------------------
+
+    def _find(self, session_id: str) -> ChatSession | None:
+        """`get`, plus the session that TRIED to be this conversation.
+
+        A --resume that fell back has a new id and a transcript showing
+        the old one; the old row, if the CLI's store still lists it, is
+        the conversation whose context is gone, and clicking it again
+        would only fall back again. So it answers for that row too.
+        """
+        held = self.get(session_id)
+        if held is not None or not session_id:
+            return held
+        return next((s for s in self._sessions
+                     if s.meta.get("lost_from") == session_id), None)
+
+    def _stored_meta(self, session_id: str) -> dict:
+        """A transcript's `meta` for a conversation we are not holding —
+        which after a restart is every conversation but the attached one."""
+        path = transcript_path(session_id or "")
+        if path is None:
+            return {}
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            self._meta_cache.pop(session_id, None)
+            return {}
+        cached = self._meta_cache.get(session_id)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+        try:
+            data = json.loads(path.read_text("utf-8"))
+        except (OSError, ValueError):
+            data = None
+        meta = _clean_meta(data.get("meta")) if isinstance(data, dict) else {}
+        self._meta_cache[session_id] = (mtime, meta)
+        return meta
+
+    def state_of(self, session: ChatSession | None, meta: dict | None = None,
+                 *, view_only: bool = False) -> dict:
+        """The one derivation, for a held session or for a bare `meta`.
+
+        Order matters and is the argument. A record is a record whatever
+        else is true. A live process answers before anything historical —
+        except `context_lost`, which outranks "live" on purpose: the
+        process is fresh and the transcript on screen is not its, and that
+        is the one thing worth saying until the next message makes them
+        agree. Off a process, an eviction is a paused row with a reason
+        and everything else is simply paused. A session with no id and no
+        process is the empty chat you are about to type into: "Ready".
+        """
+        if view_only:
+            return row_state_payload("record")
+        meta = session.meta if session is not None else (meta or {})
+        alive = session is not None and session.alive()
+        if meta.get("context_lost"):
+            return row_state_payload("context_lost")
+        if alive:
+            if session.pending_permission:
+                return row_state_payload("needs_ok")
+            if session.state == "busy":
+                return row_state_payload("answering")
+            return row_state_payload("live")
+        if meta.get("evicted_at"):
+            return row_state_payload("paused_room")
+        if session is not None and not session.session_id:
+            return row_state_payload("live")
+        return row_state_payload("paused")
+
+    def row_state(self, session_id: str, view_only: bool = False) -> dict:
+        """What one conversation row says: ``{state, label, hint}``."""
+        if view_only:
+            return self.state_of(None, view_only=True)
+        session = self._find(session_id)
+        if session is not None:
+            return self.state_of(session)
+        return self.state_of(None, self._stored_meta(session_id))
+
+    def composer_state(self) -> dict:
+        """The attached conversation's state — what the composer renders."""
+        return self.state_of(self.attached())
+
     # -- what the panel is told ------------------------------------------
 
     def live(self) -> list[dict]:
@@ -1822,6 +2007,9 @@ class SessionRegistry:
                 "title": session.title(),
                 "busy_since": session._busy_since,
                 "last_activity": session.last_activity,
+                # The pill and the sentence, derived once, here — the
+                # three flags above stay for anything still reading them.
+                "row_state": self.state_of(session),
             })
         return rows
 
@@ -1909,6 +2097,14 @@ class SessionRegistry:
             victim = min(idle, key=lambda s: s.last_activity)
             await victim.stop()
             self._evicted += 1
+            # On the row as well as in the transcript: the notice below is
+            # read only once somebody opens it, and "Paused to make room"
+            # is what tells them, from the list, that opening it is what
+            # picks it back up.
+            now = time.time()
+            victim.meta["evicted_at"] = now
+            if victim.session_id:
+                self._evicted_ids[victim.session_id] = now
             victim._emit({"type": "notice", "text":
                           "brAIn closed this chat's session to make room for "
                           f"another one — it keeps {cap} alive at once "
@@ -1929,6 +2125,9 @@ class SessionRegistry:
             existing = self.get(session_id)
             if existing is not None:
                 await self._make_room(existing)
+                # Reopened: whatever the cap did to it is over (start()
+                # clears the transcript's copy once the process is up).
+                self._evicted_ids.pop(session_id, None)
                 spawned = False
                 if not existing.alive():
                     # Held but stopped — by the cap, or by a handoff. The

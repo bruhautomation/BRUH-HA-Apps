@@ -94,6 +94,7 @@ random token to keep the unauthenticated /local URLs unguessable.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import fcntl
 import hashlib
 import json
@@ -146,6 +147,7 @@ import playbooks
 import prompt_store
 import proposals
 import rehearsal
+import reports
 import rhythm
 import routines
 import run_sources
@@ -529,6 +531,33 @@ DIAGNOSTICS_FILE = Path(os.environ.get(
     "BRAIN_DIAGNOSTICS_FILE", "/config/.brain/diagnostics.json"))
 DIAGNOSTICS_PUBLISH_S = 3600
 DIAG_STATE: dict = {"published_at": 0.0}
+# Problem reports (panel/reports.py) are written off whichever thread noticed
+# the problem: `journal.record` is synchronous and is called from the event
+# loop as well as from request threads, and a report fetches the add-on log
+# with a five-second budget. One worker keeps the files in order, and the
+# diagnostics a report abridges are computed on that thread, never on the
+# loop. `file_incident` never raises, so a fire-and-forget future is safe.
+_REPORT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="brain-reports")
+
+
+def _report_async(fn, *args, **kwargs) -> None:
+    """Run one `reports.*` producer on the reports thread."""
+    kwargs.setdefault("diagnostics", _diagnostics_payload)
+    try:
+        _REPORT_EXECUTOR.submit(fn, *args, **kwargs)
+    except RuntimeError:
+        # The interpreter is shutting down; a report about that is one
+        # nobody could read.
+        pass
+
+
+def _journal_report_listener(row: dict) -> None:
+    """Every failed run of any kind files a problem report — hooked on the
+    journal rather than at each caller, so a new run path is covered by
+    having recorded itself."""
+    if isinstance(row, dict) and row.get("outcome") in reports.FAILURE_OUTCOMES:
+        _report_async(reports.file_run_failure, row)
 _CLI_VERSION: dict = {"value": None}
 AUTH_CHECK: dict = {"state": "unchecked", "error": "", "checked_at": 0,
                     "running": False}
@@ -887,6 +916,9 @@ async def _send_notification(rows: list[dict], held: bool = False) -> bool:
             data={"actions": buttons} if buttons else None)
     except Exception as exc:  # noqa: BLE001 — a bad target can't fail the run
         log.warning("findings notification via %s failed: %s", service, exc)
+        _report_async(reports.notify_failure, service, str(exc),
+                      context=f"{len(rows)} finding(s)"
+                      + (", held overnight" if held else ""))
         return False
     log.info("notified %s of %d finding(s)%s", service, len(rows),
              " held overnight" if held else "")
@@ -1772,6 +1804,9 @@ async def _notify_flush_loop():
             raise
         except Exception as exc:  # noqa: BLE001 — the loop outlives a bad pass
             log.warning("notification flush pass failed: %s", exc)
+            _report_async(reports.notify_failure,
+                          _findings_notify_target()[0], str(exc),
+                          context="quiet-hours flush pass")
             await asyncio.sleep(NOTIFY_FLUSH_POLL_S)
 
 
@@ -4615,20 +4650,109 @@ def _diagnostics_payload() -> dict:
 
 
 def publish_diagnostics() -> None:
-    """Write the payload to the shared volume. Skipped on a dev checkout
-    (no /config), logged and swallowed otherwise: the mirror is derived."""
+    """Write the payload to the shared volume, and notice the verdict moving.
+
+    The mirror is skipped on a dev checkout (no /config), logged and
+    swallowed otherwise: it is derived. The health comparison rides here
+    because this is the one place the verdict is computed on a schedule —
+    the panel kept no previous verdict anywhere, so `ok` on Monday and
+    `degraded` on Tuesday were two files nobody diffed. `reports.note_health`
+    keeps the last state in /data and files one problem report when it
+    leaves `ok`; a dev checkout with no /data skips that too.
+    """
     DIAG_STATE["published_at"] = time.time()
-    if not DIAGNOSTICS_FILE.parent.parent.exists():
+    mirror = DIAGNOSTICS_FILE.parent.parent.exists()
+    if not mirror and not reports.tracks_health():
+        return
+    try:
+        payload = _diagnostics_payload()
+    except Exception as exc:  # noqa: BLE001
+        log.debug("diagnostics payload failed: %s", exc)
+        return
+    reports.note_health(payload.get("health") or {}, payload)
+    if not mirror:
         return
     try:
         DIAGNOSTICS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write.write_json(DIAGNOSTICS_FILE, _diagnostics_payload())
+        atomic_write.write_json(DIAGNOSTICS_FILE, payload)
     except Exception as exc:  # noqa: BLE001
         log.debug("diagnostics mirror write failed: %s", exc)
 
 
 async def h_diagnostics(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(_diagnostics_payload))
+
+
+# ---------------------------------------------------------------------------
+# Problem reports — the ⚙ dialog's Problems section and `brain report`
+# ---------------------------------------------------------------------------
+
+async def h_reports_list(request: web.Request) -> web.Response:
+    rows = await asyncio.to_thread(reports.list_reports)
+    return web.json_response({
+        "reports": rows,
+        "dir": str(reports.REPORTS_DIR),
+        "available": reports.available(),
+        "max": reports.MAX_REPORTS,
+    })
+
+
+async def h_report_get(request: web.Request) -> web.Response:
+    text = await asyncio.to_thread(reports.read_report, request.match_info["name"])
+    if text is None:
+        return web.json_response({"error": "no such report"}, status=404)
+    return web.Response(text=text, content_type="text/plain", charset="utf-8")
+
+
+async def h_report_delete(request: web.Request) -> web.Response:
+    ok = await asyncio.to_thread(reports.delete_report, request.match_info["name"])
+    if not ok:
+        return web.json_response({"error": "no such report"}, status=404)
+    return web.json_response({"deleted": True})
+
+
+async def h_reports_copy(request: web.Request) -> web.Response:
+    """Several reports as one text, separated, for one paste."""
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    names = (body or {}).get("names") if isinstance(body, dict) else None
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        return web.json_response({"error": "names must be a list of file names"},
+                                 status=400)
+    text = await asyncio.to_thread(reports.combined, names[:reports.MAX_REPORTS])
+    return web.Response(text=text, content_type="text/plain", charset="utf-8")
+
+
+async def h_reports_run(request: web.Request) -> web.Response:
+    """Write one report now — the manual kind, carrying the FULL diagnostics
+    payload rather than the abridged subset a failure files. `brain report`
+    and ⚙'s "Copy for a bug report" both come through here, so there is one
+    shape of file whoever asked."""
+    if not reports.available():
+        return web.json_response(
+            {"error": f"{reports.REPORTS_DIR} is not available — /share is not "
+                      "mapped, so there is nowhere Home Assistant can see to "
+                      "write a report"}, status=503)
+
+    def run() -> str | None:
+        payload = _diagnostics_payload()
+        full = json.dumps(payload, indent=1, ensure_ascii=False, default=str)
+        return reports.file_incident(
+            "manual", "report requested",
+            "Somebody asked for a report — from ⚙ → Problems, or `brain report`. "
+            "Nothing failed to produce this file.",
+            "Read it before attaching it to an issue: entity and area names "
+            "are in it, credentials are not.",
+            diagnostics=payload, dedup=False,
+            extra_text="--- diagnostics (full) ---\n" + full)
+
+    name = await asyncio.to_thread(run)
+    if not name:
+        return web.json_response({"error": "the report could not be written; "
+                                           "the add-on log says why"}, status=500)
+    return web.json_response({"name": name, "path": str(reports.REPORTS_DIR / name)})
 
 
 # ---------------------------------------------------------------------------
@@ -5086,6 +5210,8 @@ async def _announce_accepted(row: dict, applied: dict) -> None:
         # running; the notification is the courtesy copy.
         log.warning("accepted-change notification via %s failed: %s",
                     service, exc)
+        _report_async(reports.notify_failure, service, str(exc),
+                      context="accepted-change announcement")
 
 
 async def h_proposal_decide(request: web.Request) -> web.Response:
@@ -6853,6 +6979,11 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
         row["live"] = bool(mark and mark["live"])
         row["busy"] = bool(mark and mark["busy"])
         row["needs_ok"] = bool(mark and mark["needs_ok"])
+        # The pill and the sentence, from the one function that decides
+        # them — a record for an engine-store row, and for the rest the
+        # held session or the flag its transcript kept across a restart.
+        row["row_state"] = registry.row_state(
+            row["id"], view_only=bool(row.get("view_only")))
     return web.json_response({
         "conversations": rows,
         "current": session.session_id,
@@ -7132,11 +7263,17 @@ async def h_chat_resume(request: web.Request) -> web.Response:
         replay = await asyncio.to_thread(
             conversations.transcript, chat_session.WORK_DIR, session_id)
     try:
-        return web.json_response(await registry.open(session_id, replay))
+        out = await registry.open(session_id, replay)
     except ValueError as exc:
         raise web.HTTPBadRequest(reason=str(exc))
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=_refusal(exc))
+    # What the composer says now that this is the attached conversation:
+    # `resumed: false` used to be a toast that vanished, and the row it was
+    # about went on looking like any other. The state is the same
+    # derivation every row gets, so the composer and the rail agree.
+    out["row_state"] = registry.composer_state()
+    return web.json_response(out)
 
 
 async def h_chat_session_close(request: web.Request) -> web.Response:
@@ -7175,7 +7312,11 @@ def _chat_snapshot(session: "chat_session.ChatSession") -> dict:
             # on the first paint rather than on the first thing that
             # happens to move.
             "sessions": chat_session.registry().live(),
-            "max_sessions": chat_session.max_sessions()}
+            "max_sessions": chat_session.max_sessions(),
+            # What sending into THIS conversation will do, for the line
+            # above the message box — derived by the same function the
+            # rows use, so the composer never disagrees with the rail.
+            "composer_state": chat_session.registry().state_of(session)}
 
 
 async def h_chat_state(request: web.Request) -> web.Response:
@@ -7216,6 +7357,13 @@ def make_app() -> web.Application:
     app.router.add_get("/api/doctor/rehearse", h_rehearse_get)
     app.router.add_post("/api/doctor/rehearse", h_rehearse_start)
     app.router.add_get("/api/diagnostics", h_diagnostics)
+    app.router.add_get("/api/reports", h_reports_list)
+    # The two fixed names before the {name} pattern, which would otherwise
+    # answer them with a 405.
+    app.router.add_post("/api/reports/copy", h_reports_copy)
+    app.router.add_post("/api/reports/run", h_reports_run)
+    app.router.add_get("/api/reports/{name}", h_report_get)
+    app.router.add_delete("/api/reports/{name}", h_report_delete)
     app.router.add_get("/api/capture", h_capture_list)
     app.router.add_get("/api/capture/{run_id}", h_capture_get)
     app.router.add_post("/api/capture/{run_id}/export", h_capture_export)
@@ -7338,6 +7486,9 @@ def make_app() -> web.Application:
             log.info("labelled %d machine conversation(s) from before their "
                      "callers claimed session ids", relabelled)
         await _options_sync()
+        # Every failed run of any kind becomes one readable file: hooked on
+        # the journal so a new run path is covered by having recorded itself.
+        journal.on_record(_journal_report_listener)
         app["worker"] = asyncio.create_task(_worker())
         app["scheduler"] = asyncio.create_task(_scheduler())
         app["checks"] = asyncio.create_task(_checks_loop())

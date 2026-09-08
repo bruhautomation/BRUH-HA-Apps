@@ -64,15 +64,18 @@ function probe() {
 
 
 // ---------------------------------------------------------------------------
-// The second pass: what a conversation row says about its own live session.
+// The second pass: what a conversation row says about its own session.
 //
-// A row can carry two marks — a quiet "answering…" while a turn it is
-// writing runs on in the background, and a badge when it is waiting on a
-// person. Both are new, both sit beside a title that is already competing
-// for the width, and the surface differs by screen: the rail is
-// display:none below 1100px, so on a phone the ⋯ dialog is the only place
-// these can be read. So both are measured, at the width each one is the
-// answer for.
+// Every row says which of seven states it is in, out of one server-side
+// derivation (`row_state`): a live process is "Live", one answering says
+// so, one waiting on a person carries the badge, one the cap paused says
+// "Paused to make room", one whose context Claude Code no longer holds
+// says "Context lost", a card run is a "Record" — and a plainly paused
+// conversation, the ordinary case, draws nothing. They sit beside a title
+// that is already competing for the width, and the surface differs by
+// screen: the rail is display:none below 1100px, so on a phone the ⋯
+// dialog is the only place these can be read. So all of them are measured,
+// at the width each surface is the answer for.
 //
 // Unlike the pass above this drives the panel's REAL renderers behind a
 // stubbed fetch (the same arrangement measure-activity.mjs uses): a copy of
@@ -80,21 +83,58 @@ function probe() {
 const LIVE_WIDTHS = [390, 1200];
 const MIN_TARGET = 44;
 
+// The server's own vocabulary, as `chat_session.ROW_STATES` ships it.
+const ROW_STATES = {
+  live: { label: 'Live', hint: 'Ready' },
+  answering: { label: 'Answering…', hint: 'Claude is answering' },
+  needs_ok: { label: 'Needs your OK', hint: 'Claude is waiting for your approval' },
+  paused: { label: '', hint: 'Your next message resumes this conversation with its context' },
+  paused_room: { label: 'Paused to make room',
+    hint: 'brAIn keeps 3 chats running at once. Sending resumes this one and '
+      + 'pauses the quietest' },
+  context_lost: { label: 'Context lost',
+    hint: 'Claude Code no longer has this conversation. You can read it; a new '
+      + 'message starts fresh from here' },
+  record: { label: 'Record', hint: 'A card run, shown to be read. It cannot be continued' },
+};
+const rs = (state) => ({ state, ...ROW_STATES[state] });
+// Which pill class each state draws, and the one that draws none.
+const PILL_OF = {
+  live: 'crlive', answering: 'crbusy', needs_ok: 'crask', paused: '',
+  paused_room: 'crpaused', context_lost: 'crlost', record: 'crrecord',
+};
+const PILL_SEL = '.crbusy, .crask, .crlive, .crpaused, .crlost, .crrecord';
+
 const CONVS = [
   { id: 'c-busy', title: 'Why does the porch light come on at three in the '
       + 'afternoon when nobody is home', modified: 0, age: '2 min ago',
-    source: 'you', live: true, busy: true, needs_ok: false },
+    source: 'you', live: true, busy: true, needs_ok: false,
+    row_state: rs('answering') },
   { id: 'c-ask', title: 'Tidy up the kitchen automations', modified: 0,
-    age: '9 min ago', source: 'you', live: true, busy: false, needs_ok: true },
+    age: '9 min ago', source: 'you', live: true, busy: false, needs_ok: true,
+    row_state: rs('needs_ok') },
   { id: 'c-live', title: 'Bedroom thermostat schedule', modified: 0,
-    age: '1 h ago', source: 'you', live: true, busy: false, needs_ok: false },
+    age: '1 h ago', source: 'you', live: true, busy: false, needs_ok: false,
+    row_state: rs('live') },
+  { id: 'c-room', title: 'Garage door sensor that keeps dropping off',
+    modified: 0, age: '2 h ago', source: 'you', live: false, busy: false,
+    needs_ok: false, row_state: rs('paused_room') },
+  { id: 'c-lost', title: 'A chat from a store the CLI has since pruned',
+    modified: 0, age: '2 d ago', source: 'you', live: false, busy: false,
+    needs_ok: false, row_state: rs('context_lost') },
   { id: 'c-cold', title: 'An older one nothing is holding open', modified: 0,
-    age: '3 d ago', source: 'you', live: false, busy: false, needs_ok: false },
+    age: '3 d ago', source: 'you', live: false, busy: false, needs_ok: false,
+    row_state: rs('paused') },
+  { id: 'c-record', title: 'Analyse the upstairs heating', modified: 0,
+    age: '5 d ago', source: 'card', view_only: true, live: false, busy: false,
+    needs_ok: false, row_state: rs('record') },
 ];
+const EXPECT_PILL = Object.fromEntries(
+  CONVS.map((c) => [c.title.slice(0, 24), PILL_OF[c.row_state.state]]));
 const SESSIONS = CONVS.filter((c) => c.live).map((c) => ({
   session_id: c.id, state: c.busy ? 'busy' : 'ready', live: true,
   busy: c.busy, needs_ok: c.needs_ok, attached: c.id === 'c-live',
-  title: c.title, busy_since: 0, last_activity: 0,
+  title: c.title, busy_since: 0, last_activity: 0, row_state: c.row_state,
 }));
 
 const LIVE_STUB = `
@@ -108,7 +148,8 @@ window.fetch = async (url) => {
   if (p.includes('api/chat/conversations')) {
     return answer({ conversations: ${JSON.stringify(CONVS)},
                     current: 'c-live',
-                    sources: [{ id: 'you', label: 'Chats', blurb: '', count: 4 }],
+                    sources: [{ id: 'you', label: 'Chats', blurb: '', count: 6 },
+                              { id: 'card', label: 'Cards', blurb: '', count: 1 }],
                     sessions: ${JSON.stringify(SESSIONS)}, max_sessions: 3 });
   }
   if (p.includes('api/chat/state')) {
@@ -116,7 +157,8 @@ window.fetch = async (url) => {
                     session_id: 'c-live', info: {}, commands: [], context: {},
                     cli: [], models: [], chat_model: '', default_model: '',
                     default_model_label: '', permission: null,
-                    sessions: ${JSON.stringify(SESSIONS)}, max_sessions: 3 });
+                    sessions: ${JSON.stringify(SESSIONS)}, max_sessions: 3,
+                    composer_state: ${JSON.stringify(rs('live'))} });
   }
   if (p.includes('api/status')) {
     return answer({
@@ -156,7 +198,7 @@ async function livePass(browser, note) {
     }, wide);
     await page.waitForSelector(selector);
 
-    const m = await page.evaluate((sel) => {
+    const m = await page.evaluate(([sel, pillSel]) => {
       const rows = [...document.querySelectorAll(sel)];
       const host = rows[0].parentElement.getBoundingClientRect();
       return {
@@ -164,7 +206,7 @@ async function livePass(browser, note) {
         hostRight: host.right,
         rows: rows.map((r) => {
           const box = r.getBoundingClientRect();
-          const mark = r.querySelector('.crbusy, .crask');
+          const mark = r.querySelector(pillSel);
           const title = r.querySelector('.ctitle');
           const ms = mark && getComputedStyle(mark);
           return {
@@ -181,11 +223,25 @@ async function livePass(browser, note) {
         }),
         docWidth: document.documentElement.scrollWidth,
       };
-    }, selector);
+    }, [selector, PILL_SEL]);
 
-    const marks = m.rows.map((r) => r.mark).join(' ');
-    if (!/crbusy/.test(marks)) note(`${width}px`, 'no row says it is answering');
-    if (!/crask/.test(marks)) note(`${width}px`, 'no row says it needs an OK');
+    // Every row says what it is, and says the right thing: each of the
+    // six pills on the row that earned it, and no pill at all on the one
+    // plainly paused conversation — the ordinary case is not news.
+    if (m.rows.length !== CONVS.length) {
+      note(`${width}px`, `${m.rows.length} rows rendered of ${CONVS.length}`);
+    }
+    for (const row of m.rows) {
+      const want = EXPECT_PILL[row.id];
+      if (want === undefined) {
+        note(`${width}px`, `${row.id}: a row the fixture does not know`);
+      } else if (want && row.mark !== want) {
+        note(`${width}px`, `${row.id}: pill is "${row.mark || 'none'}", expected ${want}`);
+      } else if (!want && row.mark) {
+        note(`${width}px`, `${row.id}: a paused row drew a pill (${row.mark})`);
+      }
+    }
+    const pillCount = Object.values(EXPECT_PILL).filter(Boolean).length;
 
     // The marks have to survive a turn ending. `chatState.live` is the
     // message node partial text streams into and is set to null when an
@@ -196,22 +252,17 @@ async function livePass(browser, note) {
     // fetch to rebuild the map, is exactly that moment.
     let after = -1;
     try {
-      after = await page.evaluate((isWide) => {
+      after = await page.evaluate(([isWide, pillSel]) => {
         chatState.live = null;
         chatState.liveText = '';
         if (isWide) renderChatRail(); else renderConvModal();
-        return [...document.querySelectorAll('.crbusy, .crask')].length;
-      }, wide);
+        return [...document.querySelectorAll(pillSel)].length;
+      }, [wide, PILL_SEL]);
     } catch (e) {
       note(`${width}px`, `repainting after a turn ended threw: ${e.message.split('\n')[0]}`);
     }
-    if (after >= 0 && after < 2) {
-      note(`${width}px`, `the marks did not survive a turn ending: ${after} left`);
-    }
-    // Three live rows, two marks: a row whose session is live but quiet is
-    // deliberately unmarked, because "has a process" is not news.
-    if (m.rows.filter((r) => r.mark).length !== 2) {
-      note(`${width}px`, `${m.rows.filter((r) => r.mark).length} marks, expected 2`);
+    if (after >= 0 && after < pillCount) {
+      note(`${width}px`, `the marks did not survive a turn ending: ${after} of ${pillCount} left`);
     }
     for (const row of m.rows) {
       if (row.mark && !row.markShown) {
@@ -235,6 +286,121 @@ async function livePass(browser, note) {
     }
     console.log(`${String(width).padStart(5)} ${m.surface.padEnd(20)} `
       + m.rows.map((r) => r.markText || '—').join(' | '));
+    await context.close();
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// The third pass: the line above the message box.
+//
+// `composer_state` is the attached conversation's own row state, and the
+// panel renders it as a sentence and ONE control — Stop while answering,
+// New chat when ready, Resume now for either kind of pause, Start fresh
+// when the context is gone, Ask about it on a record. Six states are
+// pushed through the real renderer at both widths; each has to change the
+// sentence AND the button, and the button has to be a real target on a
+// phone, because "Resume now" is the press somebody makes there.
+const COMPOSER_CASES = [
+  ['live', 'Ready', 'New chat'],
+  ['answering', 'Claude is answering', 'Stop'],
+  ['paused', 'resumes this conversation', 'Resume now'],
+  ['paused_room', 'pauses the quietest', 'Resume now'],
+  ['context_lost', 'no longer has this conversation', 'Start fresh'],
+  ['record', 'cannot be continued', 'Ask about it'],
+];
+
+async function composerPass(browser, note) {
+  for (const width of LIVE_WIDTHS) {
+    const context = await browser.newContext({ viewport: { width, height: 900 } });
+    const page = await context.newPage();
+    page.on('pageerror', (e) => note(`${width}px composer`, `page error: ${e.message}`));
+    await page.addInitScript(LIVE_STUB);
+    await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+    await page.click('.viewtab[data-view="terminal"]');
+    // Attached, not visible: on an empty chat it is hidden by design.
+    await page.waitForSelector('#chatState', { state: 'attached' });
+
+    // A fresh chat with nothing in it says nothing — "Ready · New chat"
+    // on an empty conversation would offer a no-op, and the 44px it would
+    // take is what pushes the meta line under a 320px phone's fold. So
+    // the line is hidden on an empty live chat, and shown the moment the
+    // conversation has anything in it.
+    const blank = await page.evaluate(() => {
+      chatState.record = null;
+      chatState.composer = { state: 'live', label: 'Live', hint: 'Ready' };
+      renderComposerState();
+      const hiddenWhenEmpty = getComputedStyle(document.querySelector('#chatState')).display === 'none';
+      const msg = document.createElement('div');
+      msg.className = 'msg bot';
+      msg.textContent = 'Sample answer. '.repeat(20);
+      chatAppend(msg);
+      renderComposerState();
+      const shownWithContent = getComputedStyle(document.querySelector('#chatState')).display !== 'none';
+      return { hiddenWhenEmpty, shownWithContent };
+    });
+    if (!blank.hiddenWhenEmpty) note(`${width}px composer`, 'an empty live chat draws the line');
+    if (!blank.shownWithContent) note(`${width}px composer`, 'the line stays hidden once there is a conversation');
+
+    const seenText = new Set();
+    const seenButton = [];
+    const line = [];
+    for (const [state, needle, button] of COMPOSER_CASES) {
+      const m = await page.evaluate((s) => {
+        chatState.record = null;
+        chatState.busyStart = s.state === 'answering' ? Date.now() - 14000 : 0;
+        chatState.composer = s;
+        renderComposerState();
+        const host = document.querySelector('#chatState');
+        const btn = document.querySelector('#chatStateAct');
+        const box = btn.getBoundingClientRect();
+        const cs = getComputedStyle(btn);
+        const stop = document.querySelector('#chatStop');
+        return {
+          state: host.dataset.state,
+          pill: host.querySelector('.cs-pill').textContent,
+          text: host.querySelector('.cs-text').textContent,
+          button: btn.textContent,
+          h: Math.round(box.height),
+          w: Math.round(box.width),
+          shown: cs.display !== 'none' && cs.visibility !== 'hidden' && box.width > 0,
+          right: host.getBoundingClientRect().right,
+          // The square Stop icon in the bar stands down while the line
+          // offers a labelled Stop — one Stop, not two.
+          iconStopShown: getComputedStyle(stop).display !== 'none'
+            && !stop.classList.contains('hidden'),
+          docWidth: document.documentElement.scrollWidth,
+        };
+      }, rs(state));
+      const where = `${width}px composer/${state}`;
+      if (m.state !== state) note(where, `data-state is "${m.state}"`);
+      if (!m.text.includes(needle)) note(where, `text "${m.text}" lacks "${needle}"`);
+      if (state === 'answering' && !/· 1[34] s$/.test(m.text)) {
+        note(where, `answering does not count seconds: "${m.text}"`);
+      }
+      if (m.button !== button) note(where, `button is "${m.button}", expected "${button}"`);
+      if (!m.shown) note(where, 'the button is not shown');
+      if (m.h < MIN_TARGET) note(where, `button is ${m.h}px tall, under ${MIN_TARGET}`);
+      if (m.right > width + 0.5) note(where, `the line overflows the viewport (${m.right})`);
+      if (m.docWidth > width + 0.5) note(where, `page scrolls sideways (${m.docWidth}px)`);
+      if (state === 'paused' && m.pill) note(where, `a plain pause drew a pill "${m.pill}"`);
+      if (state !== 'paused' && !m.pill) note(where, 'no pill');
+      if (state === 'answering' && m.iconStopShown) {
+        note(where, 'two Stops: the bar icon is still shown beside the labelled one');
+      }
+      seenText.add(m.text.replace(/ · \d+ s$/, ''));
+      seenButton.push(m.button);
+      line.push(`${state}: "${m.button}" ${m.h}px`);
+    }
+    // The sentence changes with every state, and the button with every
+    // state that asks for a different thing.
+    if (seenText.size !== COMPOSER_CASES.length) {
+      note(`${width}px composer`, `${seenText.size} distinct sentences for ${COMPOSER_CASES.length} states`);
+    }
+    if (new Set(seenButton).size !== 5) {
+      note(`${width}px composer`, `${new Set(seenButton).size} distinct buttons, expected 5`);
+    }
+    console.log(`${String(width).padStart(5)} ${line.join(' | ')}`);
     await context.close();
   }
 }
@@ -273,9 +439,18 @@ async function livePass(browser, note) {
   await livePass(browser, (where, message) => failures.push(`${where}: ${message}`));
   failures.forEach((f) => console.log('  ' + f));
   console.log(failures.length
-    ? `\n${failures.length} problem(s) with the live-session marks`
-    : `\nboth widths: "answering…" and "Needs your OK" render inside the row`);
+    ? `\n${failures.length} problem(s) with the row pills`
+    : `\nboth widths: every row says which of the seven states it is in`);
+
+  console.log('\nwidth composer line: state → button');
+  const composerFailures = [];
+  await composerPass(browser, (where, message) =>
+    composerFailures.push(`${where}: ${message}`));
+  composerFailures.forEach((f) => console.log('  ' + f));
+  console.log(composerFailures.length
+    ? `\n${composerFailures.length} problem(s) with the composer line`
+    : '\nboth widths: six states, six sentences, one control each');
 
   await browser.close();
-  process.exit(bad || failures.length ? 1 : 0);
+  process.exit(bad || failures.length || composerFailures.length ? 1 : 0);
 })();

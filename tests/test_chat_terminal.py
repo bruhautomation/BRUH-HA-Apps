@@ -1499,6 +1499,158 @@ class TestManySessions(unittest.IsolatedAsyncioTestCase):
         self.assertIs(self.reg.attached(), first)
         self.assertEqual(len(self.reg.sessions()), 1)
 
+    # -- what a row says about itself -----------------------------------
+    #
+    # Every row used to derive its own answer — the rail marked two of the
+    # three live states and nothing else, an evicted row said nothing
+    # until you opened it, and a resume that fell back was a toast that
+    # vanished. One function answers now, so these drive each state
+    # through the real registry and the fake CLI rather than asserting a
+    # table.
+
+    def _state(self, session_id, **kw):
+        return self.reg.row_state(session_id, **kw)["state"]
+
+    async def test_a_live_quiet_row_says_live(self):
+        await self._open("conv-live")
+        self.assertEqual(self._state("conv-live"), "live")
+        self.assertEqual(self.reg.row_state("conv-live")["label"], "Live")
+        # And the listing carries the same derivation on every row.
+        row = next(r for r in self.reg.live() if r["session_id"] == "conv-live")
+        self.assertEqual(row["row_state"]["state"], "live")
+
+    async def test_an_answering_row_says_so(self):
+        await self._busy("conv-busy")
+        self.assertEqual(self._state("conv-busy"), "answering")
+
+    async def test_a_row_waiting_on_a_person_outranks_answering(self):
+        os.environ["FAKE_CHAT_MODE"] = "permission"
+        asking = await self._open("conv-asking")
+        await asking.send("delete that file")
+        self.assertTrue(await self._wait(lambda: asking.pending_permission))
+        os.environ["FAKE_CHAT_MODE"] = "ok"
+        # The turn is busy AND blocked on a question: the question wins,
+        # because it is the one a person can do something about.
+        self.assertEqual(asking.state, "busy")
+        self.assertEqual(self._state("conv-asking"), "needs_ok")
+
+    async def test_a_closed_row_is_plainly_paused_with_no_pill(self):
+        await self._open("conv-one")
+        await self._open("conv-two")
+        await self.reg.close("conv-one")
+        payload = self.reg.row_state("conv-one")
+        self.assertEqual(payload["state"], "paused")
+        self.assertEqual(payload["label"], "", "an ordinary paused row is not news")
+        self.assertIn("resumes this conversation", payload["hint"])
+
+    async def test_an_evicted_row_says_it_was_paused_to_make_room(self):
+        self._cap(1)
+        first = await self._open("conv-one")
+        await self._open("conv-two")
+        self.assertFalse(first.alive())
+        payload = self.reg.row_state("conv-one")
+        self.assertEqual(payload["state"], "paused_room")
+        self.assertEqual(payload["label"], "Paused to make room")
+        # The hint names the cap it is about, from the setting, not a
+        # number typed into the sentence.
+        self.assertIn("1 chats", payload["hint"])
+        self.assertIn("conv-one", self.reg._evicted_ids)
+
+        # Reopening is what clears it — the process is back.
+        await self.reg.open("conv-one", [])
+        self.assertEqual(self._state("conv-one"), "live")
+        self.assertNotIn("conv-one", self.reg._evicted_ids)
+        self.assertNotIn("evicted_at", first.meta)
+
+    async def test_a_resume_that_fell_back_is_context_lost_until_you_type(self):
+        """The toast said it and vanished; the row and the composer say it
+        until the next message, which is the fresh start the notice
+        promised."""
+        os.environ["FAKE_CHAT_MODE"] = "noresume"
+        out = await self.reg.open("gone-forever",
+                                  [{"type": "user", "text": "old history"}])
+        os.environ["FAKE_CHAT_MODE"] = "ok"
+        self.assertFalse(out["resumed"])
+        session = self.reg.attached()
+        self.assertTrue(session.alive(), "the fresh session is not running")
+        # The attached conversation — what the composer renders — says so
+        # even though a process is live under a new id.
+        composer = self.reg.composer_state()
+        self.assertEqual(composer["state"], "context_lost")
+        self.assertIn("no longer has this conversation", composer["hint"])
+        # And the OLD id, the row somebody clicked, answers the same.
+        self.assertEqual(self._state("gone-forever"), "context_lost")
+        self.assertEqual(session.meta.get("lost_from"), "gone-forever")
+
+        # Typing into it IS the fresh start: from here the transcript on
+        # screen is the process's own.
+        await session.send("carry on")
+        self.assertTrue(await self._wait(lambda: session.state == "ready"))
+        self.assertEqual(self.reg.composer_state()["state"], "live")
+        self.assertEqual(self._state("gone-forever"), "paused")
+
+    async def test_a_record_is_a_record_whatever_else_is_true(self):
+        await self._open("conv-live")
+        payload = self.reg.row_state("conv-live", view_only=True)
+        self.assertEqual(payload["state"], "record")
+        self.assertEqual(payload["label"], "Record")
+        self.assertIn("cannot be continued", payload["hint"])
+
+    async def test_an_empty_chat_reads_as_ready_not_paused(self):
+        """The attached session before anybody has typed: no id, no
+        process. "Your next message resumes this conversation" would be a
+        lie about a conversation that does not exist yet."""
+        composer = self.reg.composer_state()
+        self.assertEqual(composer["state"], "live")
+        self.assertEqual(composer["hint"], "Ready")
+
+    async def test_the_row_state_survives_a_registry_restart(self):
+        """A reload after an eviction or a fallback has to show the same
+        pill it showed before — the fact rides in the transcript's own
+        `meta`, which is what a fresh registry reads back."""
+        self._cap(1)
+        await self._open("conv-one")
+        await self._open("conv-two")
+        self.assertEqual(self._state("conv-one"), "paused_room")
+
+        # A fallback, now attached: its meta lands under the NEW id once
+        # the fresh process has named itself.
+        os.environ["FAKE_CHAT_MODE"] = "noresume"
+        await self.reg.open("gone-forever", [{"type": "user", "text": "old"}])
+        os.environ["FAKE_CHAT_MODE"] = "ok"
+        new_id = self.reg.attached().session_id
+        self.assertTrue(new_id and new_id != "gone-forever")
+
+        await self.reg.stop_all()
+        fresh = self.chat_session.SessionRegistry()
+        try:
+            # conv-one is not held by the new registry: the answer comes
+            # off its transcript, not memory.
+            self.assertIsNone(fresh.get("conv-one"))
+            self.assertEqual(fresh.row_state("conv-one")["state"], "paused_room")
+            # The attached one is reconstructed from `.attached` and its
+            # transcript, meta included.
+            self.assertEqual(fresh.attached().session_id, new_id)
+            self.assertEqual(fresh.composer_state()["state"], "context_lost")
+            # And a conversation nothing recorded anything about is simply
+            # paused — no meta is not an error.
+            self.assertEqual(fresh.row_state("never-held")["state"], "paused")
+        finally:
+            await fresh.stop_all()
+
+    async def test_the_transcript_meta_is_bounded_to_what_is_known(self):
+        """`meta` is read back off disk, so a stray or malformed key must
+        not reach a listing. Only the three known keys survive, in their
+        own shapes."""
+        clean = self.chat_session._clean_meta
+        self.assertEqual(clean(None), {})
+        self.assertEqual(clean({"evicted_at": "yesterday"}), {})
+        self.assertEqual(clean({"evicted_at": 12.5, "stray": 1}),
+                         {"evicted_at": 12.5})
+        self.assertEqual(clean({"context_lost": True, "lost_from": "../x"}),
+                         {"context_lost": True})
+        self.assertEqual(clean({"context_lost": "yes"}), {})
+
 
 class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
     """The API the panel actually calls, including the SSE stream."""
@@ -1788,6 +1940,79 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
 
         resp = await self.client.get("/api/chat/conversation/never-was/view")
         self.assertEqual(resp.status, 404)
+
+    async def test_every_listed_row_carries_its_state_and_records_say_record(self):
+        """The pill's source of truth rides on every row the panel lists,
+        and a card run is `record` however it is listed — the same
+        derivation the rail, the ⋯ dialog and the composer read."""
+        self._fake_conversation("mine", "hello", age_s=60)
+        self._fake_engine_conversation("card-1", "Analyse the upstairs heating")
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=all")).json()
+        by_id = {c["id"]: c for c in data["conversations"]}
+        self.assertEqual(set(by_id), {"mine", "card-1"})
+        for row in by_id.values():
+            self.assertIn("row_state", row)
+            self.assertEqual(set(row["row_state"]), {"state", "label", "hint"})
+        self.assertEqual(by_id["card-1"]["row_state"]["state"], "record")
+        self.assertEqual(by_id["mine"]["row_state"]["state"], "paused")
+        # A live one says so on the row — the three flags stay beside it.
+        await self.client.post("/api/chat/send", json={"text": "hi"})
+        await asyncio.sleep(0.6)
+        current = (await (await self.client.get(
+            "/api/chat/state")).json())["session_id"]
+        self._fake_conversation(current, "the open one")
+        data = await (await self.client.get("/api/chat/conversations")).json()
+        row = next(c for c in data["conversations"] if c["id"] == current)
+        self.assertTrue(row["live"])
+        self.assertEqual(row["row_state"]["state"], "live")
+        self.assertEqual(row["row_state"]["label"], "Live")
+        pushed = next(s for s in data["sessions"] if s["session_id"] == current)
+        self.assertEqual(pushed["row_state"]["state"], "live")
+
+    async def test_the_snapshot_says_what_sending_will_do(self):
+        """`composer_state` is the attached conversation's own row state,
+        and it moves with the turn: Ready before, answering during."""
+        snap = await (await self.client.get("/api/chat/state")).json()
+        self.assertEqual(snap["composer_state"]["state"], "live")
+        self.assertEqual(snap["composer_state"]["hint"], "Ready")
+
+        os.environ["FAKE_CHAT_MODE"] = "slow"
+        try:
+            await self.client.post("/api/chat/send", json={"text": "hi"})
+            snap = await (await self.client.get("/api/chat/state")).json()
+            self.assertEqual(snap["state"], "busy")
+            self.assertEqual(snap["composer_state"]["state"], "answering")
+            deadline = asyncio.get_running_loop().time() + 10
+            while asyncio.get_running_loop().time() < deadline:
+                snap = await (await self.client.get("/api/chat/state")).json()
+                if snap["state"] == "ready":
+                    break
+                await asyncio.sleep(0.1)
+            self.assertEqual(snap["composer_state"]["state"], "live")
+        finally:
+            os.environ.pop("FAKE_CHAT_MODE", None)
+
+    async def test_resume_answers_with_the_row_state_it_landed_in(self):
+        """`resumed: false` used to be a toast; the state rides back so the
+        composer line is right before the reconnect's snapshot."""
+        self._fake_conversation("older", "an older chat", age_s=60)
+        out = await (await self.client.post(
+            "/api/chat/resume", json={"session_id": "older"})).json()
+        self.assertTrue(out["resumed"])
+        self.assertEqual(out["row_state"]["state"], "live")
+
+        os.environ["FAKE_CHAT_MODE"] = "noresume"
+        try:
+            self._fake_conversation("pruned", "a pruned one", age_s=120)
+            out = await (await self.client.post(
+                "/api/chat/resume", json={"session_id": "pruned"})).json()
+        finally:
+            os.environ.pop("FAKE_CHAT_MODE", None)
+        self.assertFalse(out["resumed"])
+        self.assertEqual(out["row_state"]["state"], "context_lost")
+        snap = await (await self.client.get("/api/chat/state")).json()
+        self.assertEqual(snap["composer_state"]["state"], "context_lost")
 
     async def test_the_chips_lead_with_your_chats_then_go_alphabetical(self):
         """"Yours" answered nothing — whose else would they be? — and the
