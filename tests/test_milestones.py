@@ -555,6 +555,70 @@ class TestTheRoutes(MilestoneCase):
         self.server.JOBS.clear()
 
 
+class TestAMilestoneAnswersToTheSameGates(MilestoneCase):
+    """A card is a Claude run, and a Claude run has three switches in
+    front of it. Nothing is settled by a pass that could not run: the
+    milestone stays armed, so a paused house gets its card on the pass
+    after it is unpaused."""
+
+    def setUp(self):
+        super().setUp()
+        self.server = importlib.import_module("server")
+        import settings_store
+        self.settings_store = settings_store
+        self._old_settings = settings_store.SETTINGS_FILE
+        settings_store.SETTINGS_FILE = os.path.join(self.tmp.name, "settings.json")
+        settings_store.save({"onboarded": True, "auto_enabled": True})
+        self._old_auth = self.server.engine.get_auth
+        self._old_budget = self.server.usage_store.budget_state
+        self._old_snapshot = self.server._house_snapshot
+        self._old_payloads = self.server._milestone_payloads
+        self.server.engine.get_auth = lambda: {"type": "oauth"}
+        self.server.usage_store.budget_state = lambda _s: {"blocked": False}
+        snap, payloads = rhythm_house()
+
+        async def snapshot(now=None):
+            return snap
+
+        self.server._house_snapshot = snapshot
+        self.server._milestone_payloads = lambda: payloads
+        self.server.JOBS.clear()
+
+    def tearDown(self):
+        self.settings_store.SETTINGS_FILE = self._old_settings
+        self.server.engine.get_auth = self._old_auth
+        self.server.usage_store.budget_state = self._old_budget
+        self.server._house_snapshot = self._old_snapshot
+        self.server._milestone_payloads = self._old_payloads
+        self.server.JOBS.clear()
+        super().tearDown()
+
+    def offer(self):
+        return asyncio.run(self.server._offer_milestones(NOW))
+
+    def test_it_queues_when_every_gate_is_open(self):
+        self.assertEqual(self.offer(), 1)
+        self.assertEqual(self.server.JOBS["milestone-rhythm"]["kind"],
+                         "milestone")
+
+    def test_a_signed_out_house_queues_nothing_and_stays_armed(self):
+        self.server.engine.get_auth = lambda: None
+        self.assertEqual(self.offer(), 0)
+        self.assertFalse(milestones.is_settled("rhythm"))
+
+    def test_a_paused_house_queues_nothing(self):
+        self.settings_store.save({"auto_enabled": False})
+        self.assertEqual(self.offer(), 0)
+
+    def test_a_house_over_its_budget_queues_nothing(self):
+        self.server.usage_store.budget_state = lambda _s: {"blocked": True}
+        self.assertEqual(self.offer(), 0)
+
+    def test_a_second_pass_does_not_queue_it_twice(self):
+        self.assertEqual(self.offer(), 1)
+        self.assertEqual(self.offer(), 0, "the job is already in flight")
+
+
 class TestTheStoreOnDisk(MilestoneCase):
     def test_a_card_is_json_on_disk_under_its_own_id(self):
         due = self.fire("closures")[0]

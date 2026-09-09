@@ -2348,6 +2348,16 @@ async def _offer_milestones(now: float) -> int:
     because "what has become knowable" is a question about the same
     snapshot the checks just read.
     """
+    # A milestone card is a Claude run, so it answers to the same three
+    # gates scheduled generation does. Checked BEFORE the table is
+    # evaluated, and nothing is settled by a pass that could not run: a
+    # milestone is armed until a card exists, so a paused house simply
+    # gets the card on the pass after it is unpaused.
+    settings = settings_store.load()
+    if not engine.get_auth() or not settings["auto_enabled"]:
+        return 0
+    if usage_store.budget_state(settings)["blocked"]:
+        return 0
     snapshot = await _house_snapshot(now)
     payloads = await asyncio.to_thread(_milestone_payloads)
     due = await asyncio.to_thread(milestones.due, snapshot, payloads, now)

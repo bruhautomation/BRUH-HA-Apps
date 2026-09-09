@@ -2124,3 +2124,72 @@ def test_a_panel_that_is_down_still_confirms_locally(tmp_path):
     record = json.loads(inbox_lines(memory_dir)[0])
     assert record["fact"] == GUESS["text"]
 
+
+# ---------------------------------------------------------------------------
+# The context file the terminal and the chat read
+# ---------------------------------------------------------------------------
+
+CONSOLIDATOR = ADDON / "scripts" / "brain-memory-consolidate.sh"
+
+
+def drive_refresh_context(generator, tmp_path):
+    """Run the consolidator's own `refresh_context`, and only that.
+
+    Lifted out by name and driven rather than grepped for: the whole
+    reason this exists is that `/config/CLAUDE.md` was written once at
+    startup and never again, so a test asserting the call is *there*
+    would pass against a call that does nothing.
+    """
+    src = CONSOLIDATOR.read_text()
+    match = re.search(r"^refresh_context\(\) \{\n.*?^\}$", src, re.S | re.M)
+    assert match, "brain-memory-consolidate.sh no longer defines refresh_context"
+    harness = ('log() { echo "LOG $*"; }\n'
+               + match.group(0) + "\nrefresh_context\n")
+    env = {**os.environ, "BRAIN_CONTEXT_GEN": str(generator)}
+    result = subprocess.run(["bash", "-c", harness], capture_output=True,
+                            text=True, check=False, env=env, cwd=str(tmp_path))
+    return result.returncode, result.stdout
+
+
+def _generator(tmp_path, exit_code=0):
+    path = tmp_path / "ha-context-gen.sh"
+    path.write_text("#!/bin/bash\n"
+                    f'echo ran >> "{tmp_path}/ran"\n'
+                    f"exit {exit_code}\n")
+    path.chmod(0o755)
+    return path
+
+
+def test_a_finished_pass_regenerates_the_context_file(tmp_path):
+    """A fact taught on Tuesday reached voice, the analyst and the fixer,
+    and did not reach the person typing in the terminal until somebody
+    restarted the add-on."""
+    rc, out = drive_refresh_context(_generator(tmp_path), tmp_path)
+    assert rc == 0
+    assert (tmp_path / "ran").exists()
+    assert "refreshed" in out
+
+
+def test_a_generator_that_fails_does_not_fail_the_pass(tmp_path):
+    """The context file is derived and the memory it is derived from is
+    already on disk. A consolidation that reported failure because a
+    regeneration did would leave the inbox pending over a copy."""
+    rc, out = drive_refresh_context(_generator(tmp_path, exit_code=1), tmp_path)
+    assert rc == 0
+    assert "could not refresh" in out
+
+
+def test_a_missing_generator_is_silent_and_harmless(tmp_path):
+    rc, out = drive_refresh_context(tmp_path / "not-there.sh", tmp_path)
+    assert rc == 0
+    assert "could not refresh" not in out
+
+
+def test_the_pass_regenerates_after_the_document_is_written():
+    """Called from `consolidate_once`, after the marker: that is the one
+    place the document changes, and anywhere else would regenerate
+    something that had not moved."""
+    src = CONSOLIDATOR.read_text()
+    body = src[src.index("consolidate_once() {"):src.index("refresh_context() {")]
+    assert "refresh_context" in body
+    assert body.index("record_change") < body.index("refresh_context")

@@ -322,5 +322,101 @@ class TestAnalystCanOnlyRead(unittest.TestCase):
             self.assertIn(shared, categories.SYSTEM_PROMPT)
 
 
+class TestTheFacesThatCanBypassTheChokepointAreToldTheList(unittest.TestCase):
+    """`protected_entities` is enforced in the MCP server and nowhere else.
+
+    That is right for every path whose only route to the house is a tool
+    call: `call_service` is the chokepoint every `control_*` routes
+    through, and it refuses. Two faces are not like that. The fixer holds
+    Bash, Write and Edit; the terminal and the chat hold the same. `ha
+    service light.turn_on`, a line added to automations.yaml, a script
+    written and reloaded — none of those passes the chokepoint, and none
+    of them can be refused by it.
+
+    Telling them is weaker than enforcing, and it is not offered as a
+    substitute: it is the only thing available on the paths enforcement
+    cannot reach, and a rule the model was never told is one it cannot
+    keep. What is asserted here is that the list actually arrives.
+    """
+
+    def setUp(self):
+        import sys
+        sys.path.insert(0, os.path.join(ADDON_DIR, "panel"))
+        import fixer
+        self.fixer = fixer
+
+    def test_the_fix_prompt_carries_the_homeowners_list(self):
+        prompt = self.fixer.build_prompt(
+            {"text": "the porch light is stuck"},
+            protected=["lock.front_door", "alarm_control_panel.*"])
+        self.assertIn("lock.front_door", prompt)
+        self.assertIn("alarm_control_panel.*", prompt)
+        self.assertIn("PROTECTED ENTITIES", prompt)
+
+    def test_an_empty_list_produces_no_heading(self):
+        """A heading over nothing reads as "nothing is protected here" —
+        which is true, and is also what a list that failed to load looks
+        like."""
+        for empty in (None, [], ["", "  "]):
+            with self.subTest(repr(empty)):
+                prompt = self.fixer.build_prompt(
+                    {"text": "x"}, protected=empty)
+                self.assertNotIn("PROTECTED ENTITIES", prompt)
+
+    def test_the_block_says_reading_is_still_allowed(self):
+        """Read-only tools are untouched by the chokepoint too: a
+        protected entity can be looked at, not acted on. A rule stated as
+        "do not touch" would stop the fixer confirming the problem."""
+        block = self.fixer.protected_block(["lock.front_door"])
+        self.assertIn("Read them freely", block)
+
+    def test_the_system_prompt_names_the_two_paths_that_are_not_checked(self):
+        """The hard rule is static and the list is runtime, so the rule
+        has to point at the list rather than repeat it."""
+        self.assertIn("PROTECTED ENTITY", self.fixer.FIX_SYSTEM)
+        self.assertIn("shell and file edits", self.fixer.FIX_SYSTEM)
+
+    def test_the_fixer_reads_the_same_option_the_mcp_server_does(self):
+        """One parse, one answer. A second reading of the same option is
+        a second answer to "is this entity protected"."""
+        import automation_writer
+        os.environ["BRAIN_PROTECTED_ENTITIES"] = " lock.Front_Door , light.* "
+        try:
+            self.assertEqual(automation_writer.protected_patterns(),
+                             ["lock.front_door", "light.*"])
+        finally:
+            os.environ.pop("BRAIN_PROTECTED_ENTITIES", None)
+
+    def test_the_generated_context_file_carries_the_list(self):
+        """`/config/CLAUDE.md` is the project context Claude Code reads,
+        which makes it the only route the terminal and the chat have to
+        the list. The block is lifted out of the real script and driven,
+        rather than grepped for — a grep for a line is not a test of what
+        the line does.
+        """
+        import subprocess
+        script = os.path.join(ADDON_DIR, "scripts", "ha-context-gen.sh")
+        with open(script, encoding="utf-8") as f:
+            source = f.read()
+        start = source.index("        protected_rows=$(printf")
+        end = source.index("\n", source.index("| sed 's/^/- `/;", start))
+        recipe = source[start:end].strip()
+        out = subprocess.run(
+            ["bash", "-c",
+             'BRAIN_PROTECTED_ENTITIES="lock.front_door, alarm_control_panel.*"\n'
+             + recipe.replace("        ", "") + '\nprintf "%s" "$protected_rows"'],
+            capture_output=True, text=True, check=True)
+        self.assertEqual(out.stdout,
+                         "- `lock.front_door`\n- `alarm_control_panel.*`")
+
+    def test_the_context_file_says_nothing_when_the_list_is_empty(self):
+        """Same rule as the fix prompt: an empty heading is a claim."""
+        with open(os.path.join(ADDON_DIR, "scripts", "ha-context-gen.sh"),
+                  encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn('if [ -n "${BRAIN_PROTECTED_ENTITIES:-}" ]; then', text)
+        self.assertIn("${protected_section}", text)
+
+
 if __name__ == "__main__":
     unittest.main()

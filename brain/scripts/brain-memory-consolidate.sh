@@ -540,7 +540,8 @@ consolidate_once() {
 # leave the inbox pending over a copy.
 refresh_context() {
     local gen
-    for gen in /usr/local/bin/ha-context-gen.sh /opt/scripts/ha-context-gen.sh; do
+    for gen in "${BRAIN_CONTEXT_GEN:-/usr/local/bin/ha-context-gen.sh}" \
+               /opt/scripts/ha-context-gen.sh; do
         [ -x "$gen" ] || continue
         if "$gen" >/dev/null 2>&1; then
             log "refreshed /config/CLAUDE.md with the updated memory"
