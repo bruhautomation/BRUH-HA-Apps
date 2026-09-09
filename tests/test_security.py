@@ -15,7 +15,10 @@ Tests cover:
 
 import os
 import re
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..")
 ADDON_DIR = os.path.join(BASE_DIR, "brain")
@@ -420,3 +423,65 @@ class TestTheFacesThatCanBypassTheChokepointAreToldTheList(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAStudySessionIsScopedLikeTheAnalyst(unittest.TestCase):
+    """A study reads the house; this script writes what it found.
+
+    Every fact a study session produces is filed by `brain-learn.sh`
+    itself, out of the JSON the model returned — the model never needs a
+    tool that writes. It nonetheless ran with whatever
+    `/config/.claude/settings.local.json` pre-approves, which is Bash,
+    Write and Edit, on a path reachable from an automation
+    (`brain.study`). It runs with the analyst's own lists now, read out
+    of `engine.py` so there is one answer to "what may an unattended run
+    touch", and it REFUSES rather than running unscoped when it cannot
+    read them.
+    """
+
+    SCRIPT = Path(BASE_DIR) / "brain" / "scripts" / "brain-learn.sh"
+
+    def _run(self, panel_dir, claude_log):
+        """Drive the real script against a fake claude, return its argv."""
+        env = dict(os.environ)
+        env.update({
+            "BRAIN_CLAUDE_BIN": str(claude_log.parent / "fake-claude"),
+            "BRAIN_MEMORY_DIR": str(claude_log.parent / "memory"),
+            "BRAIN_FINDINGS_INBOX": str(claude_log.parent / "findings"),
+            "BRAIN_CURRICULUM_FILE": str(claude_log.parent / "curriculum.json"),
+            "BRAIN_LEARN_TIMEOUT": "20",
+            "FAKE_CLAUDE_ARGV_LOG": str(claude_log),
+            "BRAIN_PANEL_DIR": str(panel_dir),
+        })
+        return subprocess.run(
+            ["bash", str(self.SCRIPT), "naming"],
+            capture_output=True, text=True, timeout=60, env=env)
+
+    def test_the_lists_come_from_engine_and_are_not_copied_here(self):
+        src = self.SCRIPT.read_text()
+        self.assertIn("engine.ANALYST_TOOLS", src)
+        self.assertIn("engine.ANALYST_DENIED", src)
+        self.assertIn("--allowedTools", src)
+        self.assertIn("--disallowedTools", src)
+        # The deny list must not be spelled out a second time in the
+        # shell: that is the copy that goes stale when a tool is added.
+        for acting in ("call_service", "fire_event", "run_script"):
+            self.assertNotIn(f"mcp__home-assistant__{acting}", src,
+                             "the shell keeps its own copy of the deny list")
+
+    def test_it_refuses_rather_than_running_with_no_restriction(self):
+        """The failure mode that matters: unreadable lists must not mean
+        an unscoped run, because that is the state this fixes."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            log = root / "argv.log"
+            (root / "fake-claude").write_text("#!/bin/sh\nexit 0\n")
+            (root / "fake-claude").chmod(0o755)
+            # A panel directory with no engine.py in it.
+            empty = root / "nopanel"
+            empty.mkdir()
+            proc = self._run(empty, log)
+        self.assertNotEqual(proc.returncode, 0,
+                            "an unscopeable study session still ran")
+        self.assertIn("refusing", (proc.stderr or "").lower())
+        self.assertFalse(log.exists(), "claude was invoked anyway")

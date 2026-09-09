@@ -1443,6 +1443,11 @@ class TestTurnBudgets(unittest.TestCase):
             # Over the landing floor, so a tripped cap is landed rather
             # than refused for want of time.
             "BRAIN_LEARN_TIMEOUT": "60", "BRAIN_ASK_TIMEOUT": "60",
+            # A study session scopes itself to the analyst's tool lists
+            # and refuses to run when it cannot read them, so a driver
+            # has to say where the panel is: in the image it is
+            # /opt/panel, and here it is the checkout.
+            "BRAIN_PANEL_DIR": str(PANEL),
         })
         env.update(extra)
         proc = subprocess.run(["bash", str(SCRIPTS / script), *args],

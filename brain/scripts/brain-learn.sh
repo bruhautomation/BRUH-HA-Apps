@@ -325,10 +325,46 @@ fi
 # the last line of stderr is what tells them apart.
 err_file=$(mktemp 2>/dev/null || echo "/tmp/brain-learn-err.$$")
 
+# A study session READS the house and writes nothing itself: every fact it
+# finds is filed below, by this script, out of the JSON it returned. So it
+# runs with the analyst's own tool set — the one `engine.run_analyst` uses
+# for the same reason, unattended work that must not act on a home.
+#
+# The lists are read from `engine.py` rather than copied here, because two
+# answers to "what may an unattended run touch" is the drift that lets an
+# acting tool reach one of them. If they cannot be read the run is refused
+# rather than made with no restriction: a study that cannot be scoped is
+# not a study that should run with Bash and Write.
+tool_args=()
+panel_dir="${BRAIN_PANEL_DIR:-/opt/panel}"
+if perms=$(BRAIN_PANEL_DIR="$panel_dir" python3 - <<'PYTOOLS' 2>/dev/null
+import os
+import sys
+sys.path.insert(0, os.environ.get("BRAIN_PANEL_DIR", "/opt/panel"))
+try:
+    import engine
+except Exception:
+    raise SystemExit(1)
+allow, deny = engine.ANALYST_TOOLS, engine.ANALYST_DENIED
+if not allow or not deny:
+    raise SystemExit(1)
+print(",".join(allow))
+print(",".join(deny))
+PYTOOLS
+); then
+    allow_list=$(printf '%s' "$perms" | sed -n '1p')
+    deny_list=$(printf '%s' "$perms" | sed -n '2p')
+    tool_args=(--allowedTools "$allow_list" --disallowedTools "$deny_list")
+else
+    echo "Cannot read the analyst's tool lists from ${panel_dir}/engine.py;" >&2
+    echo "refusing to run a study session with no restriction." >&2
+    exit 1
+fi
+
 run_study() {
     # shellcheck disable=SC2086
     printf '%s' "$prompt" | timeout "$TIMEOUT" \
-        $claude_cmd -p "${turn_args[@]}" "$@" \
+        $claude_cmd -p "${turn_args[@]}" "${tool_args[@]}" "$@" \
         ${MODEL:+--model "$MODEL"} 2>"$err_file"
 }
 
