@@ -1652,7 +1652,8 @@ class TestPromptStore(unittest.TestCase):
     def test_corrupt_file_tolerated(self):
         with open(prompt_store.OVERRIDES_FILE, "w") as f:
             f.write("not json")
-        self.assertEqual(prompt_store.load_overrides(), {"categories": {}})
+        self.assertEqual(prompt_store.load_overrides(),
+                         {"categories": {}, "accepted": []})
         self.assertTrue(prompt_store.effective_category("energy")["enabled"])
 
 
