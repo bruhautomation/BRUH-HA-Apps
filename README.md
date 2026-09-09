@@ -16,6 +16,8 @@ A Home Assistant add-on that runs Claude Code and a suite of tools inside HA, wh
 
 That memory isn't a black box: open it, read it, edit it, correct it. An insights panel shows what it knows about your house and what it's done there — in the sidebar, or embedded straight into your dashboards. Reach it as your conversation agent, through a full-featured chat interface, or from native Claude Code; your automations can call it too, which means your house can ask for help before you notice anything's wrong.
 
+Most of what it eventually tells you is **measured** rather than guessed — when the house gets up, what a reading normally is at this hour of this week, how fast each room loses heat, what you keep doing by hand — worked out overnight from what Home Assistant already records, with no Claude run at all. Every one of those has a floor under it, so a new install is quiet for a while; the **Knowledge** tab is what says which measurement is waiting on what, and roughly when. And when something does go wrong, brAIn writes the evidence down by itself: one redacted text file per problem, where you can read it and paste it.
+
 One install, one sidebar panel, one login. **Runs on the Claude Pro or Max subscription — or your own API key**.
 
 📖 **[bruhautomation.com/brain](https://bruhautomation.com/brain/)** · [add-on README](brain/)

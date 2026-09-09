@@ -1071,6 +1071,168 @@ class TestDocsTab(unittest.TestCase):
         self.assertIn("return esc(s)", self.app)
 
 
+class TestDocsAreGenerated(unittest.TestCase):
+    """The Docs tab is DOCS.md, built by `panel/build-docs.py`.
+
+    They used to be two hand-written copies of the same guide, and they drifted
+    exactly as two copies do: the panel went on teaching a five-tab layout and a
+    button set the file beside it had already corrected. So the file is the
+    source and the tab is generated — which is only true while the checked-in
+    output still matches what the generator would write today, and that is what
+    `--check` is for.
+    """
+
+    BUILDER = PANEL / "build-docs.py"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.md = (ADDON_DIR / "DOCS.md").read_text()
+        cls.docs = (PANEL / "docs.js").read_text()
+
+    def _run(self, *args):
+        return subprocess.run([sys.executable, str(self.BUILDER), *args],
+                              capture_output=True, text=True, timeout=60)
+
+    def test_the_generator_is_there_and_says_so_in_the_output(self):
+        self.assertTrue(self.BUILDER.is_file(), "panel/build-docs.py is gone")
+        self.assertIn("GENERATED from brain/DOCS.md by panel/build-docs.py",
+                      self.docs.split("\n", 1)[0],
+                      "docs.js must name its generator on its first line, or "
+                      "the next person edits it by hand")
+
+    def test_the_checked_in_docs_js_is_what_the_generator_writes(self):
+        """The whole contract. A DOCS.md edit that nobody regenerated is a Docs
+        tab one release behind the file it claims to be."""
+        res = self._run("--check")
+        self.assertEqual(res.returncode, 0,
+                         f"{res.stdout}\n{res.stderr}\n"
+                         "run `python3 brain/panel/build-docs.py` and commit")
+
+    def test_check_actually_fails_on_drift(self):
+        """A `--check` that cannot fail is a `--check` nobody has to satisfy —
+        the grep-for-a-line failure, one tool over. Drive it against a source
+        that differs and assert it says so."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "DOCS.md"
+            src.write_text("# brAIn\n\n## Setup\n\nSomething else entirely.\n")
+            res = self._run("--check", "--source", str(src))
+        self.assertEqual(res.returncode, 1,
+                         "--check passed against a source it was not built from")
+
+    def test_every_top_level_section_of_the_guide_has_an_entry(self):
+        """A `##` with no entry is a page of the guide the panel does not
+        serve, and nothing else would notice."""
+        ids = set(re.findall(r'^\s*id: "([^"]+)"', self.docs, re.M))
+        # A title may hold an escaped quote (`It knows what \"unusual\" means
+        # here`), so the naive `[^"]+` stops halfway through one and the test
+        # reports a section that is right there.
+        titles = [json.loads(f'"{raw}"') for raw in re.findall(
+            r'^\s*title: "((?:[^"\\]|\\.)*)"', self.docs, re.M)]
+        missing = []
+        for heading in re.findall(r"^##\s+(?!#)(.*)$", self.md, re.M):
+            name = heading.strip()
+            if name == "What it can do":
+                # Deliberately split per `###` — see the module docstring.
+                continue
+            if name not in titles:
+                missing.append(name)
+        self.assertEqual(missing, [], f"sections with no docs.js entry: {missing}")
+        # And the split one really is split, rather than silently dropped.
+        subs = re.findall(r"^###\s+(?!#)(.*)$", self.md.split("## Setup", 1)[0], re.M)
+        self.assertTrue(subs, "`What it can do` has no subsections any more")
+        for sub in subs:
+            self.assertIn(sub.strip(), titles, f"`{sub.strip()}` is not in the guide")
+        self.assertEqual(len(ids), len(re.findall(r'^\s*id: ', self.docs, re.M)),
+                         "duplicate section id")
+
+    def test_the_cli_verbs_survive_the_generation(self):
+        """`test_guide_documents_the_current_cli_not_the_retired_one` asserts
+        this of docs.js; this asserts the SOURCE carries it, so a regeneration
+        cannot be what makes that one pass."""
+        for current in ("brain memory", "brain learn", "brain undo",
+                        "brain doctor", "ha reload", "ha check"):
+            self.assertIn(current, self.md, f"DOCS.md never mentions {current}")
+            self.assertIn(current, self.docs, f"docs.js lost {current}")
+
+    def test_a_fenced_code_block_round_trips(self):
+        """Backticks are the one character a template literal cannot carry
+        raw, and a fenced block is three of them on a line of its own — so an
+        escaping bug here is a docs.js that either does not parse or renders
+        somebody's shell example as prose."""
+        fence = "```bash\nbrain doctor --deep\n```"
+        self.assertIn("```bash", self.md, "the guide has no shell examples left")
+        self.assertIn("\\`\\`\\`bash", self.docs,
+                      "a fenced block did not survive into docs.js escaped")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "DOCS.md"
+            out = Path(tmp) / "docs.js"
+            src.write_text(f"# T\n\n## Sec\n\n{fence}\n")
+            self.assertEqual(
+                self._run("--source", str(src), "--out", str(out)).returncode, 0)
+            body = out.read_text()
+            node = subprocess.run(["node", "--check", str(out)],
+                                  capture_output=True, text=True, timeout=30)
+            self.assertEqual(node.returncode, 0, node.stderr)
+            self.assertIn("brain doctor --deep", body)
+            self.assertIn("\\`\\`\\`bash", body)
+
+    def test_a_markdown_table_round_trips(self):
+        """Tables carry most of the reference material in this guide — the
+        options, the ports, the panel's tabs — and the renderer only draws one
+        when the pipe rows survive intact."""
+        table = ("| Port | What |\n| --- | --- |\n"
+                 "| 8099 | The panel |\n")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "DOCS.md"
+            out = Path(tmp) / "docs.js"
+            src.write_text(f"# T\n\n## Sec\n\n{table}")
+            self.assertEqual(
+                self._run("--source", str(src), "--out", str(out)).returncode, 0)
+            body = out.read_text()
+        for row in table.strip().split("\n"):
+            self.assertIn(row, body, f"table row lost: {row!r}")
+        # And the real guide still has tables in it.
+        self.assertRegex(self.docs, r"\n\| --- \|", "docs.js has no tables")
+
+    def test_the_shapes_the_renderer_cannot_draw_are_normalised_away(self):
+        """`renderMarkdown` has no branch for a horizontal rule, an in-page
+        anchor link or a heading inside a blockquote, so each would be printed
+        as the literal characters it was written as."""
+        self.assertIn("\n---\n", self.md, "DOCS.md has no rules left to strip")
+        self.assertNotIn("\n---\n", self.docs, "a `---` rule reached docs.js")
+        self.assertRegex(self.md, r"\]\(#", "DOCS.md has no anchor links left")
+        self.assertNotIn("](#", self.docs, "an in-page anchor link reached docs.js")
+        self.assertNotRegex(self.docs, r"(?m)^> #", "a quoted heading reached docs.js")
+        # `*emphasis*` has no inline rule either — only `**bold**` does — so a
+        # single-asterisk span reaches the reader as its own asterisks. The
+        # hand-written docs.js shipped forty of them.
+        self.assertRegex(self.md, r"(?<!\*)\*[^*`\n]+\*(?!\*)",
+                         "DOCS.md has no emphasis left to normalise")
+        self.assertNotRegex(self.docs, r"(?<!\*)\*(?!\*)[^*\n]{1,60}(?<!\*)\*(?!\*)",
+                            "single-asterisk emphasis reached docs.js")
+
+    def test_an_asterisk_inside_code_is_left_alone(self):
+        """`alarm_control_panel.*` is a glob somebody meant literally, and
+        bolding half of a pair of them would teach a pattern that does not
+        exist. The rewrite runs outside inline code only."""
+        for glob in ("alarm_control_panel.*", "notify.mobile_app_*", "brain_test_*"):
+            self.assertIn(glob, self.docs, f"{glob} was mangled or lost")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "DOCS.md"
+            out = Path(tmp) / "docs.js"
+            src.write_text("# T\n\n## Sec\n\nUse `light.*` and `switch.*` *here*.\n")
+            self.assertEqual(
+                self._run("--source", str(src), "--out", str(out)).returncode, 0)
+            body = out.read_text()
+        self.assertIn("`light.*`", body.replace("\\`", "`"))
+        self.assertIn("`switch.*`", body.replace("\\`", "`"))
+        self.assertIn("**here**", body)
+
+
 # ---------------------------------------------------------------------------
 # CLI dispatchers
 # ---------------------------------------------------------------------------

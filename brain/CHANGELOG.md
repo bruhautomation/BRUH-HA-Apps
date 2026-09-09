@@ -4,10 +4,333 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ## 1.48.0
 
-_In progress: this entry is completed before the release is cut. The
-work so far closes the security and logic gaps found in the 1.47.3
-audit and retires the three `*_max_turns` options — a tripped turn
-guard now lands the run with two more turns instead of truncating it._
+**A house that has just been installed is quiet, and the quiet was
+indistinguishable from broken.** Seven measurements sit under nearly
+everything brAIn says — when the house gets up, what a reading normally is,
+how fast a room loses heat, how much of each hour a door is open, what each
+machine's own power looks like, what somebody does by hand often enough to be
+a habit, what the electricity did last week — and every one has a floor under
+it, because a confident answer over data that holds none is worse than no
+answer at all. The cost of that honesty is weeks of silence on a fresh
+install, and **nothing anywhere said so**: the tabs simply had nothing on
+them.
+
+So every measurement now answers one question about itself, in one shape:
+what state it is in, what it has, what it needs, and one sentence true in
+that state. The Memory tab becomes **Knowledge** and shows all seven,
+always, whatever state each is in — and the day a measurement first has an
+answer, brAIn writes one card about it, once, on that measurement's own row.
+
+The second half is about the other kind of silence. Every failure this
+add-on has ever shipped was a quiet one, and every tool for answering "what
+went wrong" was pull-shaped: `brain doctor` if you knew to run it, ⚙ →
+Diagnostics if you knew to open it, `brain report` if somebody had already
+asked you for one. Now a failure writes its own evidence down, as one
+plain-text file, the moment it happens.
+
+And a third: **the three `*_max_turns` options are gone.** A turn cap is a
+runaway guard, not a budget, and it was the wrong thing to put in front of
+somebody — set it low and a run stops mid-thought having paid for every
+token it spent, set it high and it never fires. The guards are still there,
+large and invisible, and a run that trips one is now *landed* rather than
+truncated.
+
+### Added
+
+- **What brAIn has measured, and how far along each one is**
+  (`panel/house.py`, `GET /api/knowledge/house`, the **Knowledge** tab).
+  Each of the seven measurement stores answers `progress()` — a state (not
+  started, collecting, ready, unavailable, stale), what it has against what
+  it needs in its own named unit, the reason, an estimated date, and one
+  human sentence. Press a row to open that store's own numbers.
+
+  Three rules keep it from becoming a second copy of the measurements. **A
+  store's floor lives in the store**: `progress()` is a method on the module
+  that owns `MIN_DAYS`/`MIN_SAMPLES`/`MIN_BUCKETS`, never a number restated
+  in the aggregate, because a second copy of a floor is a floor that drifts
+  and the drift is invisible until the two disagree about whether a house is
+  ready. **The date is arithmetic here and the RATE is the store's**, since
+  only the store knows whether its unit is a nightly pass, an hour of
+  watching, or a weekday — which is why the weekday rhythm takes about two
+  weeks and the weekend one about five. And **"I could not look" is not
+  "there is nothing here"**: a house with no outdoor thermometer, no door
+  and no energy dashboard configured is `unavailable` with the store's own
+  sentence and **no date**, because a date beside it is a promise nothing is
+  going to keep.
+
+  Claude reads the same answers through a new `get_house_model` tool, and
+  the analyst, the morning brief and the weekly report are each handed a
+  short block of them — one line per ready measurement, in the
+  measurement's own words, budgeted at 2 KB and omitted when nothing is
+  ready. The analyst used to be told about the house and never about brAIn,
+  so it re-derived "what is normal here" from a week of readings on every
+  run and reached a different answer each time.
+
+- **The card brAIn writes the day it first knows something**
+  (`panel/milestones.py`). A progress bar says *when*; this says *what*. Each
+  of the seven fires **once**, when its own predicate first turns true, and
+  what it produces is an ordinary insight card built from that store's own
+  numbers — your house's measured wake time, the room that loses heat
+  fastest, the machines with a power shape brAIn can read.
+
+  They live on the Knowledge tab and **never on Insights**, which holds only
+  the cards you asked for: a category is a standing question somebody chose
+  to have answered, and this is a fact that became knowable on a Tuesday.
+  What makes it once is an entry in a settled ledger written the moment the
+  card is saved, so deleting the card, regenerating it by hand, or a run
+  that fails outright cannot let the next checks pass file it again.
+
+- **One problem, one text file, written when it happens** (`panel/reports.py`,
+  ⚙ → **Problems**). Three producers and one writer: a Claude run, checks
+  pass, baseline build or overnight heal that ended in a failure — caught by
+  a single listener on the run journal every one of them already passes
+  through, so nothing new has to remember to report — the health verdict
+  *leaving* `ok`, and a notification that could not be delivered, which is
+  the one failure whose only symptom was silence on a phone.
+
+  The file lands in `/share/brain/reports/`, where the file editor and the
+  Samba share can see it, and it is one file rather than a directory of five
+  and a tarball. The same problem inside 24 hours appends a `seen again at
+  HH:MM` line to the file it already has, because forty files about one dead
+  credential is how a folder stops being opened; the folder is capped at 30,
+  oldest first and never the one just written. **Redaction runs over the
+  whole composed file every time**, not over the sections that could hold a
+  token — a regex skipped for the part that "can't" is the one that misses
+  the day it does — and writing a report can never raise, because a report
+  that took down the run it was reporting on is worse than no report.
+
+  ⚙ → Problems lists them with a checkbox each and **Copy selected**, **Copy
+  all** and **Write a report now**. `brain report` writes the same single
+  file and assembles it itself when the panel is down, which is exactly when
+  a report is most wanted. And Home Assistant's own **Settings → Repairs**
+  carries *brAIn hit a problem* with the reason while the health verdict is
+  not `ok` — deliberately not fixable from there, because the fix is in ⚙ →
+  Problems where the file already is; it deletes itself when the verdict
+  comes back.
+
+- **Every conversation says which state it is in** (`chat_session.ROW_STATES`,
+  `SessionRegistry.row_state`). With several chats live at once, a paused
+  conversation, one the cap stopped to make room, and one whose context
+  Claude Code has dropped are three different things needing three different
+  responses — and all three rendered as a row with nothing on it. There are
+  seven words now: **Live**, **Answering…**, **Needs your OK**, paused (no
+  pill: a conversation with no process is the ordinary case and is not
+  news), **Paused to make room**, **Context lost**, and **Record** for a
+  card or fix run, which is kept to be read and can never be resumed.
+
+  One derivation decides which, for a live session and for a stored one
+  alike, so a row and the composer above it can never disagree; the state
+  rides in the transcript's own metadata, so a reload agrees with what you
+  were just looking at rather than reporting every backgrounded conversation
+  as merely paused. A status line above the composer says what sending will
+  do and offers the one control that fits — *Stop*, *New chat*, *Resume
+  now*, *Start fresh*, *Ask about it*.
+
+- **A Today strip on Insights, and a Diagnostics section that draws what its
+  payload always carried.** When the checks last ran and what they found,
+  when the measurements were last rebuilt, when memory was last filed, and
+  how many problems have been written up since yesterday — every number read
+  from state that already existed, because a second tally beside them would
+  be a second answer to "did the checks run". ⚙ → Diagnostics gains six
+  things its payload had always carried and the dialog had never drawn: when
+  the house wakes and settles, how rooms hold heat, doors and windows,
+  machines, habits, and the background daemons. A rhythm that never gathered
+  enough days and one that had looked, on that screen, like the same
+  silence — and it is the screen somebody is on when they are asking exactly
+  that.
+
+- **"Let brAIn raise it again" finally has a button.** The route to un-settle
+  a finding has been in the code, and in this repository's own notes, for
+  four releases with **no caller anywhere** — the guard that forbade an
+  archive of dismissed cards forbade any view of the ledger at all, and a
+  button that exists only in prose is a button nobody can press. It is an
+  **Answered** filter on the Findings tab, and the guard is narrowed to the
+  invariants that made an archive bad rather than dropped: hidden until the
+  ledger holds something, capped in what it renders, counted by no badge
+  (the badge counts work waiting on you, and an answered thing is not), and
+  carrying exactly one verb, which stops the suppression and nothing more.
+
+### Changed
+
+- **The three `*_max_turns` options are retired.** `assist_max_turns`,
+  `automation_max_turns` and `study_max_turns` are gone from the
+  Configuration tab. A cap is a runaway guard nobody should be asked to
+  choose a number for: low enough to bind and a run stops mid-thought,
+  having paid for every token it spent and produced nothing parseable; high
+  enough not to bind and it is a setting that does nothing. What actually
+  bounds a run is the wall clock, which is a thing people have an intuition
+  about, so `study_timeout_minutes` and `generation_timeout_minutes` are
+  what is left to reason about.
+
+  The guards are still there and are large: 40 turns for voice, 200 for an
+  automation task, 40 for a card, 60 for a fix, 24 for the brief, the weekly
+  report and a one-off intent, and **none at all** for a study session,
+  `brain ask` or the chat, where depth is the deliverable.
+
+- **A run that trips a turn guard is landed, not truncated**
+  (`engine._run_cli`, `scripts/brain-landing.sh`). A guard that trips has to
+  change what happens next, or every token the run spent is thrown away with
+  the answer. So a run that ends on the CLI's own cap is resumed on the same
+  session with two more turns and told to finish now with what it has, in
+  exactly the format the task asked for, and to end with one sentence
+  saying what it did not get to — a partial that files, instead of a
+  thorough one that never did. It is charged to the run's own wall clock and
+  is skipped when there is not enough of it left, and the journal records
+  the landing so a run that keeps needing one is countable. One
+  implementation for Python and one for the shell paths, with the same two
+  numbers in both.
+
+- **A card refreshes when its inputs moved, not when a timer expired.** The
+  age floor alone meant a card regenerated over identical inputs produced
+  the identical card at full price, every day, which is how a dashboard
+  teaches people it is a timer. The new default (`refresh_mode: changed`)
+  also requires that something the card reads has moved: a new or ended
+  finding in its domains, an edit to `memory.md`, a measurement rebuilt
+  overnight, feedback you added, a rewritten focus. `always` is what every
+  release before this did and `never` stops the scheduler for cards
+  entirely; **Generate** and **Regenerate** work in all three, because
+  pressing a button is an explicit ask. Every card now records **why it was
+  made**, and one that skipped a run records the hold instead — a quiet
+  dashboard should be able to say which of the two it is. A fingerprint that
+  cannot be read falls through to the old behaviour: "I could not tell" must
+  not become a card that never refreshes again.
+
+- **Onboarding asks where brAIn may speak, first.** The morning brief is the
+  one thing that reaches a person where they already are; it is off by
+  default and gated on a notify service existing, so on a fresh install the
+  most useful thing the add-on does was switched off behind two options
+  nobody had been told about. The first screen asks for a notify service and
+  quiet hours, listing the ones this house really has and saying so when
+  there are none. The panel cannot write those four add-on options, so it
+  stores the answer in its own settings and every reader consults that as a
+  **fallback under** the Supervisor's value — the choice takes effect at
+  once and **an entry on the Configuration tab always wins** — and the step
+  says exactly what to paste there instead.
+
+- **A fresh install creates only the cards it was asked for.** The nine
+  shipped categories are offered as suggestions like everything else, and
+  the ones you do not accept are not created — including when you accept
+  none, which is an answer. One card starts generating immediately, from the
+  cheap orientation map, because an Insights tab with nothing on it for the
+  twenty minutes the opening syllabus takes is indistinguishable from a
+  broken one; and those five study sessions run a lighter syllabus than
+  `brain learn` does, because somebody is watching a progress bar. An
+  install that onboarded before this release is untouched and keeps every
+  card it has.
+
+- **`enable_insights: false` now switches something off.** It was exported
+  and read by nothing for two releases: the option turned a face off in the
+  documentation and nowhere else. It stops the scheduler and takes the
+  **Insights** and **Proposals** tabs out of the strip — the two only a
+  scheduled Claude run ever fills — while **Findings stays**, because the
+  house checks cost nothing to run and still file there.
+
+- **The protected list reaches the three faces that can step around the
+  chokepoint.** `protected_entities` is enforced where every Home Assistant
+  tool call passes through, and a shell command or a file edit does not go
+  through it. The terminal, the chat and **Fix it** are now *told* the list
+  instead: it is in the fixer's own instructions and in the generated
+  `/config/CLAUDE.md`, which is regenerated after every consolidation pass
+  rather than written once at startup and never again.
+
+- **Five dead routes are gone**, along with `questions` from the knowledge
+  payload: `/api/generate_all`, `/api/replay` and the three
+  `/api/knowledge/question/*` endpoints had no caller in the panel, the CLI
+  or the integration.
+
+- **The docs tab is generated from `DOCS.md`** (`panel/build-docs.py`). The
+  guide existed twice, by hand, and had drifted the way two copies always
+  do: the panel went on teaching a five-tab layout, a card button set and a
+  CLI the file beside it had already corrected. One source now, and CI fails
+  if the generated file is out of date.
+
+### Security
+
+- **`backup_exclude` covers the three places a credential could still ride
+  out in a backup**: the panel's own credential store, the last-known-good
+  copy of Claude Code's credentials, and `.brain_env`, which carries the
+  Supervisor token into every background process. Home Assistant backups
+  are unencrypted unless you opt in, and they travel.
+
+- **A study session really is read-only, and refuses when it cannot be.**
+  It was reported as scoped to the analyst's tools and it was not:
+  `brain-learn.sh` passed no tool flags at all, so it inherited the
+  project's own permissions — Bash, Write and Edit — on a path an automation
+  can reach through the `brain.study` service. It reads the allow and deny
+  lists out of `engine.py` rather than keeping a second copy, because two
+  answers to "what may an unattended run touch" is how an acting tool
+  reaches one of them, and it **refuses to run** rather than running
+  unscoped when they cannot be read.
+
+- **`fire_event` is refused while anything is protected.** An event reaches
+  the house through whatever automations listen for it, one of which may act
+  on exactly that entity, and which ones do cannot be checked from the
+  chokepoint — the same conservatism a label or floor target already got.
+  A `homeassistant.turn_on`/`turn_off`/`toggle` that names **no target at
+  all** is refused for the same reason: it addresses every entity there is.
+  The two chokepoint checks disagreed about that payload; they no longer do.
+
+- **The analyst's tool partition is asserted exhaustively.** Every tool the
+  MCP server registers must be in exactly one of the allow and deny lists,
+  because a tool in neither is neither allowed nor forbidden — it *fails*
+  when an unattended run reaches for it, which is not the same guarantee and
+  reads like a broken tool.
+
+- **The project allow-list drops two unrelated MCP wildcards**, and the edit
+  journal's index is created owned by the `claude` user at boot, so the
+  first snapshot after a restart is not a root-owned file the hook cannot
+  append to.
+
+### Fixed
+
+- **A snapshot key that Core refused now reads as "I could not look".** A
+  recorder that declined a statistics command was folded into an empty
+  result and marked available — which is "the recorder has no statistics for
+  anything", and let the clear pass delete every `dev.frozen` and
+  `forecast.battery` row the previous pass had filed. The daily statistics
+  and the battery window are also two fetches in two try blocks now: they
+  shared one, so a battery window that failed blanked the daily statistics
+  beside it.
+
+- **A refused nightly fetch leaves last night's measurements alone**, and one
+  failing builder no longer discards the other three. The four shared a
+  single try block, so a thermal build that raised took the baselines, the
+  closures and the appliance profiles with it — and the answer to that is
+  four builders, four try blocks, and a record of which ran.
+
+- **`sys.disk_space` is urgent, as the urgency table always said.** The table
+  named a check id that does not exist, so a full disk was held until
+  morning like everything else.
+
+- **`learning: false` is not a degraded health verdict.** Switching learning
+  off stops the consolidator and the study watcher on purpose, and the
+  health check counted their absence as two dead daemons — the "optional is
+  not broken" rule, applied one file late.
+
+- **`edit_journal_days: 0` really disables the journal.** It only disabled
+  the *prune*: every edit was still snapshotted and indexed, forever, with
+  the size cap skipped too, which made the one setting that says off the one
+  setting that made the journal unbounded.
+
+- **A consolidation pass gives way to an edit you made while it was
+  running.** The pass rewrites the whole document from what it read at the
+  start, so a hand edit landing in the middle of one was silently
+  overwritten by a rewrite of the version before it. The pass now stands
+  down and leaves the queue for the next one.
+
+- **`brain memory confirm` and `brain memory reject` go through the panel**,
+  which is the one writer of the settled key, the memory line and the ask
+  history — the same reason `brain findings` has always gone through the API
+  rather than the store files.
+
+- **`brain.answer_question` files a plain fact.** It queued the question and
+  the answer as a pair, and a document of questions answers nothing; what is
+  remembered is the answer as a statement with the question as its subject,
+  which is the shape the panel's own answer path already queued.
+
+- **A queue's list and its count are read in one call** on the Knowledge
+  tab, and the seven measurement rows always render — a store that is
+  missing from the list is a store nobody can ask about.
 
 ## 1.47.3
 

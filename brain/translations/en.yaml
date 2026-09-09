@@ -14,8 +14,10 @@ configuration:
   enable_insights:
     name: Insights tab
     description: >-
-      Show the Insights and Findings tabs — the scheduled reports about
-      your home and the list of things brAIn thinks are broken.
+      Show the Insights and Proposals tabs, and let cards regenerate on
+      their schedule. Turning this off stops every scheduled Claude run.
+      Findings stays either way: the house checks cost nothing to run and
+      still file there.
   auto_launch_claude:
     name: Start Claude in the terminal
     description: >-

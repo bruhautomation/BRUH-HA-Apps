@@ -46,16 +46,18 @@ electricity by device](https://raw.githubusercontent.com/bruhautomation/BRUH-HA-
 | | |
 | --- | --- |
 | **Runs Home Assistant** | 40 native tools for reading and controlling, 65 registry-management services for the parts that normally live behind the Settings UI, and a real shell in `/config` for everything that's still YAML. Areas, floors, labels, devices, entities, integrations, helpers, zones, people, users, dashboards, blueprints, statistics — create, rename, move, disable, delete. |
-| **Finds what's broken** | A dead battery, a sensor that quietly stopped reporting, a device stuck unavailable, an automation that can never fire. Press **Fix it** and it makes the change; press **Not a problem** and it never raises that one again. |
+| **Finds what's broken** | A dead battery, a sensor that quietly stopped reporting, a device stuck unavailable, an automation that can never fire. Press **Fix it** and it makes the change; press **Wrong** and say why, and it never makes that mistake again in new words. |
 | **Explains your house** | Insight cards with real interactive visualisations, chosen for *your* home rather than shipped as defaults. Ask anything and get a card back; keep the good ones as recurring, or drop any of them on a dashboard. |
 | **Remembers** | One editable document of durable facts about your home — nicknames, household rhythms, the devices that are meant to behave oddly. Learned from conversations, insight runs and study sessions, and read by every part of brAIn. |
+| **Measures** | Seven things it works out for itself, overnight, from what Home Assistant already records and with no Claude run at all: when the house gets up, what each reading normally is at this hour of this week, how fast each room loses heat, how much of each hour a door is open, what each machine's own power looks like, what you keep doing by hand, and what the electricity did. The **Knowledge** tab shows all seven and how far along each one is — because every one has a floor under it, and weeks of honest silence looks exactly like something being broken. |
+| **Says when it breaks** | The moment a run fails, a daemon dies or a notification cannot be delivered, brAIn writes the evidence down by itself — one plain-text file under `/share/brain/reports/`, redacted, listed under ⚙ → **Problems** with a Copy button, and mirrored as an entry on Home Assistant's own Repairs page. |
 | **Talks** | A conversation agent for Assist, answering in a few seconds from a pool of pre-warmed workers, with your memory and an area map already in the prompt. |
 | **Has a terminal** | The real Claude Code CLI in your browser, in two shapes: **Chat** renders it as a conversation that reflows to a phone, **Classic** is a true terminal for anything that draws its own screen. Same session behind both. |
 
 ![The brAIn Findings tab, headed "What brAIn thinks is broken", listing a dead back-door
 battery sensor, thirteen orphaned entities, and two loft sensors that never rejoined after a
-Zigbee channel change — each with Fix it, Discuss, I've fixed it, Remind me later and Not a
-problem here](https://raw.githubusercontent.com/bruhautomation/BRUH-HA-Apps/main/docs/images/panel-findings.webp)
+Zigbee channel change — each with Fix it, Discuss, I fixed it, Remind me later, Dismiss and
+Wrong](https://raw.githubusercontent.com/bruhautomation/BRUH-HA-Apps/main/docs/images/panel-findings.webp)
 
 ## Try it in one line
 
@@ -92,7 +94,8 @@ brain learn energy            # study a topic and write down what it finds
 brain undo                    # review and revert Claude's file edits
 brain check                   # run the house checks now — no Claude run
 brain doctor                  # end-to-end diagnostic (--json for a verdict)
-brain report                  # redacted diagnostics bundle for a bug report
+brain doctor --deep           # every face, one real round trip each
+brain report                  # one redacted text file for a bug report
 
 ha log                        # tail the Home Assistant log
 ha reload automations
