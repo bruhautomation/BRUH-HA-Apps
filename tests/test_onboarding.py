@@ -18,6 +18,7 @@ sys.path.insert(0, str(PANEL_DIR))
 
 import hypotheses  # noqa: E402
 import onboarding  # noqa: E402
+import categories as shipped_categories  # noqa: E402
 import prompt_store  # noqa: E402
 import settings_store  # noqa: E402
 import user_categories  # noqa: E402
@@ -176,6 +177,229 @@ class TestRecommendationParsing(OnboardingCase):
     def test_unparseable_output_raises(self):
         with self.assertRaises(ValueError):
             onboarding.parse_recommendations("I'm sorry, I can't do that.")
+
+
+class TestStepZeroAsksWhereBrainMaySpeak(OnboardingCase):
+    """The morning brief is the one place brAIn reaches a person where
+    they already are, and it shipped off, behind two Configuration-tab
+    options nobody had been told about. Asking costs one screen."""
+
+    SERVICES = {
+        "notify.mobile_app_bens_phone", "notify.mobile_app_kitchen_tablet",
+        "notify.persistent_notification", "notify.send_message",
+        "light.turn_on", "automation.reload",
+    }
+
+    def test_only_services_that_can_take_a_message_are_offered(self):
+        rows = onboarding.notify_candidates(self.SERVICES)
+        offered = [r["service"] for r in rows]
+        self.assertNotIn("light.turn_on", offered)
+        self.assertNotIn("automation.reload", offered)
+        self.assertIn("notify.persistent_notification", offered)
+
+    def test_the_entity_transport_is_left_out(self):
+        """`notify.send_message` takes an entity_id rather than a target,
+        so calling it the way everything here calls a notify service does
+        nothing at all."""
+        offered = [r["service"] for r in onboarding.notify_candidates(self.SERVICES)]
+        self.assertNotIn("notify.send_message", offered)
+
+    def test_phones_come_first_and_are_the_ones_that_take_buttons(self):
+        rows = onboarding.notify_candidates(self.SERVICES)
+        self.assertTrue(rows[0]["phone"])
+        self.assertTrue(rows[0]["buttons"])
+        self.assertFalse(
+            [r for r in rows if r["service"] == "notify.persistent_notification"
+             ][0]["buttons"])
+
+    def test_a_house_with_no_notify_service_gets_an_empty_list(self):
+        """Not a made-up default: a brief nobody sees is the thing this
+        step exists to prevent."""
+        self.assertEqual(onboarding.notify_candidates(set()), [])
+        self.assertEqual(onboarding.notify_candidates(None), [])
+
+    def test_choosing_a_service_turns_the_brief_on(self):
+        saved = onboarding.save_notify("notify.mobile_app_bens_phone", 22, 7)
+        self.assertEqual(saved["findings_notify_service"],
+                         "notify.mobile_app_bens_phone")
+        self.assertEqual(saved["notify_quiet_start"], "22")
+        self.assertEqual(saved["notify_quiet_end"], "7")
+        self.assertIs(saved["morning_brief"], True)
+        stored = settings_store.load()
+        self.assertEqual(stored["findings_notify_service"],
+                         "notify.mobile_app_bens_phone")
+        self.assertIs(stored["morning_brief"], True)
+
+    def test_saying_no_to_the_brief_is_recorded_rather_than_inferred(self):
+        """Somebody who says no must not be asked again by a rule that
+        reads the service."""
+        saved = onboarding.save_notify("notify.mobile_app_bens_phone",
+                                       brief=False)
+        self.assertIs(saved["morning_brief"], False)
+
+    def test_skipping_the_step_leaves_the_brief_off(self):
+        saved = onboarding.save_notify(None)
+        self.assertIsNone(saved["findings_notify_service"])
+        self.assertIs(saved["morning_brief"], False)
+
+    def test_the_hours_have_to_be_hours(self):
+        for bad in ("half past", 24, -1, "99"):
+            with self.subTest(bad):
+                with self.assertRaises(ValueError):
+                    onboarding.save_notify("notify.x", quiet_start=bad)
+
+    def test_an_empty_hour_is_unset_rather_than_midnight(self):
+        saved = onboarding.save_notify("notify.x", quiet_start="", quiet_end=None)
+        self.assertIsNone(saved["notify_quiet_start"])
+        self.assertIsNone(saved["notify_quiet_end"])
+
+    def test_it_says_what_has_to_be_pasted_by_hand(self):
+        """`addon_options.write` knows only the six generation options, so
+        this choice cannot reach the Configuration tab — and an add-on
+        that quietly kept a setting somewhere that tab does not show is
+        the drift `_options_sync` exists to end."""
+        saved = onboarding.save_notify("notify.mobile_app_bens_phone", 22, 7)
+        pasted = "\n".join(saved["manual"])
+        self.assertIn('findings_notify_service: "notify.mobile_app_bens_phone"',
+                      pasted)
+        self.assertIn('notify_quiet_start: "22"', pasted)
+        self.assertIn("morning_brief: true", pasted)
+
+    def test_nothing_chosen_is_nothing_to_paste(self):
+        self.assertEqual(onboarding.save_notify(None)["manual"], [])
+
+    def test_the_state_says_whether_the_step_was_answered(self):
+        self.assertFalse(onboarding.notify_state()["asked"])
+        onboarding.save_notify(None)
+        self.assertTrue(onboarding.notify_state()["asked"])
+        self.assertIn("notify", onboarding.state())
+
+
+class TestInsightsIsWhatYouAskedFor(OnboardingCase):
+    """Nine cards used to appear the moment onboarding finished — the
+    generic ones the whole flow exists to avoid, beside the two somebody
+    actually ticked."""
+
+    def _offer(self, *titles):
+        onboarding.save_recommendations({
+            "recommendations": [
+                {"title": t, "icon": "✨", "focus": f"Analyse {t}.", "why": ""}
+                for t in titles],
+            "shipped": [], "sparse": False, "missing": ""})
+
+    def test_an_install_that_was_never_asked_keeps_every_card(self):
+        """Absent flag = old behaviour. A release that silently deleted
+        somebody's dashboard would be a worse failure than the one this
+        fixes."""
+        self.assertIsNone(prompt_store.accepted_ids())
+        self.assertEqual(len(prompt_store.visible_categories()),
+                         len(shipped_categories.CATEGORIES))
+
+    def test_a_fresh_install_gets_only_what_was_ticked(self):
+        self._offer("Alpha")
+        onboarding.accept([0], ["energy", "climate"])
+        self.assertTrue(settings_store.load()["curated_categories"])
+        self.assertEqual([c["id"] for c in prompt_store.visible_categories()],
+                         ["energy", "climate"])
+
+    def test_an_id_the_catalog_does_not_hold_is_dropped(self):
+        self._offer("Alpha")
+        onboarding.accept([0], ["energy", "nonsense"])
+        self.assertEqual([c["id"] for c in prompt_store.visible_categories()],
+                         ["energy"])
+
+    def test_ticking_none_leaves_the_dashboard_empty_on_purpose(self):
+        self._offer("Alpha")
+        onboarding.accept([0], [])
+        self.assertEqual(prompt_store.visible_categories(), [])
+        self.assertEqual(prompt_store.accepted_ids(), set())
+
+    def test_skipping_curates_too(self):
+        onboarding.skip()
+        self.assertTrue(settings_store.load()["curated_categories"])
+        self.assertEqual(prompt_store.visible_categories(), [])
+
+    def test_the_first_card_survives_not_being_ticked(self):
+        """It is already on the dashboard by the time anybody reaches the
+        choose step, and dropping it here would delete a card somebody
+        has been reading for the length of the syllabus."""
+        onboarding.admit_first_card()
+        self._offer("Alpha")
+        onboarding.accept([0], [])
+        self.assertEqual([c["id"] for c in prompt_store.visible_categories()],
+                         [onboarding.FIRST_CARD])
+
+    def test_a_removed_card_stays_removed_on_a_curated_install(self):
+        """Two filters answering different questions: `hidden` is a card
+        somebody deleted, `accepted` is the set they chose from."""
+        self._offer("Alpha")
+        onboarding.accept([0], ["energy", "climate"])
+        prompt_store.save_override("climate", {"hidden": True})
+        self.assertEqual([c["id"] for c in prompt_store.visible_categories()],
+                         ["energy"])
+
+    def test_a_corrupt_file_shows_everything_rather_than_nothing(self):
+        """"I could not look" and "you chose none" are different claims,
+        and only the second may empty somebody's dashboard."""
+        onboarding.accept([], ["energy"])
+        Path(prompt_store.OVERRIDES_FILE).write_text("not json")
+        self.assertIsNone(prompt_store.accepted_ids())
+        self.assertEqual(len(prompt_store.visible_categories()),
+                         len(shipped_categories.CATEGORIES))
+
+    def test_the_recommend_step_asks_for_shipped_cards_by_id(self):
+        prompt = onboarding.build_prompt("- the hall is cold", {"entities": []})
+        self.assertIn("GENERAL CARDS THAT SHIP", prompt)
+        for cat in shipped_categories.CATEGORIES:
+            self.assertIn(f"- {cat['id']}:", prompt)
+
+    def test_a_reply_naming_shipped_cards_is_parsed(self):
+        out = onboarding.parse_recommendations(json.dumps({
+            "recommendations": [],
+            "shipped": [{"id": "energy", "why": "you have six meters"},
+                        {"id": "energy", "why": "duplicate"},
+                        {"id": "made-up", "why": "nope"}],
+            "sparse": False}))
+        self.assertEqual([s["id"] for s in out["shipped"]], ["energy"])
+        self.assertEqual(out["shipped"][0]["why"], "you have six meters")
+        self.assertEqual(out["shipped"][0]["title"], "Energy")
+
+    def test_a_home_with_only_a_shipped_card_is_not_sparse(self):
+        """Sparse is about whether this home has enough for ANY card, and
+        reading it otherwise shows "there is not enough here" above a
+        list of things to accept."""
+        out = onboarding.parse_recommendations(json.dumps({
+            "recommendations": [], "shipped": [{"id": "energy"}]}))
+        self.assertFalse(out["sparse"])
+
+    def test_a_home_with_nothing_at_all_is_still_sparse(self):
+        out = onboarding.parse_recommendations(json.dumps({
+            "recommendations": [], "shipped": [], "sparse": False,
+            "missing": "there are eleven entities here"}))
+        self.assertTrue(out["sparse"])
+        self.assertIn("eleven entities", out["missing"])
+
+
+class TestTheOpeningSyllabusIsLighter(OnboardingCase):
+    def test_an_onboarding_study_carries_a_turn_cap(self):
+        """`brain learn` has no cap by design — depth is the deliverable
+        — but five of them run back to back while somebody watches a
+        progress bar."""
+        onboarding.start_learning()
+        requests = [json.loads(p.read_text())
+                    for p in onboarding.STUDY_REQUESTS_DIR.glob("*.json")]
+        self.assertTrue(requests)
+        for request in requests:
+            self.assertEqual(request["max_turns"], onboarding.STUDY_MAX_TURNS)
+
+    def test_an_ordinary_study_request_carries_none(self):
+        """An absent key is "whatever the watcher's default is", which is
+        the no-cap behaviour every other caller wants."""
+        onboarding.request_study("energy", tag="ask")
+        request = json.loads(
+            next(iter(onboarding.STUDY_REQUESTS_DIR.glob("*-ask-*.json"))
+                 ).read_text())
+        self.assertNotIn("max_turns", request)
 
 
 class TestChoosing(OnboardingCase):

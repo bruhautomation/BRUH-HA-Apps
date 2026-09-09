@@ -2071,6 +2071,52 @@ class TestGenerateFlow(InsightsServerCase):
         with open(Path(self.tmp.name) / f"{insight_id}.json") as f:
             return json.load(f)
 
+    def test_a_card_records_why_it_was_made(self):
+        """A card that cannot say why it is there reads as a timer going
+        off — which for two releases is exactly what it was."""
+        self.server.JOBS["energy"] = {"state": "queued",
+                                      "because": "2 more finding(s) on the list"}
+        asyncio.run(self.server._generate("energy"))
+        self.assertEqual(self._stored()["made_because"],
+                         "2 more finding(s) on the list")
+
+    def test_a_card_nobody_scheduled_says_a_person_asked_for_it(self):
+        asyncio.run(self.server._generate("energy"))
+        self.assertEqual(self._stored()["made_because"], "you pressed Generate")
+
+    def test_a_typed_question_says_you_asked(self):
+        self.server.JOBS["custom-1"] = {"state": "queued",
+                                        "question": "why is the hall cold?"}
+        asyncio.run(self.server._generate("custom-1"))
+        self.assertEqual(self._stored("custom-1")["made_because"], "you asked")
+
+    def test_a_card_stores_what_the_next_run_is_compared_against(self):
+        """Taken AFTER the run: the question the gate asks is "has
+        anything moved since this card was made", and a fingerprint from
+        before a run that itself filed findings answers it about the
+        wrong instant."""
+        asyncio.run(self.server._generate("energy"))
+        stored = self._stored()
+        fingerprint = stored["inputs_fingerprint"]
+        self.assertEqual(set(fingerprint["parts"]),
+                         set(self.server.CARD_INPUT_PARTS))
+        # The finding this very run filed is inside it, so the next tick
+        # does not read its own output as a change.
+        self.assertGreaterEqual(fingerprint["open_findings"], 1)
+        again = self.server._card_inputs(
+            "energy", self.server.resolve_category("energy"),
+            findings_store.prompt_block(), {"stores": {}})
+        self.assertEqual(fingerprint["parts"]["findings"],
+                         again["parts"]["findings"])
+
+    def test_a_typed_question_is_not_fingerprinted(self):
+        """Nothing schedules an Ask card, so a fingerprint on one would
+        be a number nothing ever reads."""
+        self.server.JOBS["custom-2"] = {"state": "queued",
+                                        "question": "why is the hall cold?"}
+        asyncio.run(self.server._generate("custom-2"))
+        self.assertNotIn("inputs_fingerprint", self._stored("custom-2"))
+
     def test_generate_uses_override_and_persists_new_fields(self):
         prompt_store.save_override("energy", {"focus": "Watch the dryer"})
         calls = []
@@ -3152,6 +3198,288 @@ class TestBriefReadsTheHealthVerdict(unittest.TestCase):
             (server._diagnostics_payload, server._brief_overnight,
              server.findings_store.list_all, brief.worth_saying) = saved
         self.assertEqual(seen.get("health", {}).get("state"), "degraded")
+
+
+from unittest.mock import patch  # noqa: E402
+
+
+class TestARefreshHasToBeAboutSomething(InsightsServerCase):
+    """A card is due when its interval has passed AND something moved.
+
+    For two releases a card regenerated because a clock said so, which on
+    a quiet house is a full-price Claude run producing yesterday's card —
+    and a dashboard that changes on a timer is one where nothing on it is
+    ever news. Every case here drives the real gate: the fingerprint the
+    scheduler computes, the predicate it asks, and one tick of the real
+    `_scheduler` to prove the two are actually wired together.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.server.REFRESH_HOLDS.clear()
+        self.eff = {"id": "energy", "enabled": True, "refresh_hours": 1,
+                    "focus": "watts"}
+        # Older than any plausible interval, so the age FLOOR is never
+        # what a case here is measuring — every one of them is about the
+        # second condition.
+        self.old_stamp = time.strftime(
+            "%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - 72 * 3600))
+
+    def tearDown(self):
+        self.server.REFRESH_HOLDS.clear()
+        super().tearDown()
+
+    def _inputs(self, findings_text="none", snap=None):
+        return self.server._card_inputs(
+            "energy", self.eff, findings_text,
+            snap or {"stores": {"energy": {"state": "ready",
+                                           "updated_at": 100}}})
+
+    # -- the fingerprint ---------------------------------------------------
+
+    def test_identical_inputs_are_an_identical_fingerprint(self):
+        self.assertEqual(self._inputs()["hash"], self._inputs()["hash"])
+
+    def test_each_of_the_five_inputs_moves_it(self):
+        base = self._inputs()
+
+        moved = {}
+        moved["findings"] = self._inputs(findings_text="a new one")
+        self.server.SHARED_MEMORY_FILE.write_text("- the hall is cold\n")
+        moved["memory"] = self._inputs()
+        moved["stores"] = self._inputs(
+            snap={"stores": {"energy": {"state": "ready", "updated_at": 200}}})
+        feedback_store.add_feedback("energy", "less about the kettle")
+        moved["feedback"] = self._inputs()
+        moved["focus"] = self.server._card_inputs(
+            "energy", {**self.eff, "focus": "kilowatt hours"}, "none",
+            {"stores": {"energy": {"state": "ready", "updated_at": 100}}})
+
+        for name, current in moved.items():
+            with self.subTest(name):
+                change = self.server._inputs_change(base, current)
+                self.assertTrue(change["moved"])
+                self.assertNotEqual(base["hash"], current["hash"])
+
+    def test_a_measurement_this_card_does_not_read_leaves_it_alone(self):
+        """`CATEGORY_STORES` is why the gate is per card: a nightly
+        thermal rebuild is not news for the Energy card."""
+        base = self._inputs()
+        current = self._inputs(snap={"stores": {
+            "energy": {"state": "ready", "updated_at": 100},
+            "thermal": {"state": "ready", "updated_at": 999}}})
+        self.assertFalse(self.server._inputs_change(base, current)["moved"])
+
+    def test_a_card_that_reads_every_measurement_notices_all_of_them(self):
+        """A user category or a typed question could be about anything."""
+        self.assertIsNone(categories.stores_for("user-1234"))
+        snap = {"stores": {"thermal": {"state": "ready", "updated_at": 1}}}
+        base = self.server._card_inputs("user-1234", self.eff, "none", snap)
+        snap["stores"]["thermal"]["updated_at"] = 2
+        current = self.server._card_inputs("user-1234", self.eff, "none", snap)
+        self.assertTrue(self.server._inputs_change(base, current)["moved"])
+
+    def test_a_card_with_no_stored_fingerprint_has_moved(self):
+        """Made before this existed, or never made: either way the next
+        run is the first that can be compared against anything."""
+        for stored in (None, {}, {"parts": {}}):
+            with self.subTest(repr(stored)):
+                self.assertTrue(
+                    self.server._inputs_change(stored, self._inputs())["moved"])
+
+    def test_the_reason_names_what_moved(self):
+        base = self._inputs()
+        self.server.SHARED_MEMORY_FILE.write_text("- the hall is cold\n")
+        change = self.server._inputs_change(base, self._inputs())
+        self.assertIn("memory was updated", change["why"])
+
+    def test_more_findings_is_counted_rather_than_described(self):
+        base = self._inputs()
+        base["open_findings"] = 2
+        findings_store.add_many([
+            {"text": "the freezer is warm", "severity": "warning",
+             "source": "check:x"},
+            {"text": "the porch battery is low", "severity": "info",
+             "source": "check:x"},
+            {"text": "the hall sensor is stuck", "severity": "info",
+             "source": "check:x"}])
+        change = self.server._inputs_change(
+            base, self._inputs(findings_text="three of them"))
+        self.assertIn("more finding(s) on the list", change["why"])
+
+    def test_reading_memory_costs_no_copy_of_it(self):
+        """mtime and size, never the contents: the document is somebody's
+        home and this only ever compares it against itself."""
+        self.server.SHARED_MEMORY_FILE.write_text("- a secret about the house")
+        stamp = self.server._memory_stamp()
+        self.assertNotIn("secret", stamp)
+        self.assertRegex(stamp, r"^\d+:\d+$")
+
+    def test_a_missing_document_is_a_stable_answer(self):
+        self.assertEqual(self.server._memory_stamp(), "none")
+        self.assertEqual(self.server._memory_stamp(), "none")
+
+    # -- the predicate -----------------------------------------------------
+
+    def test_the_interval_alone_is_no_longer_enough(self):
+        unmoved = {"moved": False, "why": "nothing it reads has changed"}
+        self.assertFalse(self.server._refresh_due(
+            self.eff, self.old_stamp, time.time(), change=unmoved,
+            mode="changed"))
+
+    def test_a_card_inside_its_interval_is_not_asked_about_its_inputs(self):
+        """The floor is the floor, and computing a fingerprint for a card
+        that has not aged out is a whole-house read nobody asked for."""
+        asked = []
+
+        def never():
+            asked.append(1)
+            return {"moved": True}
+
+        fresh = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
+        self.assertFalse(self.server._refresh_due(
+            self.eff, fresh, time.time(), change=never, mode="changed"))
+        self.assertEqual(asked, [])
+
+    def test_always_restores_the_old_behaviour(self):
+        unmoved = {"moved": False, "why": "nothing it reads has changed"}
+        self.assertTrue(self.server._refresh_due(
+            self.eff, self.old_stamp, time.time(), change=unmoved,
+            mode="always"))
+
+    def test_never_schedules_nothing_at_all(self):
+        self.assertFalse(self.server._refresh_due(
+            self.eff, self.old_stamp, time.time(),
+            change={"moved": True}, mode="never"))
+        # And the foot agrees, which is the half that used to lie: a
+        # `next_due` under a mode that never fires is a promise nothing
+        # keeps.
+        settings_store.save({"refresh_mode": "never"})
+        try:
+            self.assertIsNone(self.server._next_due(
+                {**self.eff}, self.old_stamp, time.time()))
+        finally:
+            settings_store.save({"refresh_mode": "changed"})
+
+    def test_the_mode_is_validated_where_it_is_stored(self):
+        for mode in settings_store.REFRESH_MODES:
+            settings_store.save({"refresh_mode": mode})
+            self.assertEqual(self.server.eff_refresh_mode(), mode)
+        with self.assertRaises(ValueError):
+            settings_store.save({"refresh_mode": "whenever"})
+        settings_store.save({"refresh_mode": "changed"})
+
+    def test_a_held_card_reports_no_date_and_a_reason(self):
+        """A `next_due` in the past would keep promising a run that is
+        not coming."""
+        self.server.REFRESH_HOLDS["energy"] = {"why": "nothing changed",
+                                               "at": 1}
+        self.assertIsNone(self.server._next_due(
+            self.eff, self.old_stamp, time.time()))
+
+    # -- one tick of the real scheduler ------------------------------------
+
+    def _tick(self):
+        from unittest.mock import patch
+        server = self.server
+        queued = []
+
+        async def one_tick():
+            ticks = {"n": 0}
+
+            async def sleep_once(_seconds):
+                ticks["n"] += 1
+                if ticks["n"] > 1:
+                    raise asyncio.CancelledError
+
+            async def snapshot(now=None):
+                return {"stores": {name: {"state": "ready", "updated_at": 1}
+                                   for name in ("energy", "baselines",
+                                                "appliances")}}
+
+            with patch.object(asyncio, "sleep", sleep_once), \
+                 patch.object(server.findings_store, "sweep_inbox", lambda: []), \
+                 patch.object(server, "_house_snapshot", snapshot), \
+                 patch.object(server.engine, "get_auth",
+                              lambda: {"type": "oauth", "value": "x"}), \
+                 patch.object(server.usage_store, "budget_state",
+                              lambda _s: {"blocked": False}), \
+                 patch.object(server, "_enqueue",
+                              lambda job_id, *a, **k: queued.append(
+                                  (job_id, k.get("because"))) or True):
+                try:
+                    await server._scheduler()
+                except asyncio.CancelledError:
+                    # The one tick is all this wants: `sleep_once` cancels
+                    # the loop to end it, so the cancellation IS the exit
+                    # and not a failure to report.
+                    pass
+
+        asyncio.run(one_tick())
+        return queued
+
+    def _store_energy(self, **extra):
+        """An Energy card made two hours ago, with today's fingerprint."""
+        insight = self._save("energy", self.old_stamp, **extra)
+        return insight
+
+    def test_a_card_whose_inputs_have_not_moved_is_skipped_and_says_why(self):
+        settings_store.save({"onboarded": True, "auto_enabled": True,
+                             "refresh_mode": "changed"})
+        # Hide every other shipped card so the tick is about this one.
+        for cat in categories.CATEGORIES:
+            if cat["id"] != "energy":
+                prompt_store.save_override(cat["id"], {"hidden": True})
+        snap = {"stores": {name: {"state": "ready", "updated_at": 1}
+                           for name in ("energy", "baselines", "appliances")}}
+        self._store_energy(inputs_fingerprint=self.server._card_inputs(
+            "energy", self.server.resolve_category("energy"), "", snap))
+
+        with patch.dict(os.environ, {"BRAIN_ENABLE_INSIGHTS": "true"}):
+            queued = self._tick()
+
+        self.assertEqual(queued, [], "an unchanged card must cost nothing")
+        hold = self.server.REFRESH_HOLDS.get("energy")
+        self.assertIsNotNone(hold)
+        self.assertIn("nothing it reads has changed", hold["why"])
+
+    def test_a_card_whose_findings_moved_runs_and_says_which(self):
+        settings_store.save({"onboarded": True, "auto_enabled": True,
+                             "refresh_mode": "changed"})
+        for cat in categories.CATEGORIES:
+            if cat["id"] != "energy":
+                prompt_store.save_override(cat["id"], {"hidden": True})
+        snap = {"stores": {name: {"state": "ready", "updated_at": 1}
+                           for name in ("energy", "baselines", "appliances")}}
+        self._store_energy(inputs_fingerprint=self.server._card_inputs(
+            "energy", self.server.resolve_category("energy"), "", snap))
+        findings_store.add_many([
+            {"text": "the freezer is warm", "severity": "warning",
+             "source": "check:x"}])
+
+        with patch.dict(os.environ, {"BRAIN_ENABLE_INSIGHTS": "true"}):
+            queued = self._tick()
+
+        self.assertEqual([j for j, _why in queued], ["energy"])
+        self.assertIn("finding", queued[0][1])
+        self.assertNotIn("energy", self.server.REFRESH_HOLDS)
+
+    def test_always_queues_it_whatever_the_inputs_say(self):
+        settings_store.save({"onboarded": True, "auto_enabled": True,
+                             "refresh_mode": "always"})
+        for cat in categories.CATEGORIES:
+            if cat["id"] != "energy":
+                prompt_store.save_override(cat["id"], {"hidden": True})
+        snap = {"stores": {name: {"state": "ready", "updated_at": 1}
+                           for name in ("energy", "baselines", "appliances")}}
+        self._store_energy(inputs_fingerprint=self.server._card_inputs(
+            "energy", self.server.resolve_category("energy"), "", snap))
+
+        with patch.dict(os.environ, {"BRAIN_ENABLE_INSIGHTS": "true"}):
+            queued = self._tick()
+
+        self.assertEqual([j for j, _why in queued], ["energy"])
+        self.assertEqual(queued[0][1], "on its refresh interval")
 
 
 if __name__ == "__main__":

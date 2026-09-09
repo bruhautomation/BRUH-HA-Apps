@@ -393,7 +393,17 @@ def _habits_prompt(prog, payload):
 
 
 # The table. `store` names the measurement in `house.STORES`, which is
-# also the key its loaded payload arrives under.
+# also the key its loaded payload arrives under, and the id is that name
+# — the vocabulary `/api/knowledge/house/{name}` and `get_house_model`
+# already use, so a person reading one surface can look the other up.
+#
+# `energy` is therefore both a milestone here and a shipped category in
+# `categories.py`. That overlap is deliberate and it is not a collision:
+# two tables, two stores (`/data/knowledge-cards` against `/data/
+# insights`), two routes, and two job ids (`milestone-energy` against
+# `energy`). Nothing joins them, and `tests/test_milestones.py` is what
+# says so — renaming the milestone to avoid the word would cost the one
+# thing the shared vocabulary buys.
 MILESTONES: list[dict] = [
     {"id": "rhythm", "store": "rhythm",
      "title": "When this house gets up",
