@@ -520,8 +520,35 @@ consolidate_once() {
     find "$PROCESSED_DIR" -type f -mtime +"$PROCESSED_PRUNE_DAYS" -delete 2>/dev/null || true
 
     touch "$MARKER_FILE" 2>/dev/null || true
+    refresh_context
     log "memory.md (${#new_memory} bytes) and voice.md (${#new_voice} bytes) updated"
     return 0
+}
+
+# `/config/CLAUDE.md` carries the head of the memory document, and it was
+# written once, at startup, and never again. So the terminal and the chat
+# — the two faces that read the project context rather than a prompt this
+# add-on builds — spent the life of the container reading whatever memory
+# held at boot: a fact taught on Tuesday reached voice, the analyst and
+# the fixer, and did not reach the person typing in the terminal until
+# somebody restarted the add-on.
+#
+# Regenerated HERE because this is the one place that changes the
+# document. It is best-effort and never fails the pass: the context file
+# is derived, the memory it is derived from is already on disk, and a
+# consolidation that reported failure because a regeneration did would
+# leave the inbox pending over a copy.
+refresh_context() {
+    local gen
+    for gen in /usr/local/bin/ha-context-gen.sh /opt/scripts/ha-context-gen.sh; do
+        [ -x "$gen" ] || continue
+        if "$gen" >/dev/null 2>&1; then
+            log "refreshed /config/CLAUDE.md with the updated memory"
+        else
+            log "could not refresh /config/CLAUDE.md — the terminal and the chat will read the previous copy until the next pass"
+        fi
+        return 0
+    done
 }
 
 daemon_loop() {

@@ -476,30 +476,45 @@ def accept(indexes: list[int], shipped: list[str] | None = None) -> list[dict]:
         except ValueError as exc:
             log.warning("could not create %r: %s", p["title"], exc)
     admitted = _admit_shipped(shipped)
-    settings_store.save({"onboarded": True, "curated_categories": True})
+    settings_store.save({"onboarded": True,
+                         "curated_categories": admitted is not None})
     _patch_state(phase="done", finished_at=int(time.time()),
                  accepted=[p["title"] for p in created],
-                 accepted_shipped=admitted)
+                 accepted_shipped=admitted or [])
     return created
 
 
-def _admit_shipped(ids) -> list[str]:
+def _admit_shipped(ids) -> list[str] | None:
     """Record which shipped cards this home has, keeping the first one.
 
     `FIRST_CARD` is already on the dashboard by the time anybody reaches
     the choose step — it is generated at sign-in so the tab is never
     empty — and dropping it here because it was not ticked would delete a
     card somebody has been reading for the length of the syllabus.
+
+    `None` is "the list could not be written", and it is what stops
+    `curated_categories` being set: the flag is what makes
+    `visible_categories` consult an accepted set, so setting it beside a
+    list that never landed would take every shipped card off somebody's
+    dashboard because a disk was full. Failing that way round is the
+    behaviour of every release before this one, which is the right place
+    to fall back to.
     """
-    picked = set(prompt_store.load_overrides()["accepted"])
-    picked |= {str(i) for i in (ids or ())}
-    return prompt_store.set_accepted(picked)
+    try:
+        picked = set(prompt_store.load_overrides()["accepted"])
+        picked |= {str(i) for i in (ids or ())}
+        return prompt_store.set_accepted(picked)
+    except OSError as exc:
+        log.warning("could not record which shipped cards this home has "
+                    "(%s) — leaving every one of them visible", exc)
+        return None
 
 
 def skip() -> None:
     """Finish without cards — the dashboard stays empty until asked."""
-    _admit_shipped(None)
-    settings_store.save({"onboarded": True, "curated_categories": True})
+    admitted = _admit_shipped(None)
+    settings_store.save({"onboarded": True,
+                         "curated_categories": admitted is not None})
     _patch_state(phase="done", finished_at=int(time.time()), accepted=[])
 
 

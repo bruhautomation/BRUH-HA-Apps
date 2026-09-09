@@ -42,6 +42,7 @@ HARD RULES — these are not negotiable
 - Fix ONLY the finding you were given. Anything else you notice along the way goes in "also_found", not into an edit.
 - NEVER delete an entity, device, area, automation, script, dashboard or file you did not create in this run. Disable, correct, or comment out instead.
 - NEVER touch secrets.yaml, credentials, tokens, or anything under .storage that you cannot validate.
+- NEVER act on a PROTECTED ENTITY. The homeowner's protected list is given to you in the prompt below; anything matching it must not be turned on or off, set, unlocked, disabled, renamed, deleted, or written into an automation, a script or a scene that could act on it. Reading its state and its history is fine — the restriction is on acting. If the fix requires acting on one, do not do it: set "ok": false and say which entity and why. The MCP tools refuse these on your behalf, but shell and file edits do not go through them, so this rule is yours to keep.
 - NEVER restart Home Assistant. Reloading a specific config domain is fine; a restart is the homeowner's call.
 - If the real fix needs a human in the physical world — replacing a battery, re-pairing a device, power-cycling a hub — do NOT invent a software substitute. Set "needs_you": true and explain exactly what they have to do.
 - If you are not confident the change is correct and safe, stop and explain. A refused fix is a good outcome; a wrong one costs trust.
@@ -59,7 +60,44 @@ When you are finished, reply with ONE JSON object and nothing else — no markdo
 Set "ok": false when the problem is still there. Set "needs_you": true when it needs hands rather than software — with "ok": false, because you did not fix it."""
 
 
-def build_prompt(finding: dict, memory: str = "", context: str = "") -> str:
+def protected_block(patterns) -> str:
+    """The homeowner's protected list, told to the one face that can bypass it.
+
+    `protected_entities` is enforced in the MCP server, at the
+    `call_service` chokepoint every `control_*` tool routes through —
+    which covers every way the fixer can move something *through a tool*.
+    It does not cover the two things this run has that an insight run
+    does not: a shell and a file editor. `ha service light.turn_on`, a
+    line added to `automations.yaml`, a script written and reloaded — all
+    of them reach the house without passing the chokepoint, and none of
+    them can be refused by it.
+
+    So the list is stated. That is weaker than enforcement and it is not
+    offered as a substitute for it: it is the only thing available on the
+    paths where enforcement cannot reach, and a rule the model was never
+    told is one it cannot keep. An empty list produces no block, because
+    a heading over nothing reads as "nothing is protected here" — which
+    is true, and is also what a list that failed to load looks like.
+    """
+    rows = [str(p).strip() for p in (patterns or []) if str(p).strip()]
+    if not rows:
+        return ""
+    return (
+        "PROTECTED ENTITIES — the homeowner has told brAIn not to act on "
+        "these. Read them freely; do not turn them on or off, set them, "
+        "unlock them, disable them, rename them, delete them, or write them "
+        "into anything that could. The Home Assistant tools refuse these on "
+        "your behalf, but a shell command or an edit to automations.yaml "
+        "does not go through those tools, so on those paths this is the only "
+        "thing standing between the list and the house:\n"
+        + "\n".join(f"- {p}" for p in rows)
+        + "\nA pattern ending in `.*` is a whole domain, and `*` is "
+        "everything. If the fix needs one of these, do not do it — return "
+        "\"ok\": false and say which entity and why.")
+
+
+def build_prompt(finding: dict, memory: str = "", context: str = "",
+                 protected=None) -> str:
     """The user prompt for one fix run."""
     parts = ["THE PROBLEM TO FIX:", f"- What is wrong: {finding.get('text', '')}"]
     if finding.get("detail"):
@@ -80,6 +118,10 @@ def build_prompt(finding: dict, memory: str = "", context: str = "") -> str:
             "yourself: if software really can fix it, fix it; if not, return "
             "\"needs_you\": true with precise instructions."
         )
+
+    block = protected_block(protected)
+    if block:
+        parts.append("\n" + block)
 
     if memory.strip():
         parts.append(

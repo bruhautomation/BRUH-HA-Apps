@@ -197,6 +197,42 @@ $(head -c 4096 "$memory_file")
 "
     fi
 
+    # The homeowner's protected entities, told to the faces that can
+    # bypass the place they are enforced. `protected_entities` is checked
+    # in the MCP server, at the one chokepoint every `control_*` tool
+    # routes through — which is every way an insight run or a voice turn
+    # can move something. The terminal and the chat are different: they
+    # hold Bash, Write and Edit, so `ha service light.turn_on`, a line
+    # added to automations.yaml or a script written and reloaded all
+    # reach the house without passing that chokepoint and cannot be
+    # refused by it. This file is the project context Claude Code reads
+    # in /config, which makes it the only route those two faces have to
+    # the list. Read from the same environment variable the MCP server
+    # parses, so there is one source and not two.
+    local protected_section=""
+    if [ -n "${BRAIN_PROTECTED_ENTITIES:-}" ]; then
+        local protected_rows
+        protected_rows=$(printf '%s' "$BRAIN_PROTECTED_ENTITIES" \
+            | tr ',' '\n' \
+            | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+            | grep -v '^$' \
+            | sed 's/^/- `/; s/$/`/')
+        protected_section="## Protected Entities — do not act on these
+
+The homeowner has told brAIn to leave these alone. **Read them freely; never
+act on them.** Do not turn one on or off, set it, unlock it, disable it,
+rename it, delete it, or write it into an automation, script or scene that
+could. A pattern ending in \`.*\` is a whole domain; \`*\` is everything.
+
+${protected_rows}
+
+The Home Assistant MCP tools refuse these on your behalf. A shell command
+(\`ha service ...\`), an edit to \`automations.yaml\`, or a script you write
+and reload does **not** go through those tools — on those paths this rule is
+the only thing there is. If a task needs one of these, stop and say so.
+"
+    fi
+
     # Generate the CLAUDE.md file
     cat > "$OUTPUT_FILE" << CLAUDEMD
 # CLAUDE.md - Auto-generated Home Assistant Context
@@ -415,6 +451,7 @@ affected automations/scripts/scenes; update them, then run
 devices/integrations/users or deleting anything non-trivial. For a
 safe-mode restart use core \`homeassistant.restart\` with \`safe_mode: true\`.
 
+${protected_section}
 ## Important Notes
 
 - **Always run \`ha reload automations\` after editing automations.yaml**

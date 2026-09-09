@@ -140,6 +140,7 @@ import hypotheses
 import intents
 import journal
 import knowledge_store
+import milestones
 import notify_router
 import override_ledger
 import onboarding
@@ -164,7 +165,8 @@ import usage_store
 import user_categories
 import weekly
 from categories import (ANALYST_SYSTEM, CATEGORIES, SYSTEM_PROMPT, build_orientation_prompt,
-                        build_prompt, get_category)
+                        build_prompt, get_category, house_block, memory_excerpt,
+                        stores_for)
 
 HERE = Path(__file__).resolve().parent
 INSIGHTS_DIR = Path(os.environ.get("BRAIN_DIR", "/data/insights"))
@@ -512,6 +514,33 @@ VERBOSE_ACCESS_LOG = os.environ.get("BRAIN_ACCESS_LOG", "").lower() in (
 # JOBS[insight_id] = {state, phase, started_at, error, question}
 JOBS: dict[str, dict] = {}
 QUEUE: asyncio.Queue[str] = asyncio.Queue()
+
+
+def _rebind_queue() -> None:
+    """Give the running loop its own work queue, carrying anything waiting.
+
+    An `asyncio.Queue` binds to the loop that first awaits it, and this
+    one is a module global — so a process that builds a second app in a
+    second loop hands its worker a queue it can never read from. Called
+    once from `on_startup`, where the loop is the app's own.
+
+    Whatever was already queued is carried across rather than dropped:
+    in the add-on there is never anything (nothing enqueues before the
+    app is up), and losing a job to a tidy-up would be the wrong way for
+    a housekeeping call to be wrong.
+    """
+    global QUEUE
+    waiting = []
+    while True:
+        try:
+            waiting.append(QUEUE.get_nowait())
+        except asyncio.QueueEmpty:
+            break
+    QUEUE = asyncio.Queue()
+    for job_id in waiting:
+        QUEUE.put_nowait(job_id)
+
+
 # The house checks (panel/checks): whether a pass is in flight, and the
 # summary of the last one — which is what /api/checks, `brain check list`
 # and the diagnostics bundle read.
@@ -854,10 +883,19 @@ def _findings_notify_target() -> tuple[str, str]:
     so a Configuration-tab edit lands without a restart); the environment
     variables are the fallback run.sh exports for the same options, which is
     what keeps this working when the Supervisor is unreachable.
+
+    A third source sits under both: what somebody chose in onboarding's
+    first step. `addon_options.write` knows only the six generation
+    options, so that choice cannot reach the Configuration tab — and a
+    choice that reached nothing would be a screen that does not work.
+    It is read LAST of the three, so a Configuration-tab entry always
+    wins the moment there is one.
     """
     opts = addon_options.snapshot() or {}
     service = str(opts.get("findings_notify_service")
-                  or os.environ.get("BRAIN_FINDINGS_NOTIFY", "")).strip()
+                  or os.environ.get("BRAIN_FINDINGS_NOTIFY", "")
+                  or settings_store.load().get("findings_notify_service")
+                  or "").strip()
     severity = str(opts.get("findings_notify_min_severity")
                    or os.environ.get("BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY",
                                      "")).strip().lower()
@@ -877,15 +915,19 @@ NOTIFY_FLUSH_FIRST_DELAY_S = 120
 def _quiet_hours() -> tuple[int | None, int | None]:
     """The hours between which only an urgent finding may ring a phone."""
     opts = addon_options.snapshot() or {}
-    start = notify_router.parse_hour(
-        opts.get("notify_quiet_start")
-        if opts.get("notify_quiet_start") is not None
-        else os.environ.get("BRAIN_NOTIFY_QUIET_START", ""))
-    end = notify_router.parse_hour(
-        opts.get("notify_quiet_end")
-        if opts.get("notify_quiet_end") is not None
-        else os.environ.get("BRAIN_NOTIFY_QUIET_END", ""))
-    return start, end
+    stored = settings_store.load()
+
+    def _hours(key: str, env: str):
+        # The panel's own copy is the last resort — see
+        # `_findings_notify_target` for why there is one at all.
+        if opts.get(key) is not None:
+            return notify_router.parse_hour(opts[key])
+        hour = notify_router.parse_hour(os.environ.get(env, ""))
+        return hour if hour is not None \
+            else notify_router.parse_hour(stored.get(key) or "")
+
+    return _hours("notify_quiet_start", "BRAIN_NOTIFY_QUIET_START"), \
+        _hours("notify_quiet_end", "BRAIN_NOTIFY_QUIET_END")
 
 
 async def _send_notification(rows: list[dict], held: bool = False) -> bool:
@@ -1056,6 +1098,13 @@ async def _send_brief(now: float) -> str:
     local = _local_now(now)
     state["woke_at"] = rhythm.clock(
         rhythm.wake_minute(rhythm.profile(), local))
+    # The brief reads no memory and no measurements today, which is how
+    # it can say the hall is cold in a house whose hall is always cold.
+    # Both are handed in rather than fetched there: `brief.py` owns no
+    # store, and a second answer to what this house is like is the drift
+    # `_CARD_CONTRACT` is shared to avoid.
+    state["house"] = await _house_prompt_block(now)
+    state["memory"] = memory_excerpt(await asyncio.to_thread(_read_shared_memory))
 
     result = await asyncio.to_thread(
         engine.run_analyst, brief.frame(reasons, state), brief.SYSTEM,
@@ -1273,6 +1322,13 @@ async def _send_weekly(now: float) -> str:
         "learned": lore,
         "since": state.get("since"),
     }
+    # Same two blocks the brief gets, and for the same reason: the
+    # numbers above are what happened this week, and these are what this
+    # house is like. Added after `last_state` is taken, because that
+    # rides into /api/diagnostics and a memory excerpt is a fact about
+    # somebody's home rather than a diagnostic.
+    state["house"] = await _house_prompt_block(now)
+    state["memory"] = memory_excerpt(await asyncio.to_thread(_read_shared_memory))
     if not weekly.worth_reporting(state):
         # Not an error: a quiet week is the design. Clearing it matters
         # because a stale `last_error` beside a report that never went is
@@ -1929,6 +1985,74 @@ async def _snapshot_run(insight_id: str, cat: dict, framing: dict):
         "gather_mode": "snapshot", "bundle": bundle, "prompt_chars": len(prompt)}
 
 
+# ---------------------------------------------------------------------------
+# What brAIn measured, on its way into a prompt
+# ---------------------------------------------------------------------------
+
+async def _house_snapshot(now: float | None = None) -> dict:
+    """`house.snapshot()` with the energy figures fetched.
+
+    One helper because four callers need the same payload — the analyst's
+    house block, the brief's, the weekly report's and the milestone
+    table — and `house.energy_week` caches for an hour, so asking four
+    times in a pass costs one statistics query at most.
+    """
+    import aiohttp  # noqa: PLC0415 — the module has no other need of it
+
+    now = time.time() if now is None else now
+    try:
+        async with aiohttp.ClientSession() as session:
+            week = await house.energy_week(session, now)
+    except Exception as exc:  # noqa: BLE001 — one section, not the payload
+        # Same rule the aggregate route follows: six measurements and a
+        # sentence about the seventh is an answer; a failure here is not
+        # a reason for a card to lose the other six.
+        log.info("could not read the week's energy for the house block: %s", exc)
+        week = None
+    return await asyncio.to_thread(house.snapshot, now, week)
+
+
+async def _current_inputs(cat_id: str, eff: dict) -> dict | None:
+    """This card's input fingerprint, right now. None when it cannot be read.
+
+    None rather than a partial answer: `_inputs_change` treats a missing
+    fingerprint as "moved", so a card that could not be measured refreshes
+    on the interval alone — which is the old behaviour, and the safe
+    direction for a gate that cannot see.
+    """
+    try:
+        findings_text = await asyncio.to_thread(findings_store.prompt_block)
+        snap = await _house_snapshot()
+        return await asyncio.to_thread(
+            _card_inputs, cat_id, eff, findings_text, snap)
+    except Exception as exc:  # noqa: BLE001 — accounting, not the run
+        log.debug("could not fingerprint %s after its run: %s", cat_id, exc)
+        return None
+
+
+def _because_of(job: dict, question: str | None) -> str:
+    """Why this run happened, in one short phrase.
+
+    The scheduler puts its own sentence on the job when it queues one;
+    everything else got here because a person pressed something, and
+    those two are the only kinds there are.
+    """
+    said = str((job or {}).get("because") or "").strip()
+    if said:
+        return said[:200]
+    return "you asked" if question is not None else "you pressed Generate"
+
+
+async def _house_prompt_block(now: float | None = None) -> str:
+    """The 2 KB block, or "" when nothing has been measured yet."""
+    try:
+        snap = await _house_snapshot(now)
+    except Exception as exc:  # noqa: BLE001 — a prompt section, not the run
+        log.info("could not build the house block: %s", exc)
+        return ""
+    return house_block(snap)
+
+
 async def _generate(insight_id: str) -> None:
     job = JOBS.get(insight_id, {})
     question = job.get("question")
@@ -1962,7 +2086,11 @@ async def _generate(insight_id: str) -> None:
         framing = dict(question=question, feedback=feedback,
                        hypothesis_budget=hypotheses.budget(),
                        knowledge=knowledge, previous=previous,
-                       findings=findings_store.prompt_block())
+                       findings=findings_store.prompt_block(),
+                       # What brAIn measured. Its own budget (HOUSE_CHARS),
+                       # taken from nothing else, and empty on a house
+                       # where nothing is ready yet.
+                       house=await _house_prompt_block())
 
         result = cost = sent = None
         if eff_gather_mode() == "search":
@@ -2046,6 +2174,11 @@ async def _generate(insight_id: str) -> None:
             "focus_used": cat.get("focus", "") if question is None else "",
             "html": html,
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            # Why this run happened, in the words the person who reads
+            # the card would use. A card that cannot say why it is here
+            # is a card that reads as a timer going off — which for two
+            # releases is exactly what it was.
+            "made_because": _because_of(job, question),
             # `cost` is derived once, here, and stored — not recomputed in the
             # panel from `usage`. Which fields count against a session window
             # (and that a cache read does not) is a rule usage_store owns; a
@@ -2053,6 +2186,15 @@ async def _generate(insight_id: str) -> None:
             # drift from the one the budget actually uses.
             "meta": {**result.get("meta", {}), "cost": cost},
         }
+        # What the next run will be compared against. Taken AFTER the run
+        # rather than before it: the question the gate asks is "has
+        # anything moved since this card was made", and a fingerprint
+        # from before a run that itself filed findings would answer it
+        # about the wrong instant.
+        if question is None:
+            fingerprint = await _current_inputs(cat["id"], cat)
+            if fingerprint:
+                insight["inputs_fingerprint"] = fingerprint
         save_insight(insight)
         # What was sent, what came back, and — later, when somebody ends one
         # of the findings above — what they made of it. Off unless somebody
@@ -2118,7 +2260,15 @@ async def _run_fix(job_id: str) -> None:
         # the route already claimed it on disk — this is the in-memory half
         _set_job(job_id, state="fixing", error="")
         memory = await asyncio.to_thread(_read_shared_memory)
-        prompt = fixer.build_prompt(finding, memory=memory)
+        # The protected list rides in the prompt because this is the one
+        # Claude path with a shell and a file editor, and neither of
+        # those passes the MCP chokepoint the list is enforced at. Read
+        # through `automation_writer.protected_patterns`, which is the
+        # single reader of the option — a second parse would be a second
+        # answer to "is this entity protected".
+        prompt = fixer.build_prompt(
+            finding, memory=memory,
+            protected=automation_writer.protected_patterns())
         result = await asyncio.to_thread(
             engine.run_agent, prompt, fixer.FIX_SYSTEM, eff_model(),
             FIX_TIMEOUT_S, FIX_MAX_TURNS, "fix")
@@ -2159,6 +2309,101 @@ async def _run_fix(job_id: str) -> None:
         _set_job(job_id, state="error", error=str(exc)[:500])
 
 
+# ---------------------------------------------------------------------------
+# Milestone cards — the day a measurement first has an answer
+# ---------------------------------------------------------------------------
+
+def _milestone_payloads() -> dict:
+    """Each measurement's own file, for the predicates that need the rows.
+
+    The aggregate carries counts; three of the seven ask something the
+    counts cannot answer (which closures have a full day of watching,
+    what each room's time constant is, what each machine idles at), and
+    a store that will not load is an empty payload rather than a failed
+    pass — its predicate then reads it as not ready, which is the honest
+    answer to "I could not look".
+    """
+    loaders = {"rhythm": rhythm.load, "baselines": baselines.load,
+               "thermal": thermal.load, "closures": closures.load,
+               "appliances": appliances.load, "habits": routines.load}
+    out = {}
+    for name, load in loaders.items():
+        try:
+            out[name] = load()
+        except Exception as exc:  # noqa: BLE001 — one store, not the pass
+            log.debug("milestones: could not read %s: %s", name, exc)
+            out[name] = {}
+    return out
+
+
+def _milestone_job_id(mile_id: str) -> str:
+    return f"milestone-{mile_id}"
+
+
+async def _offer_milestones(now: float) -> int:
+    """Queue a card for every milestone that has just become true.
+
+    Runs in the checks pass, after the nightly build has had its chance
+    to write the stores — the same place every other producer is called,
+    because "what has become knowable" is a question about the same
+    snapshot the checks just read.
+    """
+    snapshot = await _house_snapshot(now)
+    payloads = await asyncio.to_thread(_milestone_payloads)
+    due = await asyncio.to_thread(milestones.due, snapshot, payloads, now)
+    queued = 0
+    for entry in due:
+        if _enqueue(_milestone_job_id(entry["id"]), kind="milestone",
+                    milestone=entry["id"], prompt=entry["prompt"],
+                    mark=entry["mark"], because=entry["made_because"],
+                    title=entry["title"]):
+            queued += 1
+            log.info("milestone: queued a card for %s (%s)",
+                     entry["id"], entry["made_because"])
+    return queued
+
+
+async def _run_milestone(job_id: str) -> None:
+    """One milestone card: the store's numbers, one analyst turn, one file.
+
+    It shares the generation queue like a fix run, because one Claude
+    invocation in flight across the add-on is what keeps a subscription's
+    rate limit intact — and it uses `run_analyst` (reading tools only)
+    for the reason every unattended run does.
+    """
+    job = JOBS.get(job_id, {})
+    mile_id = str(job.get("milestone") or "")
+    entry = milestones.get(mile_id)
+    if entry is None:
+        _set_job(job_id, state="error", error="unknown milestone")
+        return
+    try:
+        _set_job(job_id, state="generating", error="")
+        result = await asyncio.to_thread(
+            engine.run_analyst, job.get("prompt") or "", ANALYST_SYSTEM,
+            eff_model(), eff_timeout_s(), ANALYST_MAX_TURNS, "card")
+        _record_usage(result, job_id)
+        if not result.get("ok"):
+            raise RuntimeError(result.get("error") or "generation failed")
+        obj = engine.extract_json(result.get("text") or "")
+        if not obj or not obj.get("title"):
+            raise RuntimeError("Claude returned an unparseable card")
+        card = await asyncio.to_thread(
+            milestones.save_card, mile_id, obj, job.get("mark") or {},
+            str(job.get("because") or ""))
+        _set_job(job_id, state="done", error="")
+        log.info("milestone card written: %s (%s)", mile_id, card["title"])
+    except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
+        # Deliberately NOT settled: a milestone whose card failed is a
+        # milestone nobody has been told about, and the next pass should
+        # try again. The settled key is written by `save_card`, which is
+        # to say by success and nothing else.
+        log.warning("milestone %s failed: %s", mile_id, exc)
+        journal.record("insight", journal.classify({"ok": False, "error": str(exc)}),
+                       error=str(exc), extra={"id": job_id})
+        _set_job(job_id, state="error", error=str(exc)[:500])
+
+
 async def _worker() -> None:
     while True:
         job_id = await QUEUE.get()
@@ -2166,6 +2411,8 @@ async def _worker() -> None:
             kind = JOBS.get(job_id, {}).get("kind")
             if kind == "fix":
                 await _run_fix(job_id)
+            elif kind == "milestone":
+                await _run_milestone(job_id)
             elif kind == "doctor":
                 await _run_doctor_deep(job_id)
             elif kind == "rehearse":
@@ -2231,6 +2478,14 @@ def _next_due(eff: dict, generated_at: str, now: float) -> float | None:
     """
     if not eff.get("enabled", True):
         return None
+    # Two things that are not a clock. `never` means nothing is
+    # scheduled; a HOLD means the floor has passed and the scheduler is
+    # waiting for something the card reads to move, which has no date —
+    # so the honest answer is "not on a clock", with the hold's own
+    # sentence beside it in the payload rather than a time that will
+    # keep arriving and keep not happening.
+    if eff_refresh_mode() == "never" or REFRESH_HOLDS.get(eff.get("id")):
+        return None
     schedule = eff.get("schedule")
     if isinstance(schedule, list) and schedule:
         if _schedule_due(schedule, generated_at, now):
@@ -2260,30 +2515,182 @@ def _next_due(eff: dict, generated_at: str, now: float) -> float | None:
     return max(now, gen + hours * 3600)
 
 
-def _refresh_due(eff: dict, generated_at: str, now: float) -> bool:
+# ---------------------------------------------------------------------------
+# What a card is a function of, and whether any of it has moved
+# ---------------------------------------------------------------------------
+# A card used to regenerate because a clock said so, which on a quiet
+# house means a full-price Claude run producing the same card it produced
+# yesterday — and a dashboard that changes on a timer rather than because
+# something happened is one people stop reading, since nothing on it is
+# ever news.
+#
+# So the interval is the FLOOR and the second condition is that something
+# the card reads has actually changed since the stored run. Five inputs,
+# hashed separately so the answer can say WHICH one moved — a card whose
+# foot says "3 more findings on the list" is telling you why it is there,
+# where "inputs changed" is a mechanism talking about itself.
+#
+# `findings` is the whole prompt block rather than a per-domain slice:
+# there is no per-domain view of a finding, and inventing one here would
+# be a second answer to "what is this finding about" living beside
+# `findings_store`'s own. The cost is that a new finding anywhere lets
+# every card past the floor, which is the conservative direction.
+CARD_INPUT_PARTS = ("findings", "memory", "stores", "feedback", "focus")
+
+
+def _sha1(text: str) -> str:
+    import hashlib  # noqa: PLC0415 — one caller, and not on the hot path
+
+    return hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _memory_stamp() -> str:
+    """memory.md's mtime and size — never its contents.
+
+    The document is up to 32 KB and this is asked once per card per tick;
+    it is only ever compared against itself, so reading the file in to
+    answer a question about a timestamp buys a copy of somebody's home
+    for nothing. Same reasoning as `SetupTokenFlow`'s credential
+    fingerprint.
+    """
+    try:
+        stat = SHARED_MEMORY_FILE.stat()
+    except OSError:
+        # A missing document is a state, and a stable one: "none" is not
+        # the same string as any real stamp, so writing the first fact
+        # counts as a change.
+        return "none"
+    return f"{int(stat.st_mtime)}:{stat.st_size}"
+
+
+def _store_stamp(cat_id: str, snapshot: dict | None) -> str:
+    """The ready-state and build time of the measurements this card reads."""
+    wanted = stores_for(cat_id)
+    stores = (snapshot or {}).get("stores") or {}
+    rows = {name: [entry.get("state"), entry.get("updated_at")]
+            for name, entry in sorted(stores.items())
+            if isinstance(entry, dict) and (wanted is None or name in wanted)}
+    return json.dumps(rows, sort_keys=True)
+
+
+def _card_inputs(cat_id: str, eff: dict, findings_text: str,
+                 snapshot: dict | None, now: float | None = None) -> dict:
+    """Everything the next run of this card would read, as a fingerprint.
+
+    `findings_text` and `snapshot` are passed in rather than fetched,
+    because the scheduler asks this of every category on one tick and
+    both are whole-house reads: computing them per card would be the
+    same answer fetched nine times.
+    """
+    feedback = [] if cat_id.startswith("custom-") else [
+        f["text"] for f in feedback_store.list_feedback(cat_id)]
+    parts = {
+        "findings": _sha1(findings_text or ""),
+        "memory": _memory_stamp(),
+        "stores": _sha1(_store_stamp(cat_id, snapshot)),
+        "feedback": _sha1("\n".join(feedback)),
+        "focus": _sha1(str(eff.get("focus") or "")),
+    }
+    return {
+        "parts": parts,
+        "hash": _sha1(json.dumps(parts, sort_keys=True)),
+        # One number the sentence can be built from. Not part of the
+        # hash — it is derived from the same text the `findings` part
+        # already covers, and counting it twice would let a re-worded
+        # finding read as a new one.
+        "open_findings": len(findings_store.list_all()),
+        "at": int(time.time() if now is None else now),
+    }
+
+
+def _inputs_change(stored: dict | None, current: dict) -> dict:
+    """Has anything moved, and what would you tell somebody it was.
+
+    A card with no stored fingerprint has moved by definition: it was
+    made before this existed, or it has never been made, and both mean
+    the next run is the first that can be compared against anything.
+    """
+    if not isinstance(stored, dict) or not stored.get("parts"):
+        return {"moved": True, "why": "first run since inputs were tracked",
+                "fingerprint": current}
+    was, now_parts = stored["parts"], current["parts"]
+    if was == now_parts:
+        return {"moved": False, "why": "nothing it reads has changed",
+                "fingerprint": current}
+    changed = [p for p in CARD_INPUT_PARTS if was.get(p) != now_parts.get(p)]
+    reasons = []
+    if "findings" in changed:
+        delta = int(current.get("open_findings") or 0) - \
+            int(stored.get("open_findings") or 0)
+        reasons.append(f"{delta} more finding(s) on the list" if delta > 0
+                       else "the findings list changed")
+    if "memory" in changed:
+        reasons.append("memory was updated")
+    if "stores" in changed:
+        reasons.append("a measurement was rebuilt")
+    if "feedback" in changed:
+        reasons.append("your feedback changed")
+    if "focus" in changed:
+        reasons.append("its focus was rewritten")
+    return {"moved": True, "why": "; ".join(reasons) or "inputs changed",
+            "fingerprint": current}
+
+
+# Why the scheduler last held a card back, per category id. In memory
+# and written by the tick, because computing a fingerprint for nine
+# categories on every /api/status poll would be nine whole-house reads
+# for an answer that changes when the house does. It is a READBACK of
+# what the scheduler decided, which is exactly what "why did this card
+# stop updating" is asking.
+REFRESH_HOLDS: dict[str, dict] = {}
+
+
+def eff_refresh_mode() -> str:
+    mode = settings_store.load().get("refresh_mode")
+    return mode if mode in settings_store.REFRESH_MODES else "changed"
+
+
+def _refresh_due(eff: dict, generated_at: str, now: float,
+                 change=None, mode: str | None = None) -> bool:
     """True when a category's stored insight should regenerate.
 
-    A non-empty per-category schedule (fixed daily times) takes precedence;
-    otherwise the age-based interval applies (per-category refresh_hours
-    override, else global REFRESH_HOURS; 0 disables). A missing or
-    unparseable timestamp counts as ancient, so first boot generates every
-    enabled category."""
+    Two conditions, and the first is a floor. A non-empty per-category
+    schedule (fixed daily times) takes precedence; otherwise the age-based
+    interval applies (per-category refresh_hours override, else global
+    REFRESH_HOURS; 0 disables). A missing or unparseable timestamp counts
+    as ancient, so first boot generates every enabled category.
+
+    The second is `refresh_mode` (see settings_store.REFRESH_MODES): in
+    the default `changed`, the floor having passed is not enough — one of
+    the five things the card reads has to have moved too. `change` is
+    that answer and may be a CALLABLE, evaluated only once the floor has
+    passed: on most ticks no card has aged out, and computing a
+    fingerprint for one that has not is a whole-house read for a question
+    nobody asked.
+    """
     if not eff.get("enabled", True):
+        return False
+    mode = mode or eff_refresh_mode()
+    if mode == "never":
         return False
     schedule = eff.get("schedule")
     if isinstance(schedule, list) and schedule:
-        return _schedule_due(schedule, generated_at, now)
-    hours = eff.get("refresh_hours")
-    if hours is None:
-        hours = eff_refresh_hours()
-    if hours <= 0:
-        return False
-    if not generated_at:
+        if not _schedule_due(schedule, generated_at, now):
+            return False
+    else:
+        hours = eff.get("refresh_hours")
+        if hours is None:
+            hours = eff_refresh_hours()
+        if hours <= 0:
+            return False
+        gen = _parse_generated_at(generated_at) if generated_at else None
+        if gen is not None and now - gen < hours * 3600:
+            return False
+    if mode == "always" or change is None:
         return True
-    gen = _parse_generated_at(generated_at)
-    if gen is None:
-        return True
-    return now - gen >= hours * 3600
+    if callable(change):
+        change = change()
+    return bool((change or {}).get("moved"))
 
 
 async def _scheduler() -> None:
@@ -2339,12 +2746,53 @@ async def _scheduler() -> None:
             continue
         budget_logged = False
         _set_gate(None)
-        stored = {i["id"]: i.get("generated_at", "") for i in load_insights()}
+        cards = {i["id"]: i for i in load_insights()}
         now = time.time()
+        mode = eff_refresh_mode()
+        # Fetched once per tick, not once per card: both are whole-house
+        # reads and nine categories asking separately would be the same
+        # answer nine times. Lazy, because on most ticks no card has
+        # aged out and neither is needed at all.
+        shared: dict = {}
+
+        async def _inputs_for(cat_id: str, eff: dict) -> dict:
+            if "findings" not in shared:
+                shared["findings"] = await asyncio.to_thread(
+                    findings_store.prompt_block)
+                shared["house"] = await _house_snapshot(now)
+            return await asyncio.to_thread(
+                _card_inputs, cat_id, eff, shared["findings"],
+                shared["house"], now)
+
         for cat in all_categories():
             eff = resolve_category(cat["id"]) or cat
-            if _refresh_due(eff, stored.get(cat["id"], ""), now) and _enqueue(cat["id"]):
-                log.info("auto-refresh: queued %s", cat["id"])
+            stored = cards.get(cat["id"]) or {}
+            if not _refresh_due(eff, stored.get("generated_at", ""), now,
+                                mode=mode):
+                continue
+            change = {"moved": True, "why": "on its refresh interval",
+                      "fingerprint": None}
+            if mode == "changed":
+                try:
+                    change = _inputs_change(
+                        stored.get("inputs_fingerprint"),
+                        await _inputs_for(cat["id"], eff))
+                except Exception as exc:  # noqa: BLE001 — a gate that cannot
+                    # read its inputs must not become a card that never
+                    # refreshes: "I could not tell" falls through to the
+                    # old behaviour, which is the interval alone.
+                    log.debug("could not fingerprint %s: %s", cat["id"], exc)
+                    change = {"moved": True,
+                              "why": "its inputs could not be read",
+                              "fingerprint": None}
+            if not change["moved"]:
+                REFRESH_HOLDS[cat["id"]] = {
+                    "why": change["why"], "at": int(now)}
+                continue
+            REFRESH_HOLDS.pop(cat["id"], None)
+            if _enqueue(cat["id"], because=change["why"]):
+                log.info("auto-refresh: queued %s (%s)",
+                         cat["id"], change["why"])
 
 
 def _enqueue(job_id: str, question: str | None = None, **fields) -> bool:
@@ -2492,6 +2940,7 @@ def _category_status(c: dict, insights: dict) -> dict:
             "refresh_hours": c.get("refresh_hours"),
             "schedule": c.get("schedule"),
             "next_due": _next_due(c, insights.get(c["id"]) or "", now),
+            "refresh_hold": REFRESH_HOLDS.get(c["id"]),
             "user": True,
             "job": {k: JOBS.get(c["id"], {}).get(k) for k in ("state", "error")},
         }
@@ -2515,6 +2964,11 @@ def _category_status(c: dict, insights: dict) -> dict:
         # _refresh_due, so the foot can say "next 7am" instead of leaving
         # "why did this stop updating" to the add-on log.
         "next_due": _next_due(eff, insights.get(c["id"]) or "", now),
+        # Why the scheduler is waiting rather than when: with
+        # `refresh_mode: changed` a card past its interval sits until
+        # something it reads moves, and a `next_due` in the past would
+        # keep promising a run that is not coming.
+        "refresh_hold": REFRESH_HOLDS.get(c["id"]),
         "job": {k: JOBS.get(c["id"], {}).get(k) for k in ("state", "error")},
     }
 
@@ -3786,6 +4240,17 @@ async def run_checks(reason: str = "schedule") -> dict:
             offered += await _offer_scene_schedule(snapshot, started)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not offer a scene schedule: %s", exc)
+        # And the fifth producer, which is not a proposal at all: the
+        # card brAIn writes the day one of its own measurements first has
+        # an answer. Here rather than in the nightly build because the
+        # build writes the stores and this reads them, and a producer
+        # that could fail must not cost a house its list of what is
+        # broken.
+        try:
+            made = await _offer_milestones(started)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not evaluate the milestones: %s", exc)
+            made = 0
         # And the other half of the same lifecycle: a trial that nothing
         # evaluates is a status with no report behind it.
         try:
@@ -3817,6 +4282,7 @@ async def run_checks(reason: str = "schedule") -> dict:
             "refreshed": refreshed,
             "cleared": cleared,
             "proposed": offered,
+            "milestones": made,
             "trials_evaluated": graded,
             "intents_fired": fired,
             # Filed where nobody will see them, on purpose. The count is
@@ -3842,6 +4308,7 @@ async def run_checks(reason: str = "schedule") -> dict:
                    "finished_at": int(time.time()), "error": str(exc)[:300],
                    "ran": [], "created": [], "cleared": [], "refreshed": 0,
                    "skipped": {}, "errors": {}, "per_check": {}, "found": 0,
+                   "milestones": 0,
                    "shadow": {"created": 0, "found": 0},
                    "snapshot_errors": {}}
     finally:
@@ -6102,18 +6569,162 @@ def _queue_memory_fact(fact: str, source: str = "panel",
 # memory.md is edited out of memory.md, in the editor beside the queue.
 
 
+# -- the knowledge cards: what brAIn learned about itself learning ----------
+
+async def h_knowledge_cards(request: web.Request) -> web.Response:
+    """Every milestone card there is, plus what is still being waited for.
+
+    The two together because they are one screen: a card that exists and
+    a measurement that has not landed are the same question asked at two
+    different times, and a list of cards with no sense of what is coming
+    reads as everything brAIn is ever going to know.
+    """
+    cards = await asyncio.to_thread(milestones.list_cards)
+    settled = await asyncio.to_thread(milestones.settled)
+    return web.json_response({
+        "cards": cards,
+        "pending": [{"id": m["id"], "store": m["store"], "title": m["title"]}
+                    for m in milestones.MILESTONES if m["id"] not in settled],
+        "running": [j for j in (JOBS.get(_milestone_job_id(m["id"])) or {}
+                                for m in milestones.MILESTONES)
+                    if j.get("state") in ("queued", "generating")],
+    })
+
+
+async def h_knowledge_card(request: web.Request) -> web.Response:
+    card = await asyncio.to_thread(
+        milestones.get_card, request.match_info["card_id"])
+    if card is None:
+        raise web.HTTPNotFound(text="no such knowledge card")
+    return web.json_response(card)
+
+
+async def h_knowledge_card_refresh(request: web.Request) -> web.Response:
+    """Make this card again, on demand.
+
+    The only thing that clears a settled milestone. A person asking for
+    it again is the one case where re-running is not the loop the settled
+    key exists to prevent — and it re-reads the store rather than
+    replaying the stored prompt, because what the card should say is
+    whatever is true now.
+    """
+    card_id = request.match_info["card_id"]
+    entry = milestones.get(card_id)
+    if entry is None:
+        raise web.HTTPNotFound(text="no such knowledge card")
+    if not engine.get_auth():
+        raise web.HTTPBadRequest(text="connect your Claude account first")
+    now = time.time()
+    snapshot = await _house_snapshot(now)
+    payloads = await asyncio.to_thread(_milestone_payloads)
+    prog = (snapshot.get("stores") or {}).get(entry["store"]) or {}
+    payload = payloads.get(entry["store"]) or {}
+    if not entry["ready"](prog, payload):
+        # Not an error: the measurement really is not there any more (a
+        # store rebuilt from a shorter history, a meter removed), and
+        # saying so beats a card written from numbers that have gone.
+        return web.json_response(
+            {"error": "that measurement does not have an answer right now",
+             "state": prog.get("state"), "reason": prog.get("reason")},
+            status=409)
+    await asyncio.to_thread(milestones.unsettle, card_id)
+    queued = _enqueue(
+        _milestone_job_id(card_id), kind="milestone", milestone=card_id,
+        prompt=milestones.prompt_for(entry, prog, payload),
+        mark=entry["mark"](prog, payload), because="you asked for it again",
+        title=entry["title"])
+    return web.json_response({"id": card_id, "queued": queued})
+
+
 # -- onboarding: learn the home, then propose cards worth having ------------
 
 async def h_onboarding(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(onboarding.state))
 
 
+async def _notify_services() -> list[dict]:
+    """The notify services Home Assistant has registered, phones first.
+
+    Asked of Core directly rather than through the checks snapshot: that
+    one gathers the registries, the config files, a week of statistics
+    and sixty days of battery means, and this needs one endpoint. The
+    parsing is `onboarding.notify_candidates`', so there is one answer to
+    "which of these can take a message".
+    """
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415
+
+    async with aiohttp.ClientSession() as session:
+        raw = await ha_data._rest_get(session, "/services", timeout=20)
+    names = set()
+    for row in raw or []:
+        domain = str((row or {}).get("domain") or "").lower()
+        for name in ((row or {}).get("services") or {}):
+            names.add(f"{domain}.{str(name).lower()}")
+    return onboarding.notify_candidates(names)
+
+
+async def h_onboarding_notify(request: web.Request) -> web.Response:
+    """Step 0: where brAIn may speak, and the hours it may not.
+
+    A house Core will not answer for gets an empty list and a reason
+    rather than a 502 — the step is skippable and a first-run flow that
+    cannot be got past over a notify service is worse than one with no
+    notify service.
+    """
+    try:
+        candidates = await _notify_services()
+        error = ""
+    except Exception as exc:  # noqa: BLE001 — report, don't 500
+        log.info("could not list notify services: %s", exc)
+        candidates, error = [], "Home Assistant did not answer"
+    return web.json_response({
+        "candidates": candidates, "error": error,
+        # The panel cannot write these into the add-on's own options —
+        # see `onboarding.save_notify`. `writable` says so out loud so
+        # the screen can show the two lines to paste rather than
+        # implying the Configuration tab has been updated.
+        "writable": False,
+        **await asyncio.to_thread(onboarding.notify_state),
+    })
+
+
+async def h_onboarding_notify_save(request: web.Request) -> web.Response:
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text="expected a JSON object")
+    try:
+        saved = await asyncio.to_thread(
+            onboarding.save_notify, body.get("service"),
+            body.get("quiet_start"), body.get("quiet_end"), body.get("brief"))
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc)) from exc
+    return web.json_response(saved)
+
+
 async def h_onboarding_learn(request: web.Request) -> web.Response:
-    """Queue the opening syllabus. Returns immediately — study sessions run
-    for minutes on the CLI side, and the panel polls progress."""
+    """Queue the opening syllabus, and put one card up while it runs.
+
+    The syllabus is five study sessions and takes the better part of
+    half an hour, and for the whole of it the Insights tab said nothing
+    at all — which on a first install is indistinguishable from an
+    add-on that does not work. Home Overview runs in search mode off the
+    orientation map, so it costs a small prompt and a few lookups rather
+    than the whole house, and it is admitted to this home's card set at
+    the same time: a card whose category `visible_categories` does not
+    return is a file the dashboard skips, which is a Claude run spent on
+    something nobody can see.
+    """
     if not engine.get_auth():
         raise web.HTTPBadRequest(text="connect your Claude account first")
     result = await asyncio.to_thread(onboarding.start_learning)
+    try:
+        await asyncio.to_thread(onboarding.admit_first_card)
+        result["first_card"] = onboarding.FIRST_CARD if _enqueue(
+            onboarding.FIRST_CARD, because="your first card") else ""
+    except Exception as exc:  # noqa: BLE001 — the syllabus is the step
+        log.warning("could not queue the first card: %s", exc)
+        result["first_card"] = ""
     return web.json_response(result)
 
 
@@ -6160,8 +6771,15 @@ async def h_onboarding_accept(request: web.Request) -> web.Response:
     picked = body.get("accept")
     if not isinstance(picked, list):
         raise web.HTTPBadRequest(text="accept must be a list of indexes")
-    created = await asyncio.to_thread(onboarding.accept, picked)
-    return web.json_response({"created": created, "onboarded": True})
+    # The shipped half. Two lists because there are two kinds of card and
+    # only one of them is created — the other already exists in the code
+    # and is admitted to this home's set.
+    shipped = body.get("shipped")
+    if shipped is not None and not isinstance(shipped, list):
+        raise web.HTTPBadRequest(text="shipped must be a list of category ids")
+    created = await asyncio.to_thread(onboarding.accept, picked, shipped)
+    return web.json_response({"created": created, "onboarded": True,
+                              "shipped": prompt_store.load_overrides()["accepted"]})
 
 
 async def h_onboarding_skip(request: web.Request) -> web.Response:
@@ -7603,6 +8221,12 @@ def make_app() -> web.Application:
     # answer the aggregate with a 404 for a store called "".
     app.router.add_get("/api/knowledge/house", h_house)
     app.router.add_get("/api/knowledge/house/{name}", h_house_store)
+    # brAIn's own knowledge cards. Not insights: no schedule, no
+    # category, and they never appear on the Insights tab.
+    app.router.add_get("/api/knowledge/cards", h_knowledge_cards)
+    app.router.add_get("/api/knowledge/card/{card_id}", h_knowledge_card)
+    app.router.add_post("/api/knowledge/card/{card_id}/refresh",
+                        h_knowledge_card_refresh)
     app.router.add_get("/api/weekly", h_weekly)
     app.router.add_post("/api/weekly/run", h_weekly_run)
     app.router.add_get("/api/activity", h_activity)
@@ -7636,6 +8260,8 @@ def make_app() -> web.Application:
     app.router.add_delete("/api/insight/{id}/feedback/{ts}", h_feedback_delete)
     app.router.add_get("/api/card_info", h_card_info)
     app.router.add_get("/api/onboarding", h_onboarding)
+    app.router.add_get("/api/onboarding/notify", h_onboarding_notify)
+    app.router.add_post("/api/onboarding/notify", h_onboarding_notify_save)
     app.router.add_post("/api/onboarding/learn", h_onboarding_learn)
     app.router.add_post("/api/onboarding/recommend", h_onboarding_recommend)
     app.router.add_post("/api/onboarding/accept", h_onboarding_accept)
@@ -7717,6 +8343,16 @@ def make_app() -> web.Application:
         # Every failed run of any kind becomes one readable file: hooked on
         # the journal so a new run path is covered by having recorded itself.
         journal.on_record(_journal_report_listener)
+        # The work queue belongs to the loop the worker runs on, and it
+        # is a module global — so the first loop to touch it owns it for
+        # the life of the process. In the add-on that is one loop and one
+        # app and the distinction never arises; anywhere that builds a
+        # second app (a test, the demo panel) the second worker's very
+        # first `get()` raises "bound to a different event loop" into a
+        # task nobody awaits, which surfaces as an unraisable exception
+        # in an unrelated teardown. Rebinding here costs one object and
+        # keeps the queue an implementation detail of the running app.
+        _rebind_queue()
         app["worker"] = asyncio.create_task(_worker())
         app["scheduler"] = asyncio.create_task(_scheduler())
         app["checks"] = asyncio.create_task(_checks_loop())

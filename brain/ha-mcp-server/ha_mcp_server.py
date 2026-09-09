@@ -1972,6 +1972,12 @@ TOOLS = [
             "that return data (create_area/floor/label, "
             "delete_orphaned_entities, create_repair_issue).\n"
             "\nUse get_service_details to look up all available fields for any service."
+            "\n\nPROTECTED ENTITIES: the homeowner may have named entities "
+            "brAIn must not act on, and this call refuses any target that "
+            "matches one — including an area or device that contains one. "
+            "The refusal names the entity. Do not route around it with a "
+            "shell command or by editing a YAML file: it is the homeowner's "
+            "list, and those paths are not checked."
         ),
         "inputSchema": {
             "type": "object",
