@@ -3838,20 +3838,56 @@ const HOUSE_STORES = [
 ];
 
 async function refreshHouse() {
-  try {
-    houseState.data = await api("api/knowledge/house");
-    houseState.error = "";
-  } catch (e) {
-    houseState.data = null;
-    houseState.error = "Could not read what brAIn has measured: " + e.message;
-  }
+  // Two reads, in parallel, because they answer one question between them:
+  // how far along each measurement is, and — for the ones that have landed
+  // — the card brAIn wrote when it did. A tab that paid for them in series
+  // would spinner over the half that had already arrived.
+  await Promise.all([
+    (async () => {
+      try {
+        houseState.data = await api("api/knowledge/house");
+        houseState.error = "";
+      } catch (e) {
+        houseState.data = null;
+        houseState.error = "Could not read what brAIn has measured: " + e.message;
+      }
+    })(),
+    refreshMilestones(),
+  ]);
   renderHouse();
+}
+
+// The milestone cards, and what is still being waited for. A card that
+// exists and a measurement that has not landed are the same question asked
+// at two different times, so they come from one endpoint and are rendered
+// against one list of rows — a pending line under a store's own row reads
+// as "this arrives when this lands", where a separate list at the bottom
+// reads as a card that is missing.
+async function refreshMilestones() {
+  try {
+    const data = await api("api/knowledge/cards");
+    houseState.cards = {};
+    (data.cards || []).forEach((c) => {
+      if (c && c.store) houseState.cards[c.store] = c;
+    });
+    houseState.pending = data.pending || [];
+    houseState.running = data.running || [];
+  } catch (e) {
+    // A tab that cannot read its cards still has seven measurements to
+    // show, so this is not the tab's error — it is the absence of cards.
+    houseState.cards = {};
+    houseState.pending = [];
+    houseState.running = [];
+  }
 }
 
 const houseState = {
   data: null,      // the /api/knowledge/house payload
   error: "",       // why we could not read it — a sentence, never a blank tab
   open: "",        // which store's drill-down is open; one at a time
+  cards: {},       // store id -> its milestone card, when one has been made
+  pending: [],     // the milestones with no card yet, as {id, store, title}
+  running: [],     // the milestone jobs in flight, as job states
   detail: {},      // store id -> its drill-down payload, fetched once
   entity: "",      // baselines: which entity's week is drawn
   buckets: null,   // baselines: that entity's 168 buckets
@@ -3925,11 +3961,115 @@ function makeStoreRow(id, name, store) {
     || (state === "ready" ? "measured" : "nothing to show yet")));
   const reason = String(s.reason || "").trim();
   if (reason) txt.appendChild(el("div", "kwhy", reason));
+  // A card behind a row nobody presses is a card nobody reads, so the row
+  // says it has one. It is a mark on the row rather than the card itself
+  // because seven sandboxed frames on one tab is the same "two open at
+  // once" problem the drill-downs already answer.
+  if (houseState.cards[id]) txt.appendChild(el("span", "kcardmark", "Card"));
   row.appendChild(txt);
 
   row.appendChild(el("span", "kchip", storeChipText(s)));
   row.addEventListener("click", () => toggleStore(id));
   return row;
+}
+
+// What a milestone job is doing, for the pending line. `queued` and
+// `generating` are the two the endpoint sends; anything else is a state
+// this panel does not know and says nothing about rather than guessing.
+function milestoneRunning(store) {
+  return (houseState.running || []).some((j) =>
+    j && (j.store === store || j.milestone === store || j.id === store));
+}
+
+// The one line a measurement with no card yet gets, under its own row.
+// Deliberately not a card-shaped placeholder: nothing has been written, and
+// a greyed-out card reads as one that failed to load.
+function makePendingLine(store, title) {
+  const line = el("div", "kpending");
+  line.dataset.store = store;
+  line.appendChild(el("span", "kpendmark", "○"));
+  line.appendChild(el("span", null, milestoneRunning(store)
+    ? `Writing “${title}” now…`
+    : `“${title}” — this card arrives when this measurement lands.`));
+  return line;
+}
+
+// A milestone card, rendered the way an insight card is: title, summary,
+// highlights, then the sandboxed visualization through `makeFrame`, which
+// is the one route from an `html` payload to a frame. There is no
+// regenerate/edit/feedback/delete menu — a milestone is not a card you
+// keep re-running, it is the thing brAIn wrote the day it worked something
+// out — so the single control is "make it again from the numbers as they
+// are now".
+function makeMilestoneCard(card) {
+  const box = el("article", "card kcard");
+  box.dataset.milestone = card.id;
+
+  const head = el("div", "card-head");
+  head.appendChild(el("span", "cicon", "🎓"));
+  const titles = el("div", "ctitles");
+  titles.appendChild(el("div", "cat", "What brAIn worked out"));
+  titles.appendChild(el("h3", null, card.title || "A measurement landed"));
+  head.appendChild(titles);
+  box.appendChild(head);
+
+  if (card.summary) box.appendChild(el("div", "summary", card.summary));
+
+  const highlights = Array.isArray(card.highlights) ? card.highlights : [];
+  if (highlights.length) {
+    const hls = el("div", "highlights");
+    highlights.forEach((h) => {
+      if (!h || !h.label) return;
+      const cell = el("div", "hl");
+      cell.appendChild(el("div", "l", String(h.label)));
+      cell.appendChild(el("div", "v", String(h.value != null ? h.value : "—")));
+      hls.appendChild(cell);
+    });
+    box.appendChild(hls);
+  }
+
+  if (card.html) box.appendChild(makeFrame(card));
+
+  const foot = el("div", "foot");
+  const when = dateAt(card.made_at);
+  if (when) foot.appendChild(el("span", null, `Made ${when}`));
+  const because = String(card.made_because || "").trim();
+  if (because) foot.appendChild(el("span", "because", `· ${because}`));
+  foot.appendChild(el("span", "spacer"));
+  const again = el("button", "btn small", "Make this again");
+  tip(again, "Write this card again from the numbers as they are now");
+  again.addEventListener("click", () => remakeMilestone(card.id, again));
+  foot.appendChild(again);
+  box.appendChild(foot);
+  return box;
+}
+
+// The one control. A 409 here is not a failure: the measurement really has
+// no answer at the moment (a store rebuilt from a shorter history, a meter
+// removed), and the endpoint says so in a sentence — so it is a toast in
+// the ordinary voice rather than a red error about something nobody did
+// wrong.
+async function remakeMilestone(id, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch(`api/knowledge/card/${encodeURIComponent(id)}/refresh`,
+      { method: "POST", headers: { "Content-Type": "application/json" } });
+    let body = {};
+    try { body = await resp.json(); } catch (e) { body = {}; }
+    if (!resp.ok) {
+      toast(body.error || `Could not make it again (HTTP ${resp.status})`);
+      return;
+    }
+    toast(body.queued
+      ? "Writing it again — it'll appear here when it lands"
+      : "Already being written");
+    await refreshMilestones();
+    renderHouse();
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function renderHouse() {
@@ -3948,9 +4088,26 @@ function renderHouse() {
   renderBrief(briefBox, data);
 
   const stores = data.stores || {};
+  const pending = {};
+  (houseState.pending || []).forEach((m) => {
+    if (m && m.store) pending[m.store] = m;
+  });
   HOUSE_STORES.forEach(([id, name]) => {
     host.appendChild(makeStoreRow(id, name, stores[id]));
-    if (houseState.open === id) host.appendChild(makeDrill(id));
+    // The pending line rides with its row, always — it is one muted
+    // sentence, and what it says is about this measurement.
+    if (pending[id]) {
+      host.appendChild(makePendingLine(id, pending[id].title || name));
+    }
+    // The card opens with the row, above the evidence: the row is the
+    // answer, the card is what brAIn wrote about it, and the drill-down
+    // is the numbers underneath.
+    if (houseState.open === id) {
+      if (houseState.cards[id]) {
+        host.appendChild(makeMilestoneCard(houseState.cards[id]));
+      }
+      host.appendChild(makeDrill(id));
+    }
   });
 }
 
