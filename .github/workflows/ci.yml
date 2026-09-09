@@ -98,6 +98,14 @@ jobs:
       - name: Measure the activity tab
         run: node tests/manual/measure-activity.mjs
 
+      # Seven measurement rows, five states, four sections and the Today
+      # strip. The failure it exists to catch is the tab's own reason for
+      # existing: a store that has stopped, one that has not started and a
+      # house with nothing to say are three silences that look identical
+      # unless every row carries its state and its reason.
+      - name: Measure the Knowledge tab
+        run: node tests/manual/measure-knowledge.mjs
+
       - name: Measure the proposals tab
         run: node tests/manual/measure-proposals.mjs
 

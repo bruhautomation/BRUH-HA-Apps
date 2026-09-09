@@ -500,6 +500,9 @@ class TestMCPProtocol(unittest.TestCase):
             "explain_change", "get_activity",
             # Baselines — what is normal here
             "get_baseline",
+            # And what has been measured at all, so a silence can be read
+            # as "not yet" rather than as "nothing is wrong"
+            "get_house_model",
             "get_error_log", "render_template", "fire_event",
             "get_supervisor_info", "reload_config",
             # Memory

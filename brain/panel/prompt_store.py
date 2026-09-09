@@ -41,21 +41,77 @@ MAX_ICON = 4
 
 def load_overrides() -> dict:
     """The stored override map; tolerates a missing or corrupt file."""
+    out: dict = {"categories": {}, "accepted": []}
     try:
         with open(OVERRIDES_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         cats = data.get("categories")
         if isinstance(cats, dict):
-            return {"categories": cats}
+            out["categories"] = cats
+        picked = data.get("accepted")
+        if isinstance(picked, list):
+            out["accepted"] = [c for c in picked if isinstance(c, str)]
     except (OSError, ValueError, AttributeError):
         # No overrides file, or an unreadable one, means no overrides — which
         # is the shipped behaviour, not a broken one.
         pass
-    return {"categories": {}}
+    return out
 
 
 def _write(data: dict) -> None:
     atomic_write.write_json(OVERRIDES_FILE, data)
+
+
+# ---------------------------------------------------------------------------
+# Which shipped cards this home has, on an install that was asked
+# ---------------------------------------------------------------------------
+# brAIn shipped nine categories enabled from the moment it was installed,
+# and onboarding replaced that with "study the home, then propose" — for
+# the CUSTOM proposals only. The nine went on appearing the moment
+# onboarding finished, so a person who ticked two proposals got eleven
+# cards and nine of them were the generic ones the flow exists to avoid.
+#
+# `accepted` is the list of shipped ids this home actually asked for, and
+# it is consulted ONLY when `curated_categories` is set — a flag written
+# by the first onboarding that finishes under this release. An install
+# that onboarded before it exists has no flag, reads as uncurated, and
+# keeps every card it has: a release that silently deleted somebody's
+# dashboard would be a far worse failure than the one this fixes.
+
+def is_curated() -> bool:
+    """True when this install's shipped-card set was chosen, not shipped."""
+    import settings_store  # noqa: PLC0415 — panel-local, and no cycle
+
+    return bool(settings_store.load().get("curated_categories"))
+
+
+def accepted_ids() -> set[str] | None:
+    """The shipped ids this home accepted, or None for "all of them".
+
+    None is not an empty set and the two must not be conflated: an
+    uncurated install has never been asked and shows everything, while a
+    curated install that accepted nothing shows nothing and that is the
+    answer somebody gave.
+    """
+    if not is_curated():
+        return None
+    return set(load_overrides()["accepted"])
+
+
+def set_accepted(ids) -> list[str]:
+    """Record which shipped cards this home has. Returns what was stored."""
+    known = {c["id"] for c in CATEGORIES}
+    picked = [c["id"] for c in CATEGORIES
+              if c["id"] in known and c["id"] in set(ids or ())]
+    data = load_overrides()
+    data["accepted"] = picked
+    _write(data)
+    return picked
+
+
+def accept(cat_id: str) -> list[str]:
+    """Add one shipped card to what this home has, keeping shipped order."""
+    return set_accepted(set(load_overrides()["accepted"]) | {cat_id})
 
 
 def save_override(cat_id: str, fields: dict) -> dict:
@@ -156,9 +212,18 @@ def is_hidden(cat_id: str) -> bool:
 
 
 def visible_categories() -> list[dict]:
-    """Shipped categories the user hasn't removed, in shipped order."""
+    """Shipped categories this home has and hasn't removed, in shipped order.
+
+    Two different filters and they answer different questions: `hidden`
+    is a card somebody deleted, `accepted` is the set they were offered
+    and chose from. On an uncurated install the second is not asked at
+    all, which is exactly the behaviour every release before this had.
+    """
     hidden = {
         cid for cid, entry in load_overrides()["categories"].items()
         if isinstance(entry, dict) and entry.get("hidden") is True
     }
-    return [c for c in CATEGORIES if c["id"] not in hidden]
+    allowed = accepted_ids()
+    return [c for c in CATEGORIES
+            if c["id"] not in hidden
+            and (allowed is None or c["id"] in allowed)]

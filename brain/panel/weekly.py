@@ -322,6 +322,16 @@ def frame(state: dict) -> str:
                   "There is nothing open to end on. Say so in a few "
                   + "words rather than finding something."]
 
+    # The measurements and the memory document, exactly as the brief gets
+    # them and for the same reason: the numbers above are what happened,
+    # and these are what this house is like. A report that says the
+    # kitchen was cold without knowing the kitchen is always cold is the
+    # one people stop reading.
+    if str(state.get("house") or "").strip():
+        lines += ["", str(state["house"]).strip()]
+    if str(state.get("memory") or "").strip():
+        lines += ["", str(state["memory"]).strip()]
+
     lines += ["",
               "Use your read-only tools at most once or twice, to make "
               + "one of the above specific. Then write the message and "

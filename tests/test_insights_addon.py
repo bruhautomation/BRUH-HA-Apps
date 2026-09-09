@@ -2010,31 +2010,6 @@ class TestPromptEndpoints(InsightsServerCase):
 
         asyncio.run(run())
 
-    def test_generate_all_skips_disabled(self):
-        prompt_store.save_override("energy", {"enabled": False})
-        old_generate = self.server._generate
-
-        async def noop_generate(insight_id):
-            self.server._set_job(insight_id, state="done", error="")
-
-        self.server._generate = noop_generate
-
-        async def run():
-            client = self._client()
-            await client.start_server()
-            try:
-                resp = await client.post("/api/generate_all")
-                queued = (await resp.json())["queued"]
-                self.assertNotIn("energy", queued)
-                self.assertIn("climate", queued)
-            finally:
-                await client.close()
-
-        try:
-            asyncio.run(run())
-        finally:
-            self.server._generate = old_generate
-
     def test_refresh_due_logic(self):
         due = self.server._refresh_due
         now = time.mktime(time.strptime("2026-07-18T12:00:00", "%Y-%m-%dT%H:%M:%S"))
@@ -2472,10 +2447,13 @@ class TestUserCategoryEndpoints(InsightsServerCase):
                                         json={"title": "X"})
                 self.assertEqual(resp.status, 404)
 
-                # generate_all includes enabled user categories
-                self.server.JOBS.clear()
-                resp = await client.post("/api/generate_all")
-                self.assertIn(cat["id"], (await resp.json())["queued"])
+                # A user category is an ordinary category to everything
+                # that schedules one: it is in the list the refresh loop
+                # walks, and it is enabled.
+                self.assertIn(cat["id"],
+                              [c["id"] for c in self.server.all_categories()])
+                self.assertTrue(
+                    self.server.resolve_category(cat["id"])["enabled"])
 
                 # delete cleans up definition, insight, history, feedback.
                 # A fresh stamp, or the prune empties history first and the
@@ -2550,8 +2528,8 @@ class TestCardDeletionAndRenaming(InsightsServerCase):
                 self.assertNotIn("removed_categories", status)
                 resp = await client.post("/api/generate", json={"category": "energy"})
                 self.assertEqual(resp.status, 400)
-                resp = await client.post("/api/generate_all")
-                self.assertNotIn("energy", (await resp.json())["queued"])
+                self.assertNotIn("energy",
+                                 [c["id"] for c in self.server.all_categories()])
 
                 # and its stored data really is gone — no ghost card either,
                 # and no tag edits waiting to be inherited by a later card

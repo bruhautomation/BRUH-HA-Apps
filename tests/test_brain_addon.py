@@ -2446,5 +2446,124 @@ class TestCredentialBackupRestore(unittest.TestCase):
         self.assertEqual(self.live.stat().st_mode & 0o777, 0o600)
 
 
+# ---------------------------------------------------------------------------
+# The Knowledge tab
+# ---------------------------------------------------------------------------
+# What the tab renders is measured by `tests/manual/measure-knowledge.mjs`,
+# which drives the real renderers — a grep for a line is not a test of what
+# the line does. What is worth asserting HERE is the pair of lists the two
+# halves have to agree on: the panel writes down the seven store ids and the
+# five state words, `house.py` writes them down too, and a disagreement is a
+# row that renders as "not started" for ever or one that never renders at all.
+
+
+class TestKnowledgeTab(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = (PANEL / "app.js").read_text()
+        cls.html = (PANEL / "index.html").read_text()
+        cls.css = (PANEL / "style.css").read_text()
+        cls.house = (PANEL / "house.py").read_text()
+
+    def _js_store_ids(self):
+        """The ids out of `HOUSE_STORES`, in the order the panel renders."""
+        block = self.app.split("const HOUSE_STORES = [", 1)[1].split("];", 1)[0]
+        return re.findall(r'\["([a-z_]+)",', block)
+
+    def _py_names(self, name):
+        block = self.house.split(f"{name} = (", 1)[1].split(")", 1)[0]
+        return re.findall(r'"([a-z_]+)"', block)
+
+    def test_the_tab_is_called_knowledge_and_keeps_its_view_name(self):
+        """The document is one of four things on this tab now, so the word
+        moved. `data-view` did not: every id and handler under it is the
+        memory pane's, and renaming that would be a rename of the wiring to
+        match a label."""
+        self.assertIn("<span>Knowledge</span>", self.html)
+        self.assertIn('data-view="memory"', self.html)
+        self.assertIn('data-tip="Knowledge"', self.html)
+        self.assertNotIn("<span>Memory</span>", self.html)
+
+    def test_the_panel_and_the_server_name_the_same_seven_stores(self):
+        """A store the panel does not name is a measurement nobody can ask
+        about, and one it names that the server does not send renders as
+        "not started" for ever. Order is part of it: this is a list somebody
+        learns the shape of."""
+        self.assertEqual(self._js_store_ids(), self._py_names("STORES"))
+
+    def test_every_state_the_server_can_send_has_words_in_the_panel(self):
+        """`storeChipText` is the one place a state becomes a sentence. A
+        state with no branch falls through to "not started", which is the
+        one reading that turns a stopped measurement into a fresh one."""
+        chip = self.app.split("function storeChipText(", 1)[1].split(
+            "\n}", 1)[0]
+        for state in self._py_names("STATES"):
+            with self.subTest(state=state):
+                # `not_started` is the fallthrough and so is named in the
+                # docstring rather than in a branch; the rest are branches.
+                self.assertIn(state, chip + "\nnot_started")
+
+    def test_the_four_sections_are_in_the_order_they_are_read(self):
+        """What brAIn said this morning, what it has measured, what it
+        remembers, what is queued. The document used to sit beside the queue
+        in two columns, which said nothing about which was which."""
+        order = ["This morning", "What brAIn has measured",
+                 "What it remembers", "Waiting to be filed"]
+        # The headings, not the prose: a comment can say any of these words
+        # in any order, and the thing being asserted is the page.
+        marks = [f">{h}</h2>" for h in order[:2]] \
+            + [f"<label>{h}</label>" for h in order[2:]]
+        at = [self.html.index(m) for m in marks]
+        self.assertEqual(at, sorted(at), f"sections are out of order: {order}")
+
+    def test_the_today_strip_makes_no_request_of_its_own(self):
+        """It is read off the /api/status poll every viewer already makes. A
+        fetch here would be a request per viewer per interval for numbers
+        that are already on the wire."""
+        strip = self.app.split("function renderToday(", 1)[1].split(
+            "\nfunction ", 1)[0]
+        self.assertNotIn("api(", strip)
+        self.assertNotIn("fetch(", strip)
+        # …and it has to be in the render key, or a checks pass finishing
+        # while somebody is looking changes nothing on screen.
+        self.assertIn("today: s && s.today", self.app)
+
+    def test_the_measure_runs_in_ci(self):
+        """Running it locally is about reading the failure next to your
+        editor; CI is what makes it enforcement."""
+        workflow = (BASE_DIR / ".github" / "workflows" / "ci.yml").read_text()
+        self.assertIn("tests/manual/measure-knowledge.mjs", workflow)
+        self.assertTrue((BASE_DIR / "tests" / "manual"
+                         / "measure-knowledge.mjs").exists())
+
+    def test_the_touch_floor_blocks_stay_where_they_are(self):
+        """The FIRST `pointer: coarse` block is the 16px text floor and the
+        LAST one is the small-button floor; both positions are load-bearing,
+        because equal specificity is settled by order. The Knowledge styles
+        went between them."""
+        first = self.css.index("@media (pointer: coarse)")
+        block = self.css[first:first + 400]
+        self.assertIn("font-size: 16px", block)
+        self.assertLess(self.css.index(".kstores {"),
+                        self.css.rindex("@media (pointer: coarse)"))
+
+    def test_a_measurement_row_is_a_button_at_the_touch_floor(self):
+        """A row people miss is a row they stop pressing, on any pointer —
+        `.actrow`'s rule, and set unconditionally for its reason rather than
+        inside a touch query."""
+        block = self.css.split(".krow {", 1)[1].split("}", 1)[0]
+        self.assertIn("min-height: 44px", block)
+        self.assertIn('el("button", "krow")', self.app)
+
+    def test_letting_brain_raise_it_again_calls_the_route_that_does_it(self):
+        """`POST /api/findings/unsettle` existed with no caller at all: the
+        one press that removes a settled key was documented and unreachable
+        from the panel."""
+        self.assertIn('api("api/findings/unsettle"', self.app)
+        self.assertIn("Let brAIn raise it again", self.app)
+        self.assertIn('JSON.stringify({ key: entry.key })', self.app)
+
+
 if __name__ == "__main__":
     unittest.main()

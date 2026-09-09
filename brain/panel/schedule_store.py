@@ -57,4 +57,34 @@ def set(key: str, when: float, path: str | None = None) -> None:  # noqa: A001
         log.warning("could not record %s: %s", key, exc)
 
 
-__all__ = ["STORE", "get", "load", "set"]
+# What the message said, beside when it was sent. A brief goes to a phone
+# and is gone, and the panel is the only place it could be re-read — so it
+# is kept here for the stamp's own reason: a restart is the ordinary case.
+# Capped because this file is two floats and a paragraph, not an archive:
+# only the last one is ever asked for.
+TEXT_MAX = 4000
+
+
+def get_text(key: str, path: str | None = None) -> str:
+    """The last message under this key, or "" — which reads as never."""
+    value = load(path).get(key)
+    return value if isinstance(value, str) else ""
+
+
+def set_text(key: str, text: str, path: str | None = None) -> None:
+    """Record a message. Never raises: it has already gone out."""
+    import atomic_write  # noqa: PLC0415 — panel-local
+
+    target = path or STORE
+    parent = os.path.dirname(target)
+    if parent and not os.path.isdir(parent):
+        return
+    data = load(target)
+    data[str(key)] = str(text or "")[:TEXT_MAX]
+    try:
+        atomic_write.write_json(target, data)
+    except OSError as exc:
+        log.warning("could not record %s: %s", key, exc)
+
+
+__all__ = ["STORE", "TEXT_MAX", "get", "get_text", "load", "set", "set_text"]

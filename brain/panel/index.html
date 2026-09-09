@@ -63,12 +63,19 @@
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="m5 8 4 4-4 4M13 16h6"/></svg>
       <span>Terminal</span>
     </button>
-    <button class="viewtab" data-view="memory" role="tab" data-tip="Memory">
+    <!-- "Knowledge", not "Memory": the document is one of four things on this
+         tab now. What brAIn has measured about the house on its own — when it
+         wakes, what is normal, how rooms hold heat — used to be visible only
+         in ⚙ Diagnostics or not at all, which is how a measurement that had
+         quietly stopped looked exactly like one that had nothing to say.
+         `data-view` stays "memory" because every id and handler under it
+         does. -->
+    <button class="viewtab" data-view="memory" role="tab" data-tip="Knowledge">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5.5a3 3 0 0 0-5.7-1.3A2.8 2.8 0 0 0 4 9.4a3 3 0 0 0 .4 4.8A2.9 2.9 0 0 0 7 19a3 3 0 0 0 5-1.2zM12 5.5a3 3 0 0 1 5.7-1.3A2.8 2.8 0 0 1 20 9.4a3 3 0 0 1-.4 4.8A2.9 2.9 0 0 1 17 19a3 3 0 0 1-5-1.2z"/></svg>
-      <!-- No badge. This tab holds a queue that files itself and a document
-           you read; nothing on it is waiting on a person. The one badge in
+      <!-- No badge. This tab holds a queue that files itself and things you
+           read; nothing on it is waiting on a person. The one badge in
            the strip is Findings', which counts exactly that. -->
-      <span>Memory</span>
+      <span>Knowledge</span>
     </button>
     <button class="viewtab" data-view="docs" role="tab" data-tip="Docs">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5zM20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z"/></svg>
@@ -253,6 +260,13 @@
 
   <!-- Dashboard -->
   <section id="dash" class="hidden">
+    <!-- One wrapping line: what brAIn has done for itself since you last
+         looked. Every segment is read off the /api/status poll that is
+         already running, so this costs no request of its own — and a segment
+         whose data is absent is omitted rather than rendered as a zero,
+         because "0 findings" and "no checks pass has finished" are different
+         reports of the same quiet house. -->
+    <div id="todayStrip" class="today hidden"></div>
     <!-- One bar, two verbs. Asking makes a card; saying "learn…" runs a study
          session instead, because a second input for learning meant nobody
          ever ran one. The placeholder has to teach both — it is the only
@@ -547,7 +561,39 @@
   </div>
 </div>
 
+<!-- Knowledge: everything brAIn builds on its own, in four sections, in the
+     order somebody reads them. What it said this morning; what it has
+     measured; what it remembers; what is still queued to be remembered.
+
+     The first two are new surfaces over stores that already existed and were
+     readable from nowhere — a rhythm that never gathered enough days looked
+     identical to one that had, and a baseline pass that stopped running
+     looked exactly like a quiet house. Every row says which of those it is. -->
 <div id="viewMemory" class="view">
+
+  <!-- (a) What brAIn said this morning. One paragraph, or one sentence about
+       why there wasn't one — because "the brief is off" and "there was
+       nothing worth saying" are different answers and only the first has
+       something to do about it. -->
+  <section class="ksec kbriefsec">
+    <h2>This morning</h2>
+    <div id="kBrief" class="kbrief"></div>
+  </section>
+
+  <!-- (b) The measurements. Always seven rows, always in this order, whatever
+       state each is in: a store that is missing from the list is a store
+       nobody can ask about, and "not started" is the answer for six of the
+       seven on the day you install this. -->
+  <section class="ksec">
+    <h2>What brAIn has measured</h2>
+    <p class="hint tight">Built quietly, over days, from what your house
+      already records. Nothing here costs a Claude run. Press one to see the
+      numbers behind it.</p>
+    <div id="kStores" class="kstores"></div>
+  </section>
+
+  <!-- (c) the memory document and (d) the inbox queue, in that order — the
+       relocated knowledge pane. `adoptMemoryPane()` moves it here. -->
   <div id="memoryHost"></div>
 </div>
 
@@ -1050,40 +1096,14 @@
       <button id="kClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
     <div class="edit-body ksplit">
-      <!-- This column is a queue, so it reads like one: one heading, one
-           list, one button. Every paragraph that explained the model rather
-           than the list under it is in the Docs tab instead — the list is
-           short and self-evident, and the prose was longer than the content
-           it introduced.
-
-           It used to open with "Waiting on you" — guesses brAIn wanted
-           confirmed, with yes/no beside each. Those are decisions and they
-           are on the Findings tab now, with the problems, because both are
-           the same job and splitting it across two tabs meant neither list
-           ever emptied. Nothing on this tab is waiting on a person any more:
-           the queue below files itself on a timer, and the document beside
-           it is there to read. -->
-      <div class="kcol">
-        <label>Waiting to be filed</label>
-        <!-- Consolidation is normally daily (or early past 20 pending facts).
-             That is the right cadence for a background daemon and the wrong
-             one for someone who has just taught it something and wants to see
-             it land. Same pass, same checks — pressed by hand. -->
-        <div class="row kmemrow">
-          <button id="kConsolidate" class="btn small"
-                  title="Merge everything queued into the memory document — a few seconds, and one small Claude call">⇪ File into memory now</button>
-          <span id="kPending" class="kpending"></span>
-        </div>
-        <div id="kFacts" class="klist"></div>
-        <!-- Filed discoveries are not shown at all. Once something is in the
-             document it IS the document, and a second copy of it under
-             "already in memory" made a drained queue look like it had never
-             emptied. The ledger still holds them so nothing is re-announced;
-             it just isn't a list anyone has to read. -->
-      </div>
-
+      <!-- The document comes FIRST and the queue after it, which is the order
+           they are read in: what brAIn remembers, then what has not landed
+           there yet. They used to be two columns side by side, which said
+           nothing about which was which — and in the tab there is no
+           `.kwide` ancestor, so the two-column rule never applies and this
+           is simply the order down the page. -->
       <div id="kMemWrap" class="kcol kmemcol">
-        <label>Home memory</label>
+        <label>What it remembers</label>
         <p class="hint tight">Everything brAIn knows about the house. Insight runs, voice
           and the terminal all read this.</p>
         <form id="kAddForm" class="kadd">
@@ -1124,6 +1144,38 @@
           or press “Edit markdown” to start one.</div>
         <textarea id="kMemTa" class="kmemedit hidden" rows="14" maxlength="100000"
                   spellcheck="false"></textarea>
+      </div>
+
+      <!-- This column is a queue, so it reads like one: one heading, one
+           list, one button. Every paragraph that explained the model rather
+           than the list under it is in the Docs tab instead — the list is
+           short and self-evident, and the prose was longer than the content
+           it introduced.
+
+           It used to open with "Waiting on you" — guesses brAIn wanted
+           confirmed, with yes/no beside each. Those are decisions and they
+           are on the Findings tab now, with the problems, because both are
+           the same job and splitting it across two tabs meant neither list
+           ever emptied. Nothing on this tab is waiting on a person any more:
+           the queue below files itself on a timer, and the document above
+           it is there to read. -->
+      <div class="kcol">
+        <label>Waiting to be filed</label>
+        <!-- Consolidation is normally daily (or early past 20 pending facts).
+             That is the right cadence for a background daemon and the wrong
+             one for someone who has just taught it something and wants to see
+             it land. Same pass, same checks — pressed by hand. -->
+        <div class="row kmemrow">
+          <button id="kConsolidate" class="btn small"
+                  title="Merge everything queued into the memory document — a few seconds, and one small Claude call">⇪ File into memory now</button>
+          <span id="kPending" class="kpending"></span>
+        </div>
+        <div id="kFacts" class="klist"></div>
+        <!-- Filed discoveries are not shown at all. Once something is in the
+             document it IS the document, and a second copy of it under
+             "already in memory" made a drained queue look like it had never
+             emptied. The ledger still holds them so nothing is re-announced;
+             it just isn't a list anyone has to read. -->
       </div>
     </div>
   </div>

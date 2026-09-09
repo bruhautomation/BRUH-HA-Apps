@@ -138,6 +138,12 @@ const state = {
   // who lives here can answer — and one list is what makes "nothing waiting"
   // a thing the tab can ever say.
   hypotheses: [],
+  // What has been answered. The ledger is a dedup index the server reads and
+  // NOT a second list of work — which is why it is offered behind a filter
+  // that appears only once there is something in it, and why the only thing
+  // you can do to a row is stop it suppressing the report. It is the one
+  // route to `POST /api/findings/unsettle`, which had no caller at all.
+  settled: [],
   findFilter: "live",
   filter: "all",
   editingTags: null, // card id whose tag row is in edit mode
@@ -1381,10 +1387,111 @@ function makeTagRow(insight) {
   return row;
 }
 
+// One wrapping line above the cards: what brAIn has done for itself since
+// you last looked. Every number is read off the /api/status poll that is
+// already running, so it costs no request of its own — and a segment whose
+// data is absent is OMITTED rather than rendered as a zero, because "no
+// checks pass has finished" and "the pass found nothing" are different
+// reports of the same quiet house and only one of them is news.
+//
+// A pass that is running says so, and says how long it has been going WHEN
+// the server has done that subtraction — `elapsedLabel` answers an unknown
+// elapsed with silence rather than a confident "(0s)", and the subtraction
+// stays the server's so a phone with a wrong clock still reads right.
+function renderToday(today) {
+  const strip = $("#todayStrip");
+  if (!strip) return;
+  strip.textContent = "";
+  const t = today || {};
+  const segs = [];
+
+  const checks = t.checks || {};
+  if (checks.running) {
+    segs.push(["checks", `Checks running${elapsedLabel(checks.running_for)}`, null]);
+  } else if (checks.last_at) {
+    const bits = [`Checks ran ${clockAt(checks.last_at)}`];
+    const ran = Number(checks.ran) || 0;
+    const skipped = Number(checks.skipped) || 0;
+    const errored = Number(checks.errored) || 0;
+    // "12 ran, 1 could not look" — a skipped check did not find nothing, and
+    // it is the same check `clear_resolved` may not clear a row for.
+    let part = `${ran} ran`;
+    if (skipped) part += `, ${skipped} could not look`;
+    if (errored) part += `, ${errored} errored`;
+    bits.push(part);
+    const created = Number(checks.created) || 0;
+    const cleared = Number(checks.cleared) || 0;
+    if (created) bits.push(`${created} new finding${created === 1 ? "" : "s"}`);
+    if (cleared) bits.push(`${cleared} cleared`);
+    if (checks.next_at) bits.push(`next ${clockAt(checks.next_at)}`);
+    segs.push(["checks", bits.join(" · "), null]);
+  }
+
+  const base = t.baselines || {};
+  if (base.running) {
+    segs.push(["baselines", `Baselines rebuilding${elapsedLabel(base.running_for)}`, null]);
+  } else if (base.error) {
+    segs.push(["baselines", `Baselines: ${base.error}`, null]);
+  } else if (base.built_at) {
+    segs.push(["baselines", `Baselines rebuilt ${clockAt(base.built_at)}`, null]);
+  }
+
+  const mem = t.memory || {};
+  if (mem.running) {
+    segs.push(["memory", `Memory filing now${elapsedLabel(mem.running_for)}`, null]);
+  } else if (mem.last_filed_at) {
+    const waiting = Number(mem.waiting) || 0;
+    segs.push(["memory", `Memory filed ${agoAt(mem.last_filed_at)}`
+      + (waiting ? `, ${waiting} waiting` : ""), null]);
+  }
+
+  // The one segment that is a press: a problem report is a file somebody has
+  // to read, and the place to read it is behind ⚙ — so say where rather than
+  // making them go and find it.
+  const problems = Number((t.reports || {}).since_yesterday) || 0;
+  if (problems) {
+    segs.push(["reports",
+      `${problems} problem${problems === 1 ? "" : "s"} since yesterday`,
+      openProblems]);
+  }
+
+  // Every Claude run and every checks pass that reached the journal. It is
+  // what tells a quiet add-on from a stopped one, which is why the window is
+  // said out loud rather than left as "today".
+  const landed = Number(t.landed_runs_24h) || 0;
+  if (landed) {
+    segs.push(["runs",
+      `${landed} run${landed === 1 ? "" : "s"} landed in the last day`, null]);
+  }
+
+  strip.classList.toggle("hidden", !segs.length);
+  segs.forEach(([id, text, press]) => {
+    const node = press ? el("button", "tseg press", text) : el("span", "tseg", text);
+    node.dataset.seg = id;
+    if (press) {
+      node.type = "button";
+      node.appendChild(el("span", "tsegwhere", "⚙ Problems"));
+      node.addEventListener("click", press);
+    }
+    strip.appendChild(node);
+  });
+}
+
+// ⚙ opens on the Diagnostics/Problems half; the section is already loaded by
+// openSettings, so all this owes is putting it in front of somebody.
+function openProblems() {
+  openSettings();
+  setTimeout(() => {
+    const box = $("#probBody");
+    if (box) box.scrollIntoView({ block: "center" });
+  }, 60);
+}
+
 function render() {
   const s = state.status;
   if (!s) return;
   renderAuth();
+  renderToday(s.today);
   if (!s.authenticated) return;
 
   // filter chips — the dynamic union of tags across all generated cards
@@ -1456,6 +1563,10 @@ function renderIfChanged() {
     tagEdit: state.editingTags,
     paused: s && [s.settings && s.settings.auto_enabled, s.usage && s.usage.blocked],
     usage: s && s.usage && [s.usage.used_percent, s.usage.resets_at],
+    // The Today strip is rendered by `render`, so what it reads has to be in
+    // the key — otherwise a checks pass finishing while somebody is looking
+    // changes nothing on screen until the next unrelated repaint.
+    today: s && s.today,
     filter: state.filter,
   });
   if (key !== lastRenderKey) {
@@ -2163,6 +2274,84 @@ function renderDiagnostics(d) {
         + "filed</li>";
     });
     rows.push(diagRow("Checks in shadow", `<ul>${items.join("")}</ul>`));
+  }
+  // What brAIn has measured about the house, one line each. The payload has
+  // carried these since the stores existed and the dialog drew none of them,
+  // so a rhythm that never gathered enough days and one that had were the
+  // same silence — and this is the screen somebody is on when they are
+  // asking exactly that. The Knowledge tab is where the numbers are; these
+  // are here because a bug report has to carry them too.
+  const rhythm = d.rhythm || {};
+  if (rhythm.days != null || rhythm.wake || rhythm.settle) {
+    const say = (part) => (part && part.at)
+      ? `${esc(part.at)} ±${Math.round(Number(part.spread_min) || 0)}m` : "not yet";
+    rows.push(diagRow("When the house wakes",
+      `weekdays ${say((rhythm.weekday || {}).wakes || rhythm.wake)}, `
+      + `settles ${say((rhythm.weekday || {}).settles || rhythm.settle)}`
+      + (rhythm.days != null ? ` — ${rhythm.days} days recorded` : "")));
+  }
+  const th = d.thermal || {};
+  if (th.measured != null || th.built_at) {
+    // With no outdoor reference there is no model at all, and that is a
+    // sentence rather than a zero: "no climate findings" and "no room could
+    // be measured against anything" look identical from everywhere else.
+    rows.push(diagRow("How rooms hold heat",
+      th.reason ? esc(th.reason)
+        : `${th.measured ?? 0} of ${th.asked ?? "?"} room`
+          + `${th.measured === 1 ? "" : "s"} measured`
+          + (th.outdoor ? ` against ${esc(th.outdoor)}` : "")
+          + (th.built_at
+              ? ` — ${timeAgo(new Date(th.built_at * 1000).toISOString())}` : ""),
+      !!th.reason));
+  }
+  const cl = d.closures || {};
+  if (cl.measured != null || cl.built_at) {
+    rows.push(diagRow("Doors and windows",
+      `${cl.measured ?? 0} of ${cl.asked ?? "?"} watched`
+      + (cl.built_at
+          ? ` — ${timeAgo(new Date(cl.built_at * 1000).toISOString())}`
+          : " — no pass has run")));
+  }
+  const ap = d.appliances || {};
+  if (ap.measured != null || ap.built_at || ap.error) {
+    rows.push(diagRow("Machines",
+      ap.error ? esc(ap.error)
+        : `${ap.measured ?? 0} of ${ap.asked ?? "?"} power sensors have a shape`
+          + (ap.chore_capable != null
+              ? `, ${ap.chore_capable} look like a chore` : "")
+          + (ap.built_at
+              ? ` — ${timeAgo(new Date(ap.built_at * 1000).toISOString())}` : ""),
+      !!ap.error));
+  }
+  const rt = d.routines || {};
+  if (rt.presses != null || rt.would_propose != null) {
+    rows.push(diagRow("Habits",
+      `${rt.presses ?? 0} press${(rt.presses === 1) ? "" : "es"} kept across `
+      + `${rt.entities ?? 0} entities, ${rt.would_propose ?? 0} look like a habit`
+      + (rt.automated_keys != null
+          ? `, ${rt.automated_keys} already automated` : "")));
+  }
+  // The roll-call, because "the consolidator is not running" is invisible
+  // from every other line in this dialog — and an EMPTY roll-call is /proc
+  // unreadable, which is a different claim from seven dead daemons.
+  // `{name: {running: bool, …}}`. Each value is an OBJECT, so the truthiness
+  // of the value says nothing — every daemon would read as running, which is
+  // exactly the reassuring lie this row exists to stop.
+  const daemons = d.daemons;
+  const names = (daemons && typeof daemons === "object" && !Array.isArray(daemons))
+    ? Object.keys(daemons) : [];
+  if (names.length) {
+    const up = (n) => !!(daemons[n] || {}).running;
+    const items = names.sort().map((n) =>
+      `<li><b>${esc(n)}</b> — ${up(n) ? "running" : "not running"}</li>`);
+    // The roll-call is DESCRIPTIVE — some of these are correctly absent
+    // because the option behind them is off — so a stopped one is not
+    // painted as a fault here. `health.py` is what interprets it against
+    // the options, and its verdict is the row at the top of this dialog.
+    rows.push(diagRow("Background daemons", `<ul>${items.join("")}</ul>`));
+  } else if (daemons) {
+    // An empty roll-call is /proc unreadable, not seven dead daemons.
+    rows.push(diagRow("Background daemons", "could not read /proc"));
   }
   if (failures.length) {
     const items = failures.slice(0, 5).map((f) =>
@@ -2952,6 +3141,9 @@ const FIND_FILTERS = [
     ["open", "fixing", "fixed", "failed", "needs_you"].includes(f.status)
     && !findings_isSnoozed(f) },
   { id: "snoozed", label: "Later", match: (f) => findings_isSnoozed(f) },
+  // Not a list of findings — the rows are gone. What is here is the ledger
+  // of answers, so that changing your mind has somewhere to happen.
+  { id: "settled", label: "Answered", match: () => false },
 ];
 
 async function refreshFindings() {
@@ -2965,13 +3157,14 @@ async function refreshFindings() {
 
 // Every findings endpoint answers with the same
 // {findings, hypotheses, open, settled}, so there is one place that unpacks
-// it. `settled` is deliberately dropped on the floor: the ledger is a dedup
-// index the server reads, not something the panel renders — settling writes
-// the answer into memory and deletes the row, and memory is where that
-// answer is read from afterwards.
+// it. `settled` is the ledger and it is NOT a work list: settling writes the
+// answer into memory and deletes the row, and memory is where that answer is
+// read from afterwards. It is kept here for one press — "let brAIn raise it
+// again" — and it is counted by no badge, because nothing on it is waiting.
 function takeFindings(data) {
   state.findings = data.findings || [];
   state.hypotheses = data.hypotheses || [];
+  state.settled = data.settled || [];
   state.scorecard = data.scorecard || [];
   updateFindBadge(data.open);
 }
@@ -3342,8 +3535,56 @@ function makeHypothesis(h) {
 }
 
 function findCount(f) {
+  if (f.id === "settled") return (state.settled || []).length;
   return state.findings.filter(f.match).length
     + (f.id === "live" ? state.hypotheses.length : 0);
+}
+
+// The ending, in the words the button used. It is what the ledger records,
+// and it is the half that says whether the report was right.
+const SETTLED_WORDS = {
+  done: "you fixed it", fixed: "brAIn fixed it", ack: "brAIn fixed it",
+  wrong: "not a problem here", ignored: "waved off",
+};
+
+// One answered problem. There is exactly one press on it and it takes
+// nothing back: unsettling stops the suppression and nothing more, so
+// nothing "comes back" unless the next analysis finds it still there.
+function makeSettled(entry) {
+  const card = el("article", "finding settled");
+  const line = el("div", "findmeta");
+  line.appendChild(el("span", "findstate",
+    SETTLED_WORDS[entry.kind] || entry.kind || "answered"));
+  if (entry.ts) {
+    line.appendChild(el("span", "findsrc",
+      new Date(entry.ts * 1000).toLocaleDateString([],
+        { month: "short", day: "numeric" })));
+  }
+  if (entry.source_title) line.appendChild(el("span", "findsrc", entry.source_title));
+  card.appendChild(line);
+  card.appendChild(el("h3", "findtitle", entry.text || entry.key || ""));
+  if (entry.note) card.appendChild(el("p", "findsaid", `You said: ${entry.note}`));
+
+  const actions = el("div", "findactions");
+  const again = el("button", "btn small ghost", "↺  Let brAIn raise it again");
+  tip(again, "Stops this being suppressed. Nothing comes back on its own — "
+    + "the next analysis is simply free to find it.");
+  again.addEventListener("click", async () => {
+    again.disabled = true;
+    try {
+      const data = await api("api/findings/unsettle", {
+        method: "POST", body: JSON.stringify({ key: entry.key }) });
+      takeFindings(data);
+      renderFindings();
+      toast("brAIn may raise it again");
+    } catch (e) {
+      toast(e.message);
+      again.disabled = false;
+    }
+  });
+  actions.appendChild(again);
+  card.appendChild(actions);
+  return card;
 }
 
 function renderFindings() {
@@ -3366,6 +3607,18 @@ function renderFindings() {
 
   const list = $("#findList");
   list.textContent = "";
+  if (state.findFilter === "settled") {
+    const answered = state.settled || [];
+    if (!answered.length) {
+      list.appendChild(el("div", "findempty", "Nothing answered yet."));
+      return;
+    }
+    // Capped: this is a record, not a queue, and a ledger rendered whole
+    // beside a list that is meant to empty invites people to read the wrong
+    // one as the record. Memory is the record.
+    answered.slice(0, 30).forEach((e) => list.appendChild(makeSettled(e)));
+    return;
+  }
   const active = FIND_FILTERS.find((f) => f.id === state.findFilter) || FIND_FILTERS[0];
   const shown = state.findings.filter(active.match);
   // Guesses go at the top of the live list. They are two taps against a
@@ -3522,6 +3775,12 @@ function takeQueue(inbox, pending) {
 }
 
 async function renderKnowledge() {
+  // Two payloads, neither waiting on the other: the document and its queue
+  // come from one store and what brAIn has measured from another, and a tab
+  // that paid for them in series would be a spinner over the half that had
+  // already arrived. A failure on either leaves its own sections saying so
+  // rather than blanking the tab.
+  refreshHouse();
   let data;
   try {
     data = await api("api/knowledge");
@@ -3555,6 +3814,659 @@ async function renderKnowledge() {
   // settled, so there is no Q/A pair left to show.
 
   renderMemory(data);
+}
+
+// ------------------------------------------------------ what it has measured
+//
+// Seven stores brAIn builds on its own, plus what it said this morning. Each
+// one was readable from nowhere before this: a rhythm that has not gathered
+// enough days, a baseline pass that stopped running and a house with nothing
+// odd in it were three silences that looked identical from every screen.
+//
+// The row is the answer and the drill-down is the evidence. The row is a
+// button because pressing it does something, and 44px because a row people
+// miss is a row they stop pressing — the same rule `.actrow` carries.
+
+const HOUSE_STORES = [
+  ["rhythm", "When the house wakes"],
+  ["baselines", "What is normal here"],
+  ["thermal", "How rooms hold heat"],
+  ["closures", "Doors and windows"],
+  ["appliances", "Machines"],
+  ["habits", "Habits"],
+  ["energy", "Energy this week"],
+];
+
+async function refreshHouse() {
+  try {
+    houseState.data = await api("api/knowledge/house");
+    houseState.error = "";
+  } catch (e) {
+    houseState.data = null;
+    houseState.error = "Could not read what brAIn has measured: " + e.message;
+  }
+  renderHouse();
+}
+
+const houseState = {
+  data: null,      // the /api/knowledge/house payload
+  error: "",       // why we could not read it — a sentence, never a blank tab
+  open: "",        // which store's drill-down is open; one at a time
+  detail: {},      // store id -> its drill-down payload, fetched once
+  entity: "",      // baselines: which entity's week is drawn
+  buckets: null,   // baselines: that entity's 168 buckets
+  filter: "",      // baselines: the search box
+};
+
+// Epoch seconds through the same two formatters everything else uses, so a
+// stamp on this tab and a stamp in the ⚙ dialog can never read differently.
+function agoAt(epoch) {
+  const n = Number(epoch) || 0;
+  if (!n) return "";
+  return timeAgo(new Date(n * 1000).toISOString());
+}
+
+function clockAt(epoch) {
+  const n = Number(epoch) || 0;
+  if (!n) return "";
+  return new Date(n * 1000).toLocaleTimeString([],
+    { hour: "2-digit", minute: "2-digit" });
+}
+
+function dateAt(epoch) {
+  const n = Number(epoch) || 0;
+  if (!n) return "";
+  return new Date(n * 1000).toLocaleDateString([],
+    { month: "short", day: "numeric" });
+}
+
+// What each state says, in the store's own units. `collecting` is the one
+// that has to carry a number: "not started" and "still going" are the same
+// empty row otherwise, and only the second is worth waiting for.
+function storeChipText(s) {
+  const state = String(s.state || "not_started");
+  if (state === "collecting") {
+    const have = Number(s.have) || 0;
+    const need = Number(s.need) || 0;
+    const unit = s.unit || "days";
+    let text = need ? `${have} of ${need} ${unit}` : `${have} ${unit}`;
+    if (s.ready_at) text += ` · first answer ~${dateAt(s.ready_at)}`;
+    return text;
+  }
+  if (state === "ready") {
+    const ago = agoAt(s.updated_at);
+    return ago ? `updated ${ago}` : "ready";
+  }
+  if (state === "stale") {
+    const ago = agoAt(s.updated_at);
+    return ago ? `stale since ${ago}` : "stale";
+  }
+  if (state === "unavailable") return "not available";
+  return "not started";
+}
+
+// One row: the name, what it currently says, and the chip. `reason` sits
+// under the summary whenever there is one — it is the "I could not look"
+// half, and a state with no explanation under it is a state nobody can act
+// on.
+function makeStoreRow(id, name, store) {
+  const s = store || {};
+  const state = String(s.state || "not_started");
+  const row = el("button", "krow");
+  row.type = "button";
+  row.dataset.store = id;
+  row.dataset.state = state;
+  row.setAttribute("aria-expanded", houseState.open === id ? "true" : "false");
+
+  const txt = el("div", "ktxt");
+  txt.appendChild(el("div", "kname", name));
+  const summary = String(s.summary || "").trim();
+  txt.appendChild(el("div", "ksum", summary
+    || (state === "ready" ? "measured" : "nothing to show yet")));
+  const reason = String(s.reason || "").trim();
+  if (reason) txt.appendChild(el("div", "kwhy", reason));
+  row.appendChild(txt);
+
+  row.appendChild(el("span", "kchip", storeChipText(s)));
+  row.addEventListener("click", () => toggleStore(id));
+  return row;
+}
+
+function renderHouse() {
+  const host = $("#kStores");
+  const briefBox = $("#kBrief");
+  if (!host || !briefBox) return;
+  host.textContent = "";
+  briefBox.textContent = "";
+
+  if (houseState.error) {
+    briefBox.appendChild(el("div", "kempty", houseState.error));
+    host.appendChild(el("div", "kempty", houseState.error));
+    return;
+  }
+  const data = houseState.data || {};
+  renderBrief(briefBox, data);
+
+  const stores = data.stores || {};
+  HOUSE_STORES.forEach(([id, name]) => {
+    host.appendChild(makeStoreRow(id, name, stores[id]));
+    if (houseState.open === id) host.appendChild(makeDrill(id));
+  });
+}
+
+// What brAIn said this morning, or the one sentence explaining why it said
+// nothing. "Off" and "nothing was worth saying" are different answers and
+// only the first has something to do about it — which is why the off case
+// names the tab the switch is on rather than saying "no brief today".
+function renderBrief(box, data) {
+  const brief = data.brief || {};
+  if (!brief.enabled) {
+    box.appendChild(el("p", "kbrieftext off",
+      "The morning brief is off — turn it on in the add-on's Configuration "
+      + "tab once a notify service is set."));
+    return;
+  }
+  const text = String(brief.text || "").trim();
+  if (text) {
+    const when = new Date((Number(brief.last_sent) || 0) * 1000);
+    const today = new Date();
+    const sameDay = when.toDateString() === today.toDateString();
+    box.appendChild(el("div", "kbriefwhen", brief.last_sent
+      ? (sameDay ? `This morning, ${clockAt(brief.last_sent)}`
+                 : `${dateAt(brief.last_sent)}, ${clockAt(brief.last_sent)}`)
+      : "The last brief"));
+    box.appendChild(el("p", "kbrieftext", text));
+  } else if (brief.error) {
+    box.appendChild(el("p", "kbrieftext off",
+      `The last brief did not go out: ${brief.error}`));
+  } else {
+    // The brief's whole design is a refusal — it is silent most mornings on
+    // purpose — so silence is reported as the working state it is.
+    box.appendChild(el("p", "kbrieftext off",
+      "Nothing was worth saying this morning. The brief only goes out when "
+      + "something has changed."));
+  }
+  // The week's report rides under it when there is one: same kind of thing,
+  // a different window, and nowhere else to read it back.
+  const weekly = data.weekly || {};
+  const wtext = String(weekly.text || "").trim();
+  if (weekly.enabled && wtext) {
+    box.appendChild(el("div", "kbriefwhen",
+      weekly.last_sent ? `This week — ${dateAt(weekly.last_sent)}` : "This week"));
+    box.appendChild(el("p", "kbrieftext", wtext));
+  }
+}
+
+// One drill-down at a time: two open at once turns a list of seven answers
+// into a page nobody can see the shape of.
+async function toggleStore(id) {
+  if (houseState.open === id) {
+    houseState.open = "";
+    renderHouse();
+    return;
+  }
+  houseState.open = id;
+  renderHouse();
+  if (houseState.detail[id] !== undefined) return;
+  try {
+    houseState.detail[id] = await api(`api/knowledge/house/${id}`);
+  } catch (e) {
+    houseState.detail[id] = { error: e.message };
+  }
+  if (houseState.open === id) renderHouse();
+}
+
+// A store's payload holds its rows under whichever name that store calls
+// them. Reading several is not laxness — it is the same "I could not tell"
+// rule the checks carry: a shape we do not recognise is reported as nothing
+// measured, never as an empty house.
+function houseRows(payload, keys) {
+  // Two of these routes answer with a bare list (`_baselines_rows`,
+  // `_closure_rows`) and the rest with an object naming one. Both are the
+  // route's own shape and neither is wrong; what would be wrong is a
+  // renderer that only knows one and reports the other as an empty house.
+  if (Array.isArray(payload)) return payload.slice();
+  for (const key of keys) {
+    const value = payload && payload[key];
+    if (Array.isArray(value)) return value.slice();
+    if (value && typeof value === "object") {
+      return Object.keys(value).map((k) => ({ id: k, entity_id: k, ...value[k] }));
+    }
+  }
+  return [];
+}
+
+function drillEmpty(id, message) {
+  const box = el("div", "kdrill");
+  box.dataset.store = id;
+  box.appendChild(el("div", "kempty", message));
+  return box;
+}
+
+function num(v, digits) {
+  const n = Number(v);
+  if (!isFinite(n)) return "";
+  return digits ? n.toFixed(digits) : String(Math.round(n));
+}
+
+function makeDrill(id) {
+  const payload = houseState.detail[id];
+  if (payload === undefined) return drillEmpty(id, "Reading…");
+  if (payload && payload.error) {
+    return drillEmpty(id, `Could not read it: ${payload.error}`);
+  }
+  const store = ((houseState.data || {}).stores || {})[id] || {};
+  const box = el("div", "kdrill");
+  box.dataset.store = id;
+  const drawn = ({
+    rhythm: drillRhythm, baselines: drillBaselines, thermal: drillThermal,
+    closures: drillClosures, appliances: drillAppliances, habits: drillHabits,
+    energy: drillEnergy,
+  }[id] || (() => null))(box, payload || {});
+  if (!drawn) {
+    // Nothing to draw is the store's own answer, in the store's own words:
+    // "no ZHA in this house" and "the pass has not run" are different, and
+    // only the store knows which this is.
+    box.appendChild(el("div", "kempty", store.reason
+      || "Nothing measured yet — it fills in as the house records more."));
+  }
+  return box;
+}
+
+function drillTable(box, head, rows) {
+  if (!rows.length) return false;
+  const wrap = el("div", "ktablewrap");
+  const table = el("table", "ktable");
+  const thead = el("thead");
+  const hr = el("tr");
+  head.forEach((h) => hr.appendChild(el("th", null, h)));
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  const body = el("tbody");
+  rows.forEach((cells) => {
+    const tr = el("tr");
+    cells.forEach((c) => tr.appendChild(el("td", null, c)));
+    body.appendChild(tr);
+  });
+  table.appendChild(body);
+  wrap.appendChild(table);
+  box.appendChild(wrap);
+  return true;
+}
+
+// ---- rhythm: when the house gets up and when it settles, weekdays and
+// weekends apart, because one number over both is wrong on all seven days.
+function drillRhythm(box, payload) {
+  const rows = [];
+  [["weekday", "Weekdays"], ["weekend", "Weekends"]].forEach(([key, label]) => {
+    const part = payload[key] || {};
+    const cell = (shape) => {
+      if (!shape || !shape.at) return "not measured yet";
+      const spread = Number(shape.spread_min) || 0;
+      return spread ? `${shape.at} ± ${Math.round(spread)} min` : shape.at;
+    };
+    const days = (part.wakes || {}).days || (part.settles || {}).days || 0;
+    rows.push([label, cell(part.wakes), cell(part.settles),
+               days ? `${days} days` : "—"]);
+  });
+  return drillTable(box, ["", "Wakes", "Settles", "Measured over"], rows);
+}
+
+// ---- baselines: 480-odd entities is a list nobody scrolls, so it is a
+// search box, and the week itself is a picture — 168 numbers in a table is
+// data rather than an answer.
+function drillBaselines(box, payload) {
+  const rows = houseRows(payload, ["entities", "rows", "measured"]);
+  if (!rows.length) return false;
+
+  const find = el("input", "kfind");
+  find.type = "search";
+  find.placeholder = "Find a sensor…";
+  find.setAttribute("aria-label", "Find a sensor");
+  find.value = houseState.filter;
+  find.addEventListener("input", () => {
+    houseState.filter = find.value;
+    paintBaselineList(list, rows);
+  });
+  box.appendChild(find);
+
+  const list = el("div", "kfindlist");
+  box.appendChild(list);
+  paintBaselineList(list, rows);
+
+  const chart = el("div", "kchart");
+  chart.id = "kBaselineChart";
+  box.appendChild(chart);
+  paintBaselineChart(chart);
+  return true;
+}
+
+function paintBaselineList(list, rows) {
+  const q = houseState.filter.trim().toLowerCase();
+  list.textContent = "";
+  const shown = rows.filter((r) => !q
+    || String(r.entity_id || "").toLowerCase().includes(q)
+    || String(r.name || "").toLowerCase().includes(q)).slice(0, 40);
+  if (!shown.length) {
+    list.appendChild(el("div", "kempty", "Nothing here by that name."));
+    return;
+  }
+  shown.forEach((r) => {
+    const id = String(r.entity_id || r.id || "");
+    const btn = el("button", "kpick" + (houseState.entity === id ? " on" : ""),
+      r.name || id);
+    btn.type = "button";
+    if (r.flat) btn.appendChild(el("span", "kflag", "flat"));
+    btn.addEventListener("click", () => pickBaseline(id, r.name || id));
+    list.appendChild(btn);
+  });
+}
+
+async function pickBaseline(entityId, name) {
+  houseState.entity = entityId;
+  houseState.entityName = name || entityId;
+  houseState.buckets = null;
+  renderHouse();
+  let data;
+  try {
+    const res = await api(`api/baselines?entity_id=${encodeURIComponent(entityId)}`);
+    // The route answers with the whole store's progress and the one entity
+    // under `baseline`; the entity is what the chart is about.
+    data = res.baseline || (res.buckets ? res : null)
+      || { empty: true, error: res.error || "" };
+  } catch (e) {
+    data = { error: e.message };
+  }
+  if (houseState.entity !== entityId) return;
+  houseState.buckets = data;
+  const chart = $("#kBaselineChart");
+  if (chart) paintBaselineChart(chart);
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const svgEl = (tag, attrs) => {
+  const node = document.createElementNS(SVG_NS, tag);
+  Object.keys(attrs || {}).forEach((k) => node.setAttribute(k, attrs[k]));
+  return node;
+};
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+// The bucket index Home Assistant's own week uses: hour of the week, Monday
+// first. `getDay()` is Sunday-first, so the shift is not cosmetic — an
+// unshifted "now" marker points at the wrong day, which is the one thing a
+// marker must not do.
+function nowBucket() {
+  const now = new Date();
+  return ((now.getDay() + 6) % 7) * 24 + now.getHours();
+}
+
+// A week of one sensor: the median as a line, the spread as a band around
+// it, and a mark where we are now. A bucket with no samples breaks the line
+// rather than being drawn through — "nothing measured at 3am on a Tuesday"
+// is not the same claim as a number.
+function paintBaselineChart(chart) {
+  chart.textContent = "";
+  if (!houseState.entity) {
+    chart.appendChild(el("div", "kempty",
+      "Pick a sensor to see what it normally reads, hour by hour."));
+    return;
+  }
+  const data = houseState.buckets;
+  if (!data) {
+    chart.appendChild(el("div", "kempty", "Reading…"));
+    return;
+  }
+  if (data.error) {
+    chart.appendChild(el("div", "kempty", `Could not read it: ${data.error}`));
+    return;
+  }
+  if (data.flat) {
+    chart.appendChild(el("div", "kempty",
+      "This one never moves, so it has no spread and no baseline — which is "
+      + "an answer, not a gap."));
+    return;
+  }
+  const buckets = data.buckets || {};
+  const points = [];
+  for (let i = 0; i < 168; i += 1) {
+    const b = buckets[String(i)] || buckets[i];
+    if (!b || !isFinite(Number(b.median))) { points.push(null); continue; }
+    points.push({ i, m: Number(b.median), s: Math.abs(Number(b.spread) || 0) });
+  }
+  const real = points.filter(Boolean);
+  if (!real.length) {
+    chart.appendChild(el("div", "kempty",
+      "No hour of the week has enough samples yet."));
+    return;
+  }
+
+  const W = 700;
+  const H = 190;
+  const PAD_L = 46;
+  const PAD_B = 22;
+  const PAD_T = 10;
+  let lo = Math.min(...real.map((p) => p.m - p.s));
+  let hi = Math.max(...real.map((p) => p.m + p.s));
+  if (hi - lo < 1e-6) { hi += 0.5; lo -= 0.5; }
+  const x = (i) => PAD_L + (i / 167) * (W - PAD_L - 8);
+  const y = (v) => PAD_T + (1 - (v - lo) / (hi - lo)) * (H - PAD_T - PAD_B);
+
+  const svg = svgEl("svg", {
+    viewBox: `0 0 ${W} ${H}`, class: "kweek",
+    role: "img",
+    "aria-label": `What ${houseState.entityName || houseState.entity} normally reads, `
+      + "per hour of the week",
+  });
+
+  // Day boundaries, labelled. A chart of 168 unlabelled columns is a
+  // texture; the labels are what make it a week.
+  for (let d = 0; d < 7; d += 1) {
+    if (d) svg.appendChild(svgEl("line", {
+      class: "kgrid", x1: x(d * 24), x2: x(d * 24), y1: PAD_T, y2: H - PAD_B }));
+    const tick = svgEl("text", {
+      class: "ktick", x: x(d * 24 + 12), y: H - 6, "text-anchor": "middle" });
+    tick.textContent = DAY_NAMES[d];
+    svg.appendChild(tick);
+  }
+  // Two value ticks: the top and the bottom of what this sensor does.
+  const unit = data.unit ? ` ${data.unit}` : "";
+  [[hi, PAD_T + 4], [lo, H - PAD_B]].forEach(([v, ty]) => {
+    const t = svgEl("text", { class: "ktick", x: PAD_L - 6, y: ty,
+                              "text-anchor": "end" });
+    t.textContent = `${num(v, Math.abs(v) < 10 ? 1 : 0)}${unit}`;
+    svg.appendChild(t);
+  });
+
+  // The band and the line, in segments: a gap in the data is a gap here.
+  let run = [];
+  const flush = () => {
+    if (run.length > 1) {
+      const top = run.map((p) => `${x(p.i)},${y(p.m + p.s)}`);
+      const bottom = run.slice().reverse().map((p) => `${x(p.i)},${y(p.m - p.s)}`);
+      svg.appendChild(svgEl("polygon", {
+        class: "kband", points: top.concat(bottom).join(" ") }));
+      svg.appendChild(svgEl("polyline", {
+        class: "kline", points: run.map((p) => `${x(p.i)},${y(p.m)}`).join(" ") }));
+    } else if (run.length === 1) {
+      svg.appendChild(svgEl("circle", {
+        class: "kline", cx: x(run[0].i), cy: y(run[0].m), r: 1.6 }));
+    }
+    run = [];
+  };
+  points.forEach((p) => { if (p) run.push(p); else flush(); });
+  flush();
+
+  // Where we are now, so the picture answers "is this hour unusual" without
+  // anybody counting columns.
+  const nb = nowBucket();
+  svg.appendChild(svgEl("line", {
+    class: "know", x1: x(nb), x2: x(nb), y1: PAD_T, y2: H - PAD_B }));
+
+  chart.appendChild(svg);
+  const foot = el("div", "kchartfoot",
+    `${houseState.entityName || houseState.entity} · ${real.length} of 168 hours measured`
+    + (data.overall && isFinite(Number(data.overall.median))
+        ? ` · usually ${num(data.overall.median, 1)}${unit}` : "")
+    + (data.trend && data.trend.per_day
+        ? ` · drifting ${num(data.trend.per_day, 2)}${unit} a day` : ""));
+  chart.appendChild(foot);
+}
+
+// ---- thermal: two numbers per room, sorted by the one people have an
+// intuition for. τ is the time constant — how long the room takes to give up
+// most of its heat — and it is the reciprocal of the loss rate.
+function drillThermal(box, payload) {
+  const rooms = houseRows(payload, ["rooms", "entities", "rows"]);
+  if (!rooms.length) return false;
+  const sorted = rooms.slice().sort((a, b) =>
+    (Number(a.tau_h) || 1e9) - (Number(b.tau_h) || 1e9));
+  const rows = sorted.map((r) => [
+    r.name || r.entity_id || r.id || "",
+    num(r.k, 3) || "—",
+    num(r.tau_h, 1) || "—",
+    r.gain != null ? `${num(r.gain, 2)}°/h` : "—",
+    r.hours_to_warm != null ? `${num(r.hours_to_warm, 1)} h` : "—",
+  ]);
+  const ok = drillTable(box,
+    ["Room", "Loss k /h", "τ hours", "Gain", "To warm"], rows);
+  if (ok && payload.outdoor) {
+    box.appendChild(el("div", "kfoot",
+      `Measured against ${payload.outdoor}${payload.unit ? ` (${payload.unit})` : ""}.`));
+  }
+  return ok;
+}
+
+// ---- closures: how much of each hour of the week each door is open. A
+// number per hour is the measurement; the block is what makes it readable.
+function drillClosures(box, payload) {
+  const rows = houseRows(payload, ["entities", "closures", "rows"]);
+  if (!rows.length) return false;
+  rows.slice(0, 12).forEach((r) => {
+    const wrap = el("div", "kheat");
+    wrap.appendChild(el("div", "kheatname",
+      `${r.name || r.entity_id || r.id}`
+      + (r.overall != null ? ` — open ${num(Number(r.overall) * 100)}% of the time` : "")));
+    const grid = el("div", "kheatgrid");
+    const buckets = r.buckets || {};
+    for (let d = 0; d < 7; d += 1) {
+      const label = el("span", "kheatday", DAY_NAMES[d]);
+      grid.appendChild(label);
+      for (let h = 0; h < 24; h += 1) {
+        const key = String(d * 24 + h);
+        // The route sends the open fraction itself; the store it reads keeps
+        // `{open, hours}`. Either is a fraction and neither is a missing
+        // bucket — which is `null`/absent, and a different claim.
+        const raw = key in buckets ? buckets[key] : buckets[d * 24 + h];
+        const value = (raw && typeof raw === "object") ? raw.open : raw;
+        const cell = el("span", "kcell");
+        if (value === undefined || value === null) {
+          // An hour nobody watched is a different answer from an hour it was
+          // never open in, and both are invisible if they share a colour.
+          cell.classList.add("unwatched");
+          cell.title = `${DAY_NAMES[d]} ${h}:00 — not watched`;
+        } else {
+          const open = Math.max(0, Math.min(1, Number(value) || 0));
+          cell.style.opacity = String(0.10 + open * 0.90);
+          cell.title = `${DAY_NAMES[d]} ${h}:00 — open ${num(open * 100)}%`;
+        }
+        grid.appendChild(cell);
+      }
+    }
+    wrap.appendChild(grid);
+    box.appendChild(wrap);
+  });
+  box.appendChild(el("div", "kfoot",
+    "Darker is more often open. A pale square is an hour nothing watched."));
+  return true;
+}
+
+// ---- appliances: the watts this machine itself runs at, never a number
+// somebody typed, plus what it is doing right now.
+function drillAppliances(box, payload) {
+  const rows = houseRows(payload, ["appliances", "entities", "rows"]);
+  if (!rows.length) return false;
+  const table = rows.map((r) => [
+    r.name || r.entity_id || r.id || "",
+    r.idle_w != null ? `${num(r.idle_w)} W` : "—",
+    r.busy_w != null ? `${num(r.busy_w)} W` : "—",
+    r.threshold_w != null ? `${num(r.threshold_w)} W` : "—",
+    r.settle_min != null ? `${num(r.settle_min)} min` : "—",
+    // What it is doing NOW is a live fetch and can fail on its own — an
+    // empty `now` is the recorder not answering, which is not "idle".
+    ((r.now || {}).state || r.state || "—"),
+  ]);
+  const ok = drillTable(box,
+    ["Machine", "Idle", "Running", "Threshold", "Quiet phase", "Now"], table);
+  if (ok && payload.live_error) {
+    box.appendChild(el("div", "kfoot",
+      `What each is doing now could not be read: ${payload.live_error}`));
+  }
+  return ok;
+}
+
+// ---- habits: what you do by hand often enough to be a habit, and the rules
+// you keep undoing. Both are counts with denominators — a count on its own
+// reports "six times in a fortnight" and "six times in two months" the same.
+function drillHabits(box, payload) {
+  // `routines` is an object about the ledger with the mined rows inside it,
+  // not a list — reading it as one would turn three counts into three rows.
+  const habits = houseRows(payload.routines || {}, ["rows"]);
+  const patterns = houseRows(payload, ["patterns"]);
+  let drew = false;
+  if (habits.length) {
+    box.appendChild(el("h4", "kdrillhead", "What you do by hand"));
+    drew = drillTable(box, ["What", "When", "Days", "Share", "Offer it?"],
+      habits.map((r) => [
+        `${r.name || r.entity_id || r.id || ""} → ${r.state || ""}`,
+        r.at || "—",
+        r.days != null ? `${r.days} of ${r.eligible_days ?? "?"}` : "—",
+        r.share != null ? `${num(Number(r.share) * 100)}%` : "—",
+        r.proposable === false ? "no" : (r.proposable ? "yes" : "—"),
+      ])) || drew;
+  }
+  if (patterns.length) {
+    box.appendChild(el("h4", "kdrillhead", "Rules you keep undoing"));
+    drew = drillTable(box, ["Automation", "Times", "Days", "When"],
+      patterns.map((r) => [
+        r.name || r.automation || r.id || "",
+        String(r.events ?? r.count ?? "—"),
+        String(r.days ?? "—"),
+        (r.from_hour != null && r.to_hour != null)
+          ? `${String(r.from_hour).padStart(2, "0")}:00–${String(r.to_hour).padStart(2, "0")}:00`
+          : "—",
+      ])) || drew;
+  }
+  return drew;
+}
+
+// ---- energy: last week against the week before, both seven complete local
+// days, because half of today against seven full days is a fall that is
+// nothing but the clock.
+function drillEnergy(box, payload) {
+  // `available: false` is the store's own answer with its own reason on it —
+  // "no energy configuration" and "the recorder had nothing to say" send
+  // somebody to two different places, and neither is an empty table.
+  if (payload.available === false) return false;
+  const halves = [["energy", "Electricity"], ["cost", "Cost"]]
+    .map(([key, label]) => [label, payload[key]])
+    .filter(([, half]) => half && (half.this != null || half.last != null));
+  if (!halves.length) return false;
+  const rows = halves.map(([label, half]) => {
+    const pct = half.change_pct;
+    // The unit rides on each half, because a cost and a consumption are two
+    // different units and one `unit` for both quotes the wrong one.
+    const unit = half.unit ? ` ${half.unit}` : "";
+    return [
+      label,
+      `${num(half.this, 1)}${unit}`,
+      `${num(half.last, 1)}${unit}`,
+      pct == null ? "not comparable"
+                  : `${pct > 0 ? "+" : ""}${num(pct, 1)}%`,
+      half.days != null ? `${half.days} days` : "—",
+    ];
+  });
+  return drillTable(box,
+    ["", "This week", "Week before", "Change", "Complete"], rows);
 }
 
 // The consolidate button says how much is waiting, so pressing it is an

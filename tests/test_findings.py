@@ -1559,15 +1559,49 @@ class TestFindingsUI(unittest.TestCase):
         record when memory already is. The ledger stays — it is the dedup
         index that stops the analyst re-raising what you answered — it is
         just not something the panel draws."""
+        # A per-status archive is still refused: "ignored"/"fixed"/
+        # "Everything" would be the growing pile beside a list meant to
+        # empty, which is what this guard was written against.
         self.assertNotIn('{ id: "ignored"', self.js)
         self.assertNotIn('{ id: "fixed"', self.js)
-        self.assertNotIn('label: "Answered"', self.js)
         self.assertNotIn('label: "Everything"', self.js)
-        self.assertNotIn("makeSettled", self.js)
-        self.assertNotIn("findingsSettled", self.js)
-        # Two chips and no more: the work, and what is waiting.
+        # The work and what is waiting are still the chips that are always
+        # there.
         self.assertIn('{ id: "live", label: "Needs you"', self.js)
         self.assertIn('{ id: "snoozed", label: "Later"', self.js)
+        # 1.48.0 narrows the rule rather than dropping it. `unsettle` is
+        # the one thing that removes a settled entry and CLAUDE.md says it
+        # happens "only because a person pressed 'Let brAIn raise it
+        # again'" — and that press existed nowhere: the route had no
+        # caller in the panel, the CLI or the integration. A button that
+        # lives only in prose is a button nobody can press, so the ledger
+        # gets exactly enough surface to hold it, and no more. What must
+        # stay true is everything that made the old archive a second
+        # record: it is never a work list, and it is invisible until it
+        # holds something.
+        self.assertIn('{ id: "settled", label: "Answered", match: () => false }',
+                      self.js,
+                      "the Answered chip must match no live row: settling "
+                      "deletes the row, so a filter over the list could "
+                      "only ever be empty")
+        self.assertIn("makeSettled", self.js)
+        # No badge counts it. `open` is the badge's number and it spans
+        # findings and hypotheses — work waiting on a person — and an
+        # answered thing is by definition not waiting.
+        badge = self.js[self.js.index("function findBadge") :][:800] \
+            if "function findBadge" in self.js else ""
+        self.assertNotIn("settled", badge,
+                         "an answered finding is not work waiting on you")
+        # Hidden until it holds something, and capped: the two properties
+        # that keep it from becoming the pile.
+        self.assertIn('if (f.id === "settled") return (state.settled || []).length;',
+                      self.js, "the chip is counted, so it can hide at zero")
+        self.assertRegex(self.js, r"answered\.slice\(0,\s*\d+\)",
+                         "the rendered list is capped")
+        # One verb, and it only stops the suppression.
+        self.assertIn("api/findings/unsettle", self.js)
+        for verb in ('"api/finding/" + entry', "restore", "reopen"):
+            self.assertNotIn(f"makeSettled({verb}", self.js)
 
 
 class TestUndoStore(unittest.TestCase):

@@ -3237,6 +3237,224 @@ body.term-classic #termMode .ico-out { display: block; }
   .actwhy { margin-left: 12px; }
 }
 
+/* ------------------------------------------------------------------ today
+   One wrapping line above the cards. It is a line and not a card because
+   nothing on it is waiting on anybody: it is the record of what brAIn did
+   for itself, and a panel of tiles for that would out-weigh the insights
+   underneath it. Segments wrap rather than shrink, so a phone drops to two
+   or three lines and every segment keeps its words -- the topbar's rule,
+   one surface down. */
+.today {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin: 0 0 12px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.today .tseg { display: inline-flex; align-items: center; gap: 6px; }
+/* The separator is drawn rather than typed, so a wrapped line never begins
+   with a stray bullet. */
+.today .tseg + .tseg::before {
+  content: "";
+  width: 1px;
+  height: 11px;
+  margin-right: 8px;
+  background: var(--hairline);
+}
+.today .tseg.press {
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+  padding: 6px 0;
+  min-height: 44px;
+}
+.today .tseg.press:hover { color: var(--ink-1); }
+.today .tsegwhere {
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 11.5px;
+}
+
+/* -------------------------------------------------------------- knowledge
+   Four sections: what brAIn said this morning, what it has measured, what it
+   remembers, and what is queued to be remembered. The first two are new
+   surfaces over stores that were readable from nowhere -- a rhythm that had
+   not gathered enough days, a baseline pass that had stopped running and a
+   house with nothing odd in it were three silences nothing could tell apart.
+
+   A measurement row is a BUTTON at the 44px floor for `.actrow`'s reason: a
+   row people miss is a row they stop pressing, on any pointer. */
+.ksec { max-width: 900px; margin: 0 0 26px; }
+.ksec > h2 { margin: 0 0 4px; font-size: 18px; }
+.ksec > .hint { margin: 0 0 12px; }
+
+.kbrief { max-width: 68ch; }
+.kbriefwhen {
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  margin-top: 10px;
+}
+.kbrieftext {
+  margin: 4px 0 0;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--ink-1);
+}
+/* The states that are not a brief -- off, failed, or nothing worth saying --
+   read as the explanations they are rather than as this morning's message. */
+.kbrieftext.off { color: var(--ink-2); font-size: 13.5px; }
+
+.kstores { display: grid; gap: 2px; }
+.krow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.krow:hover { background: var(--surface-2); }
+.krow .ktxt { flex: 1 1 auto; min-width: 0; }
+.krow .kname { font-size: 14px; font-weight: 600; }
+.krow .ksum { color: var(--ink-2); font-size: 13px; margin-top: 1px; }
+/* "I could not look" is its own answer and it goes under the summary it
+   qualifies -- a state with no reason under it is a state nobody can act
+   on. It wraps: this is a sentence, not a chip. */
+.krow .kwhy { color: var(--ink-3); font-size: 12.5px; margin-top: 3px; }
+
+.kchip {
+  flex: none;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.krow[data-state="ready"] .kchip { color: var(--good); border-color: var(--good); }
+.krow[data-state="collecting"] .kchip { color: var(--accent); border-color: var(--accent); }
+.krow[data-state="stale"] .kchip { color: var(--warning); border-color: var(--warning); }
+
+.kdrill {
+  margin: 0 0 12px 12px;
+  padding: 12px 14px;
+  border-left: 2px solid var(--hairline);
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.kdrillhead { margin: 12px 0 6px; font-size: 13px; color: var(--ink-1); }
+.kdrillhead:first-child { margin-top: 0; }
+.kfoot { margin-top: 8px; color: var(--ink-3); font-size: 12px; }
+
+/* A table is wide by nature, so it scrolls inside its own box rather than
+   taking the page sideways with it. */
+.ktablewrap { overflow-x: auto; }
+.ktable { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.ktable th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink-3);
+  padding: 4px 12px 4px 0;
+  white-space: nowrap;
+}
+.ktable td {
+  padding: 4px 12px 4px 0;
+  border-top: 1px solid var(--hairline);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.ktable td:first-child { white-space: normal; color: var(--ink-1); }
+
+/* Baselines: a search box, because a house has hundreds of these and a list
+   of hundreds is one nobody scrolls. 16px, spelled here, because this is a
+   class-qualified rule and would otherwise beat the touch floor. */
+.kfind {
+  width: 100%;
+  max-width: 320px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--plane);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 16px;
+}
+.kfindlist { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.kpick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 4px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.kpick.on { border-color: var(--accent); color: var(--accent); }
+.kflag { color: var(--ink-3); font-size: 11px; }
+
+.kchart { margin-top: 8px; }
+.kweek { width: 100%; height: auto; display: block; }
+.kweek .kgrid { stroke: var(--hairline); stroke-width: 1; }
+.kweek .ktick { fill: var(--ink-3); font-size: 10px; }
+/* The band is the spread and the line is the median. The band is drawn
+   first and translucent, so the line is readable through it in both
+   themes -- a solid fill in dark mode swallows its own line. */
+.kweek .kband { fill: var(--accent); opacity: 0.16; stroke: none; }
+.kweek .kline { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+/* Where we are now. Without it the picture answers "what is normal" and not
+   "is this hour unusual", which is the question somebody opened it with. */
+.kweek .know { stroke: var(--warning); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.kchartfoot { color: var(--ink-3); font-size: 12px; margin-top: 6px; }
+
+/* Closures: seven rows of twenty-four. Darker is more often open; a pale
+   cell is an hour nothing watched, which is a different claim from an hour
+   it was never open in and must not share a colour with it. */
+.kheat { margin-bottom: 14px; }
+.kheatname { color: var(--ink-1); font-size: 12.5px; margin-bottom: 4px; }
+.kheatgrid {
+  display: grid;
+  grid-template-columns: 34px repeat(24, minmax(0, 1fr));
+  gap: 2px;
+  align-items: center;
+  max-width: 560px;
+}
+.kheatday { color: var(--ink-3); font-size: 10.5px; }
+.kcell { display: block; height: 12px; border-radius: 2px; background: var(--accent); }
+.kcell.unwatched {
+  background: none;
+  border: 1px dashed var(--hairline);
+  height: 10px;
+}
+
+/* An answered problem, on the Findings tab's Answered filter. It carries one
+   press and takes nothing back. */
+.finding.settled { border-left-color: var(--hairline); }
+.findsaid { margin: 6px 0 0; color: var(--ink-2); font-size: 13px; }
+
 /* ------------------------------------------------------------ proposals
    The fifth kind of knowledge, and the only list here that is not about
    something being wrong. It reads like the findings list on purpose --

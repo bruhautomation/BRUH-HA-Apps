@@ -179,12 +179,131 @@ CATEGORIES: list[dict] = [
 
 CATEGORY_IDS = [c["id"] for c in CATEGORIES]
 
+# Which of brAIn's own measurements bear on each shipped card.
+#
+# Read by the refresh gate, not by the prompt: a card whose measurements
+# have not moved has nothing new to say from them, and a card that reads
+# none of them is not held up by one being rebuilt. Anything NOT named
+# here — a user category, a typed question — reads every measurement,
+# because it could be about any of them, which is the same conservatism
+# `collect_bundle` applies to a question's entity slice.
+CATEGORY_STORES: dict[str, tuple[str, ...]] = {
+    "overview": ("rhythm", "baselines", "habits"),
+    "energy": ("energy", "baselines", "appliances"),
+    "climate": ("thermal", "baselines", "closures"),
+    "lighting": ("rhythm", "habits"),
+    "security": ("closures", "rhythm"),
+    "presence": ("rhythm", "habits"),
+    "automations": ("habits", "rhythm"),
+    "devices": ("baselines", "appliances"),
+    "maintenance": ("baselines", "appliances", "thermal"),
+}
+
+
+def stores_for(cat_id: str) -> tuple[str, ...] | None:
+    """The measurements this card reads, or None for "all of them"."""
+    return CATEGORY_STORES.get(cat_id)
+
 
 def get_category(cat_id: str) -> dict | None:
     for c in CATEGORIES:
         if c["id"] == cat_id:
             return c
     return None
+
+
+# ---------------------------------------------------------------------------
+# What brAIn has already measured, as a block in a prompt
+# ---------------------------------------------------------------------------
+# The analyst used to be told about the house and never about brAIn: it
+# was handed entities and history and no hint that seven measurements had
+# already been made over the same data, so it re-derived "what is normal
+# here" from a week of readings on every run and reached a different
+# answer each time. This is the block that stops that.
+#
+# It is a BUDGET rather than a section: 2 KB, taken from nothing else.
+# Memory has its own budget in the bundle (`ha_data.MEMORY_CHARS`) and the
+# findings block has no cap at all, and this must not be able to push
+# either of them out — the failure that argument comes from is the one
+# where memory and the house context split 4 KB and both arrived
+# truncated.
+HOUSE_CHARS = 2_000
+
+# What the brief and the weekly report get of the memory document. They
+# are handed a couple of paragraphs each, not the 34 KB the insight
+# bundle carries: what a lock-screen message needs from memory is the
+# handful of standing preferences at the top of the document, and the
+# rest is what makes it a report.
+MEMORY_EXCERPT_CHARS = 2_000
+
+_HOUSE_HEAD = (
+    "WHAT brAIn HAS ALREADY MEASURED ABOUT THIS HOUSE. These are its own "
+    "numbers, computed overnight from months of history — use them rather "
+    "than re-deriving them from the data below, and do not report them "
+    "back as discoveries. Each name is a measurement you can read in full "
+    "with the get_house_model tool. A measurement that is NOT listed here "
+    "has not been made yet, and its silence is not evidence that nothing "
+    "is wrong:")
+
+
+def house_block(snapshot: dict | None, limit: int = HOUSE_CHARS) -> str:
+    """The measurements that have an answer, one sentence each.
+
+    Only `ready` stores. A store that is still collecting, that this house
+    cannot supply, or that has stopped being rebuilt has no number worth
+    acting on, and a line saying so would spend the budget telling the
+    analyst about brAIn rather than about the house — the drill-down is
+    what `get_house_model` is for. Nothing ready means no block at all,
+    which is a fresh install and is exactly the case where an empty
+    heading would read as "measured, and nothing found".
+
+    The sentence is the STORE's own (`progress()["summary"]`), never one
+    composed here: every floor and every caveat in it belongs to the
+    module that owns the measurement, and a second wording is a second
+    answer to what a house is like.
+
+    Whole lines are dropped to fit rather than the text being cut, because
+    half a measurement reads exactly like a whole one.
+    """
+    stores = (snapshot or {}).get("stores") or {}
+    lines: list[str] = []
+    for name, entry in stores.items():
+        if not isinstance(entry, dict) or entry.get("state") != "ready":
+            continue
+        said = " ".join(str(entry.get("summary") or "").split())
+        if said:
+            lines.append(f"- {name}: {said}")
+    if not lines:
+        return ""
+    out = [_HOUSE_HEAD]
+    used = len(_HOUSE_HEAD)
+    for line in lines:
+        if used + len(line) + 1 > limit:
+            break
+        out.append(line)
+        used += len(line) + 1
+    return "\n".join(out)
+
+
+def memory_excerpt(text: str | None, limit: int = MEMORY_EXCERPT_CHARS) -> str:
+    """The head of the memory document, cut at a line boundary.
+
+    The brief and the weekly report read no memory at all today, which is
+    why both of them can say something the homeowner has already
+    corrected. They get the top of the document — where the consolidator
+    keeps the standing facts — and the cut is made between lines, since a
+    fact truncated mid-sentence is a fact stated wrongly.
+    """
+    body = (text or "").strip()
+    if not body:
+        return ""
+    if len(body) > limit:
+        body = body[:limit].rsplit("\n", 1)[0].rstrip()
+    if not body:
+        return ""
+    return ("WHAT IS ALREADY KNOWN ABOUT THIS HOME — the homeowner's own "
+            "standing facts and preferences. Do not contradict them, and "
+            "do not repeat them back:\n" + body)
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +444,7 @@ def _framing(
     findings: str | None,
     hypothesis_budget: int,
     previous: dict | None,
+    house: str | None = None,
 ) -> list[str]:
     """Everything the analyst is told before it is told about the data.
 
@@ -358,6 +478,13 @@ def _framing(
             "wording, and visualization accordingly):\n"
             + "\n".join(f"- {f}" for f in cleaned_feedback)
         )
+
+    # What brAIn measured, before what brAIn was told and before what is
+    # already on the work list: a reading is only unusual against a
+    # baseline, and a card that reports one without checking is the
+    # commonest thing a homeowner marks Wrong.
+    if house and house.strip():
+        parts.append("\n" + house.strip())
 
     if knowledge and knowledge.strip():
         parts.append("\n" + knowledge.strip())
@@ -395,6 +522,7 @@ def build_prompt(
     previous: dict | None = None,
     hypothesis_budget: int = 0,
     findings: str | None = None,
+    house: str | None = None,
 ) -> str:
     """Assemble the user prompt: analysis focus + the data bundle.
 
@@ -411,7 +539,7 @@ def build_prompt(
     list, and what the homeowner dismissed as not a problem here.
     """
     parts = _framing(category, question, feedback, knowledge, findings,
-                     hypothesis_budget, previous)
+                     hypothesis_budget, previous, house)
     parts.append(
         "\nHOME DATA SNAPSHOT (JSON). Sections: meta (now, timezone, location name), areas, "
         "entities (e=entity_id, s=state, n=friendly name — ABSENT when it is just the "
@@ -440,6 +568,7 @@ def build_orientation_prompt(
     previous: dict | None = None,
     hypothesis_budget: int = 0,
     findings: str | None = None,
+    house: str | None = None,
 ) -> str:
     """The searching path's prompt: the map, not the territory.
 
@@ -450,7 +579,7 @@ def build_orientation_prompt(
     instruction to go and get what answering it needs.
     """
     parts = _framing(category, question, feedback, knowledge, findings,
-                     hypothesis_budget, previous)
+                     hypothesis_budget, previous, house)
     parts.append(
         "\nMAP OF THIS HOME (JSON). NOT the data — the shape of it. Sections: meta (now, "
         "timezone, location name), entity_count (how many entities exist in total), "

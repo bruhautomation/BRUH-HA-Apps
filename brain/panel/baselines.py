@@ -473,6 +473,82 @@ async def fetch_hourly(session, ids: list[str], now: float,
     return out if answered else None
 
 
+# One nightly pass. Every store built by `build_baselines` accrues at
+# this rate, which is why they each hand this number to `house.eta`
+# rather than the panel guessing on their behalf.
+PROGRESS_UNIT_S = 86400.0
+
+
+def progress(payload: dict | None = None, path: str | None = None,
+             now: float | None = None) -> dict:
+    """How much of this house has a picture of what is normal for it.
+
+    `have` is entities with at least one hour-of-the-week bucket rather
+    than entities *read*: a sensor whose month held three readings is
+    measured and answers nothing, and counting it would report a house as
+    ready for a question none of its baselines can take.
+    """
+    import house  # noqa: PLC0415 — panel-local, one shape and one eta
+
+    now = time.time() if now is None else now
+    payload = load(path) if payload is None else payload
+    entities = payload.get("entities") or {}
+    with_buckets = flat = trends = 0
+    for entry in entities.values():
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("flat"):
+            flat += 1
+        if entry.get("buckets"):
+            with_buckets += 1
+        if entry.get("trend"):
+            trends += 1
+    built = int(payload.get("built_at") or 0) or None
+    detail = {"measured": len(entities), "with_buckets": with_buckets,
+              "flat": flat, "trends": trends}
+    common = {"unit": "entities", "need": 1, "have": with_buckets,
+              "detail": detail, "updated_at": built,
+              "per_unit_s": PROGRESS_UNIT_S, "now": now}
+
+    if payload.get("error"):
+        return house.progress(
+            state=house.UNAVAILABLE, reason=str(payload["error"])[:200],
+            summary=("The last pass could not measure anything: "
+                     f"{payload['error']}."),
+            **common)
+    if not built:
+        return house.progress(
+            state=house.NOT_STARTED,
+            reason="no pass has run yet",
+            summary=("Nothing measured yet — the first pass runs overnight "
+                     f"and reads {HISTORY_DAYS} days of statistics for every "
+                     "numeric sensor."),
+            **common)
+    if is_stale(payload, now):
+        return house.progress(
+            state=house.STALE,
+            reason=f"last measured {house.days_ago(built, now)}",
+            summary=(f"Measured {house.days_ago(built, now)} — the nightly "
+                     "pass has not run since, so this describes the house as "
+                     "it was then."),
+            **common)
+    if with_buckets:
+        return house.progress(
+            state=house.READY,
+            summary=(f"{house.plural(len(entities), 'sensor')} measured · "
+                     f"{with_buckets} with a picture for every hour of the "
+                     "week."),
+            **common)
+    return house.progress(
+        state=house.COLLECTING,
+        reason=(f"{len(entities)} sensors read, none with {MIN_SAMPLES} "
+                "readings in one hour of the week yet"),
+        summary=(f"{house.plural(len(entities), 'sensor')} read, none with "
+                 f"enough history yet — a bucket needs {MIN_SAMPLES} readings "
+                 "at the same hour of the week."),
+        **common)
+
+
 def refused(kind: str, prev: dict, reason: str) -> dict:
     """What a nightly `build` hands back when the fetch did not answer.
 

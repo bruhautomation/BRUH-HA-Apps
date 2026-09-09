@@ -15,7 +15,6 @@ PUT  /api/settings           — update {auto_enabled, plan, budget_percent,
                                (null = fall back to the add-on configuration)
 GET  /api/insights           — all stored insights (with rendered HTML)
 POST /api/generate           — queue generation {category} or {question}
-POST /api/generate_all       — queue every standard category
 GET  /api/auth               — every credential store, which one is in use,
                                and the last verdict (the ⚙ Claude account
                                section; not polled — read when it opens)
@@ -71,12 +70,12 @@ POST /api/hypothesis/{ts}/confirm — yes, that's right: it becomes a memory lin
 POST /api/hypothesis/{ts}/reject  — no, optionally {note}: why it's wrong
                                (both answer with the Findings payload, because
                                 that is the one list they are shown in)
-GET  /api/knowledge          — learned facts + question ledger + shared memory.md
+GET  /api/knowledge          — the memory queue + hypotheses + shared memory.md
+GET  /api/knowledge/house    — every measurement's own progress, in one payload
+GET  /api/knowledge/house/{name}  — one measurement in full (rhythm, baselines,
+                               thermal, closures, appliances, habits, energy)
 POST /api/knowledge/fact     — teach a fact {text}; Claude merges it into memory.md
                                (its only home — never duplicated into the ledger)
-POST /api/knowledge/question/{ts}/answer   — answer an open question {answer}
-POST /api/knowledge/question/{ts}/dismiss  — retire a question unanswered
-DELETE /api/knowledge/question/{ts}        — forget a question (askable again)
 PUT  /api/memory             — save a manual edit of the memory file {text}
 
 Runs on 0.0.0.0:8099. The HA Supervisor proxies the ingress URL into
@@ -136,6 +135,7 @@ import findings_store
 import fixer
 import healing
 import health
+import house
 import hypotheses
 import intents
 import journal
@@ -776,14 +776,6 @@ async def _submit_memory(fact: str, source: str = "insights") -> None:
     await asyncio.to_thread(_queue_memory_fact, fact, source)
 
 
-async def _submit_answer(question: str, answer: str) -> None:
-    """An answered question is durable knowledge — but what gets remembered
-    is the ANSWER as a plain statement, not the Q/A pair. Storing
-    "Q: ... -> A: ..." is what made the old memory unreadable."""
-    await asyncio.to_thread(
-        _queue_memory_fact, f"{question.rstrip('?')}: {answer}", "homeowner", "high")
-
-
 # ---------------------------------------------------------------------------
 # Generation worker
 # ---------------------------------------------------------------------------
@@ -977,7 +969,13 @@ BRIEF_FIRST_DELAY_S = 300
 # changing an option. Same for the weekly, where the duplicate is a whole
 # week's material reported twice.
 BRIEF_SENT_KEY = "brief_last_sent"
+# And what it said. A brief delivered once to a phone and then gone is a
+# message nobody can re-read or check, and the panel is the one place it
+# could be kept — so it is kept beside the stamp, for the stamp's reason:
+# a restart is the ordinary case, not the unlucky one.
+BRIEF_TEXT_KEY = "brief_last_text"
 BRIEF_STATE: dict = {"last_sent": schedule_store.get(BRIEF_SENT_KEY),
+                     "last_text": schedule_store.get_text(BRIEF_TEXT_KEY),
                      "last_reasons": [], "last_error": ""}
 # What "overnight" means for the summary that rides in the prompt.
 BRIEF_NIGHT_HOURS = 12
@@ -1075,6 +1073,8 @@ async def _send_brief(now: float) -> str:
         return ""
 
     BRIEF_STATE["last_error"] = ""
+    BRIEF_STATE["last_text"] = body
+    schedule_store.set_text(BRIEF_TEXT_KEY, body)
     await _send_notification([{"text": body, "severity": "info"}])
     return body
 
@@ -1207,8 +1207,10 @@ def _intents_diagnostics() -> dict:
 WEEKLY_POLL_S = 15 * 60
 WEEKLY_FIRST_DELAY_S = 600
 WEEKLY_SENT_KEY = "weekly_last_sent"
+WEEKLY_TEXT_KEY = "weekly_last_text"
 WEEKLY_STATE: dict = {"last_sent": schedule_store.get(WEEKLY_SENT_KEY),
-                      "last_text": "", "last_error": "", "last_state": {}}
+                      "last_text": schedule_store.get_text(WEEKLY_TEXT_KEY),
+                      "last_error": "", "last_state": {}}
 
 
 def _weekly_enabled() -> tuple[bool, int]:
@@ -1295,6 +1297,7 @@ async def _send_weekly(now: float) -> str:
 
     WEEKLY_STATE["last_error"] = ""
     WEEKLY_STATE["last_text"] = body
+    schedule_store.set_text(WEEKLY_TEXT_KEY, body)
     await _send_notification([{"text": body, "severity": "info"}])
     return body
 
@@ -2516,6 +2519,80 @@ def _category_status(c: dict, insights: dict) -> dict:
     }
 
 
+# What brAIn did last and what it will do next, for the one poll every
+# viewer already makes. Cached briefly because it reads four files and
+# `/api/status` is a timer: none of these numbers moves inside twenty
+# seconds, and a status poll that re-parses the run journal per viewer is
+# the "refresh everything" button with a shorter interval.
+TODAY_TTL_S = 20.0
+_TODAY_CACHE: dict = {"at": 0.0, "state": None}
+
+
+def _today_state(now: float | None = None) -> dict:
+    """The last pass of each scheduled thing, and when the next one is due.
+
+    Every number here is read from state that already exists — the checks
+    summary, the baseline summary, the consolidator's marker, the reports
+    directory and the run journal — because a second tally kept beside
+    them would be a second answer to "did the checks run".
+    """
+    now = time.time() if now is None else now
+    last = CHECKS_STATE["last"] or {}
+    hours = eff_checks_interval_hours()
+    finished = int(last.get("finished_at") or 0)
+    built = int((baselines.load() or {}).get("built_at") or 0)
+    try:
+        recent = len([r for r in reports.list_reports()
+                      if (r.get("ts") or 0) >= now - 86400])
+    except Exception as exc:  # noqa: BLE001 — one number, not the payload
+        log.debug("could not count reports: %s", exc)
+        recent = 0
+    return {
+        "checks": {
+            "last_at": finished or None,
+            "ran": len(last.get("ran") or []),
+            # A check that could not look did not find nothing, so the two
+            # are counted apart here exactly as `clear_resolved` keeps them
+            # apart: "12 ran, 3 skipped" and "15 ran" are different reports
+            # of the same quiet house.
+            "skipped": len(last.get("skipped") or {}),
+            "errored": len(last.get("errors") or {}),
+            "created": len(last.get("created") or []),
+            "cleared": len(last.get("cleared") or []),
+            # An interval of 0 is "not on a timer" — a date invented for
+            # one would be a promise nothing is going to keep.
+            "next_at": int(finished + hours * 3600)
+            if finished and hours > 0 else None,
+            "running": bool(CHECKS_STATE["running"]),
+        },
+        "baselines": {
+            "built_at": built or None,
+            "next_at": int(built + BASELINE_INTERVAL_S) if built else None,
+            "running": bool(BASELINE_STATE["running"]),
+            "error": str((BASELINE_STATE["last"] or {}).get("error") or ""),
+        },
+        "memory": {
+            "last_filed_at": _last_consolidated() or None,
+            "waiting": _inbox_pending(),
+            "running": _consolidation_running(),
+        },
+        "reports": {"since_yesterday": recent},
+        # Every Claude run and every checks pass that reached the journal.
+        # It is what tells a quiet add-on from a stopped one.
+        "landed_runs_24h": journal.summary(24.0, now).get("runs", 0),
+    }
+
+
+async def _today(now: float | None = None) -> dict:
+    now = time.time() if now is None else now
+    if (_TODAY_CACHE["state"] is not None
+            and now - float(_TODAY_CACHE["at"] or 0) < TODAY_TTL_S):
+        return _TODAY_CACHE["state"]
+    state = await asyncio.to_thread(_today_state, now)
+    _TODAY_CACHE.update(at=now, state=state)
+    return state
+
+
 async def h_status(request: web.Request) -> web.Response:
     auth = engine.get_auth()
     # Re-earn a verdict that has gone stale. Lazy on purpose — see
@@ -2550,6 +2627,10 @@ async def h_status(request: web.Request) -> web.Response:
         # polls on a timer and open_count() reads raw entries without shaping
         # 200 findings to throw all but the length away.
         "findings_open": findings_store.open_count() + hypotheses.open_count(),
+        # What brAIn did last and what it will do next. On the poll every
+        # viewer already makes, because "is this thing working" is asked
+        # of the top bar and not of a tab.
+        "today": await _today(),
         # `question` lets the panel label an ad-hoc "Ask" card (and retry it)
         # while it's still generating, before any insight exists to read.
         # `prompt_chars`/`entities` are what the run is spending, carried so
@@ -2677,17 +2758,6 @@ async def h_generate(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(text="unknown category")
     started = _enqueue(cat_id)
     return web.json_response({"queued": [cat_id] if started else []})
-
-
-async def h_generate_all(request: web.Request) -> web.Response:
-    queued = []
-    for c in all_categories():
-        eff = resolve_category(c["id"]) or c
-        if not eff.get("enabled", True):
-            continue
-        if _enqueue(c["id"]):
-            queued.append(c["id"])
-    return web.json_response({"queued": queued})
 
 
 async def h_delete_insight(request: web.Request) -> web.Response:
@@ -4065,6 +4135,244 @@ async def h_appliances(request: web.Request) -> web.Response:
     })
 
 
+def _brief_block() -> dict:
+    """What the morning brief is, in the aggregate's own shape.
+
+    The two scheduled messages are the server's rather than `house.py`'s
+    because they are about what brAIn *said*, not about what it has
+    measured — but they belong in the same payload, because "there is
+    nothing to say yet" and "there was something and it went out at 07:12"
+    are the same screen's question.
+    """
+    on, fallback = _brief_enabled()
+    local = _local_now(time.time())
+    return {
+        "enabled": on,
+        "last_sent": int(BRIEF_STATE["last_sent"]),
+        "text": BRIEF_STATE["last_text"],
+        "reasons": list(BRIEF_STATE["last_reasons"]),
+        "error": BRIEF_STATE["last_error"],
+        "fallback_hour": fallback,
+        # Whether the hour above is a measurement or the fallback. A brief
+        # arriving at a typed-in hour and one arriving when this house is
+        # actually up look identical from outside.
+        "wake_measured": rhythm.wake_minute(
+            rhythm.profile(), local) is not None,
+    }
+
+
+def _weekly_block() -> dict:
+    on, want_day = _weekly_enabled()
+    return {
+        "enabled": on,
+        "last_sent": int(WEEKLY_STATE["last_sent"]),
+        "text": WEEKLY_STATE["last_text"],
+        "error": WEEKLY_STATE["last_error"],
+        "day": weekly.DAYS[want_day],
+    }
+
+
+async def h_house(request: web.Request) -> web.Response:
+    """Every measurement's own answer about how far along it is.
+
+    One route rather than seven, because the question a person is asking
+    is about the house and not about any one store: a fresh install is
+    silent everywhere at once, and seven separate fetches would tell them
+    so seven times without ever adding up to "this is what brAIn is still
+    waiting for".
+    """
+    import aiohttp  # noqa: PLC0415 — the module has no other need of it
+
+    now = time.time()
+    async with aiohttp.ClientSession() as session:
+        week = await house.energy_week(session, now)
+    payload = await asyncio.to_thread(house.snapshot, now, week,
+                                      _brief_block(), _weekly_block())
+    return web.json_response(payload)
+
+
+def _baselines_rows(store: dict) -> list[dict]:
+    rows = []
+    for eid, entry in sorted((store.get("entities") or {}).items()):
+        if not isinstance(entry, dict):
+            continue
+        rows.append({
+            "entity_id": eid,
+            # Nothing stores a friendly name against a baseline, and the
+            # object id is what the store holds — saying so is better than
+            # a name invented here that disagrees with Home Assistant's.
+            "name": entry.get("name") or eid.split(".", 1)[-1].replace("_", " "),
+            "unit": entry.get("unit") or "",
+            "flat": bool(entry.get("flat")),
+            "buckets_n": len(entry.get("buckets") or {}),
+            "trend": entry.get("trend"),
+        })
+    return rows
+
+
+def _closure_rows(store: dict) -> list[dict]:
+    rows = []
+    for eid, entry in sorted((store.get("entities") or {}).items()):
+        if not isinstance(entry, dict):
+            continue
+        rows.append({
+            "entity_id": eid,
+            "name": entry.get("name") or eid.split(".", 1)[-1].replace("_", " "),
+            "overall": entry.get("overall"),
+            # The share only. The hours behind it are what made the bucket
+            # count, and that number is already the store's `have`.
+            "buckets": {h: (b or {}).get("open")
+                        for h, b in (entry.get("buckets") or {}).items()},
+        })
+    return rows
+
+
+def _thermal_payload(store: dict) -> dict:
+    """The rooms, with the one derived number a person can act on.
+
+    `hours_to_warm` is measured between this room's own extremes on the
+    coldest night the month held — its coolest reading to its warmest,
+    against `coldest` — because those are three numbers the store already
+    holds. A target typed in here would be a threshold invented by the
+    panel, which is the thing every floor in `thermal.py` exists to avoid.
+    """
+    outdoor = store.get("coldest")
+    rooms = []
+    for eid, entry in sorted((store.get("rooms") or {}).items()):
+        if not isinstance(entry, dict):
+            continue
+        ends = (entry.get("coolest"), entry.get("warmest"))
+        warm = None
+        if isinstance(outdoor, (int, float)) and all(
+                isinstance(v, (int, float)) for v in ends):
+            warm = thermal.hours_to_warm(entry, ends[0], outdoor, ends[1])
+        rooms.append({
+            "id": eid,
+            "name": entry.get("name") or eid.split(".", 1)[-1].replace("_", " "),
+            "area": entry.get("area") or "",
+            "k": entry.get("k"),
+            "tau_h": entry.get("tau_h"),
+            "gain": entry.get("gain"),
+            "warmest": entry.get("warmest"),
+            "coolest": entry.get("coolest"),
+            "hours_to_warm": None if warm is None else round(warm, 1),
+        })
+    return {"outdoor": store.get("outdoor") or "",
+            "unit": store.get("unit") or "",
+            "rooms": rooms}
+
+
+async def _appliance_detail(now: float) -> dict:
+    """Every profiled machine, and what each one is doing right now.
+
+    The shapes are the nightly store's; what a machine is doing *now* is a
+    live question, so this is the one drill-down that fetches — the same
+    split and the same cheap fetch the checks pass makes, over the same
+    window, so the tab and the chore cannot disagree about which machine
+    is running.
+    """
+    import aiohttp  # noqa: PLC0415
+    import datetime  # noqa: PLC0415
+
+    store = await asyncio.to_thread(appliances.load)
+    shapes = store.get("entities") or {}
+    live: dict = {}
+    error = ""
+    ids = sorted(shapes)
+    if ids:
+        start = datetime.datetime.fromtimestamp(
+            now - checks.snapshot.APPLIANCE_HOURS * 3600,
+            tz=datetime.timezone.utc)
+        try:
+            async with aiohttp.ClientSession() as session:
+                live = await appliances.fetch(session, ids, start)
+            if live is None:
+                # The recorder refused: what each machine is doing now is
+                # unknown, which is not "idle".
+                live, error = {}, ("the recorder did not answer for the "
+                                   + "appliance sensors")
+        except Exception as exc:  # noqa: BLE001 — the shapes still answer
+            live, error = {}, str(exc)[:200]
+    rows = []
+    for eid, shape in sorted(shapes.items()):
+        rows.append({"entity_id": eid, **shape,
+                     "chore_kind": checks.chores.kind_of(shape.get("name") or ""),
+                     "now": appliances.state_at(shape, live.get(eid) or [], now)
+                     if live else {}})
+    return {"built_at": store.get("built_at", 0),
+            "asked": store.get("asked", 0),
+            "days": store.get("days", appliances.HISTORY_DAYS),
+            "hours": checks.snapshot.APPLIANCE_HOURS,
+            "live_error": error,
+            "appliances": rows}
+
+
+def _habits_payload(now: float) -> dict:
+    """What this house does by hand, and what it keeps undoing.
+
+    One payload because they are one question from a person's side, and
+    the patterns ride beside the raw overrides because a count with no
+    shape is what `auto.overridden` shipped as and could not act on.
+    """
+    tz, _name = baselines.house_timezone()
+    ledger = routines.load()
+    rows = override_ledger.load()
+    patterns = []
+    for key, group in sorted(override_ledger.by_automation(rows).items()):
+        shape = override_ledger.pattern(group, tz, now)
+        if shape:
+            patterns.append({"automation": key,
+                             "name": group[-1].get("by_name") or key,
+                             **shape})
+    return {
+        "routines": {
+            "presses": len(ledger.get("rows") or []),
+            "rows": routines.mine(ledger, tz, now),
+            "automated": len(ledger.get("automated") or {}),
+        },
+        "overrides": {
+            "events": len(rows),
+            "automations": len(override_ledger.by_automation(rows)),
+            "recent": sorted(rows, key=lambda r: r.get("ts") or 0,
+                             reverse=True)[:50],
+        },
+        "patterns": patterns,
+    }
+
+
+async def h_house_store(request: web.Request) -> web.Response:
+    """One measurement in full — the rows behind the aggregate's number.
+
+    Split from the aggregate rather than folded into it because these are
+    the expensive halves: every closure's whole week, every baseline in
+    the house, a live recorder fetch. The aggregate is polled; this is
+    opened.
+    """
+    name = request.match_info["name"]
+    if name not in house.STORES:
+        raise web.HTTPNotFound(text=f"no measurement called {name[:40]}")
+    now = time.time()
+    if name == "rhythm":
+        return web.json_response(await asyncio.to_thread(rhythm.profile))
+    if name == "baselines":
+        store = await asyncio.to_thread(baselines.load)
+        return web.json_response(_baselines_rows(store))
+    if name == "thermal":
+        store = await asyncio.to_thread(thermal.load)
+        return web.json_response(_thermal_payload(store))
+    if name == "closures":
+        store = await asyncio.to_thread(closures.load)
+        return web.json_response(_closure_rows(store))
+    if name == "appliances":
+        return web.json_response(await _appliance_detail(now))
+    if name == "habits":
+        return web.json_response(await asyncio.to_thread(_habits_payload, now))
+    import aiohttp  # noqa: PLC0415
+
+    async with aiohttp.ClientSession() as session:
+        return web.json_response(await house.energy_week(session, now))
+
+
 async def h_checks(request: web.Request) -> web.Response:
     return web.json_response({
         # `shadow` per row rather than a separate list: `brain check list`
@@ -5438,26 +5746,6 @@ async def _replay_config(session, config: dict, start: float, end: float,
         return {"error": str(exc), "refused": True}
 
 
-async def h_replay(request: web.Request) -> web.Response:
-    """What an automation would have done over a window of recorded history."""
-    import aiohttp  # noqa: PLC0415 — the module has no other need of it
-
-    body = await _json_body(request)
-    config = body.get("config")
-    if not isinstance(config, dict):
-        return web.json_response({"error": "no automation to replay"},
-                                 status=400)
-    days = max(1, min(int(body.get("days") or REPLAY_DAYS),
-                      shadow.MAX_WINDOW_DAYS))
-    now = time.time()
-    tz, _name = baselines.house_timezone()
-    async with aiohttp.ClientSession() as session:
-        result = await _replay_config(
-            session, config, now - days * 86400, now, tz)
-    return web.json_response(
-        result, status=422 if result.get("refused") else 200)
-
-
 async def h_undo(request: web.Request) -> web.Response:
     """Put back what the last press took away.
 
@@ -5814,18 +6102,6 @@ def _queue_memory_fact(fact: str, source: str = "panel",
 # memory.md is edited out of memory.md, in the editor beside the queue.
 
 
-def _retire_question_everywhere(text: str) -> None:
-    """Remove a question string from every stored insight card so the UI
-    stops surfacing it once it's answered or dismissed in the store."""
-    for ins in load_insights():
-        qs = [q for q in (ins.get("questions") or []) if isinstance(q, str)]
-        kept = [q for q in qs
-                if knowledge_store.normalize(q) != knowledge_store.normalize(text)]
-        if len(kept) != len(qs):
-            ins["questions"] = kept
-            save_insight(ins)
-
-
 # -- onboarding: learn the home, then propose cards worth having ------------
 
 async def h_onboarding(request: web.Request) -> web.Response:
@@ -6103,7 +6379,6 @@ async def h_knowledge(request: web.Request) -> web.Response:
     inbox, pending = await asyncio.to_thread(queue)
     return web.json_response({
         "inbox": inbox,
-        "questions": knowledge_store.list_questions(),
         "hypotheses": hypotheses.list_all("open"),
         "hypothesis_budget": hypotheses.budget(),
         "shared_memory": _read_shared_memory(),
@@ -6456,52 +6731,6 @@ async def h_inbox_delete(request: web.Request) -> web.Response:
         raise web.HTTPNotFound(text="nothing waiting under that")
     return web.json_response({"deleted": item_id, "inbox": inbox,
                               "inbox_pending": pending})
-
-
-async def h_knowledge_answer(request: web.Request) -> web.Response:
-    """Answer an open question from the knowledge panel (by ts)."""
-    try:
-        ts = int(request.match_info["ts"])
-    except ValueError:
-        raise web.HTTPBadRequest(text="bad question id")
-    body = await request.json()
-    answer = str(body.get("answer") or "").strip()
-    if not answer:
-        raise web.HTTPBadRequest(text="answer required")
-    if len(answer) > 1000:
-        raise web.HTTPBadRequest(text="answer too long")
-    match = next((q for q in knowledge_store.list_questions() if q["ts"] == ts), None)
-    if match is None:
-        raise web.HTTPNotFound(text="no such question")
-    knowledge_store.answer_question(match["text"], answer)
-    knowledge_store.add_fact(f"{match['text'].rstrip('?')}: {answer}",
-                             source="homeowner", category=match.get("category", ""))
-    await _submit_answer(match["text"], answer)
-    _retire_question_everywhere(match["text"])
-    return web.json_response({"answered": True})
-
-
-async def h_knowledge_dismiss(request: web.Request) -> web.Response:
-    try:
-        ts = int(request.match_info["ts"])
-    except ValueError:
-        raise web.HTTPBadRequest(text="bad question id")
-    match = next((q for q in knowledge_store.list_questions() if q["ts"] == ts), None)
-    if match is None or not knowledge_store.dismiss_question(ts):
-        raise web.HTTPNotFound(text="no such question")
-    _retire_question_everywhere(match["text"])
-    return web.json_response({"dismissed": ts})
-
-
-async def h_knowledge_question_delete(request: web.Request) -> web.Response:
-    """Forget a question entirely — it becomes askable again."""
-    try:
-        ts = int(request.match_info["ts"])
-    except ValueError:
-        raise web.HTTPBadRequest(text="bad question id")
-    if not knowledge_store.remove_question(ts):
-        raise web.HTTPNotFound(text="no such question")
-    return web.json_response({"deleted": ts})
 
 
 # -- runtime settings (⚙ dialog) --------------------------------------------
@@ -7344,7 +7573,6 @@ def make_app() -> web.Application:
     app.router.add_put("/api/settings", h_settings_put)
     app.router.add_get("/api/insights", h_insights)
     app.router.add_post("/api/generate", h_generate)
-    app.router.add_post("/api/generate_all", h_generate_all)
     app.router.add_delete("/api/insight/{id}", h_delete_insight)
     app.router.add_put("/api/insight/{id}", h_rename_insight)
     app.router.add_delete("/api/card/{id}", h_delete_card)
@@ -7371,6 +7599,10 @@ def make_app() -> web.Application:
     app.router.add_get("/api/baselines", h_baselines)
     app.router.add_post("/api/baselines/run", h_baselines_run)
     app.router.add_get("/api/appliances", h_appliances)
+    # The fixed prefix before the {name} pattern, which would otherwise
+    # answer the aggregate with a 404 for a store called "".
+    app.router.add_get("/api/knowledge/house", h_house)
+    app.router.add_get("/api/knowledge/house/{name}", h_house_store)
     app.router.add_get("/api/weekly", h_weekly)
     app.router.add_post("/api/weekly/run", h_weekly_run)
     app.router.add_get("/api/activity", h_activity)
@@ -7386,7 +7618,6 @@ def make_app() -> web.Application:
     app.router.add_get("/api/scenes/areas", h_scene_areas)
     app.router.add_post("/api/scenes/design", h_scene_design)
     app.router.add_post("/api/proposal/{ts}/{verb}", h_proposal_decide)
-    app.router.add_post("/api/replay", h_replay)
     app.router.add_post("/api/findings/unsettle", h_finding_unsettle)
     app.router.add_post("/api/undo/{token}", h_undo)
     app.router.add_post("/api/finding/{ts}/{verb}", h_finding_verb)
@@ -7420,9 +7651,6 @@ def make_app() -> web.Application:
     app.router.add_post("/api/memory/import", h_memory_import)
     app.router.add_post("/api/knowledge/fact", h_knowledge_fact_add)
     app.router.add_delete("/api/memory/inbox/{id}", h_inbox_delete)
-    app.router.add_post("/api/knowledge/question/{ts}/answer", h_knowledge_answer)
-    app.router.add_post("/api/knowledge/question/{ts}/dismiss", h_knowledge_dismiss)
-    app.router.add_delete("/api/knowledge/question/{ts}", h_knowledge_question_delete)
     app.router.add_get("/api/auth", h_auth)
     app.router.add_post("/api/auth/token", h_auth_token)
     app.router.add_post("/api/auth/logout", h_auth_logout)

@@ -119,6 +119,19 @@ def frame(reasons: list[str], state: dict) -> str:
     if state.get("woke_at"):
         lines.append(f"It is about {state['woke_at']}, which is when this "
                      "house usually starts moving.")
+
+    # What brAIn has measured, and what it has been told. Both blocks are
+    # built by `categories` and handed in by the caller: this module has
+    # no store of its own and a brief that re-derived either would be a
+    # second answer to what this house is like. Neither is material —
+    # `worth_saying` has already decided there is something to say — they
+    # are what makes a reason SPECIFIC without spending a tool call, and
+    # what stops a message repeating something the homeowner has
+    # corrected.
+    if str(state.get("house") or "").strip():
+        lines += ["", str(state["house"]).strip()]
+    if str(state.get("memory") or "").strip():
+        lines += ["", str(state["memory"]).strip()]
     lines += ["",
               "Use your read-only tools to make any of the above specific "
               + "before you write. Then write the paragraph and nothing else."]

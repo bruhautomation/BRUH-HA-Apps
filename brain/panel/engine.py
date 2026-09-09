@@ -668,6 +668,7 @@ ANALYST_TOOLS = [
     f"{MCP}get_baseline",         # what is NORMAL here, so "unusual" is a number
     f"{MCP}explain_change",       # what CAUSED a change, not just that it happened
     f"{MCP}get_activity",
+    f"{MCP}get_house_model",   # what has been MEASURED here, and what has not
     f"{MCP}get_areas",
     f"{MCP}get_registry",
     f"{MCP}get_automations",

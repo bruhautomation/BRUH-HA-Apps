@@ -78,6 +78,31 @@ TERMINAL_UIS = ("chat", "classic")
 # setting AND as the automatic fallback when a search run fails.
 GATHER_MODES = ("search", "snapshot")
 
+# When a scheduled card is allowed to spend a Claude run.
+#   "changed" — the age floor AND something the card reads has moved
+#               since the stored run: a new finding in its domains, an
+#               edit to memory.md, a measurement rebuilt, feedback, a
+#               rewritten focus. The default, because a card regenerated
+#               over identical inputs produces the same card at full
+#               price and teaches people the dashboard is a timer.
+#   "always"  — the age floor alone, which is what every release before
+#               this one did.
+#   "never"   — nothing is scheduled; Generate and Refresh still work,
+#               because pressing a button is an explicit ask.
+REFRESH_MODES = ("changed", "always", "never")
+
+# The add-on options the first-run flow can be asked for but cannot
+# write. `addon_options.write` maps a settings name onto a Configuration
+# option and only knows the six generation options, so these four are
+# stored HERE and read as a fallback *under* the Supervisor's own value:
+# a Configuration-tab entry always wins, and the panel's copy is what
+# makes a choice made during onboarding take effect at all. Each is None
+# when nobody has chosen — never "" — so "unset" and "deliberately
+# blank" stay different answers.
+NOTIFY_KEYS = ("findings_notify_service", "notify_quiet_start",
+               "notify_quiet_end", "morning_brief")
+MAX_SERVICE_CHARS = 120
+
 # Runtime-overridable add-on options: name → allowed integer range.
 # None (or absent) = use the value from the add-on's Configuration tab.
 OPTION_RANGES = {
@@ -111,6 +136,18 @@ DEFAULTS = {
     #              tools. Deterministic and the fallback whenever a search
     #              run fails, so nothing depends on the model behaving.
     "gather_mode": "search",
+    # See REFRESH_MODES. `auto_refresh_hours` is still the floor between
+    # runs; this decides what has to be true once the floor is cleared.
+    "refresh_mode": "changed",
+    # Written once, by the first onboarding that finishes: this install's
+    # card set is what the homeowner accepted, not the nine that ship in
+    # the code. Absent on an install that onboarded before this existed,
+    # which is what keeps its cards exactly where they are.
+    "curated_categories": False,
+    "findings_notify_service": None,
+    "notify_quiet_start": None,
+    "notify_quiet_end": None,
+    "morning_brief": None,
     "plan": "pro",
     "budget_percent": 25,
     "terminal_ui": "chat",
@@ -155,6 +192,17 @@ def load() -> dict:
         out["terminal_ui"] = data["terminal_ui"]
     if data.get("gather_mode") in GATHER_MODES:
         out["gather_mode"] = data["gather_mode"]
+    if data.get("refresh_mode") in REFRESH_MODES:
+        out["refresh_mode"] = data["refresh_mode"]
+    if isinstance(data.get("curated_categories"), bool):
+        out["curated_categories"] = data["curated_categories"]
+    if isinstance(data.get("morning_brief"), bool):
+        out["morning_brief"] = data["morning_brief"]
+    for key in ("findings_notify_service", "notify_quiet_start",
+                "notify_quiet_end"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            out[key] = value.strip()[:MAX_SERVICE_CHARS]
     pct = data.get("budget_percent")
     if isinstance(pct, int) and not isinstance(pct, bool) and 5 <= pct <= 100:
         out["budget_percent"] = pct
@@ -249,6 +297,25 @@ def save(fields: dict) -> dict:
                 raise ValueError(
                     f"gather_mode must be one of {', '.join(GATHER_MODES)}")
             clean[key] = value
+        elif key == "refresh_mode":
+            if value not in REFRESH_MODES:
+                raise ValueError(
+                    f"refresh_mode must be one of {', '.join(REFRESH_MODES)}")
+            clean[key] = value
+        elif key == "curated_categories":
+            if not isinstance(value, bool):
+                raise ValueError("curated_categories must be a boolean")
+            clean[key] = value
+        elif key == "morning_brief":
+            # Tri-state on purpose: None is "nobody has said", which is
+            # what lets the add-on option answer instead.
+            if value is not None and not isinstance(value, bool):
+                raise ValueError("morning_brief must be a boolean or null")
+            clean[key] = value
+        elif key in NOTIFY_KEYS:
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"{key} must be a string or null")
+            clean[key] = (value or "").strip()[:MAX_SERVICE_CHARS] or None
         elif key == "terminal_ui":
             if value not in TERMINAL_UIS:
                 raise ValueError(
