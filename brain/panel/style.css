@@ -369,12 +369,25 @@ html, body {
 .card .foot {
   display: flex;
   align-items: center;
+  /* The foot WRAPS. It carries a stamp, why the run happened, a duration, a
+     token count and up to two controls, and a single non-wrapping line
+     squeezes whichever of those shrinks first down to nothing on a phone --
+     which for the reason is the whole of it. A row that gives way is the
+     rule the top bar and the design bar already follow. */
+  flex-wrap: wrap;
   gap: 8px;
+  row-gap: 4px;
   padding: 0 16px 12px;
   color: var(--ink-3);
   font-size: 11.5px;
 }
 .card .foot .spacer { flex: 1; }
+/* Why this run happened, and why the next one is waiting. Neither is ever
+   clipped: `overflow: hidden` here would answer "why did this change" with
+   half a sentence, which reads as a rendering fault rather than a reason. */
+.card .foot .because,
+.card .foot .hold { flex: 0 1 auto; }
+.card .foot .hold { color: var(--ink-2); }
 
 /* dimmed disabled category */
 .card.off > :not(.card-head) { opacity: 0.45; }
@@ -1184,6 +1197,43 @@ body.modal-open {
    for three buttons, and a button that wraps mid-word is one nobody
    presses confidently on a phone. */
 .diag .row.tight { margin: 6px 0 0; gap: 6px; flex-wrap: wrap; }
+/* ⚙ Problems: one row per report file — a checkbox, when, the headline,
+   and a delete at the end. The label is the whole row's press target so a
+   thumb never has to find the box itself; the ✕ sits outside the label so
+   pressing it cannot also tick the row. The touch floor for these lives in
+   the scoped `pointer: coarse` block at the end of the file, with the
+   proposals' and the account section's, and not here: the first coarse
+   block in this file is the 16px text floor and is read as such. */
+.prob .prow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.prob .prow:last-child { border-bottom: 0; }
+.prob .probpick {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  min-height: 32px;
+}
+.prob .probcheck { flex: none; width: 18px; height: 18px; margin: 0; }
+.prob .probwhen { flex: none; color: var(--ink-2); font-size: 11.5px; white-space: nowrap; }
+.prob .probhead { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.prob .probcount { color: var(--ink-2); font-size: 11.5px; margin-left: 4px; }
+.prob .probdel { flex: none; }
+.probbtns { flex-wrap: wrap; gap: 8px; }
+@media (max-width: 520px) {
+  /* The stamp goes over the headline rather than beside it: a 390px row
+     holding a box, "3 hours ago", a sentence and a button truncates the
+     sentence, and the sentence is the row. */
+  .prob .probpick { flex-wrap: wrap; }
+  .prob .probwhen { flex-basis: calc(100% - 26px); }
+}
 /* One capture is a house's worth of JSON. It scrolls inside its own box,
    because the dialog it is in is the one place a horizontal scrollbar on
    the page would be worst. */
@@ -3061,6 +3111,47 @@ body.term-classic #termMode .ico-out { display: block; }
   line-height: 1.5;
 }
 
+/* One heading per group on a step that has two of them. A step whose two
+   lists run together is one list somebody ticks without noticing that half
+   of it means something different. */
+.obh3 { margin: 22px 0 2px; font-size: 15px; color: var(--ink); }
+.obh3:first-child { margin-top: 0; }
+
+/* Step 0's hour pickers. A row rather than the stacked `.setup label` shape
+   because "quiet from X until Y" is one sentence and reads as one. */
+.obquiet {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.obquiet select { min-width: 84px; }
+
+/* The morning-brief tick uses the card shape the recommendations use: it is
+   the same kind of decision, and a bare checkbox beside a sentence is the
+   one control on this step a thumb misses. */
+.obcheckrow { margin-top: 14px; align-items: center; }
+
+/* What to paste, shown rather than described. Selectable on its own, because
+   an ingress iframe may be refused the clipboard outright and a Copy button
+   that fails must not be the only route to the text. */
+.obmanual {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--plane);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
 /* ------------------------------------------------------------------ activity
    What changed, and what changed it. The list is long by nature — a busy
    house makes hundreds of rows a day — so the row is one line at every
@@ -3199,6 +3290,266 @@ body.term-classic #termMode .ico-out { display: block; }
   .actrow .cause { width: 100%; max-width: none; padding-left: 62px; }
   .actwhy { margin-left: 12px; }
 }
+
+/* ------------------------------------------------------------------ today
+   One wrapping line above the cards. It is a line and not a card because
+   nothing on it is waiting on anybody: it is the record of what brAIn did
+   for itself, and a panel of tiles for that would out-weigh the insights
+   underneath it. Segments wrap rather than shrink, so a phone drops to two
+   or three lines and every segment keeps its words -- the topbar's rule,
+   one surface down. */
+.today {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin: 0 0 12px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.today .tseg { display: inline-flex; align-items: center; gap: 6px; }
+/* The separator is drawn rather than typed, so a wrapped line never begins
+   with a stray bullet. */
+.today .tseg + .tseg::before {
+  content: "";
+  width: 1px;
+  height: 11px;
+  margin-right: 8px;
+  background: var(--hairline);
+}
+.today .tseg.press {
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+  padding: 6px 0;
+  min-height: 44px;
+}
+.today .tseg.press:hover { color: var(--ink-1); }
+.today .tsegwhere {
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 11.5px;
+}
+
+/* -------------------------------------------------------------- knowledge
+   Four sections: what brAIn said this morning, what it has measured, what it
+   remembers, and what is queued to be remembered. The first two are new
+   surfaces over stores that were readable from nowhere -- a rhythm that had
+   not gathered enough days, a baseline pass that had stopped running and a
+   house with nothing odd in it were three silences nothing could tell apart.
+
+   A measurement row is a BUTTON at the 44px floor for `.actrow`'s reason: a
+   row people miss is a row they stop pressing, on any pointer. */
+.ksec { max-width: 900px; margin: 0 0 26px; }
+.ksec > h2 { margin: 0 0 4px; font-size: 18px; }
+.ksec > .hint { margin: 0 0 12px; }
+
+.kbrief { max-width: 68ch; }
+.kbriefwhen {
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  margin-top: 10px;
+}
+.kbrieftext {
+  margin: 4px 0 0;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--ink-1);
+}
+/* The states that are not a brief -- off, failed, or nothing worth saying --
+   read as the explanations they are rather than as this morning's message. */
+.kbrieftext.off { color: var(--ink-2); font-size: 13.5px; }
+
+/* `minmax(0, 1fr)` rather than a bare single column: a grid track is sized
+   to its widest item's MIN-CONTENT by default, and the milestone card that
+   opens under a row holds an <iframe>, whose intrinsic 300px survives a
+   `width: 100%` and dragged the whole track to 480px inside a 390px window.
+   The dashboard's `.grid` carries the same guard as `min(460px, 100%)`. */
+.kstores { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+.krow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.krow:hover { background: var(--surface-2); }
+.krow .ktxt { flex: 1 1 auto; min-width: 0; }
+.krow .kname { font-size: 14px; font-weight: 600; }
+.krow .ksum { color: var(--ink-2); font-size: 13px; margin-top: 1px; }
+/* "I could not look" is its own answer and it goes under the summary it
+   qualifies -- a state with no reason under it is a state nobody can act
+   on. It wraps: this is a sentence, not a chip. */
+.krow .kwhy { color: var(--ink-3); font-size: 12.5px; margin-top: 3px; }
+
+.kchip {
+  flex: none;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.krow[data-state="ready"] .kchip { color: var(--good); border-color: var(--good); }
+.krow[data-state="collecting"] .kchip { color: var(--accent); border-color: var(--accent); }
+.krow[data-state="stale"] .kchip { color: var(--warning); border-color: var(--warning); }
+
+/* A row that opens onto a card says so. Without it the card is behind a
+   press nobody has a reason to make, which is the same as not having one. */
+.krow .kcardmark {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--hairline));
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+/* A measurement with no card yet. One muted line under its OWN row, so it
+   reads as "this card arrives when this lands" rather than as a card that
+   failed to load -- which is what a greyed-out card-shaped box would say. */
+.kpending {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 4px 12px;
+  padding: 4px 10px;
+  border-left: 2px solid var(--hairline);
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+.kpending .kpendmark { color: var(--ink-3); }
+
+/* The milestone card itself, indented under its row so the tie to the
+   measurement survives on a phone where nothing can sit side by side.
+   `min-width: 0` because `.kstores` is a grid and a grid item's automatic
+   minimum is its MIN-CONTENT -- a title, a summary and a row of highlight
+   boxes measured 468px inside a 390px window and took the page sideways
+   with them, which is the same trap `.strow` and `.addbar` carry. */
+.kcard, .kpending { min-width: 0; }
+.kcard { margin: 0 0 12px 12px; }
+.kcard .summary, .kcard .foot { overflow-wrap: anywhere; }
+
+.kdrill {
+  margin: 0 0 12px 12px;
+  padding: 12px 14px;
+  border-left: 2px solid var(--hairline);
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.kdrillhead { margin: 12px 0 6px; font-size: 13px; color: var(--ink-1); }
+.kdrillhead:first-child { margin-top: 0; }
+.kfoot { margin-top: 8px; color: var(--ink-3); font-size: 12px; }
+
+/* A table is wide by nature, so it scrolls inside its own box rather than
+   taking the page sideways with it. */
+.ktablewrap { overflow-x: auto; }
+.ktable { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.ktable th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink-3);
+  padding: 4px 12px 4px 0;
+  white-space: nowrap;
+}
+.ktable td {
+  padding: 4px 12px 4px 0;
+  border-top: 1px solid var(--hairline);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.ktable td:first-child { white-space: normal; color: var(--ink-1); }
+
+/* Baselines: a search box, because a house has hundreds of these and a list
+   of hundreds is one nobody scrolls. 16px, spelled here, because this is a
+   class-qualified rule and would otherwise beat the touch floor. */
+.kfind {
+  width: 100%;
+  max-width: 320px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--plane);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 16px;
+}
+.kfindlist { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.kpick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 4px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.kpick.on { border-color: var(--accent); color: var(--accent); }
+.kflag { color: var(--ink-3); font-size: 11px; }
+
+.kchart { margin-top: 8px; }
+.kweek { width: 100%; height: auto; display: block; }
+.kweek .kgrid { stroke: var(--hairline); stroke-width: 1; }
+.kweek .ktick { fill: var(--ink-3); font-size: 10px; }
+/* The band is the spread and the line is the median. The band is drawn
+   first and translucent, so the line is readable through it in both
+   themes -- a solid fill in dark mode swallows its own line. */
+.kweek .kband { fill: var(--accent); opacity: 0.16; stroke: none; }
+.kweek .kline { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+/* Where we are now. Without it the picture answers "what is normal" and not
+   "is this hour unusual", which is the question somebody opened it with. */
+.kweek .know { stroke: var(--warning); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.kchartfoot { color: var(--ink-3); font-size: 12px; margin-top: 6px; }
+
+/* Closures: seven rows of twenty-four. Darker is more often open; a pale
+   cell is an hour nothing watched, which is a different claim from an hour
+   it was never open in and must not share a colour with it. */
+.kheat { margin-bottom: 14px; }
+.kheatname { color: var(--ink-1); font-size: 12.5px; margin-bottom: 4px; }
+.kheatgrid {
+  display: grid;
+  grid-template-columns: 34px repeat(24, minmax(0, 1fr));
+  gap: 2px;
+  align-items: center;
+  max-width: 560px;
+}
+.kheatday { color: var(--ink-3); font-size: 10.5px; }
+.kcell { display: block; height: 12px; border-radius: 2px; background: var(--accent); }
+.kcell.unwatched {
+  background: none;
+  border: 1px dashed var(--hairline);
+  height: 10px;
+}
+
+/* An answered problem, on the Findings tab's Answered filter. It carries one
+   press and takes nothing back. */
+.finding.settled { border-left-color: var(--hairline); }
+.findsaid { margin: 6px 0 0; color: var(--ink-2); font-size: 13px; }
 
 /* ------------------------------------------------------------ proposals
    The fifth kind of knowledge, and the only list here that is not about
@@ -3378,6 +3729,103 @@ body.term-classic #termMode .ico-out { display: block; }
 .properror .propbtns { margin-top: 0; }
 
 .propbtns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+
+/* chat states
+   What a conversation row says about itself, and what the composer says
+   sending will do. One vocabulary (`ROW_STATES` in chat_session.py) drawn
+   in two places: a pill on the row, and a line above the message box.
+   Every pill shares one shape with `.crbusy`/`.crask` above; what differs
+   is the colour, because the states differ in what they ask of a person —
+   "Live" and "Record" are facts and stay quiet, "Paused to make room" and
+   "Context lost" are things worth knowing before you type and take the
+   warning colour, and "Needs your OK" keeps the loudest treatment because
+   the card behind it declines itself if nobody comes. */
+.crlive, .crpaused, .crlost, .crrecord {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  border: 1px solid var(--hairline);
+  background: var(--surface-2);
+  color: var(--ink-3);
+}
+.crlive {
+  border-color: color-mix(in srgb, var(--good) 55%, var(--hairline));
+  color: var(--good);
+  background: color-mix(in srgb, var(--good) 10%, var(--surface));
+}
+.crpaused, .crlost {
+  border-color: var(--warning);
+  color: var(--warning);
+  background: transparent;
+}
+/* The line above the composer. The same quiet register as the meta line
+   under it: a sentence you read once before typing, not a banner. The
+   button is 44px whatever the pointer — it is one of the composer's own
+   controls, like the send button beside it, and "Resume now" is a press
+   somebody makes on a phone. Not a coarse-only floor: the composer's
+   controls are this size everywhere. */
+.chatstate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 4px 16px 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--ink-3);
+}
+/* Hidden in the markup and shown by the renderer: a fresh chat with
+   nothing in it has nothing to say ("Ready · New chat" would offer a
+   no-op), and on a 320px phone the 44px it would take is the difference
+   between the meta line being on screen and under it. */
+.chatstate.hidden { display: none; }
+.chatstate .cs-pill {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--surface-2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.chatstate .cs-pill:empty { display: none; }
+.chatstate[data-state="live"] .cs-pill,
+.chatstate[data-state="answering"] .cs-pill {
+  border-color: color-mix(in srgb, var(--good) 55%, var(--hairline));
+  color: var(--good);
+}
+.chatstate[data-state="answering"] .cs-pill { animation: crpulse 1.6s ease-in-out infinite; }
+.chatstate[data-state="needs_ok"] .cs-pill,
+.chatstate[data-state="paused_room"] .cs-pill,
+.chatstate[data-state="context_lost"] .cs-pill {
+  border-color: var(--warning);
+  color: var(--warning);
+  background: transparent;
+}
+.chatstate .cs-text { flex: 1; min-width: 0; }
+.chatstate .btn {
+  flex: none;
+  min-height: 44px;
+  padding-inline: 14px;
+  border-radius: 10px;
+}
+.chatstate .btn:empty { display: none; }
+/* One Stop, not two: while the line offers a labelled Stop, the square
+   icon in the bar — the same handler — stands down. */
+.chatstate[data-state="answering"] ~ .chatbar .chatsend.stop { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .chatstate[data-state="answering"] .cs-pill { animation: none; }
+}
+/* The record dialog's own copy of the press, above the replay. */
+.viewacts { display: flex; justify-content: flex-end; margin: 0 0 8px; }
+.viewacts .btn { min-height: 44px; padding-inline: 14px; }
+
 /* These are the primary actions of the tab and one of them enables an
    automation in somebody's house, so they get the touch floor even though
    `.btn.small` is 28px everywhere else in the panel. Scoped rather than
@@ -3403,6 +3851,23 @@ body.term-classic #termMode .ico-out { display: block; }
      for the reason they give. */
   .propask .btn { min-height: 44px; padding-inline: 14px; }
   .propask select { min-height: 44px; }
+  /* ⚙ Problems: the row is the press target (its label), the ✕ beside it,
+     and the three buttons under the list. Scoped for the reason above; the
+     tick box itself grows so a thumb can see what it hit. */
+  .prob .probpick, .prob .probdel, .probbtns .btn { min-height: 44px; }
+  .prob .probdel { min-width: 44px; }
+  .prob .probcheck { width: 22px; height: 22px; }
+  /* The first-run flow. Every press here is a decision made once and lived
+     with: where brAIn may reach you, whether it may wake the house, which
+     cards exist at all. Scoped like the four blocks above rather than
+     raised globally, for the reason they give. */
+  .setup .row .btn { min-height: 44px; padding-inline: 14px; }
+  .setup .obquiet select { min-height: 44px; }
+  .oblist .obcard { min-height: 44px; }
+  .oblist .obcard input { width: 22px; height: 22px; }
+  /* The one control on the Knowledge tab that asks brAIn for a Claude run,
+     on the card it would rewrite. */
+  .kcard .foot .btn { min-height: 44px; padding-inline: 14px; }
 }
 /* The reason box replaces the buttons INSIDE the card, so what you are
    explaining stays on screen while you write about it. */

@@ -23,7 +23,7 @@
 #   brain memory undo [n]               Revert a memory change
 #   brain memory hypotheses             Pending guesses awaiting your yes/no
 #   brain memory confirm "<text>"       Confirm a guess (becomes a fact)
-#   brain memory reject "<text>"        Reject a guess (becomes a dead end)
+#   brain memory reject "<text>" [why]  Reject a guess (becomes a dead end)
 #   brain memory inbox                  Facts awaiting consolidation
 #   brain memory consolidate            Run one consolidation pass now
 #   brain memory clear --confirm        Reset the document (.bak kept)
@@ -38,6 +38,11 @@ DIM='\033[2m'
 NC='\033[0m'
 
 MEMORY_DIR="${BRAIN_MEMORY_DIR:-/config/.brain/memory}"
+# The panel. Confirm/reject, export and import all go through its API: the
+# panel owns the ledgers the analyst reads (in the add-on's /data, which this
+# script cannot see) and is the one writer that can settle a guess in all of
+# them at once.
+PANEL="${BRAIN_PANEL_URL:-http://127.0.0.1:8099}"
 MEMORY_FILE="$MEMORY_DIR/memory.md"
 INBOX_DIR="$MEMORY_DIR/inbox"
 HYPOTHESES_FILE="$MEMORY_DIR/hypotheses.jsonl"
@@ -60,7 +65,7 @@ Usage:
 
   brain memory hypotheses          Guesses waiting on a yes/no from you
   brain memory confirm "<text>"    Yes — file it as a fact
-  brain memory reject "<text>"     No — record it as a dead end
+  brain memory reject "<text>" [why]  No — a dead end; the reason teaches
 
   brain memory inbox               Facts awaiting consolidation
   brain memory consolidate         Fold the inbox in now
@@ -231,6 +236,77 @@ resolve_hypothesis() {
     return 1
 }
 
+# The panel's own list of open guesses, as JSON — or nothing at all when the
+# panel is not answering, which is the one case the JSONL below is for.
+#
+# Settling a guess is three writes, and only one of them is in this
+# directory. The panel's /api/hypothesis/{ts}/confirm queues the memory
+# line; its /reject also records the dead end in the knowledge ledger under
+# /data, which is what the analyst's prompt reads back — so a `reject` that
+# only flipped hypotheses.jsonl retired the guess here and left the analyst
+# free to make it again. Same rule as `brain findings`: go through the API
+# that every button on the tab presses, and fall back to the file only when
+# there is no panel to ask, saying so.
+panel_hypotheses() {
+    local payload
+    payload=$(curl -s -m 10 "$PANEL/api/findings" 2>/dev/null) || return 1
+    [ -n "$payload" ] || return 1
+    printf '%s' "$payload" | jq -c '.hypotheses // []' 2>/dev/null
+}
+
+# resolve_panel_hypothesis <guesses-json> <needle> -> prints "<ts>\t<text>"
+# rc 0 found, 1 none, 2 ambiguous (the candidates are printed to stderr).
+resolve_panel_hypothesis() {
+    local guesses="$1" needle="$2" exact matches count
+    exact=$(printf '%s' "$guesses" | jq -r --arg t "$needle" \
+        '.[] | select(.text == $t) | "\(.ts)\t\(.text)"' 2>/dev/null | head -1)
+    if [ -n "$exact" ]; then
+        printf '%s' "$exact"
+        return 0
+    fi
+    matches=$(printf '%s' "$guesses" | jq -r --arg t "$needle" \
+        '.[] | select(.text | ascii_downcase | contains($t | ascii_downcase)) | "\(.ts)\t\(.text)"' \
+        2>/dev/null)
+    count=$(printf '%s' "$matches" | grep -c . || true)
+    if [ "${count:-0}" -eq 1 ]; then
+        printf '%s' "$matches"
+        return 0
+    fi
+    if [ "${count:-0}" -gt 1 ]; then
+        echo -e "${YELLOW}That matches more than one guess:${NC}" >&2
+        printf '%s\n' "$matches" | cut -f2 | sed 's/^/  ? /' >&2
+        return 2
+    fi
+    return 1
+}
+
+# settle_via_panel <confirm|reject> <needle> [note]
+# rc 0 settled, 1 the panel refused (its message printed), 2 ambiguous,
+# 3 no open guess matches, 4 the panel is not answering (caller falls back).
+settle_via_panel() {
+    local verb="$1" needle="$2" note="${3:-}" guesses found ts text body rc
+    guesses=$(panel_hypotheses) || return 4
+    [ -n "$guesses" ] || return 4
+    found=$(resolve_panel_hypothesis "$guesses" "$needle"); rc=$?
+    [ $rc -eq 2 ] && return 2
+    [ $rc -ne 0 ] && return 3
+    ts="${found%%$'\t'*}"
+    text="${found#*$'\t'}"
+    body=$(jq -cn --arg note "$note" '{note: $note}')
+    local response http_code
+    response=$(curl -s -m 30 -w '\n%{http_code}' -X POST \
+        -H "Content-Type: application/json" -d "$body" \
+        "$PANEL/api/hypothesis/${ts}/${verb}" 2>/dev/null)
+    http_code="${response##*$'\n'}"
+    response="${response%$'\n'*}"
+    if [ "$http_code" = "200" ]; then
+        SETTLED_TEXT="$text"
+        return 0
+    fi
+    echo -e "${RED}${response:-the panel did not answer}${NC}" >&2
+    return 1
+}
+
 settle_hypothesis() {  # settle_hypothesis <text> <confirmed|rejected>
     local text="$1" status="$2" now
     now=$(date +%s)
@@ -241,9 +317,23 @@ settle_hypothesis() {  # settle_hypothesis <text> <confirmed|rejected>
         && mv "${HYPOTHESES_FILE}.tmp" "$HYPOTHESES_FILE"
 }
 
+SETTLED_TEXT=""
+
+# Only when the panel is not there: flip the JSONL the panel would have
+# flipped, and say what that leaves undone.
+local_fallback_note() {
+    echo -e "${DIM}The panel is not answering on ${PANEL}, so this was recorded in hypotheses.jsonl only — the panel's own ledger was not updated. It settles there once the add-on is running.${NC}" >&2
+}
+
 cmd_confirm() {
     require_arg "${1:-}" "'confirm' needs the guess text (a distinctive fragment is enough)"
     local text rc
+    settle_via_panel confirm "$1"; rc=$?
+    case $rc in
+        0)  echo -e "${GREEN}Confirmed and queued as a fact:${NC} $SETTLED_TEXT"; return ;;
+        1|2) exit 1 ;;
+        3)  echo -e "${RED}No open guess matches that.${NC} See: brain memory hypotheses" >&2; exit 1 ;;
+    esac
     text=$(resolve_hypothesis "$1"); rc=$?
     if [ $rc -eq 2 ]; then exit 1; fi
     if [ $rc -ne 0 ]; then
@@ -255,11 +345,18 @@ cmd_confirm() {
     # the guess itself is never spoken of again.
     append_inbox_fact "$text" "hypothesis-confirmed" "high" > /dev/null
     echo -e "${GREEN}Confirmed and queued as a fact:${NC} $text"
+    local_fallback_note
 }
 
 cmd_reject() {
     require_arg "${1:-}" "'reject' needs the guess text (a distinctive fragment is enough)"
-    local text rc
+    local text rc note="${2:-}"
+    settle_via_panel reject "$1" "$note"; rc=$?
+    case $rc in
+        0)  echo -e "${GREEN}Rejected.${NC} ${DIM}brAIn won't pursue that line again.${NC}"; return ;;
+        1|2) exit 1 ;;
+        3)  echo -e "${RED}No open guess matches that.${NC} See: brain memory hypotheses" >&2; exit 1 ;;
+    esac
     text=$(resolve_hypothesis "$1"); rc=$?
     if [ $rc -eq 2 ]; then exit 1; fi
     if [ $rc -ne 0 ]; then
@@ -267,7 +364,13 @@ cmd_reject() {
         exit 1
     fi
     settle_hypothesis "$text" "rejected"
+    if [ -n "$note" ]; then
+        # The panel would have queued this as a correction; offline, the
+        # closest honest thing is the same sentence into the same queue.
+        append_inbox_fact "brAIn guessed: \"$text\". The homeowner says that is wrong, because: $note" "correction" "high" > /dev/null
+    fi
     echo -e "${GREEN}Rejected.${NC} ${DIM}brAIn won't pursue that line again.${NC}"
+    local_fallback_note
 }
 
 # --------------------------------------------------------------------------
@@ -356,8 +459,6 @@ shift
 # the findings and knowledge ledgers live in the add-on's /data, which this
 # script cannot see, and the panel is the one writer that can merge safely.
 
-PANEL="${BRAIN_PANEL_URL:-http://127.0.0.1:8099}"
-
 cmd_export() {
     local out="${1:-brain-export-$(date +%Y-%m-%d).json}"
     if curl -s -f -m 30 "$PANEL/api/memory/export" -o "$out" 2>/dev/null; then
@@ -412,7 +513,7 @@ case "$action" in
     clear)        cmd_clear "${1:-}" ;;
     hypotheses|guesses) cmd_hypotheses ;;
     confirm)      cmd_confirm "${1:-}" ;;
-    reject)       cmd_reject "${1:-}" ;;
+    reject)       cmd_reject "${1:-}" "${2:-}" ;;
     log)
         if [ "${1:-}" = "--show" ]; then
             shift; cmd_log_show "${1:-}"

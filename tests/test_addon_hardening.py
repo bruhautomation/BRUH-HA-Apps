@@ -322,6 +322,69 @@ class TestLanGateBehaviour(unittest.TestCase):
         self.assertEqual(403, response.status)
 
 
+def _exclude_matches(pattern, rel_path):
+    """Does a `backup_exclude` pattern cover this /data-relative path?
+
+    The Supervisor resolves each pattern with `Path.glob` against the
+    add-on's data directory: `**` spans directories, `*` and `?` do not
+    cross a `/`. A directory pattern (`secrets/**`) covers everything
+    under it, and a bare name covers exactly that file.
+    """
+    import re as _re
+    out = ""
+    i = 0
+    while i < len(pattern):
+        c = pattern[i]
+        if pattern.startswith("**", i):
+            out += ".*"
+            i += 2
+            if i < len(pattern) and pattern[i] == "/":
+                i += 1
+            continue
+        if c == "*":
+            out += "[^/]*"
+        elif c == "?":
+            out += "[^/]"
+        else:
+            out += _re.escape(c)
+        i += 1
+    return _re.fullmatch(out, rel_path) is not None
+
+
+def _secret_paths_the_code_writes():
+    """Every /data path that holds a token, read from the code that writes
+    it — never a list typed here, which would agree with the manifest the
+    day both were written and drift together afterwards."""
+    import re as _re
+    brain = ADDONS["brain"]
+    with open(os.path.join(brain, "panel", "engine.py")) as f:
+        engine_src = f.read()
+    with open(os.path.join(brain, "run.sh")) as f:
+        run_sh = f.read()
+
+    found = {}
+    # The panel's own store: SECRETS_DIR default + AUTH_FILE's basename.
+    secrets_dir = _re.search(
+        r'SECRETS_DIR = os\.environ\.get\("BRAIN_SECRETS", "(/data/[^"]+)"\)',
+        engine_src).group(1)
+    auth_name = _re.search(
+        r'AUTH_FILE = os\.path\.join\(SECRETS_DIR, "([^"]+)"\)', engine_src).group(1)
+    found["panel credential store (engine.AUTH_FILE)"] = f"{secrets_dir}/{auth_name}"
+    # run.sh's last-known-good copy of the CLI credential, and the module
+    # constant that pins the same path from the other end.
+    found["credential backup (engine.AUTH_BACKUP_FILE)"] = _re.search(
+        r'"BRAIN_AUTH_BACKUP", "(/data/[^"]+)"', engine_src).group(1)
+    backup_dir = _re.search(
+        r'auth_backup_dir="(/data/[^"]+)"', run_sh).group(1)
+    found["credential backup (run.sh auth_backup_dir)"] = (
+        f"{backup_dir}/.credentials.json")
+    # The env file run.sh writes SUPERVISOR_TOKEN into.
+    env_file = _re.search(r'env_file="(/data/[^"]+)"', run_sh).group(1)
+    assert "SUPERVISOR_TOKEN" in run_sh[run_sh.index('env_file="'):][:4000]
+    found["background env file (run.sh env_file)"] = env_file
+    return {why: path[len("/data/"):] for why, path in found.items()}
+
+
 class TestBackupsExcludeCredentials(unittest.TestCase):
     """HA backups are unencrypted unless the user opts in."""
 
@@ -329,6 +392,31 @@ class TestBackupsExcludeCredentials(unittest.TestCase):
         excludes = load_config(ADDONS["brain"])["backup_exclude"]
         self.assertIn(".config/claude/**", excludes)
         self.assertIn("terminal-credential", excludes)
+
+    def test_every_secret_the_code_writes_is_excluded(self):
+        """Three stores shipped for two releases with nothing excluding
+        them: the panel's own credential file, run.sh's backup copy of the
+        CLI's, and the env file carrying SUPERVISOR_TOKEN. Each path comes
+        from the constant that writes it, so a store that moves fails here
+        rather than turning up in somebody's cloud backup."""
+        excludes = load_config(ADDONS["brain"])["backup_exclude"]
+        secrets = _secret_paths_the_code_writes()
+        self.assertGreaterEqual(len(secrets), 4, secrets)
+        for why, rel in secrets.items():
+            with self.subTest(store=why, path=rel):
+                self.assertTrue(
+                    any(_exclude_matches(p, rel) for p in excludes),
+                    f"{rel} ({why}) is matched by no backup_exclude pattern")
+
+    def test_the_matcher_reads_patterns_the_way_the_supervisor_does(self):
+        """The matcher above is only worth trusting if it refuses too."""
+        self.assertTrue(_exclude_matches("secrets/**", "secrets/claude_auth.json"))
+        self.assertTrue(_exclude_matches("secrets/**", "secrets/deep/er/file"))
+        self.assertTrue(_exclude_matches(".brain_env", ".brain_env"))
+        self.assertFalse(_exclude_matches(".brain_env", ".brain_env.bak"))
+        self.assertFalse(_exclude_matches("secrets/*", "secrets/deep/file"))
+        self.assertFalse(_exclude_matches("chat/**", "chat_transcript.json"))
+        self.assertFalse(_exclude_matches("terminal-credential", "x/terminal-credential"))
 
     def test_minecraft_excludes_the_rcon_secret(self):
         excludes = load_config(ADDONS["bruh_minecraft_server"])["backup_exclude"]

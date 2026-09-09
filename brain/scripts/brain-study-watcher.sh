@@ -40,6 +40,19 @@ run_request() {
 
     topic=$(jq -r '.topic // ""' "$claimed" 2>/dev/null)
 
+    # Onboarding's own syllabus asks for a shorter session than a study a
+    # person asked for: five topics before anyone has seen a card is the
+    # one place the cap is a courtesy rather than a runaway guard. The
+    # request carries it, so the watcher has to pass it on — a field
+    # written and never read is a setting that silently does nothing.
+    local cap
+    cap=$(jq -r '.max_turns // empty' "$claimed" 2>/dev/null)
+    if [ -n "$cap" ] && [ "$cap" -gt 0 ] 2>/dev/null; then
+        export BRAIN_LEARN_MAX_TURNS="$cap"
+    else
+        unset BRAIN_LEARN_MAX_TURNS
+    fi
+
     if [ -n "$topic" ]; then
         log "studying '${topic}' (requested from Home Assistant)"
         bash "$LEARN_SCRIPT" "$topic" 2>&1 | sed 's/^/[brain-study] /'

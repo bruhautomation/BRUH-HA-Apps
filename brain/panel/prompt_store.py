@@ -8,9 +8,12 @@ at read time — categories.py itself stays untouched and dependency-free.
 
 File shape: {"categories": {"<id>": {"title": "...", "icon": "...",
 "focus": "...", "enabled": false, "hidden": true, "refresh_hours": 12,
-"schedule": ["07:00", "19:00"]}}} — every key is optional per category; an
-absent key means "use the shipped default". A non-empty schedule (fixed
-daily run times) takes precedence over refresh_hours for that category.
+"schedule": ["07:00", "19:00"]}}, "accepted": ["energy", "climate"]} — every
+key is optional per category; an absent key means "use the shipped default".
+A non-empty schedule (fixed daily run times) takes precedence over
+refresh_hours for that category. ``accepted`` is which shipped cards this
+home asked for at onboarding, and is read only on a curated install (see
+``accepted_ids``).
 
 ``hidden`` is how a shipped card gets "deleted": the definition can't go
 away (it ships in the code), so the card is dropped from the dashboard and
@@ -39,23 +42,109 @@ MAX_TITLE = 60
 MAX_ICON = 4
 
 
-def load_overrides() -> dict:
-    """The stored override map; tolerates a missing or corrupt file."""
+def _read() -> dict | None:
+    """The file as it is, or None when there is nothing readable there.
+
+    The one parse, with the one thing `load_overrides` cannot express:
+    whether the file was *read*. "No overrides" and "I could not look"
+    are the same answer for an override — both mean the shipped defaults
+    — and different answers for the accepted set, where an empty list
+    read out of a corrupt file would take every card off the dashboard.
+    """
     try:
         with open(OVERRIDES_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        cats = data.get("categories")
-        if isinstance(cats, dict):
-            return {"categories": cats}
-    except (OSError, ValueError, AttributeError):
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def load_overrides() -> dict:
+    """The stored override map; tolerates a missing or corrupt file."""
+    out: dict = {"categories": {}, "accepted": []}
+    data = _read()
+    if data is None:
         # No overrides file, or an unreadable one, means no overrides — which
         # is the shipped behaviour, not a broken one.
-        pass
-    return {"categories": {}}
+        return out
+    cats = data.get("categories")
+    if isinstance(cats, dict):
+        out["categories"] = cats
+    picked = data.get("accepted")
+    if isinstance(picked, list):
+        out["accepted"] = [c for c in picked if isinstance(c, str)]
+    return out
 
 
 def _write(data: dict) -> None:
     atomic_write.write_json(OVERRIDES_FILE, data)
+
+
+# ---------------------------------------------------------------------------
+# Which shipped cards this home has, on an install that was asked
+# ---------------------------------------------------------------------------
+# brAIn shipped nine categories enabled from the moment it was installed,
+# and onboarding replaced that with "study the home, then propose" — for
+# the CUSTOM proposals only. The nine went on appearing the moment
+# onboarding finished, so a person who ticked two proposals got eleven
+# cards and nine of them were the generic ones the flow exists to avoid.
+#
+# `accepted` is the list of shipped ids this home actually asked for, and
+# it is consulted ONLY when `curated_categories` is set — a flag written
+# by the first onboarding that finishes under this release. An install
+# that onboarded before it exists has no flag, reads as uncurated, and
+# keeps every card it has: a release that silently deleted somebody's
+# dashboard would be a far worse failure than the one this fixes.
+
+def is_curated() -> bool:
+    """True when this install's shipped-card set was chosen, not shipped."""
+    import settings_store  # noqa: PLC0415 — panel-local, and no cycle
+
+    return bool(settings_store.load().get("curated_categories"))
+
+
+def accepted_ids() -> set[str] | None:
+    """The shipped ids this home accepted, or None for "all of them".
+
+    None is not an empty set and the two must not be conflated: an
+    uncurated install has never been asked and shows everything, while a
+    curated install that accepted nothing shows nothing and that is the
+    answer somebody gave.
+
+    A file that could not be READ is also None — the checks' rule, one
+    module over: "I could not look" and "you chose none" are different
+    claims, and only the second may empty somebody's dashboard. The
+    tolerant `load_overrides` cannot say which, so this asks the parse
+    itself.
+    """
+    if not is_curated():
+        return None
+    data = _read()
+    if data is None:
+        return None
+    picked = data.get("accepted")
+    if not isinstance(picked, list):
+        # Curated, and the key is gone: something rewrote the file
+        # without it, and hiding every card over that would be a
+        # dashboard emptied by a bug rather than by an answer.
+        return None
+    return {c for c in picked if isinstance(c, str)}
+
+
+def set_accepted(ids) -> list[str]:
+    """Record which shipped cards this home has. Returns what was stored."""
+    known = {c["id"] for c in CATEGORIES}
+    picked = [c["id"] for c in CATEGORIES
+              if c["id"] in known and c["id"] in set(ids or ())]
+    data = load_overrides()
+    data["accepted"] = picked
+    _write(data)
+    return picked
+
+
+def accept(cat_id: str) -> list[str]:
+    """Add one shipped card to what this home has, keeping shipped order."""
+    return set_accepted(set(load_overrides()["accepted"]) | {cat_id})
 
 
 def save_override(cat_id: str, fields: dict) -> dict:
@@ -156,9 +245,18 @@ def is_hidden(cat_id: str) -> bool:
 
 
 def visible_categories() -> list[dict]:
-    """Shipped categories the user hasn't removed, in shipped order."""
+    """Shipped categories this home has and hasn't removed, in shipped order.
+
+    Two different filters and they answer different questions: `hidden`
+    is a card somebody deleted, `accepted` is the set they were offered
+    and chose from. On an uncurated install the second is not asked at
+    all, which is exactly the behaviour every release before this had.
+    """
     hidden = {
         cid for cid, entry in load_overrides()["categories"].items()
         if isinstance(entry, dict) and entry.get("hidden") is True
     }
-    return [c for c in CATEGORIES if c["id"] not in hidden]
+    allowed = accepted_ids()
+    return [c for c in CATEGORIES
+            if c["id"] not in hidden
+            and (allowed is None or c["id"] in allowed)]

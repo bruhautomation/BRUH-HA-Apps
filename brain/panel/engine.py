@@ -668,12 +668,25 @@ ANALYST_TOOLS = [
     f"{MCP}get_baseline",         # what is NORMAL here, so "unusual" is a number
     f"{MCP}explain_change",       # what CAUSED a change, not just that it happened
     f"{MCP}get_activity",
+    f"{MCP}get_house_model",   # what has been MEASURED here, and what has not
     f"{MCP}get_areas",
     f"{MCP}get_registry",
     f"{MCP}get_automations",
     f"{MCP}get_automation_trace",
     f"{MCP}get_ha_config",
     f"{MCP}get_weather_forecast",
+    # The rest of the MCP server's reads. Every tool the server registers is
+    # in exactly one of these two lists (tests/test_security.py drives
+    # TOOL_IMPLEMENTATIONS against both), because a tool in neither is
+    # neither allowed nor forbidden — it FAILS when the analyst reaches for
+    # it, which is not the same guarantee and reads like a broken tool.
+    f"{MCP}get_services",
+    f"{MCP}get_service_details",
+    f"{MCP}get_device_registry",
+    f"{MCP}list_dashboards",
+    f"{MCP}get_dashboard",
+    f"{MCP}get_error_log",
+    f"{MCP}get_supervisor_info",
 ]
 # Named explicitly rather than left to the allow-list, because `--allowedTools`
 # governs what runs WITHOUT a prompt, and a headless run cannot be prompted:
@@ -696,7 +709,7 @@ def run_analyst(
     system_prompt: str,
     model: str = "",
     timeout: int = 480,
-    max_turns: int = 12,
+    max_turns: int = 40,
     source: str = "",
 ) -> dict:
     """Run `claude -p` with READ-ONLY Home Assistant tools. Same envelope.
@@ -733,7 +746,7 @@ def run_agent(
     system_prompt: str,
     model: str = "",
     timeout: int = 900,
-    max_turns: int = 30,
+    max_turns: int = 60,
     source: str = "",
 ) -> dict:
     """Run `claude -p` WITH its tools. Same envelope as ``run_claude``.
@@ -757,6 +770,31 @@ def run_agent(
         f"the fix run passed its {timeout}s limit and was stopped", source)
 
 
+# A turn cap is a runaway guard, never a budget — and a guard that trips
+# has to change what happens next, or every token the run spent is thrown
+# away with the answer. So a run that ends on `error_max_turns` is asked to
+# LAND: one more invocation, `--resume` on the same session, two turns,
+# and a prompt that says finish now with what you have. The resumed
+# conversation still holds everything the run read, so what comes back is
+# the answer in the task's own format with one sentence about what it did
+# not get to — a partial that files, instead of a thorough one that never
+# did. The landing is charged to the same wall-clock budget as the run.
+LANDING_TURNS = 2
+LANDING_MIN_S = 20
+LANDING_PROMPT = (
+    "You have run out of room for further investigation. Do not call any "
+    "more tools. Finish NOW with what you already have, in exactly the "
+    "format the task asked for, and end with one sentence saying what you "
+    "did not get to."
+)
+
+
+def hit_turn_cap(result: dict) -> bool:
+    """Did this run end on the CLI's own turn cap (not ours, not a timeout)?"""
+    return (not result.get("ok")
+            and journal.classify(result) == "max_turns")
+
+
 def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
              max_turns: int, timeout_message: str, source: str = "") -> dict:
     """Invoke `claude -p` and parse its envelope.
@@ -766,40 +804,54 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
     copies: a fix applied to one and not the other is how the tool-enabled
     path quietly stops authenticating the way the analysis path does.
 
-    ``source`` claims the run's transcript for a face ("card", "fix") the
-    way every other background caller does — a minted ``--session-id``,
-    recorded in run_sources *before* the run, because a run that times out
-    or crashes still left a transcript behind and it should still be
-    labelled as the run it was. The same fallback the consolidator has: a
-    CLI that rejects the flag names it on stderr and dies unspoken, and
-    then the run is retried without it — the label is optional, the run is
-    not. An unclaimed engine-directory transcript is simply not listed.
+    Every run mints a ``--session-id`` before it starts. ``source`` claims
+    it for a face ("card", "fix") the way every other background caller
+    does — recorded in run_sources *before* the run, because a run that
+    times out or crashes still left a transcript behind and it should still
+    be labelled as the run it was; an unclaimed one (the auth self-check)
+    is simply not listed. The same fallback the consolidator has: a CLI
+    that rejects the flag names it on stderr and dies unspoken, and then
+    the run is retried without it — the label is optional, the run is not.
+
+    A run that ends on the turn cap is landed (see LANDING_PROMPT) on the
+    id the CLI reports for it, and the landed answer is the run's result;
+    the journal line says so (``extra.landed``). A landing that also fails
+    leaves the ordinary error, which names no setting — there is none.
     """
-    argv = _claude_argv() + [
-        "-p",
-        "--output-format", "json",
-        "--max-turns", str(max_turns),
-    ] + flags
+    base = _claude_argv() + ["-p", "--output-format", "json"]
     if model:
-        argv += ["--model", model]
+        base += ["--model", model]
+    argv = base + ["--max-turns", str(max_turns)] + flags
     started = time.monotonic()
-    result = None
+    session_id = str(uuid.uuid4())
     if source:
-        session_id = str(uuid.uuid4())
-        if run_sources.record(session_id, source):
-            result = _spawn_cli(argv + ["--session-id", session_id],
-                                prompt, timeout, timeout_message)
-            if not (result["ok"] or "session-id" not in (result.get("error") or "")):
-                result = None
-    if result is None:
+        run_sources.record(session_id, source)
+    result = _spawn_cli(argv + ["--session-id", session_id],
+                        prompt, timeout, timeout_message)
+    if not (result["ok"] or "session-id" not in (result.get("error") or "")):
         result = _spawn_cli(argv, prompt, timeout, timeout_message)
+    landed = False
+    if hit_turn_cap(result):
+        # The CLI's own id first: after the older-CLI retry above the
+        # minted one names no conversation at all.
+        resume_id = str((result.get("meta") or {}).get("session_id")
+                        or session_id)
+        remaining = int(timeout - (time.monotonic() - started))
+        if remaining >= LANDING_MIN_S:
+            landing = _spawn_cli(
+                base + ["--max-turns", str(LANDING_TURNS)] + flags
+                + ["--resume", resume_id],
+                LANDING_PROMPT, remaining, timeout_message)
+            if landing["ok"]:
+                result, landed = landing, True
     _journal(source or "engine", result, model, timeout_message,
-             time.monotonic() - started)
+             time.monotonic() - started,
+             extra={"landed": True} if landed else None)
     return result
 
 
 def _journal(source: str, result: dict, model: str, timeout_message: str,
-             duration_s: float) -> None:
+             duration_s: float, extra: dict | None = None) -> None:
     """One journal line per invocation, whatever happened to it.
 
     Best effort by construction (journal.record never raises), and kept
@@ -815,6 +867,7 @@ def _journal(source: str, result: dict, model: str, timeout_message: str,
         tokens=usage_store.tokens_from_meta(meta),
         turns=meta.get("num_turns") if isinstance(meta.get("num_turns"), int) else None,
         run_id=str(meta.get("session_id") or "")[:64],
+        extra=extra,
     )
 
 
@@ -867,8 +920,11 @@ def _envelope(proc: subprocess.CompletedProcess) -> dict:
         meta["usage"] = envelope["usage"]
     if envelope.get("is_error") or not text:
         if envelope.get("subtype") == "error_max_turns":
-            err = ("Claude hit the turn limit before finishing the insight — "
-                   "hit Regenerate to try again")
+            # Reached only when the landing in _run_cli failed too. No
+            # setting is named because there is none to change: the cap
+            # is a runaway guard, and what ended this run is the wall
+            # clock or the model, not a number somebody can raise.
+            err = "Claude ran out of room before finishing — try Regenerate"
         else:
             err = text or envelope.get("subtype") or stderr[-500:] or "empty result"
         return {"ok": False, "error": str(err)[:1000], "text": "", "meta": meta}

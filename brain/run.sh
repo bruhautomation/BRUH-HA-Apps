@@ -319,19 +319,19 @@ MEMORYMD
     # the token from the s6 environment for any reason.
     #
     # NOTE: BRAIN_CLAUDE_PERMS_FLAG is used by the interactive terminal only.
-    local assist_max_turns
-    assist_max_turns=$(bashio::config 'assist_max_turns' '8')
-    local automation_max_turns
-    automation_max_turns=$(bashio::config 'automation_max_turns' '30')
     local assist_tool_access
     assist_tool_access=$(bashio::config 'assist_tool_access' 'mcp_only')
     # Exported as well as written to the env file: the bash listeners
     # re-source /data/.brain_env, but the worker pool — the *default*
     # assist path — is plain python3 launched from this script and reads
-    # os.environ only. Without these exports assist_max_turns and
-    # assist_tool_access were dead options in fast mode.
-    export BRAIN_ASSIST_MAX_TURNS="$assist_max_turns"
-    export BRAIN_AUTOMATION_MAX_TURNS="$automation_max_turns"
+    # os.environ only. Without this export assist_tool_access was a dead
+    # option in fast mode.
+    #
+    # There is no turn cap here any more. `assist_max_turns`,
+    # `automation_max_turns` and `study_max_turns` were options whose
+    # only effect was to TRUNCATE a run that needed one more step — the
+    # work paid for and thrown away — so each face carries a large
+    # runaway guard of its own now and no option feeds it.
     export BRAIN_ASSIST_TOOL_ACCESS="$assist_tool_access"
 
     # Memory / learning options — exported here too (not just written to the
@@ -371,14 +371,11 @@ MEMORYMD
     export BRAIN_WEEKLY_REPORT="$weekly_report"
     export BRAIN_WEEKLY_REPORT_DAY="$weekly_report_day"
 
-    # Study sessions are where depth actually matters, and --max-turns
-    # truncates rather than degrading — a session that hits the cap files
-    # nothing at all. Generous by default; 0 removes the cap entirely.
-    local study_max_turns study_timeout_min
-    study_max_turns=$(bashio::config 'study_max_turns' '60')
+    # Study sessions are where depth actually matters; the timeout is the
+    # one budget they carry (there is no turn cap — see above).
+    local study_timeout_min
     study_timeout_min=$(bashio::config 'study_timeout_minutes' '30')
     local study_timeout_s=$((study_timeout_min * 60))
-    export BRAIN_LEARN_MAX_TURNS="$study_max_turns"
     export BRAIN_LEARN_TIMEOUT="$study_timeout_s"
 
     # House checks and the protected-entity policy. The checks interval
@@ -417,14 +414,11 @@ export SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
 export HA_TOKEN="${SUPERVISOR_TOKEN}"
 export HA_BASE_URL="http://supervisor/core/api"
 export SUPERVISOR_API_URL="http://supervisor"
-export BRAIN_ASSIST_MAX_TURNS="${assist_max_turns}"
-export BRAIN_AUTOMATION_MAX_TURNS="${automation_max_turns}"
 export BRAIN_ASSIST_TOOL_ACCESS="${assist_tool_access}"
 export BRAIN_ASSIST_LEARNING="${assist_learning}"
 export BRAIN_MEMORY_INJECTION="${memory_injection}"
 export BRAIN_MEMORY_MAX_KB="${memory_max_kb}"
 export BRAIN_EDIT_JOURNAL_DAYS="${edit_journal_days}"
-export BRAIN_LEARN_MAX_TURNS="${study_max_turns}"
 export BRAIN_LEARN_TIMEOUT="${study_timeout_s}"
 export BRAIN_CHECKS_INTERVAL_HOURS="${checks_interval_hours}"
 export BRAIN_PROTECTED_ENTITIES="${protected_entities}"
@@ -510,6 +504,18 @@ setup_claude_user() {
     touch /data/run-sources.jsonl 2>/dev/null || true
     chown claude:claude /data/run-sources.jsonl 2>/dev/null || true
     chmod 664 /data/run-sources.jsonl 2>/dev/null || true
+    # The edit journal has the same two writers in the same two users: the
+    # PreToolUse hook (`brain-edit-snapshot.py`, under the claude user
+    # every Claude edit runs as) and the panel's automation_writer (root,
+    # on an accepted proposal). A first write by the panel would leave a
+    # root-owned index.jsonl and a root-owned snapshot, and every later
+    # hook would fail its append — silently, because a hook that fails
+    # must not fail the edit — so nothing after that could be undone.
+    mkdir -p /data/.brain/edits/snapshots 2>/dev/null || true
+    touch /data/.brain/edits/index.jsonl 2>/dev/null || true
+    chown -R claude:claude /data/.brain/edits 2>/dev/null || true
+    chmod 775 /data/.brain/edits /data/.brain/edits/snapshots 2>/dev/null || true
+    chmod 664 /data/.brain/edits/index.jsonl 2>/dev/null || true
 
     # Claude Code needs write access to /config for editing HA configuration.
     # This is safe within the add-on container; HA Core runs in its own container.
@@ -1256,8 +1262,6 @@ setup_claude_settings() {
   "permissions": {
     "allow": [
       "mcp__home-assistant__*",
-      "mcp__claude_ai_Home_Assistant__*",
-      "mcp__claude_ai_Vercel__*",
       "Bash(*)",
       "Read",
       "Write",

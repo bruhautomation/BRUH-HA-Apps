@@ -25,6 +25,7 @@ Stdlib only.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import threading
@@ -56,6 +57,12 @@ OUTCOMES = (
 )
 
 _LOCK = threading.Lock()
+# Who wants to hear about a row once it has landed. `server` registers the
+# problem-report writer here so a failed run of ANY kind is reported without
+# every caller of `record` having to remember to. Each listener runs in its
+# own try: a listener that raised would fail the run it was told about, which
+# is the one thing this module promises not to do.
+_LISTENERS: list = []
 _SECRET_RE = re.compile(
     r"(sk-ant-[A-Za-z0-9_\-]{8,}|Bearer\s+[A-Za-z0-9._\-]{8,}"
     r"|eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,})")
@@ -76,7 +83,12 @@ def classify(result: dict, timeout_message: str = "") -> str:
         return "timeout"
     if "timed out" in low or "timeout" in low:
         return "timeout"
-    if "turn limit" in low or "max_turns" in low or "max turns" in low:
+    # The CLI's own verdict is on the envelope; the words are for a result
+    # that arrived without one (a shell path's stderr, an older shape).
+    if (result.get("meta") or {}).get("subtype") == "error_max_turns":
+        return "max_turns"
+    if ("turn limit" in low or "max_turns" in low or "max turns" in low
+            or "ran out of room" in low):
         return "max_turns"
     if "cli not found" in low:
         return "no_cli"
@@ -90,6 +102,32 @@ def classify(result: dict, timeout_message: str = "") -> str:
     if "unparseable" in low or "no json" in low:
         return "unparseable"
     return "error"
+
+
+def on_record(fn):
+    """Register ``fn(row)`` to be called after every recorded row. Returns
+    ``fn`` so it can be used as a decorator; `off_record` removes it."""
+    if fn not in _LISTENERS:
+        _LISTENERS.append(fn)
+    return fn
+
+
+def off_record(fn) -> None:
+    try:
+        _LISTENERS.remove(fn)
+    except ValueError:
+        # Not registered, or already removed: the state this was asked
+        # for is the state there is.
+        pass
+
+
+def _notify(row: dict) -> None:
+    for fn in list(_LISTENERS):
+        try:
+            fn(row)
+        except Exception:  # noqa: BLE001 — a listener may not fail the run
+            logging.getLogger("brain.journal").debug(
+                "journal listener %r raised", fn, exc_info=True)
 
 
 def record(source: str, outcome: str, *, ok: bool | None = None,
@@ -134,6 +172,7 @@ def record(source: str, outcome: str, *, ok: bool | None = None,
         # The journal is a diagnostic, and a diagnostic that takes down the
         # thing it diagnoses is worse than a missing line.
         pass
+    _notify(row)
     return row
 
 

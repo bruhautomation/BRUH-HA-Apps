@@ -1,7 +1,7 @@
 ---
 name: "brAIn"
 description: "Give your smart home a mind — Claude with full run of Home Assistant: every entity, device, area, dashboard and automation, plus insights, findings, memory, voice and a terminal"
-version: "1.47.3"
+version: "1.48.0"
 slug: "brain"
 init: false
 
@@ -75,6 +75,16 @@ backup_exclude:
   - .config/claude/**
   - home/.claude/**
   - terminal-credential
+  # The other three places a credential lives. `secrets/` is the panel's
+  # own store (claude_auth.json — a pasted token or a setup-token login);
+  # `.brain_auth_backup/` is run.sh's last-known-good copy of the CLI's
+  # .credentials.json, restored whenever the live file goes missing; and
+  # `.brain_env` carries SUPERVISOR_TOKEN into every background process.
+  # tests/test_addon_hardening.py derives these paths from the code that
+  # writes them, so a store that moves fails there rather than in a backup.
+  - secrets/**
+  - .brain_auth_backup/**
+  - .brain_env
   # The chat's scrollbacks. A directory since 1.45.0 (one file per
   # conversation); the old single file is still named because an upgraded
   # install still has one on disk.
@@ -110,9 +120,6 @@ options:
   dangerously_skip_permissions: false
   assist_fast_mode: true
   assist_tool_access: mcp_only
-  assist_max_turns: 8
-  automation_max_turns: 30
-  study_max_turns: 60
   study_timeout_minutes: 30
   learning: true
   memory_injection: true
@@ -156,9 +163,6 @@ schema:
   dangerously_skip_permissions: bool?
   assist_fast_mode: bool?
   assist_tool_access: "list(mcp_only|full)?"
-  assist_max_turns: "int(1,40)?"
-  automation_max_turns: "int(1,200)?"
-  study_max_turns: "int(0,500)?"
   study_timeout_minutes: "int(2,120)?"
   learning: bool?
   memory_injection: bool?

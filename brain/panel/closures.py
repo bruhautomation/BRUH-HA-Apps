@@ -237,7 +237,75 @@ def save(payload: dict, path: str | None = None) -> None:
         log.warning("could not write the closure store: %s", exc)
 
 
-async def fetch_history(session, ids: list[str], start: dt.datetime) -> dict:
+def progress(payload: dict | None = None, path: str | None = None,
+             now: float | None = None) -> dict:
+    """How much of the week this house's doors have been watched for.
+
+    The unit is an **hour of the week**, because that is what a bucket
+    is: `have` is the best-watched entity's count of them, since one door
+    with a full picture is what makes the bedtime check sayable at all
+    and an average over the house would hide it.
+    """
+    import baselines  # noqa: PLC0415 — one staleness floor, one home
+    import house  # noqa: PLC0415 — panel-local, one shape and one eta
+
+    now = time.time() if now is None else now
+    payload = load(path) if payload is None else payload
+    entities = payload.get("entities") or {}
+    best = max((len(e.get("buckets") or {}) for e in entities.values()
+                if isinstance(e, dict)), default=0)
+    built = int(payload.get("built_at") or 0) or None
+    asked = int(payload.get("asked") or 0)
+    common = {"unit": "hours", "need": MIN_BUCKETS, "have": best,
+              "detail": {"entities": len(entities)}, "updated_at": built,
+              # A bucket needs an hour of watching, and until the week
+              # wraps that is one more of them per hour of wall clock.
+              "per_unit_s": SECONDS_PER_HOUR, "now": now}
+
+    if payload.get("error"):
+        return house.progress(
+            state=house.UNAVAILABLE, reason=str(payload["error"])[:200],
+            summary=f"The last pass could not measure anything: {payload['error']}.",
+            **common)
+    if not built:
+        return house.progress(
+            state=house.NOT_STARTED, reason="no pass has run yet",
+            summary=("Nothing measured yet — the first pass runs overnight "
+                     f"and reads {HISTORY_DAYS} days of door history."),
+            **common)
+    if not asked:
+        return house.progress(
+            state=house.UNAVAILABLE,
+            reason="no door, window, lock or cover in this house",
+            summary=("No door, window, lock or cover to watch, so there is "
+                     "nothing here to be left open."),
+            **common)
+    if baselines.is_stale(payload, now):
+        return house.progress(
+            state=house.STALE,
+            reason=f"last measured {house.days_ago(built, now)}",
+            summary=(f"Measured {house.days_ago(built, now)} — the nightly "
+                     "pass has not run since."),
+            **common)
+    if best >= MIN_BUCKETS:
+        return house.progress(
+            state=house.READY,
+            summary=(f"{house.plural(len(entities), 'closure')} watched of "
+                     f"{asked} · the best-watched has {best} hours of the "
+                     "week with a picture."),
+            **common)
+    return house.progress(
+        state=house.COLLECTING,
+        reason=(f"{asked} closures watched, the best with {best} of the "
+                f"{MIN_BUCKETS} hours one needs"),
+        summary=(f"{house.plural(asked, 'closure')} watched, none with the "
+                 f"{MIN_BUCKETS} hours of history one needs before "
+                 "“usually open then” means anything."),
+        **common)
+
+
+async def fetch_history(session, ids: list[str],
+                        start: dt.datetime) -> dict | None:
     """Raw state changes per entity — not the bundle's downsampled shape.
 
     `ha_data.get_history` keeps only the newest `MAX_STATE_CHANGES` of a
@@ -246,7 +314,10 @@ async def fetch_history(session, ids: list[str], start: dt.datetime) -> dict:
     """
     import ha_data  # noqa: PLC0415
 
+    if not ids:
+        return {}
     out: dict[str, list] = {}
+    answered = 0
     for i in range(0, len(ids), BATCH):
         batch = ids[i:i + BATCH]
         try:
@@ -258,7 +329,11 @@ async def fetch_history(session, ids: list[str], start: dt.datetime) -> dict:
             # batch that failed; the rest of the house still gets measured.
             log.info("closure history batch failed: %s", exc)
             continue
-        for series in raw or []:
+        if not isinstance(raw, list):
+            log.info("closure history batch answered with no list")
+            continue
+        answered += 1
+        for series in raw:
             if not series:
                 continue
             eid = series[0].get("entity_id", "")
@@ -268,12 +343,20 @@ async def fetch_history(session, ids: list[str], start: dt.datetime) -> dict:
                 [(p.get("last_changed") or p.get("last_updated") or ""),
                  p.get("state")]
                 for p in series]
-    return out
+    # None is "Core did not answer for any batch"; {} is a house whose
+    # history holds nothing for these ids. `build` writes on the second
+    # and refuses on the first.
+    return out if answered else None
 
 
 async def build(session, states: dict, now: float | None = None,
                 path: str | None = None) -> dict:
-    """Measure every closure and write the store. Returns the payload."""
+    """Measure every closure and write the store. Returns the payload.
+
+    A fetch nothing answered writes nothing and hands back the previous
+    store with `error` beside it (`baselines.refused`); a house with no
+    closures still writes an empty store.
+    """
     now = time.time() if now is None else now
     import baselines  # noqa: PLC0415
 
@@ -288,6 +371,11 @@ async def build(session, states: dict, now: float | None = None,
     start = dt.datetime.fromtimestamp(now - HISTORY_DAYS * 86400,
                                       tz=dt.timezone.utc)
     series = await fetch_history(session, ids, start)
+    if series is None:
+        return baselines.refused(
+            "closures", load(path),
+            f"Home Assistant did not answer for any of the {len(ids)} "
+            "closures asked about")
     for eid, points in series.items():
         built = build_entity(points, tz, now)
         if built:
@@ -305,5 +393,5 @@ async def build(session, states: dict, now: float | None = None,
 __all__ = [
     "HISTORY_DAYS", "MAX_ENTITIES", "MIN_BUCKETS", "MIN_OBSERVED_S", "STORE",
     "build", "build_entity", "candidates", "fetch_history", "is_closure",
-    "load", "save", "spread_interval", "usual_open",
+    "load", "progress", "save", "spread_interval", "usual_open",
 ]

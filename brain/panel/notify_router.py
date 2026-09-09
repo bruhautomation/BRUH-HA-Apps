@@ -61,7 +61,7 @@ PRODUCER_URGENCY = {
     "check:dev.unavailable": "now",
     "check:dev.implausible": "now",
     "check:sys.addon_down": "now",
-    "check:sys.disk_low": "now",
+    "check:sys.disk_space": "now",
     # This one fires INSIDE quiet hours by construction — it only speaks
     # around the hour this house goes to bed, which is the hour the
     # window starts. Anything but `now` holds it until morning, which is
@@ -227,6 +227,28 @@ def save_queue(rows: list[dict], path: str | None = None) -> None:
         atomic_write.write_json(target, rows[-QUEUE_MAX:])
     except OSError as exc:
         log.warning("could not write the notification queue: %s", exc)
+        # A queue that could not be written is a finding that will never be
+        # announced, and the only other symptom is a phone that stayed
+        # quiet. Off the event loop: a report fetches the add-on log.
+        _report_queue_failure(target, exc)
+
+
+def _report_queue_failure(target: str, exc: BaseException) -> None:
+    import threading  # noqa: PLC0415 — panel-local, and only on failure
+
+    def run() -> None:
+        import reports  # noqa: PLC0415 — deferred: reports imports nothing of ours
+        reports.file_incident(
+            "notify", "the notification hold queue could not be written",
+            f"A finding held for the end of quiet hours could not be queued "
+            f"at {target}, so it will not be announced when they end.\n"
+            f"The error was: {exc}",
+            "Check that /data is writable and not full; `brain doctor` "
+            "reports the disk.",
+            run={"source": "notify_queue", "outcome": "notify",
+                 "error": str(exc)[:300]})
+
+    threading.Thread(target=run, name="brain-reports-queue", daemon=True).start()
 
 
 def hold(findings: list[dict], now: float, path: str | None = None) -> int:

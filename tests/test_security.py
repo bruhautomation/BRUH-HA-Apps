@@ -15,7 +15,10 @@ Tests cover:
 
 import os
 import re
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..")
 ADDON_DIR = os.path.join(BASE_DIR, "brain")
@@ -278,6 +281,38 @@ class TestAnalystCanOnlyRead(unittest.TestCase):
             if f"{self.engine.MCP}{n}" not in self.engine.ANALYST_DENIED)
         self.assertEqual(missing, [], f"acting MCP tools not denied: {missing}")
 
+    def test_every_mcp_tool_is_in_exactly_one_list(self):
+        """The partition, driven off the server's own tool table.
+
+        The prefix regex above catches an acting tool that was forgotten;
+        it says nothing about a READ tool in neither list, and a tool in
+        neither is not forbidden — it fails when the analyst reaches for it,
+        which from a card reads as a broken tool rather than a policy. So
+        every name the server registers has to be allowed or denied, and
+        never both: a tool on both lists is a policy nobody can read.
+        """
+        import sys
+        sys.path.insert(0, os.path.join(ADDON_DIR, "ha-mcp-server"))
+        import ha_mcp_server
+        registered = set(ha_mcp_server.TOOL_IMPLEMENTATIONS)
+        self.assertGreater(len(registered), 30, "did the tool table move?")
+        prefix = self.engine.MCP
+        allowed = {n[len(prefix):] for n in self.engine.ANALYST_TOOLS
+                   if n.startswith(prefix)}
+        denied = {n[len(prefix):] for n in self.engine.ANALYST_DENIED
+                  if n.startswith(prefix)}
+        self.assertEqual(sorted(allowed & denied), [],
+                         "a tool cannot be both allowed and denied")
+        self.assertEqual(sorted(registered - allowed - denied), [],
+                         "MCP tools in neither list: neither allowed nor "
+                         "forbidden, so the analyst's call fails instead")
+        self.assertEqual(sorted((allowed | denied) - registered), [],
+                         "the analyst lists name tools the server does not have")
+        # And the three the analyst leans on for "unusual" and "why" are on
+        # the reading side — a rename there would silently blind every card.
+        for name in ("get_baseline", "get_activity", "explain_change"):
+            self.assertIn(name, allowed, name)
+
     def test_the_analyst_is_not_told_it_has_no_tools(self):
         """The two preambles differ in exactly this, and share the rest."""
         import categories
@@ -290,5 +325,163 @@ class TestAnalystCanOnlyRead(unittest.TestCase):
             self.assertIn(shared, categories.SYSTEM_PROMPT)
 
 
+class TestTheFacesThatCanBypassTheChokepointAreToldTheList(unittest.TestCase):
+    """`protected_entities` is enforced in the MCP server and nowhere else.
+
+    That is right for every path whose only route to the house is a tool
+    call: `call_service` is the chokepoint every `control_*` routes
+    through, and it refuses. Two faces are not like that. The fixer holds
+    Bash, Write and Edit; the terminal and the chat hold the same. `ha
+    service light.turn_on`, a line added to automations.yaml, a script
+    written and reloaded — none of those passes the chokepoint, and none
+    of them can be refused by it.
+
+    Telling them is weaker than enforcing, and it is not offered as a
+    substitute: it is the only thing available on the paths enforcement
+    cannot reach, and a rule the model was never told is one it cannot
+    keep. What is asserted here is that the list actually arrives.
+    """
+
+    def setUp(self):
+        import sys
+        sys.path.insert(0, os.path.join(ADDON_DIR, "panel"))
+        import fixer
+        self.fixer = fixer
+
+    def test_the_fix_prompt_carries_the_homeowners_list(self):
+        prompt = self.fixer.build_prompt(
+            {"text": "the porch light is stuck"},
+            protected=["lock.front_door", "alarm_control_panel.*"])
+        self.assertIn("lock.front_door", prompt)
+        self.assertIn("alarm_control_panel.*", prompt)
+        self.assertIn("PROTECTED ENTITIES", prompt)
+
+    def test_an_empty_list_produces_no_heading(self):
+        """A heading over nothing reads as "nothing is protected here" —
+        which is true, and is also what a list that failed to load looks
+        like."""
+        for empty in (None, [], ["", "  "]):
+            with self.subTest(repr(empty)):
+                prompt = self.fixer.build_prompt(
+                    {"text": "x"}, protected=empty)
+                self.assertNotIn("PROTECTED ENTITIES", prompt)
+
+    def test_the_block_says_reading_is_still_allowed(self):
+        """Read-only tools are untouched by the chokepoint too: a
+        protected entity can be looked at, not acted on. A rule stated as
+        "do not touch" would stop the fixer confirming the problem."""
+        block = self.fixer.protected_block(["lock.front_door"])
+        self.assertIn("Read them freely", block)
+
+    def test_the_system_prompt_names_the_two_paths_that_are_not_checked(self):
+        """The hard rule is static and the list is runtime, so the rule
+        has to point at the list rather than repeat it."""
+        self.assertIn("PROTECTED ENTITY", self.fixer.FIX_SYSTEM)
+        self.assertIn("shell and file edits", self.fixer.FIX_SYSTEM)
+
+    def test_the_fixer_reads_the_same_option_the_mcp_server_does(self):
+        """One parse, one answer. A second reading of the same option is
+        a second answer to "is this entity protected"."""
+        import automation_writer
+        os.environ["BRAIN_PROTECTED_ENTITIES"] = " lock.Front_Door , light.* "
+        try:
+            self.assertEqual(automation_writer.protected_patterns(),
+                             ["lock.front_door", "light.*"])
+        finally:
+            os.environ.pop("BRAIN_PROTECTED_ENTITIES", None)
+
+    def test_the_generated_context_file_carries_the_list(self):
+        """`/config/CLAUDE.md` is the project context Claude Code reads,
+        which makes it the only route the terminal and the chat have to
+        the list. The block is lifted out of the real script and driven,
+        rather than grepped for — a grep for a line is not a test of what
+        the line does.
+        """
+        import subprocess
+        script = os.path.join(ADDON_DIR, "scripts", "ha-context-gen.sh")
+        with open(script, encoding="utf-8") as f:
+            source = f.read()
+        start = source.index("        protected_rows=$(printf")
+        end = source.index("\n", source.index("| sed 's/^/- `/;", start))
+        recipe = source[start:end].strip()
+        out = subprocess.run(
+            ["bash", "-c",
+             'BRAIN_PROTECTED_ENTITIES="lock.front_door, alarm_control_panel.*"\n'
+             + recipe.replace("        ", "") + '\nprintf "%s" "$protected_rows"'],
+            capture_output=True, text=True, check=True)
+        self.assertEqual(out.stdout,
+                         "- `lock.front_door`\n- `alarm_control_panel.*`")
+
+    def test_the_context_file_says_nothing_when_the_list_is_empty(self):
+        """Same rule as the fix prompt: an empty heading is a claim."""
+        with open(os.path.join(ADDON_DIR, "scripts", "ha-context-gen.sh"),
+                  encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn('if [ -n "${BRAIN_PROTECTED_ENTITIES:-}" ]; then', text)
+        self.assertIn("${protected_section}", text)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAStudySessionIsScopedLikeTheAnalyst(unittest.TestCase):
+    """A study reads the house; this script writes what it found.
+
+    Every fact a study session produces is filed by `brain-learn.sh`
+    itself, out of the JSON the model returned — the model never needs a
+    tool that writes. It nonetheless ran with whatever
+    `/config/.claude/settings.local.json` pre-approves, which is Bash,
+    Write and Edit, on a path reachable from an automation
+    (`brain.study`). It runs with the analyst's own lists now, read out
+    of `engine.py` so there is one answer to "what may an unattended run
+    touch", and it REFUSES rather than running unscoped when it cannot
+    read them.
+    """
+
+    SCRIPT = Path(BASE_DIR) / "brain" / "scripts" / "brain-learn.sh"
+
+    def _run(self, panel_dir, claude_log):
+        """Drive the real script against a fake claude, return its argv."""
+        env = dict(os.environ)
+        env.update({
+            "BRAIN_CLAUDE_BIN": str(claude_log.parent / "fake-claude"),
+            "BRAIN_MEMORY_DIR": str(claude_log.parent / "memory"),
+            "BRAIN_FINDINGS_INBOX": str(claude_log.parent / "findings"),
+            "BRAIN_CURRICULUM_FILE": str(claude_log.parent / "curriculum.json"),
+            "BRAIN_LEARN_TIMEOUT": "20",
+            "FAKE_CLAUDE_ARGV_LOG": str(claude_log),
+            "BRAIN_PANEL_DIR": str(panel_dir),
+        })
+        return subprocess.run(
+            ["bash", str(self.SCRIPT), "naming"],
+            capture_output=True, text=True, timeout=60, env=env)
+
+    def test_the_lists_come_from_engine_and_are_not_copied_here(self):
+        src = self.SCRIPT.read_text()
+        self.assertIn("engine.ANALYST_TOOLS", src)
+        self.assertIn("engine.ANALYST_DENIED", src)
+        self.assertIn("--allowedTools", src)
+        self.assertIn("--disallowedTools", src)
+        # The deny list must not be spelled out a second time in the
+        # shell: that is the copy that goes stale when a tool is added.
+        for acting in ("call_service", "fire_event", "run_script"):
+            self.assertNotIn(f"mcp__home-assistant__{acting}", src,
+                             "the shell keeps its own copy of the deny list")
+
+    def test_it_refuses_rather_than_running_with_no_restriction(self):
+        """The failure mode that matters: unreadable lists must not mean
+        an unscoped run, because that is the state this fixes."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            log = root / "argv.log"
+            (root / "fake-claude").write_text("#!/bin/sh\nexit 0\n")
+            (root / "fake-claude").chmod(0o755)
+            # A panel directory with no engine.py in it.
+            empty = root / "nopanel"
+            empty.mkdir()
+            proc = self._run(empty, log)
+        self.assertNotEqual(proc.returncode, 0,
+                            "an unscopeable study session still ran")
+        self.assertIn("refusing", (proc.stderr or "").lower())
+        self.assertFalse(log.exists(), "claude was invoked anyway")

@@ -91,10 +91,11 @@ MAX_ROWS = 60
 # point and never removed: see the module docstring.
 INTENT_TTL_DAYS = 14
 
-# One turn of searching, a handful of tool calls. It is not an insight
-# run: the whole job is to find one entity and write four lines of YAML.
+# A short search, a handful of tool calls. It is not an insight run: the
+# whole job is to find one entity and write four lines of YAML, so the
+# timeout is the budget and the turn cap only a runaway guard.
 TIMEOUT_S = 180
-MAX_TURNS = 8
+MAX_TURNS = 24
 
 ID_PREFIX = "brain_intent_"
 # `armed` is waiting on the house, `fired` has happened, and `refused` is

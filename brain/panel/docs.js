@@ -1,34 +1,48 @@
-// Documentation tab content.
+// GENERATED from brain/DOCS.md by panel/build-docs.py — do not edit.
 //
-// Kept as data rather than markup so the same source drives the sidebar,
-// the search index, and the rendered page — a docs page whose nav can drift
-// out of sync with its own body is worse than no nav.
+// Run `python3 panel/build-docs.py` after editing DOCS.md; CI runs it with
+// `--check` and fails if this file is out of date.
+//
+// Kept as data rather than markup so the same source drives the sidebar, the
+// search index, and the rendered page — a docs page whose nav can drift out of
+// sync with its own body is worse than no nav.
 //
 // `body` is a small markdown subset (headings, lists, tables, fenced code,
-// inline code, bold, links) rendered by renderDocs() in app.js. It is
-// authored here, never user-supplied, but the renderer escapes anyway.
+// inline code, bold, links) rendered by renderDocs() in app.js.
 
 window.BRAIN_DOCS = [
   {
-    id: "what",
+    id: "brain",
     icon: "🏠",
-    title: "What brAIn can do",
+    title: "brAIn",
     body: `
-# What brAIn can do
+# brAIn
 
-**Your house already has nerves. Now give it a brAIn.** Claude plus a suite of new tools
-hands it the keys. Stop programming your house — let it think.
+**Your house already has nerves. Now give it a brAIn.**
 
-brAIn runs Claude Code and a suite of tools inside Home Assistant, and builds a permanent
-memory of your house.
+Claude plus a suite of new tools hands it the keys. Stop programming your house — let it
+think.
+
+> **Back up Home Assistant first — somewhere that isn't this machine.**
+>
+> brAIn edits your real configuration: automations, dashboards, helpers, entities. It is
+> built to be careful, it snapshots files before it changes them, and \`brain undo\` puts
+> them back. None of that is a backup you can restore from if something goes wrong.
+>
+> **Settings → System → Backups**, then copy it off the device. A backup that only exists
+> on the machine you are changing is the one you cannot use when that machine is the
+> problem.
+
+A Home Assistant add-on that runs Claude Code and a suite of tools inside HA, which builds
+a permanent memory of your house.
 
 It sees the whole system — every entity, device, area, floor, dashboard, helper and
 automation — and it can change any of it. Explain a broken automation. Fix it. Write a new
 one. Remember why, next time.
 
 That memory isn't a black box. Open it, read it, edit it, correct it. An insights panel
-shows what it knows about your house and what it's done there — in the sidebar, or embedded
-straight into your dashboards.
+shows what it knows about your house and what it's done there — in the sidebar, or
+embedded straight into your dashboards.
 
 Reach it however you want: as your conversation agent, through a full-featured chat
 interface, or from native Claude Code. Your automations can call it too — which means your
@@ -36,389 +50,1027 @@ house can ask for help before you notice anything's wrong.
 
 One install, one sidebar panel, one login. Runs on the Claude **Pro** or **Max**
 subscription — or your own API key.
-
-## It runs Home Assistant
-
-Most AI integrations can turn on a light. brAIn administers the installation. It
-reaches Home Assistant three ways at once — **39 native tools** for reading and
-controlling, **65 registry-management services** for the parts of Home Assistant that
-normally only exist behind the Settings UI, and a **real shell** in \`/config\` for
-everything that is still a YAML file.
-
-- **Organisation** — create, rename and delete areas, floors and labels; set icons and
-  voice aliases; move devices and entities between them; put areas on floors. Ask it to
-  reorganise a house that grew by accident and it does the whole sweep.
-- **Devices and entities** — rename either, change an \`entity_id\`, hide, unhide,
-  enable, disable. Find references to things that no longer exist and clean them up —
-  dry-run first, so you see the list before anything goes.
-- **Integrations** — reload one without restarting Home Assistant; enable, disable or
-  remove one entirely.
-- **Helpers, zones, people, users** — create and delete input helpers, timers, counters
-  and schedules; draw a zone; add a person and attach their device trackers; create,
-  disable or remove a user.
-- **Dashboards** — read, create, rewrite, restore a previous version, reset to
-  defaults, manage resources. It can build a dashboard from a sentence.
-- **Automations, scripts and scenes** — it edits the YAML, validates it, reloads the
-  domain, and then reads the **traces** to see whether the thing actually fired and why
-  it didn't. That last part is what makes "write me an automation" work on the second
-  try instead of never.
-- **The house's own record** — history and long-term statistics, the logbook, the error
-  log, your other add-ons, weather forecasts, camera snapshots it can actually *see*,
-  rendered templates, and every service any integration exposes.
-
-**Nothing is create-only.** Everything that can be created can be renamed and deleted,
-and every attribute a \`create_\` service accepts has a service that changes it later.
-
-## It finds what's broken
-
-A **finding** is something wrong with your house — a dying battery, a sensor that
-quietly stopped reporting three weeks ago, a device stuck unavailable, an automation
-whose trigger can never fire. brAIn files them on its own, and each one gets **Fix it**
-(it makes the change and reports back), **Discuss** (talk it over first, changing
-nothing), **Remind me later**, **I fixed it**, **Dismiss**, or **Wrong**.
-
-**Wrong is the one that teaches it.** Press it and you can say *why* in a sentence —
-"that sensor always reads on, it isn't stuck" — and that sentence goes into memory and
-into what the next analysis knows about your house. It isn't a filter on a wording; it
-is a fact brAIn didn't have, and it is what stops the same misreading coming back in
-different words next week. The sentence is optional: if it really is just normal here,
-press it and say nothing.
-
-The Findings tab is also where brAIn's **guesses** wait — things it believes about your
-home and wants a yes or no on. Same list, because both are the same job: a decision only
-you can make. **No** asks why too.
-
-I fixed it and Wrong are endings, and ending one **removes it**. The answer goes into
-memory as a fact about your home and the wording is remembered, so the same problem is
-never raised at you twice — but there is no pile of dismissed cards left behind. A work
-list full of things nobody has to look at again is not a work list.
-
-## It explains your house
-
-Insight cards with real interactive visualisations, chosen for **your** home rather
-than shipped as defaults. Ask anything and get a card back; keep the good ones as
-recurring, or put any of them on your own dashboard.
-
-## It remembers
-
-One editable document of durable facts about your home — your nicknames, your
-household's rhythms, the devices that are meant to behave oddly. Learned from
-conversations, insight runs and study sessions, and read by **every** part of brAIn.
-Tell the voice assistant something and the cards know it.
-
-## It talks
-
-Pick brAIn in **Settings → Voice assistants** and talk to it from any Assist pipeline,
-satellite or the app. Answers land in a few seconds from a pool of pre-warmed workers,
-with your memory and an area map already in the prompt.
-
-## It has a terminal, in two shapes
-
-The real Claude Code CLI in your browser, running with your \`/config\` in front of it.
-**Chat** renders it as a conversation — text that reflows to your screen, tool calls
-folded into a line each, a normal text box — and **Classic** is a true terminal for
-anything that draws its own screen. Same session, same permissions, one button between
-them. Press **⤢** to give either the whole screen.
-
-## It can be undone
-
-Before Claude writes to any file under \`/config\`, the previous version is snapshotted.
-\`brain undo\` puts it back — one edit, or everything from today.
 `,
   },
-
   {
-    id: "start",
-    icon: "🚀",
-    title: "Getting started",
+    id: "it-runs-home-assistant",
+    icon: "🏡",
+    title: "It runs Home Assistant",
     body: `
-# Getting started
+# It runs Home Assistant
 
-Four steps, and the longest one runs in the background while you do something else.
+Most AI integrations can turn on a light. brAIn administers the installation.
 
-## 1. Sign in once
+It reaches Home Assistant three ways at once — a **native MCP server** (40 tools) for
+reading and controlling, **65 registry-management services** for the parts of Home
+Assistant that normally only exist behind the Settings UI, and a **real shell** in
+\`/config\` for everything that is still a YAML file.
 
-Open the **Insights** tab and connect your Claude account. A Claude **Pro** or **Max**
-subscription is the cheapest way to run brAIn — it uses your existing plan rather than
-API credits.
+**Organisation.** Create, rename and delete **areas**, **floors** and **labels**; set
+their icons and aliases; move devices and entities between them; put areas on floors.
+Ask it to reorganise a house that grew by accident — "every light in the basement
+should be in a Basement area under a Lower Floor" — and it does the whole sweep.
 
-Three ways in, in order of least effort:
+**Devices and entities.** Rename either. Change an \`entity_id\`. Set icons and voice
+aliases. Hide, unhide, enable and disable. Find references to entities and devices
+that no longer exist, and clean them up — dry-run by default, so you see the list
+before anything goes.
 
-- **Terminal tab → type \`claude\`** — sign in there and everything else picks it up.
-- **Guided sign-in** — the panel walks you through an Anthropic sign-in link.
-- **Paste a token or API key** — for when you already have one.
+**Integrations.** Reload one without restarting Home Assistant. Enable, disable, or
+remove one entirely.
 
-Whichever you use, one sign-in covers the terminal, insights, voice, and memory.
+**Helpers, zones, people, users.** Create and delete input helpers, timers, counters
+and schedules. Draw a zone or edit its radius. Add a person, attach their device
+trackers. Create a user, disable one, remove one.
 
-## 2. Let it learn your home
+**Dashboards.** List them, read them, create them, rewrite them, restore a previous
+version, reset one to defaults, and manage dashboard resources. brAIn can build you a
+dashboard from a sentence describing what you want on it.
 
-There are no cards yet, and that's deliberate. brAIn studies your house first — how it's
-named, when it's occupied, what it uses, how its devices behave — and only then proposes
-cards. A generic "Energy" card about a home it has never looked at says nothing useful.
+**Automations, scripts and scenes.** It reads and edits the YAML directly, validates
+it, reloads the domain, and then reads the **traces** to see whether the thing
+actually fired and why it didn't. That last part is what turns "write me an
+automation" from a party trick into something that works on the second try.
 
-Press **Start learning**. It takes a few minutes and runs in the background, so you can
-close the tab. When it's done you get a handful of suggestions specific to your home, and
-you pick which to keep.
+**The house's own record.** History and long-term statistics, the logbook, the error
+log, the Supervisor's view of your add-ons, weather forecasts, camera snapshots
+(it **sees** the image), rendered templates, and every service any integration exposes.
 
-If your home is too new or too sparse to learn much from, brAIn says so rather than
-inventing generic cards. Add more entities, let some history build up, and try again.
+**Add-ons.** List, start, stop, restart and read the logs of your other add-ons.
 
-## 3. Teach it something
+If it exists in Home Assistant, brAIn can look at it, and — with a handful of
+deliberate exceptions listed below — change it.
 
-Open **Memory** and tell it one thing that isn't in the data:
-
-> The garage fridge is meant to run 24/7 — it's not a fault.
-
-That single fact stops it flagging the same false alarm every week. Memory is where brAIn
-gets genuinely useful over time.
-
-## 4. Give it a voice
-
-Settings → **Voice assistants** → pick **brAIn** as the conversation agent. It answers
-about your home and controls it, using the same memory.
+> **Nothing is create-only.** Every attribute a \`create_*\` service accepts has a
+> service that changes it afterwards, and everything that can be created can be
+> renamed and deleted. A test asserts that, because a tool that can make a mess and
+> not clean it up is worse than no tool.
 `,
   },
-
   {
-    id: "tabs",
-    icon: "🗂",
-    title: "The tabs",
+    id: "it-finds-whats-broken-and-fixes-it",
+    icon: "🔧",
+    title: "It finds what's broken — and fixes it",
     body: `
-# The tabs
+# It finds what's broken — and fixes it
 
-## Insights
+A **finding** is something wrong with your house: a battery about to die, a sensor
+that quietly stopped reporting three weeks ago, a device stuck \`unavailable\`, an
+automation whose trigger can never fire.
 
-Claude analyses your Home Assistant data and writes interactive cards.
+brAIn files findings on its own, from scheduled analysis and from study sessions.
+Each one gets a severity, a plain-English explanation, and what to do about it:
 
-- **Cards chosen for your home.** A fresh install ships **none**. brAIn studies the house
-  first, then proposes cards grounded in what it actually found — you pick which to keep.
-  Delete one you don't want with **⋯ → Delete**; ask for it again whenever you like and
-  brAIn builds it fresh, for the house it now knows.
-- **The ask bar makes cards.** Every question you ask becomes a card. If the answer is
-  worth having every week, press **＋ Make recurring** on it and the question becomes a
-  scheduled insight. There is no separate "new insight" dialog — asking *is* the way in.
-- **The ask bar also learns.** Start a line with **"learn about…"** or **"study…"** and
-  brAIn runs a study session instead of drawing a card: it digs through the registry,
-  history and long-term statistics for that corner of the house, and what it finds lands
-  in **Memory** and **Findings**. It runs for minutes in the background.
-- **Tags are yours.** Each card carries a few \`#tags\` — the chips above the cards filter
-  by them, so \`#batteries\` surfaces every card that found a battery problem, whatever
-  category it came from. The row scrolls sideways; **✦ All** stays pinned at the left, so
-  clearing a filter is always one press. Press ✎ on a card's tag row to drop a bad tag or
-  add your own. Your edits survive regeneration; new tags a later run discovers still
-  appear.
+- **Fix it** — brAIn makes the change and reports back what it did. This is the **only**
+  place the add-on lets Claude act on your house on its own initiative, it is bounded
+  to one finding, and it only ever happens because you pressed the button.
+- **Discuss** — hands it to the chat with everything brAIn knows about it and asks
+  whether it really is a problem **here**. The discussion changes nothing; the decisions
+  ride along above the composer, so agreeing to the fix at the end of it is one press.
+- **I fixed it** — you handled it yourself. brAIn remembers that you did, and there
+  is an optional box for **how** ("replaced the CR2032 — it's a 3-monthly job on that
+  one"), which goes into memory beside the fact.
+- **Remind me later** — an hour, tomorrow, next week, next month. Not a decision: the
+  finding stays exactly as open as it was and simply stops asking, and it waits under
+  the **Later** filter with the date it comes back.
+- **Dismiss** — off the list now, and free to come back. It teaches the analyst
+  nothing, so the next run may well raise it again. That is the whole difference
+  between this and Wrong.
+- **Wrong** — brAIn has misread your house, and the box asks why. That reason is the
+  half that teaches: it goes verbatim under the finding in every future analysis and
+  into memory as a correction, so the same non-problem is never raised at you twice
+  in new words. The garage fridge that runs 24/7 gets flagged once.
 
-### A card's buttons
+The three that end a finding — **I fixed it**, **Wrong** and **Got it** after an
+automated fix — each do the same three things: a plain line into memory, a key in the
+settled ledger so it is never re-raised, and the row deleted. The buttons on a
+**notification** are the same endings under their own wording (**I've fixed it**,
+**Not a problem**, **Later**), because that message is written for a lock screen rather
+than for a list.
 
-Two on the card, and the rest behind **⋯**. Six glyphs in a row was most of the width of
-a card on a phone, and the title was what got squeezed out to make room for them.
+An **Answered** filter appears once the settled ledger holds something — capped,
+hidden until then, no badge, and one verb on each row: **Let brAIn raise it again**,
+which stops the suppression and nothing more. Nothing "comes back" unless the next
+analysis finds it still there.
+`,
+  },
+  {
+    id: "it-checks-the-house-without-spending-a-token",
+    icon: "✅",
+    title: "It checks the house without spending a token",
+    body: `
+# It checks the house without spending a token
 
-- **⤢ Expand** — the only one on the card itself, because it is the only one that acts on
-  what is on screen rather than on the card's definition.
-- **⋯ → Regenerate** — run this card again now.
-- **⋯ → Edit** — name, icon, prompt and schedule. Fixed daily times ("07:00, 19:00") use
-  far fewer tokens than a short interval.
-- **⋯ → Give feedback** — tell Claude what to do differently next time ("ignore the guest
-  room sensor", "show costs in dollars"). It sticks, for every future run.
-- **⋯ → Add to dashboard** — YAML for a Webpage card, so an insight lives on your own
-  Home Assistant dashboard.
-- **⋯ → Delete** — the card and its history.
+Not every problem needs a model to find. brAIn runs a set of **house
+checks** on a schedule (every \`checks_interval_hours\`, six by default) and on
+**Run checks now** on the Findings tab: they read Home Assistant directly —
+the registries, the states, your \`automations.yaml\`, the traces Home
+Assistant keeps, a week of statistics, the dashboards, and the Supervisor's
+own view of backups, add-ons and the disk — and file what they find as
+ordinary findings under a "check" label, with no Claude run at all.
 
-There is no "refresh everything" button. It used to sit in the top bar, where it was a
-circular arrow that read like a page reload and in fact queued a Claude run for every
-card you had — minutes of work and a real bite out of the usage the pill beside it was
-reporting. Cards run on their own schedule, and **⋯ → Regenerate** does one on demand.
+- **Automations** naming an entity that no longer exists, or calling a service
+  that is not registered (the old phone's \`notify.mobile_app_*\`, with the
+  replacement named); whose last run failed; that trigger but never get past
+  their condition; that keep being skipped on \`mode: single\`; that have never
+  fired, or were switched off and forgotten; that are copies of each other; or
+  that use a blueprint that is missing.
+- **Devices** unavailable for more than a day (one row per device, not per
+  entity); batteries low, or gone quiet — a dead device stops reporting its
+  own battery, which a threshold never notices; impossible readings; sensors
+  frozen on one value for a week; entities left behind by a removed
+  integration.
+- **An automation whose trigger has died** — the failure with no symptom at
+  all: the automation is switched on, nothing errors, no trace is written,
+  and it can never fire again, because the entity in its trigger has been
+  unavailable for days.
+- **Radios**: Z-Wave nodes the controller has marked dead (a mesh problem
+  with a mesh fix, so it is reported instead of the plain "unavailable" row,
+  not beside it), and Zigbee devices that have stopped checking in — ZHA's
+  own \`last_seen\`, because a sleepy sensor is "available" between check-ins
+  and availability alone says nothing about it.
+- **The registry**: entities still named after their hardware (a name like
+  \`0x00158d0001abcdef Temperature\` is unfindable in a picker and unsayable
+  to Assist); devices in no area, which "turn off the kitchen" and every
+  area card cannot see; helpers nothing refers to; device rows with no
+  entities behind them.
+- **The machine underneath**: nothing backed up, or nothing in a week; an
+  add-on in an error state, or set to start on boot and stopped; a disk
+  nearly full; a recorder database that has outgrown its headroom.
+- **Dashboards** showing entities that no longer exist.
+- **Forecasts**: a battery running down, from the slope of its last sixty
+  days, three weeks before it is flat.
 
-## Findings
+- **A reading well outside what your house normally does at this hour** —
+  see below.
+- **An automation you keep undoing.** A rule did something and somebody put
+  it straight back. Nothing else can see it — the automation ran, nothing
+  errored, and the light is off — and it is the clearest signal a house
+  gives about a rule being wrong for it. Two shapes count: three times in a
+  day, **measured against how often that rule actually ran** (three undos of
+  something that ran three hundred times is you having an unusual Tuesday,
+  not a broken rule), and the slower one — putting the same thing back once
+  a day for weeks, which never reaches three in any single day and so is
+  invisible to a daily count.
 
-Things brAIn thinks are **broken**, and what it did about them. See **Findings** in this
-guide. A number on the tab means something is waiting on your decision.
+  When there is a pattern in **when** you override it, the finding says so,
+  because that is the condition the automation is missing: *"almost always
+  between 08:00 and 09:00 and only on weekdays"* is something you can write
+  a condition around. When there isn't one, it says nothing rather than
+  reading a shape into a coincidence.
 
-The same list is \`todo.brain\` in Home Assistant's own **To-do** panel and mobile app
-(needs core 2023.11+). Ticking one off is *I've fixed it*; deleting one is *not a
-problem here* — the two endings on this tab, so answering there teaches brAIn exactly
-what pressing the button would have. You cannot add an item: there would be nothing
-behind it, and it would vanish on the next refresh.
+- **Two automations undoing each other.** Both ran, neither failed, and the
+  light is in whichever state the later trigger happened to leave it — so
+  the result is different from one day to the next depending on the order
+  two triggers fired in, which is not something anybody designed. No trace
+  shows it, because nothing went wrong in either run.
 
-A notification about **one** finding, sent to the companion app
-(\`notify.mobile_app_*\`), arrives with those endings as buttons. Any other notifier
-means something different by the payload they ride in — or nothing at all — and a
-digest about three problems could not say which one a button answered, so both get
-the message they always did. Answers reach the add-on through a file on
-\`/config/.brain\` rather than over the network, so one given while the add-on is
-stopped waits for it instead of being lost.
+A check's finding clears itself when the check stops finding it — the device
+came back, the battery was changed — and it is simply removed, so it can be
+raised again if the problem returns. What a person ends stays ended, exactly
+as before. And every ending teaches the **scorecard** under the filters: "I
+did it" and "Got it" say the report was right, "Wrong" says it was not, and
+once a producer has a few endings the tab says how right it has been.
 
-## When the washing finished
+Findings reach you outside the panel too. The integration exposes an
+**Open findings** sensor (the count, with the severity split and the texts as
+attributes) and fires a **\`brain_finding\` event** for each new one, so an
+automation can react the moment brAIn files something. And if you set
+\`findings_notify_service\` in the add-on configuration to one of your
+\`notify.*\` services, new findings at or above \`findings_notify_min_severity\`
+(default \`serious\`) are pushed straight to it — a dead battery rings your
+phone; a naming nitpick waits on the tab. The whole tab is also scriptable as
+\`brain findings\` (list / fix / done / wrong / ack / snooze) from the terminal.
 
-Nothing in Home Assistant says a cycle ended, so brAIn measures each machine
-overnight from ten days of its own five-minute history — looking for the
-**shape** an appliance has: hours near a floor, punctuated by runs well above
-it. A sensor without that shape (a router, a fridge) gets no profile rather
-than a guessed threshold, and you need a power sensor on the appliance plus
-about ten days of it running.
+Between \`notify_quiet_start\` and \`notify_quiet_end\` (22 to 7 by default, in
+your home's own timezone) only the **urgent** ones get through: a device that
+has gone offline, an add-on that has stopped, a disk about to fill, a reading
+that is impossible. Everything else is **held**, not dropped, and arrives as a
+single message when the quiet ends. Urgency is not severity — a \`critical\`
+battery forecast is three weeks away and a \`warning\` about a boiler that has
+stopped answering is now — so it is a property of the check that raised the
+row, not of the row's wording. Anything you fixed or dismissed overnight is
+dropped from the queue rather than announced: being told at seven about a
+problem that went away at four is how these messages stop meaning anything.
+Set both to the same value (or leave both empty) to notify at any hour.
+`,
+  },
+  {
+    id: "it-explains-your-house-to-you",
+    icon: "📊",
+    title: "It explains your house to you",
+    body: `
+# It explains your house to you
 
-The waiting is the part that matters. A dishwasher's dry phase draws almost
-nothing for twenty minutes, so "done the moment the power drops" would say
-done three times a cycle. That quiet phase is measured too: the gaps between
-draws fall into two groups — lulls inside a cycle, idles between them — and
-the jump between the groups is the machine's own answer.
+The **Insights** dashboard is a set of cards, each one a small piece of analysis with
+a real interactive visualisation — not a paragraph of text with a number in it.
 
-The **chore** is narrower than the measurement: a washing machine, a tumble
-dryer or a dishwasher that has finished and is still full, matched on the
-sensor's name. A deliberate guess in the cheap direction — not recognising
-your machine costs a missing reminder, recognising the wrong one means being
-told to go and empty your television. brAIn **cannot see that you emptied
-it** (an empty machine and a full one draw the same power), so the chore ends
-the way any finding does: tick it off, press the notification button, or press
-it here. It clears itself if the machine runs again.
+There are **no default cards**, deliberately. A generic "Energy" card about a home
+brAIn has never looked at says nothing useful and costs tokens every time it runs.
+Instead the first run studies **your** house — how it's named, when it's occupied, what
+it uses, how its devices behave — and proposes cards grounded in what it found, each
+with a one-line reason.
 
-## How your house holds its heat
+- **Ask anything.** Type a question and get a card back: "why is the upstairs cold in
+  the morning", "which of my devices are costing the most", "did anyone open the back
+  door while we were out". Keep the ones worth having weekly with **＋ Make recurring**.
+- **Put them on your dashboard.** Any card gives you ready-to-paste YAML for a Webpage
+  card, so an insight can live on your own dashboard next to everything else.
+- **Tags and filters.** Cards carry tags brAIn assigns; the chips at the top filter by
+  them, and you can edit any card's tags.
+- **Feedback that sticks.** Tell a card what to do differently — "ignore the guest
+  room", "show costs in dollars" — and the next run obeys.
+- **Schedules you control.** Per-card, either an interval or fixed times of day.
+`,
+  },
+  {
+    id: "it-remembers",
+    icon: "🧠",
+    title: "It remembers",
+    body: `
+# It remembers
 
-Pre-heating so a room is warm *when you get up*, telling a window open from a
-cold day, warning that pipes will freeze by morning — each is the same two
-numbers about a room, and a threshold that is right in one house is wrong in
-the next. So brAIn measures them, per room, overnight, from a month of hourly
-history: **how fast the room falls towards outside** (its reciprocal is the
-number people have an intuition for — *this room holds its heat for about
-eight hours*) and **how fast anything puts the heat back**.
+Everything else here is a feature. This is the part that makes brAIn get **better**.
+
+brAIn keeps one plain-markdown document of durable facts about your home. Not a chat
+history — a curated document: your nicknames for rooms, which devices are meant to
+behave oddly, when your household actually wakes up, what you've corrected it on.
+
+Facts arrive from voice conversations (when you state a preference, it writes it
+down), from insight runs, from study sessions, from the CLI, and from a service any
+automation can call. A background consolidator folds them into the document, and
+**you can edit the document yourself** — your edits are the source of truth.
+
+Every part of brAIn reads the same memory. Tell the voice assistant something and the
+Insights cards know it.
+
+It also keeps a short list of **hypotheses** — things it thinks might be true and
+isn't sure about. Never more than three waiting on you, each expiring in a fortnight.
+Answer yes and it becomes a plain memory line; answer no and it stops guessing that.
+It never interrogates you with a questionnaire.
+
+**Study sessions** send it off to investigate: \`brain learn energy\`, or just type
+"learn about the upstairs heating" in the ask bar. It digs through the registry,
+history and long-term statistics for minutes at a time, and what it finds lands in
+memory and in your findings list.
+
+A study session **reads and never acts**. Since 1.48.0 it runs with the same
+read-only tool lists the scheduled card runs use — read from one place, so there
+is one answer to "what may an unattended run touch" — and if those lists cannot
+be read it **refuses to run at all** rather than running unscoped. That is a
+correction worth stating plainly: before 1.48.0 it passed no tool flags, so it
+inherited the project's own permissions, which include Bash, Write and Edit — on
+a path an automation can reach through the \`brain.study\` service. What it writes
+is still written by brAIn afterwards, out of the JSON the session returned.
+
+And everything it has learned is **portable**: \`brain memory export\` writes one
+JSON file carrying the memory document, the findings list, the settled answers
+and the facts ledger (the Knowledge tab's ⬇ Export does the same), and
+\`brain memory import\` folds one back in on another install — ledgers merge with
+the local entries winning, and the document itself is only replaced when the
+local one is empty or you say \`--replace-memory\`. Migrating to new hardware no
+longer means starting the learning over.
+`,
+  },
+  {
+    id: "it-answers-when-you-talk-to-it",
+    icon: "🗣️",
+    title: "It answers when you talk to it",
+    body: `
+# It answers when you talk to it
+
+brAIn registers as a **conversation agent**, so you can pick it in Settings → Voice
+Assistants and talk to it from any Assist pipeline, satellite or the app.
+
+- **Fast.** A pool of pre-warmed Claude workers answers in a few seconds rather than
+  cold-starting a CLI per request, and an area→entity map is baked into the prompt so
+  most commands skip lookup turns entirely.
+- **It knows your house.** The same memory, spliced into every voice prompt. "Turn on
+  the beacon" works if you once told it what the beacon is.
+- **It follows a conversation.** Follow-up turns resume the same session.
+- **Its reach is yours to set.** By default voice can only touch Home Assistant —
+  states, services, the registries. One setting widens it to the full toolset, shell
+  and file edits included.
+`,
+  },
+  {
+    id: "it-has-a-full-terminal-in-two-shapes",
+    icon: "💻",
+    title: "It has a full terminal — in two shapes",
+    body: `
+# It has a full terminal — in two shapes
+
+The **Terminal** tab is the real Claude Code CLI, in your browser, running as a
+non-root user with your \`/config\` in front of it. Everything above, plus everything a
+capable engineer with a shell can do: read logs, edit YAML, write scripts, install
+packages, use git, take the long way round a hard problem.
+
+It has two faces, and you switch between them with the **⌨/💬 button on the tab
+itself** (or in ⚙ Settings). Both run the same Claude Code, on the same login, in the
+same \`/config\`, with the same permissions — what differs is only how you see it.
+
+**Chat** (the default) renders Claude Code's own output as a conversation:
+
+- **Text reflows** to whatever screen you're on. A terminal is a grid of fixed
+  columns; at the ~40 columns a phone has, that means sentences broken mid-word. This
+  is ordinary text, so it wraps like text.
+- **Code blocks keep the grid** — inside their own horizontal scroller, so a
+  200-column log line never makes the whole page slide sideways.
+- **Tool calls collapse to one line each.** \`Read /config/automations.yaml\`, with a
+  dot that goes green or red; tap it for the arguments and the full result. In the
+  grid terminal each of those was twenty lines you scrolled past.
+- **Reasoning folds away** behind a "Thinking" line you can open.
+- **Commands, both kinds.** Type **/** and you get the commands **your** Claude Code
+  actually has — including anything you put in \`/config/.claude/commands\`. Type
+  **brain** or **ha** and you get brAIn's own CLI, \`brain memory add\` through
+  \`ha reload\`, with the same descriptions and argument hints the dispatchers print.
+  ↑/↓ to move, Enter or Tab to pick. Both lists come from the thing that owns them, so
+  neither can go stale.
+- **⋯ holds the rest** — **New chat**, **Conversations** (every conversation in \`/config\`,
+  started here or in the classic terminal; picking one replays it and carries on),
+  **Session details**, **Model**, and the switch to Classic. Two buttons float over the
+  terminal, not a column of them.
+- **The chat picks its own model.** Press the model name under the message box (or
+  ⋯ → **Model**) and choose — the current conversation carries straight on under the
+  new model. Refused while **that** conversation is being answered, because the model
+  is an argv flag and applying it is a restart that would lose the answer: stop it,
+  or switch to another chat and pick the model there. It's the chat's own setting: insights and voice keep following the
+  model on the Configuration tab, so a heavyweight model chosen for one
+  conversation never quietly raises what everything else costs. **Default** follows
+  the Configuration tab again.
+- **Several conversations stay open at once, and switching stops nothing.** Each
+  one holds its own Claude Code process, the way a terminal tab does — so picking
+  another in the list is instant, and the one you left carries on writing its
+  answer into its own transcript. Ask a long question, go and deal with something
+  else, come back to it finished. A row says what its own session is doing:
+  **answering…** while a reply is being written, **Needs your OK** when it is
+  waiting on a permission (and the chat you **are** in says so too, with a button
+  that takes you there, because a phone has no room for the list). A row with no
+  mark is the ordinary case.
+- **brAIn keeps three of those processes alive** — ⚙ Settings, one to eight. That
+  is a count of processes, not of conversations: you may have as many
+  conversations as you like and Claude Code keeps every one. Open a fourth and the
+  one untouched for longest is closed to make room, with a note in its own
+  transcript so going back to it explains the gap; your next message there picks
+  the conversation straight up again. A conversation that is mid-answer is never
+  the one closed. The only switch that is refused is when every open chat is still
+  answering and there is nothing idle to close — it says exactly that, with the
+  count and the setting.
+- **Conversations can be deleted.** Every row in the list grows a **✕**, and the
+  toast grows an **Undo** for the few minutes a mis-tap needs. One the chat is
+  holding open is refused, and the ✕ offers to close it first rather than leaving
+  you with a no — closing one mid-answer loses what it was writing, so it asks.
+  (Old conversations that Claude Code itself has pruned can no longer be picked up
+  mid-thought: reopening one shows its transcript and says plainly that the next
+  message starts fresh, instead of erroring on every send.)
+- **Yours, and everyone else's.** brAIn runs Claude in \`/config\` for voice, automation
+  tasks and filing memory, so those conversations live beside yours. The list shows
+  **Chats** by default — everything you started yourself, in the chat or the
+  classic terminal, including a finding you opened for discussion — and puts the
+  rest behind a chip each, alphabetically:
+  **Automation**, **Cards**, **Fixes**, **Memory**, **Study**, **Voice** — with a count, and
+  only for the ones your house actually uses. Each row's time is when something
+  last **happened in** the conversation — opening one just to look at it doesn't
+  bump it to the top.
+- **Cards and Fixes open read-only.** Every insight run (scheduled or a question
+  you asked) and every Fix-it run is a Claude conversation too, and its chip lists
+  them all — pick one and it opens as a record: exactly what brAIn sent to Claude
+  about your house, every tool call it made, and what came back. Read-only on
+  purpose: those runs happen under the analyst's read-only tool scoping (or the
+  fixer's), and quietly continuing one under the chat's permissions would change
+  the conversation's rules mid-thread. Want to talk about what a run found? Ask
+  in the chat — memory and the findings list already carry what it learned.
+- **The input is a real text box**, so dictation, autocorrect and selection behave.
+- **⏹ stops a running answer**, and **＋ starts a new chat**. The conversation
+  survives a page reload, a phone locking, and the add-on restarting.
+- **Session details** (under ⋯) shows the model, the project directory, how you're
+  being billed, and the conversation's id.
+- **The face switch carries the conversation, and it is the only control that does.**
+  Switching to Classic releases the chat's process and the terminal picks the same
+  conversation up — a new tmux window if it's already open, otherwise the next time
+  you open it; switching back adopts whatever the terminal was last doing. There is
+  deliberately no second "continue in the terminal" button beside a switch that
+  already moves you, because two controls for one thing is how you end up unsure
+  which one actually moved.
+- **Every conversation says what state it is in.** A row in the rail (and in the ⋯
+  dialog, which is the only surface a phone has) carries one of seven:
+
+  | State | What it means |
+  | --- | --- |
+  | **Live** | A Claude Code process is running and idle. Type and it answers. |
+  | **Answering…** | It is writing. **Stop** is the control above the composer. |
+  | **Needs your OK** | It has asked to use a tool. Answer the card; an unanswered one declines itself. |
+  | **(no pill)** | Paused: no process, and your next message resumes it with its context. |
+  | **Paused to make room** | brAIn keeps \`chat_max_sessions\` chats running at once (3, settable 1–8). This one was the quietest and was stopped; **Resume now** brings it back. Only an **idle** conversation is ever taken, never one that is answering. |
+  | **Context lost** | Claude Code no longer holds this conversation. You can read it; a new message starts fresh from here (**Start fresh**). |
+  | **Record** | A card or fix run, kept to be read. It ran under the analyst's or the fixer's rules, so it can never be resumed — **Ask about it** opens a new chat about it instead. |
+
+  A status line above the composer says what sending will do, and offers the one
+  control that fits that state — **Stop**, **New chat**, **Resume now**, **Start fresh**,
+  **Ask about it**, or nothing at all while an approval card is the thing to answer.
+  The state is derived in one place and kept in the
+  conversation's own metadata, so a reload agrees with what you were just looking at.
+
+Both faces stand in \`/config\`, which is what lets them see each other's
+conversations at all: Claude Code files them per working directory. So \`claude
+--resume\` in the terminal lists the chats you had in the panel, ⟲ in the chat lists
+the ones you had in the terminal, and a conversation can move either way without
+losing anything.
+
+**Classic** is ttyd over tmux — a true terminal. Use it for anything that draws its
+own screen (a TUI, \`htop\`, an installer), for running shell commands yourself, or
+simply because you prefer it.
+
+- **Native Home Assistant access** through the same MCP server the rest of brAIn uses.
+- **\`/config/CLAUDE.md\` written for you** at startup, describing your actual
+  installation, so a fresh session already knows your house.
+- **Built for a phone**, not merely tolerable on one: a key toolbar that stays above
+  the software keyboard, working copy/paste, swipe-scroll, an iOS dictation fix, and
+  a top bar that folds away while you're typing so the terminal gets the screen.
+- **Sessions survive.** tmux underneath, so a dropped connection doesn't kill your
+  work, and the environment persists across restarts.
+`,
+  },
+  {
+    id: "it-works-while-youre-asleep",
+    icon: "🌙",
+    title: "It works while you're asleep",
+    body: `
+# It works while you're asleep
+
+- Recurring insight cards regenerate on their own schedule.
+- Memory consolidates in the background.
+- Automations can hand brAIn work: \`brain.run_task\` gives it a job and lets it use
+  tools, \`brain.send_prompt\` asks it a question, \`brain.run_insight\` regenerates a
+  card, \`brain.study\` sends it off to research something, \`brain.add_memory\` teaches
+  it a fact, and \`brain.intent\` turns one sentence into an automation that runs
+  once and switches itself off — which is how a voice command reaches it. Wire
+  them to any trigger you like.
+- Insight jobs render to \`sensor.<name>_insight\` with the markdown and ready-to-paste
+  card YAML as attributes, so a report can drive a template, a notification, or a
+  dashboard.
+- Findings surface as \`sensor.brain_findings_open_findings\` and a \`brain_finding\`
+  event per new one — and \`findings_notify_service\` pushes them to a phone with no
+  automation at all.
+- The same findings are the \`todo.brain_system_brain\` list in Home Assistant's own
+  **To-do** panel and mobile app: one list, two views. Ticking one off is "I've fixed
+  it" and deleting one is "not a problem here" — the Findings tab's own two endings,
+  so answering from your phone teaches brAIn exactly what pressing the button would
+  have.
+- \`sensor.brain_usage_limits_health\` says whether brAIn itself is working, so an
+  automation can tell you the add-on is in trouble rather than you noticing the
+  insights stopped.
+
+Those entity ids are what Home Assistant derives from the device and entity names,
+so they are what a fresh install gets. If you have renamed anything, yours differ —
+the surest way to find them is Settings → Devices & services → brAIn → entities.
+`,
+  },
+  {
+    id: "it-knows-what-unusual-means-here",
+    icon: "📈",
+    title: "It knows what \"unusual\" means here",
+    body: `
+# It knows what "unusual" means here
+
+"Unusual" is behind most of what people want a smart home to notice — water
+running at night, a freezer drifting, a boiler on for twice as long as it
+usually is. Until there is a number behind it, every rule that uses it is a
+threshold somebody guessed.
+
+So brAIn measures your house. Overnight, for every numeric sensor, it works
+out what that sensor normally reads **at this hour of this day of the week**
+and how much it normally varies, from a month of Home Assistant's own
+long-term statistics. It costs no Claude turn.
+
+A few things it deliberately will not do:
+
+- **It won't call a sensor that never moves "unusual".** A thermostat
+  setpoint that has read 20.0 for a month has no variation to measure
+  against, so it gets no baseline rather than one where 20.5 is an
+  emergency.
+- **It won't build a normal out of two readings.** An hour of the week it
+  has only seen twice is an anecdote, and it says so instead.
+- **It won't report an impossible reading as an odd one.** A thermometer at
+  99°C is broken, not unusual, and the device check says so with the right
+  fix on it.
+- **It won't hand you fifty rows.** More than a handful at once means the
+  **baseline** has stopped describing your house — a heating season starting,
+  a meter replaced — and reporting them all would be reporting the
+  measurement rather than the home.
+
+- **It won't report a meter for going up.** A \`total_increasing\` energy
+  total is higher than it has ever been every hour of its life; that is
+  what the class means, so "far above its usual" would be a statement
+  about arithmetic rather than about your house.
+
+**And it watches the slow ones**, which is the failure with no bad reading
+in it. A freezer 6°C warmer than it was a month ago has never once been
+outside its usual range — because the range is built from the same weeks
+the drift happened in and moved along with it. Measured on a real-shaped
+month, that freezer reads 2.3 spreads to the "unusual" check, which needs
+six, and 16 to the trend. Nobody notices until something spoils.
+
+So brAIn also fits a line through the month, to what is left once the
+week's own pattern is taken out, and tells you when a reading has been
+walking one way for weeks — with the same discipline. Something that
+turned around in the middle of the window is not a drift. A step change
+is not weeks of drifting. A move smaller than the noise it sits in is not
+a move. And when five thermometers drift together that is the weather
+rather than a device, so the whole class stands down: what you get is the
+one room that is doing something the others are not.
+
+Claude can read it too: ask **"is the utility room damp?"** and it looks up
+what damp normally is in your utility room rather than picking a number.
+`,
+  },
+  {
+    id: "it-knows-what-is-normally-open",
+    icon: "🚪",
+    title: "It knows what is normally open",
+    body: `
+# It knows what is normally open
+
+A door being open is not wrong. It is wrong at half past eleven in a home that
+always has it shut then, and it is nothing at all in one that leaves it open
+all summer — and until brAIn measured that, the difference was a threshold
+somebody would have had to guess.
+
+So it measures: for every door, window, lock, cover and garage, how much of
+each hour of the week it is normally open, from a month of your own history.
+Time-weighted, not sampled — a door open for ten minutes and one open for ten
+hours look identical to anything that just checks now and then.
+
+Then **at your own bedtime** (the hour brAIn measured you settle, or a late
+fallback until it has), it files one finding if something is open that usually
+is not. One row, not one per door: it is a single thing to do before bed.
+
+It stays quiet in the cases that would make it noise. Not in the afternoon —
+a door open at four is a door somebody is using. Not about an hour it has
+never watched, which is a different thing from an hour it has never seen the
+door open in. Not about a door that is **usually** open then. And not at all
+when half the house is open at once, because that is you airing the place out
+rather than a door left ajar.
+
+Only closures are measured — a motion sensor being on at midnight is not
+something anybody wants told about, and including it would bury the row that
+matters.
+`,
+  },
+  {
+    id: "it-knows-when-your-house-gets-up",
+    icon: "⏰",
+    title: "It knows when your house gets up",
+    body: `
+# It knows when your house gets up
+
+Everything scheduled used to happen at a time somebody typed into a box,
+which is a timer, not a rhythm — 07:00 is early on a Sunday and late on a
+Tuesday in the same home. So brAIn measures it instead: the first thing a
+**person** does each day is the house waking up, and the last is it settling.
+Not a motion sensor (which fires for a cat and for the heating) and not a
+light (an automation does that at dawn) — somebody actually doing something.
+
+It keeps two numbers a day and nothing else, and it will not answer until it
+has **10 separate days** of them. Weekdays and weekends are measured apart,
+because one number over both is wrong on all seven days rather than on none —
+so the weekday answer takes about two weeks and the weekend one about five,
+since a weekend is two days a week. And a home that stirs anywhere between 05:00 and 11:00 has no
+usual time, so it says so rather than reporting the middle of that as one.
+`,
+  },
+  {
+    id: "a-morning-brief-when-there-is-something-to-say",
+    icon: "☕",
+    title: "A morning brief, when there is something to say",
+    body: `
+# A morning brief, when there is something to say
+
+Turn on **Send a morning brief** and brAIn sends one short message a day to
+your notify service, at the hour your home actually starts moving.
+
+The part that matters is when it **doesn't**. The decision to send is made
+before Claude is asked anything, out of things already counted: findings filed
+since the last brief, brAIn itself not working, an odd night. A quiet morning
+costs nothing and sends nothing — "all quiet" every day is the message people
+mute, and each one that **is** sent costs a Claude turn, which is why this is
+off by default.
+
+What Claude is for is the sentence: under eighty words, one paragraph, no
+greeting and no headings, because this is read on a lock screen. It can look
+things up to make a reason specific ("the freezer is at -12, usually -18") but
+it is not handed your house and it may not invent a number.
+
+Until brAIn has watched for a couple of weeks it uses the fallback hour you
+set. If it has been restarted and missed the window it waits for tomorrow
+rather than delivering breakfast at lunchtime.
+`,
+  },
+  {
+    id: "one-report-a-week",
+    icon: "📰",
+    title: "One report a week",
+    body: `
+# One report a week
+
+Turn on **Send a weekly report** and brAIn sends one message a week — by
+default on a Sunday, at the same hour the brief would go. It is the report
+meant for everybody in the house, so the notify service to point it at is
+usually \`notify.notify\`.
+
+It carries four things: what you used against the week before, what was found
+and what was answered, what brAIn learned, and **one thing to do this week**.
+
+That last one is chosen **before** Claude sees anything — the worst open
+severity, then the one open longest. Asked to pick, a model picks the finding
+it can write the best sentence about, which is the one carrying the most
+detail rather than the most consequence.
+
+It is not the morning brief with a longer timer. The brief asks *is there
+anything**; the report asks **what happened*, and its failure is the opposite
+one — a report that lists everything is the pile of unread cards it replaced.
+So every section is gathered and capped before Claude runs, and Claude's job
+is to say those things rather than to choose them.
+
+A week with nothing in it — nothing found, nothing answered, nothing learned
+and no meter to read — sends nothing. And unlike the brief, a report that
+missed its hour still goes out later that day: a weekly report on Sunday
+afternoon is still that week's, and skipping a week to protect an hour is the
+wrong trade.
+
+\`brain weekly\` prints what this week holds without sending; \`brain weekly
+send\` sends one now — which **moves the week**, so the next scheduled report
+is a week from now rather than a week from Sunday.
+`,
+  },
+  {
+    id: "what-the-house-used",
+    icon: "⚡",
+    title: "What the house used",
+    body: `
+# What the house used
+
+The energy half needs one thing from you: **Home Assistant's own Energy
+configuration**. brAIn reads the grid sources you declared there and nothing
+else. It deliberately does not gather up every sensor with a device class of
+\`energy\` — a whole-home clamp, an inverter and every smart plug behind them
+all carry that class, so a house with six plugs would report roughly twice
+what it used and nothing on screen would say so. No energy configuration
+means no energy section, and a sentence saying which.
+
+Cost appears only where the Energy dashboard has a cost **statistic**. If you
+gave it a price to multiply instead, Home Assistant makes its own cost sensor
+under a name brAIn would have to guess at, and a guessed name quotes somebody
+else's number.
+
+Both weeks are seven complete days ending at last midnight — never a partial
+today, which would report a 45% fall that is nothing but the clock. If a meter
+was reset or replaced mid-week those days are dropped, and with them the
+comparison: you get the total it could measure and "no comparison to make"
+rather than a plausible-looking drop.
+`,
+  },
+  {
+    id: "it-knows-when-the-washing-finished",
+    icon: "🧺",
+    title: "It knows when the washing finished",
+    body: `
+# It knows when the washing finished
+
+Nothing in Home Assistant says a cycle ended. A smart plug reports watts, and
+every rule written on one is a number typed into a box — \`> 10 W\` is a running
+dishwasher in one house and a phone charger in the next.
+
+So brAIn measures each machine instead, overnight, from ten days of its own
+five-minute history. What it looks for is a **shape**: hours near a floor,
+punctuated by runs well above it. A sensor that does not have that shape — a
+router, a fridge's standing draw — gets no profile at all rather than a
+guessed threshold.
+
+The part that matters is the waiting. A dishwasher's dry phase draws almost
+nothing for twenty minutes, so a machine that reported "done" the moment the
+power dropped would report it three times a cycle. That quiet phase is
+measured too: the gaps between draws are themselves in two groups — lulls of
+minutes inside one cycle, idles of hours between them — and the jump between
+the groups is the machine telling brAIn how long its own quiet phases last.
+
+You need a power sensor on the appliance (a smart plug is enough) and about
+ten days for it to have run a few times. \`GET /api/appliances\` shows what was
+measured; ⚙ Diagnostics shows how many machines have a shape.
+
+**The chore** is narrower than the measurement. brAIn will tell you a washing
+machine, a tumble dryer or a dishwasher has finished and is still full — and
+nothing else, matched on the sensor's name. That is a deliberate guess in the
+cheap direction: not recognising your machine costs a missing reminder, while
+recognising the wrong one means a notification telling you to go and empty
+your television.
+
+It waits before saying anything (a cycle that ended four minutes ago is
+somebody standing at the machine), it stops asking after about half a day
+(yesterday's washing is not a chore), and it is never urgent — so quiet hours
+hold it until morning.
+
+**It cannot see that you emptied it.** An empty machine and a full one draw
+exactly the same power. So the chore ends the way every finding ends: tick it
+off in the To-do app, press the button on the notification, or press it on
+the Findings tab. It also clears itself if the machine runs again.
+`,
+  },
+  {
+    id: "it-knows-how-your-house-holds-its-heat",
+    icon: "🌡️",
+    title: "It knows how your house holds its heat",
+    body: `
+# It knows how your house holds its heat
+
+Every climate question people actually want answered is the same two numbers
+about a room, and until now brAIn held neither. *Start the heating so the
+bedroom is warm when we get up. Is a window open, or is it just cold? Will
+the pipes freeze by morning? What would a 17°C setback cost?* Each of those is
+a threshold somebody guesses at, and a threshold that is right in one house is
+wrong in the next — a stone cottage and a new flat lose heat an order of
+magnitude apart, and so do two rooms of one house.
+
+So brAIn measures them, per room, overnight, from a month of hourly history:
+
+- **How fast the room falls towards outside.** Its reciprocal is the number
+  people have an intuition for — *this room holds its heat for about eight
+  hours.*
+- **How fast anything puts it back**, in degrees per hour, from the hours the
+  room was seen to be gaining.
 
 You need one outdoor temperature sensor and at least one indoor one in an
-area. With no outdoor reference there is no model at all, and ⚙ Diagnostics
-says so: every number here is a *difference* from outside. The measurement is
-taken **at night** on purpose — a south-facing room warms with the heating
-off, and a fit that includes an afternoon reports a room that gains heat as it
-gets colder outside.
+area. Without an outdoor reference there is no model at all and ⚙ Diagnostics
+says so in as many words — every number here is a **difference** from outside,
+so there is nothing to measure a room against.
 
-Two findings come out of it. **A room that never reaches what it is set to**:
-nothing errors, the thermostat calls and the room sits two degrees short all
-winter. brAIn only says so when the arithmetic *and* the evidence agree — the
-room must never once have been seen at the temperature it is asked for — 
-because a thermostat that switches off at its setpoint never lets a room show
-what it could have done. And **a room that empties much faster than the rest
-of the house**: a draught, a loft hatch, an open flue. That one needs four
-measured rooms before it will compare one against the others, and says nothing
-at all if half the house fires at once, because that is the measurement rather
-than a room.
+**The measurement is taken at night on purpose.** A south-facing room warms
+with the heating off, and a fit that includes an afternoon reports a room that
+gains heat as it gets colder outside. Deep night has no sun and, in most
+houses, no schedule.
 
-Neither is ever urgent, so quiet hours can hold both.
+Two findings come out of it, and both are floored hard because both are
+extrapolations from a fit.
 
-## When the heating is late, and when something is open
+**A room that never reaches the temperature it is set to.** Nothing errors:
+the thermostat calls, the valve opens, the boiler runs, and the room sits two
+degrees under its setpoint all winter. brAIn will only say so when the
+arithmetic **and** the evidence agree — the room must never once have been seen
+at the temperature it is asked for, over a month of hours. That second half is
+what keeps it off healthy houses: a thermostat that switches off at its
+setpoint never lets a room show what it could have done, so the measured
+ceiling of a well-heated room understates it. It also says nothing at all if
+the month held no cold night, because a January answer cannot be extrapolated
+out of an August.
 
-The same two numbers answer three more questions.
+**A room that empties much faster than the rest of the house** — a draught, a
+loft hatch, an open flue. It needs four measured rooms before it will compare
+one against the others, and the room has to be fast in absolute terms too:
+twice the loss rate of a very well insulated house is still a good room. If
+half the house fires at once it says nothing, because that is the measurement
+and not a room.
+
+Neither is ever urgent. A room that has been two degrees short all winter is
+not two degrees shorter at three in the morning, so quiet hours hold both.
+`,
+  },
+  {
+    id: "what-the-thermal-model-is-for",
+    icon: "♨️",
+    title: "What the thermal model is for",
+    body: `
+# What the thermal model is for
+
+Three more findings come out of the same two numbers, and each answers a
+question no single state can.
 
 **Your heating starts too late.** A schedule set to a fixed hour warms the
 bedroom to its setpoint at 07:40 in a house that is up at 07:00 — every
-weekday, with nothing recording a fault, because the automation ran and the
-room did get warm. brAIn needs three of its own measurements to agree before
-saying so: when this house *actually* gets up, what the room reads at that
-hour of an ordinary week, and how long the climb takes. Then it names the time
-the heating would have to start. Weekday mornings only, and never until the
-wake time is measured — a preheat time pinned to a typed-in 07:00 is a guess
-wearing a number.
+weekday, with nothing anywhere recording a fault, because the automation ran
+and the room did get warm. brAIn needs three of its own measurements to agree
+before it will say so: when this house **actually** gets up, what the room reads
+at that hour of an ordinary week, and how long the climb takes. Then it names
+the time the heating would have to start.
+
+It reports weekday mornings only — that is where a schedule exists, and where
+the wake time has enough days behind it — and it says nothing at all until
+that wake time is measured rather than assumed. A preheat time pinned to a
+typed-in 07:00 is a guess wearing a number.
 
 **A window is open.** A room falling more than twice as fast as its own
-insulation allows is losing heat by a route the walls do not have. Only
-sayable because the model exists: the same half-degree in ten minutes is a
-draught in one room and an ordinary evening in another.
+insulation allows is losing heat by a route the walls do not have. This one is
+only sayable **because** the model exists: the same half-degree in ten minutes is
+a draught in one room and an ordinary evening in another, and no fixed
+threshold can tell them apart.
 
-**The pipes are at risk.** When does this room reach 5 °C — where water in an
-outside wall starts to be at risk, well before the room's thermometer reads
-freezing. Only for a room already *falling*, because nothing in Home Assistant
-says the heating is off, so the fall is the evidence.
+**The pipes are at risk.** From the current reading and the current outdoor
+temperature, when does this room reach 5 °C — the point water in an outside
+wall starts to be at risk, well before the room's own thermometer reads
+freezing. It only reports a room that is **already falling**, rather than
+assuming nothing is heating it: no state in Home Assistant says the heating is
+off, so the fall is the evidence.
 
-The last two read five-minute history: an hourly average cannot see a window
-opened forty minutes ago, because it is still inside the hour that has not
-finished. Both break quiet hours. The preheat one does not — a schedule that
-starts late will start late again tomorrow.
+The last two read five-minute history rather than hourly, because an hourly
+average cannot see a window opened forty minutes ago — it is still inside the
+hour that has not finished. Both are urgent enough to break quiet hours; the
+preheat one is not, because a schedule that starts late will start late again
+tomorrow.
+`,
+  },
+  {
+    id: "where-a-proposal-comes-from",
+    icon: "💡",
+    title: "Where a proposal comes from",
+    body: `
+# Where a proposal comes from
 
-## Where a proposal comes from
+The first thing brAIn proposes is **what you already do by hand.** Somebody
+walks over and turns the hall lamp on at about twenty to seven every weekday.
+No check can report that — the light works, the switch works, nobody has
+complained — and it is nonetheless the most useful thing a house knows about
+itself.
 
-The first thing brAIn proposes is **what you already do by hand** — somebody
-turning the hall lamp on at about twenty to seven every weekday. No check can
-report that: the light works, the switch works, nobody has complained.
-
-So the checks pass keeps the changes a **person** caused, and only those. An
+So the checks pass keeps the changes a **person** caused, and only those: an
 automation moving a light says nothing about a habit, and a wall switch reaches
-Home Assistant with no record of who pressed it — brAIn calls that
-*unattributed* rather than guessing.
+Home Assistant with no record of who pressed it, which brAIn reports as
+\`unattributed\` rather than guessing. Two months are kept, in the domains a
+timer can sensibly act on.
 
-Five things have to hold before anything is offered, and each answers "would
-this fire on a house with no habit in it": **six separate days** (twelve
-presses on one Monday is one Monday); **a share of the days it could have
-happened on**, weekdays and weekends counted apart, because six times in a
-fortnight is a habit and six times in two months is a coincidence; **a time
-rather than a stretch of evening**, averaged around the clock so a bedtime
-either side of midnight is not reported as noon; **it has to still be
-happening**; and **nothing must already do it**, because a second rule moving
-the same thing is two rules that will disagree.
+Five things have to hold before any of it is offered, and each one answers
+"would this fire on a house with no habit in it":
 
-What it writes is a plain time trigger with a weekday condition when the habit
-has one — never a condition it did not measure. A pass offers at most three.
+- **Six separate days**, not six presses. Twelve presses on one Monday is one
+  Monday.
+- **A share of the days it could have happened on.** Six times in a fortnight
+  is a habit; six times in two months is a coincidence, and a count with no
+  denominator reports both identically. Weekdays and weekends are counted
+  apart, so a weekday habit is graded against weekdays.
+- **A time, not a stretch of evening.** The times are averaged *around the
+  clock* — half past eleven and half past midnight are forty minutes apart, and
+  a plain average of them is noon — and anything more scattered than about
+  three quarters of an hour is not a time of day.
+- **It has to still be happening.** A habit you dropped in the spring has a
+  beautiful spring in the record.
+- **Nothing must already do it.** A second automation moving the same thing to
+  the same state is not a helpful duplicate; it is two rules that will disagree
+  the first time their triggers land in the wrong order.
 
-## Proposals, and the trial before them
+What it writes is a plain time trigger, with a weekday or weekend condition
+when the habit has one — never a condition it did not measure. A pass offers at
+most three, strongest first; the rest are still there next time.
+`,
+  },
+  {
+    id: "it-suggests-things-and-proves-them-first",
+    icon: "🧪",
+    title: "It suggests things, and proves them first",
+    body: `
+# It suggests things, and proves them first
 
-The **Proposals** tab is the only list here that is not about something being
-wrong. It has its own tab rather than a row on Findings, because a list of
-things you might want beside a list of things that are broken makes both worse.
+The **Proposals** tab is the only list in the panel that is not about something
+being wrong. It gets its own tab rather than a row on Findings: a list of things
+you might want, sitting beside a list of things that are broken, makes both
+worse — the broken things stop looking urgent and the nice-to-haves start to.
+
+\`\`\`
+proposed  ──"Try it for a week"──▶  trialling  ──▶  accepted
+          └──"No thanks"──────────────────────────▶  declined
+\`\`\`
 
 **Nothing brAIn writes is enabled on its own.** You can accept a proposal
-straight away, or press *Try it for a week* first — what the trial buys you is
-evidence. brAIn replays the automation, every few hours, over the days since you
-started — grading each firing against what you actually did, from the record of
-your own presses it already keeps. Nothing is called and nothing is enabled,
-and the card fills in as the week goes on rather than staying blank until
-Sunday: *three days in, it would have fired three times and you did the same
-thing on two of them.*
+straight away — it is your house and your yes — or press **Try it for a week**
+first, and what you give up by skipping the trial is the evidence: a trial is
+a replay of the week as you live it: every few hours brAIn replays the proposed
+automation over the days since you started it and grades each firing against
+what you **actually did**, from the record of your own presses it already keeps.
+Nothing is called and nothing is enabled. The card fills in as the week goes
+on — *"three days in: it would have fired three times, and you did the same
+thing yourself on two of them"* — rather than staying blank until Sunday.
 
-Each firing gets one of three answers: **agreed** (you did the same within a
-quarter of an hour), **nothing happened** (weak evidence either way, and it
-says so), or **you did the opposite** — which is the one worth having, and is
-deliberately not counted as the second. When the week is up the trial stays
-where it is with its report attached; ending it is your press.
+Each firing gets one of three answers. **Agreed**: you did the same thing
+within a quarter of an hour. **Nothing happened**: weak evidence either way,
+and it says so rather than counting against the change. **You did the
+opposite**: you would have undone it, which is the one answer worth having and
+is deliberately not folded into the second.
+
+Some automations cannot be replayed at all, and the trial says which rather
+than reporting a confident zero — see **What a replay can and cannot answer**
+below. When the week is up the trial stays where it is with its report
+attached: ending it is your press, not brAIn's.
+
+An automation you accepted after watching it be right five times out of six is
+a different object from one you accepted because it sounded reasonable.
+`,
+  },
+  {
+    id: "saying-yes-and-taking-it-back",
+    icon: "↩️",
+    title: "Saying yes, and taking it back",
+    body: `
+# Saying yes, and taking it back
 
 **Accept writes a real automation.** It is appended to \`automations.yaml\` with
-an id of \`brain_<id>\`, and your file is not reformatted — everything above the
-new block is left exactly as you wrote it. Then Home Assistant is reloaded and
-the new \`automation.<name>\` entity has to actually turn up before the proposal
-is marked accepted; if it does not, brAIn puts the file back and says what it
-tried. A yes it could not honour is not a yes it records.
+an \`id\` of \`brain_<proposal id>\`, the proposal's title as its alias, and a
+description saying where it came from. Your file is not reformatted — the
+automation is added at the end and everything above it is left exactly as you
+wrote it, comments and all.
 
-**Undo is on the toast and reverses all three**: the automation goes, Home
-Assistant is reloaded, and the proposal comes back on the list. The file is
-snapshotted into the same journal \`brain undo\` reads before it is touched, so
-the terminal can revert it too.
+Then three things have to be true before the proposal is marked accepted:
+Home Assistant reloads its automations, the new \`automation.<name>\` entity
+turns up, and only then does the row leave the list. If any of them fails,
+brAIn **puts the file back**, reloads again, and tells you what it tried — a
+yes it could not honour is not a yes it records, so the proposal is still
+there to press again once the reason is fixed.
 
-An accept is refused — in a sentence — for a **protected entity** (asked here
-as well as in the MCP server, because a file the panel writes never reaches
-that chokepoint), for a \`configuration.yaml\` with no
-\`automation: !include automations.yaml\` line, for an \`automations.yaml\` that
-is not a list of automations, and for a duplicate id or name.
+**Undo is on the toast, and it reverses all three.** The automation is removed,
+Home Assistant is reloaded, and the proposal comes back on the list under its
+own id. If the file cannot be put back — the snapshot has aged out of the edit
+journal — it says so rather than claiming a success, because the automation is
+still running.
 
-Every proposal shows its evidence and a **replay** — what the automation would
-have done over the last month of your own history, answered in seconds. A
-suggestion from nowhere deserves a no.
+The file is snapshotted into the same edit journal that records Claude's own
+edits **before** it is touched, so \`brain undo\` in the terminal reverts an
+accepted proposal exactly as it reverts anything else Claude changed.
 
-**Saying no teaches more than saying nothing.** The reason box is optional, but
-*"the hall light stays on because my partner works nights"* is a fact brAIn did
-not have. A declined proposal is remembered by the **change** it described, not
-the sentence — so rewording it will not get it offered again.
+**Four things stop an accept, each in a sentence.** An automation acting on
+something in your **protected entities** list — asked here as well as in the
+MCP server, because a file the panel writes never passes through that
+chokepoint, and refused outright when it targets an **area** rather than named
+entities, since brAIn cannot expand one safely. A \`configuration.yaml\` with no
+\`automation: !include automations.yaml\` line: your automations live somewhere
+brAIn cannot find, and appending to a file Home Assistant does not read would
+be a change that silently does nothing. An \`automations.yaml\` that is not a
+list of automations. And a duplicate \`id\` or name.
 
-Replay covers \`time\`, \`state\`, \`numeric_state\` and \`template\` triggers. Anything
-else is refused in as many words, and refused **whole** — never replayed for
-just the part that can be read, because a plausible wrong number is worse than
-no number.
+**Every proposal carries its evidence**, because a suggestion from nowhere
+deserves a no. That is the reason it was raised, plus a **replay** — brAIn runs
+the automation against the last month of your own recorded history and tells you
+what it would have done. Answered in seconds, before anything is enabled.
 
-## The house acts
+**Saying no teaches it more than saying nothing.** The reason box is optional
+(a required field turns a one-press dismissal into a chore and fills up with
+"no"), but a sentence like *"the hall light stays on because my partner works
+nights"* is a fact brAIn did not have, and it stops the same suggestion coming
+back in different words next month. It goes into memory exactly as a finding's
+**Wrong** does.
 
-Two things brAIn does that nothing else here does: it fixes a small, fixed set
-of problems while you are asleep, and it writes the automation you would want on
-a bad night. Both are off until you turn them on, and both are built around what
-they refuse to do.
+A declined proposal is remembered by the **change** it described, not by the
+sentence describing it — so a miner that rewords its own explanation is still
+offering something you already answered, and it will not be offered again.
+`,
+  },
+  {
+    id: "what-a-replay-can-and-cannot-answer",
+    icon: "⏪",
+    title: "What a replay can and cannot answer",
+    body: `
+# What a replay can and cannot answer
 
-### Three things it may fix overnight
+\`POST /api/replay\` takes an automation and a window and reports when it would
+have fired.
 
-Only with **Fix three things overnight** switched on in the add-on's
-Configuration tab, and only these three:
+It covers **\`time\`, \`state\`, \`numeric_state\` and \`template\`** triggers — the
+four Home Assistant's recorder can reconstruct. Anything else is refused **in as
+many words**, and refused **whole**: an automation with a state trigger **and** a
+webhook trigger is not replayed for the half that can be read, because
+reporting "this would have fired twice" about something whose webhook fires
+forty times a day is a confident wrong number that looks exactly like a right
+one.
+
+A template is replayed only when every entity it names has recorded history, and
+only using a named set of Home Assistant's own helpers. Rendering against a
+half-built world gives a blank; a blank reads as \`unknown\`, which reads as
+\`false\`, which is a confident **no**.
+
+Three details decide whether a number is right, and each is tested against the
+version that gets it wrong:
+
+- **\`for:\` is a promise about a stretch of time.** A three-minute door blip does
+  not clear a ten-minute hold.
+- **\`numeric_state\` is a crossing, never a level.** Home Assistant fires on the
+  way in, not for every sample spent inside the range.
+- **An area or device target is recorded and not resolved.** Expanding one needs
+  the entity registry as it was at the time, and a wrong expansion would tell you
+  a proposal touches lights it does not.
+
+The window reaches back at most 30 days, because the recorder's default purge is
+ten days and most houses leave it there.
+`,
+  },
+  {
+    id: "the-house-acts",
+    icon: "🛠️",
+    title: "The house acts",
+    body: `
+# The house acts
+
+Two things brAIn does that nothing else on this page does: it fixes a small,
+fixed set of problems while you are asleep, and it writes the automation you
+would want on a bad night. Both are off until you switch them on, and both are
+built around what they refuse to do.
+
+**Three things it may fix overnight** — and only three, and only with
+\`self_healing\` turned on:
 
 | What is wrong | What it does |
 | --- | --- |
@@ -427,81 +1079,91 @@ Configuration tab, and only these three:
 | An integration that did not finish setting up | Reloads that entry |
 
 Each is a call you would have made yourself, and each fails into nothing. There
-is **no power-cycling anything**, no restart of Home Assistant, no restart of
+is **no power-cycling of anything**, no restart of Home Assistant, no restart of
 brAIn, and **no Claude run anywhere on this path** — a model deciding what to
 restart in your house at 3am is a guess wearing a repair.
 
 It runs **once a night, inside your quiet hours**. With no quiet hours set it
-runs an hour after the time brAIn has *measured* your house going quiet; with
-neither, it does not run at all, and ⚙ → Diagnostics says so.
+runs an hour after the time brAIn has **measured** your house going quiet; with
+neither, it does not run at all, and the ⚙ Diagnostics section says so — running
+at an hour nobody set would be acting on a guess about when nobody is looking.
 
-**At most three a night** — nine broken things at once is not a house to fix
-unattended. **One try per problem per night**, written down as it goes, so
-restarting the add-on at 3am does not start the same thing twice. **Never
-anything on your protected entities**: the dead node's whole device is checked,
-not just the sensor, because a ping reaches the box and the box might be a lock
-— and if brAIn cannot work out what a repair would touch, it skips it rather
-than guessing. **Never something you have already answered** with *Fix it* or
-*Wrong*.
+- **At most three repairs a night.** Nine broken things at once is not a house
+  to fix unattended.
+- **One try per problem per night**, written down as it goes, so restarting the
+  add-on at 3am does not start the same thing twice.
+- **Never anything on your protected entities** — the node's whole device is
+  checked, not just the sensor, because a ping reaches the box and the box might
+  be a lock. If brAIn cannot work out what a repair would touch, it skips it
+  rather than guessing.
+- **Never something you have already answered.** If you pressed **Fix it** or
+  **Wrong** on that finding, it is yours.
 
-**Nothing checks its own work, deliberately.** A call the Supervisor accepted is
-not a working add-on. What proves a repair is the next house-checks pass: the
-finding clears, or it does not — and the morning brief says which, with the
-time: *"started the Mosquitto broker add-on at 03:10; it is working now."*
+**Nothing here checks its own work, and that is deliberate.** A call the
+Supervisor accepted is not a working add-on. What proves a repair is the next
+house-checks pass: the finding clears, or it does not — and the morning brief
+tells you which, with the time: *"started the Mosquitto broker add-on at 03:10;
+it is working now."*
 
-### Emergency playbooks
+**Emergency playbooks** are the other half, and brAIn never runs one. It
+**writes** one and offers it on the Proposals tab; Home Assistant runs it if you
+accept it. Three, and each only when your house has the sensor for it:
 
-brAIn never runs one. It **writes** one and offers it on **Proposals**; Home
-Assistant runs it if you accept it. Three, each only when your house has the
-sensor:
-
-**Smoke or CO** — every light to full brightness, heating and cooling off,
-blinds and curtains open, a notification naming the room the detector is in.
-
-**Water leak** — water valves closed, water switches off, water heaters off, a
-notification naming the room.
-
-**Freeze with the heating stopped** — the coldest room brAIn has measured falls
-below 5 °C *and* its thermostat has been doing nothing for half an hour. **This
-one only tells you.** Nothing here turns a boiler on: brAIn cannot know why the
-heating stopped.
+- **Smoke or CO** — every light to full brightness, heating and cooling off,
+  blinds and curtains open, and a notification naming the room the detector is
+  in.
+- **Water leak** — water valves closed, water switches off, water heaters off,
+  and a notification naming the room.
+- **Freeze with the heating stopped** — the coldest room brAIn has measured
+  falls below 5 °C **and** its thermostat has been doing nothing for half an hour.
+  **This one only tells you.** Nothing here turns a boiler on: brAIn cannot know
+  why the heating stopped.
 
 **No playbook unlocks a door or disarms an alarm.** Not as a setting, not ever.
-A smoke detector is the sensor most likely in a house to go off over burnt
+A smoke detector is the sensor in a house most likely to go off over burnt
 toast, and a false alarm that opens the house at three in the morning is a worse
 outcome than any it could prevent.
 
 **Every entity it would act on is on the card, by name**, grouped by what
-happens to it — and anything protected is shown as *skipped: protected* rather
-than quietly left out, so you can see brAIn knows it is there and knows it may
-not touch it. If protection leaves a playbook with nothing to do but send a
-message, it is not offered at all.
+happens to it — and anything on your protected list is shown as *skipped:
+protected* rather than quietly left out, so you can see that brAIn knows it is
+there and knows it may not touch it. If protection leaves a playbook with
+nothing to do but send a message, it is not offered at all.
 
-Which valve, which lights, which thermostats is read straight from your
-registries. **No model chooses any of it** — a model picking which valve to
+Which valve, which lights, which thermostats: all of that is read straight from
+your registries. **No model chooses any of it** — a model picking which valve to
 close is a guess you could not check afterwards, because the automation would
-look the same either way. Claude writes one thing, optionally: the paragraph on
-the card explaining it in plain English, and if that run fails the card still
-says what it does.
+look exactly the same either way. Claude writes one thing, optionally: the
+paragraph on the card explaining it in plain English, and if that run fails the
+card still says what it does.
 
 **Rehearse it** shows every call it would make with each target's state right
-now — *12 lights → on (3 already on), 1 valve → closed (open now)* — and
-**changes nothing**. It deliberately does not use \`automation.trigger\`, which
-would run the actions; that is not a rehearsal, it is the emergency. A real
-rehearsal is setting the detector off on purpose and reading the automation's
-trace afterwards.
+now — **"12 lights → on (3 already on), 1 valve → closed (open now)"** — and
+**changes nothing**. It deliberately does not use Home Assistant's
+\`automation.trigger\`, which would run the actions; that is not a rehearsal, it
+is the emergency. A real rehearsal is setting the detector off on purpose and
+reading the automation's trace afterwards.
 
-**There is no trial button on a playbook**, and the card says why: a trial
-replays the week you have just lived, and that week had no emergency in it.
+**There is no trial button on a playbook.** A trial replays the week you have
+just lived, and that week had no smoke alarm in it — a button that cannot answer
+the question is worse than a sentence saying why.
 
-Accepting one goes through the same path as any other proposal — written to
-\`automations.yaml\` with an id of \`brain_playbook_smoke\`, reloaded, verified,
-put back if it did not take, undoable from the toast.
+Accepting one goes through the same path as any other proposal: written to
+\`automations.yaml\`, reloaded, verified, reverted if it did not take, and
+undoable from the toast. Declining one is remembered by the **change** rather
+than the sentence, so it comes back if you fit another detector — the automation
+is genuinely different then — and not because the wording moved.
+`,
+  },
+  {
+    id: "the-condition-it-is-missing",
+    icon: "🧩",
+    title: "The condition it is missing",
+    body: `
+# The condition it is missing
 
-### The condition it is missing
-
-When brAIn has watched you put the same automation back, at about the same
-time, on enough separate days, it can say more than *"you keep undoing this"*.
+When brAIn has watched you put the same automation back, at the same sort of
+time, on enough separate days, it can say more than **"you keep undoing this"**.
 It offers the **condition the automation does not have**: *"Stand Evening
 lights down between 21:00 and 23:00 on weekdays."*
 
@@ -515,1118 +1177,527 @@ the card says so with a pill. brAIn edits exactly the bytes of that one entry:
 your ordering, your comments, your quoting and every other automation in the
 file are untouched, byte for byte. Undo puts the file back exactly as it was.
 
-What it writes is one \`time\` condition inside a \`not\`. A plain \`time\`
-condition passes only when the clock is in its window **and** the day is in its
-weekday list, so adding one directly would stand the automation down every
-Saturday and Sunday too, at every hour — which is not what you have been
-telling brAIn by undoing it on weekday evenings.
+What it writes is one \`time\` condition inside a \`not\`. That is not decoration.
+A plain \`time\` condition passes only when the clock is in its window **and**
+the day is in its weekday list, so adding one directly would stand the
+automation down every Saturday and Sunday too, at every hour — which is not
+what you have been telling brAIn by undoing it on weekday evenings.
 
-Four things stop it being offered, and a refusal is not a card — there is nothing
-to answer, so ⚙ → Diagnostics names the automations skipped and why: it has no
-\`id\` (Home Assistant's own editor cannot change one either — open it in the
-editor and save it once), it already stands down over those hours, its existing
-time condition names an \`input_datetime\` rather than a clock so brAIn cannot
-read what it already forbids, or it acts on a protected entity.
+Four things stop it being offered. A refusal is not a card — there is nothing
+to answer — so ⚙ → Diagnostics names which automations were skipped and why:
 
-### Something that happens once
+- **The automation has no \`id\`.** Home Assistant's own editor cannot change one
+  either — there is nothing stable to address it by. Open it in the automation
+  editor and save it once, and brAIn will offer this again.
+- **It already stands down over those hours.** You wrote the condition; a
+  second copy of it is noise.
+- **Its existing time condition names an entity** (an \`input_datetime\`) rather
+  than a clock time, so brAIn cannot read what it already forbids — and "I
+  could not tell" is not "there is nothing there".
+- **It acts on a protected entity.**
+`,
+  },
+  {
+    id: "something-that-happens-once",
+    icon: "🎯",
+    title: "Something that happens once",
+    body: `
+# Something that happens once
 
-*"Turn the porch light off when the guests leave."* *"Tell me when the tumble
+**"Turn the porch light off when the guests leave."** *"Tell me when the tumble
 dryer finishes."* These are the sentences people already try to say to their
 house, and no automation fits them: an automation is a standing rule, and this
 is a thing to do next time.
 
-Type one into the ask bar — anything beginning *when…*, *once…*, *the next
-time…*, *tell me when…* — or call \`brain.intent\` with a \`sentence\`, which is
+Type one into the ask bar — anything beginning **when…**, **once…**, *the next
+time…**, **tell me when…* — or call \`brain.intent\` with a \`sentence\`, which is
 how a voice command reaches it. Claude reads your house (searching only; it
-cannot act) and works out the automation. It arrives on **Proposals** with your
-sentence, what brAIn understood, and a replay saying how often that trigger
-would have fired last month — which is a sanity check that brAIn read the right
-thing, not evidence that you want it.
+cannot act) and works out the automation, and it arrives on **Proposals** with
+your sentence, what brAIn understood, and a replay saying how often that
+trigger would have fired over the last month. That replay is a sanity check on
+a trigger that has never fired — for a one-off it is not evidence that you want
+it, it is evidence that brAIn read the right thing.
 
 Accepting writes an ordinary automation with one extra action brAIn adds
-itself: it switches itself off after it runs. The card then says **armed**; when
-it fires it says so and the time, and offers **Remove**. Nothing removes it for
-you — an automation that vanished from your file while you were not looking is
-a file you cannot trust — and one that has waited a fortnight without firing is
-offered the same Remove with *"it has never fired"*.
+itself: it switches itself off after it runs. So Home Assistant does the
+running, and there is nothing still going afterwards.
 
-brAIn will not arm a sentence it cannot do properly, and says so on a card
-rather than in a log: it sounds like a **standing rule** (which is a good thing
-to want — ask for it as an ordinary change and it gets a trial week; the card
-shows what brAIn understood so you can see which half it misread), the
-**trigger cannot be replayed**, the sentence **named nothing** brAIn could act
-on, it touches a **protected entity**, or you already have six waiting.
+Then the card says **armed**. When it fires, the card says so and the time, and
+offers **Remove**. Nothing removes it for you — an automation that vanished
+from your file while you were not looking is a file you cannot trust — and one
+that has been waiting a fortnight without firing is offered the same Remove
+with **"it has never fired"** rather than being cleaned up.
 
-### Four scenes for a room
+brAIn will not arm a sentence it cannot do properly, and it says so on a card
+rather than in a log:
 
-*"Design my evening for the living room"*, or pick a room from **Design scenes
+- **It sounds like a standing rule.** **"Turn the porch light on at sunset"** is
+  something that should keep happening, and it is a good thing to want — ask
+  for it as an ordinary change and it gets a replay, a trial week and a report.
+  The card shows what brAIn understood, so you can see which half it misread.
+- **The trigger cannot be replayed** (a \`webhook\`, a \`device\` trigger). Without
+  a replay there is no check at all on a trigger that has never fired.
+- **The sentence named nothing brAIn could find**, or nothing it could act on.
+- **It touches a protected entity.**
+- **You already have six one-offs waiting.** A list of things about to happen
+  is only useful while it is short.
+`,
+  },
+  {
+    id: "four-scenes-for-a-room",
+    icon: "🎨",
+    title: "Four scenes for a room",
+    body: `
+# Four scenes for a room
+
+**"Design my evening for the living room"**, or pick a room from **Design scenes
 for** at the top of the Proposals tab. brAIn composes four — morning, day,
 evening, night — from the lights that room actually has.
 
-What each bulb gets is read from what it can be told: a colour temperature
-where it takes one, the nearest colour where it cannot, a level where it only
-dims, on or off where it only switches — and the card says which. A bulb whose
-capabilities cannot be read is included as on/off rather than left out.
+What each bulb gets is read from what it can be told. A bulb that takes a
+colour temperature gets one; a colour-only bulb gets the nearest colour; a
+dimmable one gets a level; a bulb that only switches gets on or off, and the
+card says which. A bulb whose capabilities cannot be read at all is included as
+on/off rather than left out.
 
-Morning is cool and bright, day neutral and full, evening warm and dimmed.
-**Night turns the room off except anything named like a nightlight** — a bedside
-lamp, a hall light. There is no attribute for "this is the one I leave on", so
-the name is what brAIn goes on; a room with nothing named that way goes fully
-dark, which is what night means in a room without one.
+Morning is cool and bright, day is neutral and full, evening is warm and
+dimmed. **Night turns the room off except anything named like a nightlight** —
+a bedside lamp, a hall light. There is no attribute for "this is the one I
+leave on", so the name is what brAIn goes on; a room with nothing named that
+way goes fully dark at night, which is what night means in a room without one.
 
 The card shows the four as **swatches**, one per light per mood, so you see the
-moods before saying yes; a light that is off in a scene is an empty outline
-rather than a dark square, and anything protected is listed as skipped. There
-is no trial button — nothing in the last month set these scenes, so there is no
-week to replay.
+moods before saying yes. A light that is off in a scene is drawn as an empty
+outline rather than a dark square. Anything on your protected list is left out
+and listed as skipped.
 
-Accepting writes them to \`scenes.yaml\`, appended with your file above them
-untouched, reloads scenes, checks all four really appeared, and puts the file
-back if any of that did not happen. Once they are really there, brAIn offers a
-**second** proposal: the schedule that moves between them. That one is an
-ordinary automation, so it gets a replay and a trial week — morning and night
-from the times brAIn has measured for when this house gets up and settles, the
-middle two fixed guesses the card names as such.
+There is no trial button: nothing in the last month set these scenes, so there
+is no week to replay. Accepting writes them to \`scenes.yaml\` — appended, with
+your file above them untouched — reloads scenes, checks all four really
+appeared, and puts the file back if any of that did not happen. Undo takes them
+straight out again.
 
-A room with fewer than two lights brAIn can set is refused (four scenes over
-one bulb is four ways of saying the same thing), and so is one with more than
-forty (that is a floor, not a room). Claude is used for exactly one thing here:
-naming the four. If that run fails you get *Morning*, *Day*, *Evening*,
-*Night*, which work fine.
+Once the four are really there, brAIn offers a **second** proposal: the
+schedule that moves between them. That one is an ordinary automation, so it
+gets a replay and a trial week like any other. Morning and night use the times
+brAIn has measured for when this house gets up and settles; the middle two are
+fixed guesses and the card says so.
 
-## What counts as unusual
-
-brAIn measures your house overnight: for every numeric sensor, what it normally
-reads **at this hour of this day of the week**, and how much it normally varies,
-from a month of Home Assistant's own statistics. No Claude run, nothing spent.
-
-That is what lets a finding say *"4.2 times its normal variation for a Tuesday
-morning"* instead of *"that looks high"*. Claude reads the same numbers when you
-ask it something like "is the utility room damp?".
-
-It is deliberately quiet in five cases: a sensor that never moves gets no
-baseline (there is nothing to measure oddness against), an hour of the week it
-has only seen twice is an anecdote rather than a normal, an *impossible* reading
-is the device check's to report, an energy total is *supposed* to be higher than
-it has ever been, and more than a handful of odd readings at once means the
-baseline has stopped describing your house rather than that your house
-has changed.
-
-### The slow ones
-
-A freezer 6°C warmer than it was a month ago has never once been outside its
-usual range — the range is built from the same weeks the drift happened in, and
-moved along with it. It reads about 2 times its normal variation, against a bar
-of 6. Nothing above can see it, however far it goes.
-
-So brAIn also fits a line through the month and tells you when a reading has
-been **walking one way for weeks**, with the same discipline: something that
-turned around mid-month is not a drift, a step change is not weeks of drifting,
-and a move smaller than the noise it sits in is not a move. When five
-thermometers drift together that is the weather rather than a device, so the
-whole class stands down — what you get is the one room doing something the
-others are not.
-
-## What is normally open
-
-A door being open is not wrong — it is wrong at half past eleven in a home that
-always has it shut then, and nothing at all in one that leaves it open all
-summer. brAIn measures which house yours is: for every door, window, lock and
-cover, how much of each hour of the week it is normally open, from a month of
-your own history. Time-weighted, so a door open ten minutes and one open ten
-hours are not the same thing.
-
-Then **at your own bedtime** it files one finding if something is open that
-usually is not — one row, not one per door, because it is a single thing to do
-before bed. It is deliberately quiet in the afternoon, about an hour it has
-never watched, about a door that is usually open then, and when half the house
-is open at once (that is airing out, not a door left ajar).
-
-## When your house gets up
-
-Everything scheduled used to happen at a time somebody typed in, which is a
-timer rather than a rhythm. brAIn measures it instead: the first thing a
-**person** does each day is your house waking up, the last is it settling. Not
-a motion sensor (it fires for a cat and for the heating) and not a light (an
-automation does that at dawn) — somebody actually doing something.
-
-Two numbers a day, nothing else, and no answer until there is a fortnight of
-them. Weekdays and weekends are measured apart, so the weekend answer takes
-about five weeks to appear. A home that stirs anywhere between 05:00 and 11:00
-has no usual time and is told so, rather than handed the middle of that.
-
-## When it rings your phone
-
-\`findings_notify_service\` pushes new findings straight to a \`notify.*\` service.
-Between **quiet hours** (\`notify_quiet_start\` to \`notify_quiet_end\`, 22 to 7 by
-default, in your home's own timezone) only the urgent ones get through — a
-device gone offline, an add-on that has stopped, a disk about to fill, an
-impossible reading.
-
-Urgency is not severity. A \`critical\` battery forecast is three weeks away; a
-\`warning\` about a boiler that has stopped answering is now. So it is a property
-of the check that raised the row, not of how the row is worded.
-
-**Send a morning brief** is the other half: one short message a day, at the
-hour your home actually starts moving. The part that matters is when it does
-not send — that decision is made before Claude is asked anything, out of
-things already counted (findings since the last one, brAIn itself not working,
-an odd night). A quiet morning costs nothing and sends nothing, because "all
-quiet" every day is the message people mute and each one that *is* sent costs
-a Claude turn.
-
-**Send a weekly report** is one message a week — by default on a Sunday, at the
-same hour. What the house used against the week before, what was found and
-answered, what brAIn learned, and **one thing to do this week**. That last one
-is picked before Claude sees anything (worst open severity, then longest open):
-asked to choose, a model picks the finding it can write the best sentence about
-rather than the one that matters. A week with nothing in it sends nothing — and
-unlike the brief, one that missed its hour still goes out later that day,
-because a report on Sunday afternoon is still that week's.
-
-The energy half reads **Home Assistant's own Energy configuration** and nothing
-else. Summing every sensor with a device class of \`energy\` would count a
-whole-home clamp, an inverter and every plug behind them, so a house with six
-plugs would report about twice what it used with nothing on screen to say so.
-No energy configuration means no energy section. Cost appears only where the
-Energy dashboard has a cost *statistic*, never from a price brAIn would have to
-guess a sensor name for.
-
-Everything else is **held rather than dropped**, and arrives as one message when
-the quiet ends. Anything you fixed or dismissed overnight is dropped from that
-queue rather than announced — being told at seven about a problem that went away
-at four is how these messages stop meaning anything. Set both hours the same, or
-both empty, to notify at any hour.
-
-## Activity
-
-**What changed in your house, and what changed it.** Every state change with the thing
-that caused it beside it: an automation (by name), a script, a scene, a person, a voice
-command, or brAIn. Tap any row for that entity's own recent history.
-
-Read straight from Home Assistant's logbook every time you open the tab — no Claude run,
-nothing spent. It needs the \`logbook\` integration, which is part of the default config;
-if it has been removed from \`configuration.yaml\`, this tab says so rather than showing
-you an empty house.
-
-Some rows say **no cause recorded**, and that is the honest answer rather than a gap. A
-press on a wall switch and a push from a device's own integration arrive in Home
-Assistant identically, so anything that named one of them would be guessing — and a
-timeline that guesses is not something you can use as evidence.
-
-Above the list, when there are any: **the times somebody put back what an automation had
-just done**. That is the clearest signal a house gives about a rule being wrong for it,
-and it is invisible everywhere else — the automation ran, nothing errored, and the light
-is off.
-
-Two shapes of that become a finding. **Three in a day, measured against how often that
-rule actually ran** — three undos of something that ran three hundred times is you having
-an unusual Tuesday, and only the share can tell that from a rule nobody wants. And **the
-slow one**: putting the same thing back once a day for weeks, which never reaches three
-on any single day. Only overrides are kept for that (a handful of rows a week, not a copy
-of the logbook), because *"you undo this every weekday morning"* is a sentence about weeks
-and one day of history can only ever produce a count.
-
-When there is a pattern in **when**, the finding names it, because that is the condition
-the automation is missing — *"almost always between 08:00 and 09:00 and only on
-weekdays"*. When there isn't one it says nothing, rather than reading a shape into a
-coincidence somebody would then write a condition around.
-
-And **two automations undoing each other** is its own finding. Both ran, neither failed,
-and the light ends up in whichever state the later trigger left it — so the result differs
-from day to day depending on the order two triggers happened to fire in. No trace shows
-it, because nothing went wrong in either run.
-
-## Terminal
-
-Full Claude Code in the browser, with native Home Assistant access — read states, call
-services, check history, edit YAML, reload config.
-
-It's the same terminal the add-on runs, served through this panel, so there's no second
-sidebar entry and no second login.
-
-**It has two faces**, and the button in the corner switches between them (so does
-⚙ Settings). Both run the same Claude Code, on the same login, in the same \`/config\`,
-with the same permissions — the difference is entirely how you see it.
-
-**The switch carries the conversation.** Going to Classic releases the chat's session
-and opens the terminal already inside it. Coming back picks up whatever the terminal was
-last doing, transcript and all. You do not have to finish a thought in the face you
-started it in — swap mid-answer and carry on typing.
-
-One honest limit: only one Claude Code process can own a conversation at a time, so this
-is a hand-off, not a mirror. The face you leave lets go; the face you arrive in takes
-over with the full history. The terminal's own shell is never killed to make that happen
-— it is your shell — so if you had one running, it is still sitting there where you left
-it.
-
-**Several conversations can be open at once, and switching between them stops nothing.**
-Each one holds its own Claude Code process, the same way a terminal tab does — so
-picking another conversation in the rail is instant, and the one you walked away from
-carries on writing its answer. Come back in a minute and it is finished and waiting for
-you. Ask a long question, go and deal with something else, come back: nothing is lost
-and nothing had to be interrupted.
-
-**brAIn keeps three of those processes alive at a time** (⚙ Settings, anywhere from one
-to eight). That is a count of *processes*, not of conversations — you can have as many
-conversations as you like, and Claude Code keeps every one of them. When you open a
-fourth, the one you have not touched for longest is closed to make room; it says so in
-its own transcript, so going back to it explains the gap rather than looking like
-something that died, and your next message there picks the conversation straight back
-up. The one thing that is never closed is a conversation that is mid-answer — surviving
-you looking somewhere else is the whole point.
-
-The only time a switch is refused is when *every* open chat is still answering and there
-is nothing idle to close. It says exactly that, with the count and the setting that
-changes it. Raise the number, stop one of them, or wait.
-
-**Chat** is the default. Claude Code's output rendered as a conversation: text that
-reflows to your screen, code blocks that scroll inside their own box, tool calls folded
-into one line each (tap for the arguments and the result), reasoning streamed live into
-a "Thinking" line as it happens, and a real text box so dictation and autocorrect
-behave. While Claude works, a status line under the newest content says what it is doing
-— thinking, writing, which tool is running — and how long the turn has been at it, the
-same way the native CLI does. **⏹** stops an answer in progress and **＋** starts a new
-chat. It survives a reload, a locked phone, and the add-on restarting.
-
-**When Claude needs a permission you haven't granted, it asks.** A call outside the
-pre-approved set used to fail silently in the chat — headless Claude Code cannot put a
-prompt on a TTY — and the answer got written around the gap. Now the same question the
-classic terminal would ask arrives as a card in the conversation: what tool, aimed at
-what, **Allow once** or **Don't allow**. The turn waits for your answer (ten minutes,
-then it declines on your behalf and says so), a declined call shows amber as "not
-permitted" rather than red as an error, and everything already allowed in
-\`/config/.claude/settings.local.json\` still runs without asking.
-
-**When Claude has a question, you get the question — not a permission slip.** Claude
-Code sometimes asks multiple-choice questions mid-task (which zone did you mean, which
-approach do you prefer). Those used to arrive as "may I use AskUserQuestion?", and
-allowing it sent back an empty answer sheet that broke the turn. The chat now renders
-the questions themselves: tap an option, pick several where it allows it, or type your
-own answer — and **Don't answer** tells Claude to use its best judgement instead of
-asking again.
-
-**One thing the chat can't do: appear in the Claude app on your phone.** The app's
-"connected" sessions ride Remote Control, which only supports interactive sessions —
-the chat drives Claude Code headlessly, and there is no flag that changes that (it's a
-Claude Code limitation, not a setting). The conversation itself is not stuck, though:
-switch to Classic and the same conversation moves into a real terminal session, which
-can register with the app like any other.
-
-**Type / for Claude Code's commands, or \`brain\` / \`ha\` for brAIn's own.** The palette
-lists what *your* install actually has — including anything you put in
-\`/config/.claude/commands\`, and every subcommand the two dispatchers print. Neither
-list is written down in the panel, so neither can go stale. ↑/↓ to move, Enter or Tab
-to pick. A few Claude Code commands are REPL-only (\`/help\` among them) and say so
-rather than failing.
-
-**⋯ holds the rest.** *New chat*; *Conversations* — every conversation in \`/config\`,
-started here or in the classic terminal, and picking one replays it into the pane and
-carries on; *Session details* — the model, the project directory, how you are being
-billed, and this conversation's id (copy it to resume from an SSH session or another
-machine); and the switch between the two faces.
-
-Both faces stand in the same directory, which is what lets each see the other's
-conversations at all: Claude Code files them per working directory.
-
-**On a wide screen the conversations get a rail.** From about 1100px the chat grows a
-column down the left listing every conversation, with **＋** for a new one and the one
-you are in marked rather than hidden. It is the same list the menu opens and the same
-resume — below that width it isn't drawn, because 248px of conversations is most of a
-phone, and **⋯ → Conversations** is still there.
-
-**The rail shows yours, and says who ran the rest.** brAIn drives the same Claude Code
-from \`/config\` for voice, for automation tasks and for filing memory, so those land in
-the same store your own chats do — and a house that uses them ends up with a column of
-machine prompts. Each row carries who started it, and the chips above the list choose:
-**Yours** to begin with, then **Voice**, **Automation**, **Memory** or **Study** with a
-count each. Only faces that have actually run in your house are offered, nothing is
-hidden, and opening a machine's run is a perfectly good way to see what voice really
-did with "turn off the kitchen lights". Switching back from the classic terminal only
-ever picks up a conversation of yours.
-
-**Starting a new chat does not lose the old one.** Claude Code keeps it and it stays in
-the list — and if it was mid-answer, it keeps answering. What a new chat costs is that
-the next thing you say belongs to a separate conversation, not that anything was
-forgotten.
-
-**A row says what its own session is doing.** A quiet **answering…** means that
-conversation is writing a reply right now, in the background, whether or not you are
-looking at it. **Needs your OK** means it has asked for a permission and is waiting —
-worth pressing, because an approval nobody answers is declined after ten minutes. When
-a background conversation asks, the chat you are in says so too, with a button that
-takes you there; the badge alone is not enough on a phone, where there is no rail. A row
-with no mark is the ordinary case and says nothing, because "this one has a process" is
-not news.
-
-**Deleting takes one press, or one pass.** The **✕** on a row deletes that conversation,
-with an Undo in the toast for a few minutes. To clear several at once, press the
-checklist icon above the list (in the rail or in **⋯ → Conversations**): rows grow
-checkboxes, **Select all** takes everything that is not currently open, and **Delete**
-removes the lot with a single Undo that puts them all back. A conversation the chat is
-holding open is never deleted out from under itself — the ✕ offers to close it first,
-and says so, because closing one mid-answer loses what it was writing.
-
-**Under the box: which model is answering, and how full the conversation is** — say
-\`42k / 1000k context · 4%\`, going amber past 80%. The number is the CLI's own report of
-what it sent on the last model call, and what it sent *is* the conversation so far, so it
-is measured rather than estimated. Cached parts count: a cached prompt still takes up the
-window, it is only cheaper to send. The window is the model's own published one, so it
-changes with the model you are on — Opus and Sonnet are 1M from 4.6 onward, Haiku is 200k.
-
-**A per-message price only appears if an API key is paying.** On a Pro or Max
-subscription those tokens are already bought, so there is nothing to charge and the
-footnote shows the duration and turn count instead.
-
-**Classic** is a true terminal — ttyd over tmux. Use it for anything that draws its own
-screen (a TUI, \`htop\`, an installer), for running shell commands yourself, or just
-because you prefer it.
-
-**On a small screen it takes the room it needs.** The bar above folds away by itself
-while the keyboard is up and comes back when you dismiss it; **⤢** in the corner folds
-it away for good, and the same button brings it back. tmux drops its status line on a
-narrow terminal too — one row of about twenty, spent on the date.
-
-## Memory
-
-What brAIn knows about your home, and the queue behind it. See **Memory** in this guide.
-Nothing on this tab is waiting on you — the queue files itself, and the document is
-there to read. Anything that needs an answer is on **Findings**.
-
-## Docs
-
-This guide.
+Two rooms are refused, each with the reason: one with fewer than two lights
+brAIn can set (four scenes over one bulb is four ways of saying the same
+thing), and one with more than forty (that is a floor, not a room — split it
+into areas). Claude is used for exactly one thing here: naming the four. If
+that run fails you get **Morning**, **Day**, **Evening**, **Night**, which work fine.
 `,
   },
-
   {
-    id: "findings",
-    icon: "⚠️",
-    title: "Findings",
+    id: "answering-without-opening-anything",
+    icon: "📱",
+    title: "Answering without opening anything",
     body: `
-# Findings
+# Answering without opening anything
 
-Three things sound similar and are not:
+Two places show brAIn's work list, and both of them can end an item.
 
-| | Question it answers | How it ends |
+**\`todo.brain_system_brain\`** is the open findings in Home Assistant's own To-do
+panel and mobile app — the same list the Findings tab shows, as items. Completing
+one is the tab's **I fixed it**; deleting one is its **Wrong**. Both are the tab's
+own endings, so the memory line, the settled key and the row leaving the list all
+happen exactly as they would have — the To-do app has its own two verbs and there
+is no third vocabulary here.
+
+You cannot **add** an item. There would be nothing behind it and it would vanish
+on the next refresh, and a list that silently deletes what you put on it is
+worse than one that does not offer to take it. There are no due dates yet
+either: a forecast's date lives in the prose of its detail ("about 9 days
+left"), and a date parsed out of a sentence is a guess with a calendar entry
+attached to it.
+
+The list needs Home Assistant 2023.11 or newer (the To-do panel's own floor).
+On anything older it is simply absent.
+
+**Notifications get buttons** — **I've fixed it**, **Not a problem**, **Later** —
+when two things are true: the notify service is the Home Assistant companion
+app (\`notify.mobile_app_*\`), and the message is about exactly one finding.
+Every other notifier means something different by the payload the buttons ride
+in, or nothing at all, and a guess there is how a working notification stops
+arriving; and a digest about three problems could not say which one a button
+answered. In both cases the message is the one you were already getting.
+
+Either way the answer reaches the add-on through a small file on
+\`/config/.brain/\`, not over the network — brAIn's panel port is deliberately
+not published — so if the add-on is stopped when you tick something off, the
+answer waits for it rather than being lost.
+`,
+  },
+  {
+    id: "it-knows-what-changed-and-what-changed-it",
+    icon: "🕵️",
+    title: "It knows what changed, and what changed it",
+    body: `
+# It knows what changed, and what changed it
+
+A state does not carry a cause. Nothing in \`light.kitchen\` being on says
+whether somebody pressed a switch, an automation fired, a voice command
+asked, or brAIn did it — and that is the question behind most of what people
+ask their house.
+
+The **Activity** tab reads Home Assistant's own logbook and puts a cause on
+every row: the automation by name, the script, the scene, the person, the
+voice assistant, or brAIn. Tap a row for that entity's own recent history.
+Page back a day at a time; filter by cause. It costs nothing — no Claude run,
+no stored copy — and it needs the \`logbook\` integration, which is part of
+Home Assistant's default config.
+
+Some rows say **no cause recorded**. That is deliberate: a press on a wall
+switch and a push from a device's own integration arrive identically, so
+naming either would be a guess, and a timeline that guesses is not evidence.
+
+brAIn's own actions are the one thing it does not have to read out of the
+logbook. It calls Home Assistant with the Supervisor's token like every other
+add-on, so its changes are indistinguishable there from any integration's —
+it writes down what it did instead, in \`/config/.brain/actions.jsonl\`, and
+matches that against the logbook.
+
+Claude can read all of this too: ask **"why did the hall light come on"** in
+the chat or the ask bar and it looks up the cause rather than reasoning from
+a state.
+`,
+  },
+  {
+    id: "it-says-when-it-is-not-working",
+    icon: "❤️",
+    title: "It says when it is not working",
+    body: `
+# It says when it is not working
+
+\`sensor.brain_usage_limits_health\` is \`ok\`, \`degraded\` or \`failed\`, with the reason and
+what to do about it in its attributes. It never goes unavailable — Home
+Assistant hides the attributes of an unavailable entity, and this is the
+entity you look at when the others have gone — and a verdict that has gone
+stale reports **that** rather than serving you its last good answer.
+
+It is a state and a sentence, never a score: one number over a house hides
+its worst problem inside an average. A face you have switched off is never
+counted as a fault. The same verdict appears at the top of **Diagnostics**
+under ⚙ and in \`brain doctor\`.
+`,
+  },
+  {
+    id: "everything-it-does-can-be-undone",
+    icon: "🔙",
+    title: "Everything it does can be undone",
+    body: `
+# Everything it does can be undone
+
+Before Claude writes to any file under \`/config\`, brAIn snapshots the previous
+contents. \`brain undo\` lists what changed and puts any of it back — one edit, or
+everything from today. \`secrets.yaml\` is never snapshotted.
+
+That covers Claude's edits. For the house as a whole, use Home Assistant's own
+backups: they're whole-system and restorable, and brAIn deliberately does not
+duplicate them (see What it will not do).
+`,
+  },
+  {
+    id: "setup",
+    icon: "🚀",
+    title: "Setup",
+    body: `
+# Setup
+
+1. **Install and start the add-on.**
+2. **Open the panel** from the sidebar and connect your Claude account. Easiest route:
+   open the **Terminal** tab, run \`claude\`, and sign in there — the rest of brAIn
+   picks that login up. The panel also offers a guided sign-in and a paste-a-token
+   box. This is the **only** login; terminal, insights, voice, findings and memory all
+   share it.
+
+   Afterwards, everything about that login lives in **⚙ Settings → Claude account**:
+   which credential is in use and where it came from, whether Claude still accepts
+   it, **Sign in again**, **Sign out**, and whether to share it with the other BRUH
+   add-ons. Come back here when the top bar says **Claude auth failed** — pressing
+   that chip goes straight to the sign-in screen.
+3. **Accept the integration.** Home Assistant offers to set up **brAIn** via
+   discovery. That's what provides the services, the sensors and the voice assistant.
+4. **Say where brAIn may speak.** The first screen asks for a notify service and,
+   optionally, quiet hours. It is asked first because the morning brief is the one
+   thing that reaches you where you already are, it is off by default, and it is
+   gated on a service existing — so on a fresh install the most useful thing the
+   add-on does was switched off behind two options nobody had been told about. A
+   home with no notify service is told so; nothing is invented.
+5. **Press Start learning.** brAIn studies your home for a few minutes in the
+   background, then proposes the cards this particular house should have. You pick
+   which to keep. Two things happen alongside it: **one card starts generating
+   immediately** — an overview, from the cheap orientation map — because an empty
+   Insights tab for the twenty minutes the syllabus takes is indistinguishable
+   from a broken one; and the five opening study sessions run a **lighter**
+   syllabus than \`brain learn\` does, because somebody is watching a progress bar.
+6. **Pick your cards.** A fresh install now creates **only** what you ticked. The
+   nine shipped categories are offered as suggestions like everything else, and
+   the ones you did not accept are not created — including when you accept none,
+   which is an answer and gives you the empty dashboard you asked for. (An install
+   that onboarded before 1.48.0 is untouched: it keeps every card it has.)
+
+A **Claude Pro or Max subscription** is the cheapest way to run brAIn — it uses the
+plan you already pay for rather than API credits. An API key works too.
+
+> **If your home is too sparse to learn from**, brAIn says what's missing rather than
+> inventing generic cards. Add entities, let some history accumulate, run it again.
+
+## Signing in, and sharing that login
+
+A Claude credential can live in **four** places. Three are read by everything that
+authenticates, in this order; the fourth is a safety net brAIn keeps for itself:
+
+| Where | Written by | Notes |
 | --- | --- | --- |
-| **Memory** | What is *true* of this home? | It's a document; it just gets better |
-| **Guesses** | What might brAIn have *wrong*? | Yes or No, once |
-| **Findings** | What is *broken* in this home? | Fixed, or corrected |
+| Claude Code's own store | \`claude\` / \`claude /login\` in the Terminal tab | The only one that records an expiry — and a **session** token, which the CLI refreshes for itself |
+| The panel's store | the ✨ Connect screen, ⚙ Settings → Claude account | Lives in the add-on's own storage |
+| The shared file | **Share it**, or \`ha login --share\` | On \`/config\`, so it is the one other BRUH add-ons can read |
+| The backup copy | the add-on, at every start | The last known-good copy of Claude Code's own store, put back if that file goes missing. **Sign out clears this one too** — otherwise signing out and restarting, which is the first thing anybody locked out tries, would put the old credential straight back. |
 
-A finding is a work list item. A dead battery. A sensor that hasn't changed value in six
-days. A device stuck unavailable. An automation whose trigger entity was renamed, so it
-can never fire again. Something is wrong and somebody has to do something about it.
+Sharing is **off unless you turn it on**. \`/config\` is included in Home Assistant
+backups, and those are not encrypted unless you turned that on — so a shared login
+travels with your backups. Claude Code's own session token is deliberately **not**
+shareable: the shared file records no refresh token, so a copy would work for a few
+hours and then break every add-on reading it with nothing to say why. Sign in from
+the panel (or run \`ha login\`) to mint a long-lived token that can be shared.
 
-Findings come from insight runs and from study sessions — the same passes that fill
-memory — and from the **house checks**, which cost nothing. brAIn only reports a problem
-**once**: the same finding in different words is recognised and dropped.
+A long-lived token has one thing it cannot do: **read your account's usage limits.**
+The permission for that is only asked for by the interactive sign-in, so a box whose
+only credential came from \`ha login\` or the panel will show the usage pill as an
+estimate and report \`oauth_token_lacks_usage_scope\`. That is not a broken sign-in and
+running \`ha login\` again cannot change it — run \`claude /login\` in the **Terminal**
+tab as well, which does not replace the shared file.
 
-## House checks
+From a terminal, \`ha login\` and \`brain login\` are the same command:
 
-Not every problem needs a model to find. On a schedule (every
-\`checks_interval_hours\`, six by default) and on **Run checks now**, brAIn reads Home
-Assistant directly — registries, states, your automations, the traces Home Assistant
-keeps, a week of statistics, the dashboards, and the Supervisor's own view of backups,
-add-ons and the disk — and files what it finds under a *check* label, with no Claude run:
+\`\`\`bash
+ha login              # sign in — needs a real terminal (it is an OAuth round trip)
+ha login --status     # all three stores, and which one is in use
+ha login --share      # publish a login you already have
+ha login --token …    # paste a token minted elsewhere
+ha login --revoke     # withdraw the shared copy
+\`\`\`
 
-- an automation naming an entity that no longer exists, or calling a service that is
-  not registered (your old phone's notify service, with the replacement named)
-- an automation whose last run failed, whose condition never passes, that keeps being
-  skipped on \`mode: single\`, that has never fired, or was switched off and forgotten
-- a device unavailable for more than a day; a battery low, or *gone quiet*; an
-  impossible reading; a sensor frozen on one value for a week
-- an automation that is switched on, errors at nothing, and can never fire again,
-  because the entity in its trigger has been unavailable for days
-- a Z-Wave node the controller has marked dead, or a Zigbee device that has stopped
-  checking in — a sleepy sensor reads as \`available\` between check-ins, so silence is
-  the honest question and not availability
-- an entity still named after its hardware, a device in no area, a helper nothing uses,
-  a device row with no entities behind it
-- nothing backed up in a week; an add-on erroring, or set to start on boot and stopped;
-  a disk nearly full; a recorder database that has outgrown its headroom
-- a dashboard showing entities that no longer exist
-- a battery **running down**, from the slope of its last sixty days — a finding with a
-  date on it
-
-A check's finding clears itself when the check stops finding it — the device came back,
-the battery was changed — and it is simply removed, so it can come back if the problem
-does. What *you* end stays ended.
-
-## How right it's been
-
-Every ending here is a label. **I did it** and **Got it** say the report was right;
-**Wrong** says it was not. Once a producer — a check, a card, a study topic — has a few
-endings, a line under the filters says how right it has been. That is the number that
-decides whether this tab is trusted, and it is the number that gets a check with a bad
-threshold fixed.
-
-## Guesses are on this list too
-
-The first two rows of that table stay different kinds of knowledge, but answering them
-is the same job — a decision only the person who lives here can make — so they are on
-one list. A guess sits at the top of **Needs you** with **✓ Yes** and **✕ No**:
-
-> The garage fridge is meant to run 24/7
-
-**Yes** files it as a plain fact in memory. **No** offers you the same box Wrong does,
-and the same thing is true of it: "no" retires one guess, and *"no, that's the beer
-fridge and it's meant to cycle all night"* retires every guess built on the same
-misreading. Never more than three are open at a time, and they expire after 14 days.
-
-They used to be answerable in two other places as well — under each insight card and in
-the Memory tab — with a badge that counted neither. Answering in one left the others
-showing an open question. One list, one badge, and when it says nothing is waiting,
-nothing is.
-
-## The two ways out
-
-**✦ Fix it** sends Claude to make the change, in your actual Home Assistant. It confirms
-the problem is still real, finds the cause rather than the symptom, makes the smallest
-change that resolves it, verifies the change took, and reports back with a list of exactly
-what it touched.
-
-It is bounded on purpose:
-
-- **One finding per run.** Anything else it notices along the way becomes its own finding
-  rather than an edit you didn't ask for.
-- **It never deletes** an entity, automation, dashboard or file it didn't create — it
-  disables or corrects instead.
-- **It never restarts Home Assistant.** Reloading one config domain is fine; a restart is
-  your call.
-- **It never touches secrets** or credentials.
-- **Nothing runs until you press it.** brAIn will not change your house on a schedule.
-
-Every change it makes is snapshotted first by the same hook the terminal uses, so
-\`brain undo\` puts a file back if a fix goes wrong.
-
-### The two endings
-
-They are easy to confuse until you say what each one *teaches brAIn*, which is the only
-difference that matters:
-
-**✓ I fixed it** — it was a real problem and it is sorted now. For anything with hands
-in it: replacing a battery, re-pairing a device. brAIn marks findings like these **needs
-you** rather than offering to fix them, because inventing a software substitute for a
-dead battery is worse than saying so.
-
-It offers the same box, for a different reason: nothing is being corrected here, so what
-you type is simply more of the fact.
-
-> Replaced the CR2032 — it's a 3-monthly job on that one.
-
-"I fixed it" leaves brAIn knowing a problem is over. That sentence leaves it knowing your
-house. Optional, like the other one.
-
-**✕ Wrong** — brAIn has misread something, or it is simply normal in this house. If the
-garage freezer is *supposed* to sit at -30°C, one press ends that conversation for good:
-the answer is fed back into every future analysis, so brAIn stops raising it rather than
-raising it again next week for you to dismiss again.
-
-**Say why, if there is a why.** Pressing it opens a box for one sentence:
-
-> That sensor always reads on. It's not stuck.
-
-That sentence is worth more than the press. Without it, brAIn learns that one wording was
-unwanted, and reports the same misunderstanding again in different words. With it, it
-learns something about your house — and that goes two places: into your memory document
-at the next consolidation, and into what every future analysis is told about this home.
-
-It is not a rule brAIn obeys literally. It is handed over as *what you said*, and brAIn
-works out what follows from it — usually a standing fact about a device or a habit,
-sometimes nothing at all. That is on purpose: you shouldn't have to phrase a correction
-carefully for it to be useful.
-
-The box is optional. If it is just normal here and there is nothing to explain, press
-Send with it empty.
-
-Both endings do the same three things. The answer goes into memory as a plain fact about
-your home, the wording is remembered so the same problem is never reported at you twice,
-and **the card is deleted**. There is no pile of dismissed cards to scroll past — a list
-of things nobody has to look at again is not a work list.
-
-### Undo
-
-Because the card is deleted, and because the two endings sit next to each other meaning
-opposite things. Every press that takes something off the list — both endings, **Got it**,
-**Dismiss**, and either answer to a guess — leaves an **Undo** in the toast for a few
-seconds. It puts back all of it: the card, the suppression that would have stopped brAIn
-raising it again, and the line it queued for your memory document.
-
-It is deliberately only that long. This is "I pressed the wrong one", not a history: once
-a consolidation has run, the fact is in the document and the way to change it is to edit
-the document. If you press Undo after that, it says so rather than pretending.
-
-**Fix it has no Undo**, because it starts a Claude run against your actual house and
-taking the card back would be a lie about what was undone. **Remind me later** has none
-either — it took nothing away, and it already has *Bring it back now*.
-
-### Dismiss, which is neither
-
-**⌫ Dismiss** clears the row and teaches brAIn nothing. No memory line, no suppression —
-so the next analysis is free to find the same thing again, and probably will if it is
-still there.
-
-That is the difference from Wrong, and it is why both exist. Wrong is a judgement about
-the problem: *you've misread this*, or *this is normal here*. Dismiss is a judgement
-about the list: *not now, and I don't want to promise anything*. Use it when you're
-clearing the board rather than answering it.
-
-**💬 Discuss** opens it as a conversation in the Terminal tab, with everything brAIn
-knows about it already in the question: the detail, the fix it had in mind, the entity,
-the severity. It is asked to look into the thing and say plainly whether it really is a
-problem *in your house* — and told not to change anything, because "explain this to me"
-and "go change my house" are different permissions.
-
-The decisions come with you. While you are discussing a finding, a strip above the
-message box keeps **Fix it**, **I fixed it**, **Later** and **Wrong**
-one press away, so agreeing to the fix at the end of the conversation doesn't mean
-coming back here to find the card again. Wrong asks for its reason there too — telling
-Claude in the chat reaches *this* conversation, and the box reaches every future one.
-
-**⏰ Remind me later** is the answer for "yes, but not now" — an hour, tomorrow, next
-week, next month. It is not a decision and it does not settle anything: the finding
-stays exactly as open as it was and simply stops asking. Use it instead of dismissing
-something you actually intend to deal with, because dismissing is permanent. While it
-waits it sits under the **Later** filter, showing when it comes back, with a button to
-bring it back sooner.
-
-## After a fix
-
-When brAIn fixes something itself, the card **stays on the list** and turns green with
-what it changed and which files it touched. That is deliberate: it altered something in
-your house, and news you haven't read is not settled. **✓ Got it** clears it once you
-have. What it changed is already in memory by then, so the press only means "I've seen
-this".
-
-The **Answered** filter is the record of everything you have ended — one line each,
-saying whether you dealt with it or told brAIn it was never a problem. It is not an
-archive of cards; the cards are gone. If you change your mind, **Let brAIn raise it
-again** stops suppressing that one. Nothing comes back on its own — the next analysis is
-simply free to find it, and if it has genuinely stopped happening, nothing does.
+The interactive flow needs a terminal, so run it in the panel's **Terminal** tab —
+not the separate **Terminal & SSH** add-on, which is a different container whose \`ha\`
+is the Supervisor CLI, an unrelated tool. Without a terminal at all, use \`--share\`,
+\`--token\`, or the panel.
 `,
   },
-
   {
-    id: "memory",
-    icon: "🧠",
-    title: "Memory",
+    id: "what-to-expect",
+    icon: "🗓️",
+    title: "What to expect",
     body: `
-# Memory
+# What to expect
 
-One rule governs the whole design:
+Most of what brAIn eventually tells you is **measured**, and a measurement has a
+floor under it: a confident answer over data that holds none is worse than no
+answer at all. So a fresh install is quiet, deliberately, and the silence is the
+one thing that looks exactly like being broken. This is the table that says which
+is which.
 
-> **The memory document is the only thing that is "memory."** Everything else is a queue
-> or an audit trail.
+Every number below is the floor that is actually in the code — \`MIN_DAYS\`,
+\`MIN_SAMPLES\`, \`MIN_BUCKETS\`, \`HISTORY_DAYS\` — not a guess. The **Knowledge** tab
+shows the same thing live, per measurement, with a date when it can estimate one.
 
-That is what keeps it readable. You can open the document, read it top to bottom, and
-know exactly what brAIn believes about your house.
+The four measurement stores (baselines, thermal, closures, appliances) are all
+built by one pass that runs about five minutes after the add-on starts and then
+once a day. What takes weeks is not the pass; it is the **history** each floor
+needs, which is why the column below is about days of your house and not about
+brAIn's schedule.
 
-## The document
+| Feature | Default | What it needs | When it first says something |
+| --- | --- | --- | --- |
+| **House checks** | on | nothing | Two minutes after the add-on starts, then every \`checks_interval_hours\` (6). They read Home Assistant directly and cost no Claude run. |
+| **Findings from analysis** | on | a Claude sign-in | With the first card run. |
+| **Battery and decline forecasts** | on | ~10 daily statistics rows per sensor (\`BATTERY_MIN_POINTS\`) | About **10 days**, and only for a battery whose runway is under 21 days. |
+| **Baselines** — what is normal here | on | long-term statistics; 28 days is the window it reads | The first pass runs about five minutes after the add-on starts and then daily, so there is a **whole-history** answer as soon as there is any history to read. The **per-hour-of-the-week** answer needs 3 samples in one bucket (\`MIN_SAMPLES\`) and a bucket fills once a week — so about **3 weeks**. The two are different answers and every reading says which it came from. |
+| **Thermal model** — how a room holds heat | on | an outdoor temperature sensor, indoor sensors in areas, and cold nights | About **4 weeks** (\`HISTORY_DAYS = 28\`). With no outdoor sensor it says so and stops, rather than waiting forever. |
+| **Rhythm** — when the house gets up | on | person-caused changes in the logbook | 10 separate days (\`MIN_DAYS\`). Weekdays arrive five times in seven, so about **2 weeks**; weekends accrue twice a week, so about **5 weeks**. |
+| **Closures** — what is normally open | on | doors, windows, locks or covers | 24 watched hours of the week on one entity (\`MIN_BUCKETS\`), read from 28 days of history — so the first pass usually answers on a house that already has history, and a rarely-changing door takes longer. |
+| **Habits and routines** | on | things you do by hand | 6 separate days (\`MIN_DAYS\`) plus a share of the days it could have happened on, which in practice is **2–3 weeks**. |
+| **Appliance chores** | on | a power sensor on the machine | 10 days of its own 5-minute statistics (\`HISTORY_DAYS\`), and only for a washer, dryer or dishwasher matched by name. |
+| **Energy — last week vs the week before** | on | Home Assistant's own Energy dashboard configured | 6 complete local days (\`MIN_DAYS\`); the comparison needs a second week behind it. |
+| **Notifications about findings** | **off** | \`findings_notify_service\` | As soon as a service is set. Onboarding asks for one on its first screen. |
+| **Morning brief** | **off** | a notify service **and** \`morning_brief\` | Within 45 minutes of the measured wake time, and only when there is something worth saying. Until rhythm has answered it uses \`morning_brief_hour\`. |
+| **Weekly report** | **off** | a notify service **and** \`weekly_report\` | On \`weekly_report_day\`, once there is material. |
+| **Overnight self-healing** | **off** | \`self_healing\`, plus quiet hours or a measured settle time | The first night after it is switched on. With neither a quiet window nor a rhythm it does **not** run, and says so in Diagnostics. |
+| **Usage sensors** | on | \`claude /login\` in the **Terminal** tab | Within five minutes of that sign-in. A pasted token or \`ha login\` cannot read them — see below. |
 
-Preferences, entity nicknames, household patterns, device notes. Plain markdown, and
-**yours to edit** — your edits are the source of truth.
+Two of these are worth spelling out.
 
-Every part of brAIn reads it: insight runs, voice conversations, study sessions, and the
-terminal (\`brain memory list\`).
+**The usage sensors need the interactive login specifically.** \`ha login\` and the
+panel's paste box mint a long-lived token, which is the only kind that can be
+shared with the other BRUH add-ons — and the permission to read your account's
+usage windows is only ever asked for by \`claude /login\`. Without it the pill in the
+top bar shows brAIn's own local estimate, prefixed \`~\`, and the tracker reports
+\`oauth_token_lacks_usage_scope\`. That is not a broken sign-in and running \`ha login\`
+again cannot change it.
 
-## How facts get in
+**"Not started", "collecting" and "not available" are three different answers.**
+A measurement this house cannot supply — no outdoor thermometer, no doors, no
+energy dashboard — says **not available** with the reason, and no date, because a
+date beside it would be a promise nothing is going to keep. One that has stopped
+being rebuilt says **stale**, and that one is worth going and fixing.
+`,
+  },
+  {
+    id: "the-panel",
+    icon: "🖥️",
+    title: "The panel",
+    body: `
+# The panel
 
-Nothing writes the document directly except the consolidator. Everything else queues:
+One ingress panel, seven tabs.
 
-| Source | What it queues |
+| Tab | What's there |
 | --- | --- |
-| You, in the Memory tab | what you type |
-| Voice conversations | preferences and corrections you state out loud |
-| Insight runs | durable discoveries about the home |
-| Study sessions | whatever \`brain learn\` finds |
-| Findings | what you said when you pressed **Wrong** or **I fixed it** |
-| Guesses | the ones you confirmed, and your reason for the ones you didn't |
-| \`brain memory add\` | what you type in the terminal |
+| **Insights** | Your cards, and the ask bar that makes new ones. A question becomes a card; a line starting "learn about…" starts a study session instead. A **Today** strip across the top says when the checks last ran, when the measurements were last rebuilt, when memory was last filed, and how many problems have been written up since yesterday. |
+| **Findings** | What brAIn thinks is broken. Six controls on each one — **Fix it**, **Discuss**, **I fixed it**, **Remind me later**, **Dismiss**, **Wrong**. A count on the tab means something is waiting on you. |
+| **Proposals** | Changes brAIn would like to make: a habit worth automating, a condition an automation you keep undoing is missing, an emergency playbook, four scenes for a room. Nothing here has happened yet. |
+| **Activity** | What changed in your house and what caused it — a person, an automation, a script, voice, brAIn itself — plus the overrides that are evidence rather than history. Fetched fresh every visit and never cached. |
+| **Terminal** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with the button on the tab, or in ⚙ Settings. Press ⤢ to give either the whole screen. |
+| **Knowledge** | What brAIn knows: this morning's brief, the seven measurements and how far along each is, the memory document, and the queue waiting to be filed into it. |
+| **Docs** | This guide, in the panel. |
 
-One writer means the terminal, the panel, and voice can all feed the same memory without
-fighting over the file.
+\`enable_terminal\` switches the Terminal tab off. \`enable_insights\` switches off
+everything that only a scheduled Claude run ever fills: the scheduler stops, and
+the **Insights** and **Proposals** tabs go from the strip. **Findings stays**,
+because the house checks cost nothing to run and still file there. The panel
+itself always runs, because it is the ingress target.
 
-**Waiting to be filed** is that queue, and every row in it is a line the next pass will
-read — whoever put it there. It used to list only what insight runs had discovered while
-counting everything, which is why it could say "9 things waiting" above four cards. **✕**
-on a row drops it before it is filed; nothing is asked of the consolidator, because a
-queued fact has never reached the document. A line that *is* in the document is edited out
-of the document, in the markdown editor beside the queue.
+## What's on a card
 
-## Filing the queue now
+One control sits on the card and the rest are behind **⋯**, because on a phone six
+icon buttons in the card's head are what squeezes the title out.
 
-The consolidator runs **daily**, and early once more than 20 things are waiting. That's
-the right cadence for a background job and the wrong one for someone who has just taught
-brAIn something and wants to see it land.
+- **⤢ Expand** — the only one on the card itself, because it is the only one that
+  acts on what is on screen rather than on the card's definition.
+- **⋯ → Regenerate** — run this card again now.
+- **⋯ → Edit** — name, icon, prompt and schedule. Fixed daily times ("07:00, 19:00")
+  use far fewer tokens than a short interval.
+- **⋯ → Give feedback** — tell Claude what to do differently next time ("ignore the
+  guest room sensor", "show costs in dollars"). It sticks, for every future run.
+- **⋯ → Add to dashboard** — YAML for a Webpage card, so an insight lives on your own
+  Home Assistant dashboard.
+- **⋯ → Delete** — the card and its history.
 
-**⇪ File into memory now** runs the same pass immediately: it merges everything queued
-into the document, dedupes, and resolves contradictions newest-wins. It says how much is
-waiting before you press it, and costs one small Claude call. Same script, same safety
-checks — the consolidator stays the only writer either way.
+There is no "refresh everything" button. It used to sit in the top bar, where it was
+a circular arrow that read like a page reload and in fact queued a Claude run for
+every card you had — minutes of work and a real bite out of the usage the pill beside
+it was reporting.
 
-Filing empties **Waiting to be filed**, and what was in it is then part of the memory
-document beside it. It is not listed twice: once a discovery is in the document, the
-document is where you read it, and where you edit or delete it. If the pass keeps the
-facts instead — it does that rather than write a document it isn't happy with — it says
-so, and the queue stays where it was.
+## When a card actually re-runs
 
-Manual edits are rewritten by a consolidation, so if you have unsaved edits in the
-markdown editor below it asks before filing.
+A card has an interval, and past 1.48.0 clearing that interval is only half of what
+lets it spend a run. The other half is that **something it reads has moved**: a new
+or ended finding in its domains, an edit to \`memory.md\`, a measurement rebuilt
+overnight, feedback you added, a rewritten focus. A card whose inputs are identical
+would produce the same card at full price, and a dashboard that changes nothing on a
+timer teaches people it is a timer.
 
-## Guesses live on Findings
+Every card records **why it was made** — "on its refresh interval", "a finding it
+reads changed", "first run since inputs were tracked" — and a card that skipped a run
+records the hold instead, so a quiet dashboard can say which of the two it is.
 
-brAIn proposes things it believes and asks you to confirm — *"the garage fridge is meant
-to run 24/7"* — and a confirmed one becomes a line in the document beside this queue.
-But answering is a **decision**, and decisions are all in one place: the **Findings**
-tab. See that section for what Yes and No do.
+**When to refresh a card** in ⚙ Settings (\`refresh_mode\`) picks the rule. It is
+brAIn's own setting and is not on the Configuration tab:
 
-Nothing on this tab is waiting on you. The queue below files itself on a timer, and the
-document is here to read and edit.
+| Mode | What has to be true |
+| --- | --- |
+| \`changed\` | The interval has passed **and** something the card reads has moved. The default. |
+| \`always\` | The interval alone, which is what every release before 1.48.0 did. |
+| \`never\` | Nothing is scheduled at all. **Generate** and **Regenerate** still work, because pressing a button is an explicit ask. |
 
-## Seeing what changed
+If the inputs cannot be read for some reason, the card refreshes anyway: "I could not
+tell" must not become a card that never updates again.
 
-\`\`\`bash
-brain memory log        # what it learned recently
-brain memory undo 1     # revert a change
-\`\`\`
+**⚙ > Diagnostics** is the read-only half of the settings dialog: versions, whether
+the Claude sign-in is holding, the last 24 hours of Claude runs counted by how they
+ended with the failures behind those counts, and the last house-checks pass —
+including **which checks could not run, and why**. That last line is the one worth
+reading: a skipped check did not find nothing, it could not look, and it is also the
+check that is not allowed to clear a row. **Copy for a bug report** puts the payload
+on the clipboard (it falls back to putting the text on screen, selected, when an
+ingress iframe is refused the clipboard). It is the same payload behind **Download
+diagnostics** on the brAIn integration page, and the one \`brain report\` bundles.
+Since 1.48.0 it also draws six things its payload had always carried and the
+dialog had never rendered: when the house wakes and settles, how rooms hold heat,
+doors and windows, machines, habits, and the background daemons. The **Knowledge**
+tab is where those numbers belong; they are here because a bug report has to carry
+them too — a rhythm that never gathered enough days and one that did were, on this
+screen, the same silence.
 
-Every consolidation records what it added and removed, so "what did it learn this week"
-is a real question with a real answer.
-
-## Studying on demand
-
-\`\`\`bash
-brain learn energy      # study one topic
-brain learn             # study whatever has gone stalest
-brain learn --list      # the curriculum
-\`\`\`
-
-A study session investigates a topic — registry, live state, history, long-term
-statistics — and files what it finds. Its output is **knowledge, not a dashboard card**:
-durable facts go to this queue, anything broken goes to **Findings**, and at most a few
-guesses come back for you to settle.
-
-Topics: naming, presence, energy, climate, devices, automations, lighting. You can also
-pass free text.
-
-You don't need the terminal for this. Type **"learn about my heating"** into the ask bar
-on the Insights tab and it runs the same session.
+**⚙ > Problems** is the other half. Every incident brAIn has written up is listed
+there with a checkbox; **Copy selected**, **Copy all** and **Write a report now**
+put the text where you can paste it. See Reports.
 `,
   },
-
   {
-    id: "cli",
-    icon: "⌨️",
-    title: "Command line",
+    id: "what-brain-is-measuring",
+    icon: "📐",
+    title: "What brAIn is measuring",
     body: `
-# Command line
+# What brAIn is measuring
 
-Two commands, split by what they act on. \`brain\` is brAIn's own faculties; \`ha\` is
-Home Assistant operations. That split is why there's no ambiguity about what
-\`ha log\` means.
+The **Knowledge** tab is what brAIn knows about your house, as opposed to what it
+thinks is broken (Findings), what it would like to change (Proposals) or what
+happened (Activity). Four sections, in this order.
 
-Run \`brain help\` or \`ha help\` for the full list.
+**This morning.** The brief that went out, or one sentence saying why there wasn't
+one. "The brief is switched off" and "there was nothing worth saying" are different
+answers and only the first has something to do about it.
 
-## brain
+**What brAIn has measured.** Seven rows, always, in the same order — rhythm,
+baselines, thermal, closures, appliances, habits, energy — whatever state each is
+in. A store missing from the list would be a store nobody can ask about, and on the
+day you install this six of the seven have not started. Nothing on this list costs a
+Claude run: it is all built overnight from what Home Assistant already records.
+Press a row to open the numbers behind it.
 
-\`\`\`bash
-brain memory add "We call the office lamp the beacon"
-brain memory list                  # what it knows
-brain memory edit                  # open the document in $EDITOR
-brain memory forget "<text>"       # queue a line for removal
-brain memory log                   # what it learned recently
-brain memory undo [n]              # revert a memory change
+**What it remembers.** The memory document, editable in place.
 
-brain memory hypotheses            # guesses waiting on you
-brain memory confirm "<text>"      # yes — file it as a fact
-brain memory reject "<text>"       # no — record a dead end
+**What is waiting to be filed.** The inbox queue: facts that have been learned and
+not yet folded into the document. It drains itself; **File into memory now** runs
+the same consolidator by hand.
 
-brain learn [topic]                # study the home
-brain ask "why is the garage cold" # one-shot question
-brain undo                         # revert Claude's file edits
-brain check                        # the house checks, now — no Claude run
-brain doctor                       # end-to-end diagnostic
-brain doctor --json                # the same verdict as one JSON object
-brain doctor --deep                # every face, one real round trip each (~5 turns)
-brain doctor --rehearse            # plant defects here, score the checks, clean up
-brain report                       # redacted diagnostics bundle for a bug report
-\`\`\`
+There is no badge on this tab. Everything on it is a queue that files itself and
+things you read — nothing is waiting on a person, and a badge counting work nobody
+has to do is how the badge next to it stops being read.
 
-A distinctive fragment is enough for \`confirm\` and \`reject\` — you don't have to retype
-the whole sentence.
+## The five states a measurement can be in
 
-## ha
+Each of the seven rows carries one chip, and the five words mean different things:
 
-\`\`\`bash
-ha log                    # tail the Home Assistant log
-ha reload automations     # reload config
-ha check configuration.yaml
-ha context                # regenerate /config/CLAUDE.md
-ha entity list light
-ha service call light.turn_on
-ha addon list
-ha notify "dishwasher finished"
-ha share push <file>
-ha login                  # share this login with other BRUH add-ons
-\`\`\`
+| Chip | What it means |
+| --- | --- |
+| **not started** | No pass has run yet, or nothing has been filed. On a fresh install this is most of the list. |
+| **N of M days · first answer ~date** | Collecting. The number is in that measurement's own unit — days, entities, rooms, hours of the week, machines — and the date is when the floor is met at the rate that unit accrues. |
+| **updated *date*** | Ready. The row's sentence is the measurement's own answer about your house. |
+| **stale since *date*** | It was ready and the nightly pass has stopped running. This is the one worth going and fixing. |
+| **not available** | This house cannot supply it, with the reason underneath — no outdoor thermometer, no door or window, no energy dashboard configured. Never a date, because there is nothing to wait for. |
 
-> If some other \`ha\` command is ever present in the container, brAIn installs its own as
-> \`hass\` instead rather than shadowing it. The startup log says so when that happens.
+The first time a measurement becomes ready, brAIn writes **one card about it** —
+what your house's wake time turned out to be, which room loses heat fastest — and
+that card lives here, on the row it belongs to. It fires once. Milestone cards never
+appear on the Insights tab, which holds only the cards you asked for.
+
+Claude reads the same answers through the \`get_house_model\` tool, and the analyst,
+the morning brief and the weekly report are all handed a short block of them (2 KB,
+one line per ready measurement, in the measurement's own words) so a card does not
+re-derive "what is normal here" from a week of readings on every run.
 `,
   },
-
   {
-    id: "undo",
-    icon: "↩️",
-    title: "Undo & backups",
+    id: "checking-brain-itself",
+    icon: "🩺",
+    title: "Checking brAIn itself",
     body: `
-# Undo & backups
-
-## brAIn does not back up your configuration
-
-Use Home Assistant's own backups — they're whole-system and restorable, and they already
-work. Earlier versions kept a git repo inside \`/config\`, which duplicated those backups
-*into* those backups. That's gone.
-
-## What it does keep
-
-Before Claude writes to any file under \`/config\`, the previous contents are snapshotted.
-
-\`\`\`bash
-brain undo                # list recent edits, newest first
-brain undo 3              # revert edit #3
-brain undo --all-today    # revert everything changed today
-\`\`\`
-
-Each entry shows when, which file, and whether it was created or modified. Reverting
-restores the file exactly as it was immediately before that edit.
-
-- Scoped to what **Claude** touched — not your whole config.
-- Stored under \`/data\`, so it never lands inside your Home Assistant backups.
-- Pruned on \`edit_journal_days\` (default 14) and capped by size.
-- \`secrets.yaml\` is never snapshotted.
-
-> If something else already keeps a \`/config/.git\`, brAIn leaves it exactly as it is —
-> your version control is yours.
-`,
-  },
-
-  {
-    id: "voice",
-    icon: "🎙",
-    title: "Voice & automations",
-    body: `
-# Voice & automations
-
-## Voice
-
-Settings → **Voice assistants** → set the conversation agent to **brAIn**.
-
-By default voice runs on a pool of pre-warmed workers, so commands land in a few seconds
-rather than waiting for a cold CLI start. The area→entity map is cached, so most commands
-skip lookup turns entirely.
-
-Voice reads the same memory as everything else — nicknames and preferences you've taught
-it apply here without further setup.
-
-When you state a durable preference out loud ("actually, we call that the beacon"), it's
-queued into memory automatically.
-
-## Tool access
-
-\`assist_tool_access\` decides how far voice can reach:
-
-- **\`mcp_only\`** (default) — control the house, nothing else.
-- **\`full\`** — also run Bash and edit files.
-
-Leave it on \`mcp_only\` unless you specifically want voice editing your config.
-
-## Watching it learn
-
-Learning is a markdown file on disk, which is invisible to everything outside brAIn. So it
-also surfaces where you already look:
-
-- **The logbook.** Every new fact fires a \`brain_learned\` event, so "brAIn learned: the
-  hallway sensor drops offline around 2am" appears in your home's timeline next to lights
-  and doors.
-- **\`sensor.brain_facts_learned\`** — how much it knows.
-- **\`sensor.brain_last_learned\`** — when, with the facts as an attribute.
-- **\`binary_sensor.brain_waiting_on_you\`** — on when a guess needs a yes/no, with the
-  text in \`pending\`.
-- **\`sensor.brain_open_findings\`** — how many findings are waiting on you, with the
-  severity split and the texts as attributes.
-- **A \`brain_finding\` event per new finding**, for automations and the logbook — and
-  the \`findings_notify_service\` add-on option pushes new findings to a phone with no
-  automation at all.
-
-That last one exists to be automated. A guess sitting in a panel nobody has open expires
-unanswered; pushed to a phone, it costs one tap:
-
-\`\`\`yaml
-triggers:
-  - trigger: state
-    entity_id: binary_sensor.brain_waiting_on_you
-    to: "on"
-actions:
-  - action: notify.mobile_app_phone
-    data:
-      message: "{{ state_attr('binary_sensor.brain_waiting_on_you', 'oldest') }}"
-\`\`\`
-
-## Studying on a schedule
-
-\`\`\`yaml
-action: brain.study
-data:
-  topic: energy      # omit to study whatever has gone stalest
-\`\`\`
-
-Returns immediately — a session runs for minutes, and what it finds arrives in memory
-rather than in a response. A nightly automation with no topic works its way through the
-curriculum on its own.
-
-In the terminal, **\`/learn\`** does the same thing where you can watch it and correct it
-mid-flight. **\`/memory\`** shows what it knows and anything waiting on you.
-
-## Watching it learn
-
-Learning is a markdown file on disk, which is invisible to everything outside brAIn. So it
-also surfaces where you already look:
-
-- **The logbook.** Every new fact fires a \`brain_learned\` event, so "brAIn learned: the
-  hallway sensor drops offline around 2am" appears in your home's timeline next to lights
-  and doors.
-- **\`sensor.brain_facts_learned\`** — how much it knows.
-- **\`sensor.brain_last_learned\`** — when, with the facts as an attribute.
-- **\`binary_sensor.brain_waiting_on_you\`** — on when a guess needs a yes/no, with the
-  text in \`pending\`.
-- **\`sensor.brain_open_findings\`** — how many findings are waiting on you, with the
-  severity split and the texts as attributes.
-- **A \`brain_finding\` event per new finding**, for automations and the logbook — and
-  the \`findings_notify_service\` add-on option pushes new findings to a phone with no
-  automation at all.
-
-That last one exists to be automated. A guess sitting in a panel nobody has open expires
-unanswered; pushed to a phone it costs one tap:
-
-\`\`\`yaml
-triggers:
-  - trigger: state
-    entity_id: binary_sensor.brain_waiting_on_you
-    to: "on"
-actions:
-  - action: notify.mobile_app_phone
-    data:
-      message: "{{ state_attr('binary_sensor.brain_waiting_on_you', 'oldest') }}"
-\`\`\`
-
-## Studying on a schedule
-
-\`\`\`yaml
-action: brain.study
-data:
-  topic: energy      # omit to study whatever has gone stalest
-\`\`\`
-
-Returns immediately — a session runs for minutes, and what it finds arrives in memory
-rather than in a response. A nightly automation with no topic works through the curriculum
-on its own.
-
-In the terminal, **\`/learn\`** does the same where you can watch it and correct it
-mid-flight. **\`/memory\`** shows what it knows and anything waiting on you.
-
-## From automations
-
-\`\`\`yaml
-action: brain.run_task
-data:
-  task: >-
-    Check whether any door has been open more than 20 minutes
-    and notify me if so.
-\`\`\`
-
-Other services: \`brain.send_prompt\`, \`brain.run_insight\`, \`brain.add_memory\`,
-\`brain.clear_conversation\`.
-
-**BRUH Power Tools** adds 65 admin-gated registry services under \`brain.*\` — areas,
-floors, labels, entities, devices, helpers, zones, persons, dashboards and more. Every
-registry object it can create it can also rename, change and delete; the destructive
-ones take \`dry_run\` and tell you the blast radius first. Adapted from
-[Spook](https://github.com/frenck/spook).
-`,
-  },
-
-  {
-    id: "settings",
-    icon: "⚙️",
-    title: "Settings & cost",
-    body: `
-# Settings & cost
-
-## Keeping token use sane
-
-brAIn runs on your Claude subscription, and a subscription has a usage window. The
-defaults are deliberately modest, and ⚙ **Settings** is where you tune them.
-
-**The usage budget** is the important one. Your plan refills every 5 hours; the budget
-caps what share of that window brAIn's *automatic* runs may consume. Hit the cap and
-background generation pauses until the window rolls over. **Manual clicks are never
-blocked** — pressing Generate always works.
-
-The pill in the top bar reads \`Session 19% · Week 64%\`: the 5-hour window the budget
-is set against, and the seven-day window that is usually what actually ends your week.
-**Press it** for when each one resets and what the session went on — there is no hover
-version, because a phone is where that pill is most often the only thing worth reading.
-Nothing is budgeted against the weekly number — it is
-there because a session that looks fine tells you nothing about a week that doesn't.
-
-Both figures come from your Anthropic account when you signed in with a subscription.
-When brAIn can't read them, the pill shows **\`~19%\`** with a warning dot instead: a
-tilde means the number is an *estimate* of brAIn's own spending against a rough plan
-allowance, not your account's real usage, and the weekly window isn't shown at all.
-Press the pill and it names the reason — most often an API key (which bills per token
-and has no usage window), a sign-in that has expired, or Anthropic rate-limiting the
-usage endpoint itself, which is nothing to do with your account's quota and clears on
-its own. The \`sensor.brain_usage_tracker\` diagnostic entity carries the same status
-for automations.
-
-One reason is worth knowing in advance, because it looks like a broken sign-in and is
-not. A **long-lived token** — the kind \`ha login\` mints, and the only kind that can be
-shared with other add-ons — is allowed to run Claude and is not allowed to read your
-usage. There is nothing to fix in the token and re-running \`ha login\` will not change
-it. If you want the real figures, open the **Terminal** tab and run \`claude /login\`:
-the interactive sign-in asks for the extra permission, it does not replace your shared
-login, and the numbers come back on the next poll a few minutes later.
-
-## What a card costs, and where to see it
-
-A card is not a chat message. Generating one posts a snapshot of your home to Claude and
-gets a whole rendered visualization back, so **a single card is typically 25k–45k
-tokens** — a few percent of a Pro session each, and several cards in a row is a real
-bite out of a 5-hour window.
-
-## How a card gets its data
-
-There are two ways, and ⚙ **Settings → How a card gets its data** picks between them.
-
-**Search** (the default) gives Claude a *map* of your home — how many entities of each
-kind exist, which areas they're in, a few anchors like people and thermostats — plus
-read-only Home Assistant tools. It then looks up what the card actually needs: search by
-room or by name, read the few entities that matter, pull their history. A question about
-the hallway costs the hallway. It is also the only mode that can afford **history on a
-question you type**, which the one-shot path never could.
-
-**Snapshot** posts the whole slimmed home in a single turn with no tools at all. It's
-predictable and it's the automatic fallback — if a search run fails or runs out of turns,
-brAIn falls back to the snapshot so a card always appears. That fallback is logged, so a
-run that keeps taking it is worth reading the log about.
-
-Neither mode can change anything in your house. Insight runs get **reading tools only** —
-no service calls, no controls, no shell. The one place brAIn changes things is the
-Findings tab's **Fix it** button, which you press.
-
-Why not a middle option, where Claude is handed a list of every entity and picks from it?
-Measured: the list costs about as much as the data does, because every entity id has to
-be in it. Searching by name skips that entirely.
-
-Under Snapshot, **an asked question is the expensive kind**: a category card sends that
-category's slice of the home, while a question sends *every* entity (up to 500) plus
-device context, because the question could be about anything. That is why, in Snapshot
-mode, three answers can cost what a dozen category refreshes do.
-
-Three places now say so, and they say the same number:
-
-- **While it runs** — the card's spinner line reads \`500 entities · ~33k tokens sent\`,
-  so the size is visible before the answer is.
-- **After it runs** — the card's footer shows \`41.2k tokens\` beside the stopwatch.
-  Hover it for the input/output split. Seconds and tokens are different readings: a fast
-  card over the whole home outspends a slow one over eight thermostats.
-- **Across the window** — press the usage pill. Under the two windows is *What brAIn
-  spent, this session*, itemized per card. When the percentage is your account's live
-  figure it covers everything on your subscription — terminal, chat and voice included —
-  and the list underneath is only brAIn's own generation runs.
-
-The add-on log carries the same numbers, one line per run:
-\`custom-1785807758 cost 41.3k tokens (33.2k in + 8.1k out; 0 read from cache, free)\`.
-
-Biggest levers, in order:
-
-1. **Leave "How a card gets its data" on Search.** It is the single biggest one, and it is
-   the default.
-2. **Fixed daily times** on a card ("07:00, 19:00") instead of an interval.
-3. **Disable cards you don't read.** Each card's **⋯ → Edit** dialog has an Enabled
-   switch.
-4. **A smaller model.** Settings → Claude model. Smaller models cost far fewer tokens;
-   the bigger ones dig deeper.
-5. **Fewer history days.** Settings → History analyzed.
-
-## How deep it digs
-
-A turn cap is not a safety valve — it **truncates**. A run that hits one stops mid-thought
-and produces nothing usable, so you pay for every token and get no result. That makes a
-tight cap the most expensive setting in the add-on.
-
-So the limits are set by what each job is actually for:
-
-| Job | Default | Why |
-| --- | --- | --- |
-| Voice | 8 turns | Latency is the point. A twenty-turn voice command is a failed interaction whatever it answers — and the cached area map means most take one or two. |
-| Automation tasks | 30 turns | No one is waiting, so it can afford to be thorough. |
-| Study sessions | 60 turns, 30 min | Depth **is** the deliverable. Set \`study_max_turns\` to \`0\` to remove the cap entirely. |
-
-If a study session reports hitting its limit, raise it — that message means the run found
-things and then lost them.
-
-## Turning faces off
-
-- \`enable_terminal: false\` — dashboard only, no shell.
-- \`enable_insights: false\` — memory and terminal only, no generation.
-
-The panel always runs; it's the ingress target.
-
-## Options
-
-Everything in ⚙ Settings is also in the add-on's Configuration tab, and they stay in
-sync — the panel writes changes back through the Supervisor. Only \`log_level\` is
-Configuration-only, since it takes effect at startup.
-
-See the add-on's **Documentation** tab for every option with its range and default.
-`,
-  },
-
-  {
-    id: "trouble",
-    icon: "🔧",
-    title: "Troubleshooting",
-    body: `
-# Troubleshooting
-
-Start here:
-
-\`\`\`bash
-brain doctor
-\`\`\`
-
-It checks the Supervisor token, the HA REST API, the MCP handshake, the custom
-integration, both background listeners, the worker pool API, and your Claude login — then
-smoke-tests the CLI. \`brain doctor --json\` gives the same verdict as one JSON object.
-
-## What brAIn has been doing
-
-**⚙ > Diagnostics** is the read-only half of the settings dialog: versions, whether the
-Claude sign-in is holding, the last 24 hours of Claude runs counted by how they ended,
-the failures behind those counts, and the last pass of the house checks — including
-**which checks could not run, and why**. That last line is the one worth reading. A
-check that was skipped did not find nothing; it could not look, and it is also the check
-that is not allowed to clear a row, so "12 ran, 3 skipped" and "15 ran" are very
-different reports of a quiet house.
-
-**Copy for a bug report** puts the whole payload on the clipboard. If your browser
-refuses the panel the clipboard — an ingress iframe sometimes does, and there is no way
-to ask in advance — the text appears on screen already selected, ready for Ctrl/Cmd+C.
-
-## Checking brAIn itself
+# Checking brAIn itself
 
 Three of these, and they cost three different amounts.
 
@@ -1634,162 +1705,624 @@ Three of these, and they cost three different amounts.
 | --- | --- | --- |
 | \`brain doctor\` | Is the plumbing connected? | nothing |
 | \`brain doctor --deep\` | Does each face work end to end, right now? | ~5 Claude turns |
-| \`brain doctor --rehearse\` | Do the checks and the analyst find a defect planted in *this* house? | 1 analyst run |
+| \`brain doctor --rehearse\` | Do the checks and the analyst find a defect planted in **this** house? | 1 analyst run |
 
-### brain doctor --deep
+\`brain doctor\` is unchanged and is still the one to run first. It reads what is
+there — a token, an MCP handshake, the panel, the daemons, the three stores a
+sign-in is read from — and calls Claude never. It also warns about anything a
+\`--rehearse\` run left behind. \`--json\` gives the same report as one object,
+which is what \`brain report\` bundles.
 
-\`brain doctor\` reads what is there — a token, an MCP handshake, the panel, the
-daemons. Every one of those can be true while the thing you actually use is broken.
-This asks the other question the only way that can be trusted: by doing the thing.
+## \`brain doctor --deep\`
 
-Eight stages, each a real round trip with its own budget and its own failure sentence
-naming the switch or the log to look at — a no-tool Claude run whose reply the JSON
-extractor has to read (the step every card depends on), an analyst run that must read
-your areas **and** must be refused \`call_service\`, a chat session that spawns and
-speaks, an automation task claimed and answered, an Assist turn through Home
-Assistant's own front door, a fact filed into memory and taken back out, a finding
-ended and undone, and one real fix run renaming a helper.
+Eight stages, in order. Each is a real round trip with its own budget, and each
+has a sentence that names the switch or the log to look at when it fails. Every
+stage is reported, not just the first break — "the chat works and the automation
+listener does not" is the answer. A stage whose precondition failed is *skipped
+with the reason* rather than run, because eight identical authentication
+failures is a report nobody reads past line one.
 
-**Every stage is reported**, not just the first break: "the chat works and the
-automation listener does not" is the answer. **A stage whose precondition failed is
-skipped with the reason** — eight identical authentication failures is a report nobody
-reads past line one. **A disabled face is skipped, not failed.** **Everything it
-creates it removes, and it checks that it did**; a leftover is reported as a failure
-of the stage that left it.
+| Stage | What it does | What it proves |
+| --- | --- | --- |
+| Claude, no tools | Asks for a fixed JSON object and reads it back | The credential works for a plain run, and the JSON extractor can read a real reply — the step every insight card depends on |
+| Analyst tools | Asks for the area count **and** attempts a \`call_service\` | MCP reaches the model, the allow list lets a read through, and the deny list blocks an acting tool. An acting call that **ran** is the loudest failure here |
+| Chat session | Opens a session of its own, sends one message, closes it | The stream-json session spawns, speaks and ends a turn |
+| Automation listener | Writes a task the way the integration does | The listener is alive, the claim-by-rename contract holds, and a result arrives inside the bridge's window |
+| Assist | \`conversation/process\` with brAIn's own agent id | The worker pool answers through Home Assistant's front door, not just its health endpoint |
+| Memory | Queues a fact, consolidates, then removes it again | A fact reaches \`memory.md\` and can be taken out |
+| Findings and undo | Files a finding, ends it, undoes it, ends it again | The store, the settled ledger, the memory line and the undo token all round-trip |
+| Fixer | One real fix run renaming a \`brain_test_\` helper | The one path that can change the house can, and it is verified in Core |
 
-**It never runs on its own.** It costs real Claude turns, so it happens when you ask —
-from the terminal, or from **⚙ Settings → Diagnostics → Run deep check**, which fills
-the stage list in as it goes.
+**It never runs on its own.** There is no option that schedules one and no timer
+anywhere: it costs real Claude turns, so it happens when you ask.
 
-### brain doctor --rehearse
+**Everything it creates it removes, and it checks that it did.** The synthetic
+fact is not in \`memory.md\` afterwards, the synthetic finding is in neither the
+store nor the settled ledger, the helper is deleted. A leftover is reported as a
+failure of the stage that left it.
 
-Every house check is tested against made-up houses. This tests them against *yours*.
-It plants a few deliberately broken things named \`brain_test_*\`, runs the checks and
-the analyst against them, scores both, and removes everything again.
+**A skipped stage is not a failure.** Assist with the Assist integration
+switched off, the automation task with the Automation integration off, and the
+fixer with \`protected_entities\` covering the helper it would rename are all
+**skipped**, and each says which switch. The chat stage skips rather than closing
+somebody's conversation to make room for itself.
 
-The score is the point: *on this house, this Home Assistant version, this model, the
-analyst found 3 of 4 planted defects and reported 1 thing that was not there.* That is
-what makes a prompt change measurable somewhere other than the developer's own home.
+Run it from the terminal (\`brain doctor --deep\`, \`--json\` for the whole object,
+non-zero exit on any failed stage), or from **⚙ Settings → Diagnostics → Run
+deep check**, which fills the stage list in as it goes. The last run's verdict
+rides in the diagnostics bundle, so a bug report carries it without anybody
+having to ask.
 
-**It asks first, and the question names exactly what it would create.** Nothing is
-written before you answer. Checks whose floor is measured in days — thirty days
-switched off, a week of statistics — are named as *not rehearsable* rather than
-counted as missed, because scoring those would report a working check as broken every
-time. The removal runs whatever else happened, and the plain \`brain doctor\` warns
-afterwards about anything \`brain_test_*\` still on the system.
+## \`brain doctor --rehearse\`
 
-## Capture, corpus and replay
+The test suite checks every house check against fixture houses. What it cannot
+see is **this** install's Home Assistant version, its integrations and its data
+shapes — which is where every late bug has lived. A rehearsal plants a small set
+of defects in your house, runs the checks and the analyst against them, scores
+both, and removes everything.
 
-Everything above tests brAIn's plumbing. The one part no test can reach is the
-**prompts** behind every insight card, because nothing runs them against a real house
-and a real model. This is the machinery that changes that, and all of it is off,
-optional or invisible until you choose otherwise.
+**It asks first, and the question names exactly what it would create.** Nothing
+is created before you answer. \`--yes\` skips the question for scripted use; the ⚙
+button shows the same list in a confirm dialog.
 
-### Capture — off by default
+Everything it plants is named \`brain_test_*\` and goes in through paths brAIn
+already owns — automations through the same write-reload-verify path an accepted
+proposal uses — so the rehearsal is also a real round trip of the writer.
 
-**⚙ Settings → Diagnostics → Capture runs for the corpus.** With it on, every card run
-writes one file under \`/data/capture\`: the data brAIn gave Claude, the card that came
-back, what it cost, and later **the ending you gave each finding it raised**.
+What it reports:
 
-That last part is why it exists. An ending is already a label — **I've fixed it** and
-**Got it** say the report was right, **Wrong** says it was not — and pairing that with
-the prompt that produced it turns a house into a graded example.
+- **Checks** — of the defects planted, how many the checks found, and whether
+  anything **else** fired on a \`brain_test_\` row. A check firing on a healthy
+  planted row is a false positive worth knowing about.
+- **Analyst** — the automations card's own prompt, run against the same house,
+  scored for precision and recall over the planted rows. That number — "on this
+  house, this Home Assistant version, this model, the analyst found 3 of 4
+  planted defects and reported 1 thing that was not there" — is the reason the
+  rehearsal exists.
+- **Not rehearsable** — the checks whose floor is measured in days
+  (\`auto.forgotten_off\` needs 30 days off, \`dev.frozen\` needs a week of
+  statistics) are named with the reason rather than counted as missed.
+- **Cleanup** — what was removed, and loudly if anything could not be.
 
-- **Anything credential-shaped is stripped as the file is written**, not as it is
-  exported. A redaction applied on the way out is one that never ran for the file
-  somebody found another way.
-- **Your entity and area names ARE in these files.** They are a floor plan. That is
-  why the switch is off, why every run has a **View** button, and why you should read
-  one before you send it anywhere.
-- **Nothing leaves the add-on until you press Export**, which copies one file to
-  \`/share/brain/corpus/\`. \`/data\` is invisible to the file editor, to Samba and to
-  Home Assistant, and backups skip the folder.
-- The newest 50 runs are kept, oldest deleted first.
+The removal runs in a \`finally\`, so a rehearsal that fails halfway still cleans
+up. And **cleanup is the first thing the plain \`brain doctor\` verifies on its
+next run**: it warns if any \`brain_test_*\` automation, entity or helper is still
+there, and names the command that removes it.
 
-**View**, **Export** and **Delete** are the three buttons per run. The diagnostics
-payload carries the counts and never the captures — a bundle is what gets attached to
-a public issue.
+The rehearsal never runs on its own either, and it refuses before asking for
+consent if \`protected_entities\` would match a \`brain_test_*\` id.
 
-### The corpus and the nightly replay
+## Reports
 
-\`tests/corpus/\` in the repository holds houses with their labels. Two ship with it and
-neither is hand-written: the clean fixture house, whose whole label is *every check
-must be silent here*, and that same house with the rehearsal's own planted defects in
-it. Ground truth by construction either way.
+Everything above is something you have to go and run. Every failure this add-on
+has shipped was a quiet one, and by the time anybody looked, the journal row that
+would have explained it was one of two thousand and the log line had scrolled off.
 
-The replay scores this release's producers against them. The free half runs every
-check and compares what it found with what the entry says should be found — no model,
-no tokens, on every pull request — and it is what fails when a threshold moves: a
-check that gains a condition stops finding a defect planted for it, and one that loses
-a condition starts firing on a house meant to be quiet. The costed half rebuilds the
-prompt with the *current* builder, asks a real model and scores its findings against
-your endings; it runs nightly, capped, and never as a required check.
+So the moment something fails, brAIn writes the evidence down by itself — as **one
+plain-text file** under \`/share/brain/reports/\`, which is where the File editor and
+the Samba share can see it. Not a directory of five files, and not a tarball.
 
-Contributing an entry from your own house is a switch, a look, a press and a pull
-request — see \`tests/corpus/README.md\`. It is entirely optional.
+Three things write one:
 
-### Shadow mode
+- **A run that failed.** Every Claude run, checks pass, baseline build and overnight
+  heal already passes through the run journal, so a single listener there covers all
+  of them — a timeout, a crash, an unparseable answer, an authentication failure. A
+  refusal doing its job is not a fault and writes nothing.
+- **The health verdict leaving \`ok\`.** This is the one that catches a daemon that
+  died and a credential that expired on a Tuesday afternoon.
+- **A notification that could not be sent** — the one failure whose only symptom was
+  silence on a phone.
 
-A new house check runs in shadow first: on every pass, filing to a store of its own,
-reaching nothing you look at — not the Findings tab, not the badge, not a
-notification, not the To-do list, not the analyst's prompt. ⚙ → Diagnostics shows a
-line per trialled check (*"14 rows over 9 days, 11 agree with what was filed"*), and
-**nothing is promoted automatically**: a rule joins the visible list when somebody
-reads those numbers and decides it has earned a place. No check is in shadow in this
-release.
+The same problem inside 24 hours appends a \`seen again at HH:MM\` line to the file it
+already has rather than making a new one, and the folder is capped at 30. Every file
+is redacted as a whole before it is written: anything credential-shaped, and the
+JSON fields that carry tokens. Prompts and replies are never in them in the first
+place. Entity names **are** — a report about "a sensor" is not a report — and
+\`brain report --no-names\` hashes them if that matters to you.
 
-## Reporting a bug
+Read them in **⚙ → Problems**: a checkbox each, **Copy selected**, **Copy all**, and
+**Write a report now** for the case where nothing failed but something is wrong.
+\`brain report\` from a terminal writes the same single file and prints its path,
+and it assembles it itself when the panel is down — which is exactly when a report
+is most needed.
+
+While the health verdict is not \`ok\`, Home Assistant's own **Settings → Repairs**
+carries a **brAIn hit a problem** entry with the reason. It is not fixable from there
+on purpose: the fix is in ⚙ → Problems, where the add-on has already written the
+file about it. The entry deletes itself when the verdict goes back to \`ok\`.
+
+These files are on \`/share\` rather than in \`/data\` precisely so you can reach them
+without the panel — which also means they are **not** covered by the add-on's
+\`backup_exclude\`. That is why the redaction runs over the whole file every time,
+rather than over the sections that "could" hold a token.
+`,
+  },
+  {
+    id: "capture-corpus-and-replay",
+    icon: "🔬",
+    title: "Capture, corpus and replay",
+    body: `
+# Capture, corpus and replay
+
+Everything above tests brAIn's **plumbing**. The one part no test can reach is the
+**prompts** — the framing and the output contract behind every insight card —
+because nothing in the project runs them against a real house or a real model.
+A prompt edit ships on somebody's judgement.
+
+This is the machinery that changes that, and every part of it is off, optional
+or invisible until somebody chooses otherwise.
+
+## Capture
+
+**⚙ Settings → Diagnostics → Capture runs for the corpus.** Off by default.
+
+With it on, every card run writes one file under \`/data/capture\`:
+
+- the data brAIn gave Claude (the map for a search run, the slimmed home for a
+  snapshot one),
+- the card that came back — its findings, what it learned, the fields you read,
+  never the rendered chart,
+- what it cost,
+- and later, **the ending you gave each finding it raised**.
+
+That last part is the whole point. An ending on the Findings tab is already a
+label: **I fixed it** and **Got it** say the report was right, **Wrong** says
+it was not. Pairing that with the prompt that produced it turns a house into a
+graded example, and a directory of graded examples is something a prompt change
+can be scored against before it ships.
+
+Four things about what it does and does not do:
+
+- **Anything credential-shaped is stripped as the file is written**, not as it
+  is exported — a redaction applied on the way out is one that never ran for the
+  file somebody found by another route. It is the same scrub \`brain report\`
+  applies to every file in a bundle.
+- **Your entity and area names ARE in these files.** They are a floor plan.
+  That is why the switch is off, why the list has a **View** button, and why
+  step three below is **read one**.
+- **Nothing leaves the add-on until you press Export.** \`/data\` is not visible
+  from the file editor, from Samba or from Home Assistant, and \`backup_exclude\`
+  names the folder so a backup does not carry it either.
+- **The newest 50 runs are kept**, oldest deleted first.
+
+The list under the switch gives you three buttons per run. **View** shows the
+whole file exactly as it is on disk. **Export** copies that one file to
+\`/share/brain/corpus/<run id>.json\`, where the file editor and Samba can reach
+it. **Delete** removes it.
+
+\`/api/diagnostics\` carries the numbers — whether capture is on, how many files,
+how many have an ending on them — and never the captures themselves, because a
+diagnostics bundle is what gets attached to a public issue.
+
+## The corpus
+
+\`tests/corpus/\` in the repository holds contributed houses with their labels.
+Two ship with it, and neither is hand-written: the clean fixture house, whose
+whole label is **every check must be silent here**, and that same house with the
+rehearsal's own planted defects in it, whose labels are the rehearsal's plan.
+Ground truth by construction in both cases.
+
+Contributing one from your own house is four steps and the third is the
+important one: switch capture on, use brAIn normally and answer its findings,
+**read the file**, then export it and open a pull request adding it to
+\`tests/corpus/entries/\`. \`tests/corpus/README.md\` is the whole procedure. It is
+entirely optional, and it should be.
+
+## Replay
+
+\`python tests/corpus/replay.py\` scores this release's producers against the
+corpus, in two halves.
+
+The **free half** runs every house check against each entry and compares what it
+found with what the entry says should be found. No model, no tokens, no network
+— it runs in ordinary CI on every pull request, and it is what fails when
+somebody changes a threshold: a check that gains a condition stops finding a
+defect that was planted for it, and one that loses a condition starts firing on
+a house that is meant to be quiet.
+
+The **analyst half** rebuilds the prompt with the **current** builder and asks a
+real model, then scores its findings against the endings people gave. It is
+capped by \`--max-entries\`, \`--max-tokens\` and \`--model\`, runs nightly in CI when
+a \`BRAIN_REPLAY_TOKEN\` secret is present (and does the free half and says so in
+the log when it is not), and is never required for a pull request. A capture
+from a **search** run is skipped there and says why: that run read the house with
+Home Assistant tools, and replaying the prompt where those tools reach nothing
+would grade a model that cannot look anything up.
+
+## Shadow mode
+
+A house check that is new goes into shadow first: it runs on every pass, files
+to a store of its own, and reaches nothing you look at — not the Findings tab,
+not the badge, not a notification, not the To-do list, not the analyst's own
+prompt.
+
+For as long as it is there, ⚙ → Diagnostics shows a line per trialled check:
+*"\`dev.example\`: 14 rows over 9 days, 11 agree with what was filed"*. Agreement
+means something else — the analyst, or another check — reported the same thing,
+which is the only corroboration available for a row nobody can press Wrong on.
+
+**Nothing is promoted automatically.** A check moves onto the visible list when
+somebody reads those numbers, and the corpus numbers beside them, and decides it
+has earned a place. A rule that promoted itself on a threshold would be a
+threshold nobody can see deciding what your house is told about.
+
+No check is in shadow in this release. Every one that ships has earned its
+place, and the set is empty on purpose.
+`,
+  },
+  {
+    id: "the-cli",
+    icon: "⌨️",
+    title: "The CLI",
+    body: `
+# The CLI
+
+Two dispatchers, split by what they act on. brAIn's own faculties are under \`brain\`;
+anything that acts on Home Assistant is under \`ha\`.
 
 \`\`\`bash
-brain report
+brain memory add "We call the office lamp the beacon"
+brain memory list                  # what it knows
+brain memory edit                  # open the document in $EDITOR
+brain memory log                   # what it learned recently
+brain memory hypotheses            # pending guesses awaiting a yes/no
+brain memory export                # everything learned, as one portable file
+brain memory import backup.json    # fold an export back in
+brain findings                     # what it thinks is broken
+brain findings fix 1786715730      # let Claude fix one
+brain findings wrong 1786715730 "that sensor is meant to sit closed"
+brain learn energy                 # study a topic
+brain ask "why is the garage cold" # same engine as the Ask card
+brain undo                         # review and revert Claude's edits
+brain check                        # run the house checks now (no Claude run)
+brain doctor                       # end-to-end diagnostic
+brain doctor --json                # the same verdict as one JSON object
+brain doctor --deep                # every face, one real round trip each (~5 turns)
+brain doctor --rehearse            # plant defects here, score the checks, clean up
+brain weekly [send]                # the week's report: what it holds, or send one
+brain report                       # redacted diagnostics bundle for a bug report
+
+ha log                             # tail the Home Assistant log
+ha reload automations
+ha check configuration.yaml
+ha context                         # regenerate /config/CLAUDE.md
+ha entity list light
+ha service call light.turn_on
+ha addon list
+ha notify "dishwasher finished"
 \`\`\`
 
-That writes one redacted archive under \`/share/brain/reports/\`: the self-test's verdict,
-the panel's diagnostics (versions, options, the last day of the run journal — every
-Claude run and how it ended, the findings and memory stores' shapes, the last house
-checks pass), and the tail of the add-on log. Anything credential-shaped is replaced
-before it is written; prompts and replies are never in it. Read it, then attach it to
-the issue. The same bundle is behind **Download diagnostics** on the brAIn integration
-page in Home Assistant.
+Run \`brain help\` or \`ha help\` for the full list.
 
-## The terminal tab won't load
+> If some other \`ha\` command is ever present on \`PATH\` inside the container, brAIn
+> installs its own as \`hass\` instead rather than shadowing it. The startup log says so
+> when this happens.
+`,
+  },
+  {
+    id: "configuration-options",
+    icon: "⚙️",
+    title: "Configuration options",
+    body: `
+# Configuration options
 
-Give it a few seconds after a restart and reload — ttyd starts slightly after the panel.
-If it stays down, check \`enable_terminal\` is on, and look at the add-on log.
+**Six of these are also editable from the panel's ⚙ Settings dialog**, which writes
+them back through the Supervisor so both screens always show the same value:
+\`auto_refresh_hours\`, \`history_days\`, \`history_keep_runs\`, \`history_keep_days\`,
+\`model\` and \`generation_timeout_minutes\`. Everything else on this page is the
+Configuration tab's alone.
 
-## Voice is slow or fails
+⚙ Settings also holds things that are **not** add-on options at all, because they
+are changed while looking at the panel rather than at a restart: the master pause,
+your plan and usage budget, the Chat/Classic face, the chat's own model and how many
+chats may run at once, \`gather_mode\`, \`refresh_mode\`, and the capture switch.
 
-\`brain doctor\` reports the worker pool's health. If it's not answering, the pool falls
-back to spawning a CLI per request — slower, but working. Restarting the add-on
-re-warms it.
+Onboarding's first screen asks for a notify service and quiet hours, which **are**
+add-on options — and the panel cannot write those four
+(\`findings_notify_service\`, \`notify_quiet_start\`, \`notify_quiet_end\`,
+\`morning_brief\`). It stores your answer in its own settings instead and every
+reader consults that as a **fallback under** the Supervisor's value, so the choice
+takes effect immediately and **an entry on the Configuration tab always wins**.
+The step tells you exactly what to paste there if you would rather keep it with
+the rest of your options.
 
-## It asks me to log in again
+## Faces
 
-One sign-in should cover everything. If the terminal prompts after you signed in through
-the panel, run \`brain doctor\` — it reports which credential source is active.
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| \`enable_terminal\` | bool | \`true\` | Run the ttyd terminal and expose the Terminal tab. Turn off for a dashboard-only install with no shell. |
+| \`enable_insights\` | bool | \`true\` | Run the card scheduler and show the **Insights** and **Proposals** tabs. Off stops every scheduled Claude run; **Findings stays**, because the house checks cost nothing and still file there. |
 
-## An insight is wrong
+## Terminal
 
-Don't fight it in the prompt — use **⋯ → Give feedback** on the card. That's remembered and
-applied to every future run of that card.
+The **Chat / Classic** choice is not here — it lives in the panel's ⚙ Settings (and on
+the Terminal tab itself), because it changes nothing about how the add-on runs.
 
-If it's wrong about a *fact* rather than a presentation choice, fix it in **Memory**.
-Delete the wrong line and brAIn is asked to drop it from the document too.
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| \`auto_launch_claude\` | bool | \`true\` | Start Claude Code automatically when the terminal opens. |
+| \`auto_generate_context\` | bool | \`true\` | Regenerate \`/config/CLAUDE.md\` with your HA system context at startup. |
+| \`enable_ha_mcp_server\` | bool | \`true\` | Give Claude native HA access (states, services, history, statistics, registries, dashboards, logs, templates). |
+| \`enable_mobile_ui\` | bool | \`true\` | Splice the mobile toolbar and iOS dictation fix into ttyd's UI. |
+| \`dangerously_skip_permissions\` | bool | \`false\` | Skip Claude Code's tool-permission prompts in the interactive terminal. Background listeners never use this. |
 
-## It keeps flagging something that's fine
+## Voice and automation
 
-Press **✕ Wrong** on the finding and say why in the box:
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| \`enable_assist_integration\` | bool | \`true\` | Register brAIn as a conversation agent for Assist. |
+| \`enable_automation_integration\` | bool | \`true\` | Watch for task requests from automations. |
+| \`assist_fast_mode\` | bool | \`true\` | Serve voice from a pool of pre-warmed persistent workers instead of spawning a CLI per request. |
+| \`assist_tool_access\` | \`mcp_only\` \\| \`full\` | \`mcp_only\` | Whether voice can only touch HA, or also run Bash and edit files. |
 
-> That sensor always reads on. It's not stuck.
+## Memory and learning
 
-That reaches both your memory document and every future analysis, which is what stops
-the same misreading coming back in different words. Telling it in Memory works too, and
-so does answering the guess it's already showing you on **Findings**.
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| \`learning\` | bool | \`true\` | Master switch for everything brAIn learns: the consolidator, the end-of-conversation reflection pass, and study sessions. Turning it off leaves existing memory untouched. |
+| \`memory_injection\` | bool | \`true\` | Splice learned memory into voice prompts. |
+| \`memory_max_kb\` | 1–64 | \`32\` | Size cap for the memory document. A pass that cannot fit under it files nothing, so this is the setting to raise when the log says the document is full. |
+| \`study_timeout_minutes\` | 2–120 | \`30\` | Wall-clock limit for a study session. |
+| \`findings_notify_service\` | string | **(empty)** | A \`notify.*\` service (with or without the prefix) that gets a push when brAIn files a new finding. Empty means no notifications — the Findings tab, the sensor and the \`brain_finding\` event work either way. |
+| \`findings_notify_min_severity\` | \`info\` \\| \`warning\` \\| \`serious\` \\| \`critical\` | \`serious\` | Only findings at or above this severity are pushed. The default means dying batteries and silent sensors ring your phone while naming nitpicks wait on the tab. |
+| \`notify_quiet_start\` | string | \`22\` | The hour (0–23, your home's timezone) from which only urgent findings ring your phone. Everything else is held and delivered as one message when the quiet ends. |
+| \`notify_quiet_end\` | string | \`7\` | The hour held findings are delivered. A window that crosses midnight (22 to 7) is the normal case. Set both the same, or both empty, for no quiet hours. |
+| \`morning_brief\` | bool | \`false\` | One short message a day, at the hour your home actually starts moving, and only when there is something to say. Each one sent costs a Claude turn; a quiet morning costs nothing. Needs \`findings_notify_service\` set. |
+| \`morning_brief_hour\` | string | \`7\` | When to send it until brAIn has measured your home's own hour (10 weekdays, so about two weeks), or if your days are too irregular for there to be one. |
+| \`weekly_report\` | bool | \`false\` | One message a week: what the house used against the week before, what was found and answered, what brAIn learned, and the one thing worth doing. Needs \`findings_notify_service\` set — point it at \`notify.notify\` and it reaches everybody. |
+| \`weekly_report_day\` | list | \`sunday\` | Which day it goes out. The hour is \`morning_brief_hour\`, or your home's own measured hour once brAIn knows it. |
 
-## Claude's login expired
+> **There are no turn-limit options any more.** \`assist_max_turns\`,
+> \`automation_max_turns\` and \`study_max_turns\` were retired in 1.48.0. A turn
+> cap is a runaway guard, not a budget, and it was the wrong thing to put in
+> front of somebody: set it low and a run stops mid-thought and produces
+> nothing parseable, having paid for every token it spent; set it high and it
+> never fires. The guards are still there — large, and invisible: 40 turns for
+> voice, 200 for an automation task, 40 for a card, 60 for a fix, 24 for the
+> brief, the weekly report and a one-off intent, and **none at all** for a
+> study session, \`brain ask\` or the chat. And a run that trips one is now
+> **landed** rather than truncated: it is resumed with two more turns and told
+> to finish with what it has, in the format the task asked for, so a partial
+> answer files instead of a thorough one that never did.
+>
+> What is left to reason about is the **wall clock**, which is the guard that
+> actually bounds what a run costs: \`study_timeout_minutes\` for a study
+> session and \`generation_timeout_minutes\` for a card.
 
-Open the Terminal tab and run \`claude\` once. Background tasks, voice, and insights pick
-the fresh login up automatically.
+## Insights
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| \`auto_refresh_hours\` | 0–168 | \`24\` | How often recurring cards regenerate. \`0\` disables. |
+| \`history_days\` | 1–30 | \`7\` | How much history each analysis reads. |
+| \`history_keep_runs\` | 0–200 | \`40\` | Past runs kept per card. |
+| \`history_keep_days\` | 0–365 | \`30\` | Age limit on past runs. |
+| \`model\` | string | \`""\` | Override the Claude model. Empty uses the default. |
+| \`generation_timeout_minutes\` | 2–30 | \`8\` | Per-generation timeout. |
+
+## House checks and policy
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| \`checks_interval_hours\` | 0–168 | \`6\` | How often the deterministic house checks run. They read Home Assistant and the Supervisor directly and never call Claude, so they cost nothing. \`0\` means never on a timer; \`brain check\` and the tab's button still run them. |
+| \`self_healing\` | bool | \`false\` | Let brAIn make up to three repairs a night, inside your quiet hours: start an add-on that was set to run at boot, ping a dead Z-Wave node, reload an integration that failed to set up. Nothing else, never on a protected entity, and never on a finding you have already answered. See **The house acts**. |
+| \`protected_entities\` | list | \`[]\` | Entity ids (\`lock.front_door\`) or whole domains (\`alarm_control_panel.*\`) that brAIn may never act on. Enforced at the one place every Home Assistant tool call passes through, so it covers voice, automations, insight runs, the fixer, the overnight healer and anything the panel writes into \`automations.yaml\`; a call aimed at an area or device containing one is refused too, and so is a label or floor target, which cannot be resolved there. A shell command or a file edit does not go through that chokepoint — the terminal, the chat and Fix it are **told** the list instead. Protected entities can always be looked at. |
+
+## Undo and access
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| \`edit_journal_days\` | 0–365 | \`14\` | How long to keep snapshots of files Claude edited. **\`0\` really disables it** — nothing is snapshotted and nothing is indexed, so \`brain undo\` has nothing to restore. (Through 1.47.0 it only disabled the **prune**, which made the one setting that said off the one that made the journal unbounded.) |
+| \`access_share\` | bool | \`true\` | Mount \`/share\`. |
+| \`access_media\` | bool | \`true\` | Mount \`/media\`. |
+| \`access_backup\` | bool | \`true\` | Mount \`/backup\` read-only. |
+| \`access_addon_configs\` | bool | \`true\` | Mount other add-ons' config directories. |
+| \`access_addons\` | bool | \`true\` | Mount add-on source directories. |
+| \`additional_directories\` | list | \`[]\` | Extra paths to expose. |
+| \`persistent_apk_packages\` | list | \`[]\` | Alpine packages reinstalled on every start. |
+| \`persistent_pip_packages\` | list | \`[]\` | Python packages reinstalled on every start. |
+| \`log_level\` | enum | \`info\` | Add-on log verbosity. At \`debug\` the panel logs every HTTP request (polls included) and ttyd its own connection chatter; below that a successful poll is silent and only failures are logged. |
+`,
+  },
+  {
+    id: "what-it-costs",
+    icon: "💰",
+    title: "What it costs",
+    body: `
+# What it costs
+
+brAIn runs on **your** Claude account, so it costs whatever your plan costs and
+nothing more. There is no brAIn subscription and no middleman.
+
+To keep it from eating the plan you also use for your own work:
+
+- The top bar shows both usage windows — the **5-hour session** and the **week** —
+  live. Press the pill for when each one resets, what the budget gates, and whether
+  automatic work is currently paused by it.
+- The chat terminal shows a **per-message price only if an API key is paying**. On a
+  subscription there is no per-message charge, so it shows the duration and turn count
+  instead of a figure that would look like money and isn't.
+- A **budget** (Settings) caps how much of the session window automatic work may
+  spend. Past it, scheduled cards pause and say so in the bar; anything you ask for by
+  hand still runs.
+- Usage is also exposed as Home Assistant sensors, so you can chart it or alert on it.
+- Fixed daily times ("07:00, 19:00") cost far fewer tokens than a short refresh
+  interval, and cards you never look at can simply be deleted.
+`,
+  },
+  {
+    id: "what-it-will-not-do",
+    icon: "🚫",
+    title: "What it will not do",
+    body: `
+# What it will not do
+
+An honest list, because a tool that can edit your house should be clear about its
+edges.
+
+- **It does not back up your configuration.** Home Assistant's own backups are
+  whole-system and restorable; duplicating them inside \`/config\` only made the backups
+  bigger. brAIn keeps an edit journal of its own changes instead.
+- **It never touches an existing \`/config/.git\`.** If you version your config
+  yourself, that's yours.
+- **Nothing that runs on a schedule can act on your house.** Scheduled work — cards,
+  the morning brief, the weekly report, study sessions, a one-off intent — runs with
+  Home Assistant tools that **read only**: states, history, statistics, the logbook,
+  the registries, brAIn's own measurements. The list is asserted from both ends, an
+  allow list and a deny list, because an unlisted tool would **fail** rather than be
+  **forbidden**, and those are not the same guarantee with a real house behind them.
+  Two things can act, and both need a press: the Findings **Fix it** button, and
+  accepting a proposal. Overnight self-healing is the third and is off by default,
+  runs no Claude at all, and does exactly three things.
+- **It does not restart Home Assistant by itself**, and a fix never deletes anything
+  it didn't create.
+- **Overnight self-healing does exactly three things and no more.** No
+  power-cycling a device through its plug, no restarting Home Assistant, no
+  restarting itself, and no Claude run on that path at all. It is off by
+  default, capped at three repairs a night, and never touches a protected entity
+  or a finding you have answered.
+- **No emergency playbook unlocks a door or disarms an alarm**, whatever the
+  emergency. And brAIn never runs a playbook itself — it writes one, you accept
+  it, and Home Assistant runs it.
+- **Voice is limited to Home Assistant by default.** Widening it to Bash and file
+  editing is a setting you turn on deliberately.
+- **The registry services are admin-gated**, and destructive sweeps (orphan cleanup)
+  are dry-run by default.
+- **It is not affiliated with Anthropic or the Open Home Foundation.** It runs the
+  official Claude Code CLI under your own account.
+`,
+  },
+  {
+    id: "ports",
+    icon: "🔌",
+    title: "Ports",
+    body: `
+# Ports
+
+| Port | What | Needed? |
+| --- | --- | --- |
+| 8099 | The ingress panel. Also reverse-proxies \`/terminal/\`. | Internal; ingress handles it. |
+| 7681 | ttyd, direct access. | **Off by default.** Optional, for a kiosk or a bookmarked full-screen terminal. |
+| 8098 | The assist worker pool's internal API. | Internal only. |
+
+## About port 7681
+
+Before 1.19.0 this port was published on every install and ttyd ran without
+a password, so anyone on your network could open a root shell with \`/config\`
+read-write and your signed-in Claude. It is unpublished now, and the
+terminal you use in the panel does not need it — the panel proxies ttyd over
+loopback, which is what makes Terminal a tab.
+
+If you do want the direct port (a wall tablet, a bookmark), assign it under
+the add-on's **Network** settings. It asks for a password either way:
+
+- Username \`brain\`; the password is generated on first start.
+- It is printed in the add-on log, and stored at \`/data/terminal-credential\`.
+- To rotate it, delete that file and restart the add-on.
+
+Please don't forward this port through your router. It is a shell.
+`,
+  },
+  {
+    id: "security",
+    icon: "🔒",
+    title: "Security",
+    body: `
+# Security
+
+brAIn runs with real authority over your Home Assistant: \`/config\`
+read-write, admin access to the Home Assistant API, and — depending on the
+options you enable — \`/share\`, \`/media\` and other add-ons' configuration.
+That is the point of it, and it is worth knowing where the edges are.
+
+- **Home Assistant's login is the boundary.** Everything brAIn exposes sits
+  behind ingress, which means behind your Home Assistant account. Nothing
+  should be reachable without it; if you find something that is, that is a
+  vulnerability and [SECURITY.md](https://github.com/bruhautomation/BRUH-HA-Apps/blob/main/SECURITY.md)
+  is how to report it privately.
+- **AppArmor is on.** The profile denies the container the things a host
+  escape needs — mounting, kernel modules, raw sockets, kernel tunables, the
+  Docker socket. It deliberately does not restrict what brAIn does **inside**
+  the container, because an agent that can only run a fixed list of commands
+  is an agent that breaks the first time you ask it something new.
+- **Your Claude credential stays out of your backups.** Home Assistant
+  backups are unencrypted unless you opt in, and they travel. Restoring a
+  backup costs you one sign-in.
+- **Claude Code runs as an unprivileged user** (UID 1000), not root.
+- **\`protected_entities\` is the line brAIn may not cross, and it is worth
+  knowing exactly how far the enforcement reaches.** Put the front door lock,
+  the alarm and the garage door on it and **every route through the Home
+  Assistant tools refuses** — voice, automations, insight runs, the chat and
+  the terminal when they use those tools, the fixer, the overnight healer and
+  anything the panel writes into \`automations.yaml\` or \`scenes.yaml\`. It is
+  enforced at the one place those calls pass through, not in a prompt: the
+  refusal covers the entity, its device and its area, and a label or floor
+  target is refused outright because it cannot be resolved there. While the
+  list is non-empty, \`fire_event\` is refused wholesale (an event reaches the
+  house through whatever automations listen for it, and which ones do cannot
+  be checked from there), and so is a \`homeassistant.turn_on\`/\`turn_off\`/
+  \`toggle\` that names no target at all, which addresses every entity there is.
+  **What it cannot gate is a shell.** The terminal, the chat and **Fix it**
+  hold Bash and file editing, and a shell command or a file edit does not go
+  through that chokepoint. Those three are **told** the list instead — it is in
+  the fixer's own instructions and in the generated \`/config/CLAUDE.md\`, which
+  is rewritten after every consolidation pass — and the rule there is Claude
+  keeping it rather than a gate enforcing it. If that distinction matters to
+  you, leave \`dangerously_skip_permissions\` off, which is the default.
+- **\`dangerously_skip_permissions\` does what it says.** Off by default. On,
+  Claude stops asking before it edits a file or runs a command in the
+  interactive terminal.
+- **The panel's rating is 6/6** in the add-on store — the highest the
+  Supervisor gives, and it is worth knowing that \`hassio_role: admin\` costs
+  two points that ingress and AppArmor pay back. brAIn needs that role
+  because \`ha addon\` manages your other add-ons.
+`,
+  },
+  {
+    id: "where-things-live",
+    icon: "📁",
+    title: "Where things live",
+    body: `
+# Where things live
+
+| Path | What |
+| --- | --- |
+| \`/config/.brain/memory/memory.md\` | The memory document. Yours to edit. |
+| \`/config/.brain/memory/voice.md\` | A ≤2 KB distillate spliced into voice prompts. Derived; don't edit. |
+| \`/config/.brain/memory/inbox/\` | Candidate facts awaiting consolidation. |
+| \`/config/.brain/findings/inbox/\` | Problems study sessions found, awaiting filing. |
+| \`/config/CLAUDE.md\` | The generated description of your installation. |
+| \`/data/chat/<session id>.json\` | One chat conversation's scrollback each. Losing one costs a scrollback, never context — Claude Code keeps the conversation itself. (\`/data/chat_transcript.json\` is the single file this used to be, read once on upgrade.) |
+| \`/config/custom_components/brain/\` | The Home Assistant integration, deployed at startup. |
+| \`/data/findings.json\` | The findings list and its history. |
+| \`/data/.brain/edits/\` | The edit journal \`brain undo\` restores from. |
+`,
+  },
+  {
+    id: "credits",
+    icon: "🙏",
+    title: "Credits",
+    body: `
+# Credits
+
+The web terminal at the heart of this add-on began as
+[Claude Terminal](https://github.com/heytcass/home-assistant-addons) by Tom
+Cassady — that add-on is what showed Claude Code could live inside Home
+Assistant behind ingress at all. BRUH Terminal was built on it, and brAIn is
+what BRUH Terminal grew into.
+
+BRUH Power Tools is adapted from [Spook](https://github.com/frenck/spook) by
+Franck Nijhof (MIT).
+`,
+  },
+  {
+    id: "license",
+    icon: "📜",
+    title: "License",
+    body: `
+# License
+
+MIT.
 `,
   },
 ];

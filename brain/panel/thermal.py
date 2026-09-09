@@ -440,6 +440,86 @@ def is_stale(payload: dict, now: float | None = None) -> bool:
     return (now - (payload.get("built_at") or 0)) > STALE_DAYS * 86400
 
 
+def progress(payload: dict | None = None, path: str | None = None,
+             now: float | None = None) -> dict:
+    """How many rooms of this house have a measured thermal model.
+
+    The two ways of having none are different answers and this is the
+    module that can tell them apart: a house with no outdoor thermometer,
+    or with no indoor one in an area, can never have a model however long
+    it waits (`unavailable`, carrying the store's own sentence), while
+    one whose month held no cold night simply has not had the weather for
+    it yet (`collecting`).
+    """
+    import baselines  # noqa: PLC0415
+    import house  # noqa: PLC0415 — panel-local, one shape and one eta
+
+    now = time.time() if now is None else now
+    payload = load(path) if payload is None else payload
+    rooms = payload.get("rooms") or {}
+    built = int(payload.get("built_at") or 0) or None
+    detail = {"outdoor": payload.get("outdoor") or "",
+              "rooms": len(rooms),
+              "coldest": payload.get("coldest")}
+    common = {"unit": "rooms", "need": 1, "have": len(rooms),
+              "detail": detail, "updated_at": built,
+              "per_unit_s": baselines.PROGRESS_UNIT_S, "now": now}
+
+    if payload.get("error"):
+        return house.progress(
+            state=house.UNAVAILABLE, reason=str(payload["error"])[:200],
+            summary=f"The last pass could not measure anything: {payload['error']}.",
+            **common)
+    if not built:
+        return house.progress(
+            state=house.NOT_STARTED, reason="no pass has run yet",
+            summary=("Nothing measured yet — the first pass runs overnight "
+                     f"and reads {HISTORY_DAYS} days of temperatures."),
+            **common)
+    if not rooms and not payload.get("outdoor"):
+        return house.progress(
+            state=house.UNAVAILABLE,
+            reason=str(payload.get("reason") or "no outdoor temperature sensor"),
+            summary=("No outdoor temperature sensor, so there is nothing to "
+                     "measure a room against."),
+            **common)
+    if not rooms and not payload.get("asked"):
+        return house.progress(
+            state=house.UNAVAILABLE,
+            reason=str(payload.get("reason") or "no room to measure"),
+            summary=("No indoor thermometer is in an area and reporting in "
+                     f"{payload.get('unit') or 'the same unit'}, so there is "
+                     "no room to measure."),
+            **common)
+    if is_stale(payload, now):
+        return house.progress(
+            state=house.STALE,
+            reason=f"last measured {house.days_ago(built, now)}",
+            summary=(f"Measured {house.days_ago(built, now)} — the nightly "
+                     "pass has not run since."),
+            **common)
+    if rooms:
+        # The room with the shortest time constant is the one that loses
+        # heat fastest, which is the one fact a sentence about a whole
+        # house's thermal model can usefully carry.
+        timed = [(v["tau_h"], k, v) for k, v in rooms.items()
+                 if isinstance(v, dict) and v.get("tau_h")]
+        said = (f"{house.plural(len(rooms), 'room')} measured against "
+                f"{payload.get('outdoor') or 'outdoors'}")
+        if timed:
+            tau, eid, entry = min(timed)
+            said += (f" · {entry.get('area') or entry.get('name') or eid} "
+                     f"holds its heat about {round(tau)} h")
+        return house.progress(state=house.READY, summary=said + ".", **common)
+    return house.progress(
+        state=house.COLLECTING,
+        reason=str(payload.get("reason") or "no room could be measured yet"),
+        summary=(f"{house.plural(int(payload.get('asked') or 0), 'room')} "
+                 "watched, none measurable yet — the fit needs a month of "
+                 "nights with the outdoor temperature moving."),
+        **common)
+
+
 def save(payload: dict, path: str | None = None) -> None:
     """Write the store. Skipped silently on a dev checkout with no /data."""
     import atomic_write  # noqa: PLC0415 — panel-local, as above
@@ -642,12 +722,20 @@ def build_room(room_rows: list, outdoor_rows: list, tz: dt.tzinfo,
 
 
 async def fetch_hourly(session, ids: list[str], now: float,
-                       days: int = HISTORY_DAYS) -> dict:
-    """Hourly means per entity for the window, or {} if nothing answered."""
+                       days: int = HISTORY_DAYS) -> dict | None:
+    """Hourly means per entity for the window.
+
+    `{}` is the recorder holding nothing for these ids; None is the
+    recorder refusing every batch, which `build` answers by leaving the
+    store alone rather than writing a house with no rooms over it.
+    """
     import ha_data  # noqa: PLC0415 — see the checks snapshot's own note
 
+    if not ids:
+        return {}
     start = dt.datetime.fromtimestamp(now - days * 86400, tz=dt.timezone.utc)
     out: dict[str, list] = {}
+    answered = 0
     for i in range(0, len(ids), BATCH):
         batch = ids[i:i + BATCH]
         try:
@@ -662,14 +750,24 @@ async def fetch_hourly(session, ids: list[str], now: float,
             # batch that failed; the rest of the house still gets a model.
             log.info("thermal statistics batch failed: %s", exc)
             continue
-        for sid, rows in (results[0] or {}).items():
+        rows_by_id = results[0] if results else None
+        if not isinstance(rows_by_id, dict):
+            log.info("thermal statistics batch refused by the recorder")
+            continue
+        answered += 1
+        for sid, rows in rows_by_id.items():
             out[sid] = rows or []
-    return out
+    return out if answered else None
 
 
 async def build(session, states: dict, registries: dict | None = None,
                 now: float | None = None, path: str | None = None) -> dict:
-    """Measure every room and write the store. Returns the payload."""
+    """Measure every room and write the store. Returns the payload.
+
+    A fetch the recorder refused writes nothing and hands back the
+    previous store with `error` beside it (`baselines.refused`). A house
+    with nothing to measure still writes, with `reason` saying why.
+    """
     import baselines  # noqa: PLC0415
 
     now = time.time() if now is None else now
@@ -701,6 +799,11 @@ async def build(session, states: dict, registries: dict | None = None,
         return payload
 
     rows = await fetch_hourly(session, [outdoor] + ids, now)
+    if rows is None:
+        return baselines.refused(
+            "thermal", load(path),
+            f"the recorder did not answer for any of the {len(ids) + 1} "
+            "thermometers asked about")
     outdoor_rows = rows.get(outdoor) or []
     outdoor_map = _hourly_map(outdoor_rows)
     if outdoor_map:
@@ -734,5 +837,6 @@ __all__ = [
     "build_room", "ceiling", "coast", "expected_fall", "fetch_recent", "fit_gain",
     "fit_loss", "fetch_hourly", "hours_to_fall", "hours_to_warm", "latest",
     "in_room_band", "is_night", "is_stale", "load", "normalise_unit",
-    "percentile", "pick_outdoor", "recent_fall", "room_candidates", "save",
+    "percentile", "pick_outdoor", "progress", "recent_fall",
+    "room_candidates", "save",
 ]

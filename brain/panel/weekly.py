@@ -48,9 +48,10 @@ import energy
 MAX_WORDS = 150
 MIN_CHARS = 60
 # Four sections and a couple of lookups. This is the least time-critical
-# thing the add-on runs, so it gets room rather than a race.
+# thing the add-on runs, so it gets room rather than a race; the timeout
+# is the budget and the turn cap only a runaway guard.
 TIMEOUT_S = 300
-MAX_TURNS = 10
+MAX_TURNS = 24
 
 # The change log the memory consolidator writes, which is the only
 # record of what actually reached `memory.md` and when.
@@ -320,6 +321,16 @@ def frame(state: dict) -> str:
         lines += ["",
                   "There is nothing open to end on. Say so in a few "
                   + "words rather than finding something."]
+
+    # The measurements and the memory document, exactly as the brief gets
+    # them and for the same reason: the numbers above are what happened,
+    # and these are what this house is like. A report that says the
+    # kitchen was cold without knowing the kitchen is always cold is the
+    # one people stop reading.
+    if str(state.get("house") or "").strip():
+        lines += ["", str(state["house"]).strip()]
+    if str(state.get("memory") or "").strip():
+        lines += ["", str(state["memory"]).strip()]
 
     lines += ["",
               "Use your read-only tools at most once or twice, to make "

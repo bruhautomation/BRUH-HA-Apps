@@ -330,12 +330,95 @@ def age_days(payload: dict, now: float | None = None) -> float | None:
     return max(0.0, ((time.time() if now is None else now) - built) / 86400.0)
 
 
+def progress(payload: dict | None = None, path: str | None = None,
+             now: float | None = None) -> dict:
+    """How many machines in this house have a measured power shape.
+
+    `chore_capable` is the narrower count and both belong in the answer:
+    the measurement is universal — every power sensor with an appliance's
+    shape gets a profile — while a *chore* is one of three machines
+    matched on its name, so "four profiled, none of them a washer" is why
+    no chore ever arrives, and one number could not say it.
+    """
+    import baselines  # noqa: PLC0415 — one staleness floor, one home
+    import house  # noqa: PLC0415 — panel-local, one shape and one eta
+
+    now = time.time() if now is None else now
+    payload = load(path) if payload is None else payload
+    entities = payload.get("entities") or {}
+    built = int(payload.get("built_at") or 0) or None
+    asked = int(payload.get("asked") or 0)
+    chores = 0
+    try:
+        from checks import chores as chore_check  # noqa: PLC0415
+        chores = len([e for e in entities.values()
+                      if isinstance(e, dict)
+                      and chore_check.kind_of(e.get("name") or "")])
+    except Exception as exc:  # noqa: BLE001 — the narrower count is a detail
+        log.debug("could not count chore machines: %s", exc)
+    common = {"unit": "machines", "need": 1, "have": len(entities),
+              "detail": {"profiled": len(entities), "chore_capable": chores},
+              "updated_at": built, "per_unit_s": baselines.PROGRESS_UNIT_S,
+              "now": now}
+
+    if payload.get("error"):
+        return house.progress(
+            state=house.UNAVAILABLE, reason=str(payload["error"])[:200],
+            summary=f"The last pass could not measure anything: {payload['error']}.",
+            **common)
+    if not built:
+        return house.progress(
+            state=house.NOT_STARTED, reason="no pass has run yet",
+            summary=("Nothing measured yet — the first pass runs overnight "
+                     f"and reads {HISTORY_DAYS} days of power readings."),
+            **common)
+    if not asked:
+        return house.progress(
+            state=house.UNAVAILABLE,
+            reason="no power sensor in this house",
+            summary=("No power sensor, so there is no machine whose own "
+                     "watts could say when it finished."),
+            **common)
+    if baselines.is_stale(payload, now):
+        return house.progress(
+            state=house.STALE,
+            reason=f"last measured {house.days_ago(built, now)}",
+            summary=(f"Measured {house.days_ago(built, now)} — the nightly "
+                     "pass has not run since."),
+            **common)
+    if entities:
+        said = (f"{house.plural(len(entities), 'machine')} measured of "
+                f"{asked} power sensors")
+        said += (f" · {chores} of them a washer, dryer or dishwasher"
+                 if chores else
+                 " · none of them named as a washer, dryer or dishwasher, so "
+                 "no chore is raised")
+        return house.progress(state=house.READY, summary=said + ".", **common)
+    return house.progress(
+        state=house.COLLECTING,
+        reason=(f"{asked} power sensors read, none with {MIN_DRAWS} separate "
+                "draws yet"),
+        summary=(f"{house.plural(asked, 'power sensor')} read, none with the "
+                 f"{MIN_DRAWS} separate runs it takes to tell a machine's "
+                 "idle from its busy."),
+        **common)
+
+
 async def fetch(session, ids: list[str], start: dt.datetime,
-                end: dt.datetime | None = None) -> dict:
-    """Five-minute means per entity, or {} when nothing answered."""
+                end: dt.datetime | None = None) -> dict | None:
+    """Five-minute means per entity.
+
+    `{}` is the recorder holding nothing for these ids; None is the
+    recorder refusing every batch (`_ws_commands` answers None for a
+    command Core rejected). The nightly `build` and the checks snapshot
+    both branch on the difference.
+    """
     import ha_data  # noqa: PLC0415
 
+    if not ids:
+        return {}
     out: dict[str, list] = {}
+    answered = 0
     command: dict = {
         "type": "recorder/statistics_during_period",
         "start_time": start.isoformat(),
@@ -353,14 +436,26 @@ async def fetch(session, ids: list[str], start: dt.datetime,
             # batch that failed; the rest of the house still gets a profile.
             log.info("appliance statistics batch failed: %s", exc)
             continue
-        for sid, rows in (results[0] or {}).items():
+        rows_by_id = results[0] if results else None
+        if not isinstance(rows_by_id, dict):
+            log.info("appliance statistics batch refused by the recorder")
+            continue
+        answered += 1
+        for sid, rows in rows_by_id.items():
             out[sid] = rows or []
-    return out
+    return out if answered else None
 
 
 async def build(session, states: dict, now: float | None = None,
                 path: str | None = None) -> dict:
-    """Measure every power sensor's shape and write the store."""
+    """Measure every power sensor's shape and write the store.
+
+    A fetch the recorder refused writes nothing and hands back the
+    previous store with `error` beside it (`baselines.refused`); a house
+    with no power sensors still writes an empty one.
+    """
+    import baselines  # noqa: PLC0415
+
     now = time.time() if now is None else now
     ids = candidates(states)
     payload: dict = {"built_at": int(now), "days": HISTORY_DAYS,
@@ -372,6 +467,11 @@ async def build(session, states: dict, now: float | None = None,
     start = dt.datetime.fromtimestamp(now - HISTORY_DAYS * 86400,
                                       tz=dt.timezone.utc)
     series = await fetch(session, ids, start)
+    if series is None:
+        return baselines.refused(
+            "appliances", load(path),
+            f"the recorder did not answer for any of the {len(ids)} power "
+            "sensors asked about")
     for eid, points in series.items():
         shape = profile(points, now)
         if not shape:
@@ -390,6 +490,6 @@ __all__ = [
     "MAX_ENTITIES", "MAX_SETTLE_MIN", "MIN_DRAWS", "MIN_RUN_MIN",
     "MIN_SETTLE_MIN", "MIN_SPAN_RATIO", "MIN_SPAN_W", "RUNNING", "STORE",
     "THRESHOLD_FRACTION", "age_days", "build", "candidates", "fetch",
-    "is_power", "load", "percentile", "profile", "save", "segments",
-    "settle_minutes", "state_at",
+    "is_power", "load", "percentile", "profile", "progress", "save",
+    "segments", "settle_minutes", "state_at",
 ]

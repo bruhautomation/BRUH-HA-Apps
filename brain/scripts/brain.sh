@@ -17,7 +17,7 @@
 #   brain doctor [--json]          End-to-end diagnostic
 #   brain doctor --deep            Every face, one real round trip each
 #   brain doctor --rehearse        Plant defects, score the checks, clean up
-#   brain report                   Redacted diagnostics bundle for a bug report
+#   brain report                   One redacted text file for a bug report
 #   brain help                     This help
 
 set -uo pipefail
@@ -78,8 +78,8 @@ Usage:
                                  against them, score both, then remove
                                  everything. Asks first, and says exactly
                                  what it would create
-  brain report [--no-names]      Write a redacted diagnostics bundle to
-                                 /share/brain/reports for a bug report
+  brain report [--no-names]      Write one redacted text file to
+                                 /share/brain/reports (also under ⚙ → Problems)
   brain login [--status|--share] Sign in to Claude, and share that login with
                                  other BRUH add-ons. Same command as `ha login`
                                  — it is listed here because the credential is

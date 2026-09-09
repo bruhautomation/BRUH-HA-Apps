@@ -21,6 +21,15 @@
 #
 # On ANY failure (not authenticated, parse failure, oversized output) the
 # existing memory files are left untouched and the inbox stays pending.
+#
+# Exit codes a caller can tell apart:
+#   0    the pass ran (or there was nothing to file)
+#   1    the pass failed; the document is untouched and the inbox pending
+#   75   another pass holds the lock (LOCK_BUSY_RC)
+#   76   memory.md changed while the pass was running — somebody edited it
+#        in the panel or the terminal between the read and the write, so
+#        the pass discarded its own answer rather than theirs; the inbox
+#        stays pending for the next pass (MEMORY_EDITED_RC)
 
 set -uo pipefail
 
@@ -66,6 +75,23 @@ LOG_KEEP=200
 PROCESSED_PRUNE_DAYS=30
 
 VOICE_SEPARATOR="-----VOICE-----"
+
+# A pass reads memory.md, spends minutes in a Claude call, and writes it
+# back. Anything a person saved in between — the Memory tab's editor, an
+# `$EDITOR` session in the terminal — was overwritten by a document that
+# was rewritten from the version before their edit, silently. So the file
+# is fingerprinted at the read and checked again before the write, and a
+# file that moved ends the pass with this code and no write.
+MEMORY_EDITED_RC=76
+
+# What the document looks like right now: size and checksum, or nothing
+# for a file that is not there. `cksum` rather than an mtime, because a
+# save inside the same second as the read is invisible to a clock with
+# one-second ticks, and it is BusyBox-safe.
+memory_fingerprint() {
+    [ -f "$MEMORY_FILE" ] || { printf 'absent'; return 0; }
+    cksum < "$MEMORY_FILE" 2>/dev/null | awk '{print $1, $2}'
+}
 
 # The shrink guard: how much of the document a single consolidation is
 # allowed to lose before we assume the model rewrote it instead of merging
@@ -326,6 +352,8 @@ consolidate_once() {
     # shellcheck disable=SC2086
     inbox_lines=$(cat $files 2>/dev/null | grep . || true)
     current_memory=$(cat "$MEMORY_FILE" 2>/dev/null || echo "")
+    local read_fingerprint
+    read_fingerprint=$(memory_fingerprint)
 
     local prompt output out_file attempt=1 retry_note=""
     local new_memory new_voice old_content new_content shrink_floor over
@@ -439,6 +467,16 @@ consolidate_once() {
     done
     rm -f "$out_file"
 
+    # The document this answer was merged INTO has to be the document on
+    # disk. If a person saved an edit while Claude was working, writing now
+    # would replace their version with one rewritten from the older copy —
+    # so the pass gives way: nothing written, the inbox kept, and the next
+    # pass merges the same facts into what they saved.
+    if [ "$(memory_fingerprint)" != "$read_fingerprint" ]; then
+        log "memory.md was edited while this pass was running — keeping the edited document; the ${inbox_lines:+$(printf '%s\n' "$inbox_lines" | wc -l) }queued fact(s) stay pending for the next pass"
+        return "$MEMORY_EDITED_RC"
+    fi
+
     # Snapshot the pre-merge document BEFORE overwriting it — this is what
     # `brain memory undo` restores, and it has to exist even if the write
     # below is the thing that goes wrong.
@@ -482,8 +520,36 @@ consolidate_once() {
     find "$PROCESSED_DIR" -type f -mtime +"$PROCESSED_PRUNE_DAYS" -delete 2>/dev/null || true
 
     touch "$MARKER_FILE" 2>/dev/null || true
+    refresh_context
     log "memory.md (${#new_memory} bytes) and voice.md (${#new_voice} bytes) updated"
     return 0
+}
+
+# `/config/CLAUDE.md` carries the head of the memory document, and it was
+# written once, at startup, and never again. So the terminal and the chat
+# — the two faces that read the project context rather than a prompt this
+# add-on builds — spent the life of the container reading whatever memory
+# held at boot: a fact taught on Tuesday reached voice, the analyst and
+# the fixer, and did not reach the person typing in the terminal until
+# somebody restarted the add-on.
+#
+# Regenerated HERE because this is the one place that changes the
+# document. It is best-effort and never fails the pass: the context file
+# is derived, the memory it is derived from is already on disk, and a
+# consolidation that reported failure because a regeneration did would
+# leave the inbox pending over a copy.
+refresh_context() {
+    local gen
+    for gen in "${BRAIN_CONTEXT_GEN:-/usr/local/bin/ha-context-gen.sh}" \
+               /opt/scripts/ha-context-gen.sh; do
+        [ -x "$gen" ] || continue
+        if "$gen" >/dev/null 2>&1; then
+            log "refreshed /config/CLAUDE.md with the updated memory"
+        else
+            log "could not refresh /config/CLAUDE.md — the terminal and the chat will read the previous copy until the next pass"
+        fi
+        return 0
+    done
 }
 
 daemon_loop() {

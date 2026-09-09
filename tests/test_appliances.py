@@ -545,3 +545,74 @@ class TestTheChore(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestARefusedFetchLeavesTheStore(unittest.TestCase):
+    """A recorder that would not answer is not a house with no appliances.
+
+    `fetch` used to answer `{}` for both, and `build` wrote that `{}` over
+    last night's shapes, stamped tonight — so one busy recorder cost the
+    chore check its profiles until the next successful night, with nothing
+    on disk saying the measurement had not happened.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, "appliances.json")
+        self.previous = {"built_at": int(NOW - 86400), "days": 10, "asked": 1,
+                         "entities": {"sensor.dishwasher_power": {
+                             "idle_w": 0.6, "busy_w": 1800.0,
+                             "name": "Dishwasher power"}}}
+        appliances.save(self.previous, self.path)
+        self.before = Path(self.path).read_bytes()
+        self.states = {"sensor.dishwasher_power": {
+            "state": "0.6",
+            "attributes": {"device_class": "power",
+                           "state_class": "measurement",
+                           "friendly_name": "Dishwasher power"}}}
+
+    def _build(self, answer):
+        import ha_data
+
+        async def ws(session, commands):
+            return [answer]
+        real = ha_data._ws_commands
+        ha_data._ws_commands = ws
+        try:
+            return asyncio.run(appliances.build(None, self.states, NOW, self.path))
+        finally:
+            ha_data._ws_commands = real
+
+    def test_a_refusal_writes_nothing_and_says_so(self):
+        got = self._build(None)
+        self.assertEqual(Path(self.path).read_bytes(), self.before,
+                         "the store was rewritten over a refused fetch")
+        self.assertEqual(got["built_at"], self.previous["built_at"])
+        self.assertIn("sensor.dishwasher_power", got["entities"])
+        self.assertIn("did not answer", got["error"])
+        self.assertEqual(appliances.load(self.path), self.previous)
+
+    def test_an_empty_answer_is_a_measurement_and_is_written(self):
+        """The recorder answering that it holds nothing for these ids is
+        a night's measurement: the store moves on, or a sensor that was
+        removed keeps its shape forever."""
+        got = self._build({})
+        self.assertNotIn("error", got)
+        self.assertEqual(got["built_at"], int(NOW))
+        self.assertEqual(appliances.load(self.path)["built_at"], int(NOW))
+
+    def test_the_fetch_says_which_it_was(self):
+        import ha_data
+
+        async def refused(session, commands):
+            return [None]
+        real = ha_data._ws_commands
+        ha_data._ws_commands = refused
+        try:
+            start = dt.datetime.fromtimestamp(NOW - 3600, tz=dt.timezone.utc)
+            self.assertIsNone(asyncio.run(
+                appliances.fetch(None, ["sensor.dishwasher_power"], start)))
+            self.assertEqual(asyncio.run(appliances.fetch(None, [], start)), {})
+        finally:
+            ha_data._ws_commands = real

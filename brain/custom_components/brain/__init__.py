@@ -557,9 +557,14 @@ def _append_question_answer(
         os.path.join(memory_dir, QUESTIONS_FILE), "a", encoding="utf-8"
     ) as fh:
         fh.write(json.dumps(record) + "\n")
+    # What is remembered is the answer as a plain statement with the
+    # question as its subject — the same shape the panel's own
+    # `_submit_answer` queues. A "Q: … → A: …" pair filed into memory.md
+    # is what made the old document unreadable: the consolidator kept the
+    # question, and a document of questions answers nothing.
     _append_memory_fact(
         memory_dir,
-        f"Q: {record['q']} → A: {record['a']}",
+        f"{record['q'].rstrip('?').strip()}: {record['a']}",
         source,
         "high",
     )

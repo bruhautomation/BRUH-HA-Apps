@@ -61,6 +61,21 @@ class TestBrainManifest(unittest.TestCase):
             self.assertNotIn(opt, self.config["options"])
             self.assertNotIn(opt, self.config["schema"])
 
+    def test_turn_limit_options_are_gone(self):
+        """A turn cap TRUNCATES — the run is paid for and thrown away one
+        step short of its answer — so the three options that set one were
+        removed. Each face carries a large runaway guard of its own now,
+        and nothing in the manifest or run.sh feeds it."""
+        run_sh = (ADDON_DIR / "run.sh").read_text()
+        for opt in ("assist_max_turns", "automation_max_turns", "study_max_turns"):
+            self.assertNotIn(opt, self.config["options"])
+            self.assertNotIn(opt, self.config["schema"])
+            self.assertNotIn(f"bashio::config '{opt}'", run_sh)
+        for var in ("BRAIN_ASSIST_MAX_TURNS", "BRAIN_AUTOMATION_MAX_TURNS",
+                    "BRAIN_LEARN_MAX_TURNS"):
+            self.assertNotIn(f"export {var}=", run_sh,
+                             f"run.sh still exports {var} for an option that is gone")
+
     def test_edit_journal_option_present(self):
         self.assertIn("edit_journal_days", self.config["options"])
 
@@ -1056,6 +1071,168 @@ class TestDocsTab(unittest.TestCase):
         self.assertIn("return esc(s)", self.app)
 
 
+class TestDocsAreGenerated(unittest.TestCase):
+    """The Docs tab is DOCS.md, built by `panel/build-docs.py`.
+
+    They used to be two hand-written copies of the same guide, and they drifted
+    exactly as two copies do: the panel went on teaching a five-tab layout and a
+    button set the file beside it had already corrected. So the file is the
+    source and the tab is generated — which is only true while the checked-in
+    output still matches what the generator would write today, and that is what
+    `--check` is for.
+    """
+
+    BUILDER = PANEL / "build-docs.py"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.md = (ADDON_DIR / "DOCS.md").read_text()
+        cls.docs = (PANEL / "docs.js").read_text()
+
+    def _run(self, *args):
+        return subprocess.run([sys.executable, str(self.BUILDER), *args],
+                              capture_output=True, text=True, timeout=60)
+
+    def test_the_generator_is_there_and_says_so_in_the_output(self):
+        self.assertTrue(self.BUILDER.is_file(), "panel/build-docs.py is gone")
+        self.assertIn("GENERATED from brain/DOCS.md by panel/build-docs.py",
+                      self.docs.split("\n", 1)[0],
+                      "docs.js must name its generator on its first line, or "
+                      "the next person edits it by hand")
+
+    def test_the_checked_in_docs_js_is_what_the_generator_writes(self):
+        """The whole contract. A DOCS.md edit that nobody regenerated is a Docs
+        tab one release behind the file it claims to be."""
+        res = self._run("--check")
+        self.assertEqual(res.returncode, 0,
+                         f"{res.stdout}\n{res.stderr}\n"
+                         "run `python3 brain/panel/build-docs.py` and commit")
+
+    def test_check_actually_fails_on_drift(self):
+        """A `--check` that cannot fail is a `--check` nobody has to satisfy —
+        the grep-for-a-line failure, one tool over. Drive it against a source
+        that differs and assert it says so."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "DOCS.md"
+            src.write_text("# brAIn\n\n## Setup\n\nSomething else entirely.\n")
+            res = self._run("--check", "--source", str(src))
+        self.assertEqual(res.returncode, 1,
+                         "--check passed against a source it was not built from")
+
+    def test_every_top_level_section_of_the_guide_has_an_entry(self):
+        """A `##` with no entry is a page of the guide the panel does not
+        serve, and nothing else would notice."""
+        ids = set(re.findall(r'^\s*id: "([^"]+)"', self.docs, re.M))
+        # A title may hold an escaped quote (`It knows what \"unusual\" means
+        # here`), so the naive `[^"]+` stops halfway through one and the test
+        # reports a section that is right there.
+        titles = [json.loads(f'"{raw}"') for raw in re.findall(
+            r'^\s*title: "((?:[^"\\]|\\.)*)"', self.docs, re.M)]
+        missing = []
+        for heading in re.findall(r"^##\s+(?!#)(.*)$", self.md, re.M):
+            name = heading.strip()
+            if name == "What it can do":
+                # Deliberately split per `###` — see the module docstring.
+                continue
+            if name not in titles:
+                missing.append(name)
+        self.assertEqual(missing, [], f"sections with no docs.js entry: {missing}")
+        # And the split one really is split, rather than silently dropped.
+        subs = re.findall(r"^###\s+(?!#)(.*)$", self.md.split("## Setup", 1)[0], re.M)
+        self.assertTrue(subs, "`What it can do` has no subsections any more")
+        for sub in subs:
+            self.assertIn(sub.strip(), titles, f"`{sub.strip()}` is not in the guide")
+        self.assertEqual(len(ids), len(re.findall(r'^\s*id: ', self.docs, re.M)),
+                         "duplicate section id")
+
+    def test_the_cli_verbs_survive_the_generation(self):
+        """`test_guide_documents_the_current_cli_not_the_retired_one` asserts
+        this of docs.js; this asserts the SOURCE carries it, so a regeneration
+        cannot be what makes that one pass."""
+        for current in ("brain memory", "brain learn", "brain undo",
+                        "brain doctor", "ha reload", "ha check"):
+            self.assertIn(current, self.md, f"DOCS.md never mentions {current}")
+            self.assertIn(current, self.docs, f"docs.js lost {current}")
+
+    def test_a_fenced_code_block_round_trips(self):
+        """Backticks are the one character a template literal cannot carry
+        raw, and a fenced block is three of them on a line of its own — so an
+        escaping bug here is a docs.js that either does not parse or renders
+        somebody's shell example as prose."""
+        fence = "```bash\nbrain doctor --deep\n```"
+        self.assertIn("```bash", self.md, "the guide has no shell examples left")
+        self.assertIn("\\`\\`\\`bash", self.docs,
+                      "a fenced block did not survive into docs.js escaped")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "DOCS.md"
+            out = Path(tmp) / "docs.js"
+            src.write_text(f"# T\n\n## Sec\n\n{fence}\n")
+            self.assertEqual(
+                self._run("--source", str(src), "--out", str(out)).returncode, 0)
+            body = out.read_text()
+            node = subprocess.run(["node", "--check", str(out)],
+                                  capture_output=True, text=True, timeout=30)
+            self.assertEqual(node.returncode, 0, node.stderr)
+            self.assertIn("brain doctor --deep", body)
+            self.assertIn("\\`\\`\\`bash", body)
+
+    def test_a_markdown_table_round_trips(self):
+        """Tables carry most of the reference material in this guide — the
+        options, the ports, the panel's tabs — and the renderer only draws one
+        when the pipe rows survive intact."""
+        table = ("| Port | What |\n| --- | --- |\n"
+                 "| 8099 | The panel |\n")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "DOCS.md"
+            out = Path(tmp) / "docs.js"
+            src.write_text(f"# T\n\n## Sec\n\n{table}")
+            self.assertEqual(
+                self._run("--source", str(src), "--out", str(out)).returncode, 0)
+            body = out.read_text()
+        for row in table.strip().split("\n"):
+            self.assertIn(row, body, f"table row lost: {row!r}")
+        # And the real guide still has tables in it.
+        self.assertRegex(self.docs, r"\n\| --- \|", "docs.js has no tables")
+
+    def test_the_shapes_the_renderer_cannot_draw_are_normalised_away(self):
+        """`renderMarkdown` has no branch for a horizontal rule, an in-page
+        anchor link or a heading inside a blockquote, so each would be printed
+        as the literal characters it was written as."""
+        self.assertIn("\n---\n", self.md, "DOCS.md has no rules left to strip")
+        self.assertNotIn("\n---\n", self.docs, "a `---` rule reached docs.js")
+        self.assertRegex(self.md, r"\]\(#", "DOCS.md has no anchor links left")
+        self.assertNotIn("](#", self.docs, "an in-page anchor link reached docs.js")
+        self.assertNotRegex(self.docs, r"(?m)^> #", "a quoted heading reached docs.js")
+        # `*emphasis*` has no inline rule either — only `**bold**` does — so a
+        # single-asterisk span reaches the reader as its own asterisks. The
+        # hand-written docs.js shipped forty of them.
+        self.assertRegex(self.md, r"(?<!\*)\*[^*`\n]+\*(?!\*)",
+                         "DOCS.md has no emphasis left to normalise")
+        self.assertNotRegex(self.docs, r"(?<!\*)\*(?!\*)[^*\n]{1,60}(?<!\*)\*(?!\*)",
+                            "single-asterisk emphasis reached docs.js")
+
+    def test_an_asterisk_inside_code_is_left_alone(self):
+        """`alarm_control_panel.*` is a glob somebody meant literally, and
+        bolding half of a pair of them would teach a pattern that does not
+        exist. The rewrite runs outside inline code only."""
+        for glob in ("alarm_control_panel.*", "notify.mobile_app_*", "brain_test_*"):
+            self.assertIn(glob, self.docs, f"{glob} was mangled or lost")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "DOCS.md"
+            out = Path(tmp) / "docs.js"
+            src.write_text("# T\n\n## Sec\n\nUse `light.*` and `switch.*` *here*.\n")
+            self.assertEqual(
+                self._run("--source", str(src), "--out", str(out)).returncode, 0)
+            body = out.read_text()
+        self.assertIn("`light.*`", body.replace("\\`", "`"))
+        self.assertIn("`switch.*`", body.replace("\\`", "`"))
+        self.assertIn("**here**", body)
+
+
 # ---------------------------------------------------------------------------
 # CLI dispatchers
 # ---------------------------------------------------------------------------
@@ -1247,55 +1424,292 @@ class TestRunSourceLedgerOwnership(unittest.TestCase):
                             script)
 
 
+def _run_sh_block(start, end):
+    """Lines of run.sh from the first line containing `start` through the
+    first later line containing `end`, inclusive — lifted so a shell can
+    run them, the way `test_doctor_json` drives `ha-selftest.sh`'s."""
+    lines = (ADDON_DIR / "run.sh").read_text().splitlines()
+    i = next(n for n, line in enumerate(lines) if start in line)
+    j = next(n for n, line in enumerate(lines) if n >= i and end in line)
+    return "\n".join(lines[i:j + 1])
+
+
+class TestEditJournalOwnership(unittest.TestCase):
+    """The edit journal is written by two users, like the run-source ledger.
+
+    `brain-edit-snapshot.py` runs as the claude user on every Claude edit
+    and appends to /data/.brain/edits/index.jsonl; the panel's
+    automation_writer runs as root on an accepted proposal and appends to
+    the same file. A root-owned first write locks the hook out, and a hook
+    that fails must not fail the edit — so the failure is silent and every
+    edit after it is one `brain undo` cannot reverse. Driven rather than
+    grepped: the block is run against a temp directory standing in for
+    /data and the modes are read back.
+    """
+
+    def _drive(self):
+        import tempfile
+        block = _run_sh_block("touch /data/run-sources.jsonl",
+                              "chmod 664 /data/.brain/edits/index.jsonl")
+        tmp = tempfile.mkdtemp()
+        script = block.replace("/data/", f"{tmp}/")
+        proc = subprocess.run(["bash", "-e", "-c", script],
+                              capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return Path(tmp)
+
+    def test_the_index_and_its_snapshot_dir_exist_before_anything_writes_them(self):
+        data = self._drive()
+        index = data / ".brain" / "edits" / "index.jsonl"
+        snaps = data / ".brain" / "edits" / "snapshots"
+        self.assertTrue(index.is_file())
+        self.assertTrue(snaps.is_dir())
+        self.assertEqual(oct(index.stat().st_mode & 0o777), "0o664")
+        self.assertEqual(oct(snaps.stat().st_mode & 0o777), "0o775")
+        self.assertEqual(oct(index.parent.stat().st_mode & 0o777), "0o775")
+        # And the ledger this block was written for still comes out the same.
+        ledger = data / "run-sources.jsonl"
+        self.assertTrue(ledger.is_file())
+        self.assertEqual(oct(ledger.stat().st_mode & 0o777), "0o664")
+
+    def test_the_index_is_handed_to_the_claude_user(self):
+        """chown cannot be observed in a temp dir without root, so the one
+        thing the block must say — WHO owns the journal — is read back
+        from the lines the shell would run."""
+        block = _run_sh_block("touch /data/run-sources.jsonl",
+                              "chmod 664 /data/.brain/edits/index.jsonl")
+        self.assertIn("chown -R claude:claude /data/.brain/edits", block)
+
+    def test_the_journal_exists_before_the_hook_could_fire(self):
+        """The block runs ahead of everything that launches Claude."""
+        run_sh = (ADDON_DIR / "run.sh").read_text()
+        setup = run_sh.index("touch /data/.brain/edits/index.jsonl")
+        for launch in ("brain-memory-consolidate.sh", "brain-study-watcher.sh",
+                       "assist-worker-pool.py"):
+            self.assertLess(setup, run_sh.index(launch), launch)
+
+    def test_the_paths_are_the_ones_the_hook_and_the_writer_use(self):
+        """A block creating a file nothing writes is a block nobody notices
+        going stale — both writers name their default from the same
+        constant, and this reads it back from each."""
+        for src in (SCRIPTS / "brain-edit-snapshot.py",
+                    PANEL / "automation_writer.py"):
+            text = src.read_text()
+            self.assertIn('"BRAIN_EDIT_JOURNAL", "/data/.brain/edits"', text, src.name)
+            self.assertIn('JOURNAL_DIR / "index.jsonl"', text, src.name)
+
+
+class TestProjectSettingsAllowList(unittest.TestCase):
+    """`setup_claude_settings()` lifted out of run.sh and run.
+
+    The allow-list it writes is what every headless run — voice, tasks,
+    the fixer, the chat — may do without a prompt. It shipped
+    pre-approving `mcp__claude_ai_Home_Assistant__*` and
+    `mcp__claude_ai_Vercel__*`: neither is a server this add-on declares,
+    and a wildcard for a server somebody could later connect is an
+    approval given in advance for tools nobody has read. The function is
+    RUN here against a temp directory rather than grepped, so the JSON the
+    add-on actually writes is the JSON that is asserted.
+    """
+
+    EXPECTED_ALLOW = [
+        "mcp__home-assistant__*",
+        "Bash(*)",
+        "Read", "Write", "Edit", "Glob", "Grep", "Agent", "Skill",
+        "WebFetch", "WebSearch", "NotebookEdit",
+        "TaskCreate", "TaskUpdate", "TaskGet", "TaskList",
+        "TodoWrite", "TodoRead",
+    ]
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        run_sh = (ADDON_DIR / "run.sh").read_text()
+        # The function holds a JSON heredoc whose own `}` sits at column 0,
+        # so "the first `}` on a line" is the JSON's; the function's is the
+        # one after its last log line.
+        m = re.search(r"^setup_claude_settings\(\) \{\n.*?"
+                      r"project settings written[^\n]*\n\}\n", run_sh, re.S | re.M)
+        assert m, "setup_claude_settings() not found in run.sh"
+        cls.tmp = tempfile.mkdtemp()
+        fn = m.group(0).replace('"/config/.claude"', f'"{cls.tmp}/.claude"')
+        # The function reads nothing else from outside itself; bashio is
+        # the one thing the harness has to supply.
+        script = "bashio::log.info() { :; }\n" + fn + "\nsetup_claude_settings\n"
+        proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
+        cls.settings = json.loads(
+            (Path(cls.tmp) / ".claude" / "settings.local.json").read_text())
+
+    def test_the_allow_list_is_exactly_this(self):
+        self.assertEqual(self.settings["permissions"]["allow"], self.EXPECTED_ALLOW)
+
+    def test_no_foreign_server_is_pre_approved(self):
+        for entry in self.settings["permissions"]["allow"]:
+            self.assertNotIn("claude_ai", entry, entry)
+        mcp = [e for e in self.settings["permissions"]["allow"] if e.startswith("mcp__")]
+        self.assertEqual(mcp, ["mcp__home-assistant__*"],
+                         "the only MCP server this add-on declares is home-assistant")
+
+    def test_the_project_server_is_still_trusted(self):
+        """The approval that makes HA tools load in a `-p` run is separate
+        from the allow-list and must survive trimming it."""
+        self.assertTrue(self.settings["enableAllProjectMcpServers"])
+        self.assertEqual(self.settings["enabledMcpjsonServers"], ["home-assistant"])
+
+    def test_the_edit_snapshot_hook_is_still_installed(self):
+        hooks = self.settings["hooks"]["PreToolUse"]
+        self.assertEqual(hooks[0]["matcher"], "Write|Edit|MultiEdit|NotebookEdit")
+        self.assertIn("brain-edit-snapshot.py", hooks[0]["hooks"][0]["command"])
+
+    def test_the_slash_commands_land_beside_it(self):
+        commands = Path(self.tmp) / ".claude" / "commands"
+        self.assertTrue((commands / "learn.md").is_file())
+        self.assertTrue((commands / "memory.md").is_file())
+
+
 class TestTurnBudgets(unittest.TestCase):
-    """A turn cap TRUNCATES — it doesn't degrade. A run that hits one stops
-    mid-thought and produces nothing parseable, so the work is paid for and
-    then thrown away. That makes a tight cap the most expensive setting in
-    the add-on, and it must not be set by reflex."""
+    """A turn cap is a runaway guard, never a budget, and nobody is asked
+    about it. The study and ask paths pass no cap at all by default — the
+    wall clock is the guard — and a cap somebody sets by hand is one that
+    LANDS when it trips: the run is resumed on its own session with two
+    turns and told to finish with what it has (brain-landing.sh, the shell
+    half of engine._run_cli's landing). Driven: both scripts run under the
+    fake CLI and the claims are read off its argv log and off what the
+    study actually filed."""
+
+    FAKE = Path(__file__).resolve().parent / "fake_claude.py"
 
     @classmethod
     def setUpClass(cls):
         cls.config = yaml.safe_load((ADDON_DIR / "config.yaml").read_text())
         cls.learn = (SCRIPTS / "brain-learn.sh").read_text()
-        cls.ask = (SCRIPTS / "brain-ask.sh").read_text()
 
-    def test_study_can_run_uncapped(self):
-        """Depth is the deliverable for a study session, so 0 must be legal."""
-        self.assertIn("study_max_turns", self.config["options"])
-        self.assertTrue(self.config["schema"]["study_max_turns"].startswith("int(0,"))
+    def _drive(self, script, args, **extra):
+        """Run one of the two scripts against the fake CLI. Returns the
+        process, the argv of every CLI invocation, and the scratch root."""
+        import tempfile
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
+        log = root / "argv.log"
+        env = dict(os.environ)
+        for key in ("FAKE_MODE", "FAKE_LANDING_TEXT", "BRAIN_LEARN_MAX_TURNS",
+                    "BRAIN_ASK_MAX_TURNS"):
+            env.pop(key, None)
+        env.update({
+            "BRAIN_CLAUDE_BIN": f"{sys.executable} {self.FAKE}",
+            "FAKE_CLAUDE_LOG": str(log),
+            "BRAIN_MEMORY_DIR": str(root / "memory"),
+            "BRAIN_FINDINGS_INBOX": str(root / "findings"),
+            "BRAIN_RUN_SOURCES": str(root / "run-sources.jsonl"),
+            # Over the landing floor, so a tripped cap is landed rather
+            # than refused for want of time.
+            "BRAIN_LEARN_TIMEOUT": "60", "BRAIN_ASK_TIMEOUT": "60",
+            # A study session scopes itself to the analyst's tool lists
+            # and refuses to run when it cannot read them, so a driver
+            # has to say where the panel is: in the image it is
+            # /opt/panel, and here it is the checkout.
+            "BRAIN_PANEL_DIR": str(PANEL),
+        })
+        env.update(extra)
+        proc = subprocess.run(["bash", str(SCRIPTS / script), *args],
+                              capture_output=True, text=True, env=env,
+                              timeout=120)
+        argvs = ([json.loads(ln) for ln in log.read_text().splitlines()
+                  if ln.startswith("[")] if log.exists() else [])
+        return proc, argvs, root
 
-    def test_study_omits_the_flag_when_uncapped(self):
-        """Passing --max-turns 0 would cap at zero, not remove the cap."""
-        self.assertIn('if [ "${MAX_TURNS:-0}" -gt 0 ]', self.learn)
-        self.assertIn('turn_args=(--max-turns "$MAX_TURNS")', self.learn)
-        self.assertIn('-p "${turn_args[@]}"', self.learn)
+    @staticmethod
+    def _after(argv, flag):
+        return argv[argv.index(flag) + 1] if flag in argv else None
 
-    def test_ask_also_supports_uncapped(self):
-        self.assertIn('if [ "${MAX_TURNS:-0}" -gt 0 ]', self.ask)
-        self.assertIn('-p "${turn_args[@]}"', self.ask)
+    # -- no cap unless somebody set one ----------------------------------
 
-    def test_study_defaults_are_generous(self):
-        self.assertGreaterEqual(self.config["options"]["study_max_turns"], 40)
+    def test_a_study_passes_no_turn_cap_by_default(self):
+        _, argvs, _ = self._drive("brain-learn.sh", ["energy"])
+        self.assertEqual(len(argvs), 1)
+        self.assertIn("-p", argvs[0])
+        self.assertNotIn("--max-turns", argvs[0])
+
+    def test_a_study_passes_the_cap_somebody_set_by_hand(self):
+        _, argvs, _ = self._drive("brain-learn.sh", ["energy"],
+                                  BRAIN_LEARN_MAX_TURNS="7")
+        self.assertEqual(self._after(argvs[0], "--max-turns"), "7")
+
+    def test_an_ask_passes_no_turn_cap_by_default(self):
+        proc, argvs, _ = self._drive("brain-ask.sh", ["how many lights are on"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("ONESHOT:", proc.stdout)
+        self.assertEqual(len(argvs), 1)
+        self.assertNotIn("--max-turns", argvs[0])
+
+    def test_an_ask_passes_the_cap_somebody_set_by_hand(self):
+        _, argvs, _ = self._drive("brain-ask.sh", ["how many lights are on"],
+                                  BRAIN_ASK_MAX_TURNS="7")
+        self.assertEqual(self._after(argvs[0], "--max-turns"), "7")
+
+    # -- a tripped cap lands ---------------------------------------------
+
+    def test_a_study_that_trips_its_cap_is_landed_and_the_landing_is_filed(self):
+        """The fake ends the first call on the CLI's own cap and answers
+        the resumed one. What the study files is the landed answer — the
+        partial that landed, instead of nothing at all."""
+        landing = json.dumps({
+            "report": "Partial: ran out of room before the statistics.",
+            "facts": ["The dryer draws about 3 kWh per cycle."],
+            "findings": [], "hypotheses": []})
+        proc, argvs, root = self._drive(
+            "brain-learn.sh", ["energy"], FAKE_MODE="max_turns_then_land",
+            FAKE_LANDING_TEXT=landing, BRAIN_LEARN_MAX_TURNS="5")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("landing", proc.stderr.lower())
+        inbox = list((root / "memory" / "inbox").glob("*.jsonl"))
+        self.assertEqual(len(inbox), 1, proc.stderr)
+        queued = [json.loads(ln) for ln in inbox[0].read_text().splitlines()]
+        self.assertEqual([q["fact"] for q in queued],
+                         ["The dryer draws about 3 kWh per cycle."])
+        self.assertIn("ran out of room",
+                      (root / "memory" / "reports" / "energy.md").read_text())
+
+        first, second = argvs
+        sid = self._after(first, "--session-id")
+        self.assertTrue(sid)
+        self.assertEqual(self._after(first, "--max-turns"), "5")
+        self.assertEqual(self._after(second, "--resume"), sid)
+        self.assertEqual(self._after(second, "--max-turns"), "2")
+        self.assertNotIn("--session-id", second)
+
+    def test_an_ask_that_trips_its_cap_is_landed(self):
+        proc, argvs, _ = self._drive(
+            "brain-ask.sh", ["why is the garage cold"],
+            FAKE_MODE="max_turns_then_land", BRAIN_ASK_MAX_TURNS="5")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(proc.stdout.startswith("LANDED:"), proc.stdout)
+        first, second = argvs
+        self.assertEqual(self._after(second, "--resume"),
+                         self._after(first, "--session-id"))
+        self.assertEqual(self._after(second, "--max-turns"), "2")
+        self.assertEqual(self._after(second, "--output-format"), "text")
+
+    def test_a_landing_that_also_fails_names_no_setting(self):
+        """What is left is the run's own failure, and nothing on it tells
+        a person to go and raise a number: there is none to raise."""
+        proc, argvs, root = self._drive(
+            "brain-learn.sh", ["energy"], FAKE_MODE="max_turns",
+            BRAIN_LEARN_MAX_TURNS="5")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(len(argvs), 2)  # the landing was tried
+        self.assertFalse((root / "memory" / "inbox").exists())
+        for word in ("BRAIN_LEARN_MAX_TURNS", "Raise it", "study_max_turns"):
+            self.assertNotIn(word, proc.stderr)
+
+    def test_study_timeout_default_is_generous(self):
         self.assertGreaterEqual(self.config["options"]["study_timeout_minutes"], 15)
 
-    def test_voice_stays_tight_but_not_starved(self):
-        """Voice is the one place a cap is genuinely right — latency is the
-        product — but 5 was tight enough to truncate real commands."""
-        turns = self.config["options"]["assist_max_turns"]
-        self.assertGreaterEqual(turns, 8)
-        self.assertLessEqual(turns, 15)
-
-    def test_background_work_is_not_held_to_voice_limits(self):
-        self.assertGreaterEqual(self.config["options"]["automation_max_turns"], 20)
-
-    def test_truncation_is_reported_as_truncation(self):
-        """Blaming the model for a limit we imposed sends people looking in
-        entirely the wrong place."""
-        self.assertIn("hit its ${MAX_TURNS}-turn limit", self.learn)
-        self.assertIn("BRAIN_LEARN_MAX_TURNS", self.learn)
-
     def test_model_is_told_to_land_before_it_runs_out(self):
-        """Converts a truncated run into a partial but useful one."""
+        """The prompt's own landing: converts a run the wall clock is about
+        to end into a partial but useful one."""
         self.assertIn("running low on room", self.learn)
 
 
@@ -1475,6 +1889,57 @@ class TestEditJournal(unittest.TestCase):
             env={**os.environ, "BRAIN_EDIT_JOURNAL": str(self.journal)},
             timeout=30)
         self.assertEqual(res.returncode, 0)
+
+    def test_zero_days_switches_the_journal_off(self):
+        """DOCS and the option's own description say `0` disables the
+        journal. It disabled the PRUNE: every edit was still copied and
+        indexed, forever, with the size cap skipped as well — the one
+        value that said "off" was the one that made the journal grow
+        without bound."""
+        target = self.watched / "automations.yaml"
+        target.write_text("before")
+        res = self._hook({"tool_name": "Edit",
+                          "tool_input": {"file_path": str(target)}},
+                         extra_env={"BRAIN_EDIT_JOURNAL_DAYS": "0"})
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(self._index(), [])
+        snaps = self.journal / "snapshots"
+        self.assertEqual(list(snaps.iterdir()) if snaps.exists() else [], [])
+
+    def test_a_positive_window_still_snapshots(self):
+        """The control for the test above, with the value spelled out."""
+        target = self.watched / "automations.yaml"
+        target.write_text("before")
+        self._hook({"tool_name": "Edit",
+                    "tool_input": {"file_path": str(target)}},
+                   extra_env={"BRAIN_EDIT_JOURNAL_DAYS": "14"})
+        entries = self._index()
+        self.assertEqual(len(entries), 1)
+        snap = self.journal / "snapshots" / entries[0]["snapshot"]
+        self.assertEqual(snap.read_text(), "before")
+
+    def test_the_size_cap_runs_whenever_the_journal_is_on(self):
+        """The cap used to be behind the same `days <= 0` guard as the
+        age prune, so it was skipped in exactly the case it mattered."""
+        target = self.watched / "big.yaml"
+        target.write_text("x" * 4096)
+        src = (SCRIPTS / "brain-edit-snapshot.py").read_text().replace(
+            'WATCH_ROOTS = ("/config",)', f'WATCH_ROOTS = ({str(self.watched)!r},)'
+        ).replace("MAX_JOURNAL_BYTES = 256 * 1024 * 1024",
+                  "MAX_JOURNAL_BYTES = 6000")
+        runner = self.root / "hook_capped.py"
+        runner.write_text(src)
+        env = {**os.environ, "BRAIN_EDIT_JOURNAL": str(self.journal),
+               "BRAIN_EDIT_JOURNAL_DAYS": "14"}
+        for _ in range(3):
+            time.sleep(1.05)  # snapshot names carry whole seconds
+            subprocess.run([sys.executable, str(runner)],
+                           input=json.dumps({"tool_name": "Edit",
+                                             "tool_input": {"file_path": str(target)}}),
+                           capture_output=True, text=True, env=env, timeout=30)
+        snaps = list((self.journal / "snapshots").iterdir())
+        self.assertEqual(len(snaps), 1,
+                         "three 4 KB snapshots under a 6 KB cap should leave one")
 
     def test_prunes_snapshots_past_the_retention_window(self):
         target = self.watched / "old.yaml"
@@ -1890,24 +2355,6 @@ class TestBrainEnvIsSourcedBeforeItIsRead(unittest.TestCase):
             self.assertEqual(late, "10", "the old ordering should ignore the option")
             self.assertEqual(early, "30", "the fixed ordering should honour it")
 
-    def test_fallbacks_agree_with_the_shipped_defaults(self):
-        """A fallback that disagrees with config.yaml is a second answer to one
-        question, and it wins exactly when nobody is looking — an unreadable
-        env file. Same failure as the ordering bug, one layer down."""
-        options = yaml.safe_load((ADDON_DIR / "config.yaml").read_text())["options"]
-        for path, var, option in (
-            (ADDON_DIR / "integrations" / "automation-listener.sh",
-             "BRAIN_AUTOMATION_MAX_TURNS", "automation_max_turns"),
-            (ADDON_DIR / "integrations" / "assist-listener.sh",
-             "BRAIN_ASSIST_MAX_TURNS", "assist_max_turns"),
-        ):
-            with self.subTest(option=option):
-                self.assertIn(
-                    f'"${{{var}:-{options[option]}}}"', path.read_text(),
-                    f"{path.name}'s fallback for {var} disagrees with "
-                    f"config.yaml's {option}: {options[option]}",
-                )
-
 
 class TestCredentialBackupRestore(unittest.TestCase):
     """`run.sh`'s backup restore, lifted out of the script and driven.
@@ -2164,6 +2611,125 @@ class TestCredentialBackupRestore(unittest.TestCase):
         self._put(self.saved, self._credential(offset_s=-3600), mode="644")
         self._run()
         self.assertEqual(self.live.stat().st_mode & 0o777, 0o600)
+
+
+# ---------------------------------------------------------------------------
+# The Knowledge tab
+# ---------------------------------------------------------------------------
+# What the tab renders is measured by `tests/manual/measure-knowledge.mjs`,
+# which drives the real renderers — a grep for a line is not a test of what
+# the line does. What is worth asserting HERE is the pair of lists the two
+# halves have to agree on: the panel writes down the seven store ids and the
+# five state words, `house.py` writes them down too, and a disagreement is a
+# row that renders as "not started" for ever or one that never renders at all.
+
+
+class TestKnowledgeTab(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = (PANEL / "app.js").read_text()
+        cls.html = (PANEL / "index.html").read_text()
+        cls.css = (PANEL / "style.css").read_text()
+        cls.house = (PANEL / "house.py").read_text()
+
+    def _js_store_ids(self):
+        """The ids out of `HOUSE_STORES`, in the order the panel renders."""
+        block = self.app.split("const HOUSE_STORES = [", 1)[1].split("];", 1)[0]
+        return re.findall(r'\["([a-z_]+)",', block)
+
+    def _py_names(self, name):
+        block = self.house.split(f"{name} = (", 1)[1].split(")", 1)[0]
+        return re.findall(r'"([a-z_]+)"', block)
+
+    def test_the_tab_is_called_knowledge_and_keeps_its_view_name(self):
+        """The document is one of four things on this tab now, so the word
+        moved. `data-view` did not: every id and handler under it is the
+        memory pane's, and renaming that would be a rename of the wiring to
+        match a label."""
+        self.assertIn("<span>Knowledge</span>", self.html)
+        self.assertIn('data-view="memory"', self.html)
+        self.assertIn('data-tip="Knowledge"', self.html)
+        self.assertNotIn("<span>Memory</span>", self.html)
+
+    def test_the_panel_and_the_server_name_the_same_seven_stores(self):
+        """A store the panel does not name is a measurement nobody can ask
+        about, and one it names that the server does not send renders as
+        "not started" for ever. Order is part of it: this is a list somebody
+        learns the shape of."""
+        self.assertEqual(self._js_store_ids(), self._py_names("STORES"))
+
+    def test_every_state_the_server_can_send_has_words_in_the_panel(self):
+        """`storeChipText` is the one place a state becomes a sentence. A
+        state with no branch falls through to "not started", which is the
+        one reading that turns a stopped measurement into a fresh one."""
+        chip = self.app.split("function storeChipText(", 1)[1].split(
+            "\n}", 1)[0]
+        for state in self._py_names("STATES"):
+            with self.subTest(state=state):
+                # `not_started` is the fallthrough and so is named in the
+                # docstring rather than in a branch; the rest are branches.
+                self.assertIn(state, chip + "\nnot_started")
+
+    def test_the_four_sections_are_in_the_order_they_are_read(self):
+        """What brAIn said this morning, what it has measured, what it
+        remembers, what is queued. The document used to sit beside the queue
+        in two columns, which said nothing about which was which."""
+        order = ["This morning", "What brAIn has measured",
+                 "What it remembers", "Waiting to be filed"]
+        # The headings, not the prose: a comment can say any of these words
+        # in any order, and the thing being asserted is the page.
+        marks = [f">{h}</h2>" for h in order[:2]] \
+            + [f"<label>{h}</label>" for h in order[2:]]
+        at = [self.html.index(m) for m in marks]
+        self.assertEqual(at, sorted(at), f"sections are out of order: {order}")
+
+    def test_the_today_strip_makes_no_request_of_its_own(self):
+        """It is read off the /api/status poll every viewer already makes. A
+        fetch here would be a request per viewer per interval for numbers
+        that are already on the wire."""
+        strip = self.app.split("function renderToday(", 1)[1].split(
+            "\nfunction ", 1)[0]
+        self.assertNotIn("api(", strip)
+        self.assertNotIn("fetch(", strip)
+        # …and it has to be in the render key, or a checks pass finishing
+        # while somebody is looking changes nothing on screen.
+        self.assertIn("today: s && s.today", self.app)
+
+    def test_the_measure_runs_in_ci(self):
+        """Running it locally is about reading the failure next to your
+        editor; CI is what makes it enforcement."""
+        workflow = (BASE_DIR / ".github" / "workflows" / "ci.yml").read_text()
+        self.assertIn("tests/manual/measure-knowledge.mjs", workflow)
+        self.assertTrue((BASE_DIR / "tests" / "manual"
+                         / "measure-knowledge.mjs").exists())
+
+    def test_the_touch_floor_blocks_stay_where_they_are(self):
+        """The FIRST `pointer: coarse` block is the 16px text floor and the
+        LAST one is the small-button floor; both positions are load-bearing,
+        because equal specificity is settled by order. The Knowledge styles
+        went between them."""
+        first = self.css.index("@media (pointer: coarse)")
+        block = self.css[first:first + 400]
+        self.assertIn("font-size: 16px", block)
+        self.assertLess(self.css.index(".kstores {"),
+                        self.css.rindex("@media (pointer: coarse)"))
+
+    def test_a_measurement_row_is_a_button_at_the_touch_floor(self):
+        """A row people miss is a row they stop pressing, on any pointer —
+        `.actrow`'s rule, and set unconditionally for its reason rather than
+        inside a touch query."""
+        block = self.css.split(".krow {", 1)[1].split("}", 1)[0]
+        self.assertIn("min-height: 44px", block)
+        self.assertIn('el("button", "krow")', self.app)
+
+    def test_letting_brain_raise_it_again_calls_the_route_that_does_it(self):
+        """`POST /api/findings/unsettle` existed with no caller at all: the
+        one press that removes a settled key was documented and unreachable
+        from the panel."""
+        self.assertIn('api("api/findings/unsettle"', self.app)
+        self.assertIn("Let brAIn raise it again", self.app)
+        self.assertIn('JSON.stringify({ key: entry.key })', self.app)
 
 
 if __name__ == "__main__":

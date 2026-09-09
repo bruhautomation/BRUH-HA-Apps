@@ -657,31 +657,17 @@ class TestKnowledgeEndpoints(InsightsServerCase):
                 self.assertEqual([f["text"] for f in data["inbox"]],
                                  ["Garage fridge runs 24/7"])
                 self.assertEqual(data["inbox_pending"], 1)
-                self.assertEqual(data["questions"][0]["status"], "open")
                 self.assertIn("a note", data["shared_memory"])
+                # The ask-history ledger is not in this payload: a question
+                # is answered on the Findings tab or not at all, and a
+                # second surface for one is what the badge stopped counting.
+                self.assertNotIn("questions", data)
 
-                # answer the open question via the knowledge panel
-                q_ts = data["questions"][0]["ts"]
-                resp = await client.post(f"/api/knowledge/question/{q_ts}/answer",
-                                         json={"answer": "Yes, security"})
-                self.assertEqual(resp.status, 200)
-                data = (await (await client.get("/api/knowledge")).json())
-                self.assertEqual(data["questions"][0]["status"], "answered")
-                self.assertEqual(data["questions"][0]["answer"], "Yes, security")
-                # the answer became a fact — as a statement, not a Q/A pair —
-                # and it is waiting in the queue like everything else
-                self.assertTrue(
-                    any("Yes, security" in f["text"] for f in data["inbox"]))
-                self.assertTrue(
-                    any("Yes, security" in f["text"]
-                        for f in knowledge_store.list_facts()))
-                self.assertFalse(
-                    any(f["text"].startswith("Q:") for f in data["inbox"]))
-
-                # ✕ drops it from the queue, and the reply carries the fresh
-                # list and count together so the row cannot vanish while the
-                # label above it still counts it.
-                item = next(f for f in data["inbox"] if "Yes, security" in f["text"])
+                # ✕ drops a line from the queue, and the reply carries the
+                # fresh list and count together so the row cannot vanish
+                # while the label above it still counts it.
+                item = next(f for f in data["inbox"]
+                            if "Garage fridge" in f["text"])
                 resp = await client.delete(f"/api/memory/inbox/{item['id']}")
                 self.assertEqual(resp.status, 200)
                 after = await resp.json()
@@ -694,49 +680,6 @@ class TestKnowledgeEndpoints(InsightsServerCase):
                 await client.close()
 
         asyncio.run(run())
-
-    def test_dismiss_and_delete_question(self):
-        q = knowledge_store.record_question("Meh question?")
-
-        async def run():
-            client = self._client()
-            await client.start_server()
-            try:
-                resp = await client.post(f"/api/knowledge/question/{q['ts']}/dismiss")
-                self.assertEqual(resp.status, 200)
-                self.assertEqual(
-                    knowledge_store.list_questions("dismissed")[0]["ts"], q["ts"])
-                resp = await client.delete(f"/api/knowledge/question/{q['ts']}")
-                self.assertEqual(resp.status, 200)
-                self.assertEqual(knowledge_store.list_questions(), [])
-                resp = await client.post("/api/knowledge/question/999/dismiss")
-                self.assertEqual(resp.status, 404)
-                resp = await client.post("/api/knowledge/question/abc/dismiss")
-                self.assertEqual(resp.status, 400)
-            finally:
-                await client.close()
-
-        asyncio.run(run())
-
-    def test_dismissing_retires_question_from_cards(self):
-        self.server.save_insight({
-            "id": "energy", "category": "energy", "title": "T",
-            "generated_at": "2026-07-20T10:00:00", "html": "<p>x</p>",
-            "questions": ["Is the porch light intentional?"]})
-        q = knowledge_store.record_question("Is the porch light intentional?")
-
-        async def run():
-            client = self._client()
-            await client.start_server()
-            try:
-                resp = await client.post(f"/api/knowledge/question/{q['ts']}/dismiss")
-                self.assertEqual(resp.status, 200)
-            finally:
-                await client.close()
-
-        asyncio.run(run())
-        stored = json.loads((Path(self.tmp.name) / "energy.json").read_text())
-        self.assertEqual(stored["questions"], [])
 
     def test_confirming_a_guess_settles_it_and_answers_with_the_list(self):
         """Guesses are answered on the Findings tab now, so the reply is the
@@ -944,19 +887,6 @@ class TestMemoryFile(InsightsServerCase):
         self.assertIn('Lines beginning "FORGET: "', consolidator)
         cli = (BASE_DIR / "brain" / "scripts" / "brain-memory.sh").read_text()
         self.assertIn('append_inbox_fact "FORGET: $1"', cli)
-
-    def test_answered_question_is_remembered_as_a_statement(self):
-        """Not as "Q: ... -> A: ...", which is what made memory unreadable."""
-        async def run():
-            await self.server._submit_answer(
-                "Is the garage fridge meant to run overnight?", "Yes, always")
-
-        asyncio.run(run())
-        queued = self._queued_facts()
-        self.assertEqual(len(queued), 1)
-        self.assertNotIn("Q:", queued[0]["fact"])
-        self.assertNotIn("→", queued[0]["fact"])
-        self.assertIn("Yes, always", queued[0]["fact"])
 
     def test_inbox_failure_never_breaks_the_request(self):
         """A memory hand-off that cannot write must not fail an insight run."""

@@ -260,8 +260,18 @@ def _protected_scopes():
     return areas, devices, ok
 
 
-def _protected_target(payload):
-    """Why a service call's targets touch a protected entity, or None."""
+def _protected_target(payload, empty_is_all=False):
+    """Why a service call's targets touch a protected entity, or None.
+
+    ``empty_is_all`` is the meta-service rule: a ``homeassistant.turn_off``
+    that names no entity, area or device addresses every entity Core has,
+    which certainly includes the protected ones — `_meta_call_denied`
+    has read it that way since it was written, and this did not, so the
+    two chokepoint checks disagreed about the same payload. It is opt-in
+    because most services legitimately take no entity target at all
+    (notify, reload, the brain.* registry services), and refusing those
+    while a protected list exists would take the add-on's own tooling away.
+    """
     if not PROTECTED_ENTITIES:
         return None
     payload = payload if isinstance(payload, dict) else {}
@@ -286,6 +296,8 @@ def _protected_target(payload):
             if scope.get(key):
                 return ("it targets a label or floor, whose member entities "
                         "cannot be checked against the protected list")
+    if empty_is_all and not (entity_ids or area_ids or device_ids):
+        return "it names no target, which addresses all entities, including protected ones"
     for eid in entity_ids:
         if eid.lower() == "all":
             return "it addresses all entities, including protected ones"
@@ -465,7 +477,10 @@ def call_service(domain, service, data=None, return_response=False):
                 "if that is also refused, tell the user the action is "
                 "restricted and do not retry."
             )}
-    protected = _protected_target(data)
+    protected = _protected_target(
+        data,
+        empty_is_all=(domain.lower() == "homeassistant"
+                      and service.lower() in _META_SERVICES))
     if protected:
         return {"error": (
             f"{domain}.{service} is refused because {protected}. The "
@@ -621,6 +636,37 @@ def explain_change(entity_id, hours=24):
         return {"entity_id": entity_id, "hours": window, "changes": [],
                 "note": "nothing changed this entity in that window"}
     return {"entity_id": entity_id, "hours": window, "changes": changes}
+
+
+def get_house_model():
+    """What brAIn has measured about this house, and what it is still missing.
+
+    Seven measurements — when the house gets up, what each reading normally
+    is, how fast each room loses heat, how often each door is open, what
+    each machine's power looks like, what somebody does by hand often
+    enough to be a habit, and what the electricity did last week — each
+    with how far along it is and one sentence saying so.
+
+    Read this BEFORE deciding a house is quiet or a sensor is normal: a
+    measurement that has not been made yet says nothing, and reading its
+    silence as "nothing is wrong" is the one mistake it cannot recover
+    from. The `state` of each store says which it is.
+    """
+    result = _panel_get("/api/knowledge/house")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    stores = (result or {}).get("stores") or {}
+    return {
+        "generated_at": (result or {}).get("generated_at"),
+        # Trimmed to what a model can act on: the whole `detail` of every
+        # store is the drill-down's job and would be most of a house.
+        "stores": {name: {k: row.get(k) for k in
+                          ("state", "have", "need", "unit", "summary",
+                           "reason", "updated_at")}
+                   for name, row in stores.items() if isinstance(row, dict)},
+        "brief": (result or {}).get("brief") or {},
+        "weekly": (result or {}).get("weekly") or {},
+    }
 
 
 def get_activity(hours=24, cause=None, limit=200):
@@ -1763,6 +1809,21 @@ def fire_event(event_type, event_data=None):
             "any automation. Tell the user this action is restricted; "
             "do not retry."
         )}
+    # The protected list gets the same answer for the same reason. A
+    # protected entity is refused at call_service for every channel, and an
+    # event reaches the house through whatever automations listen for it —
+    # one of which may act on exactly that entity — with nothing here able
+    # to see which. That is the label/floor rule in `_protected_target`:
+    # a target this process cannot resolve is refused while the list is
+    # non-empty, not waved through because it could not be checked.
+    if PROTECTED_ENTITIES:
+        return {"error": (
+            "fire_event is refused while brAIn has protected entities: an "
+            "event can reach a protected entity through any automation "
+            "that listens for it, and which automations do cannot be "
+            "checked from here. Tell the user; do not retry or look for "
+            "another route."
+        )}
     result = ha_api_request(
         f"/api/events/{event_type}",
         method="POST",
@@ -1911,6 +1972,12 @@ TOOLS = [
             "that return data (create_area/floor/label, "
             "delete_orphaned_entities, create_repair_issue).\n"
             "\nUse get_service_details to look up all available fields for any service."
+            "\n\nPROTECTED ENTITIES: the homeowner may have named entities "
+            "brAIn must not act on, and this call refuses any target that "
+            "matches one — including an area or device that contains one. "
+            "The refusal names the entity. Do not route around it with a "
+            "shell command or by editing a YAML file: it is the homeowner's "
+            "list, and those paths are not checked."
         ),
         "inputSchema": {
             "type": "object",
@@ -2631,6 +2698,21 @@ TOOLS = [
         }
     },
     {
+        "name": "get_house_model",
+        "description": (
+            "What brAIn has measured about this house and what it is still "
+            "collecting: the wake/settle rhythm, per-entity baselines, each "
+            "room's heat model, how often closures are open, appliance power "
+            "shapes, hand-driven habits, and last week's energy. Each answers "
+            "with a state (not_started / collecting / ready / unavailable / "
+            "stale), how far along it is, and one sentence. Read it before "
+            "calling a house quiet or a reading normal — a measurement that "
+            "has not been made yet says nothing, which is not the same as "
+            "saying nothing is wrong."
+        ),
+        "inputSchema": {"type": "object", "properties": {}}
+    },
+    {
         "name": "get_activity",
         "description": (
             "What changed in the house recently, with a cause on every row, plus "
@@ -2848,6 +2930,7 @@ TOOL_IMPLEMENTATIONS = {
     "explain_change": "explain_change",
     "get_baseline": "get_baseline",
     "get_activity": "get_activity",
+    "get_house_model": "get_house_model",
     "get_statistics": "get_statistics",
     "get_weather_forecast": "get_weather_forecast",
     "get_error_log": "get_error_log",

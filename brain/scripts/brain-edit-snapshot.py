@@ -35,6 +35,11 @@ WATCH_ROOTS = ("/config",)
 SKIP_NAMES = {"secrets.yaml"}
 MAX_FILE_BYTES = 4 * 1024 * 1024
 MAX_JOURNAL_BYTES = 256 * 1024 * 1024
+# `edit_journal_days: 0` is documented as "disables the journal", and for a
+# while it only disabled the PRUNE: every edit was still snapshotted and
+# indexed, forever, with the size cap skipped too — the one setting that
+# turned the journal into an unbounded one was the setting that said off.
+# Zero means no snapshot and no index line; the cap runs whenever days > 0.
 RETAIN_DAYS = int(os.environ.get("BRAIN_EDIT_JOURNAL_DAYS", "14") or 14)
 
 
@@ -51,8 +56,6 @@ def watched(path: Path) -> bool:
 def prune() -> None:
     """Drop snapshots past the retention window, then oldest-first while the
     journal is over its size cap."""
-    if RETAIN_DAYS <= 0:
-        return
     cutoff = time.time() - RETAIN_DAYS * 86400
     snaps = []
     for p in SNAP_DIR.glob("*"):
@@ -81,6 +84,11 @@ def main() -> int:
 
     tool = str(payload.get("tool_name") or "")
     if tool not in ("Write", "Edit", "NotebookEdit", "MultiEdit"):
+        return 0
+    if RETAIN_DAYS <= 0:
+        # The journal is switched off: nothing is copied, nothing is
+        # indexed, and `brain undo` has nothing to offer — which is what
+        # the option's own description promises.
         return 0
 
     tool_input = payload.get("tool_input") or {}

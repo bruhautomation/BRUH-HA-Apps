@@ -344,8 +344,63 @@ async def week(session, now: float | None = None,
     return out
 
 
+def progress(answer: dict | None, now: float | None = None) -> dict:
+    """What the week's figures amount to, over an answer already fetched.
+
+    Pure over `week()`'s own payload rather than fetching one: this is the
+    single measurement with no store behind it, so the fetch (and the
+    cache in front of it) belongs to the caller, and this stays a
+    function of what came back. `None` is "nobody has asked yet".
+
+    There is deliberately no `stale` here. Every other measurement is a
+    file that can stop being rewritten; this one is computed from the
+    recorder each time it is asked, so the only ways of having no answer
+    are having no meters configured and having no history in them.
+    """
+    import time  # noqa: PLC0415 — the module has no other need of it
+    import house  # noqa: PLC0415 — panel-local, one shape and one eta
+
+    now = time.time() if now is None else now
+    answer = answer if isinstance(answer, dict) else {}
+    used = answer.get("energy") or {}
+    days = int(used.get("days") or 0)
+    common = {"unit": "days", "need": MIN_DAYS, "have": days,
+              "detail": answer,
+              "updated_at": int(answer.get("to") or 0) or None,
+              "per_unit_s": 86400.0, "now": now}
+
+    if not answer:
+        return house.progress(
+            state=house.NOT_STARTED,
+            reason="the figures have not been read yet",
+            summary="The week's electricity has not been read yet.",
+            **common)
+    if not answer.get("available"):
+        reason = str(answer.get("reason") or "the figures could not be read")
+        return house.progress(
+            state=house.UNAVAILABLE, reason=reason,
+            summary=(reason[:1].upper() + reason[1:]).rstrip(".") + ".",
+            **common)
+    if days >= MIN_DAYS:
+        unit = used.get("unit") or "kWh"
+        said = f"{used.get('this')} {unit} over {house.plural(days, 'day')}"
+        pct = used.get("change_pct")
+        if isinstance(pct, (int, float)):
+            said += (f", {abs(pct)}% {'up' if pct > 0 else 'down'} on the "
+                     "week before")
+        elif not used.get("comparable"):
+            said += ", with the week before too short to compare against"
+        return house.progress(state=house.READY, summary=said + ".", **common)
+    return house.progress(
+        state=house.COLLECTING,
+        reason=f"{days} of the {MIN_DAYS} complete days a week needs",
+        summary=(f"{house.plural(days, 'complete day')} of electricity "
+                 f"recorded of the {MIN_DAYS} a week's comparison needs."),
+        **common)
+
+
 __all__ = [
     "BATCH", "MIN_CHANGE_PCT", "MIN_DAYS", "WEEK_DAYS", "change_pct",
-    "consumption", "midnight", "preferences", "sources", "total", "week",
-    "windows", "worth_mentioning",
+    "consumption", "midnight", "preferences", "progress", "sources", "total",
+    "week", "windows", "worth_mentioning",
 ]

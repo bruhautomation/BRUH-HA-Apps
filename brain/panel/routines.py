@@ -391,6 +391,72 @@ def mine(payload: dict | None = None, tz=None, now: float | None = None,
     return found[:MAX_ROUTINES]
 
 
+def progress(payload: dict | None = None, path: str | None = None,
+             tz=None, now: float | None = None) -> dict:
+    """How many separate days of hand-driven evidence this ledger holds.
+
+    Days, never presses: six presses in one evening is one evening, and
+    `MIN_DAYS` is the floor every producer here already carries. The
+    override ledger rides in the same answer because the two are one
+    question from a person's side — *what do I keep doing myself, and
+    what do I keep undoing* — and a tab with one and not the other has a
+    half-empty screen it cannot explain.
+    """
+    import baselines  # noqa: PLC0415 — one staleness floor, one home
+    import house  # noqa: PLC0415 — panel-local, one shape and one eta
+    import override_ledger  # noqa: PLC0415
+
+    now = time.time() if now is None else now
+    tz = tz or dt.timezone.utc
+    payload = load(path) if payload is None else payload
+    rows = [r for r in (payload.get("rows") or []) if r.get("ts")]
+    days = {dt.datetime.fromtimestamp(float(r["ts"]), tz).date() for r in rows}
+    newest = max((float(r["ts"]) for r in rows), default=0.0)
+    try:
+        overrides = len(override_ledger.load())
+    except Exception as exc:  # noqa: BLE001 — one number, not the answer
+        log.debug("could not read the override ledger: %s", exc)
+        overrides = 0
+    would = len(mine(payload, tz, now)) if len(days) >= MIN_DAYS else 0
+    common = {"unit": "days", "need": MIN_DAYS, "have": len(days),
+              "detail": {"presses": len(rows), "would_propose": would,
+                         "overrides": overrides},
+              "updated_at": int(newest) or None,
+              "per_unit_s": 86400.0, "now": now}
+
+    if not rows:
+        return house.progress(
+            state=house.NOT_STARTED,
+            reason="nothing a person did by hand has been filed yet",
+            summary=("Nothing filed yet — a habit is something you do "
+                     f"yourself on {MIN_DAYS} separate days, and the first "
+                     "one has not been recorded."),
+            **common)
+    if baselines.is_stale({"built_at": newest}, now):
+        return house.progress(
+            state=house.STALE,
+            reason=f"nothing filed since {house.days_ago(newest, now)}",
+            summary=(f"Nothing has been filed since "
+                     f"{house.days_ago(newest, now)}, so this is what the "
+                     "house was doing then."),
+            **common)
+    if len(days) >= MIN_DAYS:
+        said = (f"{house.plural(len(rows), 'press')} over "
+                f"{house.plural(len(days), 'day')}")
+        said += (f" · {would} worth proposing" if would
+                 else " · none of them regular enough to propose yet")
+        if overrides:
+            said += f" · {house.plural(overrides, 'override')} recorded"
+        return house.progress(state=house.READY, summary=said + ".", **common)
+    return house.progress(
+        state=house.COLLECTING,
+        reason=f"{len(days)} of the {MIN_DAYS} separate days a habit needs",
+        summary=(f"{house.plural(len(rows), 'press')} on "
+                 f"{house.plural(len(days), 'day')} of the {MIN_DAYS} "
+                 "separate days a habit needs."),
+        **common)
+
+
 # ---------------------------------------------------------------------------
 # What a routine looks like as something you could turn on
 # ---------------------------------------------------------------------------
@@ -518,6 +584,6 @@ def as_proposal(routine: dict) -> dict | None:
 __all__ = [
     "DOMAINS", "KEEP_DAYS", "MAX_ROUTINES", "MAX_ROWS", "MAX_SPREAD_MIN",
     "MIN_DAYS", "MIN_SHARE", "RECENT_DAYS", "STORE", "as_proposal",
-    "domain_of", "load", "mine", "record", "save", "service_for", "title_for",
-    "to_config", "trigger_minute", "why_for",
+    "domain_of", "load", "mine", "progress", "record", "save", "service_for",
+    "title_for", "to_config", "trigger_minute", "why_for",
 ]

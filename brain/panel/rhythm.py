@@ -234,6 +234,95 @@ def profile(payload: dict | None = None, path: str | None = None) -> dict:
     return out
 
 
+# A weekday arrives five times in seven, which is the whole reason the
+# weekend half takes about five weeks to exist where the weekday one takes
+# two. The rate is the store's because only the store knows what its unit
+# is; `house.eta` does the arithmetic.
+PROGRESS_UNIT_S = 86400.0 * 7.0 / 5.0
+
+
+def progress(payload: dict | None = None, path: str | None = None,
+             now: float | None = None) -> dict:
+    """How close this house is to having a measured rhythm.
+
+    The weekday half is what is counted, deliberately: it is the half the
+    brief reads on five mornings in seven, and it is the half that fills
+    first. The weekend is not ignored — it is what the sentence is about
+    once the weekdays are answered, because "measured" and "measured on
+    both kinds of day" are different claims and only the sentence can
+    carry the second.
+    """
+    import house  # noqa: PLC0415 — panel-local, one shape and one eta
+
+    now = time.time() if now is None else now
+    payload = load(path) if payload is None else payload
+    rows = [r for r in (payload.get("days") or {}).values()
+            if isinstance(r, dict)]
+    weekdays = len([r for r in rows
+                    if isinstance(r.get("dow"), int) and r["dow"] < 5])
+    weekends = len(rows) - weekdays
+    shape = profile(payload)
+    week = shape.get(WEEKDAY) or {}
+    end = shape.get(WEEKEND) or {}
+    updated = int(payload.get("updated_at") or 0) or None
+    detail = {"weekday_days": weekdays, "weekend_days": weekends,
+              "weekday": week, "weekend": end}
+    common = {"unit": "days", "need": MIN_DAYS, "have": weekdays,
+              "detail": detail, "updated_at": updated,
+              "per_unit_s": PROGRESS_UNIT_S, "now": now}
+
+    if not rows:
+        return house.progress(
+            state=house.NOT_STARTED,
+            reason="no person-caused change has been filed yet",
+            summary=("Nothing has been filed yet — the wake time is measured "
+                     "from the first thing somebody does each day, and the "
+                     f"first answer needs {MIN_DAYS} of them."),
+            **common)
+
+    import baselines  # noqa: PLC0415 — one staleness floor, one home
+    if updated and baselines.is_stale({"built_at": updated}, now):
+        return house.progress(
+            state=house.STALE,
+            reason=f"nothing has been filed since {house.days_ago(updated, now)}",
+            summary=("Nothing has been filed since "
+                     f"{house.days_ago(updated, now)}, so this is the house "
+                     "as it was then."),
+            **common)
+
+    if week.get("wakes"):
+        wake = week["wakes"]
+        said = (f"Weekdays wake about {wake['at']}, spread "
+                f"{round(wake['spread_min'])} min")
+        if end.get("wakes"):
+            said += f" · weekends about {end['wakes']['at']}"
+        else:
+            said += (" · weekends need "
+                     + house.plural(max(1, MIN_DAYS - weekends), "more day"))
+        return house.progress(state=house.READY, summary=said + ".", **common)
+
+    if weekdays >= MIN_DAYS:
+        # Enough days and no answer: this house stirs anywhere across the
+        # morning, and a median of that would be a confident number over
+        # data that holds none. More days will not fix it, so it is not
+        # `collecting` — see MAX_SPREAD_MIN.
+        return house.progress(
+            state=house.UNAVAILABLE,
+            reason=(f"{weekdays} weekdays recorded, but they are spread "
+                    f"wider than {int(MAX_SPREAD_MIN)} minutes"),
+            summary=(f"{house.plural(weekdays, 'weekday')} recorded, but this "
+                     "house stirs at too wide a range of times for one of "
+                     "them to be the usual one."),
+            **common)
+
+    return house.progress(
+        state=house.COLLECTING,
+        reason=f"{weekdays} of the {MIN_DAYS} weekdays a wake time needs",
+        summary=(f"{house.plural(weekdays, 'weekday')} recorded of the "
+                 f"{MIN_DAYS} a wake time needs."),
+        **common)
+
+
 def wake_minute(payload: dict, when: dt.datetime) -> float | None:
     """The usual first-activity minute for the kind of day `when` is."""
     part = payload.get(WEEKEND if when.weekday() >= 5 else WEEKDAY) or {}
@@ -248,7 +337,8 @@ def settle_minute(payload: dict, when: dt.datetime) -> float | None:
 
 
 __all__ = [
-    "KEEP_DAYS", "MAX_SPREAD_MIN", "MINUTES_PER_DAY", "MIN_DAYS", "STORE",
-    "WEEKDAY", "WEEKEND", "circular_median", "circular_spread", "clock",
-    "load", "profile", "record", "save", "settle_minute", "wake_minute",
+    "KEEP_DAYS", "MAX_SPREAD_MIN", "MINUTES_PER_DAY", "MIN_DAYS",
+    "PROGRESS_UNIT_S", "STORE", "WEEKDAY", "WEEKEND", "circular_median",
+    "circular_spread", "clock", "load", "profile", "progress", "record",
+    "save", "settle_minute", "wake_minute",
 ]

@@ -88,7 +88,9 @@ REHEARSAL_FILE = Path(os.environ.get("BRAIN_REHEARSAL_FILE",
 # is the prompt people actually get.
 ANALYST_CATEGORY = "automations"
 ANALYST_TIMEOUT = 480
-ANALYST_MAX_TURNS = 12
+# The same runaway guard the card gets (server.ANALYST_MAX_TURNS); the
+# timeout is the budget.
+ANALYST_MAX_TURNS = 40
 
 # The helper. An `input_number` because it is the cheapest numeric entity
 # in Home Assistant, and because a *numeric* one is what the baseline and

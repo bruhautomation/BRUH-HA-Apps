@@ -73,14 +73,17 @@ DAEMONS = {
         "severity": "degraded",
     },
     "memory_consolidator": {
-        "always": True,
+        # run.sh starts neither of these when `learning` is off, so a
+        # house that switched learning off is not a house with two dead
+        # daemons — that was a permanent `degraded` about a choice.
+        "option": "learning",
         "what": "the memory consolidator",
         "fix": "Nothing is filing what brAIn learns into memory.md. "
                "Restart the add-on.",
         "severity": "degraded",
     },
     "study_watcher": {
-        "always": True,
+        "option": "learning",
         "what": "the study watcher",
         "fix": "Study requests from the ask bar will not be picked up. "
                "Restart the add-on.",
@@ -162,8 +165,11 @@ def problems(diag: dict, options: dict | None = None,
     consol = (daemons.get("memory_consolidator") or {})
     age = consol.get("last_pass_hours_ago")
     # A missing marker is a fresh install, not a stale one — reported by
-    # the field's absence rather than by a made-up number.
-    if isinstance(age, (int, float)) and age > CONSOLIDATION_STALE_H:
+    # the field's absence rather than by a made-up number. And with
+    # `learning` off nothing is meant to be filing, so the age of the last
+    # pass is the age of a decision rather than of a fault.
+    if (options.get("learning") and isinstance(age, (int, float))
+            and age > CONSOLIDATION_STALE_H):
         found.append(_problem(
             "degraded", "nothing has been filed into memory recently",
             f"The last consolidation pass landed {int(age)} hours ago. The "

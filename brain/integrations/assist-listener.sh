@@ -69,12 +69,12 @@ AREA_MAP_FILE="$CACHE_DIR/area_map.txt"
 AREA_MAP_TTL=300        # seconds before a background refresh is triggered
 AREA_MAP_MAX_BYTES=16000
 
-# Maximum number of agentic turns per request.
-# Configurable via the add-on's assist_max_turns option; the fallback matches
-# that option's default in config.yaml, so there is one answer per setting
-# rather than a second one that only shows up when /data/.brain_env is
-# unreadable. Enough for entity lookup + service call + follow-up + response.
-MAX_TURNS="${BRAIN_ASSIST_MAX_TURNS:-8}"
+# The runaway guard on one request — not a budget, and not an add-on option:
+# the request's own timeout is what bounds a voice answer, and a cap tight
+# enough to matter truncated real commands. BRAIN_ASSIST_MAX_TURNS is an
+# override for somebody who sets it by hand. A run that trips it is landed
+# (brain-landing.sh) rather than reported as a failure.
+MAX_TURNS="${BRAIN_ASSIST_MAX_TURNS:-40}"
 
 # Default process-level timeout for claude -p commands (seconds), used when a
 # request doesn't carry its own timeout. Must be shorter than the
@@ -93,6 +93,13 @@ mkdir -p "$REQUESTS_DIR" "$RESPONSES_DIR" "$SESSIONS_DIR" "$CACHE_DIR" "$LOG_DIR
 if [ -r /opt/scripts/brain-run-source.sh ]; then
     # shellcheck disable=SC1091
     source /opt/scripts/brain-run-source.sh
+fi
+# A run that ends on the turn cap is landed on its own session rather than
+# answered with an error (see the library for why). Optional, like the
+# ledger above: without it a tripped cap is what it was before.
+if [ -r /opt/scripts/brain-landing.sh ]; then
+    # shellcheck disable=SC1091
+    source /opt/scripts/brain-landing.sh
 fi
 
 # Resolve the claude binary.  The wrapper at /usr/local/bin/claude-run
@@ -422,6 +429,33 @@ invoke_claude() {
         ${model_flag} > "$output_file" 2>"$stderr_file")
 }
 
+# The landing for a request that ended on the turn cap: the same command
+# as invoke_claude, resumed on the session it ran under, through the one
+# shared implementation in brain-landing.sh. Overwrites $output_file and
+# $stderr_file, exactly as invoke_claude does.
+# Args: $1=session id to resume, $2=seconds left on the request's budget
+land_claude() {
+    local sid="$1" limit="$2"
+    local scope_args=()
+    if [ "${BRAIN_ASSIST_TOOL_ACCESS:-mcp_only}" = "mcp_only" ] && [ -f "$SHARED_DIR/assist_settings.json" ]; then
+        scope_args=(--settings "$SHARED_DIR/assist_settings.json")
+    fi
+    # Into a scratch file, moved over only on success: a landing refused
+    # for want of time or a session must not take the run's own output
+    # with it.
+    # shellcheck disable=SC2086
+    if (cd /config && BRAIN_DENIED_SERVICES="${DENIED_SERVICES_CSV:-}" \
+        brain_land "$sid" "$limit" "$stderr_file" -- \
+        ${CLAUDE_BIN} -p --verbose \
+        --system-prompt "$final_system_prompt" \
+        "${scope_args[@]}" ${model_flag} > "${output_file}.land"); then
+        mv -f "${output_file}.land" "$output_file"
+        return 0
+    fi
+    rm -f "${output_file}.land"
+    return 1
+}
+
 # Process a conversation request file
 process_request() {
     local req_file="$1"
@@ -629,6 +663,26 @@ USER: ${stamped_text}"
     local response stderr_output
     response=$(cat "$output_file" 2>/dev/null || echo "")
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
+
+    # A run that ended on the turn cap is landed, not retried and not
+    # reported: resumed on its own session with two turns and told to
+    # answer with what it has. Checked BEFORE the empty-response recovery
+    # below, which would otherwise read a tripped cap in resume mode as a
+    # vanished session and start the whole conversation over. Legacy mode
+    # has no session to resume, so it keeps the ending it had.
+    if [ "$session_mode" != "legacy" ] \
+        && command -v brain_hit_turn_cap > /dev/null 2>&1 \
+        && brain_hit_turn_cap "$response" "$stderr_file"; then
+        local land_sid="$resume_session" land_left
+        [ "$session_mode" = "new" ] && land_sid="$new_session"
+        land_left=$(( claude_limit - ( $(date +%s) - start_time ) ))
+        bashio::log.info "Assist request [$req_id] ran out of room — landing it (${land_left}s left)"
+        if land_claude "$land_sid" "$land_left"; then
+            exit_code=0
+            response=$(cat "$output_file" 2>/dev/null || echo "")
+            stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
+        fi
+    fi
 
     # Recovery: one retry within the remaining time budget when the first
     # attempt produced nothing.

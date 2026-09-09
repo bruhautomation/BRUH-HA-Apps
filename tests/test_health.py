@@ -38,7 +38,8 @@ def diag(**over) -> dict:
         "journal": {"runs": 20, "by_outcome": {"ok": 19, "error": 1}},
         "usage": {"source": "account", "used_percent": 12},
         "options": {"enable_terminal": True, "enable_assist": True,
-                    "enable_automations": True, "checks_interval_hours": 6},
+                    "enable_automations": True, "learning": True,
+                    "checks_interval_hours": 6},
     }
     payload.update(over)
     return payload
@@ -138,6 +139,30 @@ class TestTheThingsThatMatter(unittest.TestCase):
         """No marker file is a real state, reported by the field's absence
         rather than by a made-up number."""
         self.assertNotIn("consolidation", ids(health.problems(diag(), now=NOW)))
+
+    def test_learning_off_is_not_two_dead_daemons(self):
+        """run.sh starts neither the consolidator nor the study watcher
+        when `learning` is off, so their absence is the option, and the
+        age of a pass nothing is meant to make is not staleness. This was
+        a permanent `degraded` on every house that switched learning off."""
+        snap = diag(daemons={**ALL_DAEMONS,
+                             "memory_consolidator": {"running": False,
+                                                     "last_pass_hours_ago": 400.0},
+                             "study_watcher": {"running": False}},
+                    options={**diag()["options"], "learning": False})
+        got = health.verdict(snap, now=NOW)
+        self.assertEqual(got["state"], "ok", got["problems"])
+        self.assertEqual(got["problems"], [])
+
+    def test_learning_on_still_notices_the_two_daemons_missing(self):
+        """The control: with learning on, the same roll-call is a fault."""
+        snap = diag(daemons={**ALL_DAEMONS,
+                             "memory_consolidator": {"running": False},
+                             "study_watcher": {"running": False}})
+        got = health.verdict(snap, now=NOW)
+        self.assertEqual(got["state"], "degraded")
+        self.assertEqual({"daemon:memory_consolidator", "daemon:study_watcher"},
+                         ids(got["problems"]))
 
     def test_checks_that_have_stopped_running_are_noticed(self):
         snap = diag(checks={"finished_at": int(NOW - 40 * 3600), "ran": ["a"]})

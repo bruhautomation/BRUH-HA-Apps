@@ -23,6 +23,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -471,6 +472,35 @@ class BrainHealthSensor(SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         return self._attrs
 
+    def _sync_repair(self, state: str, reason: str) -> None:
+        """A verdict off `ok` is a Repairs entry; back to `ok` deletes it.
+
+        The sensor is a number on a dashboard somebody has to look at;
+        Settings → Repairs is where Home Assistant puts the things that
+        need a person, and it is read by people who never open the brAIn
+        panel. Not fixable — the fix is on the other side, in the panel's
+        ⚙ → Problems section, where the add-on has already written a file
+        about it. A mirror that has never been published raises nothing:
+        a stopped add-on is a decision, and a repair about it would be
+        permanent for anybody who keeps the integration without the add-on.
+        """
+        try:
+            if state == "ok":
+                ir.async_delete_issue(self.hass, DOMAIN, "health_degraded")
+                return
+            text = (reason or "brAIn reports a problem").strip()
+            if not text.endswith((".", "!", "?")):
+                text += "."
+            ir.async_create_issue(
+                self.hass, DOMAIN, "health_degraded",
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="health_degraded",
+                translation_placeholders={"reason": text[:300]},
+            )
+        except Exception as exc:  # noqa: BLE001 — a repair must not fail the reading
+            _LOGGER.debug("could not sync the health repair issue: %s", exc)
+
     async def async_update(self) -> None:
         path = self.hass.config.path(SHARED_DIR, DIAGNOSTICS_FILENAME)
         data, age_h = await self.hass.async_add_executor_job(self._read, path)
@@ -517,12 +547,14 @@ class BrainHealthSensor(SensorEntity):
                 "not running. Check the add-on is started.")
             attrs["problem_count"] += 1
             self._attrs = attrs
+            self._sync_repair("failed", attrs["reason"])
             return
 
         state = health.get("state")
         self._attr_native_value = state if state in ("ok", "degraded", "failed") \
             else "failed"
         self._attrs = attrs
+        self._sync_repair(str(self._attr_native_value), str(attrs["reason"]))
 
     def _read(self, path: str) -> tuple[dict | None, float | None]:
         try:

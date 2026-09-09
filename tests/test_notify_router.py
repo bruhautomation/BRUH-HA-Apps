@@ -267,3 +267,30 @@ class TestTheMessage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEveryNamedCheckExists(unittest.TestCase):
+    """A key that names a check that does not exist is an urgency nobody
+    gets: `check:sys.disk_low` said `now` about a check called
+    `sys.disk_space`, so a full disk waited for morning like a tidy-up.
+    The same test `shadow_findings` keeps over its own set."""
+
+    def test_every_exact_key_names_a_real_check(self):
+        import checks  # noqa: PLC0415
+        for source in notify_router.PRODUCER_URGENCY:
+            if not source.startswith("check:") or source.endswith("."):
+                continue
+            self.assertIn(source[len("check:"):], checks.CHECK_IDS, source)
+
+    def test_every_family_prefix_has_a_check_in_it(self):
+        import checks  # noqa: PLC0415
+        for source in notify_router.PRODUCER_URGENCY:
+            if not (source.startswith("check:") and source.endswith(".")):
+                continue
+            family = source[len("check:"):]
+            self.assertTrue(any(c.startswith(family) for c in checks.CHECK_IDS),
+                            source)
+
+    def test_a_full_disk_is_now(self):
+        self.assertEqual(
+            notify_router.urgency_of({"source": "check:sys.disk_space"}), "now")

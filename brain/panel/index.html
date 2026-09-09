@@ -63,12 +63,19 @@
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="m5 8 4 4-4 4M13 16h6"/></svg>
       <span>Terminal</span>
     </button>
-    <button class="viewtab" data-view="memory" role="tab" data-tip="Memory">
+    <!-- "Knowledge", not "Memory": the document is one of four things on this
+         tab now. What brAIn has measured about the house on its own — when it
+         wakes, what is normal, how rooms hold heat — used to be visible only
+         in ⚙ Diagnostics or not at all, which is how a measurement that had
+         quietly stopped looked exactly like one that had nothing to say.
+         `data-view` stays "memory" because every id and handler under it
+         does. -->
+    <button class="viewtab" data-view="memory" role="tab" data-tip="Knowledge">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5.5a3 3 0 0 0-5.7-1.3A2.8 2.8 0 0 0 4 9.4a3 3 0 0 0 .4 4.8A2.9 2.9 0 0 0 7 19a3 3 0 0 0 5-1.2zM12 5.5a3 3 0 0 1 5.7-1.3A2.8 2.8 0 0 1 20 9.4a3 3 0 0 1-.4 4.8A2.9 2.9 0 0 1 17 19a3 3 0 0 1-5-1.2z"/></svg>
-      <!-- No badge. This tab holds a queue that files itself and a document
-           you read; nothing on it is waiting on a person. The one badge in
+      <!-- No badge. This tab holds a queue that files itself and things you
+           read; nothing on it is waiting on a person. The one badge in
            the strip is Findings', which counts exactly that. -->
-      <span>Memory</span>
+      <span>Knowledge</span>
     </button>
     <button class="viewtab" data-view="docs" role="tab" data-tip="Docs">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5zM20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z"/></svg>
@@ -213,7 +220,63 @@
       <p>Settings → System → Backups, then copy it off the device.</p>
     </div>
 
-    <div id="obLearn">
+    <!-- Step 0, before the syllabus. brAIn spends the next half hour studying
+         and then starts having things to say, and the first question is where
+         it may say them — a house that answers this last has already had the
+         findings it filed reach nobody. The panel cannot write these into the
+         add-on's own options (`addon_options.write` knows six generation keys
+         and none of these), so the answers are stored here and the lines to
+         paste are shown afterwards rather than implied. -->
+    <div id="obNotify" class="hidden">
+      <h3 class="obh3">Where should brAIn reach you?</h3>
+      <p class="hint tight">When it finds something worth telling you about — a
+        problem, the morning brief — it calls one Home Assistant notify service.
+        You can change all of this later.</p>
+      <div id="obNotifyErr" class="flowerr hidden"></div>
+      <div id="obNotifyList" class="oblist"></div>
+      <div id="obNotifyOpts">
+        <label for="obQuietStart">Don't wake the house</label>
+        <div class="obquiet">
+          <span>Quiet from</span>
+          <select id="obQuietStart" class="selin"></select>
+          <span>until</span>
+          <select id="obQuietEnd" class="selin"></select>
+        </div>
+        <p class="hint tight">Anything that can wait is held until the quiet hours
+          end and arrives as one message. A freeze warning still comes through.
+          Leave both blank for no quiet hours.</p>
+        <label class="obcard obcheckrow" for="obBrief">
+          <input type="checkbox" id="obBrief">
+          <div class="obcardbody">
+            <div class="obcardtitle">Send a morning brief</div>
+            <div class="obcardfocus">One short paragraph, only on the mornings
+              something has actually changed. Most days it says nothing.</div>
+          </div>
+        </label>
+      </div>
+      <div class="row">
+        <button id="obNotifySave" class="btn primary">Save and continue</button>
+        <button id="obNotifySkip" class="btn ghost">Skip this</button>
+      </div>
+    </div>
+
+    <!-- `writable: false` is load-bearing: these settings live in the panel's
+         own store and every reader consults it, so brAIn really is using them
+         — but the Configuration tab does not show them, and an add-on that
+         quietly kept a setting somewhere its own options screen does not is
+         the drift `_options_sync` exists to end. So the lines are shown. -->
+    <div id="obManual" class="hidden">
+      <h3 class="obh3">Saved</h3>
+      <p class="hint tight">brAIn is using these now; paste them into the add-on's
+        Configuration tab if you want them to live there too.</p>
+      <pre id="obManualText" class="obmanual"></pre>
+      <div class="row">
+        <button id="obManualCopy" class="btn">Copy</button>
+        <button id="obManualNext" class="btn primary">Continue</button>
+      </div>
+    </div>
+
+    <div id="obLearn" class="hidden">
       <div class="obsteps" id="obTopics"></div>
       <div class="row">
         <button id="obStart" class="btn primary">Start learning</button>
@@ -232,7 +295,19 @@
 
     <div id="obChoose" class="hidden">
       <p class="hint">Pick the ones you want. You can add, edit or remove cards any time.</p>
+      <!-- Two groups because there are two kinds of card and only one of them
+           gets CREATED: the custom ones are written for this house out of what
+           brAIn learned, the shipped ones already exist in the code and are
+           admitted to this home's set. Ticked independently, and sending no
+           shipped ids means none of them — which on a fresh install is an
+           empty Insights tab, so the step says so before Finish. -->
+      <h3 class="obh3" id="obCustomHead">Cards written for your home</h3>
       <div id="obList" class="oblist"></div>
+      <div id="obShippedBlock" class="hidden">
+        <h3 class="obh3">Cards that ship with brAIn, and fit this house</h3>
+        <div id="obShipped" class="oblist"></div>
+      </div>
+      <p class="hint" id="obChooseNote"></p>
       <div class="row">
         <button id="obAccept" class="btn primary">Create selected</button>
         <button id="obNone" class="btn ghost">None of these</button>
@@ -253,6 +328,13 @@
 
   <!-- Dashboard -->
   <section id="dash" class="hidden">
+    <!-- One wrapping line: what brAIn has done for itself since you last
+         looked. Every segment is read off the /api/status poll that is
+         already running, so this costs no request of its own — and a segment
+         whose data is absent is omitted rather than rendered as a zero,
+         because "0 findings" and "no checks pass has finished" are different
+         reports of the same quiet house. -->
+    <div id="todayStrip" class="today hidden"></div>
     <!-- One bar, two verbs. Asking makes a card; saying "learn…" runs a study
          session instead, because a second input for learning meant nobody
          ever ran one. The placeholder has to teach both — it is the only
@@ -459,6 +541,16 @@
          Not a list we maintain: a command someone adds to
          /config/.claude/commands appears here without brAIn being told. -->
     <div id="chatCmds" class="chatcmds hidden" role="listbox" aria-label="Commands"></div>
+    <!-- What sending will do, and the one control that fits. Above the box
+         rather than in a toast: a conversation whose process was paused,
+         or whose context Claude Code no longer holds, looks exactly like a
+         live one from the transcript alone, and the moment that matters is
+         the one just before you press Send. -->
+    <div id="chatState" class="chatstate hidden" data-state="">
+      <span class="cs-pill"></span>
+      <span class="cs-text"></span>
+      <button type="button" id="chatStateAct" class="btn small"></button>
+    </div>
     <form id="chatForm" class="chatbar">
       <textarea id="chatInput" rows="1" enterkeyhint="send" autocomplete="off"
                 placeholder="Message brAIn…" aria-label="Message brAIn"></textarea>
@@ -537,7 +629,39 @@
   </div>
 </div>
 
+<!-- Knowledge: everything brAIn builds on its own, in four sections, in the
+     order somebody reads them. What it said this morning; what it has
+     measured; what it remembers; what is still queued to be remembered.
+
+     The first two are new surfaces over stores that already existed and were
+     readable from nowhere — a rhythm that never gathered enough days looked
+     identical to one that had, and a baseline pass that stopped running
+     looked exactly like a quiet house. Every row says which of those it is. -->
 <div id="viewMemory" class="view">
+
+  <!-- (a) What brAIn said this morning. One paragraph, or one sentence about
+       why there wasn't one — because "the brief is off" and "there was
+       nothing worth saying" are different answers and only the first has
+       something to do about it. -->
+  <section class="ksec kbriefsec">
+    <h2>This morning</h2>
+    <div id="kBrief" class="kbrief"></div>
+  </section>
+
+  <!-- (b) The measurements. Always seven rows, always in this order, whatever
+       state each is in: a store that is missing from the list is a store
+       nobody can ask about, and "not started" is the answer for six of the
+       seven on the day you install this. -->
+  <section class="ksec">
+    <h2>What brAIn has measured</h2>
+    <p class="hint tight">Built quietly, over days, from what your house
+      already records. Nothing here costs a Claude run. Press one to see the
+      numbers behind it.</p>
+    <div id="kStores" class="kstores"></div>
+  </section>
+
+  <!-- (c) the memory document and (d) the inbox queue, in that order — the
+       relocated knowledge pane. `adoptMemoryPane()` moves it here. -->
   <div id="memoryHost"></div>
 </div>
 
@@ -724,6 +848,12 @@
     </header>
     <div class="edit-body">
       <p class="hint tight" id="convViewMeta"></p>
+      <!-- A record cannot be continued; what you CAN do is ask the chat
+           about it. The same press the composer line offers, here because
+           the dialog is over the composer while a record is open. -->
+      <div class="viewacts">
+        <button type="button" id="convViewAsk" class="btn small">Ask about it</button>
+      </div>
       <div id="convViewLog" class="viewlog"></div>
     </div>
   </div>
@@ -864,6 +994,26 @@
           <p class="hint tight">Cards without their own interval or schedule regenerate this
             often. 0 = no scheduled refresh.</p>
         </div>
+        <!-- Beside the interval because the interval is its FLOOR: one says how
+             soon a card may run again, this says what has to be true once that
+             has passed. Worded as *when* rather than *how often* for the same
+             reason — "every 12 hours" and "when the findings list moved" are
+             answers to different questions, and a card that sat still all day
+             because nothing changed has to be readable as that rather than as a
+             schedule nobody can find. Stored by the panel, so its hint says so:
+             the note above this grid is about the Configuration-tab options. -->
+        <div>
+          <label for="setRefreshMode">When to refresh a card</label>
+          <select id="setRefreshMode" class="selin">
+            <option value="changed">When something it reads has changed</option>
+            <option value="always">Always, on the interval</option>
+            <option value="never">Never on a schedule</option>
+          </select>
+          <p class="hint tight">Once the interval above has passed, this decides whether the
+            card actually runs. <b>When something it reads has changed</b> skips a run that
+            would produce the same card — the card's foot then says it is waiting.
+            This one is brAIn's own setting and is not on the Configuration tab.</p>
+        </div>
         <div>
           <label for="setHistoryDays">History analyzed (days)</label>
           <input id="setHistoryDays" type="number" min="1" max="30" step="1">
@@ -905,6 +1055,21 @@
       <div class="row">
         <button id="diagCopy" class="btn">Copy for a bug report</button>
         <button id="diagRefresh" class="btn">Refresh</button>
+      </div>
+
+      <h4 class="sethead">Problems</h4>
+      <p class="hint">When a run fails or brAIn's health changes, one plain-text file is
+        written under <code>/share/brain/reports</code> — what happened, where to look,
+        the run, the last 80 lines of the add-on log and the diagnostics above, with
+        anything credential-shaped removed. A repeat inside a day adds a line to the
+        file it already has. Tick the ones about the thing you are reporting and
+        <b>Copy selected</b>; <b>Write a report now</b> makes one with the full
+        diagnostics in it.</p>
+      <div id="probBody" class="diag prob">Loading…</div>
+      <div class="row probbtns">
+        <button id="probCopySel" class="btn">Copy selected</button>
+        <button id="probCopyAll" class="btn">Copy all</button>
+        <button id="probWrite" class="btn">Write a report now</button>
       </div>
 
       <h4 class="sethead">Capture runs for the corpus</h4>
@@ -1019,40 +1184,14 @@
       <button id="kClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
     <div class="edit-body ksplit">
-      <!-- This column is a queue, so it reads like one: one heading, one
-           list, one button. Every paragraph that explained the model rather
-           than the list under it is in the Docs tab instead — the list is
-           short and self-evident, and the prose was longer than the content
-           it introduced.
-
-           It used to open with "Waiting on you" — guesses brAIn wanted
-           confirmed, with yes/no beside each. Those are decisions and they
-           are on the Findings tab now, with the problems, because both are
-           the same job and splitting it across two tabs meant neither list
-           ever emptied. Nothing on this tab is waiting on a person any more:
-           the queue below files itself on a timer, and the document beside
-           it is there to read. -->
-      <div class="kcol">
-        <label>Waiting to be filed</label>
-        <!-- Consolidation is normally daily (or early past 20 pending facts).
-             That is the right cadence for a background daemon and the wrong
-             one for someone who has just taught it something and wants to see
-             it land. Same pass, same checks — pressed by hand. -->
-        <div class="row kmemrow">
-          <button id="kConsolidate" class="btn small"
-                  title="Merge everything queued into the memory document — a few seconds, and one small Claude call">⇪ File into memory now</button>
-          <span id="kPending" class="kpending"></span>
-        </div>
-        <div id="kFacts" class="klist"></div>
-        <!-- Filed discoveries are not shown at all. Once something is in the
-             document it IS the document, and a second copy of it under
-             "already in memory" made a drained queue look like it had never
-             emptied. The ledger still holds them so nothing is re-announced;
-             it just isn't a list anyone has to read. -->
-      </div>
-
+      <!-- The document comes FIRST and the queue after it, which is the order
+           they are read in: what brAIn remembers, then what has not landed
+           there yet. They used to be two columns side by side, which said
+           nothing about which was which — and in the tab there is no
+           `.kwide` ancestor, so the two-column rule never applies and this
+           is simply the order down the page. -->
       <div id="kMemWrap" class="kcol kmemcol">
-        <label>Home memory</label>
+        <label>What it remembers</label>
         <p class="hint tight">Everything brAIn knows about the house. Insight runs, voice
           and the terminal all read this.</p>
         <form id="kAddForm" class="kadd">
@@ -1093,6 +1232,38 @@
           or press “Edit markdown” to start one.</div>
         <textarea id="kMemTa" class="kmemedit hidden" rows="14" maxlength="100000"
                   spellcheck="false"></textarea>
+      </div>
+
+      <!-- This column is a queue, so it reads like one: one heading, one
+           list, one button. Every paragraph that explained the model rather
+           than the list under it is in the Docs tab instead — the list is
+           short and self-evident, and the prose was longer than the content
+           it introduced.
+
+           It used to open with "Waiting on you" — guesses brAIn wanted
+           confirmed, with yes/no beside each. Those are decisions and they
+           are on the Findings tab now, with the problems, because both are
+           the same job and splitting it across two tabs meant neither list
+           ever emptied. Nothing on this tab is waiting on a person any more:
+           the queue below files itself on a timer, and the document above
+           it is there to read. -->
+      <div class="kcol">
+        <label>Waiting to be filed</label>
+        <!-- Consolidation is normally daily (or early past 20 pending facts).
+             That is the right cadence for a background daemon and the wrong
+             one for someone who has just taught it something and wants to see
+             it land. Same pass, same checks — pressed by hand. -->
+        <div class="row kmemrow">
+          <button id="kConsolidate" class="btn small"
+                  title="Merge everything queued into the memory document — a few seconds, and one small Claude call">⇪ File into memory now</button>
+          <span id="kPending" class="kpending"></span>
+        </div>
+        <div id="kFacts" class="klist"></div>
+        <!-- Filed discoveries are not shown at all. Once something is in the
+             document it IS the document, and a second copy of it under
+             "already in memory" made a drained queue look like it had never
+             emptied. The ledger still holds them so nothing is re-announced;
+             it just isn't a list anyone has to read. -->
       </div>
     </div>
   </div>
