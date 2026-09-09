@@ -18,6 +18,7 @@ sys.path.insert(0, str(PANEL_DIR))
 
 import hypotheses  # noqa: E402
 import onboarding  # noqa: E402
+import prompt_store  # noqa: E402
 import settings_store  # noqa: E402
 import user_categories  # noqa: E402
 
@@ -34,6 +35,14 @@ class OnboardingCase(unittest.TestCase):
             "memory": onboarding.MEMORY_FILE,
             "cats": user_categories.USER_CATS_FILE,
             "hyp": hypotheses.HYPOTHESES_FILE,
+            # accept() records which shipped categories this home asked
+            # for, which is a write to prompt_store's own file. Every
+            # store here takes its path from the environment so a test
+            # can point it somewhere; this one is only reachable from
+            # the accept path, so it went unredirected and the write
+            # landed on the real /data — invisible to anyone running as
+            # root, and a PermissionError on CI.
+            "prompts": prompt_store.OVERRIDES_FILE,
         }
         settings_store.SETTINGS_FILE = str(root / "settings.json")
         onboarding.STATE_FILE = root / "onboarding.json"
@@ -42,6 +51,7 @@ class OnboardingCase(unittest.TestCase):
         onboarding.MEMORY_FILE = root / "memory.md"
         user_categories.USER_CATS_FILE = str(root / "user_cats.json")
         hypotheses.HYPOTHESES_FILE = root / "hypotheses.jsonl"
+        prompt_store.OVERRIDES_FILE = str(root / "prompt_overrides.json")
 
     def tearDown(self):
         settings_store.SETTINGS_FILE = self._old["settings"]
@@ -51,6 +61,7 @@ class OnboardingCase(unittest.TestCase):
         onboarding.MEMORY_FILE = self._old["memory"]
         user_categories.USER_CATS_FILE = self._old["cats"]
         hypotheses.HYPOTHESES_FILE = self._old["hyp"]
+        prompt_store.OVERRIDES_FILE = self._old["prompts"]
         self.tmp.cleanup()
 
     def _studied(self, *topics):
