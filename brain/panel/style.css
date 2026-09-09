@@ -369,12 +369,25 @@ html, body {
 .card .foot {
   display: flex;
   align-items: center;
+  /* The foot WRAPS. It carries a stamp, why the run happened, a duration, a
+     token count and up to two controls, and a single non-wrapping line
+     squeezes whichever of those shrinks first down to nothing on a phone --
+     which for the reason is the whole of it. A row that gives way is the
+     rule the top bar and the design bar already follow. */
+  flex-wrap: wrap;
   gap: 8px;
+  row-gap: 4px;
   padding: 0 16px 12px;
   color: var(--ink-3);
   font-size: 11.5px;
 }
 .card .foot .spacer { flex: 1; }
+/* Why this run happened, and why the next one is waiting. Neither is ever
+   clipped: `overflow: hidden` here would answer "why did this change" with
+   half a sentence, which reads as a rendering fault rather than a reason. */
+.card .foot .because,
+.card .foot .hold { flex: 0 1 auto; }
+.card .foot .hold { color: var(--ink-2); }
 
 /* dimmed disabled category */
 .card.off > :not(.card-head) { opacity: 0.45; }
@@ -3098,6 +3111,47 @@ body.term-classic #termMode .ico-out { display: block; }
   line-height: 1.5;
 }
 
+/* One heading per group on a step that has two of them. A step whose two
+   lists run together is one list somebody ticks without noticing that half
+   of it means something different. */
+.obh3 { margin: 22px 0 2px; font-size: 15px; color: var(--ink); }
+.obh3:first-child { margin-top: 0; }
+
+/* Step 0's hour pickers. A row rather than the stacked `.setup label` shape
+   because "quiet from X until Y" is one sentence and reads as one. */
+.obquiet {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.obquiet select { min-width: 84px; }
+
+/* The morning-brief tick uses the card shape the recommendations use: it is
+   the same kind of decision, and a bare checkbox beside a sentence is the
+   one control on this step a thumb misses. */
+.obcheckrow { margin-top: 14px; align-items: center; }
+
+/* What to paste, shown rather than described. Selectable on its own, because
+   an ingress iframe may be refused the clipboard outright and a Copy button
+   that fails must not be the only route to the text. */
+.obmanual {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--plane);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
 /* ------------------------------------------------------------------ activity
    What changed, and what changed it. The list is long by nature — a busy
    house makes hundreds of rows a day — so the row is one line at every
@@ -3313,7 +3367,12 @@ body.term-classic #termMode .ico-out { display: block; }
    read as the explanations they are rather than as this morning's message. */
 .kbrieftext.off { color: var(--ink-2); font-size: 13.5px; }
 
-.kstores { display: grid; gap: 2px; }
+/* `minmax(0, 1fr)` rather than a bare single column: a grid track is sized
+   to its widest item's MIN-CONTENT by default, and the milestone card that
+   opens under a row holds an <iframe>, whose intrinsic 300px survives a
+   `width: 100%` and dragged the whole track to 480px inside a 390px window.
+   The dashboard's `.grid` carries the same guard as `min(460px, 100%)`. */
+.kstores { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .krow {
   display: flex;
   align-items: center;
@@ -3353,6 +3412,43 @@ body.term-classic #termMode .ico-out { display: block; }
 .krow[data-state="ready"] .kchip { color: var(--good); border-color: var(--good); }
 .krow[data-state="collecting"] .kchip { color: var(--accent); border-color: var(--accent); }
 .krow[data-state="stale"] .kchip { color: var(--warning); border-color: var(--warning); }
+
+/* A row that opens onto a card says so. Without it the card is behind a
+   press nobody has a reason to make, which is the same as not having one. */
+.krow .kcardmark {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--hairline));
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+/* A measurement with no card yet. One muted line under its OWN row, so it
+   reads as "this card arrives when this lands" rather than as a card that
+   failed to load -- which is what a greyed-out card-shaped box would say. */
+.kpending {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 4px 12px;
+  padding: 4px 10px;
+  border-left: 2px solid var(--hairline);
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+.kpending .kpendmark { color: var(--ink-3); }
+
+/* The milestone card itself, indented under its row so the tie to the
+   measurement survives on a phone where nothing can sit side by side.
+   `min-width: 0` because `.kstores` is a grid and a grid item's automatic
+   minimum is its MIN-CONTENT -- a title, a summary and a row of highlight
+   boxes measured 468px inside a 390px window and took the page sideways
+   with them, which is the same trap `.strow` and `.addbar` carry. */
+.kcard, .kpending { min-width: 0; }
+.kcard { margin: 0 0 12px 12px; }
+.kcard .summary, .kcard .foot { overflow-wrap: anywhere; }
 
 .kdrill {
   margin: 0 0 12px 12px;
@@ -3761,6 +3857,17 @@ body.term-classic #termMode .ico-out { display: block; }
   .prob .probpick, .prob .probdel, .probbtns .btn { min-height: 44px; }
   .prob .probdel { min-width: 44px; }
   .prob .probcheck { width: 22px; height: 22px; }
+  /* The first-run flow. Every press here is a decision made once and lived
+     with: where brAIn may reach you, whether it may wake the house, which
+     cards exist at all. Scoped like the four blocks above rather than
+     raised globally, for the reason they give. */
+  .setup .row .btn { min-height: 44px; padding-inline: 14px; }
+  .setup .obquiet select { min-height: 44px; }
+  .oblist .obcard { min-height: 44px; }
+  .oblist .obcard input { width: 22px; height: 22px; }
+  /* The one control on the Knowledge tab that asks brAIn for a Claude run,
+     on the card it would rewrite. */
+  .kcard .foot .btn { min-height: 44px; padding-inline: 14px; }
 }
 /* The reason box replaces the buttons INSIDE the card, so what you are
    explaining stays on screen while you write about it. */

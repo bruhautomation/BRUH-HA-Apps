@@ -106,6 +106,13 @@ jobs:
       - name: Measure the Knowledge tab
         run: node tests/manual/measure-knowledge.mjs
 
+      # The one screen somebody sees exactly once, which is why it goes
+      # wrong quietly: nobody who has been through it will ever see the
+      # version that is broken. Four steps, both empty cases, and — the one
+      # that matters — that a step already answered is not asked again.
+      - name: Measure the first-run flow
+        run: node tests/manual/measure-onboarding.mjs
+
       - name: Measure the proposals tab
         run: node tests/manual/measure-proposals.mjs
 

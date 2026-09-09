@@ -220,7 +220,63 @@
       <p>Settings → System → Backups, then copy it off the device.</p>
     </div>
 
-    <div id="obLearn">
+    <!-- Step 0, before the syllabus. brAIn spends the next half hour studying
+         and then starts having things to say, and the first question is where
+         it may say them — a house that answers this last has already had the
+         findings it filed reach nobody. The panel cannot write these into the
+         add-on's own options (`addon_options.write` knows six generation keys
+         and none of these), so the answers are stored here and the lines to
+         paste are shown afterwards rather than implied. -->
+    <div id="obNotify" class="hidden">
+      <h3 class="obh3">Where should brAIn reach you?</h3>
+      <p class="hint tight">When it finds something worth telling you about — a
+        problem, the morning brief — it calls one Home Assistant notify service.
+        You can change all of this later.</p>
+      <div id="obNotifyErr" class="flowerr hidden"></div>
+      <div id="obNotifyList" class="oblist"></div>
+      <div id="obNotifyOpts">
+        <label for="obQuietStart">Don't wake the house</label>
+        <div class="obquiet">
+          <span>Quiet from</span>
+          <select id="obQuietStart" class="selin"></select>
+          <span>until</span>
+          <select id="obQuietEnd" class="selin"></select>
+        </div>
+        <p class="hint tight">Anything that can wait is held until the quiet hours
+          end and arrives as one message. A freeze warning still comes through.
+          Leave both blank for no quiet hours.</p>
+        <label class="obcard obcheckrow" for="obBrief">
+          <input type="checkbox" id="obBrief">
+          <div class="obcardbody">
+            <div class="obcardtitle">Send a morning brief</div>
+            <div class="obcardfocus">One short paragraph, only on the mornings
+              something has actually changed. Most days it says nothing.</div>
+          </div>
+        </label>
+      </div>
+      <div class="row">
+        <button id="obNotifySave" class="btn primary">Save and continue</button>
+        <button id="obNotifySkip" class="btn ghost">Skip this</button>
+      </div>
+    </div>
+
+    <!-- `writable: false` is load-bearing: these settings live in the panel's
+         own store and every reader consults it, so brAIn really is using them
+         — but the Configuration tab does not show them, and an add-on that
+         quietly kept a setting somewhere its own options screen does not is
+         the drift `_options_sync` exists to end. So the lines are shown. -->
+    <div id="obManual" class="hidden">
+      <h3 class="obh3">Saved</h3>
+      <p class="hint tight">brAIn is using these now; paste them into the add-on's
+        Configuration tab if you want them to live there too.</p>
+      <pre id="obManualText" class="obmanual"></pre>
+      <div class="row">
+        <button id="obManualCopy" class="btn">Copy</button>
+        <button id="obManualNext" class="btn primary">Continue</button>
+      </div>
+    </div>
+
+    <div id="obLearn" class="hidden">
       <div class="obsteps" id="obTopics"></div>
       <div class="row">
         <button id="obStart" class="btn primary">Start learning</button>
@@ -239,7 +295,19 @@
 
     <div id="obChoose" class="hidden">
       <p class="hint">Pick the ones you want. You can add, edit or remove cards any time.</p>
+      <!-- Two groups because there are two kinds of card and only one of them
+           gets CREATED: the custom ones are written for this house out of what
+           brAIn learned, the shipped ones already exist in the code and are
+           admitted to this home's set. Ticked independently, and sending no
+           shipped ids means none of them — which on a fresh install is an
+           empty Insights tab, so the step says so before Finish. -->
+      <h3 class="obh3" id="obCustomHead">Cards written for your home</h3>
       <div id="obList" class="oblist"></div>
+      <div id="obShippedBlock" class="hidden">
+        <h3 class="obh3">Cards that ship with brAIn, and fit this house</h3>
+        <div id="obShipped" class="oblist"></div>
+      </div>
+      <p class="hint" id="obChooseNote"></p>
       <div class="row">
         <button id="obAccept" class="btn primary">Create selected</button>
         <button id="obNone" class="btn ghost">None of these</button>
@@ -925,6 +993,26 @@
           <input id="setRefresh" type="number" min="0" max="168" step="1">
           <p class="hint tight">Cards without their own interval or schedule regenerate this
             often. 0 = no scheduled refresh.</p>
+        </div>
+        <!-- Beside the interval because the interval is its FLOOR: one says how
+             soon a card may run again, this says what has to be true once that
+             has passed. Worded as *when* rather than *how often* for the same
+             reason — "every 12 hours" and "when the findings list moved" are
+             answers to different questions, and a card that sat still all day
+             because nothing changed has to be readable as that rather than as a
+             schedule nobody can find. Stored by the panel, so its hint says so:
+             the note above this grid is about the Configuration-tab options. -->
+        <div>
+          <label for="setRefreshMode">When to refresh a card</label>
+          <select id="setRefreshMode" class="selin">
+            <option value="changed">When something it reads has changed</option>
+            <option value="always">Always, on the interval</option>
+            <option value="never">Never on a schedule</option>
+          </select>
+          <p class="hint tight">Once the interval above has passed, this decides whether the
+            card actually runs. <b>When something it reads has changed</b> skips a run that
+            would produce the same card — the card's foot then says it is waiting.
+            This one is brAIn's own setting and is not on the Configuration tab.</p>
         </div>
         <div>
           <label for="setHistoryDays">History analyzed (days)</label>

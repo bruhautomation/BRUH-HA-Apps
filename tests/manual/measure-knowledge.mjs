@@ -233,10 +233,25 @@ window.__today = ${JSON.stringify(TODAY_FULL)};
 window.EventSource = function () {
   return { close() {}, addEventListener() {}, onmessage: null, onerror: null };
 };
-window.fetch = async (url) => {
+window.fetch = async (url, opts) => {
   const p = String(url);
-  const answer = (body) => new Response(JSON.stringify(body), {
-    status: 200, headers: { 'Content-Type': 'application/json' } });
+  const answer = (body, status) => new Response(JSON.stringify(body), {
+    status: status || 200, headers: { 'Content-Type': 'application/json' } });
+  // Before the bare \`api/knowledge\` branch: these paths contain it.
+  if (p.includes('api/knowledge/card/')) {
+    // The 409 is not an error state — the measurement really has no answer
+    // right now — so it has to reach the panel as a sentence.
+    if (window.__refuseRefresh) {
+      return answer({ error: 'that measurement does not have an answer right now',
+                      state: 'stale', reason: '' }, 409);
+    }
+    window.__refreshed = (window.__refreshed || 0) + 1;
+    return answer({ id: p.split('api/knowledge/card/')[1].split('/')[0],
+                    queued: true });
+  }
+  if (p.includes('api/knowledge/cards')) {
+    return answer(window.__cards || { cards: [], pending: [], running: [] });
+  }
   if (p.includes('api/knowledge/house/')) {
     const id = p.split('api/knowledge/house/')[1].split('?')[0];
     return answer(window.__drills[id] || {});
@@ -297,8 +312,11 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
 });
 
-async function openPanel(width, extra) {
-  const context = await browser.newContext({ viewport: { width, height: 900 } });
+async function openPanel(width, extra, touch) {
+  const context = await browser.newContext({
+    viewport: { width, height: 900 },
+    ...(touch ? { hasTouch: true, isMobile: true } : {}),
+  });
   const page = await context.newPage();
   page.on('pageerror', (error) => note(`${width}px`, `page error: ${error.message}`));
   await page.addInitScript(STUB);
@@ -745,6 +763,196 @@ for (const [name, payload, check] of TODAY_CASES) {
     note('empty house', 'the disabled brief does not name the tab the switch is on');
   }
   console.log('ok  empty house: seven rows, every one saying not started');
+  await context.close();
+}
+
+// -------------------------------------------------------- milestone cards
+// A measurement that has landed gets a card written about it, and one that
+// has not gets a line saying it is coming. Both belong WITH the store's own
+// row — the failure this exists to prevent is a list of cards at the bottom
+// of the tab, where a card and the measurement it is about are two things
+// nobody can connect, and a missing card reads as a card that failed.
+//
+//   * the card renders under the row it belongs to, not somewhere else
+//   * it carries `made_because` — a card with no reason on it is a card
+//     that appeared for reasons nobody can see, which is the whole thing
+//     this field was added for
+//   * the ONE control is there and is a real touch target. There is no
+//     regenerate/edit/delete menu: this is not a card you keep re-running
+//   * a pending entry is tied to its own row, by position and by data-store
+//   * a 409 from the refresh is a sentence, never a red failure
+const CARDS = {
+  cards: [{
+    id: 'rhythm', kind: 'milestone', store: 'rhythm',
+    title: 'This house gets up at about 07:05',
+    summary: 'Three weeks of mornings, and the weekdays are tighter than '
+      + 'the weekends by half an hour.',
+    highlights: [
+      { label: 'Weekdays', value: '07:05' },
+      { label: 'Weekends', value: '08:40' },
+      { label: 'Measured over', value: '21 days' },
+    ],
+    html: '<!doctype html><html><body><p>rhythm</p></body></html>',
+    made_at: NOW - 3600,
+    made_because: 'the wake time settled',
+    mark: { days: 21 },
+  }],
+  // Two still coming, so a row with a card and a row without both render.
+  pending: [
+    { id: 'thermal', store: 'thermal', title: 'How these rooms hold heat' },
+    { id: 'habits', store: 'habits', title: 'Something you do by hand' },
+  ],
+  running: [{ state: 'generating', milestone: 'thermal', store: 'thermal' }],
+};
+
+for (const width of WIDTHS) {
+  // The narrow widths are driven AS phones: the 44px floor on this card's
+  // one control lives in a `pointer: coarse` block, and a context with a
+  // fine pointer would measure the desktop density and call it a pass.
+  const touch = width <= 768;
+  const { context, page } = await openPanel(width,
+    `window.__cards = ${JSON.stringify(CARDS)};`, touch);
+  const at = `milestones/${width}px`;
+  await page.click('.viewtab[data-view="memory"]');
+  await page.waitForSelector('#kStores .krow');
+
+  // The pending lines are always on screen — they are one muted sentence,
+  // and what they say is about that measurement.
+  const pend = await page.evaluate(() => {
+    const kids = [...document.getElementById('kStores').children];
+    return [...document.querySelectorAll('#kStores .kpending')].map((n) => {
+      const i = kids.indexOf(n);
+      const before = i > 0 ? kids[i - 1] : null;
+      return {
+        store: n.dataset.store,
+        text: n.textContent.trim(),
+        afterRow: !!(before && before.classList.contains('krow')
+                     && before.dataset.store === n.dataset.store),
+      };
+    });
+  });
+  if (pend.length !== CARDS.pending.length) {
+    note(at, `${pend.length} pending lines for ${CARDS.pending.length} pending`);
+  }
+  pend.forEach((row) => {
+    if (!row.afterRow) {
+      note(at, `the pending line for ${row.store} is not tied to its row`);
+    }
+    if (!row.text) note(at, `the pending line for ${row.store} says nothing`);
+  });
+  // A card that is coming and one being written now are different answers.
+  const thermalPend = pend.find((r) => r.store === 'thermal');
+  if (thermalPend && !/Writing/.test(thermalPend.text)) {
+    note(at, `a milestone being written now says "${thermalPend.text}"`);
+  }
+  const habitsPend = pend.find((r) => r.store === 'habits');
+  if (habitsPend && !/arrives when/.test(habitsPend.text)) {
+    note(at, `a milestone still waiting says "${habitsPend.text}"`);
+  }
+  // A card behind a press nobody has a reason to make is a card nobody
+  // reads, so the row it opens says it has one.
+  const marked = await page.evaluate(() => [...document.querySelectorAll(
+    '#kStores .krow')].filter((r) => r.querySelector('.kcardmark'))
+    .map((r) => r.dataset.store));
+  if (marked.join(',') !== 'rhythm') {
+    note(at, `rows marked as having a card: [${marked.join(', ')}]`);
+  }
+
+  await page.click('#kStores .krow[data-store="rhythm"]');
+  await page.waitForSelector('.kcard', { timeout: 5000 })
+    .catch(() => note(at, 'opening a measured row drew no milestone card'));
+
+  const card = await page.evaluate((floor) => {
+    const box = document.querySelector('.kcard');
+    if (!box) return null;
+    const kids = [...document.getElementById('kStores').children];
+    const i = kids.indexOf(box);
+    const row = i > 0 ? kids[i - 1] : null;
+    const foot = box.querySelector('.foot');
+    const again = [...box.querySelectorAll('.foot .btn')]
+      .find((b) => /again/i.test(b.textContent));
+    const rect = box.getBoundingClientRect();
+    const host = document.getElementById('kStores').getBoundingClientRect();
+    return {
+      // Under its own row: the card is what brAIn wrote about THAT
+      // measurement, and a list of them at the bottom is a list of answers
+      // to questions nobody can see.
+      afterRow: !!(row && row.classList.contains('krow')
+                   && row.dataset.store === 'rhythm'),
+      title: (box.querySelector('h3') || {}).textContent || '',
+      summary: (box.querySelector('.summary') || {}).textContent || '',
+      highlights: box.querySelectorAll('.highlights .hl').length,
+      frames: box.querySelectorAll('iframe').length,
+      foot: foot ? foot.textContent : '',
+      because: (box.querySelector('.foot .because') || {}).textContent || '',
+      again: again ? Math.round(again.getBoundingClientRect().height) : 0,
+      againShort: again ? again.getBoundingClientRect().height < floor : false,
+      // No regenerate/edit/feedback/delete menu: a milestone is not a card
+      // you keep re-running, and a ⋯ offering to delete it would be a
+      // second way to lose the one thing this tab is for.
+      menus: box.querySelectorAll('.card-head .actions').length,
+      overflows: rect.right > host.right + 0.5,
+      docWidth: document.documentElement.scrollWidth,
+    };
+  }, MIN_TARGET);
+
+  if (!card) {
+    note(at, 'no milestone card at all');
+  } else {
+    if (!card.afterRow) note(at, 'the milestone card is not under its own row');
+    if (!/07:05/.test(card.title)) note(at, `the card's title is "${card.title}"`);
+    if (!card.summary.trim()) note(at, 'the card renders no summary');
+    if (card.highlights !== 3) {
+      note(at, `the card drew ${card.highlights} highlights, not 3`);
+    }
+    if (card.frames !== 1) {
+      note(at, `the card drew ${card.frames} frames for its visualization`);
+    }
+    // The card exists BECAUSE something happened, and the foot is where it
+    // says so. Without it a card that appeared overnight is a card nobody
+    // can account for.
+    if (!card.because.trim()) note(at, 'the milestone card carries no made_because');
+    if (!/the wake time settled/.test(card.because)) {
+      note(at, `made_because reads "${card.because.trim()}"`);
+    }
+    if (!/Made /.test(card.foot)) note(at, 'the card does not say when it was made');
+    if (!card.again) note(at, 'the card has no "Make this again" control');
+    // Asked where the rule lives. The 44px floor on this control is in a
+    // `pointer: coarse` block, the same scope the proposals' and the
+    // account section's floors use — a fine pointer keeps the density the
+    // rest of the panel's small buttons are drawn at.
+    if (touch && card.againShort) {
+      note(at, `"Make this again" is ${card.again}px, under ${MIN_TARGET}`);
+    }
+    if (card.menus) note(at, 'the milestone card grew a ⋯ menu');
+    if (card.overflows) note(at, 'the milestone card overflows the list');
+    if (card.docWidth > width + 0.5) {
+      note(at, `page scrolls sideways with a card open (${card.docWidth}px)`);
+    }
+  }
+
+  // The one control, pressed. A refusal comes back as a sentence in the
+  // ordinary voice — nothing is broken, the measurement simply has no
+  // answer at this moment — so it must not read as a failed request.
+  await page.evaluate(() => { window.__refuseRefresh = true; });
+  await page.click('.kcard .foot .btn');
+  await page.waitForTimeout(200);
+  const refused = await page.evaluate(() => {
+    const t = document.getElementById('toast');
+    return { text: t ? t.textContent : '', shown: !!t && t.classList.contains('show') };
+  });
+  if (!refused.shown || !/does not have an answer/.test(refused.text)) {
+    note(at, `a refused refresh said "${refused.text}" (shown: ${refused.shown})`);
+  }
+  await page.evaluate(() => { window.__refuseRefresh = false; });
+  await page.click('.kcard .foot .btn');
+  await page.waitForTimeout(200);
+  const asked = await page.evaluate(() => window.__refreshed || 0);
+  if (!asked) note(at, 'pressing "Make this again" asked the server for nothing');
+
+  console.log(`${failures.length ? 'ok? ' : 'ok  '}milestones `
+    + `${String(width).padStart(4)}px  1 card under its row, `
+    + `${pend.length} pending lines`);
   await context.close();
 }
 

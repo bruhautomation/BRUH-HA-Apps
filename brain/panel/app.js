@@ -1249,12 +1249,34 @@ function makeCard(catInfo, insight, fallbackId) {
     const foot = el("div", "foot");
     foot.appendChild(el("span", null,
       view ? `Generated ${timeAgo(shown.generated_at)}` : `Updated ${timeAgo(shown.generated_at)}`));
+    // WHY this run happened, beside when it did. The scheduler's own
+    // sentence when it queued one ("3 more finding(s) on the list", "memory
+    // was updated"), and "you asked" / "you pressed Generate" otherwise —
+    // without it a card that refreshed itself is a card that changed for no
+    // reason anybody can see. It is never truncated: the foot wraps rather
+    // than squeezing this to an ellipsis, because half a reason is worse
+    // than none.
+    const because = String(shown.made_because || "").trim();
+    if (because) foot.appendChild(el("span", "because", `· ${because}`));
     // When the scheduler will come back for this card — the readback of the
     // auto-refresh settings, on the thing they refresh. Suppressed while a
     // global gate holds (paused, budget, no auth): those surfaces already
     // say why nothing will run, and a countdown beside them would be a lie.
+    //
+    // A HOLD comes first, because with `refresh_mode: changed` a card past
+    // its interval has no `next_due` at all — the scheduler is waiting for
+    // something the card reads to move, which has no date. Saying "manual
+    // only" or nothing at all there is the wrong answer to "why has this
+    // stopped updating".
     const gate = state.status && state.status.auto && state.status.auto.gate;
-    if (!view && catInfo && catInfo.next_due && !gate) {
+    const hold = catInfo && catInfo.refresh_hold;
+    if (!view && hold && !gate) {
+      const why = String(hold.why || "nothing it reads has changed");
+      const held = el("span", "hold", `· Waiting for something to change — ${why}`);
+      tip(held, "brAIn only refreshes a card when what it reads has moved. "
+        + "Change that under ⚙ Settings → When to refresh a card.");
+      foot.appendChild(held);
+    } else if (!view && catInfo && catInfo.next_due && !gate) {
       const when = el("span", null, `· next ${timeUntil(catInfo.next_due)}`);
       tip(when, "When auto-refresh regenerates this card. Change it under "
         + "⋯ → Edit, or the default under ⚙ Settings.");
@@ -1559,7 +1581,14 @@ function renderIfChanged() {
       + ":t" + effectiveTags(i).join(",")),
     view: Object.keys(state.viewing).map((k) => k + state.viewing[k].ts),
     cats: s && s.categories.map((c) =>
-      [c.id, c.title, c.icon, c.enabled, c.focus_overridden, c.refresh_hours, c.schedule]),
+      [c.id, c.title, c.icon, c.enabled, c.focus_overridden, c.refresh_hours,
+       c.schedule,
+       // The hold is rendered in the foot, so it has to be in the key or a
+       // card that started waiting says "next in 3 h" until something
+       // unrelated repaints. Its REASON only — the store re-stamps `at` on
+       // every scheduler pass that holds, and keying on that would reload
+       // every card's iframe every few minutes.
+       c.refresh_hold ? c.refresh_hold.why : ""]),
     tagEdit: state.editingTags,
     paused: s && [s.settings && s.settings.auto_enabled, s.usage && s.usage.blocked],
     usage: s && s.usage && [s.usage.used_percent, s.usage.resets_at],
@@ -2039,6 +2068,7 @@ function renderSettingsForm(data) {
   $("#setTerminalUi").value = data.settings.terminal_ui || "chat";
   $("#setChatSessions").value = String(data.settings.chat_max_sessions || 3);
   $("#setGatherMode").value = data.settings.gather_mode || "search";
+  $("#setRefreshMode").value = data.settings.refresh_mode || "changed";
   $("#setPlan").value = data.settings.plan || "pro";
   $("#setBudget").value = data.settings.budget_percent;
   $("#setBudgetVal").textContent = data.settings.budget_percent + "%";
@@ -2971,6 +3001,14 @@ $("#setPlan").addEventListener("change", () =>
   saveSettings({ plan: $("#setPlan").value }));
 $("#setGatherMode").addEventListener("change", () =>
   saveSettings({ gather_mode: $("#setGatherMode").value }));
+// A card's foot reads this back as either a countdown or a hold, so the
+// status poll has to be told: switching to "always" clears every hold and
+// leaving it on "changed" is what puts them there.
+$("#setRefreshMode").addEventListener("change", async () => {
+  await saveSettings({ refresh_mode: $("#setRefreshMode").value });
+  await refreshStatus();
+  render();
+});
 // Applies to the next switch rather than immediately: lowering it does not
 // go round shutting conversations down, it means the next one you open
 // closes the oldest idle one to make room.
@@ -5134,7 +5172,10 @@ $("#docsSearch").addEventListener("input", (ev) => {
 // no canned fallback.
 
 const obState = { onboarded: true, phase: "learning", learning: null,
-                  recommendations: [], sparse: false, missing: "",
+                  recommendations: [], shipped: [], sparse: false, missing: "",
+                  notify: null,       // the step-0 answers, from onboarding.state()
+                  notifyData: null,   // GET /api/onboarding/notify, fetched once
+                  notifyManual: null, // the lines to paste, after a save
                   poll: null, busy: false };
 
 async function refreshOnboarding() {
@@ -5147,6 +5188,121 @@ async function refreshOnboarding() {
     obState.onboarded = true;
   }
   renderOnboarding();
+}
+
+// Step 0's own payload: which notify services this house has, plus whatever
+// was answered before. Fetched once, and a failure is not a step nobody can
+// get past — the screen renders with an empty list and a Skip, which is the
+// same shape the endpoint's own `error` produces.
+async function loadNotifyStep() {
+  if (obState.notifyData || obState.notifyLoading) return;
+  obState.notifyLoading = true;
+  try {
+    obState.notifyData = await api("api/onboarding/notify");
+  } catch (e) {
+    obState.notifyData = { candidates: [], error: e.message, writable: false,
+                           manual: [] };
+  }
+  obState.notifyLoading = false;
+  renderOnboarding();
+}
+
+function hourOptions(sel, value) {
+  sel.textContent = "";
+  // The empty option is first and it is not a zero: "not set" and "midnight"
+  // are different answers, and a picker that cannot say the first turns "no
+  // quiet hours" into a silence from 00:00.
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "—";
+  sel.appendChild(none);
+  for (let h = 0; h < 24; h += 1) {
+    const opt = document.createElement("option");
+    opt.value = String(h);
+    opt.textContent = `${String(h).padStart(2, "0")}:00`;
+    sel.appendChild(opt);
+  }
+  sel.value = value == null || value === "" ? "" : String(Number(value));
+}
+
+function renderNotifyStep() {
+  const data = obState.notifyData || {};
+  const stored = obState.notify || {};
+  const candidates = data.candidates || [];
+  const list = $("#obNotifyList");
+  list.textContent = "";
+
+  const err = $("#obNotifyErr");
+  // Two different empties. "Home Assistant did not answer" is something to
+  // try again; "this house has no notify service" is a fact about the house
+  // that nothing here can change — reporting either as the other sends
+  // somebody off to fix the wrong thing.
+  const reason = candidates.length ? ""
+    : (data.error
+      ? `${data.error} — brAIn could not list your notify services.`
+      : "This house has no notify service set up, so there is nowhere for "
+        + "brAIn to send anything yet. Add one in Home Assistant and you can "
+        + "point brAIn at it later under ⚙ Settings.");
+  err.textContent = reason;
+  err.classList.toggle("hidden", !reason);
+
+  const chosen = data.findings_notify_service
+    || stored.findings_notify_service || "";
+  candidates.forEach((c) => {
+    const row = el("label", "obcard");
+    const radio = el("input");
+    radio.type = "radio";
+    radio.name = "obnotify";
+    radio.value = c.service;
+    radio.checked = c.service === chosen;
+    row.appendChild(radio);
+    const body = el("div", "obcardbody");
+    body.appendChild(el("div", "obcardtitle", c.label || c.service));
+    body.appendChild(el("div", "obcardwhy", c.service));
+    // Only a mobile app can carry the answer buttons a finding notification
+    // puts on a message, which is the difference between reading about a
+    // problem and settling it from the notification.
+    body.appendChild(el("div", "obcardfocus", c.buttons
+      ? "A phone — can carry answer buttons, so you can settle a finding "
+        + "straight from the notification."
+      : "Takes a message. No answer buttons on this one."));
+    row.appendChild(body);
+    list.appendChild(row);
+  });
+
+  // "No thanks" is an answer rather than the absence of one — it is what
+  // stops the step being asked again, and it is offered even where there is
+  // nothing to pick, because saying no is still worth recording.
+  const none = el("label", "obcard");
+  const noneRadio = el("input");
+  noneRadio.type = "radio";
+  noneRadio.name = "obnotify";
+  noneRadio.value = "";
+  noneRadio.checked = !chosen;
+  none.appendChild(noneRadio);
+  const noneBody = el("div", "obcardbody");
+  noneBody.appendChild(el("div", "obcardtitle", "No thanks — don't notify me"));
+  noneBody.appendChild(el("div", "obcardfocus",
+    "Everything still lands on the Findings tab. Nothing reaches your phone."));
+  none.appendChild(noneBody);
+  list.appendChild(none);
+
+  hourOptions($("#obQuietStart"), data.notify_quiet_start != null
+    ? data.notify_quiet_start : stored.notify_quiet_start);
+  hourOptions($("#obQuietEnd"), data.notify_quiet_end != null
+    ? data.notify_quiet_end : stored.notify_quiet_end);
+  // On by default whenever a service is picked, because that is the whole
+  // point of having asked — a stored `false` is somebody's answer and is
+  // kept, which is why the server stores it as an explicit boolean. It
+  // follows the PICK and not just the stored value: on a fresh install
+  // nothing is chosen when this first renders, so a box read once at render
+  // time is a box that is off for everybody who then picks a phone.
+  const brief = data.morning_brief;
+  $("#obBrief").checked = brief == null ? !!chosen : !!brief;
+  obState.briefTouched = brief != null;
+  // The quiet hours and the brief are about a service; with none to pick,
+  // they are boxes that decide nothing.
+  $("#obNotifyOpts").classList.toggle("hidden", !candidates.length);
 }
 
 function renderOnboarding() {
@@ -5168,12 +5324,32 @@ function renderOnboarding() {
   });
 
   const ready = learning.complete && learning.memory_ready;
-  const chose = obState.phase === "choosing" && (obState.recommendations.length || obState.sparse);
+  const chose = obState.phase === "choosing"
+    && (obState.recommendations.length || (obState.shipped || []).length
+        || obState.sparse);
+  // Step 0 comes first and it is RESUMABLE: `onboarding.state()` carries
+  // whether it has been asked, so a browser closed on this screen reopens on
+  // it rather than skipping the one question the rest of the flow assumes an
+  // answer to. The manual block is a state of its own, because refreshing
+  // the flow marks the step answered and would take the lines to paste away
+  // with it.
+  const asked = !!(obState.notify || {}).asked;
+  const manual = !!(obState.notifyManual && obState.notifyManual.length);
+  const step0 = !manual && !asked && !ready && !chose;
+  if (step0) {
+    loadNotifyStep();
+    if (obState.notifyData) renderNotifyStep();
+  }
 
-  $("#obLearn").classList.toggle("hidden", ready || chose);
-  $("#obRecommend").classList.toggle("hidden", !ready || chose);
-  $("#obChoose").classList.toggle("hidden", !chose || obState.sparse);
-  $("#obSparse").classList.toggle("hidden", !chose || !obState.sparse);
+  $("#obNotify").classList.toggle("hidden", !step0 || !obState.notifyData);
+  $("#obManual").classList.toggle("hidden", !manual);
+  $("#obLearn").classList.toggle("hidden", step0 || manual || ready || chose);
+  $("#obRecommend").classList.toggle("hidden",
+    step0 || manual || !ready || chose);
+  $("#obChoose").classList.toggle("hidden",
+    step0 || manual || !chose || obState.sparse);
+  $("#obSparse").classList.toggle("hidden",
+    step0 || manual || !chose || !obState.sparse);
 
   if (learning.complete && !learning.memory_ready) {
     $("#obLearnHint").textContent =
@@ -5201,6 +5377,48 @@ function renderOnboarding() {
     row.appendChild(body);
     list.appendChild(row);
   });
+  $("#obCustomHead").classList.toggle("hidden",
+    !obState.recommendations.length);
+
+  // The shipped half: cards that already exist in the code and that this
+  // house has the entities for. Ticked independently of the custom ones,
+  // because they are a different kind of thing — one set gets CREATED from
+  // what brAIn learned, the other is admitted to this home's set.
+  const shipped = obState.shipped || [];
+  const shipList = $("#obShipped");
+  shipList.textContent = "";
+  shipped.forEach((cat) => {
+    const row = el("label", "obcard");
+    const cb = el("input");
+    cb.type = "checkbox";
+    cb.checked = true;
+    cb.dataset.shipped = cat.id;
+    row.appendChild(cb);
+    const body = el("div", "obcardbody");
+    body.appendChild(el("div", "obcardtitle",
+      `${cat.icon || "✨"}  ${cat.title}`));
+    if (cat.why) body.appendChild(el("div", "obcardwhy", cat.why));
+    body.appendChild(el("div", "obcardfocus", cat.description || ""));
+    row.appendChild(body);
+    shipList.appendChild(row);
+  });
+  $("#obShippedBlock").classList.toggle("hidden", !shipped.length);
+  obChooseNote();
+}
+
+// What Finish will actually leave behind. Sending no shipped ids means NONE
+// of them, and on a fresh install that is an empty Insights tab by design —
+// which is a fine thing to choose and a terrible thing to discover, so the
+// step says it before the button rather than the tab saying it after.
+function obChooseNote() {
+  const note = $("#obChooseNote");
+  if (!note) return;
+  const picked = $("#obChoose").querySelectorAll("input:checked").length;
+  note.textContent = picked
+    ? `${picked} card${picked === 1 ? "" : "s"} will be on your Insights tab. `
+      + "You can add, edit or remove cards any time."
+    : "Nothing is ticked, so your Insights tab will start empty. That is a "
+      + "real choice — you can ask a question or add a card whenever you like.";
 }
 
 function obPoll() {
@@ -5226,12 +5444,80 @@ async function obCall(route, body, btn) {
   }
 }
 
+// Step 0. `writable: false` on the payload is the whole reason there is a
+// second screen after this one: the answers are stored and used, and the
+// add-on's Configuration tab will not show them, so the lines to paste are
+// handed over rather than implied.
+async function obSaveNotify(service, btn) {
+  const body = {
+    service,
+    quiet_start: $("#obQuietStart").value || null,
+    quiet_end: $("#obQuietEnd").value || null,
+    brief: $("#obBrief").checked,
+  };
+  const res = await obCall("api/onboarding/notify", body, btn);
+  if (!res) return;   // obCall has already toasted the sentence a 400 sends
+  obState.notify = { ...(obState.notify || {}), ...res, asked: true };
+  obState.notifyData = null;
+  obState.notifyManual = res.manual || [];
+  if (obState.notifyManual.length) {
+    $("#obManualText").textContent = obState.notifyManual.join("\n");
+  }
+  renderOnboarding();
+}
+
+// The brief follows the pick until somebody touches it, and then it is
+// theirs. Delegated, because the radios are rebuilt on every render — and
+// on `#obNotify` rather than on the list, since the tick box is outside it.
+$("#obNotify").addEventListener("change", (ev) => {
+  const t = ev.target;
+  if (!t) return;
+  if (t.id === "obBrief") { obState.briefTouched = true; return; }
+  if (t.name === "obnotify" && !obState.briefTouched) {
+    $("#obBrief").checked = !!t.value;
+  }
+});
+
+$("#obNotifySave").addEventListener("click", (ev) => {
+  const picked = $("#obNotifyList").querySelector("input:checked");
+  obSaveNotify(picked ? picked.value : "", ev.target);
+});
+
+// Skip is an answer too — it records that the step was asked, so a flow
+// resumed tomorrow does not open on a question somebody has already
+// declined. A server that will not take it must not trap the flow either,
+// so the step stands down locally whatever happened.
+$("#obNotifySkip").addEventListener("click", async (ev) => {
+  await obCall("api/onboarding/notify",
+    { service: "", quiet_start: null, quiet_end: null, brief: false },
+    ev.target);
+  obState.notify = { ...(obState.notify || {}), asked: true };
+  obState.notifyManual = null;
+  renderOnboarding();
+});
+
+$("#obManualCopy").addEventListener("click", () =>
+  copyOrSelect((obState.notifyManual || []).join("\n"), "Copied"));
+
+$("#obManualNext").addEventListener("click", () => {
+  obState.notifyManual = null;
+  renderOnboarding();
+});
+
 $("#obStart").addEventListener("click", async (ev) => {
   const res = await obCall("api/onboarding/learn", undefined, ev.target);
   if (!res) return;
-  toast(res.queued.length
+  // The syllabus takes the better part of half an hour, and for the whole of
+  // it the Insights tab used to say nothing at all — indistinguishable, on a
+  // first install, from an add-on that does not work. One card is already
+  // generating, so say that rather than leaving somebody to find an empty
+  // tab and draw the obvious conclusion.
+  const first = res.first_card
+    ? " Your first card is being written now — it'll be on the Insights tab."
+    : "";
+  toast((res.queued.length
     ? `Studying ${res.queued.length} topic(s) — this runs in the background`
-    : "Already studied — checking what it found");
+    : "Already studied — checking what it found") + first);
   await refreshOnboarding();
   obPoll();
 });
@@ -5245,15 +5531,32 @@ $("#obGo").addEventListener("click", async (ev) => {
   renderOnboarding();
 });
 
+// Two lists, one press. `shipped` is sent explicitly on every accept, so an
+// empty array really does mean none of them — the server reads a missing key
+// the same way, and the note above the button has already said what that
+// leaves behind.
 $("#obAccept").addEventListener("click", async (ev) => {
   const picked = Array.from($("#obList").querySelectorAll("input:checked"))
     .map((cb) => Number(cb.dataset.index));
-  const res = await obCall("api/onboarding/accept", { accept: picked }, ev.target);
+  const shipped = Array.from($("#obShipped").querySelectorAll("input:checked"))
+    .map((cb) => cb.dataset.shipped);
+  const res = await obCall("api/onboarding/accept",
+    { accept: picked, shipped }, ev.target);
   if (!res) return;
   obState.onboarded = true;
-  toast(picked.length ? `Created ${picked.length} card(s)` : "Done — no cards created");
+  const total = picked.length + shipped.length;
+  toast(total
+    ? `${total} card${total === 1 ? "" : "s"} on your Insights tab`
+    : "Done — your Insights tab starts empty");
   await Promise.all([refreshStatus(), refreshInsights()]);
   render();
+});
+
+// The note counts what is ticked across both lists, so it has to be
+// recomputed as they are ticked — delegated, because the rows are rebuilt on
+// every render.
+$("#obChoose").addEventListener("change", (ev) => {
+  if (ev.target && ev.target.type === "checkbox") obChooseNote();
 });
 
 const obFinish = async (ev) => {
