@@ -120,10 +120,6 @@ import baselines
 import brief
 import capture
 import card_tags
-# For the prompt preview, which reports the size of every block a run
-# is sent: the contract and the previous-run renderer live there, and a
-# second copy of either here would be a preview of something else.
-import categories
 import chat_session
 import closures
 import checks
@@ -168,7 +164,15 @@ import undo_store
 import usage_store
 import user_categories
 import weekly
-from categories import (ANALYST_SYSTEM, CATEGORIES, SYSTEM_PROMPT, build_orientation_prompt,
+# `_CARD_CONTRACT` and `_previous_block` are reached into deliberately, by
+# the prompt preview, which reports the size of every block a run is sent:
+# a second copy of the contract or of the previous-run renderer here would
+# make the preview a picture of something other than what is sent. Same
+# statement as the public names rather than a bare `import categories`
+# beside it — one module imported two ways is a CodeQL alert and, more to
+# the point, two spellings of one dependency.
+from categories import (ANALYST_SYSTEM, CATEGORIES, SYSTEM_PROMPT, _CARD_CONTRACT,
+                        _previous_block, build_orientation_prompt,
                         build_prompt, get_category, house_block, memory_excerpt,
                         stores_for)
 
@@ -3553,9 +3557,9 @@ async def _prompt_preview(cat: dict, mode: str) -> dict:
         {"name": "The work list", "chars": len(framing["findings"] or ""),
          "what": "What is already filed, and what you marked Wrong and why."},
         {"name": "Last run of this card",
-         "chars": len(categories._previous_block(previous)) if previous else 0,
+         "chars": len(_previous_block(previous)) if previous else 0,
          "what": "So it advances the story instead of regenerating it."},
-        {"name": "Output contract", "chars": len(categories._CARD_CONTRACT),
+        {"name": "Output contract", "chars": len(_CARD_CONTRACT),
          "what": "The card's shape, the design system, the analysis rules. "
                  "Shared by both paths so they cannot drift."},
     ]
@@ -3607,11 +3611,23 @@ async def h_prompt_preview(request: web.Request) -> web.Response:
     try:
         return web.json_response(await _prompt_preview(cat, mode))
     except Exception as exc:  # noqa: BLE001 — a preview that cannot reach
-        # Core is a sentence, not a 500: the blocks it CAN show are still
-        # most of the answer, and the one it cannot is named.
-        log.warning("could not preview the prompt for %s: %s", cat_id, exc)
+        # Core is a sentence, not a 500.
+        #
+        # The sentence carries no exception text and the log line carries
+        # no path parameter, and both are CodeQL findings this route
+        # shipped with. The response one is real: everything else here
+        # fails with a message somebody typed, and an exception's `str`
+        # is the one string on this path that can carry a traceback's
+        # contents out to a browser. The log one is defence in depth —
+        # `cat_id` has already matched a real category by this line, so
+        # it cannot be arbitrary — but `cat["id"]` is the canonical id
+        # rather than whatever spelling arrived in the URL, which is the
+        # better thing to log regardless of who is reading it.
+        log.warning("could not preview the prompt for %s: %s", cat["id"], exc)
         raise web.HTTPBadGateway(
-            text=f"Could not build the preview: {exc}") from exc
+            text="Could not build the preview — brAIn could not reach Home "
+                 "Assistant for the data this card would be sent. The "
+                 "add-on log says which call failed.") from exc
 
 
 async def h_prompt_put(request: web.Request) -> web.Response:

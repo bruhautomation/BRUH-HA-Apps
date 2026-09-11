@@ -20,6 +20,7 @@ code does.
 from __future__ import annotations
 
 import datetime as dt
+import inspect
 import re
 import sys
 import unittest
@@ -167,10 +168,17 @@ class TestWhatActuallyReachesTheWire(unittest.IsolatedAsyncioTestCase):
 
         Neither was greppable, because the defect is the argument that is
         NOT there. Making it required is what turns it into a TypeError
-        at the call site instead.
+        at the call site instead — which is also what lets CodeQL's
+        wrong-arity rule find a caller that forgets, and why this asserts
+        the SIGNATURE rather than provoking the error: a deliberate bad
+        call written here is itself that alert, on a line whose whole
+        point is that the bad call is impossible to write by accident.
         """
-        with self.assertRaises(TypeError):
-            ha_data.history_params(["light.hall"])
+        end = inspect.signature(ha_data.history_params).parameters["end"]
+        self.assertIs(end.default, inspect.Parameter.empty,
+                      "a default on `end` is Core's start+1day trap, back")
+        self.assertIn(end.kind, (inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                                 inspect.Parameter.POSITIONAL_ONLY))
 
     async def test_the_path_is_the_period_and_nothing_else(self):
         seen = await self.fetch(ids=["light.hall"])
