@@ -2323,13 +2323,35 @@ function diagCounts(byOutcome) {
   return entries.map(([word, n]) => `${n} ${esc(word)}`).join(" · ");
 }
 
+// Everything wrong right now, at the top of the dialog and at the top of
+// the report — one list, one derivation, from the payload the server
+// already assembles. Reading a fault used to mean knowing which of a
+// dozen sections it would be in, which is the same reason the report
+// grew this section: the facts were all there and none was findable.
+function faultRows(d) {
+  const rows = (d && d.faults) || [];
+  if (!rows.length) {
+    return [diagRow("Anything wrong?",
+      "Nothing — every check ran, every daemon is up, no run failed in the "
+      + "last day and the health verdict is ok.")];
+  }
+  const out = [diagRow("Anything wrong?",
+    `${rows.length} thing${rows.length > 1 ? "s" : ""} to look at`, true)];
+  rows.forEach((r) => out.push(diagRow(
+    r.where || "?",
+    esc(r.what || "")
+    + (r.detail ? ` <span class="hint">${esc(r.detail)}</span>` : ""),
+    true, true)));
+  return out;
+}
+
 function renderDiagnostics(d) {
   diagPayload = d;
   const j = d.journal || {};
   const c = d.checks || {};
   const ok = (j.by_outcome || {}).ok || 0;
   const failures = j.failures || [];
-  const rows = [];
+  const rows = faultRows(d);
   // The verdict first, because it is the one line somebody who is not
   // debugging should have to read. Everything below it is the evidence.
   const h = d.health || {};
@@ -2545,6 +2567,9 @@ async function loadDiagnostics() {
     diagPayload = null;
     $("#diagBody").textContent = "Could not read diagnostics: " + e.message;
   }
+  // The nightly pass may be running right now, in which case the button
+  // has to say so rather than offer a press that answers 409.
+  measureState(false);
 }
 
 // "Copy for a bug report" writes a report file first and copies THAT: the
@@ -2573,6 +2598,57 @@ $("#diagCopy").addEventListener("click", async () => {
   }
 });
 $("#diagRefresh").addEventListener("click", () => { loadDiagnostics(); loadReports(); });
+
+// A measurement pass, asked for rather than waited for. Every store on the
+// rows above is written by one nightly pass, so a fix to any of them was
+// invisible for up to a day and could not be checked at all — the route to
+// start one has existed since the loop did and had no caller anywhere, which
+// is the "a button that exists only in prose" rule with the button missing
+// instead of the prose. The pass takes minutes, so this starts it and reads
+// the outcome back off `/api/baselines` rather than holding a request open.
+let measurePoll = null;
+
+async function measureState(poll) {
+  try {
+    const d = await api("api/baselines");
+    const btn = $("#diagMeasure");
+    btn.disabled = !!d.running;
+    btn.textContent = d.running
+      ? "Measuring the house…" : "Measure the house now";
+    clearTimeout(measurePoll);
+    measurePoll = d.running && poll
+      ? setTimeout(() => measureState(true), 5000) : null;
+    if (!d.running && poll) {
+      // Finished: the rows above are what the press was about, so they
+      // have to be the thing that changes on screen when it lands.
+      loadDiagnostics();
+      const last = d.last || {};
+      toast(last.error
+        ? `Measured, with something missing — ${last.error}`
+        : `Measured: ${last.measured || 0} sensors, ${last.closures || 0} doors `
+          + `and windows, ${last.appliances || 0} machines, ${last.rooms || 0} rooms`);
+    }
+  } catch (e) {
+    clearTimeout(measurePoll);
+    measurePoll = null;
+    $("#diagMeasure").disabled = false;
+  }
+}
+
+$("#diagMeasure").addEventListener("click", async () => {
+  const btn = $("#diagMeasure");
+  btn.disabled = true;
+  btn.textContent = "Measuring the house…";
+  try {
+    // A 409 means one is already going, which is an answer rather than an
+    // error: both presses are watching the same pass.
+    await api("api/baselines/run", { method: "POST" });
+    toast("Measuring — this reads a month of statistics and takes a few minutes");
+  } catch (e) {
+    toast(e.message);
+  }
+  measureState(true);
+});
 
 // ------------------------------------------------------------ problem reports
 // One row per file under /share/brain/reports, newest first, with a
@@ -2890,6 +2966,14 @@ function renderRehearsal(d) {
               ? ` (${esc(a.searched_error)})` : ""}</span>`
           : "")
       : `did not run — ${esc(a.error || "unknown")}`, !a.ran));
+    // What an earlier run left behind, and what this one had to take out
+    // before it could start. Silent on a clean house — but never silent
+    // when it removed something, because that line is the only evidence
+    // a previous rehearsal failed to clean up.
+    const swept = last.swept || {};
+    if (swept.sentence) {
+      rows.push(diagRow("Before starting", esc(swept.sentence), !swept.ran));
+    }
     rows.push(diagRow("Cleanup", esc(clean.sentence || "?"), !clean.ok));
     if (last.error) rows.push(diagRow("Error", esc(last.error), true));
   }
@@ -3408,8 +3492,14 @@ async function findAction(finding, verb, done, btns, note) {
 // nothing changes and the row stays exactly as it was. "I could not look"
 // and "it went away" are different claims and only the second may take a
 // row off the list — `clear_resolved`'s rule, reached by a press.
-async function recheckFinding(f, btns) {
+async function recheckFinding(f, btns, button) {
   btns.forEach((b) => { b.disabled = true; });
+  // A checks pass is seconds, not milliseconds — long enough that a row
+  // of greyed-out buttons is the only thing on screen and reads as
+  // nothing happening. The control that was pressed says what it is
+  // doing, which is the one place somebody is already looking.
+  const was = button ? button.textContent : "";
+  if (button) button.textContent = "↻  Checking…";
   try {
     const data = await api(`api/finding/${f.ts}/recheck`, { method: "POST" });
     takeFindings(data);
@@ -3428,13 +3518,18 @@ async function recheckFinding(f, btns) {
         : "Gone — that check doesn't see it any more");
       return;
     }
+    // "Still there" is the commonest answer and the one that has to say
+    // what it checked: the card now carries `confirmed just now`, so the
+    // toast names the check rather than repeating the row.
     toast(data.created
       ? "Still there, and the check found something new as well"
-      : "Still there, as of just now");
+      : `Still there — ${esc(f.source_title || "that check")} looked again `
+        + "just now and reported it");
   } catch (e) {
     toast(e.message);
   } finally {
     btns.forEach((b) => { b.disabled = false; });
+    if (button) button.textContent = was;
   }
 }
 
@@ -3569,6 +3664,15 @@ function makeFinding(f) {
   line.appendChild(el("span", "findsev", FIND_SEVERITY[f.severity] || "Degraded"));
   line.appendChild(el("span", "findstate", meta.label));
   if (f.source_title) line.appendChild(el("span", "findsrc", f.source_title));
+  // What "Check again" leaves behind. A toast is gone in four seconds, so
+  // the commonest answer — it is still there — used to leave the card
+  // looking untouched and the press reading as a no-op. This is also the
+  // more useful claim: not that a button was pressed, but that this was
+  // true a minute ago, which a row filed on Tuesday cannot say.
+  if (f.checked_at) {
+    line.appendChild(el("span", "findchecked", "confirmed "
+      + timeAgo(new Date(f.checked_at * 1000).toISOString())));
+  }
   card.appendChild(line);
   card.appendChild(el("h3", "findtitle", f.text));
 
@@ -3644,7 +3748,7 @@ function makeFinding(f) {
       const again = add(el("button", "btn small", "↻  Check again"));
       tip(again, "Run the check that found this, now — it clears itself if "
         + "whatever it saw has passed");
-      again.addEventListener("click", () => recheckFinding(f, btns));
+      again.addEventListener("click", () => recheckFinding(f, btns, again));
     }
 
     // Talk about it before deciding. The discussion is read-only by

@@ -2914,6 +2914,9 @@ body.term-classic #termMode .ico-out { display: block; }
 .st-failed .findstate, .st-needsyou .findstate { color: var(--serious); }
 /* Where it came from is context, not status — the quietest thing in the row. */
 .findsrc { color: var(--ink-3); font-weight: 600; opacity: 0.75; }
+/* What "Check again" left behind. Quieter than the source chip beside it:
+   it is a fact about freshness, not about what the row is. */
+.findchecked { color: var(--ink-3); opacity: 0.7; }
 
 .finddetail { margin: 9px 0 0; font-size: 13.5px; color: var(--ink-2); }
 

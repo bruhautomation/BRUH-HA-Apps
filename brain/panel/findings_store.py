@@ -290,6 +290,12 @@ def _shape(entry: dict) -> dict:
         # to leave the finding exactly as open as it was and just stop it
         # asking. A separate field is the only way to keep those apart.
         "snoozed_until": int(entry.get("snoozed_until") or 0),
+        # When somebody last pressed "Check again" and the check still
+        # reported it. Written only by that press, never by the scheduled
+        # pass: the schedule confirms every open row every few hours and a
+        # stamp that moved on its own would say "checked just now" about a
+        # row nobody has looked at, which is the one claim this is for.
+        "checked_at": int(entry.get("checked_at") or 0),
     }
 
 
@@ -879,6 +885,39 @@ def refresh_details(objs: list[dict]) -> int:
                 or cur.get("severity") != entry["severity"]):
             cur["detail"] = entry["detail"]
             cur["severity"] = entry["severity"]
+            changed += 1
+    if changed:
+        _write(items)
+    return changed
+
+
+@_mutates
+def mark_checked(texts, when: float | None = None) -> int:
+    """Stamp `checked_at` on the live rows a re-check just re-reported.
+
+    "Check again" had exactly one visible outcome when the answer was
+    *still there*: a toast, which is gone in four seconds and leaves the
+    card looking untouched — so the press read as having done nothing,
+    which is what was reported. The row itself has to carry it, because
+    the useful fact is not that a button was pressed but that **this
+    problem was true a minute ago**, which is a different claim from a
+    row filed on Tuesday and never looked at since.
+
+    Only that press writes it. A scheduled pass re-confirms every open
+    row every few hours, so stamping there would put "checked just now"
+    under a card nobody has looked at and the line would stop meaning
+    anything — the same reason `clear_resolved` writes no memory line.
+    """
+    when = time.time() if when is None else when
+    wanted = {normalize(t) for t in texts if normalize(t)}
+    if not wanted:
+        return 0
+    items = _load()
+    changed = 0
+    for entry in items:
+        if (normalize(entry.get("text", "")) in wanted
+                and entry.get("status") in CLEARABLE):
+            entry["checked_at"] = int(when)
             changed += 1
     if changed:
         _write(items)

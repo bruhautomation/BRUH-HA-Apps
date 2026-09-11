@@ -15,6 +15,42 @@ BATTERY_LOW_PCT = 15
 BATTERY_SILENT_DAYS = 7
 FROZEN_DAYS = 7
 FROZEN_MIN_DAYS = 5
+# **A sensor with no `device_class` is not making a measurement claim, and
+# that is where every false frozen row came from.** The scorecard read 0
+# confirmed against 6 marked Wrong with ten more filed in the same pass —
+# the tab saying this rule is wrong about this house, which is exactly what
+# `dev.implausible` looked like before the hot-sensor gate, and the same
+# failure the check catalog opens by naming.
+#
+# `state_class: measurement` is already required (the snapshot only fetches
+# statistics for those), and it is not enough: an integration sets it on a
+# great many numbers that are not measurements of anything that varies — a
+# fixed tariff, a rated capacity, a configured current limit, a nameplate
+# figure, a count of devices on a hub, a vendor index. Each of those reads
+# exactly one value for a week because that is what it IS, and "a real
+# sensor moves" is a true sentence about the wrong kind of number.
+#
+# What those have in common is that nothing declares what kind of quantity
+# they are. A stuck thermometer carries `temperature`, a stuck plug carries
+# `power`, a stuck barometer carries `pressure` — every case this check is
+# for names its own class — so requiring one keeps the whole point and
+# drops the rest. It is a guess made in the direction where being wrong is
+# cheap, which is `measures_something_hot`'s trade: a missed stuck sensor
+# costs one finding nobody got, a false one costs the list.
+#
+# `monetary` is named as well because a fixed tariff carries it and sits
+# still for years, and `aqi`/`enum` because neither is a continuous
+# quantity. `battery` and `signal_strength` were already out.
+FROZEN_SKIP_CLASSES = frozenset({
+    "battery", "signal_strength", "monetary", "enum", "aqi",
+    "timestamp", "date",
+})
+# And a cap, for `base.unusual`'s reason. More than a handful of sensors
+# frozen at once is not a house with a handful of broken sensors — it is
+# this rule having stopped describing the house (a recorder purge, an
+# integration reloaded, a statistics backfill), and fifty rows would be
+# reporting the measurement rather than the home.
+FROZEN_MAX_ROWS = 5
 # A Zigbee device quieter than this has dropped off the mesh. Sleepy
 # sensors check in daily at the very least; a week is not a long sleep.
 ZIGBEE_SILENT_DAYS = 7
@@ -338,9 +374,13 @@ def frozen(snap: dict, now: float) -> list[dict]:
         if st.get("state") in ("unavailable", "unknown"):
             continue
         attrs = st.get("attributes") or {}
-        # Batteries sit at 100 for weeks and signal strength sits wherever
-        # the router is. Neither is a stuck sensor.
-        if attrs.get("device_class") in ("battery", "signal_strength"):
+        # A sensor that does not say what it measures is not one this can
+        # claim should have moved: see FROZEN_SKIP_CLASSES. Batteries sit
+        # at 100 for weeks, signal strength sits wherever the router is,
+        # and a fixed tariff sits still for years — none is a stuck
+        # sensor, and nor is a rated capacity or a device count.
+        device_class = str(attrs.get("device_class") or "")
+        if not device_class or device_class in FROZEN_SKIP_CLASSES:
             continue
         days = [r for r in rows if isinstance(r, dict)
                 and r.get("min") is not None and r.get("max") is not None]
@@ -365,7 +405,10 @@ def frozen(snap: dict, now: float) -> list[dict]:
             "fixable": False,
             "entity_id": eid,
         })
-    return out
+    # Past the cap this says nothing at all, rather than saying it more
+    # quietly: a dozen at once is a fact about the statistics rather than
+    # about the sensors.
+    return [] if len(out) > FROZEN_MAX_ROWS else out
 
 
 # ---------------------------------------------------------------------------

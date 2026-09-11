@@ -419,3 +419,86 @@ class TestTheWindowItActuallyAsksFor(unittest.IsolatedAsyncioTestCase):
             self.client.session, ["binary_sensor.back"], start, end)
         asked = (dt.datetime.fromisoformat(self.seen[0]["end_time"]) - start)
         self.assertGreater(asked.days, 20)
+
+
+class TestTheStoreThatComesOutOfARealFetch(unittest.IsolatedAsyncioTestCase):
+    """The half the window test could not answer: does a pass MEASURE?
+
+    `TestTheWindowItActuallyAsksFor` proves the right span goes out on
+    the wire and serves `[]` back, which says nothing about whether what
+    Core really answers with turns into a store. That mattered, because
+    the field report after the fix shipped still read `0 of 18` — and the
+    reason was that the nightly pass had not come round since the
+    upgrade, not that anything was still broken. Nothing in the suite
+    could tell those apart, and neither could anybody reading the panel.
+
+    So this serves Core's own `minimal_response` shape — the first row a
+    full state carrying `entity_id`, the rest `{state, last_changed}` —
+    over a real aiohttp server, and asserts the store is not empty.
+    """
+
+    async def asyncSetUp(self):
+        import ha_data
+        from aiohttp import web
+        from aiohttp.test_utils import TestClient, TestServer
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = str(Path(self.tmp.name) / "closures.json")
+
+        def history(eid: str) -> list:
+            """A fortnight of a door opened twice a day for ten minutes."""
+            rows = [{"entity_id": eid, "state": "off",
+                     "last_changed": dt.datetime.fromtimestamp(
+                         NOW - 14 * 86400, tz=UTC).isoformat()}]
+            for day in range(14):
+                for hour in (8, 18):
+                    at = NOW - (14 - day) * 86400 + hour * 3600
+                    rows.append({"state": "on",
+                                 "last_changed": dt.datetime.fromtimestamp(
+                                     at, tz=UTC).isoformat()})
+                    rows.append({"state": "off",
+                                 "last_changed": dt.datetime.fromtimestamp(
+                                     at + 600, tz=UTC).isoformat()})
+            return rows
+
+        async def handler(request):
+            ids = (request.query.get("filter_entity_id") or "").split(",")
+            return web.json_response([history(e) for e in ids if e])
+
+        app = web.Application()
+        app.router.add_get("/history/period/{stamp}", handler)
+        self.server = TestServer(app)
+        self.client = TestClient(self.server)
+        await self.client.start_server()
+        self.addAsyncCleanup(self.client.close)
+        self._core = ha_data.CORE_API
+        ha_data.CORE_API = str(self.server.make_url("")).rstrip("/")
+        self.addCleanup(setattr, ha_data, "CORE_API", self._core)
+
+    async def test_a_pass_over_a_real_answer_measures_the_doors(self):
+        states = {f"binary_sensor.door_{i}": {
+            "state": "off", "attributes": {"device_class": "door",
+                                           "friendly_name": f"Door {i}"}}
+            for i in range(3)}
+        payload = await closures.build(self.client.session, states, NOW,
+                                       self.path)
+        self.assertEqual(payload["asked"], 3)
+        self.assertEqual(len(payload["entities"]), 3,
+                         "a store with `asked` set and no entities is exactly "
+                         "what `0 of 18` looked like")
+        one = payload["entities"]["binary_sensor.door_0"]
+        self.assertGreaterEqual(len(one["buckets"]), closures.MIN_BUCKETS)
+        self.assertGreater(one["overall"], 0.0)
+
+    async def test_the_check_can_then_read_it(self):
+        """Measured and unusable is the same silence as not measured."""
+        states = {"binary_sensor.door_0": {
+            "state": "off", "attributes": {"device_class": "door"}}}
+        payload = await closures.build(self.client.session, states, NOW,
+                                       self.path)
+        entry = payload["entities"]["binary_sensor.door_0"]
+        # 08:00 is a bucket the fixture opens the door in; 03:00 is not.
+        busy = hw(dt.datetime.fromtimestamp(NOW - 86400, tz=UTC).replace(
+            hour=8, minute=0, second=0, microsecond=0))
+        self.assertIsNotNone(closures.usual_open(entry, busy))

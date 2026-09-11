@@ -2107,6 +2107,56 @@ class TestCheckAgain(ServerCase):
         self._post(f["ts"])
         self.assertFalse(findings_store.is_known("The hall sensor is unavailable"))
 
+    def test_a_row_that_is_still_there_says_when_it_was_confirmed(self):
+        """The reported bug: the press had no visible effect at all.
+
+        "Still there" is the commonest answer, and its whole record was a
+        toast — four seconds, then a card looking exactly as it did
+        before. The row carries the stamp now, and the useful claim is
+        not that a button was pressed but that this was true a minute
+        ago, which a row filed on Tuesday cannot make.
+        """
+        f = self._plant()
+        self.assertEqual(f.get("checked_at", 0), 0)
+        self._answers([{"text": f["text"], "detail": "since 11 Sep",
+                        "severity": "serious",
+                        "source": "check:dev.unavailable"}])
+        status, data = self._post(f["ts"])
+        self.assertEqual(status, 200)
+        self.assertFalse(data["cleared"])
+        row = findings_store.list_all()[0]
+        self.assertGreater(row["checked_at"], 0)
+        self.assertAlmostEqual(row["checked_at"], time.time(), delta=60)
+        # And it reaches the panel, which is the whole point.
+        served = [r for r in data["findings"] if r["ts"] == f["ts"]][0]
+        self.assertEqual(served["checked_at"], row["checked_at"])
+
+    def test_the_scheduled_pass_does_not_stamp_it(self):
+        """Otherwise every open row says "confirmed just now" for ever.
+
+        The schedule re-confirms every open finding every few hours, so a
+        stamp written there would be under a card nobody has looked at —
+        and the line stops meaning anything the moment it is true of
+        everything.
+        """
+        f = self._plant()
+        findings_store.refresh_details([{
+            "text": f["text"], "detail": "since 11 Sep", "severity": "serious",
+            "source": "check:dev.unavailable"}])
+        findings_store.add_many([{
+            "text": f["text"], "detail": "since 11 Sep", "severity": "serious",
+            "source": "check:dev.unavailable"}])
+        self.assertEqual(findings_store.list_all()[0].get("checked_at", 0), 0)
+
+    def test_a_check_that_could_not_look_stamps_nothing(self):
+        """"I could not look" must not read as "confirmed just now"."""
+        f = self._plant()
+        self._answers([], ran=False, skipped={"dev.unavailable": "no registry"})
+        status, data = self._post(f["ts"])
+        self.assertEqual(status, 200)
+        self.assertFalse(data["checked"])
+        self.assertEqual(findings_store.list_all()[0].get("checked_at", 0), 0)
+
     def test_a_problem_that_is_still_there_stays_with_a_fresh_detail(self):
         f = self._plant()
         self._answers([{"text": "The hall sensor is unavailable",

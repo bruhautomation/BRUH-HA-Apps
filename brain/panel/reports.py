@@ -206,6 +206,13 @@ def abridge(diagnostics) -> dict:
             return {"error": f"diagnostics unavailable: {exc}"}
     if not isinstance(diagnostics, dict):
         return {}
+    if diagnostics.get("error") and len(diagnostics) == 1:
+        # The payload could not be built — `compose` resolves the callable
+        # once and puts the reason here, so this is the shape that arrives
+        # when it failed. Carried through rather than flattened into a
+        # page of nulls, which is what a report reading "state: null,
+        # runs: null" would have been.
+        return {"error": str(diagnostics["error"])[:300]}
     j = diagnostics.get("journal") or {}
     checks = diagnostics.get("checks") or {}
     health = diagnostics.get("health") or {}
@@ -223,7 +230,294 @@ def abridge(diagnostics) -> dict:
         "auth": {k: auth.get(k) for k in ("state", "checked_at", "error")},
         "daemons": {k: bool((v or {}).get("running")) if isinstance(v, dict) else v
                     for k, v in (diagnostics.get("daemons") or {}).items()},
+        # The same rows the prose section above renders — one derivation,
+        # so a person and a machine reading the same file cannot disagree
+        # about what is wrong with this install.
+        "faults": faults(diagnostics),
     }
+
+
+# ---------------------------------------------------------------------------
+# Everything that is wrong right now
+# ---------------------------------------------------------------------------
+
+# How many of any one repeated fault to name before saying how many more.
+FAULTS_PER_KIND = 6
+# Total cap on the section. Past this the report says how many it left out
+# rather than becoming the thing nobody reads — the same trade every other
+# capped list here makes.
+MAX_FAULTS = 40
+# A producer needs this many endings before "wrong more often than right"
+# is a claim about the rule rather than an anecdote. `findings_store`'s own
+# floor, restated here rather than imported because this module may not
+# import the panel.
+SCORE_MIN_ENDINGS = 4
+
+
+def faults(diagnostics) -> list[dict]:
+    """Every fault the diagnostics payload can see, as flat rows.
+
+    **A report whose faults are buried is a report nobody reads.** What
+    shipped opened with *"Nothing failed to produce this file"* and then
+    six hundred lines of JSON, and the install that prompted this carried
+    seven distinct faults inside it — a rehearsal that could not clean up,
+    a usage credential refused for a reason nothing recognised, a
+    notification that would not deliver, a deep check that had failed, a
+    check that could not look, two measurement stores reading zero, and a
+    house check the homeowner had marked Wrong six times out of six.
+    Every one of them was in the file. None of them was *findable*.
+
+    So this is the sweep, and it is deliberately exhaustive rather than
+    clever: every surface the payload carries that can say something went
+    wrong is read here, in one pass, and the rows go at the TOP of the
+    report. Three rules.
+
+    **It is pure over what it is handed.** No imports of the panel, no
+    fetches, no clock beyond the payload's own stamps — so it runs when
+    the panel is down, which is exactly when a report is most wanted, and
+    `brain report`'s own assembled payload goes through the same function
+    the live one does.
+
+    **A refusal doing its job is not a fault.** `heal_skipped`, a
+    `denied` run, a producer standing down because it could not read a
+    file, a shadow check finding nothing — none of those is something
+    broken, and a section that listed them would be a section people
+    learn to skim. What IS listed is every claim of the form *this did
+    not work*, *this could not look*, or *this is wrong about my house*.
+
+    **It never raises.** It is called from the writer, and a fault sweep
+    that took down the report it was summarising is worse than no sweep —
+    `file_incident`'s rule, one function over. A section that could not
+    be derived says so as its own row.
+    """
+    try:
+        return _faults(diagnostics)
+    except Exception as exc:  # noqa: BLE001 — see the docstring
+        return [{"where": "this report",
+                 "what": "brAIn could not work out what is wrong",
+                 "detail": f"{type(exc).__name__}: {exc}"[:200]}]
+
+
+def _row(out: list, where: str, what: str, detail: str = "") -> None:
+    if what:
+        out.append({"where": where, "what": str(what)[:200],
+                    "detail": str(detail or "")[:400]})
+
+
+def _faults(diag) -> list[dict]:
+    if callable(diag):
+        try:
+            diag = diag()
+        except Exception as exc:  # noqa: BLE001
+            return [{"where": "diagnostics", "what": "could not be read",
+                     "detail": f"{type(exc).__name__}: {exc}"[:200]}]
+    if not isinstance(diag, dict):
+        return []
+    out: list[dict] = []
+    if diag.get("error") and len(diag) == 1:
+        _row(out, "Diagnostics", "could not be read", diag["error"])
+        return out
+
+    # The verdict first: it is the one thing derived from everything else,
+    # and it names the switch rather than the symptom.
+    health = diag.get("health") or {}
+    if str(health.get("state") or "ok") != "ok":
+        for problem in (health.get("problems") or []):
+            if isinstance(problem, dict):
+                _row(out, "Health", problem.get("what"), problem.get("fix"))
+        if not (health.get("problems") or []):
+            _row(out, "Health", health.get("reason"), health.get("fix"))
+
+    # Runs that failed. The journal is the one place every Claude run, checks
+    # pass, baseline build and overnight heal already passes through.
+    journal = diag.get("journal") or {}
+    failures = [f for f in (journal.get("failures") or []) if isinstance(f, dict)]
+    for row in failures[:FAULTS_PER_KIND]:
+        stage = (row.get("extra") or {}).get("stage") if isinstance(
+            row.get("extra"), dict) else ""
+        where = str(row.get("source") or "a run")
+        _row(out, f"Run ({where}{f' · {stage}' if stage else ''})",
+             f"ended {row.get('outcome') or 'badly'}", row.get("error"))
+    if len(failures) > FAULTS_PER_KIND:
+        _row(out, "Runs", f"{len(failures) - FAULTS_PER_KIND} more failed runs "
+                          "in the last day", "see the journal below")
+
+    # Authentication, and the usage tracker's own verdict — different
+    # questions, and a 403 on the second says nothing about the first.
+    auth = diag.get("auth") or {}
+    if str(auth.get("state") or "ok") not in ("ok", "unchecked"):
+        _row(out, "Claude sign-in", f"the last check said {auth.get('state')}",
+             auth.get("error"))
+    usage = diag.get("usage") or {}
+    limits = usage.get("limits") if isinstance(usage.get("limits"), dict) else {}
+    if limits.get("code"):
+        _row(out, "Usage figures",
+             f"the tracker last answered {limits.get('code')}",
+             limits.get("detail"))
+    elif usage.get("source") and usage.get("source") != "account":
+        _row(out, "Usage figures",
+             "the pill is showing brAIn's own estimate, not the account's",
+             f"source: {usage.get('source')}")
+
+    # Checks that could not look. "I could not look" and "it went away" are
+    # different claims, and only the first belongs here.
+    checks = diag.get("checks") or {}
+    for cid, why in sorted((checks.get("skipped") or {}).items())[:FAULTS_PER_KIND]:
+        _row(out, f"Check {cid}", "could not run", why)
+    for cid, why in sorted((checks.get("errors") or {}).items())[:FAULTS_PER_KIND]:
+        _row(out, f"Check {cid}", "raised while running", why)
+    if checks.get("error"):
+        _row(out, "House checks", "the pass itself failed", checks.get("error"))
+    for key, why in sorted((checks.get("snapshot_errors") or {}).items()):
+        _row(out, f"Snapshot ({key})", "could not be fetched", why)
+
+    # The measurement stores. A store that measured nothing of what it
+    # asked about is the shape the doors-and-windows bug wore for the life
+    # of the feature, and nothing anywhere said so.
+    for key, label, unit in (("baselines", "Baselines", "sensors"),
+                             ("closures", "Doors and windows", "closures"),
+                             ("appliances", "Machines", "power sensors"),
+                             ("thermal", "Rooms", "rooms")):
+        store = diag.get(key)
+        if not isinstance(store, dict):
+            continue
+        if store.get("error") or store.get("reason"):
+            _row(out, label, "could not be measured",
+                 store.get("error") or store.get("reason"))
+            continue
+        asked = store.get("asked")
+        measured = store.get("measured")
+        if isinstance(asked, int) and asked > 0 and measured == 0:
+            _row(out, label, f"measured 0 of {asked} {unit}",
+                 "the store is empty, so every check that reads it is "
+                 "silent — which looks exactly like a house with nothing "
+                 "wrong in it")
+        if store.get("stale"):
+            _row(out, label, "has gone stale",
+                 "the nightly pass has not written it recently")
+
+    # The rehearsal and the deep check: both are opt-in and both leave a
+    # verdict nothing else reports.
+    reh = diag.get("rehearsal") or {}
+    if reh.get("ran_at"):
+        if not reh.get("cleanup_ok"):
+            _row(out, "Rehearsal", "left something behind",
+                 "a `brain_test_*` automation, entity or helper is still in "
+                 "the house — `brain doctor` names it")
+        if reh.get("swept"):
+            _row(out, "Rehearsal", "had to clear up after an earlier run",
+                 "took out: " + ", ".join(str(x) for x in reh["swept"][:8]))
+        counts = reh.get("checks") or {}
+        planted = counts.get("planted") or 0
+        if planted and (counts.get("found") or 0) < planted:
+            _row(out, "Rehearsal",
+                 f"the checks found {counts.get('found') or 0} of {planted} "
+                 "planted defects",
+                 "a check that misses a defect planted on THIS house is the "
+                 "thing the rehearsal exists to find")
+        if counts.get("extra"):
+            _row(out, "Rehearsal",
+                 f"{counts['extra']} rows reported that were not planted")
+    deep = diag.get("doctor_deep") or {}
+    if deep.get("verdict") and deep.get("verdict") != "ok":
+        _row(out, "Deep check", f"last run {deep.get('verdict')}",
+             f"it stopped at the {deep.get('failed_stage') or 'unknown'} stage")
+
+    # Notifications: the one failure whose only symptom is silence.
+    notify = diag.get("notify") or {}
+    failed = notify.get("error") or notify.get("last_error")
+    if failed:
+        _row(out, "Notifications",
+             "the last message brAIn tried to send did not go"
+             + (f" ({notify['last_service']})" if notify.get("last_service")
+                else ""),
+             failed)
+    if (notify.get("held") or 0) and not notify.get("quiet_now"):
+        _row(out, "Notifications",
+             f"{notify['held']} held and not sent",
+             "quiet hours are over, so the flush should have emptied this")
+    for key, label in (("rhythm", "Morning brief"), ("weekly", "Weekly report")):
+        part = diag.get(key) or {}
+        err = part.get("brief_last_error") or part.get("last_error")
+        if err:
+            _row(out, label, "did not go out", err)
+
+    # Producers the homeowner keeps marking Wrong. This is the Findings tab
+    # saying a rule is wrong about this house, which is the whole reason
+    # that number is on the screen — and it is a fault in brAIn rather than
+    # in the home, which is exactly what a bug report is for.
+    findings = diag.get("findings") or {}
+    for row in (findings.get("scorecard") or []):
+        if not isinstance(row, dict):
+            continue
+        total = int(row.get("total") or 0)
+        wrong = int(row.get("wrong") or 0)
+        if total >= SCORE_MIN_ENDINGS and wrong > total - wrong:
+            _row(out, f"Producer {row.get('source') or '?'}",
+                 f"marked Wrong {wrong} of {total} times",
+                 "this rule is firing on a healthy house, which is worse "
+                 "than not having it")
+
+    # Refusals a producer carried because nothing on the tab could show
+    # them. These are not cards anybody can answer.
+    props = diag.get("proposals") or {}
+    for key, label in (("conditions", "Condition miner"),
+                       ("intents", "One-off intents"),
+                       ("scenes", "Scene designer")):
+        part = props.get(key) if isinstance(props.get(key), dict) else {}
+        refused = part.get("refused")
+        if isinstance(refused, list) and refused:
+            _row(out, label, f"refused {len(refused)}",
+                 "; ".join(str(r)[:80] for r in refused[:3]))
+        elif isinstance(refused, int) and refused:
+            _row(out, label, f"refused {refused}")
+
+    # The overnight healer: a skip is a refusal doing its job and is NOT a
+    # fault; an attempt that failed is.
+    for attempt in ((diag.get("healing") or {}).get("attempts") or []):
+        if isinstance(attempt, dict) and attempt.get("error"):
+            _row(out, "Overnight repair",
+                 f"could not {attempt.get('remedy') or 'act'}",
+                 attempt.get("error"))
+
+    # Answers given in Home Assistant that never reached the store.
+    reqs = diag.get("finding_requests") or {}
+    if reqs.get("missed"):
+        _row(out, "Answers from Home Assistant",
+             f"{reqs['missed']} could not be applied",
+             "a tick in the To-do app or a notification button that named a "
+             "finding already gone")
+
+    # And the roll-call, read raw. `health` interprets it against the
+    # options and is the right place for a verdict; this is here because a
+    # bug report has to carry the fact as well as the interpretation.
+    down = sorted(name for name, row in (diag.get("daemons") or {}).items()
+                  if not (row or {}).get("running")
+                  if isinstance(row, dict))
+    if down:
+        _row(out, "Daemons", "not running: " + ", ".join(down),
+             "some of these are optional — the health verdict above says "
+             "which of them matters")
+
+    if len(out) > MAX_FAULTS:
+        extra = len(out) - MAX_FAULTS
+        out = out[:MAX_FAULTS]
+        _row(out, "This list", f"{extra} more not shown",
+             "the full diagnostics below carry them")
+    return out
+
+
+def faults_text(rows: list[dict]) -> str:
+    """The section as a person reads it, or the sentence for an empty one."""
+    if not rows:
+        return ("Nothing. Every check ran, every daemon is up, no run failed "
+                "in the last day and the health verdict is ok.")
+    lines = []
+    for row in rows:
+        lines.append(f"* {row.get('where', '?')}: {row.get('what', '')}")
+        if row.get("detail"):
+            lines.append(f"    {row['detail']}")
+    return "\n".join(lines)
 
 
 def _kv(row: dict) -> str:
@@ -238,6 +532,15 @@ def _kv(row: dict) -> str:
 def compose(kind: str, headline: str, what: str, look: str, *, now: float,
             run: dict | None, health: dict | None, extra_text: str,
             diagnostics, log_text: str) -> str:
+    # Resolved once. `diagnostics` arrives as a dict or a callable (this
+    # module must not import `server`), and two sections reading it would
+    # otherwise build the whole payload twice — and could disagree, since
+    # it is derived from a house that is still moving.
+    if callable(diagnostics):
+        try:
+            diagnostics = diagnostics()
+        except Exception as exc:  # noqa: BLE001 — a section, not the report
+            diagnostics = {"error": f"diagnostics unavailable: {exc}"}
     stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(now))
     version = os.environ.get("ADDON_VERSION", "dev")
     parts = [
@@ -259,6 +562,12 @@ def compose(kind: str, headline: str, what: str, look: str, *, now: float,
                   ""]
         if health.get("fix"):
             parts += [str(health["fix"]), ""]
+    # Everything wrong right now, ABOVE the log and the JSON. The report
+    # this replaced opened with "Nothing failed to produce this file" and
+    # then six hundred lines nobody could search — every fault on the
+    # install that prompted it was in that file and none was findable.
+    parts += ["--- what is wrong right now ---",
+              faults_text(faults(diagnostics)), ""]
     parts += [f"--- add-on log, last {LOG_LINES} lines ---", log_text, ""]
     parts += ["--- diagnostics (abridged) ---",
               json.dumps(abridge(diagnostics), indent=1, ensure_ascii=False,

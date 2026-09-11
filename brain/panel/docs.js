@@ -136,10 +136,13 @@ Each one gets a severity, a plain-English explanation, and what to do about it:
   was hot and has since passed. Rather than making you claim you fixed it or that it
   was never a problem, this asks the check to look again — and if it no longer sees
   it, the row goes, along with anything else that check has stopped reporting. If the
-  problem is still there you are told so, with today's numbers. If the check could not
-  look this time, nothing changes and it says why: "I could not look" and "it went
-  away" are different answers. It appears only on findings a house check raised; one
-  the analyst wrote is re-run with **Regenerate** on its card.
+  problem is still there you are told so, with today's numbers — and the row keeps a
+  **confirmed just now** mark, because a finding filed on Tuesday and one confirmed a
+  minute ago are different things and only one is evidence about your house now. The
+  button says **Checking…** while it runs, which takes a second or two. If the check
+  could not look this time, nothing changes and it says why: "I could not look" and
+  "it went away" are different answers. It appears only on findings a house check
+  raised; one the analyst wrote is re-run with **Regenerate** on its card.
 - **Remind me later** — an hour, tomorrow, next week, next month. Not a decision: the
   finding stays exactly as open as it was and simply stops asking, and it waits under
   the **Later** filter with the date it comes back.
@@ -1671,7 +1674,19 @@ The list is fixed when the card is written and capped at 12. A card cannot ask f
 entity its own run did not declare, which is what keeps a page of generated HTML from
 being able to read the rest of your house.
 
-**⚙ > Diagnostics** is the read-only half of the settings dialog: versions, whether
+**⚙ > Diagnostics** opens with **Anything wrong?** — one flat list of everything
+brAIn can currently see that is not working, gathered from every surface it has: the
+health verdict, runs that failed in the last day, house checks that could not run,
+snapshot keys that could not be fetched, a measurement store that measured nothing,
+the rehearsal and the deep check, notifications that would not deliver, the usage
+tracker's own verdict, the producers you keep marking **Wrong**, and any daemon that
+is down. On a healthy install it is one sentence saying so. A refusal doing its job —
+an overnight repair that stood down on a protected entity, a producer that could not
+read a file — is deliberately not in it, because a list that includes those is one
+people learn to skim. The same list is the **first section of every report**, above
+the log and the JSON.
+
+The rest of it is the read-only half of the settings dialog: versions, whether
 the Claude sign-in is holding, the last 24 hours of Claude runs counted by how they
 ended with the failures behind those counts, and the last house-checks pass —
 including **which checks could not run, and why**. That last line is the one worth
@@ -1686,6 +1701,12 @@ doors and windows, machines, habits, and the background daemons. The **Knowledge
 tab is where those numbers belong; they are here because a bug report has to carry
 them too — a rhythm that never gathered enough days and one that did were, on this
 screen, the same silence.
+
+**Measure the house now** is beside them. All of those stores are written by one
+nightly pass, so a number that looks wrong could not be re-asked and a change to how
+one is measured was invisible until the next night. The button starts a pass — it
+reads a month of statistics, so it takes a few minutes and the panel tells you when
+it lands — and it costs no Claude turns.
 
 **⚙ > Problems** is the other half. Every incident brAIn has written up is listed
 there with a checkbox; **Copy selected**, **Copy all** and **Write a report now**

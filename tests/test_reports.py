@@ -23,6 +23,7 @@ Each test names the mutation it catches:
 """
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import os
@@ -31,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -527,6 +529,82 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
     def drain(self):
         self.server._REPORT_EXECUTOR.submit(lambda: None).result(timeout=30)
 
+    async def test_the_measurement_pass_starts_rather_than_waits(self):
+        """`POST /api/baselines/run` had no caller anywhere.
+
+        Every measurement store is written by one nightly pass, so a fix
+        to any of them was invisible for up to a day and could not be
+        checked at all — the doors-and-windows store went on reading
+        `0 of 18` after the fix shipped simply because the pass had not
+        come round, which is indistinguishable from the fix not working.
+        And the route awaited a pass that reads a month of statistics,
+        which is longer than ingress will hold a request open.
+        """
+        started = []
+        done = asyncio.Event()
+
+        async def slow(reason="schedule"):
+            started.append(reason)
+            self.server.BASELINE_STATE["running"] = True
+            try:
+                await done.wait()
+            finally:
+                self.server.BASELINE_STATE["running"] = False
+            # What the real one does with its summary, which is what the
+            # panel reads back off the GET.
+            self.server.BASELINE_STATE["last"] = {
+                "reason": reason, "measured": 3, "closures": 18,
+                "appliances": 1, "rooms": 2, "error": ""}
+            return self.server.BASELINE_STATE["last"]
+
+        self.server.build_baselines = slow
+        resp = await self.client.post("/api/baselines/run")
+        self.assertEqual(resp.status, 202, await resp.text())
+        self.assertTrue((await resp.json())["running"])
+
+        # A second press is an answer, not a collision: both are watching
+        # the same pass.
+        for _ in range(20):
+            if started:
+                break
+            await asyncio.sleep(0.01)
+        resp = await self.client.post("/api/baselines/run")
+        self.assertEqual(resp.status, 409)
+        self.assertEqual(started, ["manual"], "only one pass may be in flight")
+
+        # And the panel reads the outcome back off the GET.
+        resp = await self.client.get("/api/baselines")
+        self.assertTrue((await resp.json())["running"])
+        done.set()
+        for _ in range(200):
+            if not self.server._baselines_busy():
+                break
+            await asyncio.sleep(0.01)
+        resp = await self.client.get("/api/baselines")
+        body = await resp.json()
+        self.assertFalse(body["running"])
+        self.assertEqual((body["last"] or {}).get("closures"), 18)
+
+    async def test_two_presses_in_one_tick_start_one_pass(self):
+        """`create_task` only schedules: nothing inside the coroutine has
+        run when the next request arrives, so a guard reading a flag its
+        own task has not set yet is no guard — `start_auth_check`'s bug
+        one route over."""
+        started = []
+
+        async def counted(reason="schedule"):
+            started.append(reason)
+            await asyncio.sleep(0.05)
+            return {"reason": reason, "error": ""}
+
+        self.server.build_baselines = counted
+        first, second = await asyncio.gather(
+            self.client.post("/api/baselines/run"),
+            self.client.post("/api/baselines/run"))
+        self.assertEqual(sorted([first.status, second.status]), [202, 409])
+        await asyncio.sleep(0.15)
+        self.assertEqual(len(started), 1)
+
     async def test_the_whole_surface(self):
         resp = await self.client.get("/api/reports")
         self.assertEqual(resp.status, 200)
@@ -858,6 +936,218 @@ class TestTheRepairsEntry(unittest.TestCase):
             self.assertIn("health_degraded", issues, f.name)
             self.assertIn("{reason}", issues["health_degraded"]["description"])
             self.assertNotIn("fix_flow", issues["health_degraded"])
+
+# ---------------------------------------------------------------------------
+# Everything that is wrong right now
+# ---------------------------------------------------------------------------
+
+# The install that prompted this section, trimmed to the keys the sweep
+# reads. Seven distinct faults, every one of them in the file that was
+# sent and not one of them findable — which is the whole complaint.
+FIELD = {
+    "versions": {"addon": "1.49.0", "claude_cli": "unknown"},
+    "health": {"state": "degraded",
+               "reason": "usage figures are not being reported",
+               "fix": "Press the pill for what the tracker last said.",
+               "problems": [{"what": "usage figures are not being reported",
+                             "fix": "Press the pill.", "id": "usage"}]},
+    "journal": {"runs": 21, "failures": [{
+        "ts": 1789155984, "source": "doctor", "outcome": "error",
+        "error": ("could not create brain_test_dead_ref: something with "
+                  "this proposal's id is already in automations.yaml"),
+        "extra": {"stage": "rehearsal", "found": 0, "planted": 0}}]},
+    "checks": {"ran": ["dev.unavailable"],
+               "skipped": {"evening.left_open": "snapshot is missing closures"},
+               "errors": {},
+               "snapshot_errors": {"closures": "brAIn has not measured what "
+                                               "is normally open here yet"}},
+    "auth": {"state": "ok", "error": ""},
+    "usage": {"source": "estimate", "used_percent": 1.3,
+              "limits": {"code": "http_403",
+                         "detail": "Anthropic refused this credential."}},
+    "closures": {"built_at": 1789089313, "measured": 0, "asked": 18},
+    "appliances": {"built_at": 1789089313, "measured": 3, "asked": 10},
+    "rehearsal": {"ran_at": 1789155984, "cleanup_ok": False,
+                  "checks": {"planted": 0, "found": 0, "extra": 0}},
+    "doctor_deep": {"ran_at": 1788960897, "verdict": "failed",
+                    "failed_stage": "memory"},
+    "findings": {"open": 39, "scorecard": [
+        {"source": "check:dev.frozen", "title": "Device check",
+         "confirmed": 0, "wrong": 6, "total": 6},
+        {"source": "check:dev.battery_low", "title": "Device check",
+         "confirmed": 3, "wrong": 0, "total": 3}]},
+    "daemons": {"ttyd": {"running": True},
+                "assist_listener": {"running": False}},
+    "notify": {"service": True, "held": 0, "quiet_now": False},
+    "finding_requests": {"pending": 0, "applied": 0, "missed": 0},
+    "proposals": {"conditions": {"refused": [], "seen": 0}},
+    "healing": {"attempts": [], "skips": []},
+}
+
+
+def _said(rows):
+    return " | ".join(f"{r['where']}: {r['what']} {r.get('detail', '')}"
+                      for r in rows)
+
+
+class TestEverythingThatIsWrongRightNow(unittest.TestCase):
+    """The report opened with "Nothing failed to produce this file".
+
+    Every fault on the install that prompted this was inside the file
+    that was sent — a rehearsal that could not clean up, a usage
+    credential refused for a reason nothing recognised, a deep check that
+    had failed, a check that could not look, a measurement store reading
+    zero, a house check marked Wrong six times out of six — and finding
+    any of them meant reading six hundred lines of JSON knowing which
+    section to look in. The facts were all there. None was findable.
+    """
+
+    def test_every_fault_in_the_field_payload_is_named(self):
+        said = _said(reports.faults(FIELD))
+        for wanted in ("usage figures are not being reported",
+                       "already in automations.yaml",
+                       "evening.left_open",
+                       "closures",
+                       "http_403",
+                       "measured 0 of 18",
+                       "left something behind",
+                       "Deep check",
+                       "memory",
+                       "check:dev.frozen"):
+            self.assertIn(wanted, said, wanted)
+
+    def test_a_producer_that_is_right_is_not_a_fault(self):
+        """`dev.battery_low` is 3 confirmed and 0 wrong: a working rule
+        in a section about broken ones is how the section stops being
+        read."""
+        self.assertNotIn("battery_low", _said(reports.faults(FIELD)))
+
+    def test_a_store_that_measured_something_is_not_a_fault(self):
+        """3 of 10 machines is a floor doing its job, not a failure."""
+        said = _said(reports.faults(FIELD))
+        self.assertNotIn("Machines", said)
+
+    def test_an_anecdote_is_not_a_producer_being_wrong(self):
+        """Two endings say nothing about a rule. `findings_store`'s own
+        floor, and the reason the tab hides a producer below it."""
+        payload = {**FIELD, "findings": {"scorecard": [
+            {"source": "check:dev.frozen", "confirmed": 0, "wrong": 2,
+             "total": 2}]}}
+        self.assertNotIn("dev.frozen", _said(reports.faults(payload)))
+
+    def test_a_healthy_install_says_so_in_one_sentence(self):
+        clean = {"health": {"state": "ok", "problems": []},
+                 "journal": {"runs": 12, "failures": []},
+                 "checks": {"ran": ["dev.unavailable"], "skipped": {},
+                            "errors": {}, "snapshot_errors": {}},
+                 "auth": {"state": "ok"},
+                 "usage": {"source": "account", "limits": {}},
+                 "closures": {"measured": 18, "asked": 18},
+                 "daemons": {"ttyd": {"running": True}}}
+        self.assertEqual(reports.faults(clean), [])
+        self.assertIn("Nothing", reports.faults_text([]))
+
+    def test_a_refusal_doing_its_job_is_not_a_fault(self):
+        """`heal_skipped`, a producer standing down, a shadow check with
+        nothing in it — a section that listed those is one people skim."""
+        payload = {"health": {"state": "ok", "problems": []},
+                   "journal": {"failures": []},
+                   "checks": {"skipped": {}, "errors": {},
+                              "snapshot_errors": {}},
+                   "healing": {"attempts": [{"remedy": "start", "error": ""}],
+                               "skips": [{"why": "protected entity"}],
+                               "enabled": True},
+                   "proposals": {"conditions": {"refused": []}},
+                   "shadow_checks": {"checks": [], "total": 0},
+                   "daemons": {}}
+        self.assertEqual(reports.faults(payload), [])
+
+    def test_a_notification_that_did_not_go_is_named(self):
+        """The one failure whose only symptom is silence on a phone.
+
+        A delivery that fails already files an incident, which is the
+        right producer — but "what is wrong right now" is asked of the
+        diagnostics payload, so the fact has to be in it too. The install
+        that prompted this was failing a `notify.` service on every pass
+        and its only trace anywhere was one warning in the log tail.
+        """
+        payload = {"notify": {"service": True, "held": 0, "quiet_now": False,
+                              "last_error": "400, message='Bad Request'",
+                              "last_service": "notify.bi17pm"}}
+        said = _said(reports.faults(payload))
+        self.assertIn("notify.bi17pm", said)
+        self.assertIn("Bad Request", said)
+
+    def test_a_notifier_that_works_is_not_a_fault(self):
+        payload = {"notify": {"service": True, "held": 0, "quiet_now": False,
+                              "last_error": "", "last_service": "notify.x"}}
+        self.assertEqual(reports.faults(payload), [])
+
+    def test_held_messages_inside_quiet_hours_are_not_a_fault(self):
+        """A hold is the router doing its job; a hold that outlived the
+        quiet window is the flush loop having died."""
+        quiet = {"notify": {"held": 4, "quiet_now": True}}
+        self.assertEqual(reports.faults(quiet), [])
+        stuck = {"notify": {"held": 4, "quiet_now": False}}
+        self.assertIn("held and not sent", _said(reports.faults(stuck)))
+
+    def test_a_failed_overnight_repair_is(self):
+        payload = {"healing": {"attempts": [
+            {"remedy": "start the add-on", "error": "the Supervisor refused"}]}}
+        self.assertIn("the Supervisor refused", _said(reports.faults(payload)))
+
+    def test_it_never_raises_whatever_it_is_handed(self):
+        """It is called from the writer, and a sweep that took down the
+        report it was summarising is worse than no sweep."""
+        class Exploding(dict):
+            def get(self, *a, **k):
+                raise RuntimeError("boom")
+
+        for payload in (None, [], "text", 7, Exploding(), {"health": "not a dict"}):
+            rows = reports.faults(payload)
+            self.assertIsInstance(rows, list)
+        self.assertIn("could not work out", _said(reports.faults(Exploding())))
+
+    def test_a_callable_that_explodes_is_a_row_and_not_a_traceback(self):
+        def boom():
+            raise RuntimeError("no payload")
+        self.assertIn("no payload", _said(reports.faults(boom)))
+
+    def test_the_list_is_capped_and_says_so(self):
+        payload = {"checks": {"snapshot_errors": {
+            f"key_{i}": "could not fetch" for i in range(reports.MAX_FAULTS + 5)}}}
+        rows = reports.faults(payload)
+        self.assertLessEqual(len(rows), reports.MAX_FAULTS + 1)
+        self.assertIn("more not shown", _said(rows))
+
+    def test_the_section_is_above_the_log_and_the_json(self):
+        """A section below six hundred lines of JSON is the section that
+        was already there."""
+        text = reports.compose(
+            "run", "h", "w", "l", now=time.time(), run=None, health=None,
+            extra_text="", diagnostics=FIELD, log_text="a log line")
+        top = text.index("--- what is wrong right now ---")
+        self.assertLess(top, text.index("--- add-on log"))
+        self.assertLess(top, text.index("--- diagnostics (abridged) ---"))
+        self.assertIn("already in automations.yaml", text)
+
+    def test_the_prose_and_the_json_say_the_same_thing(self):
+        """One derivation: a person and a machine reading one file cannot
+        disagree about what is wrong with this install."""
+        rows = reports.faults(FIELD)
+        self.assertEqual(reports.abridge(FIELD)["faults"], rows)
+
+    def test_the_payload_is_built_once_however_many_sections_read_it(self):
+        calls = []
+
+        def once():
+            calls.append(1)
+            return FIELD
+
+        reports.compose("run", "h", "w", "l", now=time.time(), run=None,
+                        health=None, extra_text="", diagnostics=once,
+                        log_text="")
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

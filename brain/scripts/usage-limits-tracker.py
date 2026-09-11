@@ -544,6 +544,27 @@ def _error_code(status, body):
     shape that carries no code, or a code this does not recognise all leave
     the status untouched — an invented verdict reads exactly like a real one
     and is the harder failure to notice.
+
+    **And the envelope is one level deeper than this first read for it.**
+    What the field actually sends is Anthropic's standard error shape —
+    ``{"type": "error", "error": {"type": …, "message": …, "details": …}}``
+    — where the first cut looked for ``details`` and ``error_code`` at the
+    top level and found neither, so the one refusal this whole narrowing
+    exists for came back `http_403` anyway: no gloss, not in `AUTH_PROBLEMS`,
+    never settled, retried hourly for ever against a verdict that cannot
+    change. A fix that could not fire is the same class as the `pop` that
+    did not case-fold — the machinery was right and the path into the body
+    was wrong — and the tests could not see it because they wrote the shape
+    down from the same guess the code did, which is what makes a fixture
+    copied from a real response the load-bearing part of this.
+
+    **There is no `error_code` in that body at all**, which is why the
+    structured scope field has to be read as well: `details.required_scopes`
+    is the endpoint saying, in as many words, which scope it wanted and did
+    not get, and that is exactly the claim `SCOPE_ERROR` makes. It is not an
+    invented verdict — it is a documented field read literally. The message
+    text is deliberately NOT matched: prose is what gets reworded, and the
+    structured field is present in every refusal seen.
     """
     fallback = f"http_{status}"
     if not body:
@@ -554,18 +575,51 @@ def _error_code(status, body):
         return fallback
     if not isinstance(parsed, dict):
         return fallback
-    # `details.error_code` is where this endpoint puts it; the top level is
-    # read too because neither placement is documented and one file guessing
-    # at both is cheaper than a release that misses the day it moves.
-    details = parsed.get("details")
+    # The envelope's own `error` object first, then the top level: neither
+    # placement is documented, and one file reading both is cheaper than a
+    # release that misses the day it moves. Every real refusal seen has
+    # been the nested one.
+    scopes = ["error_code"]
+    holders = [parsed]
+    inner = parsed.get("error")
+    if isinstance(inner, dict):
+        holders.insert(0, inner)
     code = None
-    if isinstance(details, dict):
-        code = details.get("error_code")
-    if not isinstance(code, str) or not code:
-        code = parsed.get("error_code")
-    if not isinstance(code, str):
-        return fallback
-    return API_ERROR_CODES.get(code, fallback)
+    for holder in holders:
+        details = holder.get("details")
+        for where in ((details if isinstance(details, dict) else {}), holder):
+            for key in scopes:
+                value = where.get(key)
+                if isinstance(value, str) and value:
+                    code = code or value
+    if isinstance(code, str) and code:
+        narrowed = API_ERROR_CODES.get(code)
+        if narrowed:
+            return narrowed
+    # No code anywhere — which is the ordinary case, because this endpoint
+    # does not send one. `required_scopes` is the fact itself.
+    if status == 403 and _names_a_missing_scope(holders):
+        return SCOPE_ERROR
+    return fallback
+
+
+def _names_a_missing_scope(holders):
+    """Whether the body names a scope the endpoint required and did not get.
+
+    `details.required_scopes` is a list of scope names. Its presence on a
+    403 IS the scope refusal — there is nothing else a required-scopes list
+    on a permission denial can mean — so this narrows on the field rather
+    than on the sentence wrapped around it.
+    """
+    for holder in holders:
+        details = holder.get("details")
+        if not isinstance(details, dict):
+            continue
+        wanted = details.get("required_scopes")
+        if isinstance(wanted, list) and any(
+                isinstance(name, str) and name for name in wanted):
+            return True
+    return False
 
 
 def fetch_usage_limits(token):
