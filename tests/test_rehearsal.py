@@ -70,12 +70,29 @@ class FakeHooks:
     """
 
     def __init__(self, *, write_fails="", remove_fails="",
-                 skip_helper_delete=False, findings=None, analyst=None):
+                 skip_helper_delete=False, findings=None, analyst=None,
+                 helper_item_id="brain_test_reading_2",
+                 helper_delete_error=""):
         self.automations: dict[str, dict] = {}
         self.helpers: dict[str, float] = {}
+        # The registry outlives the config, which is the whole of the
+        # cleanup bug: Core keeps an entry for every automation carrying
+        # an `id` and re-publishes it as a restored orphan once the
+        # config is gone. Keyed by entity id, as Core's is.
+        self.registry: dict[str, dict] = {}
         self.write_fails = write_fails
         self.remove_fails = remove_fails
         self.skip_helper_delete = skip_helper_delete
+        # Core mints this, and it is NOT the entity's object id whenever
+        # the slug was taken — `IDManager.generate_id` appends `_2`. The
+        # fake defaults to the colliding case on purpose, because the
+        # guessed id works right up until it doesn't and the house it
+        # breaks on is the one with a leftover from last time.
+        self.helper_item_id = helper_item_id
+        # A delete Core really refuses, as opposed to one it accepts and
+        # answers `result: null` to. The whole point of the fix is that
+        # these two stopped looking the same, so both need a test.
+        self.helper_delete_error = helper_delete_error
         self.findings = findings if findings is not None else []
         self.analyst_answer = analyst or {"ok": True, "findings": [],
                                           "model": "test-model"}
@@ -86,6 +103,8 @@ class FakeHooks:
         if self.write_fails and self.write_fails in entry_id:
             return None, "the file would not take it"
         self.automations[entry_id] = row["config"]
+        self.registry[f"automation.{entry_id}"] = {
+            "entity_id": f"automation.{entry_id}"}
         return {"automation_id": entry_id,
                 "entity_id": f"automation.{entry_id}"}, ""
 
@@ -96,10 +115,23 @@ class FakeHooks:
         return True, ""
 
     async def snapshot(self):
+        # An automation whose config has gone but whose registry entry
+        # has not is what Core really serves: `unavailable`, carrying
+        # `restored: true`. Producing it here is what makes a cleanup
+        # that leaves one visible to this suite at all.
         states = {f"automation.{k}": {"state": "on"} for k in self.automations}
+        for eid in self.registry:
+            if eid not in states:
+                states[eid] = {"state": "unavailable",
+                               "attributes": {"restored": True}}
         states.update({k: {"state": str(v)} for k, v in self.helpers.items()})
         return {"automations": list(self.automations.values()),
-                "registry": dict.fromkeys(states, {}),
+                # The key the real collector emits: a LIST under
+                # `entities`, not a dict under `registry`. The old fake
+                # built `registry`, which `checks.snapshot.collect` has
+                # never produced — so the leftovers scan's registry third
+                # iterated over nothing in production while passing here.
+                "entities": [{"entity_id": e} for e in sorted(self.registry)],
                 "states": states,
                 "available": {}}
 
@@ -107,25 +139,51 @@ class FakeHooks:
         return dict(self.analyst_answer)
 
     async def ws(self, commands):
+        """Core's real answer shape: `{ok, result, error}` per command.
+
+        The old fake returned the `result` alone and used a truthy `{}`
+        for a delete. Core sends `result: null` for one, which the panel
+        read as the same `None` that means the call failed — so the
+        cleanup reported a helper it had just deleted as undeletable.
+        A fake that cannot produce a null result cannot show that.
+        """
         out = []
         for cmd in commands:
             self.ws_calls.append(cmd)
             kind = cmd.get("type")
             if kind == "input_number/create":
                 self.helpers["input_number.brain_test_reading"] = 0.0
-                out.append({"id": "x"})
+                out.append(self._ok({"id": self.helper_item_id,
+                                     "name": "brAIn test reading"}))
             elif kind == "input_number/delete":
+                # Keyed on the item id Core minted. A caller that guessed
+                # it off the entity id deletes nothing here, which is
+                # what it would do on a real house with a slug collision.
+                if (self.helper_delete_error
+                        or cmd.get("input_number_id") != self.helper_item_id):
+                    out.append({"ok": False, "result": None,
+                                "error": (self.helper_delete_error
+                                          or "Unable to find input_number")})
+                    continue
                 if not self.skip_helper_delete:
                     self.helpers.pop("input_number.brain_test_reading", None)
-                out.append({})
+                out.append(self._ok(None))
+            elif kind == "config/entity_registry/remove":
+                self.registry.pop(cmd.get("entity_id"), None)
+                out.append(self._ok(None))
             elif kind == "call_service":
                 eid = (cmd.get("service_data") or {}).get("entity_id")
                 if eid in self.helpers:
                     self.helpers[eid] = (cmd["service_data"] or {}).get("value")
-                out.append({})
+                out.append(self._ok(None))
             else:
-                out.append(None)
+                out.append({"ok": False, "result": None,
+                            "error": f"unknown command {kind}"})
         return out
+
+    @staticmethod
+    def _ok(result):
+        return {"ok": True, "result": result, "error": ""}
 
 
 def hooks(mod, **over):
@@ -439,14 +497,103 @@ class TestTheRun(RehearsalCase):
         self.assertFalse(out["cleanup"]["ok"])
         self.assertIn("still in the house", out["cleanup"]["sentence"])
 
+    async def test_a_clean_run_leaves_nothing_and_says_nothing_was_left(self):
+        """The three failures one real house reported, as one assertion.
+
+        On 1.48.0 a rehearsal that had removed everything correctly still
+        reported SOMETHING WAS LEFT BEHIND, naming both planted
+        automations and the helper. Three separate defects produced it:
+
+        * a successful `input_number/delete` answers `result: null`, and
+          the panel read that as the failure sentinel;
+        * `_wait_for_gone` asked whether the automation's entity still
+          existed, which a restored registry orphan answers yes to for
+          ever — so a correct removal was condemned and `automations.yaml`
+          was REVERTED, putting the planted entries back;
+        * nothing ever removed the registry entries, so the orphans were
+          genuine leftovers the scan was right to see.
+        """
+        h, fake = hooks(self.r)
+        import checks
+        real = checks.run_all
+        checks.run_all = lambda snap, now=None, only=None: {
+            "findings": [], "shadow": [], "ran": checks.CHECK_IDS,
+            "skipped": {}, "errors": {}, "per_check": {}}
+        try:
+            out = await self.r.run(h)
+        finally:
+            checks.run_all = real
+        self.assertTrue(out["cleanup"]["ok"], out["cleanup"]["sentence"])
+        self.assertEqual(out["cleanup"]["left"], [])
+        self.assertNotIn("would not delete", out["cleanup"]["sentence"])
+        # Not just "the report is clean" — the house really is.
+        self.assertEqual(self.r.leftovers(await fake.snapshot()), [])
+        self.assertEqual(fake.registry, {})
+        self.assertEqual(fake.automations, {})
+        self.assertEqual(fake.helpers, {})
+
+    async def test_the_helper_is_deleted_by_the_id_core_minted(self):
+        """Not by one derived from the entity id.
+
+        `input_number/delete` keys on the storage collection's item id.
+        `IDManager.generate_id` slugifies the name only while the slug is
+        free and appends `_2` otherwise, so the guessed id is right until
+        a previous rehearsal has left one behind — which is exactly the
+        house where cleanup has to work.
+        """
+        h, fake = hooks(self.r, helper_item_id="brain_test_reading_2")
+        import checks
+        real = checks.run_all
+        checks.run_all = lambda snap, now=None, only=None: {
+            "findings": [], "shadow": [], "ran": checks.CHECK_IDS,
+            "skipped": {}, "errors": {}, "per_check": {}}
+        try:
+            out = await self.r.run(h)
+        finally:
+            checks.run_all = real
+        sent = [c for c in fake.ws_calls
+                if c.get("type") == "input_number/delete"]
+        self.assertEqual([c["input_number_id"] for c in sent],
+                         ["brain_test_reading_2"])
+        self.assertTrue(out["cleanup"]["ok"], out["cleanup"]["sentence"])
+
+    async def test_a_helper_delete_that_really_refused_is_still_reported(self):
+        """The fix must not have made every delete look like a success."""
+        h, fake = hooks(self.r, helper_delete_error="not found")
+        import checks
+        real = checks.run_all
+        checks.run_all = lambda snap, now=None, only=None: {
+            "findings": [], "shadow": [], "ran": checks.CHECK_IDS,
+            "skipped": {}, "errors": {}, "per_check": {}}
+        try:
+            out = await self.r.run(h)
+        finally:
+            checks.run_all = real
+        self.assertFalse(out["cleanup"]["ok"])
+        self.assertIn("would not delete", out["cleanup"]["sentence"])
+
     async def test_leftovers_reads_all_three_places(self):
+        """And the registry one is `entities`, which is the key that exists.
+
+        This asserted `snap["registry"]`, which `checks.snapshot.collect`
+        has never emitted — it files the entity registry as a list under
+        `entities`. So the test passed on a shape only the test built,
+        and the loop it was covering iterated over nothing on every real
+        house: a registry entry left behind with no state — precisely
+        what a removed automation leaves — was invisible.
+        """
         snap = {"automations": [{"id": "brain_test_dead_ref"}],
-                "registry": {"input_number.brain_test_reading": {}},
+                "entities": [{"entity_id": "input_number.brain_test_reading"}],
                 "states": {"automation.brain_test_other": {}}}
         self.assertEqual(self.r.leftovers(snap),
                          ["automation.brain_test_other",
                           "brain_test_dead_ref",
                           "input_number.brain_test_reading"])
+
+    async def test_a_registry_key_the_collector_never_emits_finds_nothing(self):
+        """The shape the old test pinned, driven against the real reader."""
+        snap = {"registry": {"input_number.brain_test_reading": {}}}
+        self.assertEqual(self.r.leftovers(snap), [])
 
     async def test_a_clean_house_has_no_leftovers(self):
         self.assertEqual(self.r.leftovers(

@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import re
 
+import routines
 from checks._util import House
 
 # The four moods, in the order a day happens. Each is a warmth and a
@@ -483,8 +484,21 @@ def read_names(text: str) -> dict[str, str]:
 FIXED = {"day": "11:00:00", "evening": "18:30:00"}
 
 
+# A measured median lands on a minute; a routine does not. `routines.py`
+# rounds its trigger to five for two reasons and both apply here: it
+# reads like a time somebody would have chosen, and it stops a median
+# that wandered by a minute from producing a config `proposals.key_for`
+# hashes differently — which re-offers at 07:11 the schedule that was
+# declined at 07:10. The wake and settle times under this come from
+# `rhythm`, which re-measures every night, so the drift is not
+# hypothetical; the grain is `routines`' own rather than a second number,
+# because two answers to "how precise is a habit" is one too many.
+GRAIN_MIN = routines.TRIGGER_GRAIN_MIN
+
+
 def _clock(minutes: float) -> str:
     total = int(round(minutes)) % 1440
+    total = (int(round(total / GRAIN_MIN)) * GRAIN_MIN) % 1440
     return f"{total // 60:02d}:{total % 60:02d}:00"
 
 

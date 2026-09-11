@@ -164,7 +164,15 @@ import undo_store
 import usage_store
 import user_categories
 import weekly
-from categories import (ANALYST_SYSTEM, CATEGORIES, SYSTEM_PROMPT, build_orientation_prompt,
+# `_CARD_CONTRACT` and `_previous_block` are reached into deliberately, by
+# the prompt preview, which reports the size of every block a run is sent:
+# a second copy of the contract or of the previous-run renderer here would
+# make the preview a picture of something other than what is sent. Same
+# statement as the public names rather than a bare `import categories`
+# beside it — one module imported two ways is a CodeQL alert and, more to
+# the point, two spellings of one dependency.
+from categories import (ANALYST_SYSTEM, CATEGORIES, SYSTEM_PROMPT, _CARD_CONTRACT,
+                        _previous_block, build_orientation_prompt,
                         build_prompt, get_category, house_block, memory_excerpt,
                         stores_for)
 
@@ -432,6 +440,15 @@ BIND_PORT = 8099
 CARD_TOKEN_FILE = Path(
     os.environ.get("BRAIN_SECRETS", "/data/secrets")) / "card_token"
 MAX_HTML_BYTES = 400_000
+# How many entities one card may keep live. A visualization that wants a
+# dozen is a dashboard, which the contract already forbids; the cap is
+# here as well because the contract is advice and this is the thing that
+# decides what the panel will fetch on a timer.
+MAX_LIVE_ENTITIES = 12
+# How often a card on screen asks for them. Slower than the house changes
+# and far slower than a person can read: this is a card being current, not
+# a live feed, and every visible card pays for it on every tick.
+LIVE_POLL_S = 15
 MAX_CUSTOM_KEPT = 12
 # Characters per token, for the ONE number that has to exist before the run
 # does: what a prompt is about to cost. Approximate by nature — the real
@@ -838,6 +855,30 @@ def _record_usage(result: dict, insight_id: str) -> dict:
     except Exception as exc:  # noqa: BLE001
         log.debug("usage recording failed: %s", exc)
         return usage_store.split_from_meta({})
+
+
+def _clean_entity_ids(value, max_items: int) -> list[str]:
+    """A model-returned list of entity ids: real ids only, deduped, capped.
+
+    `ha_data.is_entity_id` is the authority rather than a pattern written
+    again here — the same reason `history_params` drops an id that is not
+    one instead of escaping it. An id that is not an id names nothing, so
+    keeping it would only cost a lookup on a made-up string.
+    """
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        item = item.strip()
+        if ha_data.is_entity_id(item) and item not in out:
+            out.append(item)
+        if len(out) >= max_items:
+            break
+    return out
 
 
 def _clean_strings(value, max_items: int, max_chars: int) -> list[str]:
@@ -2172,6 +2213,14 @@ async def _generate(insight_id: str) -> None:
             "learned": learned,
             "tags": tags,
             "focus_used": cat.get("focus", "") if question is None else "",
+            # The entities whose CURRENT state the visualization wants,
+            # so a card about something happening now stops being frozen
+            # at the moment it was generated. Validated here and kept on
+            # the card, which is what makes it the ONLY thing the live
+            # route will serve for this card: the list is fixed when the
+            # card is written, so a stored `html` cannot later ask the
+            # panel for an entity its author never declared.
+            "live": _clean_entity_ids(obj.get("live"), MAX_LIVE_ENTITIES),
             "html": html,
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             # Why this run happened, in the words the person who reads
@@ -3318,6 +3367,59 @@ def _history_run_path(request: web.Request) -> Path:
     return _under(hdir, f"{ts}.json")
 
 
+# ---------------------------------------------------------------------------
+# A card that is about NOW, and is not frozen at the moment it was made
+# ---------------------------------------------------------------------------
+#
+# An insight card is one Claude run rendered to a self-contained HTML
+# document, and the document is written once. That is right for most
+# cards — "last week's energy" does not change — and wrong for the ones
+# people most want on a dashboard: a door that is open, a machine that is
+# running, a room being held at a temperature. Those read as current and
+# are not, which is the half of issue #300 that says "pull real time data
+# from HA without it being a static card".
+#
+# The entity list is the card's OWN, fixed when the card was written
+# (`_clean_entity_ids` at generation). This route will serve nothing
+# else, and that is the whole security argument: the frame is a
+# sandboxed `srcdoc` running model-authored script, and a route that took
+# entity ids from the caller would let that script read any entity in the
+# house through the panel's credential. It cannot ask for one its author
+# did not declare, and its author is the run a person asked for.
+#
+# What comes back is deliberately small — state, unit, device class,
+# friendly name, and `attributes` — because the visualization already has
+# its shape and needs only the numbers. `last_changed` rides along because
+# "on since 6:42" is the commonest thing such a card says.
+async def h_insight_live(request: web.Request) -> web.Response:
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    insight_id = request.match_info["id"]
+    try:
+        card = json.loads(_insight_path(insight_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise web.HTTPNotFound(text="no such card") from None
+    wanted = _clean_entity_ids(card.get("live"), MAX_LIVE_ENTITIES)
+    if not wanted:
+        # Not an error: most cards are about a period that has ended and
+        # declare nothing. The panel reads the empty list and stops asking.
+        return web.json_response({"states": {}, "poll_s": 0})
+
+    rows = await ha_data.entity_states(wanted)
+    out: dict[str, dict] = {}
+    for eid, row in rows.items():
+        attrs = row.get("attributes") or {}
+        out[eid] = {
+            "state": row.get("state"),
+            "name": attrs.get("friendly_name") or eid,
+            "unit": attrs.get("unit_of_measurement") or "",
+            "device_class": attrs.get("device_class") or "",
+            "last_changed": row.get("last_changed") or "",
+            "attributes": attrs,
+        }
+    return web.json_response({"states": out, "poll_s": LIVE_POLL_S})
+
+
 async def h_history_list(request: web.Request) -> web.Response:
     hdir = _history_dir(request.match_info["id"])
     runs = []
@@ -3376,6 +3478,156 @@ def _prompt_record(cat_id: str) -> dict:
 
 async def h_prompts(request: web.Request) -> web.Response:
     return web.json_response({"prompts": [_prompt_record(c["id"]) for c in CATEGORIES]})
+
+
+# ---------------------------------------------------------------------------
+# What this card is actually asked — the whole of it
+# ---------------------------------------------------------------------------
+#
+# The Edit dialog's box was labelled "Analysis focus (the prompt for this
+# category)", and it is one paragraph of a dozen blocks. Everything else
+# that shapes a card — the output contract, the homeowner's standing
+# feedback, what brAIn has measured, what is already on the work list,
+# what this card said last time, the hypothesis budget, the data itself —
+# was assembled at run time and shown nowhere. So a card that kept coming
+# back wrong could only be argued with by guessing, which is issue #300:
+# "Cannot see prompt, unable to iteratively rework card layout."
+#
+# Two decisions worth writing down.
+#
+# **It is rebuilt, never replayed.** Storing the prompt that produced the
+# card on screen and showing that back was the obvious design and it is
+# the wrong one: half those blocks are live (the findings block, memory's
+# mtime, the measurement stores, the previous run), so a stored copy
+# starts drifting the moment it is written and what somebody would be
+# editing against is a house that has moved on. What a person iterating
+# needs is *what will be sent if I press Regenerate now*, and that is a
+# thing this can answer exactly, because it calls the same builders the
+# run calls. The snapshot path's bundle is genuinely expensive to
+# collect, so `sections` carries each block's size and the data section
+# is summarised rather than pasted — a hundred kilobytes of entity rows
+# is not something anybody reads, and its SIZE is the fact people
+# actually want from it.
+#
+# **The editable part stays the focus.** Offering the assembled text as a
+# textarea would freeze those live blocks at whatever they said the day
+# it was saved: the card would stop seeing new findings and go on citing
+# a measurement from March, with nothing on screen to say so. The honest
+# split is to show the whole thing and let you edit the part that is
+# yours — the focus, and the standing feedback, both of which already
+# reach every future run.
+async def _prompt_preview(cat: dict, mode: str) -> dict:
+    """The prompt this card would be sent right now, block by block."""
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    cat_id = cat["id"]
+    feedback = [f["text"] for f in feedback_store.list_feedback(cat_id)]
+    previous = None
+    try:
+        prev = json.loads(_insight_path(cat_id).read_text(encoding="utf-8"))
+        previous = {k: prev.get(k) for k in
+                    ("generated_at", "title", "summary", "highlights", "learned")}
+    except (OSError, ValueError):
+        # No previous run to show, which is what a card that has never
+        # been generated looks like — the same silence `_generate` keeps
+        # for the same reason. The preview then reports that block as 0
+        # chars, which is the true answer for this card today.
+        pass
+    framing = dict(question=None, feedback=feedback,
+                   hypothesis_budget=hypotheses.budget(),
+                   knowledge=knowledge_store.prompt_block(),
+                   previous=previous,
+                   findings=findings_store.prompt_block(),
+                   house=await _house_prompt_block())
+
+    # The named blocks, in the order `_framing` puts them, each with what
+    # it is FOR — because "why is this in my prompt" is the question a
+    # person reading it has, and the size is the other half of the answer.
+    sections = [
+        {"name": "Analysis focus", "chars": len(cat.get("focus") or ""),
+         "what": "What you typed in this dialog.", "yours": True},
+        {"name": "Your feedback", "chars": sum(len(f) for f in feedback),
+         "what": f"{len(feedback)} standing instruction(s) from the 💬 button "
+                 "on this card. Every future run honours them.", "yours": True},
+        {"name": "What brAIn has measured", "chars": len(framing["house"] or ""),
+         "what": "Baselines, rhythms, room heat loss — so the card checks a "
+                 "reading against normal before calling it unusual."},
+        {"name": "Dead ends", "chars": len(framing["knowledge"] or ""),
+         "what": "Guesses you rejected, so they are not re-asked."},
+        {"name": "The work list", "chars": len(framing["findings"] or ""),
+         "what": "What is already filed, and what you marked Wrong and why."},
+        {"name": "Last run of this card",
+         "chars": len(_previous_block(previous)) if previous else 0,
+         "what": "So it advances the story instead of regenerating it."},
+        {"name": "Output contract", "chars": len(_CARD_CONTRACT),
+         "what": "The card's shape, the design system, the analysis rules. "
+                 "Shared by both paths so they cannot drift."},
+    ]
+
+    if mode == "search":
+        orientation = await ha_data.collect_orientation(question=None)
+        prompt = build_orientation_prompt(cat, orientation, **framing)
+        system = ANALYST_SYSTEM
+        data_note = (f"A MAP of the home — {orientation.get('entity_count', 0)} "
+                     f"entities across {len(orientation.get('domains') or {})} "
+                     "domains, named by count rather than listed. The run then "
+                     "fetches what it needs with read-only tools.")
+        data_chars = len(json.dumps(orientation))
+    else:
+        bundle = await ha_data.collect_bundle(cat, eff_history_days(),
+                                              question=None)
+        prompt = build_prompt(cat, bundle, **framing)
+        system = SYSTEM_PROMPT
+        data_note = (f"The whole home in one go — {len(bundle.get('entities') or [])} "
+                     "entities, posted with the prompt. No tools.")
+        data_chars = len(json.dumps(bundle))
+    sections.append({"name": "The data", "chars": data_chars, "what": data_note})
+
+    return {
+        "id": cat_id, "mode": mode, "system": system, "prompt": prompt,
+        "sections": sections,
+        "chars": len(prompt) + len(system),
+        # The one number people actually act on. `~` everywhere it is
+        # shown, because it is a character estimate and not a count.
+        "tokens": (len(prompt) + len(system)) // CHARS_PER_TOKEN,
+        "model": eff_model(),
+    }
+
+
+async def h_prompt_preview(request: web.Request) -> web.Response:
+    cat_id = request.match_info["id"]
+    # `resolve_category`, which is what `_generate` calls — never
+    # `get_category`, which answers with the SHIPPED definition and
+    # ignores every override. A preview that showed the shipped focus
+    # back to somebody who had rewritten it would be the exact failure
+    # this route exists to end, one layer further in: a prompt on screen
+    # that is not the prompt being sent.
+    cat = resolve_category(cat_id)
+    if not cat:
+        raise web.HTTPBadRequest(text="unknown category")
+    mode = request.query.get("mode") or eff_gather_mode()
+    if mode not in ("search", "snapshot"):
+        raise web.HTTPBadRequest(text="mode is search or snapshot")
+    try:
+        return web.json_response(await _prompt_preview(cat, mode))
+    except Exception as exc:  # noqa: BLE001 — a preview that cannot reach
+        # Core is a sentence, not a 500.
+        #
+        # The sentence carries no exception text and the log line carries
+        # no path parameter, and both are CodeQL findings this route
+        # shipped with. The response one is real: everything else here
+        # fails with a message somebody typed, and an exception's `str`
+        # is the one string on this path that can carry a traceback's
+        # contents out to a browser. The log one is defence in depth —
+        # `cat_id` has already matched a real category by this line, so
+        # it cannot be arbitrary — but `cat["id"]` is the canonical id
+        # rather than whatever spelling arrived in the URL, which is the
+        # better thing to log regardless of who is reading it.
+        log.warning("could not preview the prompt for %s: %s", cat["id"], exc)
+        raise web.HTTPBadGateway(
+            text="Could not build the preview — brAIn could not reach Home "
+                 "Assistant for the data this card would be sent. The "
+                 "add-on log says which call failed.") from exc
 
 
 async def h_prompt_put(request: web.Request) -> web.Response:
@@ -4011,7 +4263,34 @@ async def _offer_playbooks(snapshot: dict, now: float) -> int:
     was. It happens at most once per class per sensor set, because
     `proposals.knows` is asked first — a house whose playbooks are all
     answered costs nothing on every later pass.
+
+    **It stands down when the services list could not be fetched, and
+    that is what stops a declined playbook coming back.** A playbook's
+    identity is the hash of its config (`proposals.key_for`), and the
+    config ends in one notify step per target — which, with no
+    `findings_notify_service` set, is every `notify.mobile_app_*` the
+    snapshot could see. `snap["services"]` is a best-effort REST fetch
+    that degrades to an empty set and flags itself unavailable, so a pass
+    where `/services` timed out composed the same three playbooks with
+    their notify steps missing, hashed them to three different keys, and
+    offered every one the homeowner had already declined — buying a
+    Claude paragraph for each. Both passes look successful in the log,
+    which is why it read as "I keep dismissing it and it keeps coming
+    back" with nothing to point at. Measured: flipping only that field
+    moves all three keys and drops `freeze` entirely.
+
+    This is `clear_resolved`'s rule in the half that OFFERS: "I could not
+    look" and "there are no notifiers here" are different claims, and
+    only one of them may change what this house is asked. Its sibling
+    producers already carry it — `_offer_scene_schedule` returns on an
+    unreadable `scenes.yaml`, `conditions.propose` on unreadable
+    automations — and this one did not.
     """
+    if not (snapshot.get("available") or {}).get("services"):
+        log.info("not offering playbooks: the services list was not "
+                 "available this pass, and a playbook keyed on a notifier "
+                 "set we could not read is one that comes back declined")
+        return 0
     service, _sev = _findings_notify_target()
     try:
         protected = automation_writer.protected_patterns()
@@ -5004,10 +5283,17 @@ def _rehearsal_hooks() -> "rehearsal.Hooks":
         return await checks.snapshot.collect(time.time())
 
     async def ws(commands: list[dict]):
+        """`_ws_calls`, not `_ws_commands`: these commands CHANGE things.
+
+        A successful `input_number/delete` answers `result: null`, which
+        `_ws_commands` hands back as the same `None` that means the call
+        failed — so a clean cleanup reported that Home Assistant would
+        not delete the helper it had just deleted.
+        """
         import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
         import aiohttp  # noqa: PLC0415
         async with aiohttp.ClientSession() as session:
-            return await ha_data._ws_commands(session, commands)
+            return await ha_data._ws_calls(session, commands)
 
     return rehearsal.Hooks(write=write, remove=remove, snapshot=snapshot,
                            analyst=_rehearsal_analyst, ws=ws,
@@ -5045,6 +5331,36 @@ async def _rehearsal_analyst(planted: list[dict]) -> dict:
                                      ANALYST_SYSTEM, model)
     _record_usage(answer.get("result") or {}, "doctor-rehearsal")
     answer.pop("result", None)
+    if answer.get("ok"):
+        return answer
+    # The floor the card has and this did not. `_generate` slides a failed
+    # or turn-exhausted search onto the snapshot path, so a card always
+    # appears; the rehearsal ran only the search half and scored a
+    # turn-exhausted run as `ran: false`, precision and recall both null.
+    # That is a measurement of a path no card ever takes alone — and it
+    # reported the analyst as not having run on a house where a card
+    # would have been produced. `fallback` is carried rather than hidden,
+    # the same way the journal records the slide: a rehearsal that keeps
+    # taking it is saying something about the search path, and a number
+    # with no note on how it was reached is the one nobody can act on.
+    log.info("rehearsal: the search run did not land (%s) — falling back to "
+             "the snapshot path, as a card would", answer.get("error", ""))
+    searched = answer.get("error") or ""
+    try:
+        bundle = await ha_data.collect_bundle(
+            cat, eff_history_days(), question=None)
+    except Exception as exc:  # noqa: BLE001
+        answer["error"] = (f"{searched}; and the snapshot fallback could "
+                           f"not collect the home either: {exc}")
+        return answer
+    prompt = rehearsal.analyst_prompt(planted, build_prompt, cat, bundle,
+                                      framing)
+    answer = await asyncio.to_thread(rehearsal.run_analyst, prompt,
+                                     SYSTEM_PROMPT, model, False)
+    _record_usage(answer.get("result") or {}, "doctor-rehearsal")
+    answer.pop("result", None)
+    answer["fallback"] = True
+    answer["searched_error"] = journal.scrub(searched)[:200]
     return answer
 
 
@@ -5765,6 +6081,105 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
 
 
 # ---------------------------------------------------------------------------
+# Check again — the one check that filed this row, run now
+# ---------------------------------------------------------------------------
+#
+# Every other ending on a finding is a person saying something about their
+# house: it is fixed, it is normal here, come back tomorrow. This one says
+# nothing at all — it asks the producer to look again, right now.
+#
+# It exists because a check reads one instant. A device unavailable while
+# its hub rebooted, a reading implausible while a printer was hot, an
+# add-on stopped mid-update: each is a true report of a moment that has
+# since passed, and the row then sits there until somebody answers a
+# question about a problem that is over. The scheduled pass would clear it
+# — in up to `checks_interval_hours`, which is six by default, and on a
+# list you are looking at now that may as well be never.
+#
+# Three rules, and all three are `clear_resolved`'s, because this is that
+# same rule reached by a press rather than by a timer.
+#
+# **Only a check may be re-run.** A finding from the analyst came out of a
+# Claude run over a whole category, and "run that again" is Regenerate on
+# the card — it is not free, and it would not answer this question anyway.
+# The button is absent on those rows rather than failing on them.
+#
+# **A check that could not look clears nothing.** A skipped or raising
+# check is reported as such and the row is left exactly as it was: "I
+# could not look" and "it went away" are different claims and only the
+# second may take a row off the list.
+#
+# **The whole check clears, not the row.** `clear_resolved` is given this
+# check's source and the keys it still reports, so a re-run that finds two
+# of its three rows gone clears both. Clearing only the row that was
+# pressed would leave the other two to be pressed individually about a
+# thing the same look already proved is over.
+async def h_finding_recheck(request: web.Request) -> web.Response:
+    finding = _finding_or_404(request)
+    source = str(finding.get("source") or "")
+    check_id = source[6:] if source.startswith("check:") else ""
+    if not check_id or checks.get_check(check_id) is None:
+        # Not a check's row, or a check this build no longer ships. Both
+        # are "there is nothing here to re-run", and neither is an error
+        # the person can do anything about.
+        raise web.HTTPBadRequest(
+            text="This one did not come from a house check, so there is "
+                 "nothing to run again.")
+    if CHECKS_STATE["running"]:
+        raise web.HTTPConflict(
+            text="A checks pass is already running — this row will be "
+                 "brought up to date by it.")
+
+    if checks.is_shadow(check_id):
+        # The row predates the check being moved into the shadow set. It
+        # is on the tab and this cannot honestly update it: a shadow
+        # check files to a different store and reaches nobody, so running
+        # it would answer about a row that is not this one.
+        raise web.HTTPBadRequest(
+            text="That check is being trialled and no longer files here.")
+
+    started = time.time()
+    snapshot = await checks.snapshot.collect(started)
+    result = checks.run_all(snapshot, started, only=[check_id])
+    if check_id not in result["ran"]:
+        # The honest answer, and the one the row is left alone for. Both
+        # halves are named: the snapshot key that was missing, or the
+        # exception the rule raised.
+        why = (result["skipped"].get(check_id)
+               or result["errors"].get(check_id) or "it could not run")
+        return web.json_response({
+            "checked": False, "cleared": False, "why": why,
+            **(await asyncio.to_thread(_findings_payload))})
+
+    found = result["findings"]
+    keys = {findings_store.normalize(f["text"]) for f in found}
+    still = findings_store.normalize(finding.get("text", "")) in keys
+
+    def apply() -> tuple[int, int, dict]:
+        # New rows first, for the same reason the scheduled pass files
+        # before it clears: a check looking again may find the problem has
+        # moved rather than gone (the same hub, a different device), and
+        # filing that in the same breath is what makes one press enough.
+        created = findings_store.add_many(found)
+        # The number in a detail is the half that is allowed to change —
+        # the text is stable because the store dedupes on it — so a row
+        # that is still there comes back with today's number rather than
+        # the one it was filed with. Often that IS the answer.
+        findings_store.refresh_details(found)
+        cleared = findings_store.clear_resolved(
+            {checks.source_for(check_id)}, keys)
+        return len(created), len(cleared), _findings_payload()
+
+    created, cleared, payload = await asyncio.to_thread(apply)
+    return web.json_response({
+        "checked": True, "cleared": not still, "created": created,
+        # Everything else that check was reporting and no longer is. The
+        # row pressed is not counted twice: it is already in `cleared`.
+        "also_cleared": max(cleared - (0 if still else 1), 0),
+        "why": "", **payload})
+
+
+# ---------------------------------------------------------------------------
 # Proposals, and the replay behind them
 # ---------------------------------------------------------------------------
 
@@ -6072,22 +6487,60 @@ async def h_proposal_decide(request: web.Request) -> web.Response:
 
 
 async def _wait_for_gone(entity_id: str) -> bool:
-    """Whether this entity has left Core within the ceiling.
+    """Whether this automation has stopped being provided, within the ceiling.
 
     `_wait_for_entity`'s mirror, and separate rather than a flag on it:
     "it turned up" and "it went away" are the two claims, they are read at
     opposite ends of a press, and one function answering both with a
     boolean argument is a call site nobody can read.
+
+    **An entity disappearing is not what happens here, and asking whether
+    it exists was a question that could never come back yes.** Every
+    automation brAIn writes carries an `id`, so Core gives it a
+    `unique_id` and therefore an entity REGISTRY entry — and a registry
+    entry outlives the thing that provided it. Splice the entry out of
+    `automations.yaml`, reload, and Core unloads the automation and then
+    re-publishes the orphaned registry entry as a state of `unavailable`
+    carrying `restored: true`. `GET /api/states/<id>` answers 200 for
+    that, for ever.
+
+    So this polled a 200 that was never going to become a 404, spent the
+    whole `ACCEPT_VERIFY_S`, and reported that the automation "was not
+    really removed" — after which `_remove_automation` did the honest
+    thing with a failed verification and PUT THE ENTRY BACK. The removal
+    worked every time; the check condemned it and the revert undid it,
+    which is why a rehearsal's cleanup listed its own planted automations
+    as left behind in both the file and the states.
+
+    `checks/devices.py:restored` already reads exactly this shape and
+    names it: entities left over with nothing providing them. What is
+    being verified is that nothing provides it any more, and a restored
+    orphan is that, said by Core in as many words.
     """
     import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
 
     deadline = time.monotonic() + ACCEPT_VERIFY_S
     while True:
-        if not await ha_data.entity_exists(entity_id):
+        state = await ha_data.entity_state(entity_id)
+        if state is None or _is_restored_orphan(state):
             return True
         if time.monotonic() >= deadline:
             return False
         await asyncio.sleep(ACCEPT_POLL_S)
+
+
+def _is_restored_orphan(state: dict) -> bool:
+    """A state Core is publishing on behalf of nothing.
+
+    `restored` is the authority — Core sets it on exactly these — and the
+    `unavailable` half is required with it rather than instead of it: an
+    automation that is merely unavailable for some other reason is still
+    somebody's automation, and reading that as "removed" would let a
+    failed splice pass verification.
+    """
+    attrs = state.get("attributes") or {}
+    return (attrs.get("restored") is True
+            and str(state.get("state")) == "unavailable")
 
 
 async def _remove_automation(entry_id: str,
@@ -8254,12 +8707,18 @@ def make_app() -> web.Application:
     app.router.add_post("/api/proposal/{ts}/{verb}", h_proposal_decide)
     app.router.add_post("/api/findings/unsettle", h_finding_unsettle)
     app.router.add_post("/api/undo/{token}", h_undo)
+    # Before the {verb} catch-all: aiohttp matches in registration order,
+    # and "recheck" is not an ending, so it must not fall into the table
+    # of them.
+    app.router.add_post("/api/finding/{ts}/recheck", h_finding_recheck)
     app.router.add_post("/api/finding/{ts}/{verb}", h_finding_verb)
     app.router.add_delete("/api/finding/{ts}", h_finding_delete)
+    app.router.add_get("/api/insight/{id}/live", h_insight_live)
     app.router.add_get("/api/insight/{id}/history", h_history_list)
     app.router.add_get("/api/insight/{id}/history/{ts}", h_history_get)
     app.router.add_delete("/api/insight/{id}/history/{ts}", h_history_delete)
     app.router.add_get("/api/prompts", h_prompts)
+    app.router.add_get("/api/prompt/{id}/preview", h_prompt_preview)
     app.router.add_put("/api/prompt/{id}", h_prompt_put)
     app.router.add_delete("/api/prompt/{id}", h_prompt_delete)
     app.router.add_post("/api/user_category", h_user_category_create)

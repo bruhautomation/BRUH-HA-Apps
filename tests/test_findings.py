@@ -2031,3 +2031,188 @@ class TestFixRun(ServerCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCheckAgain(ServerCase):
+    """One press that asserts nothing about the house.
+
+    A check reads one instant, so it can file something true of a moment
+    that has since passed — a device unavailable while its hub rebooted,
+    a reading implausible while a printer was hot. Every other button on
+    the card makes the homeowner say something about that: it is fixed,
+    or it was never a problem. Neither is true of a state that simply
+    went away, and the scheduled pass would not notice for up to
+    `checks_interval_hours`.
+    """
+
+    def setUp(self):
+        super().setUp()
+        import checks
+        self.checks = checks
+        self._real_run_all = checks.run_all
+        self._real_collect = checks.snapshot.collect
+
+        async def collect(_now):
+            return {"available": {}}
+
+        checks.snapshot.collect = collect
+        self.addCleanup(setattr, checks, "run_all", self._real_run_all)
+        self.addCleanup(setattr, checks.snapshot, "collect", self._real_collect)
+
+    def _plant(self, text="The hall sensor is unavailable", cid="dev.unavailable"):
+        findings_store.add_many([{
+            "text": text, "detail": "since 10 Sep", "fix": "check it",
+            "severity": "serious", "source": f"check:{cid}",
+            "source_title": "Device check"}])
+        return findings_store.list_all()[0]
+
+    def _answers(self, findings, ran=True, skipped=None, errors=None):
+        def run_all(snap, now=None, only=None):
+            return {"findings": findings, "shadow": [],
+                    "ran": list(only or []) if ran else [],
+                    "skipped": skipped or {}, "errors": errors or {},
+                    "per_check": {}}
+        self.checks.run_all = run_all
+
+    def _post(self, ts):
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post(f"/api/finding/{ts}/recheck")
+                return resp.status, (await resp.json()
+                                     if resp.status == 200 else await resp.text())
+            finally:
+                await client.close()
+        return asyncio.run(run())
+
+    def test_a_problem_that_has_passed_clears_itself(self):
+        f = self._plant()
+        self._answers([])
+        status, data = self._post(f["ts"])
+        self.assertEqual(status, 200)
+        self.assertTrue(data["checked"])
+        self.assertTrue(data["cleared"])
+        self.assertEqual(findings_store.list_all(), [])
+
+    def test_clearing_teaches_nothing_and_can_come_back(self):
+        """It is not an ending, so it writes no ledger entry.
+
+        A problem that went away on its own is not a fact about the
+        house, and settling it would suppress the next real report of the
+        same thing — which is the difference between this and Wrong.
+        """
+        f = self._plant()
+        self._answers([])
+        self._post(f["ts"])
+        self.assertFalse(findings_store.is_known("The hall sensor is unavailable"))
+
+    def test_a_problem_that_is_still_there_stays_with_a_fresh_detail(self):
+        f = self._plant()
+        self._answers([{"text": "The hall sensor is unavailable",
+                        "detail": "since 10 Sep — 2 days now",
+                        "fix": "check it", "severity": "serious",
+                        "source": "check:dev.unavailable",
+                        "source_title": "Device check"}])
+        status, data = self._post(f["ts"])
+        self.assertEqual(status, 200)
+        self.assertTrue(data["checked"])
+        self.assertFalse(data["cleared"])
+        rows = findings_store.list_all()
+        self.assertEqual(len(rows), 1)
+        self.assertIn("2 days now", rows[0]["detail"])
+
+    def test_a_check_that_could_not_look_clears_nothing(self):
+        """`clear_resolved`'s rule, reached by a press.
+
+        A skipped check said nothing, and nothing is not "the problem
+        went away" — so the row is left exactly as it was and the reason
+        is handed back to be shown.
+        """
+        f = self._plant()
+        self._answers([], ran=False,
+                      skipped={"dev.unavailable": "snapshot is missing states"})
+        status, data = self._post(f["ts"])
+        self.assertEqual(status, 200)
+        self.assertFalse(data["checked"])
+        self.assertFalse(data["cleared"])
+        self.assertIn("missing states", data["why"])
+        self.assertEqual(len(findings_store.list_all()), 1)
+
+    def test_a_check_that_raised_is_the_same_answer(self):
+        f = self._plant()
+        self._answers([], ran=False, errors={"dev.unavailable": "KeyError: x"})
+        status, data = self._post(f["ts"])
+        self.assertFalse(data["checked"])
+        self.assertIn("KeyError", data["why"])
+        self.assertEqual(len(findings_store.list_all()), 1)
+
+    def test_the_whole_check_clears_not_just_the_row_pressed(self):
+        """Two of its three rows gone is two rows cleared, on one press.
+
+        Clearing only what was pressed would leave the others to be
+        pressed one at a time about a thing the same look already proved
+        is over.
+        """
+        a = self._plant("Hall sensor is unavailable")
+        self._plant("Porch sensor is unavailable")
+        self._plant("Shed sensor is unavailable")
+        self._answers([{"text": "Shed sensor is unavailable",
+                        "detail": "", "fix": "", "severity": "serious",
+                        "source": "check:dev.unavailable",
+                        "source_title": "Device check"}])
+        status, data = self._post(a["ts"])
+        self.assertTrue(data["cleared"])
+        self.assertEqual(data["also_cleared"], 1)
+        self.assertEqual([r["text"] for r in findings_store.list_all()],
+                         ["Shed sensor is unavailable"])
+
+    def test_another_checks_rows_are_untouched(self):
+        a = self._plant("Hall sensor is unavailable")
+        self._plant("The back door battery is low", cid="dev.battery_low")
+        self._answers([])
+        self._post(a["ts"])
+        self.assertEqual([r["text"] for r in findings_store.list_all()],
+                         ["The back door battery is low"])
+
+    def test_a_finding_the_analyst_raised_has_nothing_to_run(self):
+        """Regenerate on the card is that question, and it is not free."""
+        findings_store.add_many([{
+            "text": "The kitchen is warmer than the rest of the house",
+            "detail": "", "fix": "", "severity": "warning",
+            "source": "engine", "source_title": "Insight"}])
+        f = findings_store.list_all()[0]
+        status, body = self._post(f["ts"])
+        self.assertEqual(status, 400)
+        self.assertIn("house check", body)
+        self.assertEqual(len(findings_store.list_all()), 1)
+
+    def test_a_check_this_build_no_longer_ships_is_the_same_refusal(self):
+        f = self._plant(cid="dev.gone_in_this_build")
+        status, body = self._post(f["ts"])
+        self.assertEqual(status, 400)
+        self.assertEqual(len(findings_store.list_all()), 1)
+
+    def test_it_refuses_while_a_pass_is_running(self):
+        """Two passes racing would file and clear against each other."""
+        f = self._plant()
+        self._answers([])
+        self.server.CHECKS_STATE["running"] = True
+        try:
+            status, _ = self._post(f["ts"])
+        finally:
+            self.server.CHECKS_STATE["running"] = False
+        self.assertEqual(status, 409)
+        self.assertEqual(len(findings_store.list_all()), 1)
+
+    def test_a_problem_that_moved_is_filed_in_the_same_press(self):
+        f = self._plant("Hall sensor is unavailable")
+        self._answers([{"text": "Porch sensor is unavailable",
+                        "detail": "", "fix": "", "severity": "serious",
+                        "source": "check:dev.unavailable",
+                        "source_title": "Device check"}])
+        status, data = self._post(f["ts"])
+        self.assertTrue(data["cleared"])
+        self.assertEqual(data["created"], 1)
+        self.assertEqual([r["text"] for r in findings_store.list_all()],
+                         ["Porch sensor is unavailable"])

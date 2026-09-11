@@ -113,7 +113,7 @@ def safe_entity_ids(ids) -> list[str]:
     return out
 
 
-def history_params(ids, end: dt.datetime | None = None, *,
+def history_params(ids, end: dt.datetime, *,
                    minimal: bool = False,
                    no_attributes: bool = False) -> dict[str, str]:
     """Core's `/history/period` query, as params rather than as a string.
@@ -122,13 +122,33 @@ def history_params(ids, end: dt.datetime | None = None, *,
     bare key — `""` is what reaches the wire as `&minimal_response=`,
     which Core reads as present. That is the one detail that makes this
     a drop-in for the strings it replaces.
+
+    **`end` has no default, and that is the whole of this bug.** Core's
+    `/history/period/<start>` does not run to now when `end_time` is
+    absent — it defaults to **start + one day** — so a caller that omits
+    it does not get "everything since `start`", it gets a single day
+    ending 27 days ago. `closures.fetch_history` asked for 28 days that
+    way and got a day outside the recorder's 10-day retention: `[]` for
+    every door in the house, every night, which is a list, so the fetch
+    read it as "this house's history holds nothing" rather than as a
+    refusal, wrote an empty store with no error, and left
+    `evening.left_open` permanently skipped on `snapshot is missing
+    closures`. `get_history` omitted it too, which is the same bug where
+    it is much harder to see: every insight card built on the snapshot
+    path got one day of history from `history_days` ago and presented it
+    as current.
+
+    So the parameter is positional and required. A caller that genuinely
+    wants Core's own default has to write the date that produces it,
+    which is a thing a reader can see and argue with; `None` would be
+    the invisible spelling that cost two features and could not be
+    grepped for, since the bug is in the argument that is NOT there.
     """
     params: dict[str, str] = {}
     kept = safe_entity_ids(ids)
     if kept:
         params["filter_entity_id"] = ",".join(kept)
-    if end is not None:
-        params["end_time"] = end.isoformat()
+    params["end_time"] = end.isoformat()
     if minimal:
         params["minimal_response"] = ""
     if no_attributes:
@@ -254,6 +274,46 @@ async def entity_state(entity_id: str, timeout: int = 15) -> dict | None:
             return data if isinstance(data, dict) else None
 
 
+async def entity_states(entity_ids: list[str],
+                        timeout: int = 15) -> dict[str, dict]:
+    """Current state rows for a handful of named entities.
+
+    One session for the lot, and one request each — rather than `/states`,
+    which is the whole house and is hundreds of kilobytes on a real one.
+    That trade only holds for a SHORT list; this is called on a timer by
+    every insight card currently on screen, and `server.MAX_LIVE_ENTITIES`
+    is what keeps it short.
+
+    An entity Core does not have is absent from the answer rather than
+    present-and-empty: a card asking about something that has since been
+    removed should show what it was drawn with, not a blank.
+    """
+    wanted = [e for e in dict.fromkeys(entity_ids) if is_entity_id(e)]
+    if not wanted:
+        return {}
+    out: dict[str, dict] = {}
+
+    async with aiohttp.ClientSession() as session:
+        async def one(eid: str) -> None:
+            try:
+                async with session.get(
+                    f"{CORE_API}/states/{eid}", headers=_headers(),
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as resp:
+                    if resp.status != 200:
+                        return
+                    data = await resp.json()
+            except Exception:  # noqa: BLE001 — one entity that would not
+                # answer is one entity missing from the refresh, never a
+                # refresh that failed.
+                return
+            if isinstance(data, dict):
+                out[eid] = data
+
+        await asyncio.gather(*(one(e) for e in wanted))
+    return out
+
+
 async def send_notification(service: str, title: str, message: str,
                             timeout: int = 15, data: dict | None = None) -> None:
     """Deliver one notification through a notify.<service> HA service.
@@ -285,14 +345,45 @@ async def send_notification(service: str, title: str, message: str,
 
 
 async def _ws_commands(session: aiohttp.ClientSession, commands: list[dict]) -> list[Any]:
-    """Run a list of WS API commands, returning results in order (None on error)."""
+    """Run a list of WS API commands, returning results in order (None on error).
+
+    Right for every command that ASKS for something: a registry list, a
+    statistics window, the energy prefs. Wrong for one that CHANGES
+    something, because Core answers a successful mutation with
+    ``result: null`` — which lands here as the same ``None`` that means
+    the call failed. Those callers want :func:`_ws_calls`.
+    """
+    return [c["result"] for c in await _ws_calls(session, commands)]
+
+
+async def _ws_calls(session: aiohttp.ClientSession,
+                    commands: list[dict]) -> list[dict]:
+    """The same round trip, with success reported rather than inferred.
+
+    ``[{"ok": bool, "result": Any, "error": str}, ...]``, in order.
+
+    `_ws_commands` collapses the two things Core distinguishes: it hands
+    back the ``result`` field, and a successful delete's ``result`` is
+    ``null``. So `input_number/delete` — which really did delete the
+    helper — was indistinguishable from a refusal, and the rehearsal
+    reported *"Home Assistant would not delete
+    input_number.brain_test_reading"* on every clean run while its own
+    leftovers scan, reading the states, could see the helper was gone.
+    Two answers to "did that work", and the louder one was wrong.
+
+    One implementation, with `_ws_commands` layered on it, because two
+    round trips would be two chances to disagree about what Core said.
+    """
     # outer wait_for instead of ws timeout kwargs: the kwarg's type changed
     # across aiohttp versions and the base image's py3-aiohttp varies
     return await asyncio.wait_for(_ws_commands_inner(session, commands), timeout=90)
 
 
-async def _ws_commands_inner(session: aiohttp.ClientSession, commands: list[dict]) -> list[Any]:
-    results: list[Any] = [None] * len(commands)
+async def _ws_commands_inner(session: aiohttp.ClientSession,
+                             commands: list[dict]) -> list[dict]:
+    results: list[dict] = [
+        {"ok": False, "result": None, "error": "no answer from Home Assistant"}
+        for _ in commands]
     async with session.ws_connect(CORE_WS, heartbeat=20) as ws:
         authed = False
         pending: dict[int, int] = {}
@@ -314,8 +405,16 @@ async def _ws_commands_inner(session: aiohttp.ClientSession, commands: list[dict
                     await ws.send_json({"id": msg_id, **cmd})
             elif mtype == "result":
                 idx = pending.pop(data.get("id"), None)
-                if idx is not None and data.get("success"):
-                    results[idx] = data.get("result")
+                if idx is not None:
+                    if data.get("success"):
+                        results[idx] = {"ok": True, "result": data.get("result"),
+                                        "error": ""}
+                    else:
+                        err = data.get("error") or {}
+                        results[idx] = {
+                            "ok": False, "result": None,
+                            "error": str(err.get("message")
+                                         or err.get("code") or "refused")}
                 if not pending:
                     break
         if not authed:
@@ -559,14 +658,24 @@ async def get_history(
     session: aiohttp.ClientSession,
     entity_ids: list[str],
     start: dt.datetime,
+    end: dt.datetime | None = None,
 ) -> dict[str, list]:
-    """Fetch and downsample history for the given entities."""
+    """Fetch and downsample history for the given entities.
+
+    ``end`` defaults to now, which is what every caller here means by
+    "history since `start`" — and is emphatically not what Core does with
+    an absent `end_time`. See :func:`history_params`: leaving it off asked
+    for one day starting `history_days` ago, so a card built on a week of
+    history was reading a single day of it, six days stale, and saying
+    nothing about that.
+    """
     if not entity_ids:
         return {}
     ids = entity_ids[:MAX_HISTORY_ENTITIES]
+    finish = end or dt.datetime.now(dt.timezone.utc)
     raw = await _rest_get(
         session, history_path(start), timeout=90,
-        params=history_params(ids, minimal=True, no_attributes=True))
+        params=history_params(ids, finish, minimal=True, no_attributes=True))
     out: dict[str, list] = {}
     for series in raw or []:
         if not series:

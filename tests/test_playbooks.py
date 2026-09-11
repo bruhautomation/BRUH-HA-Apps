@@ -93,6 +93,14 @@ def house(**over) -> dict:
                 "k": 0.12, "coolest": 14.2, "warmest": 22.0,
                 "unit": "°C", "area": "Hall"}},
         },
+        # What the real collector always carries, and what this fixture
+        # did not. A playbook's identity includes its notify steps, so
+        # "which services could I see" is part of the question — and a
+        # pass that could not see any is not a pass that should compose
+        # one. Leaving it out meant every test here ran the one case the
+        # producer must stand down on.
+        "available": {"states": True, "registry": True, "services": True,
+                      "thermal": True},
     }
     snap.update(over)
     return snap
@@ -623,3 +631,88 @@ class TestRehearsal(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestADeclinedPlaybookStaysDeclined(unittest.IsolatedAsyncioTestCase):
+    """One real house: "I keep dismissing a playbook but it keeps coming back."
+
+    A playbook's identity is the hash of its config, and the config ends
+    in one notify step per target — with no `findings_notify_service`
+    set, every `notify.mobile_app_*` the snapshot could see.
+    `snap["services"]` is a best-effort REST fetch that degrades to an
+    empty set and flags itself unavailable, so a pass where `/services`
+    timed out composed the same three playbooks with their notify steps
+    missing, hashed them to three DIFFERENT keys, and offered every one
+    the homeowner had already declined — buying a Claude paragraph each
+    time. Both passes look successful in the log, which is why it read as
+    the add-on simply ignoring the decline.
+
+    This is `clear_resolved`'s rule in the half that offers: "I could not
+    look" and "there are no notifiers here" are different claims, and
+    only one of them may change what a house is asked.
+    """
+
+    def test_losing_the_services_list_changes_every_key(self):
+        """The mechanism, measured rather than described."""
+        import proposals
+
+        def keys(snap):
+            return {o["playbook"]["class"]: proposals.key_for(o)
+                    for o in playbooks.build(snap)}
+
+        answered = keys(house())
+        timed_out = keys(house(services=set(),
+                               available={"states": True, "registry": True,
+                                          "services": False, "thermal": True}))
+        self.assertTrue(answered)
+        self.assertNotEqual(answered, timed_out)
+        # Not one key — all of them, and `freeze` stops being offered at
+        # all, because it is notify-only and has nothing left to do.
+        self.assertNotEqual(answered["smoke"], timed_out.get("smoke"))
+        self.assertNotEqual(answered["leak"], timed_out.get("leak"))
+        self.assertNotIn("freeze", timed_out)
+
+    async def test_a_pass_that_could_not_read_the_services_offers_nothing(self):
+        server = importlib.import_module("server")
+        runs: list[str] = []
+        olds = (server.engine.run_claude, server.proposals.knows,
+                server.proposals.add, server._findings_notify_target,
+                server.automation_writer.protected_patterns)
+        server.engine.run_claude = lambda *a, **k: (
+            runs.append(a[0]) or {"ok": True, "text": "x" * 200})
+        # Nothing is known, so anything composed WOULD be offered — which
+        # is what makes the count below a statement about the guard.
+        server.proposals.knows = lambda obj: False
+        server.proposals.add = lambda obj: obj
+        server._findings_notify_target = lambda: ("", "w")
+        server.automation_writer.protected_patterns = lambda *a, **k: []
+        try:
+            snap = house(services=set(),
+                         available={"states": True, "registry": True,
+                                    "services": False, "thermal": True})
+            offered = await server._offer_playbooks(snap, NOW)
+        finally:
+            (server.engine.run_claude, server.proposals.knows,
+             server.proposals.add, server._findings_notify_target,
+             server.automation_writer.protected_patterns) = olds
+        self.assertEqual(offered, 0)
+        self.assertEqual(runs, [], "it also must not spend a Claude run")
+
+    async def test_a_pass_that_could_read_them_still_offers(self):
+        """The guard must not have switched the feature off."""
+        server = importlib.import_module("server")
+        olds = (server.engine.run_claude, server.proposals.knows,
+                server.proposals.add, server._findings_notify_target,
+                server.automation_writer.protected_patterns)
+        server.engine.run_claude = lambda *a, **k: {"ok": True, "text": "x" * 200}
+        server.proposals.knows = lambda obj: False
+        server.proposals.add = lambda obj: obj
+        server._findings_notify_target = lambda: ("", "w")
+        server.automation_writer.protected_patterns = lambda *a, **k: []
+        try:
+            offered = await server._offer_playbooks(house(), NOW)
+        finally:
+            (server.engine.run_claude, server.proposals.knows,
+             server.proposals.add, server._findings_notify_target,
+             server.automation_writer.protected_patterns) = olds
+        self.assertGreater(offered, 0)

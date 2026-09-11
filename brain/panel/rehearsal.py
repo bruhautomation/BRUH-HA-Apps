@@ -404,7 +404,14 @@ async def run(hooks: Hooks, *, progress=None) -> dict:
             out["analyst"] = {
                 **score_analyst(answer.get("findings"), PLAN,
                                 answer.get("model") or ""),
-                "ran": True, "error": ""}
+                "ran": True, "error": "",
+                # WHICH path produced the score. A card slides from the
+                # searching run to the snapshot when the first runs out
+                # of room, and the rehearsal does the same now — so a
+                # precision figure with no note on how it was reached is
+                # one nobody can compare with the last one.
+                "fallback": bool(answer.get("fallback")),
+                "searched_error": str(answer.get("searched_error") or "")[:200]}
         else:
             out["analyst"] = {"ran": False,
                               "error": str(answer.get("error") or "")[:300],
@@ -437,20 +444,34 @@ def _finish(out: dict, started: float) -> dict:
 
 async def _plant(hooks: Hooks, row: dict) -> tuple[dict | None, str]:
     if row["kind"] == "helper":
-        made = (await hooks.ws([{
+        answer = (await hooks.ws([{
             "type": "input_number/create", "name": HELPER_NAME,
             "min": 0, "max": 100, "step": 0.1,
             "initial": HELPER_VALUE}]))[0]
-        if not made:
-            return None, "Home Assistant refused input_number/create"
+        if not answer.get("ok"):
+            return None, ("Home Assistant refused input_number/create"
+                          + (f": {answer['error']}" if answer.get("error") else ""))
+        made = answer.get("result") or {}
         # The value is set separately: `initial` is what the helper reads
         # after a restart, and what a check reads is the state now.
         await hooks.ws([{"type": "call_service", "domain": "input_number",
                          "service": "set_value",
                          "service_data": {"entity_id": HELPER_ID,
                                           "value": HELPER_VALUE}}])
+        # The id Core MINTED, not the one this would have guessed.
+        # `input_number/delete` keys on the storage collection's item id,
+        # and `IDManager.generate_id` only slugifies the name while it is
+        # free — on a collision it appends `_2`, and the item id and the
+        # entity's object id part company. Deriving one from `HELPER_ID`
+        # then deletes nothing, on exactly the house that already has a
+        # leftover from a rehearsal that failed to clean up: the state
+        # where cleanup matters most is the state where it would break.
+        # `power_tools.delete_helper` looks the id up for the same reason;
+        # the create call already hands it over, so there is nothing to
+        # look up here.
         return {"kind": "helper", "id": row["id"],
-                "object_id": HELPER_ID.split(".", 1)[1]}, ""
+                "object_id": str(made.get("id")
+                                 or HELPER_ID.split(".", 1)[1])}, ""
     written, why = await hooks.write(row["row"])
     if written is None:
         return None, why
@@ -473,13 +494,37 @@ async def _remove_all(hooks: Hooks, created: list[dict]) -> dict:
         if made["kind"] == "helper":
             answer = await hooks.ws([{"type": "input_number/delete",
                                       "input_number_id": made["object_id"]}])
-            if answer and answer[0] is None:
+            # `ok`, never the result. Core answers a successful delete
+            # with `result: null`, so the old `answer[0] is None` was a
+            # null-result test wearing an error test's clothes: it fired
+            # on every clean run, and the leftovers scan below — which
+            # reads the states and could see the helper really had gone —
+            # disagreed with it in the same sentence.
+            if not answer or not answer[0].get("ok"):
+                why = (answer[0].get("error") if answer else "") or ""
                 problems.append(f"Home Assistant would not delete "
-                                f"{made['id']}")
+                                f"{made['id']}" + (f": {why}" if why else ""))
             continue
         ok, why = await hooks.remove(made["entry_id"], made.get("entity_id"))
         if not ok:
             problems.append(f"{made['id']}: {why}")
+            continue
+        # And the registry entry, which taking it out of the file does
+        # not touch. Every automation here carries an `id`, so Core gives
+        # it a `unique_id` and a registry entry — and a registry entry
+        # outlives its provider: what is left after the reload is an
+        # `unavailable` state carrying `restored: true`, which is a real
+        # leftover under the prefix and one only this can remove. The
+        # rehearsal's whole promise is that it removes everything again,
+        # and `brain doctor` warns about a stray `brain_test_*` on the
+        # strength of it, so leaving one is not a tidy-up it may skip.
+        if made.get("entity_id"):
+            gone = await hooks.ws([{"type": "config/entity_registry/remove",
+                                    "entity_id": made["entity_id"]}])
+            if gone and not gone[0].get("ok"):
+                problems.append(
+                    f"{made['id']}: the automation is gone but its entity "
+                    f"registry entry is not — {gone[0].get('error') or 'refused'}")
 
     left: list[str] = []
     try:
@@ -505,13 +550,24 @@ def leftovers(snap: dict) -> list[str]:
     independently: the automations file (the splice failed), the entity
     registry (Core did not reload), and the states (an entity nothing
     registered). Used by the removal check and worth reading on its own.
+
+    The registry third read ``snap["registry"]``, and the collector has
+    never emitted that key — it files the entity registry as a LIST under
+    ``snap["entities"]``, and "registry" is only ever a name in
+    ``snap["available"]`` and in the checks' ``needs`` tuples. So that
+    loop iterated over nothing in production for the life of the feature,
+    and a registry entry left behind with no state was invisible: the one
+    of the three places that only the registry can report. The suite
+    could not see it either, because its snapshot fake builds the key the
+    real collector does not.
     """
     found: set[str] = set()
     for cfg in snap.get("automations") or []:
         if isinstance(cfg, dict) and str(cfg.get("id") or "").startswith(PREFIX):
             found.add(str(cfg["id"]))
-    for eid in (snap.get("registry") or {}):
-        if PREFIX in str(eid):
+    for row in snap.get("entities") or []:
+        eid = row.get("entity_id") if isinstance(row, dict) else row
+        if eid and PREFIX in str(eid):
             found.add(str(eid))
     for eid in (snap.get("states") or {}):
         if PREFIX in str(eid):
@@ -542,11 +598,23 @@ def analyst_prompt(planted: list[dict], build, cat: dict, orientation: dict,
         "expected.")
 
 
-def run_analyst(prompt: str, system: str, model: str) -> dict:
+def run_analyst(prompt: str, system: str, model: str,
+                tools: bool = True) -> dict:
     """One analyst run whose card is never persisted and whose findings
-    are never filed. Same tools, same scoping, same budget."""
-    result = engine.run_analyst(prompt, system, model, ANALYST_TIMEOUT,
-                               ANALYST_MAX_TURNS, SOURCE)
+    are never filed. Same tools, same scoping, same budget.
+
+    ``tools`` is False for the snapshot fallback, which is the *other*
+    path a card can take and takes it with no tools at all
+    (`engine.run_claude`, `--disallowedTools "*"`). Running the fallback
+    prompt through the searching runner would measure a third thing that
+    no card has ever done.
+    """
+    if tools:
+        result = engine.run_analyst(prompt, system, model, ANALYST_TIMEOUT,
+                                    ANALYST_MAX_TURNS, SOURCE)
+    else:
+        result = engine.run_claude(prompt, system, model, ANALYST_TIMEOUT,
+                                   source=SOURCE)
     if not result.get("ok"):
         return {"ok": False, "findings": [], "model": model,
                 "error": journal.scrub(result.get("error") or ""),

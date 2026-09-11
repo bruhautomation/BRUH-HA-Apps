@@ -2,6 +2,84 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.49.0
+
+**You can see the prompt now.** A card's Edit dialog had a box labelled
+*"Analysis focus (the prompt for this category)"*, and that box is one
+paragraph of what Claude is actually sent — the output contract and its
+design system, your standing feedback, what brAIn has measured, what is
+already on your work list, what this card said last time, and the data
+itself are all assembled at run time and were shown nowhere. So a card that
+kept coming back wrong could only be argued with by guessing. **See the
+whole prompt** opens exactly what would be sent if you pressed *Save &
+regenerate* right now: every block named, with what it is for and how big it
+is, the full text underneath, and what the run would cost. It is rebuilt
+each time rather than stored, because half those blocks are live and a
+stored copy would be showing you a house that has moved on — and the two
+blocks that are yours to change are marked as such.
+
+**And a card can keep up.** A card is one Claude run rendered to a document,
+written once, which is right for "last week's energy" and wrong for the ones
+people pin to a dashboard: a door that is open, a machine that is running, a
+room being held at a temperature all read as current and are not. A card may
+now declare the entities whose state its visualization wants kept up to
+date, and brAIn refreshes those — and only those — while the card is on
+screen. The list is fixed when the card is written, so a page of generated
+HTML cannot ask for the rest of your house.
+
+**Doors and windows were never measured, on any install.** The nightly pass
+asked Home Assistant for four weeks of history and did not send an end time,
+and Core does not read that as "up to now" — it reads it as *start plus one
+day*. So what went out every night was a request for a single day four weeks
+ago, which is outside the recorder's retention on a default install: an
+empty answer for every door in the house. An empty answer is not a refusal,
+so the store was written as a house with nothing to measure, and the bedtime
+"something is still open" check was skipped for the life of the feature.
+The same omission was quietly costing every insight card built on the
+snapshot path a week of history, handing it one day from `history_days` ago
+and presenting it as current.
+
+**"Check again", on a finding.** A house check reads one instant, so it can
+file something that was true while a hub rebooted or a printer was hot and
+has since passed — and until now the only ways off the list were to claim
+you fixed it or that it was never a problem. This asks the check to look
+again. If it no longer sees it the row goes, along with anything else that
+check has stopped reporting; if it could not look this time, nothing changes
+and it says why.
+
+**A declined playbook kept coming back.** A playbook is identified by the
+automation it would write, and that automation ends in one notify step per
+phone. The list of notifiers is a best-effort fetch, so a pass where it
+timed out composed the same playbooks without their notify steps, decided
+they were different playbooks, and offered back every one you had already
+declined. Both passes look successful in the log, which is why there was
+nothing to point at.
+
+**A working 3D printer is not a broken sensor.** The "impossible value"
+check said a temperature sensor cannot read outside -40–60°C, which is true
+of a thermometer on a wall and false of a print nozzle at 220°C, an oven, a
+kettle, a boiler flow pipe or a CPU. The scorecard on the Findings tab is
+what caught it — nothing confirmed against several marked Wrong — and the
+rule now stands down for a sensor that plainly measures something other than
+room air.
+
+**The rehearsal cleans up after itself again.** `brain doctor --rehearse`
+reported that it had left its test automations and its helper behind. It had
+not: a successful delete answers with the same empty value Home Assistant
+uses for a refusal, and the check that an automation had really gone asked a
+question that can never come back yes — after which the rehearsal put the
+automation it had correctly removed straight back. It also removes the
+entity registry entries it creates, which nothing did before. The card's own
+per-defect rows no longer render as literal `&nbsp;`, and the analyst stage
+falls back to the snapshot path exactly as a real card does rather than
+scoring itself as not having run.
+
+**And `brain doctor --deep` stopped crying wolf about memory.** Its probe
+was a timestamped line that said "ignore this line", handed to a pass whose
+whole job is to keep durable facts about the house and drop everything else
+— so a working consolidator dropped it, and the check reported the sentence
+for a broken memory pipeline.
+
 ## 1.48.0
 
 **A house that has just been installed is quiet, and the quiet was

@@ -483,6 +483,83 @@ class TestDeviceChecks(unittest.TestCase):
         snap["states"]["sensor.hall_temp"]["attributes"]["unit_of_measurement"] = "°F"
         self.assertEqual(devices.implausible(snap, NOW), [])
 
+    def test_a_heater_is_not_an_impossible_temperature(self):
+        """The four rows one real house filed about a working 3D printer.
+
+        `device_class: temperature` says "this is a temperature", not
+        "this is room air" — and the -40–60°C bound is an ambient one. So
+        a Bambu Labs A1 reporting its bed at 65°C and its nozzle at 220°C
+        produced four findings saying a temperature sensor cannot read
+        that. It can; that one measures a heater. The producer scorecard
+        is what caught it: 0 confirmed against 2 marked Wrong.
+        """
+        snap = house()
+        for eid, name, value in (
+            ("sensor.bambu_labs_a1_nozzle_temperature",
+             "Bambu Labs A1 Nozzle temperature", "220"),
+            ("sensor.bambu_labs_a1_bed_temperature",
+             "Bambu Labs A1 Bed temperature", "65"),
+            ("sensor.oven_temperature", "Oven temperature", "210"),
+            ("sensor.kettle_temp", "Kettle temp", "98"),
+            ("sensor.boiler_flow_temperature", "Boiler flow temperature", "72"),
+            ("sensor.cpu_temperature", "CPU temperature", "78"),
+            ("sensor.hot_water_cylinder", "Hot water cylinder", "65"),
+        ):
+            snap["states"][eid] = {
+                "state": value, "last_updated": iso(60),
+                "attributes": {"device_class": "temperature",
+                               "unit_of_measurement": "°C",
+                               "friendly_name": name}}
+        self.assertEqual(devices.implausible(snap, NOW), [])
+
+    def test_a_room_thermometer_is_still_checked(self):
+        """The gate must not have switched the rule off.
+
+        Being wrong in the permissive direction costs one finding nobody
+        got; being wrong the other way costs the list. But a rule that
+        stands down for everything is the first cost paid in full.
+        """
+        snap = house()
+        snap["states"]["sensor.hall_temp"]["state"] = "99"
+        found = devices.implausible(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("Hall", found[0]["text"])
+
+    def test_a_bedroom_is_a_room_and_a_print_bed_is_not(self):
+        """`bed` alone is a bedroom; it only reads as hot beside a printer."""
+        snap = house()
+        snap["states"]["sensor.bedroom_temperature"] = {
+            "state": "95", "last_updated": iso(60),
+            "attributes": {"device_class": "temperature",
+                           "unit_of_measurement": "°C",
+                           "friendly_name": "Bedroom temperature"}}
+        snap["states"]["sensor.printer_bed_temperature"] = {
+            "state": "95", "last_updated": iso(60),
+            "attributes": {"device_class": "temperature",
+                           "unit_of_measurement": "°C",
+                           "friendly_name": "Printer bed temperature"}}
+        ids = [f["entity_id"] for f in devices.implausible(snap, NOW)]
+        self.assertIn("sensor.bedroom_temperature", ids)
+        self.assertNotIn("sensor.printer_bed_temperature", ids)
+
+    def test_the_baseline_check_agrees_about_which_sensors_those_are(self):
+        """One question, one answer.
+
+        `base.unusual` stands down for what `dev.implausible` claims, so
+        if the two disagreed a printer nozzle would stop being
+        impossible and start being *unusual* — the same sensor under a
+        different fix, which is the arrangement both rules exist to
+        avoid.
+        """
+        from checks import baseline
+        st = {"state": "220", "last_updated": iso(60),
+              "attributes": {"device_class": "temperature",
+                             "unit_of_measurement": "°C",
+                             "friendly_name": "Nozzle temperature"}}
+        self.assertFalse(devices.out_of_range(st, "sensor.nozzle_temperature"))
+        self.assertFalse(baseline.devices.out_of_range(
+            st, "sensor.nozzle_temperature"))
+
     def test_frozen_needs_a_flat_week_and_ignores_zero_and_batteries(self):
         snap = house()
         snap["stats"]["sensor.hall_temp"] = [
