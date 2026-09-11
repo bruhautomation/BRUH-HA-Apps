@@ -26,14 +26,20 @@ const OUT = process.env.TIP_SHOT_DIR || '';
 const WIDTHS = [320, 390, 768, 1100, 1440];
 
 // One of each card the tab draws, so both action rows are measured: a guess
-// (two buttons) and a finding (six, which is the row that wrapped).
+// (two buttons) and a finding (seven, which is the row that wrapped).
+//
+// The finding's source is a CHECK's, because `Check again` renders only on
+// those — and the seventh button is exactly the sort of addition that puts
+// this row back over the edge it was fixed at. A fixture whose finding came
+// from the analyst would measure the six-button row for ever and never the
+// one people actually have.
 const PAYLOAD = {
   findings: [{
     ts: 1750000001, text: 'Front porch motion sensor has been on for 8 days',
     detail: 'sensor.front_porch_motion has reported `on` continuously since 26 Jul.',
     fix: 'Reload the Zigbee integration and re-pair the sensor.',
     severity: 'warning', fixable: true, entity_id: 'binary_sensor.front_porch_motion',
-    source: 'devices', source_title: 'Device Health', status: 'open',
+    source: 'check:dev.frozen', source_title: 'Device check', status: 'open',
     result: '', changed: [], settled_at: 0, snoozed_until: 0,
   }],
   hypotheses: [{

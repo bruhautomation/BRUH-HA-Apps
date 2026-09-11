@@ -1188,6 +1188,11 @@ body.modal-open {
 }
 .diag .drow:last-child { border-bottom: 0; }
 .diag .dk { flex: 0 0 40%; color: var(--ink-2); }
+/* An indented key — one of a group under the row above it. The
+   rehearsal's per-defect rows used to ask for this with a pair of
+   `&nbsp;` inside the key, which `diagRow` escapes because a key is
+   text, so it rendered as the literal characters. */
+.diag .dk.dsub { padding-left: 16px; }
 .diag .dv { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .diag .dbad { color: var(--critical); }
 .diag ul { margin: 4px 0 0; padding-left: 16px; }
@@ -3886,3 +3891,43 @@ body.term-classic #termMode .ico-out { display: block; }
   background: var(--plane); color: var(--ink);
   font-family: inherit; font-size: 16px; line-height: 1.45;
 }
+
+/* ------------------------------------------------------------------ the
+   whole prompt, on the card that is asked it.
+
+   Issue #300: "Cannot see prompt, unable to iteratively rework card
+   layout." The focus box was labelled "the prompt for this category" and
+   is one paragraph of a dozen blocks, so the only way to argue with a
+   card that kept coming back wrong was to guess. This shows what is
+   actually sent, block by block with what each is for and how big it is,
+   and leaves editable the part that is yours. */
+.linkish {
+  background: none; border: 0; padding: 0; font: inherit;
+  color: var(--accent); text-decoration: underline; cursor: pointer;
+}
+.promptview { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 12px; }
+.promptbar { align-items: center; gap: 8px; }
+.promptsections { display: flex; flex-direction: column; gap: 2px; }
+.psec {
+  display: flex; gap: 8px; align-items: baseline;
+  padding: 4px 0; border-bottom: 1px solid var(--hairline);
+}
+.psec .pname { flex: 0 0 40%; color: var(--ink-2); }
+/* The blocks you can change, marked as such — the whole point of showing
+   the rest is that it is context rather than an invitation. */
+.psec .pname.pmine { color: var(--ink); font-weight: 600; }
+.psec .pwhat { flex: 1 1 auto; color: var(--ink-3); }
+.psec .psize { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--ink-3); }
+/* 16px explicitly: the touch floor is a bare `textarea` selector in a
+   `pointer: coarse` block and any class-qualified rule outranks it, so a
+   smaller size here would let iOS zoom the page in on focus and never
+   zoom back — readonly still takes focus. Same trap `.propnote textarea`
+   documents one block up. */
+#editPromptText {
+  width: 100%; resize: vertical; padding: 8px 10px;
+  border: 1px solid var(--hairline); border-radius: 8px;
+  background: var(--plane); color: var(--ink-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 16px; line-height: 1.4; white-space: pre-wrap;
+}
+@media (min-width: 640px) { #editPromptText { font-size: 13px; } }

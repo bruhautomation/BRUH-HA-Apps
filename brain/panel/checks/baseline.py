@@ -87,7 +87,7 @@ def eligible(house: House, eid: str, st: dict) -> bool:
     # one sensor under two different fixes is how a list stops being
     # read — the same rule `dev.unavailable` follows for a dead Z-Wave
     # node, and they share the question so they cannot disagree about it.
-    if devices.out_of_range(st):
+    if devices.out_of_range(st, eid):
         return False
     return domain_of(eid) == "sensor"
 

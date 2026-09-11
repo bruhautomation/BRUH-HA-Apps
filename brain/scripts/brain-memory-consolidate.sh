@@ -510,6 +510,33 @@ consolidate_once() {
 
     record_change "$current_memory" "$new_memory" "snapshots/$snapshot" "consolidation"
 
+    # A pass that consumed facts and wrote none of them down. It is a
+    # legitimate outcome — the prompt tells this pass to drop a
+    # correction that carries no durable truth, and a batch of
+    # already-known facts merges into nothing — but it is also what a
+    # pass that has quietly stopped filing looks like, and the two were
+    # indistinguishable from outside: the queue drains either way,
+    # `record_change` writes nothing for an empty diff, and the Memory
+    # tab shows an inbox that emptied.
+    #
+    # The drain is per PASS and the filing decision is per FACT, and
+    # nothing reconciles them. This does not try to — deciding which of
+    # twenty queued lines should have survived is the model's judgement
+    # and re-deriving it here would be a second consolidator. What it
+    # does is stop the case being silent, which is the difference
+    # between "brAIn decided that was not worth keeping" and "I typed a
+    # correction and nothing happened". Counting corrections separately,
+    # because that is the one kind somebody typed by hand and is
+    # waiting to see the effect of.
+    local queued_n corrections_n
+    queued_n=$(printf '%s
+' "$inbox_lines" | grep -c . 2>/dev/null || echo 0)
+    corrections_n=$(printf '%s
+' "$inbox_lines"         | grep -c '"source"[[:space:]]*:[[:space:]]*"correction"' 2>/dev/null || echo 0)
+    if [ "$queued_n" -gt 0 ] && [ "$current_memory" = "$new_memory" ]; then
+        log "filed nothing from ${queued_n} queued line(s) (${corrections_n} correction(s)) — the pass read them and the document is unchanged; that is a judgement, not a failure, but a run of these means memory has stopped growing"
+    fi
+
     # Archive the processed inbox files; prune old archives.
     mkdir -p "$PROCESSED_DIR"
     local f

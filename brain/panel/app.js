@@ -315,6 +315,80 @@ const jsonInScript = (v) => JSON.stringify(v).replace(/</g, "\\u003c");
 
 const SIZE_SNIPPET = (id) => `<script>(function(){var last=0;function post(){var b=document.body;if(!b)return;var h=Math.ceil(Math.max(b.offsetHeight,b.getBoundingClientRect().height));if(h>0&&Math.abs(h-last)>2){last=h;parent.postMessage({type:"bruh-size",id:${jsonInScript(id)},h:h},"*");}}try{new ResizeObserver(post).observe(document.body);}catch(e){}window.addEventListener("load",post);setTimeout(post,400);setTimeout(post,1200);})();<\/script>`;
 
+// The other direction, and the reason issue #300 asked for one: a card is
+// one Claude run rendered to a document, written once — so a card about
+// something happening NOW is frozen at the moment it was made. A card may
+// declare `live` entities in its JSON; the panel fetches their current
+// states while the card is on screen and posts them in here.
+//
+// The frame has no network of its own (the contract says so, and the
+// sandbox enforces it), so this IS the channel. `window.brainLive(cb)`
+// hands the callback whatever has arrived already and then every refresh
+// after, which is what lets a visualization register at any point during
+// its own load without racing the first message.
+//
+// It is deliberately a one-way push. A frame that could ASK for an
+// entity would be model-authored script choosing what to read out of the
+// house through the panel's credential; what it gets is what its own
+// author declared, fixed when the card was written.
+const LIVE_SNIPPET = (id) => `<script>(function(){var cbs=[],last=null;window.brainLive=function(fn){if(typeof fn!=="function")return;cbs.push(fn);if(last){try{fn(last);}catch(e){}}};window.addEventListener("message",function(ev){var d=ev.data;if(!d||d.type!=="bruh-live"||d.id!==${jsonInScript(id)}||!d.states)return;last=d.states;for(var i=0;i<cbs.length;i++){try{cbs[i](last);}catch(e){}}});})();<\/script>`;
+
+// Which frames want live data, and the one timer that serves all of them.
+// One timer rather than one per card: a dashboard with six live cards
+// would otherwise be six independent polls drifting against each other,
+// and the whole point of the interval is that it is gentle.
+const liveFrames = new Map();   // frameId -> {insightId, entities}
+let livePoll = null;
+let livePollS = 15;
+
+function watchLive(frameId, insight) {
+  const ents = Array.isArray(insight.live) ? insight.live : [];
+  if (!ents.length) return;
+  liveFrames.set(frameId, { insightId: insight.id, entities: ents });
+  if (!livePoll) livePoll = setTimeout(liveTick, 300);
+}
+
+// Frames are rebuilt on every render, so the map would grow without
+// bound; a frame whose element has gone is dropped as it is noticed
+// rather than tracked separately, which keeps the bookkeeping in one
+// place and cannot leak a card the user has navigated away from.
+async function liveTick() {
+  livePoll = null;
+  const wanted = new Map();
+  liveFrames.forEach((v, frameId) => {
+    const frame = document.querySelector(
+      `iframe[data-frame="${CSS.escape(String(frameId))}"]`);
+    // Gone from the DOM, or holding a different card now: a re-render
+    // built a new frame and this id names nothing. Dropped, or the map
+    // grows for the life of the session.
+    if (!frame || !frame.isConnected) { liveFrames.delete(frameId); return; }
+    // Rendered nowhere — a closed modal, a tab you are not on. SKIPPED
+    // rather than dropped: nobody is looking, so it must not cost a
+    // request, but `renderIfChanged` deliberately does not rebuild an
+    // iframe it does not have to, so a dropped entry would never be
+    // registered again and the card would come back permanently frozen.
+    if (frame.offsetParent === null && !frame.getClientRects().length) return;
+    if (!wanted.has(v.insightId)) wanted.set(v.insightId, []);
+    wanted.get(v.insightId).push({ frameId, frame });
+  });
+  for (const [insightId, frames] of wanted) {
+    try {
+      const d = await api(`api/insight/${insightId}/live`);
+      if (d.poll_s) livePollS = d.poll_s;
+      frames.forEach(({ frameId, frame }) => {
+        if (!frame.contentWindow) return;
+        frame.contentWindow.postMessage(
+          { type: "bruh-live", id: frameId, states: d.states || {} }, "*");
+      });
+    } catch (e) {
+      // A refresh that did not arrive leaves the card showing what it
+      // last had, which is the same thing a card with no live entities
+      // shows and is never worse than blanking it.
+    }
+  }
+  if (liveFrames.size) livePoll = setTimeout(liveTick, livePollS * 1000);
+}
+
 window.addEventListener("message", (ev) => {
   const d = ev.data;
   if (!d || d.type !== "bruh-size" || typeof d.h !== "number") return;
@@ -1020,8 +1094,9 @@ function makeFrame(insight) {
   frame.setAttribute("loading", "lazy");
   const frameId = `${insight.id}-${state.frameSeq++}`;
   frame.dataset.frame = frameId;
-  frame.srcdoc = insight.html + SIZE_SNIPPET(frameId);
+  frame.srcdoc = insight.html + SIZE_SNIPPET(frameId) + LIVE_SNIPPET(frameId);
   wrapper.appendChild(frame);
+  watchLive(frameId, insight);
   return wrapper;
 }
 
@@ -1730,8 +1805,14 @@ function openModal(insight) {
   const frame = $("#modalFrame");
   const frameId = `modal-${state.frameSeq++}`;
   frame.dataset.frame = frameId;
-  frame.srcdoc = insight.html + SIZE_SNIPPET(frameId);
+  frame.srcdoc = insight.html + SIZE_SNIPPET(frameId) + LIVE_SNIPPET(frameId);
   openBox("#modal");
+  // The expanded view is where a live card is most worth being live —
+  // it is the one you sit and watch. `#modalFrame` is a reused element
+  // rather than a rebuilt one, so it stays in the DOM after the modal
+  // closes; `liveTick`'s visibility test is what stops it being polled
+  // for the rest of the session.
+  watchLive(frameId, insight);
 }
 
 $("#modalClose").addEventListener("click", () => closeBox("#modal"));
@@ -1799,8 +1880,65 @@ function openEdit(cat) {
   const overridden = cat.focus_overridden || cat.renamed || cat.enabled === false
     || cat.refresh_hours != null || (cat.schedule && cat.schedule.length);
   $("#editReset").classList.toggle("hidden", !overridden);
+  // Closed, and emptied: the dialog is one element reused for every card,
+  // so a prompt left open from the last one would greet this card with
+  // another card's blocks — the same trap `setChatFinding` clears.
+  $("#editPrompt").hidden = true;
+  $("#editPromptSections").textContent = "";
+  $("#editPromptText").value = "";
   openBox("#editModal");
 }
+
+// The whole prompt, rebuilt rather than replayed. Half the blocks in it
+// are live — the findings block, what brAIn has measured, what this card
+// said last time — so showing a stored copy of what produced the card on
+// screen would be showing a house that has moved on. What somebody
+// iterating needs is "what will be sent if I press Save & regenerate",
+// and that is what this asks for.
+async function loadPromptView() {
+  const box = $("#editPrompt");
+  const secs = $("#editPromptSections");
+  const text = $("#editPromptText");
+  box.hidden = false;
+  $("#editShowPrompt").disabled = true;
+  secs.textContent = "";
+  text.value = "";
+  $("#editPromptSize").textContent = "Building it…";
+  try {
+    const d = await api(`api/prompt/${editCatId}/preview`);
+    secs.innerHTML = (d.sections || []).map((sec) =>
+      `<div class="psec"><span class="pname${sec.yours ? " pmine" : ""}">`
+      + `${esc(sec.name)}</span>`
+      + `<span class="pwhat">${esc(sec.what || "")}</span>`
+      + `<span class="psize">${sec.chars ? fmtChars(sec.chars) : "—"}</span></div>`
+    ).join("");
+    text.value = d.system + "\n\n" + d.prompt;
+    // `~` on the token figure everywhere it appears: it is derived from a
+    // character count, not counted, and a bare number here would be read
+    // as the one on the bill.
+    $("#editPromptSize").textContent =
+      `${fmtChars(d.chars)} · ~${fmtChars(d.tokens)} tokens · `
+      + `${d.mode === "search" ? "search mode — the data section is a map and "
+        + "the run fetches what it needs" : "snapshot mode — the whole home "
+        + "is posted with the prompt"}`;
+  } catch (e) {
+    $("#editPromptSize").textContent = e.message;
+  } finally {
+    $("#editShowPrompt").disabled = false;
+  }
+}
+
+function fmtChars(n) {
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+}
+
+$("#editShowPrompt").addEventListener("click", loadPromptView);
+$("#editPromptHide").addEventListener("click", () => {
+  $("#editPrompt").hidden = true;
+});
+$("#editPromptCopy").addEventListener("click", () =>
+  copyOrSelect($("#editPromptText").value, "Prompt copied"));
+
 
 async function saveEdit(regen) {
   const hours = $("#editHours").value.trim();
@@ -2166,8 +2304,15 @@ $("#pausedChip").addEventListener("click", async () => {
 // request per viewer per interval for an answer that changes hourly.
 let diagPayload = null;
 
-function diagRow(key, value, bad) {
-  return `<div class="drow"><div class="dk">${esc(key)}</div>`
+// `key` is TEXT and is escaped here; `value` is markup and is the caller's
+// to escape. A caller that wants its key indented asks for `sub`, because
+// the alternative is what the rehearsal block did: pass `&nbsp;&nbsp;` as
+// part of the key, have it escaped exactly as promised, and render the
+// six literal characters `&nbsp;` down the middle of the Settings dialog.
+// Indentation is presentation and belongs in the stylesheet; a caller
+// smuggling markup through an escaped argument can only ever be a bug.
+function diagRow(key, value, bad, sub) {
+  return `<div class="drow"><div class="dk${sub ? " dsub" : ""}">${esc(key)}</div>`
        + `<div class="dv${bad ? " dbad" : ""}">${value}</div></div>`;
 }
 
@@ -2727,14 +2872,23 @@ function renderRehearsal(d) {
       + (c.extra ? `, ${c.extra} reported that were not planted` : ""),
       (c.found || 0) < (c.planted || 0) || !!c.extra));
     (c.rows || []).forEach((r) => rows.push(diagRow(
-      `&nbsp;&nbsp;${esc(r.id)}`,
+      r.id,
       `${esc(r.verdict)} <span class="hint">${esc(r.check || "")}</span>`,
-      r.verdict === "missed" || r.verdict === "false positive")));
+      r.verdict === "missed" || r.verdict === "false positive", true)));
     rows.push(diagRow("Analyst", a.ran
       ? `found ${a.found || 0} of ${a.planted || 0}`
         + ` — recall ${Math.round((a.recall || 0) * 100)}%,`
         + ` precision ${Math.round((a.precision || 0) * 100)}%`
         + ` on ${esc(a.model || "the default model")}`
+        // Which of the two paths produced the number. A card slides from
+        // searching to the snapshot when the search runs out of room, so
+        // a score with no note on how it was reached is one nobody can
+        // compare against last month's.
+        + (a.fallback
+          ? ` <span class="hint">via the snapshot path — the search run `
+            + `did not land${a.searched_error
+              ? ` (${esc(a.searched_error)})` : ""}</span>`
+          : "")
       : `did not run — ${esc(a.error || "unknown")}`, !a.ran));
     rows.push(diagRow("Cleanup", esc(clean.sentence || "?"), !clean.ok));
     if (last.error) rows.push(diagRow("Error", esc(last.error), true));
@@ -3242,6 +3396,48 @@ async function findAction(finding, verb, done, btns, note) {
   }
 }
 
+// Ask the producer to look again. Unlike every other press on a finding
+// this asserts nothing — it is not an ending, it takes no note, and it
+// hands back no undo token, because there is nothing to undo: either the
+// check still reports the problem or it does not.
+//
+// Three answers, and the third is the one worth being careful about. It
+// cleared; it is still there (and the detail is now current, which is
+// often the actual answer — "9 days left" becoming "2 days left" is the
+// row telling you something); or the check COULD NOT LOOK, in which case
+// nothing changes and the row stays exactly as it was. "I could not look"
+// and "it went away" are different claims and only the second may take a
+// row off the list — `clear_resolved`'s rule, reached by a press.
+async function recheckFinding(f, btns) {
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    const data = await api(`api/finding/${f.ts}/recheck`, { method: "POST" });
+    takeFindings(data);
+    renderFindings();
+    if (!data.checked) {
+      toast(`Could not check that again — ${data.why}`);
+      return;
+    }
+    if (data.cleared) {
+      // Said in the words of what happened rather than "cleared": the
+      // problem going away on its own is the good outcome and worth
+      // naming as one.
+      toast(data.also_cleared
+        ? `Gone — and ${data.also_cleared} other${data.also_cleared > 1 ? "s" : ""}`
+          + " that check found are gone too"
+        : "Gone — that check doesn't see it any more");
+      return;
+    }
+    toast(data.created
+      ? "Still there, and the check found something new as well"
+      : "Still there, as of just now");
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    btns.forEach((b) => { b.disabled = false; });
+  }
+}
+
 // The reason box. It opens in place of the card's buttons rather than in a
 // popover, because it is the only control on this tab you type into and a
 // floating box anchored to a button is a bad place to type a sentence on a
@@ -3430,6 +3626,27 @@ function makeFinding(f) {
       fix.addEventListener("click", () => findAction(
         f, "fix", "On it — brAIn is making the change", btns));
     }
+    // "Is this still true?" — the one press on this card that says nothing
+    // about the house, and the reason it exists is that a check reads one
+    // instant. A device that was unavailable while its hub rebooted, a
+    // reading that was implausible while a printer was hot, an add-on
+    // stopped mid-update: each is a true report of a moment that has since
+    // passed, and answering it means saying something about a problem that
+    // is over. The scheduled pass would clear it in up to
+    // `checks_interval_hours` — six by default, which on a list you are
+    // looking at now may as well be never.
+    //
+    // Only on a check's row: a finding from the analyst came out of a
+    // Claude run over a whole category, and re-running that is Regenerate
+    // on the card, which costs real money and would not answer this
+    // question anyway. The button is absent there rather than failing.
+    if (String(f.source || "").startsWith("check:")) {
+      const again = add(el("button", "btn small", "↻  Check again"));
+      tip(again, "Run the check that found this, now — it clears itself if "
+        + "whatever it saw has passed");
+      again.addEventListener("click", () => recheckFinding(f, btns));
+    }
+
     // Talk about it before deciding. The discussion is read-only by
     // construction — the prompt says so — because "explain this to me" and
     // "go change my house" are different consents, and Fix it is the one

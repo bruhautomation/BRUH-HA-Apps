@@ -353,3 +353,69 @@ class TestARefusedFetchLeavesTheStore(unittest.TestCase):
         got = asyncio.run(closures.build(None, {}, NOW, self.path))
         self.assertEqual(got["entities"], {})
         self.assertEqual(closures.load(self.path)["built_at"], int(NOW))
+
+
+class TestTheWindowItActuallyAsksFor(unittest.IsolatedAsyncioTestCase):
+    """The nightly build measured 0 of 18 doors, and the query was why.
+
+    `fetch_history` asked for `now - 28 days` and sent no `end_time`.
+    Core does not read that as "up to now" — it reads it as **start plus
+    one day** — so what went out every night was a request for a single
+    day four weeks ago, which on a default install (`purge_keep_days`:
+    10) is outside the recorder's retention entirely. Core answered `[]`,
+    and `[]` is a list, so the fetch counted the batch as answered and
+    returned `{}`: "this house's history holds nothing for these ids"
+    rather than "I could not look". `build` wrote an empty store with no
+    error, `snapshot` marked the key unavailable, and `evening.left_open`
+    was skipped for the life of the feature.
+
+    Driven against a real aiohttp server rather than a stub, because the
+    defect is the parameter that is NOT on the wire, and a fake that
+    accepts `params` and discards it — which is what the fetch tests
+    above do — cannot see it. Same reasoning as
+    `tests/test_ha_history_query.py`.
+    """
+
+    async def asyncSetUp(self):
+        import ha_data
+        from aiohttp import web
+        from aiohttp.test_utils import TestClient, TestServer
+
+        self.seen = []
+
+        async def handler(request):
+            self.seen.append(dict(request.query))
+            return web.json_response([])
+
+        app = web.Application()
+        app.router.add_get("/history/period/{stamp}", handler)
+        self.server = TestServer(app)
+        self.client = TestClient(self.server)
+        await self.client.start_server()
+        self.addAsyncCleanup(self.client.close)
+        self._core = ha_data.CORE_API
+        ha_data.CORE_API = str(self.server.make_url("")).rstrip("/")
+        self.addCleanup(setattr, ha_data, "CORE_API", self._core)
+
+    async def test_the_window_ends_now_and_not_a_day_after_it_started(self):
+        start = dt.datetime.fromtimestamp(NOW - 28 * 86400, tz=dt.timezone.utc)
+        end = dt.datetime.fromtimestamp(NOW, tz=dt.timezone.utc)
+        await closures.fetch_history(
+            self.client.session, ["binary_sensor.back"], start, end)
+        self.assertEqual(len(self.seen), 1)
+        self.assertEqual(self.seen[0].get("end_time"), end.isoformat(),
+                         "without an end_time Core answers with the single "
+                         "day after `start`, which is what measured 0 of 18")
+
+    async def test_the_whole_month_is_asked_for(self):
+        """The span on the wire is the span the caller meant.
+
+        A day of it is what shipped; asserting the end_time alone would
+        pass on a window that is still one day wide.
+        """
+        start = dt.datetime.fromtimestamp(NOW - 28 * 86400, tz=dt.timezone.utc)
+        end = dt.datetime.fromtimestamp(NOW, tz=dt.timezone.utc)
+        await closures.fetch_history(
+            self.client.session, ["binary_sensor.back"], start, end)
+        asked = (dt.datetime.fromisoformat(self.seen[0]["end_time"]) - start)
+        self.assertGreater(asked.days, 20)

@@ -330,6 +330,7 @@ OUTPUT CONTRACT (strict JSON; title, summary, highlights, and html are required)
   "learned": [ "Optional: durable facts about this home worth remembering" ],
   "findings": [ {"text": "ONE sentence naming what is broken, under 120 chars — it is the card's title and anything longer is cut", "detail": "The argument: the evidence, the entity, the number, when it started, what you noticed along the way", "fix": "The specific change that would resolve it", "severity": "info|warning|serious|critical", "fixable": true, "entity_id": "sensor.example (optional)"} ],
   "tags": [ "2-4 short lowercase topic tags" ],
+  "live": [ "sensor.example", "binary_sensor.example" ],
   "html": "<!DOCTYPE html>... one complete self-contained HTML document ..."
 }
 Provide 3-6 highlights — they are the main content. Each is one specific, checkable data point: a real value with its unit, the entity/room/person it belongs to, and a time when relevant ("Dryer", "3.1 kWh", "+40% vs weekday avg"). Use "delta" for comparison against the period and "status" only when something genuinely deserves attention. Never pad with vague or derived filler ("Overall status", "Things look normal") — fewer sharp highlights beat more dull ones. Escape the HTML correctly as a JSON string.
@@ -347,6 +348,17 @@ A guess the homeowner confirms becomes a plain remembered fact; one they reject 
 - "fixable" is true ONLY when the fix is a change to Home Assistant that software could make — editing a config or automation, renaming an entity, calling a service. Anything needing hands in the physical world (batteries, unplugging, re-pairing) is false.
 - "severity": critical = safety or data loss; serious = something is not working; warning = degraded or will break soon; info = worth tidying.
 Do not pad. Most runs find nothing wrong, and an empty list is the honest, expected answer. Never repeat a finding the prompt already lists as reported or dismissed.
+
+"live" (optional, max 12): entity_ids whose CURRENT state the visualization should keep up to date. The card is generated once and then sits on a dashboard, so every number in it is frozen at the moment you ran — which is right for "last week's energy" and wrong for "what is on right now". List an entity here ONLY when watching it change is part of the story: a door that is open, a machine that is running, a temperature being held. Omit the field entirely when the card is about a period that has already ended, which is most cards.
+
+HOW TO USE IT IN THE HTML: brAIn injects a `window.brainLive(callback)` helper into the page. Register once and you are handed `{entity_id: {state, attributes, unit, name}}` immediately and again on every refresh:
+  <script>
+    if (window.brainLive) window.brainLive(function (s) {
+      var d = s["binary_sensor.front_door"];
+      if (d) document.getElementById("door").textContent = d.state === "on" ? "Open" : "Closed";
+    });
+  </script>
+Rules: the page must render correctly with NO live data at all (the callback may never fire — an older panel, a lost connection, an entity that has since gone), so draw the values from the snapshot first and let the callback update them. Only entities you listed in "live" are sent. Never poll, never fetch — there is no network from inside the frame and the callback is the whole channel.
 
 THE HTML DOCUMENT:
 - ONE focused visual that carries the story — a single chart, timeline, or state map. Not a dashboard: no stat-tile rows duplicating the highlights, no second or third chart unless the story truly needs a side-by-side pair, no prose paragraphs inside the HTML.

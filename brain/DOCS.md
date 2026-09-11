@@ -126,6 +126,16 @@ Each one gets a severity, a plain-English explanation, and what to do about it:
 - **I fixed it** — you handled it yourself. brAIn remembers that you did, and there
   is an optional box for *how* ("replaced the CR2032 — it's a 3-monthly job on that
   one"), which goes into memory beside the fact.
+- **Check again** — run the one house check that filed this, right now. The only
+  press on a finding that says nothing about your house: a check reads a single
+  instant, so it can report something that was true while a hub rebooted or a printer
+  was hot and has since passed. Rather than making you claim you fixed it or that it
+  was never a problem, this asks the check to look again — and if it no longer sees
+  it, the row goes, along with anything else that check has stopped reporting. If the
+  problem is still there you are told so, with today's numbers. If the check could not
+  look this time, nothing changes and it says why: "I could not look" and "it went
+  away" are different answers. It appears only on findings a house check raised; one
+  the analyst wrote is re-run with **Regenerate** on its card.
 - **Remind me later** — an hour, tomorrow, next week, next month. Not a decision: the
   finding stays exactly as open as it was and simply stops asking, and it waits under
   the **Later** filter with the date it comes back.
@@ -1375,7 +1385,7 @@ One ingress panel, seven tabs.
 | Tab | What's there |
 | --- | --- |
 | **Insights** | Your cards, and the ask bar that makes new ones. A question becomes a card; a line starting "learn about…" starts a study session instead. A **Today** strip across the top says when the checks last ran, when the measurements were last rebuilt, when memory was last filed, and how many problems have been written up since yesterday. |
-| **Findings** | What brAIn thinks is broken. Six controls on each one — **Fix it**, **Discuss**, **I fixed it**, **Remind me later**, **Dismiss**, **Wrong**. A count on the tab means something is waiting on you. |
+| **Findings** | What brAIn thinks is broken. Seven controls on each one — **Fix it**, **Discuss**, **Check again**, **I fixed it**, **Remind me later**, **Dismiss**, **Wrong**. A count on the tab means something is waiting on you. |
 | **Proposals** | Changes brAIn would like to make: a habit worth automating, a condition an automation you keep undoing is missing, an emergency playbook, four scenes for a room. Nothing here has happened yet. |
 | **Activity** | What changed in your house and what caused it — a person, an automation, a script, voice, brAIn itself — plus the overrides that are evidence rather than history. Fetched fresh every visit and never cached. |
 | **Terminal** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with the button on the tab, or in ⚙ Settings. Press ⤢ to give either the whole screen. |
@@ -1433,6 +1443,51 @@ brAIn's own setting and is not on the Configuration tab:
 
 If the inputs cannot be read for some reason, the card refreshes anyway: "I could not
 tell" must not become a card that never updates again.
+
+### Seeing the whole prompt, and changing your half of it
+
+A card's **Edit** dialog has an **Analysis focus** box, and that box is one
+paragraph of what Claude is actually sent. The rest — the output contract and its
+design system, your standing feedback, what brAIn has measured, what is already on
+your work list, what this card said last time, the hypothesis budget, and the data
+itself — is assembled at run time, and until now was shown nowhere. So a card that
+kept coming back wrong could only be argued with by guessing.
+
+**See the whole prompt** under the focus box opens exactly what would be sent if you
+pressed *Save & regenerate* right now: every block named, with what it is for and how
+big it is, the full text underneath, and what the run would cost. It is rebuilt each
+time you open it rather than being a copy stored when the card was made — half those
+blocks are live, so a stored copy would be showing you a house that has moved on.
+
+Two of the blocks are yours and are marked as such: the **focus**, and the **feedback**
+you leave with the 💬 button on a card. Those are the ones to edit. The rest is shown
+so you can see what the card is reading, not as an invitation — freezing the assembled
+text would mean the card stopped seeing new findings and went on citing a measurement
+from March, with nothing on screen to say so.
+
+In the default **search** mode the analyst also has read-only Home Assistant tools and
+fetches what your focus actually asks for, so a focus about something outside this
+card's usual data does work.
+
+### A card that keeps up: `live`
+
+A card is one Claude run rendered to a document, written once — right for "last week's
+energy", wrong for the ones people pin to a dashboard: a door that is open, a machine
+that is running, a room being held at a temperature. Those read as current and are not.
+
+A card may now declare the entities whose state its visualization wants kept up to
+date. While the card is on screen brAIn refreshes those — and only those — every 15
+seconds and hands them to the visualization, which updates in place. Nothing else
+changes: the analysis, the numbers and the story are still from the run.
+
+You do not configure this. Claude decides whether a card is about something happening
+now and declares the entities itself; most cards declare none, which is the honest
+answer for a card about a period that has already ended. If you want one to be live,
+say so in the focus or in feedback ("keep the door states current").
+
+The list is fixed when the card is written and capped at 12. A card cannot ask for an
+entity its own run did not declare, which is what keeps a page of generated HTML from
+being able to read the rest of your house.
 
 **⚙ > Diagnostics** is the read-only half of the settings dialog: versions, whether
 the Claude sign-in is holding, the last 24 hours of Claude runs counted by how they

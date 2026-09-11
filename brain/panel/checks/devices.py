@@ -21,6 +21,26 @@ ZIGBEE_SILENT_DAYS = 7
 
 # Sane physical ranges by device class and unit. A reading outside these is
 # a broken sensor, not a hot day.
+#
+# **The temperature bounds are an AMBIENT range, and `device_class:
+# temperature` does not mean ambient.** That gap fired this check on
+# healthy houses for its whole life: a 3D printer reported its bed at
+# 65°C and its nozzle at 220°C, and brAIn filed four `serious`-looking
+# rows saying a temperature sensor cannot read outside -40–60°C. It can;
+# that one measures a heater. So do an oven, a kettle, a sous-vide, a
+# boiler flow pipe, a CPU, a water tank and a pizza stone. The producer
+# scorecard is what caught it — 0 confirmed against 2 marked Wrong,
+# which is the tab saying this rule is wrong about this house — and it
+# is the exact failure the check catalog opens by naming: a check that
+# fires on a healthy house is worse than no check, because it is the one
+# a person learns to ignore first.
+#
+# So the ambient range is applied only where the sensor is plausibly
+# measuring room air, and `_MEASURES_SOMETHING_HOT` is the gate. It is a
+# name gate, which is a guess, and it is made in the direction where
+# being wrong is cheap — the same trade `chore.waiting` writes down for
+# the same reason. A missed implausible reading costs one finding nobody
+# got; a false one costs the list.
 _RANGES = {
     ("temperature", "°C"): (-40.0, 60.0),
     ("temperature", "°F"): (-40.0, 140.0),
@@ -30,6 +50,58 @@ _RANGES = {
     ("pressure", "hPa"): (800.0, 1100.0),
     ("pressure", "mbar"): (800.0, 1100.0),
 }
+
+
+# Words that mean "this is not the temperature of a room". Matched on the
+# entity id and on the friendly name, as whole words where a bare one
+# would be too eager: `bed` is a hotend's build plate and also a bedroom,
+# so it is only read as hot beside a printer word. Deliberately long and
+# deliberately incomplete — every entry is a class of device that really
+# does live outside -40–60°C, and anything missed simply goes back to
+# being checked as if it were a room, which is where it started.
+_HOT_WORDS = frozenset("""
+nozzle extruder hotend hot_end heatbreak heatsink heat_sink
+oven grill griddle bbq barbecue smoker fryer hob stove burner kettle
+boiler flue exhaust chimney furnace radiator manifold
+flow return coolant condenser compressor refrigerant superheat
+cpu gpu chip core soc die vrm nvme ssd drive disk
+engine motor inverter transformer inlet outlet
+sauna steam hot_water hotwater dhw cylinder immersion
+sous_vide sousvide probe meat roast food griddle
+tank kiln soldering iron laser
+""".split())
+# `bed`, `chamber` and `plate` are only hot next to one of these — a
+# heated bed is a printer's and a chamber is its enclosure, while a
+# bedroom sensor and a chamber thermostat are ordinary rooms.
+_HOT_WHEN_PAIRED = frozenset({"bed", "chamber", "plate", "platform"})
+_PAIR_WORDS = frozenset({"printer", "print", "3d", "bambu", "prusa", "ender",
+                         "creality", "voron", "klipper", "octoprint",
+                         "anycubic", "elegoo", "filament", "extruder",
+                         "nozzle", "hotend", "kiln"})
+
+
+def _words(*parts: str) -> set[str]:
+    out: set[str] = set()
+    for part in parts:
+        for word in str(part or "").lower().replace(".", " ").replace(
+                "-", " ").replace("_", " ").split():
+            out.add(word)
+            out.add(word.strip("0123456789"))
+    return {w for w in out if w}
+
+
+def measures_something_hot(eid: str, name: str) -> bool:
+    """Whether this sensor plainly measures something other than room air.
+
+    Public because `base.unusual` stands down for what `dev.implausible`
+    claims, and the two have to agree about which sensors those are —
+    the same reason `out_of_range` is shared and `_zwave_dead_devices`
+    is.
+    """
+    words = _words(eid, name)
+    if words & _HOT_WORDS:
+        return True
+    return bool(words & _HOT_WHEN_PAIRED and words & _PAIR_WORDS)
 
 
 def _live_hardware(house: House):
@@ -192,7 +264,7 @@ def battery_low(snap: dict, now: float) -> list[dict]:
 # dev.implausible — a reading no sensor should give
 # ---------------------------------------------------------------------------
 
-def out_of_range(state: dict) -> bool:
+def out_of_range(state: dict, entity_id: str = "") -> bool:
     """True when a reading is outside what its kind of sensor can produce.
 
     Shared with `base.unusual`, which stands down for exactly these: a
@@ -200,12 +272,23 @@ def out_of_range(state: dict) -> bool:
     two checks reporting one sensor under two different fixes is how a
     list stops being read. Same reasoning — and the same shape — as
     `dev.unavailable` standing down for a dead Z-Wave node.
+
+    ``entity_id`` is optional only because `base.unusual` calls this with
+    a bare state row; the name gate reads the friendly name either way,
+    and an id given is one more place to find a word like `nozzle`.
     """
     attrs = (state or {}).get("attributes") or {}
     bounds = _RANGES.get((attrs.get("device_class"),
                           attrs.get("unit_of_measurement")))
     value = num((state or {}).get("state"))
     if not bounds or value is None:
+        return False
+    # A heater's temperature is not an impossible temperature. The bound
+    # is an ambient one and this is the only thing standing between it
+    # and every oven, kettle, boiler and print head in the house.
+    if (attrs.get("device_class") == "temperature"
+            and measures_something_hot(entity_id,
+                                       attrs.get("friendly_name") or "")):
         return False
     return not bounds[0] <= value <= bounds[1]
 
@@ -223,7 +306,7 @@ def implausible(snap: dict, now: float) -> list[dict]:
         if value is None:
             continue
         lo, hi = bounds
-        if not out_of_range(st):
+        if not out_of_range(st, eid):
             continue
         out.append({
             "text": f"{house.name(eid)} is reporting an impossible value",

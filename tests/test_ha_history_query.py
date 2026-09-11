@@ -64,9 +64,9 @@ class TestWhatCountsAsAnId(unittest.TestCase):
         # A `filter_entity_id=` with nothing after it asks Core for the
         # whole house, which is the opposite of what a caller with no
         # ids wanted.
-        self.assertNotIn("filter_entity_id", ha_data.history_params([]))
+        self.assertNotIn("filter_entity_id", ha_data.history_params([], END))
         self.assertNotIn("filter_entity_id",
-                         ha_data.history_params(["not an id"]))
+                         ha_data.history_params(["not an id"], END))
 
 
 class TestThePathHoldsNothingTyped(unittest.TestCase):
@@ -129,6 +129,7 @@ class TestWhatActuallyReachesTheWire(unittest.IsolatedAsyncioTestCase):
         ha_data.CORE_API = self._core
 
     async def fetch(self, **kw):
+        kw.setdefault("end", END)
         await ha_data._rest_get(
             self.client.session, ha_data.history_path(START),
             params=ha_data.history_params(**kw))
@@ -136,8 +137,11 @@ class TestWhatActuallyReachesTheWire(unittest.IsolatedAsyncioTestCase):
 
     async def test_an_id_with_an_ampersand_cannot_add_a_parameter(self):
         seen = await self.fetch(ids=["light.hall", "switch.fan&admin=1"])
-        self.assertEqual(seen["query"], {"filter_entity_id": "light.hall"})
+        self.assertEqual(seen["query"]["filter_entity_id"], "light.hall")
         self.assertNotIn("admin", seen["query"])
+        # The id is dropped rather than escaped, and it takes nothing with
+        # it: what is left is the filter and the window, and no third key.
+        self.assertEqual(set(seen["query"]), {"filter_entity_id", "end_time"})
 
     async def test_the_valueless_flags_arrive_as_keys(self):
         seen = await self.fetch(ids=["light.hall"], minimal=True,
@@ -149,6 +153,24 @@ class TestWhatActuallyReachesTheWire(unittest.IsolatedAsyncioTestCase):
     async def test_the_end_time_rides_as_a_parameter(self):
         seen = await self.fetch(ids=["light.hall"], end=END)
         self.assertEqual(seen["query"]["end_time"], END.isoformat())
+
+    def test_the_end_time_cannot_be_left_off(self):
+        """The bug, as a signature.
+
+        Core does not read an absent `end_time` as "up to now" — it reads
+        it as **start + one day**. `closures.fetch_history` asked for 28
+        days without one and got a single day four weeks back, outside
+        the recorder's retention: `[]` for every door, every night, and a
+        `evening.left_open` that could never run. `get_history` omitted
+        it too, so every insight card's history section was one day of
+        data from `history_days` ago, presented as current.
+
+        Neither was greppable, because the defect is the argument that is
+        NOT there. Making it required is what turns it into a TypeError
+        at the call site instead.
+        """
+        with self.assertRaises(TypeError):
+            ha_data.history_params(["light.hall"])
 
     async def test_the_path_is_the_period_and_nothing_else(self):
         seen = await self.fetch(ids=["light.hall"])

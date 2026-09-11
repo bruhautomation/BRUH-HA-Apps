@@ -304,13 +304,24 @@ def progress(payload: dict | None = None, path: str | None = None,
         **common)
 
 
-async def fetch_history(session, ids: list[str],
-                        start: dt.datetime) -> dict | None:
+async def fetch_history(session, ids: list[str], start: dt.datetime,
+                        end: dt.datetime) -> dict | None:
     """Raw state changes per entity — not the bundle's downsampled shape.
 
     `ha_data.get_history` keeps only the newest `MAX_STATE_CHANGES` of a
     non-numeric series, which is right for a prompt and wrong here: the
     whole point is the weeks behind the last few changes.
+
+    ``end`` is required for the reason :func:`ha_data.history_params`
+    spells out: without it Core answers with the single day that follows
+    `start`, which here is a day four weeks ago and outside the
+    recorder's retention on any default install. That returned `[]` for
+    every door in the house, and `[]` is a list — so this read it as "the
+    history holds nothing for these ids" rather than as a refusal, and
+    `build` wrote an empty store with no error every night. The store
+    then looked measured (`built_at` set, `asked: 18`) while holding
+    nothing, `snapshot` marked the key unavailable, and
+    `evening.left_open` was skipped for the life of the feature.
     """
     import ha_data  # noqa: PLC0415
 
@@ -324,7 +335,7 @@ async def fetch_history(session, ids: list[str],
             raw = await ha_data._rest_get(
                 session, ha_data.history_path(start), timeout=90,
                 params=ha_data.history_params(
-                    batch, minimal=True, no_attributes=True))
+                    batch, end, minimal=True, no_attributes=True))
         except Exception as exc:  # noqa: BLE001 — a batch that failed is a
             # batch that failed; the rest of the house still gets measured.
             log.info("closure history batch failed: %s", exc)
@@ -370,7 +381,8 @@ async def build(session, states: dict, now: float | None = None,
 
     start = dt.datetime.fromtimestamp(now - HISTORY_DAYS * 86400,
                                       tz=dt.timezone.utc)
-    series = await fetch_history(session, ids, start)
+    series = await fetch_history(
+        session, ids, start, dt.datetime.fromtimestamp(now, tz=dt.timezone.utc))
     if series is None:
         return baselines.refused(
             "closures", load(path),

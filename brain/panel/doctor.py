@@ -661,7 +661,26 @@ def _assist_speech(reply: dict) -> str:
         return ""
 
 
-MEMORY_FACT_PREFIX = "brAIn deep check marker"
+# The probe, and its wording is load-bearing.
+#
+# It used to read `brAIn deep check marker <epoch> — ignore this line.`,
+# and that is the single most droppable string anybody could hand this
+# pass. The consolidator is a Claude turn told to merge what it is given
+# into four sections of facts about the HOUSE, to dedupe, and to exclude
+# one-off commands — so a timestamped self-test line that literally asks
+# to be ignored is a line a working pass is right to drop. The stage then
+# reported "a pass consumed it without writing it down", which is the
+# sentence for a broken memory pipeline, on installs whose memory was
+# working perfectly. A check that cries wolf is worse than no check, for
+# the same reason a house check that fires on a healthy house is.
+#
+# So the probe is shaped like what it is measuring: a plain durable fact
+# about a device, in the form the document is full of. It still says what
+# it is, so anybody who sees one left behind knows where it came from,
+# and the cleanup below still takes it out and still fails if it cannot.
+MEMORY_FACT_PREFIX = "The brAIn deep check helper"
+MEMORY_FACT_SUFFIX = ("is a diagnostic entity brAIn creates while checking "
+                      "itself; it is removed again straight away.")
 
 
 async def stage_memory(hooks: Hooks) -> dict:
@@ -678,7 +697,7 @@ async def stage_memory(hooks: Hooks) -> dict:
     holds it. A self-test that writes into somebody's memory and leaves it
     there has done more harm than the check was worth.
     """
-    marker = f"{MEMORY_FACT_PREFIX} {int(time.time())} — ignore this line."
+    marker = f"{MEMORY_FACT_PREFIX} {int(time.time())} {MEMORY_FACT_SUFFIX}"
     before = await asyncio.to_thread(hooks.inbox_pending)
     await asyncio.to_thread(hooks.queue_memory, marker, SOURCE)
     queued = await asyncio.to_thread(hooks.inbox_pending)
@@ -708,7 +727,16 @@ async def stage_memory(hooks: Hooks) -> dict:
         return _fail(
             "The queue drained and the fact is not in memory.md, so a pass "
             "consumed it without writing it down. This is the failure the "
-            "Memory tab cannot see; report it with `brain report`.")
+            "Memory tab cannot see; report it with `brain report`.",
+            # Named, because the one thing this cannot tell apart is a
+            # broken pass from a pass that read the fact and judged it
+            # not worth keeping. The probe is worded as an ordinary
+            # durable fact to make the second unlikely; it cannot make
+            # it impossible, and a check that hid that would be
+            # overstating what it knows.
+            "the pass ran and rewrote the document without this line — "
+            "either it is filing nothing, or it judged this one not worth "
+            "keeping")
 
     # Cleanup, and it is the other half of the check.
     await asyncio.to_thread(hooks.queue_memory, f"FORGET: {marker}", SOURCE)

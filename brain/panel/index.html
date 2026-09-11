@@ -712,8 +712,22 @@
           <input id="editIconIn" type="text" maxlength="4" class="iconin" placeholder="✨">
         </div>
       </div>
-      <label for="editFocus">Analysis focus (the prompt for this category)</label>
+      <label for="editFocus">Analysis focus — your half of the prompt</label>
       <textarea id="editFocus" maxlength="4000" rows="7" spellcheck="false"></textarea>
+      <p class="hint">This is what you want looked at. brAIn wraps it in the
+        output contract, what it has measured, what is already on your work
+        list and the data itself — <button id="editShowPrompt" type="button"
+        class="linkish">see the whole prompt</button>.</p>
+      <div id="editPrompt" class="promptview" hidden>
+        <div class="row nowrap promptbar">
+          <span id="editPromptSize" class="hint"></span>
+          <div class="spacer"></div>
+          <button id="editPromptCopy" type="button" class="btn small ghost">Copy</button>
+          <button id="editPromptHide" type="button" class="btn small ghost">Hide</button>
+        </div>
+        <div id="editPromptSections" class="promptsections"></div>
+        <textarea id="editPromptText" rows="14" readonly spellcheck="false"></textarea>
+      </div>
       <label class="check"><input id="editEnabled" type="checkbox">
         Enabled — include in auto-refresh and “Refresh all”</label>
       <label for="editHours">Refresh every N hours (empty = the default from ⚙ Settings, 0 = manual only)</label>
@@ -721,8 +735,10 @@
       <label for="editTimes">…or run at fixed times daily (overrides the interval — saves tokens)</label>
       <input id="editTimes" type="text" maxlength="60" autocomplete="off"
              placeholder="e.g. 07:00, 19:00 (empty = use the interval)">
-      <p class="hint">The analyst only sees the collected data snapshot — prompts can steer the
-        analysis, not fetch new data.</p>
+      <p class="hint">In the default <b>search</b> mode the analyst has
+        read-only Home Assistant tools and goes and fetches what your focus
+        actually needs, so asking for something outside the usual data for
+        this card does work. Change it in ⚙ Settings.</p>
       <div class="row">
         <button id="editSave" class="btn primary">Save</button>
         <button id="editSaveRegen" class="btn">Save &amp; regenerate</button>

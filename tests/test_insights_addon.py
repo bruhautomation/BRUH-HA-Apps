@@ -3484,3 +3484,213 @@ class TestARefreshHasToBeAboutSomething(InsightsServerCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheLiveHalfOfACard(TestGenerateFlow):
+    """A card is written once, so a card about NOW is frozen at then.
+
+    Issue #300's second half. Most cards are about a period that has
+    ended and want none of this; the ones people put on a dashboard — a
+    door, a machine, a room being held at a temperature — read as current
+    and are not. A card may declare the entities whose state its
+    visualization wants kept up to date, and the panel refreshes those
+    and only those.
+    """
+
+    def test_a_declared_entity_is_stored_on_the_card(self):
+        self.reply["live"] = ["binary_sensor.front_door", "sensor.hall_temp"]
+        asyncio.run(self.server._generate("energy"))
+        card = json.loads(
+            (Path(self.server.INSIGHTS_DIR) / "energy.json").read_text())
+        self.assertEqual(card["live"],
+                         ["binary_sensor.front_door", "sensor.hall_temp"])
+
+    def test_a_card_that_declares_nothing_carries_an_empty_list(self):
+        asyncio.run(self.server._generate("energy"))
+        card = json.loads(
+            (Path(self.server.INSIGHTS_DIR) / "energy.json").read_text())
+        self.assertEqual(card["live"], [])
+
+    def test_anything_that_is_not_an_entity_id_is_dropped(self):
+        """An id that is not an id names nothing, so keeping it would only
+        spend a lookup on a made-up string — `history_params`' rule."""
+        self.reply["live"] = ["binary_sensor.front_door", "not an id", 42,
+                              "", "sensor.ok"]
+        asyncio.run(self.server._generate("energy"))
+        card = json.loads(
+            (Path(self.server.INSIGHTS_DIR) / "energy.json").read_text())
+        self.assertEqual(card["live"], ["binary_sensor.front_door", "sensor.ok"])
+
+    def test_the_list_is_deduped_and_capped(self):
+        self.reply["live"] = (["sensor.a"] * 3
+                              + [f"sensor.n{i}" for i in range(30)])
+        asyncio.run(self.server._generate("energy"))
+        card = json.loads(
+            (Path(self.server.INSIGHTS_DIR) / "energy.json").read_text())
+        self.assertEqual(len(card["live"]), self.server.MAX_LIVE_ENTITIES)
+        self.assertEqual(len(set(card["live"])), len(card["live"]))
+
+    def test_the_route_serves_only_what_the_card_declared(self):
+        """The whole security argument for the feature.
+
+        The frame is a sandboxed srcdoc running model-authored script.
+        A route that took entity ids from the caller would let that
+        script read any entity in the house through the panel's
+        credential; this one answers from the card's own stored list,
+        fixed when the card was written.
+        """
+        asked = []
+
+        async def fake_states(ids, timeout=15):
+            asked.append(list(ids))
+            return {"binary_sensor.front_door": {
+                "state": "on", "last_changed": "2026-09-11T06:42:00",
+                "attributes": {"friendly_name": "Front door",
+                               "device_class": "door"}}}
+
+        self.reply["live"] = ["binary_sensor.front_door"]
+        asyncio.run(self.server._generate("energy"))
+        self.ha_data.entity_states = fake_states
+        try:
+            async def run():
+                from aiohttp.test_utils import TestClient, TestServer
+                client = TestClient(TestServer(self.server.make_app()))
+                await client.start_server()
+                try:
+                    # A caller naming something else gets the card's list
+                    # regardless — there is no parameter to name one with.
+                    resp = await client.get(
+                        "/api/insight/energy/live?entity_id=lock.front_door")
+                    return resp.status, await resp.json()
+                finally:
+                    await client.close()
+            status, data = asyncio.run(run())
+        finally:
+            self.ha_data.__dict__.pop("entity_states", None)
+        self.assertEqual(status, 200)
+        self.assertEqual(asked, [["binary_sensor.front_door"]])
+        row = data["states"]["binary_sensor.front_door"]
+        self.assertEqual(row["state"], "on")
+        self.assertEqual(row["name"], "Front door")
+        self.assertEqual(data["poll_s"], self.server.LIVE_POLL_S)
+
+    def test_a_card_with_nothing_live_tells_the_panel_to_stop_asking(self):
+        asyncio.run(self.server._generate("energy"))
+
+        async def run():
+            from aiohttp.test_utils import TestClient, TestServer
+            client = TestClient(TestServer(self.server.make_app()))
+            await client.start_server()
+            try:
+                resp = await client.get("/api/insight/energy/live")
+                return resp.status, await resp.json()
+            finally:
+                await client.close()
+        status, data = asyncio.run(run())
+        self.assertEqual(status, 200)
+        self.assertEqual(data["states"], {})
+        self.assertEqual(data["poll_s"], 0)
+
+
+class TestSeeingTheWholePrompt(InsightsServerCase):
+    """Issue #300: "Cannot see prompt, unable to iteratively rework card."
+
+    The Edit dialog's box was labelled "the prompt for this category" and
+    is one paragraph of a dozen blocks — the output contract, standing
+    feedback, what brAIn has measured, the work list, the previous run,
+    the data. All of it was assembled at run time and shown nowhere, so a
+    card that kept coming back wrong could only be argued with by
+    guessing.
+    """
+
+    def _preview(self, cat="energy", query=""):
+        async def run():
+            from aiohttp.test_utils import TestClient, TestServer
+            client = TestClient(TestServer(self.server.make_app()))
+            await client.start_server()
+            try:
+                resp = await client.get(f"/api/prompt/{cat}/preview{query}")
+                return resp.status, (await resp.json() if resp.status == 200
+                                     else await resp.text())
+            finally:
+                await client.close()
+        return asyncio.run(run())
+
+    def setUp(self):
+        super().setUp()
+        self._old_bundle = self.ha_data.collect_bundle
+        self._old_orient = getattr(self.ha_data, "collect_orientation", None)
+
+        async def fake_bundle(cat, days, question=None):
+            return {"meta": {"now": "2026-07-18T12:00:00"}, "entities": []}
+
+        async def fake_orientation(question=None):
+            return {"entity_count": 412, "domains": {"light": 40},
+                    "areas": {"Hall": 4}, "anchors": []}
+
+        self.ha_data.collect_bundle = fake_bundle
+        self.ha_data.collect_orientation = fake_orientation
+
+    def tearDown(self):
+        self.ha_data.collect_bundle = self._old_bundle
+        if self._old_orient is None:
+            self.ha_data.__dict__.pop("collect_orientation", None)
+        else:
+            self.ha_data.collect_orientation = self._old_orient
+        super().tearDown()
+
+    def test_it_is_the_whole_thing_and_not_just_the_focus(self):
+        status, d = self._preview(query="?mode=snapshot")
+        self.assertEqual(status, 200)
+        # The contract is the biggest block and the one nobody could see.
+        self.assertIn("OUTPUT CONTRACT", d["prompt"] + d["system"])
+        # The focus alone is a sentence; this is the whole assembly.
+        self.assertGreater(len(d["prompt"]) + len(d["system"]), 8000)
+        self.assertEqual(d["mode"], "snapshot")
+
+    def test_every_block_is_named_with_what_it_is_for_and_how_big(self):
+        status, d = self._preview(query="?mode=snapshot")
+        names = [s["name"] for s in d["sections"]]
+        self.assertIn("Analysis focus", names)
+        self.assertIn("Output contract", names)
+        self.assertIn("The work list", names)
+        self.assertIn("The data", names)
+        for sec in d["sections"]:
+            self.assertIn("what", sec)
+            self.assertIsInstance(sec["chars"], int)
+
+    def test_the_blocks_that_are_yours_say_so(self):
+        """Showing the rest is context; only two of them are an invitation."""
+        _s, d = self._preview(query="?mode=snapshot")
+        mine = {s["name"] for s in d["sections"] if s.get("yours")}
+        self.assertEqual(mine, {"Analysis focus", "Your feedback"})
+
+    def test_it_is_rebuilt_so_it_follows_an_edit(self):
+        """Not a copy stored when the card was made.
+
+        Half the blocks are live, so a stored prompt starts drifting the
+        moment it is written — and what somebody iterating needs is what
+        will be sent if they press Save & regenerate NOW.
+        """
+        prompt_store.save_override("energy", {"focus": "COUNT THE TOASTERS"})
+        _s, d = self._preview(query="?mode=snapshot")
+        self.assertIn("COUNT THE TOASTERS", d["prompt"])
+
+    def test_the_search_mode_shows_the_map_rather_than_the_house(self):
+        _s, d = self._preview(query="?mode=search")
+        self.assertEqual(d["mode"], "search")
+        data = [s for s in d["sections"] if s["name"] == "The data"][0]
+        self.assertIn("412", data["what"])
+
+    def test_it_says_what_the_run_would_cost(self):
+        _s, d = self._preview(query="?mode=snapshot")
+        self.assertGreater(d["tokens"], 0)
+        self.assertEqual(d["chars"], len(d["prompt"]) + len(d["system"]))
+
+    def test_an_unknown_card_is_a_bad_request(self):
+        status, _ = self._preview(cat="not-a-card")
+        self.assertEqual(status, 400)
+
+    def test_a_mode_that_is_not_one_is_refused(self):
+        status, _ = self._preview(query="?mode=telepathy")
+        self.assertEqual(status, 400)
