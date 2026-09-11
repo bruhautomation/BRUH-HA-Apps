@@ -836,6 +836,82 @@ class TestTheBodyIsWhatNamesTheRefusal(unittest.TestCase):
         self.assertEqual(self.mod._error_code(403, self.SCOPE_BODY),
                          self.mod.SCOPE_ERROR)
 
+    # Copied verbatim from a 1.49.0 install's log, envelope and all. The
+    # first cut of `_error_code` read `details` and `error_code` at the TOP
+    # level, and this body has neither there — so the narrowing that exists
+    # for exactly this refusal never fired on the only refusal anybody has
+    # ever seen, and the fixtures above could not tell, because they were
+    # written from the same guess the code was.
+    FIELD_BODY = json.dumps({
+        "type": "error",
+        "error": {
+            "type": "permission_error",
+            "message": ("OAuth token does not meet scope requirement "
+                        "user:profile"),
+            "details": {"required_scopes": ["user:profile"],
+                        "match": "any",
+                        "error_visibility": "visible_to_caller"},
+        },
+    })
+
+    def test_the_body_the_field_really_sends_is_narrowed(self):
+        self.assertEqual(self.mod._error_code(403, self.FIELD_BODY),
+                         self.mod.SCOPE_ERROR)
+
+    def test_the_old_reader_could_not_see_it(self):
+        """The bug, driven rather than described: the top-level-only lookup
+        run over the same body, answering the code that shipped."""
+        parsed = json.loads(self.FIELD_BODY)
+        details = parsed.get("details")
+        code = details.get("error_code") if isinstance(details, dict) else None
+        code = code or parsed.get("error_code")
+        self.assertIsNone(code, "the top level carries no code at all")
+
+    def test_a_settled_refusal_is_what_that_buys(self):
+        """The point of narrowing: `http_403` is retried hourly for ever and
+        `SCOPE_ERROR` is asked once per credential."""
+        code = self.mod._error_code(403, self.FIELD_BODY)
+        self.assertIn(code, self.mod.SETTLED_REFUSALS)
+        self.assertIn(code, self.mod.AUTH_PROBLEMS)
+        self.assertTrue(self.mod.ERROR_DETAIL.get(code))
+
+    def test_a_403_with_no_scopes_named_stays_a_bare_403(self):
+        """"I could not tell why" and "the token is under-scoped" are
+        different claims, and only the second may blank four readings."""
+        for body in (json.dumps({"type": "error", "error": {
+                         "type": "permission_error",
+                         "message": "You do not have access to this."}}),
+                     json.dumps({"error": {"details": {}}}),
+                     json.dumps({"error": {"details": {
+                         "required_scopes": []}}}),
+                     json.dumps({"error": {"details": {
+                         "required_scopes": [None, ""]}}}),
+                     json.dumps({"error": "not a dict"})):
+            self.assertEqual(self.mod._error_code(403, body), "http_403", body)
+
+    def test_required_scopes_narrows_only_a_403(self):
+        """A 500 that happens to mention scopes is not a scope verdict."""
+        self.assertEqual(self.mod._error_code(500, self.FIELD_BODY),
+                         "http_500")
+
+    def test_the_field_body_is_narrowed_end_to_end(self):
+        import io
+        import urllib.error
+
+        def raise_403(req, timeout=None):
+            raise urllib.error.HTTPError(
+                self.mod.ANTHROPIC_USAGE_URL, 403, "Forbidden", {},
+                io.BytesIO(self.FIELD_BODY.encode()))
+
+        self.mod.urllib.request.urlopen = raise_403
+        self.assertEqual(self.mod.fetch_usage_limits("sk-ant-oat01-x")[1],
+                         self.mod.SCOPE_ERROR)
+
+    def test_a_nested_error_code_is_read_too(self):
+        body = json.dumps({"error": {"details": {
+            "error_code": "oauth_scope_insufficient"}}})
+        self.assertEqual(self.mod._error_code(403, body), self.mod.SCOPE_ERROR)
+
     def test_an_unrecognised_code_leaves_the_status_alone(self):
         """It narrows and never invents: a verdict made up from a string
         this file has never seen reads exactly like a real one."""
@@ -1128,6 +1204,70 @@ class TestAScopeRefusalMovesTheSearchAlong(unittest.TestCase):
         self.mod._fetch_with_any_credential(state)
         _, error = self.mod._fetch_with_any_credential(state)
         self.assertEqual(error, self.mod.SCOPE_ERROR)
+
+class TestOneAnswerToWhereTheCliLives(unittest.TestCase):
+    """Two answers to "where is the Claude CLI" is how one goes stale.
+
+    `engine.resolve_claude_bin()` walks a list because run.sh installs the
+    binary under the `claude` user's home and the image symlinks it into
+    `/root/.local/bin` — neither on the default PATH. The panel's version
+    probe kept the bare name it was written with and reported `unknown`
+    in every bug report from a house whose Claude was running fine, and
+    this tracker's list had drifted to two of the four entries.
+    """
+
+    def test_the_tracker_tries_every_place_engine_knows_about(self):
+        import os
+        import sys
+        panel = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "brain", "panel")
+        sys.path.insert(0, panel)
+        try:
+            import engine
+        finally:
+            sys.path.remove(panel)
+        mod = load_tracker({})
+        for candidate in engine.CLAUDE_BIN_CANDIDATES:
+            self.assertIn(candidate, mod.CLI_PROBE_COMMANDS, candidate)
+        # ...and the bare name last, which is what `shutil.which` answers.
+        self.assertEqual(mod.CLI_PROBE_COMMANDS[-1], "claude")
+
+    def test_the_panel_probes_the_binary_the_resolver_names(self):
+        """Driven rather than grepped: what was wrong is the call site,
+        and a grep for the old shape matches the comment explaining it."""
+        import os
+        import subprocess
+        import sys
+        panel = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "brain", "panel")
+        sys.path.insert(0, panel)
+        try:
+            import engine
+            import server
+        finally:
+            sys.path.remove(panel)
+
+        seen = []
+        real_run, real_resolve = subprocess.run, engine.resolve_claude_bin
+
+        def fake_run(argv, **kw):
+            seen.append(argv)
+            class Out:
+                stdout, stderr = "2.1.252 (Claude Code)", ""
+            return Out()
+
+        try:
+            engine.resolve_claude_bin = lambda: "/data/home/.local/bin/claude"
+            server.subprocess.run = fake_run
+            server._CLI_VERSION["value"] = None
+            self.assertIn("2.1.252", server._cli_version())
+        finally:
+            server.subprocess.run = real_run
+            engine.resolve_claude_bin = real_resolve
+            server._CLI_VERSION["value"] = None
+        self.assertEqual(seen, [["/data/home/.local/bin/claude", "--version"]],
+                         "the bare name resolves to nothing for root, which "
+                         "is how this reported `unknown` on a working house")
 
 
 if __name__ == "__main__":

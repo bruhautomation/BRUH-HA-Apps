@@ -371,7 +371,8 @@ async def run(hooks: Hooks, *, progress=None) -> dict:
     started = time.time()
     out: dict = {"started_at": int(started), "finished_at": 0,
                  "created": [], "checks": {}, "analyst": {},
-                 "cleanup": {}, "not_rehearsable": list(NOT_REHEARSABLE),
+                 "cleanup": {}, "swept": {},
+                 "not_rehearsable": list(NOT_REHEARSABLE),
                  "error": ""}
     created: list[dict] = []
 
@@ -381,6 +382,17 @@ async def run(hooks: Hooks, *, progress=None) -> dict:
             progress(dict(out))
 
     try:
+        # Before anything is planted: whatever a run that could not clean
+        # up left behind is wearing the id this one is about to write,
+        # and `automation_writer.apply` refuses a duplicate id. Without
+        # this the failure repeats identically for ever.
+        say("clearing up after the last run")
+        out["swept"] = await _sweep(hooks)
+        if not out["swept"].get("ran"):
+            out["error"] = out["swept"].get("sentence") or (
+                "brAIn could not check for leftovers before planting")
+            return _finish(out, started)
+
         say("planting")
         for row in PLAN:
             made, why = await _plant(hooks, row)
@@ -480,6 +492,195 @@ async def _plant(hooks: Hooks, row: dict) -> tuple[dict | None, str]:
             "entity_id": written.get("entity_id") or ""}, ""
 
 
+async def _take_out_automation(hooks: Hooks, entry_id: str,
+                               entity_id: str = "") -> str:
+    """Splice one entry out of the file. The problem sentence, or "".
+
+    ``hooks.remove`` is the panel's `_remove_automation`, which answers
+    "already gone" as a removal that happened — the entry is not in the
+    file, so there is nothing to splice, nothing to reload and nothing to
+    put back. The hook flattens that to ``(False, "")``, so reading its
+    first value alone reported a success as a failure **with no reason
+    on it**: `brain_test_dead_ref: ` is the sentence that produced, and a
+    fault with an empty explanation is the one nobody can act on. An
+    empty error is therefore not a failure here.
+    """
+    ok, why = await hooks.remove(entry_id, entity_id or "")
+    if ok or not why:
+        return ""
+    return f"{entry_id}: {why}"
+
+
+async def _take_out_registry(hooks: Hooks, entity_id: str) -> str:
+    """Remove one entity registry entry. The problem sentence, or "".
+
+    Taking an automation out of the file does not touch this. Every
+    automation here carries an `id`, so Core gives it a `unique_id` and a
+    registry entry — and a registry entry outlives its provider: what is
+    left after the reload is an `unavailable` state carrying
+    `restored: true`, which is a real leftover under the prefix and one
+    only this can remove. The rehearsal's whole promise is that it
+    removes everything again, and `brain doctor` warns about a stray
+    `brain_test_*` on the strength of it, so leaving one is not a tidy-up
+    it may skip.
+    """
+    gone = await hooks.ws([{"type": "config/entity_registry/remove",
+                            "entity_id": entity_id}])
+    if gone and not gone[0].get("ok"):
+        return (f"{entity_id} is out of the file but its entity registry "
+                f"entry is not — {gone[0].get('error') or 'refused'}")
+    return ""
+
+
+async def _take_out_helper(hooks: Hooks, item_id: str, name: str = "") -> str:
+    """Delete one `input_number`. The problem sentence, or "".
+
+    Keyed on the item id Core MINTED, never one derived from the entity
+    id: `IDManager.generate_id` slugifies a name only while the slug is
+    free and appends `_2` otherwise, so a guessed id deletes nothing on
+    exactly the house that already has a leftover from last time.
+
+    `ok`, never the result. Core answers a successful delete with
+    ``result: null``, so an `answer[0] is None` test is a null-result
+    test wearing an error test's clothes: it fires on every clean run.
+    """
+    answer = await hooks.ws([{"type": "input_number/delete",
+                              "input_number_id": item_id}])
+    if not answer or not answer[0].get("ok"):
+        why = (answer[0].get("error") if answer else "") or ""
+        return (f"Home Assistant would not delete {name or item_id}"
+                + (f": {why}" if why else ""))
+    return ""
+
+
+async def _helper_items(hooks: Hooks) -> tuple[list[dict], str]:
+    """Every `input_number` under the prefix, with the id Core minted.
+
+    Asked of Core rather than derived, for `_take_out_helper`'s reason:
+    the item id and the entity's object id part company the moment
+    either slug was taken. Matched on the **name**, because the name is
+    what brAIn chose and what Core derives the entity id from — an item
+    whose own id collided still carries the name it was created with.
+    """
+    import automation_writer  # noqa: PLC0415 — deferred; it imports yaml
+
+    answer = await hooks.ws([{"type": "input_number/list"}])
+    if not answer or not answer[0].get("ok"):
+        why = (answer[0].get("error") if answer else "") or "refused"
+        return [], f"could not list the input_number helpers: {why}"
+    rows = answer[0].get("result") or []
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        item_id = str(row.get("id") or "")
+        slug = automation_writer.slugify(row.get("name") or "")
+        if item_id.startswith(PREFIX) or slug.startswith(PREFIX):
+            out.append({"id": item_id, "name": str(row.get("name") or "")})
+    return out, ""
+
+
+async def _sweep(hooks: Hooks) -> dict:
+    """Take out what an earlier run left behind, BEFORE planting.
+
+    The rehearsal plants under a fixed set of ids, so anything already
+    wearing one of them is *in the way of* the plant rather than beside
+    it. `automation_writer.apply` refuses an id that is already in
+    `automations.yaml` — correctly, since two entries under one id is a
+    config Core will not load — and that refusal ends the run on the
+    first row with nothing planted. `_remove_all` cannot clear it
+    either: it takes back what THIS run created, and this run created
+    nothing. So one failed cleanup left the field state that was
+    reported — *"could not create brain_test_dead_ref: something with
+    this proposal's id is already in automations.yaml"* on every
+    attempt, for ever, with the one thing that would end it sitting in a
+    file the panel is perfectly able to edit, and nothing on the page
+    saying so. **A guard that refuses has to change the next attempt, or
+    it is a loop**, which is the memory size check's rule reached from a
+    different direction.
+
+    Three things keep the sweep from being a licence to delete. It
+    removes only what :func:`leftovers` sees **under the prefix** — the
+    same scan the cleanup proves itself against and the same one `brain
+    doctor` warns about, so nothing here decides for itself that
+    something looks like a leftover. It runs **inside the consent** that
+    has already been given: a rehearsal is a thing somebody asked for,
+    and `brain_test_*` is brAIn's own litter. And it is **reported**,
+    never silent — a sweep that quietly removed things would be
+    indistinguishable from a house that never had them, and the line
+    that says what it took is also the only evidence a previous run
+    failed to clean up.
+
+    A sweep that cannot finish **refuses the run** rather than letting
+    the plant fail with the confusing sentence: what is in the way is
+    named, which is the answer the loop never gave.
+    """
+    out: dict = {"ran": False, "removed": [], "left": [], "sentence": ""}
+    try:
+        snap = await hooks.snapshot()
+    except Exception as exc:  # noqa: BLE001
+        out["sentence"] = ("could not look for leftovers before planting: "
+                           f"{exc}")
+        return out
+    left = leftovers(snap)
+    if not left:
+        out["ran"] = True
+        return out
+
+    problems: list[str] = []
+    removed: list[str] = []
+
+    # The file first, then the registry: taking the entry out is what
+    # turns a live automation into the restored orphan the registry
+    # removal is for, and doing it the other way round would drop the
+    # entry of something still running.
+    for cfg in snap.get("automations") or []:
+        if not isinstance(cfg, dict):
+            continue
+        entry_id = str(cfg.get("id") or "")
+        if not entry_id.startswith(PREFIX):
+            continue
+        why = await _take_out_automation(hooks, entry_id)
+        (problems.append(why) if why else removed.append(entry_id))
+
+    helpers, why = await _helper_items(hooks)
+    if why:
+        problems.append(why)
+    for item in helpers:
+        why = await _take_out_helper(hooks, item["id"], item["name"])
+        (problems.append(why) if why
+         else removed.append(item["name"] or item["id"]))
+
+    for eid in left:
+        if "." not in eid or eid.split(".", 1)[0] == "input_number":
+            continue
+        why = await _take_out_registry(hooks, eid)
+        (problems.append(why) if why else removed.append(eid))
+
+    out["removed"] = removed
+    try:
+        still = leftovers(await hooks.snapshot())
+    except Exception as exc:  # noqa: BLE001
+        problems.append(f"could not re-check the house afterwards: {exc}")
+        still = []
+    out["left"] = still
+    if still:
+        problems.append("still in the house: " + ", ".join(still[:8]))
+
+    if problems:
+        out["sentence"] = (
+            "A previous rehearsal left something behind and brAIn could "
+            "not take it out again, so this one cannot start: "
+            + "; ".join(problems)
+            + ". Remove it from automations.yaml by hand, reload the "
+              "automations, and run the rehearsal again.")
+        return out
+    out["ran"] = True
+    out["sentence"] = ("cleared up after an earlier run first: "
+                       + ", ".join(removed[:8]))
+    return out
+
+
 async def _remove_all(hooks: Hooks, created: list[dict]) -> dict:
     """Take everything back out, then prove it with a fresh snapshot.
 
@@ -492,39 +693,19 @@ async def _remove_all(hooks: Hooks, created: list[dict]) -> dict:
     problems: list[str] = []
     for made in created:
         if made["kind"] == "helper":
-            answer = await hooks.ws([{"type": "input_number/delete",
-                                      "input_number_id": made["object_id"]}])
-            # `ok`, never the result. Core answers a successful delete
-            # with `result: null`, so the old `answer[0] is None` was a
-            # null-result test wearing an error test's clothes: it fired
-            # on every clean run, and the leftovers scan below — which
-            # reads the states and could see the helper really had gone —
-            # disagreed with it in the same sentence.
-            if not answer or not answer[0].get("ok"):
-                why = (answer[0].get("error") if answer else "") or ""
-                problems.append(f"Home Assistant would not delete "
-                                f"{made['id']}" + (f": {why}" if why else ""))
+            why = await _take_out_helper(hooks, made["object_id"], made["id"])
+            if why:
+                problems.append(why)
             continue
-        ok, why = await hooks.remove(made["entry_id"], made.get("entity_id"))
-        if not ok:
-            problems.append(f"{made['id']}: {why}")
+        why = await _take_out_automation(hooks, made["entry_id"],
+                                         made.get("entity_id"))
+        if why:
+            problems.append(why)
             continue
-        # And the registry entry, which taking it out of the file does
-        # not touch. Every automation here carries an `id`, so Core gives
-        # it a `unique_id` and a registry entry — and a registry entry
-        # outlives its provider: what is left after the reload is an
-        # `unavailable` state carrying `restored: true`, which is a real
-        # leftover under the prefix and one only this can remove. The
-        # rehearsal's whole promise is that it removes everything again,
-        # and `brain doctor` warns about a stray `brain_test_*` on the
-        # strength of it, so leaving one is not a tidy-up it may skip.
         if made.get("entity_id"):
-            gone = await hooks.ws([{"type": "config/entity_registry/remove",
-                                    "entity_id": made["entity_id"]}])
-            if gone and not gone[0].get("ok"):
-                problems.append(
-                    f"{made['id']}: the automation is gone but its entity "
-                    f"registry entry is not — {gone[0].get('error') or 'refused'}")
+            why = await _take_out_registry(hooks, made["entity_id"])
+            if why:
+                problems.append(f"{made['id']}: {why}")
 
     left: list[str] = []
     try:
@@ -669,4 +850,9 @@ def summary() -> dict:
                     "model": analyst.get("model", ""),
                     "ran": bool(analyst.get("ran"))},
         "cleanup_ok": bool((last.get("cleanup") or {}).get("ok")),
+        # What the run had to take out before it could start. A rehearsal
+        # that swept something is a rehearsal reporting that the one
+        # before it did not clean up, which is a fact about this install
+        # and belongs in the bundle somebody attaches to an issue.
+        "swept": list((last.get("swept") or {}).get("removed") or [])[:8],
     }

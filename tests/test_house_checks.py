@@ -581,6 +581,87 @@ class TestDeviceChecks(unittest.TestCase):
             for d in range(7)]}
         self.assertEqual(devices.frozen(snap, NOW), [])
 
+    def test_frozen_says_nothing_about_a_number_that_is_not_a_measurement(self):
+        """0 confirmed against 6 marked Wrong, with ten more in one pass.
+
+        `state_class: measurement` is already required and is not enough:
+        integrations set it on a fixed tariff, a rated capacity, a
+        configured limit, a device count, a vendor index. Each reads one
+        value for a week because that is what it IS — "a real sensor
+        moves" is a true sentence about the wrong kind of number — and
+        none of them names a device class, while every case this check is
+        for does.
+        """
+        for eid, attrs in (
+            ("sensor.electricity_price",
+             {"device_class": "monetary", "unit_of_measurement": "USD/kWh",
+              "friendly_name": "Electricity price"}),
+            ("sensor.inverter_rated_power",
+             {"unit_of_measurement": "W", "friendly_name": "Rated power"}),
+            ("sensor.zigbee_devices",
+             {"friendly_name": "Zigbee devices"}),
+            ("sensor.charge_current_limit",
+             {"unit_of_measurement": "A", "friendly_name": "Charge limit"}),
+            ("sensor.air_quality",
+             {"device_class": "aqi", "friendly_name": "Air quality"}),
+        ):
+            snap = house()
+            snap["states"][eid] = {
+                "state": "12", "last_updated": iso(60),
+                "attributes": {"state_class": "measurement", **attrs}}
+            snap["entities"].append({"entity_id": eid, "platform": "demo"})
+            snap["stats"] = {eid: [
+                {"start": NOW - d * DAY, "mean": 12, "min": 12, "max": 12}
+                for d in range(7)]}
+            self.assertEqual(devices.frozen(snap, NOW), [], eid)
+
+    def test_frozen_still_fires_on_every_sensor_it_is_for(self):
+        """The gate keeps the whole point: a stuck thermometer, plug or
+        barometer all name their own class."""
+        for eid, klass, unit in (
+            ("sensor.hall_temp_2", "temperature", "°C"),
+            ("sensor.plug_power", "power", "W"),
+            ("sensor.study_pressure", "pressure", "hPa"),
+            ("sensor.bath_humidity", "humidity", "%"),
+            ("sensor.hall_lux", "illuminance", "lx"),
+        ):
+            snap = house()
+            snap["states"][eid] = {
+                "state": "12", "last_updated": iso(60),
+                "attributes": {"state_class": "measurement",
+                               "device_class": klass,
+                               "unit_of_measurement": unit,
+                               "friendly_name": eid}}
+            snap["entities"].append({"entity_id": eid, "platform": "demo"})
+            snap["stats"] = {eid: [
+                {"start": NOW - d * DAY, "mean": 12, "min": 12, "max": 12}
+                for d in range(7)]}
+            self.assertEqual(len(devices.frozen(snap, NOW)), 1, eid)
+
+    def test_a_dozen_frozen_at_once_says_nothing_at_all(self):
+        """`base.unusual`'s rule: past the cap this is reporting the
+        statistics rather than the house — a purge, a reload, a backfill —
+        and fifty rows is the list nobody reads."""
+        snap = house()
+        snap["stats"] = {}
+        for i in range(devices.FROZEN_MAX_ROWS + 1):
+            eid = f"sensor.stuck_{i}"
+            snap["states"][eid] = {
+                "state": "12", "last_updated": iso(60),
+                "attributes": {"state_class": "measurement",
+                               "device_class": "temperature",
+                               "unit_of_measurement": "°C",
+                               "friendly_name": eid}}
+            snap["entities"].append({"entity_id": eid, "platform": "demo"})
+            snap["stats"][eid] = [
+                {"start": NOW - d * DAY, "mean": 12, "min": 12, "max": 12}
+                for d in range(7)]
+        self.assertEqual(devices.frozen(snap, NOW), [])
+        # ...and one under the cap still reports.
+        snap["stats"].pop("sensor.stuck_0")
+        self.assertEqual(len(devices.frozen(snap, NOW)),
+                         devices.FROZEN_MAX_ROWS)
+
     def test_restored_groups_by_platform(self):
         snap = house()
         for eid in ("sensor.old_a", "sensor.old_b"):

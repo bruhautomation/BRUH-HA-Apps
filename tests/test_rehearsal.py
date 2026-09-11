@@ -102,6 +102,14 @@ class FakeHooks:
         entry_id = row["config"]["id"]
         if self.write_fails and self.write_fails in entry_id:
             return None, "the file would not take it"
+        if entry_id in self.automations:
+            # `automation_writer.apply`'s own refusal, in its own words.
+            # Two entries under one id is a config Core will not load, so
+            # this is correct — and it is also what turns one failed
+            # cleanup into a rehearsal that can never run again.
+            return None, ("something with this proposal's id is already in "
+                          + "automations.yaml — it looks like this was "
+                          + "accepted before")
         self.automations[entry_id] = row["config"]
         self.registry[f"automation.{entry_id}"] = {
             "entity_id": f"automation.{entry_id}"}
@@ -155,6 +163,13 @@ class FakeHooks:
                 self.helpers["input_number.brain_test_reading"] = 0.0
                 out.append(self._ok({"id": self.helper_item_id,
                                      "name": "brAIn test reading"}))
+            elif kind == "input_number/list":
+                # Core answers with the items, each carrying the id IT
+                # minted — which is the whole reason a sweep asks rather
+                # than deriving one from the entity id.
+                out.append(self._ok(
+                    [{"id": self.helper_item_id, "name": "brAIn test reading"}]
+                    if self.helpers else []))
             elif kind == "input_number/delete":
                 # Keyed on the item id Core minted. A caller that guessed
                 # it off the entity id deletes nothing here, which is
@@ -791,6 +806,143 @@ class TestTheLeftoverCheck(unittest.TestCase):
         src = SELFTEST.read_text(encoding="utf-8")
         self.assertIn("\nbrain_test_leftovers\n", src)
         self.assertIn("Rehearsal leftovers", src)
+
+
+# ---------------------------------------------------------------------------
+# The sweep
+# ---------------------------------------------------------------------------
+
+class TestAStuckRehearsalUnsticksItself(RehearsalCase):
+    """The loop a failed cleanup left, and the one thing that ends it.
+
+    A run that could not clean up leaves `brain_test_dead_ref` in
+    `automations.yaml`. Every run after it plants under the same id,
+    `automation_writer.apply` refuses a duplicate, and `_remove_all` only
+    takes back what THIS run created — which is nothing, because the
+    refusal ended the run on the first row. Identical failure, for ever.
+    """
+
+    async def test_the_old_recipe_fails_the_same_way_every_time(self):
+        """The loop, reproduced: two runs with no sweep, no progress.
+
+        Driven rather than described — with `_sweep` doing what it did
+        before it existed, the run ends on the first row with nothing
+        planted, and the run after it does exactly the same.
+        """
+        h, fake = hooks_with_leftover(self.r)
+
+        async def no_sweep(_hooks):
+            return {"ran": True, "removed": [], "left": [], "sentence": ""}
+
+        self.r._sweep = no_sweep
+        for _ in range(2):
+            out = await self.r.run(h)
+            self.assertIn("already in automations.yaml", out["error"])
+            self.assertEqual(out["created"], [])
+            self.assertFalse(out["cleanup"]["ok"])
+
+    async def test_and_the_sweep_is_what_ends_it(self):
+        h, fake = hooks_with_leftover(self.r)
+        first = await self.r.run(h)
+        self.assertEqual(first["error"], "")
+        self.assertTrue(first["created"])
+        self.assertTrue(first["cleanup"]["ok"], first["cleanup"]["sentence"])
+        # And the house is clean afterwards, so the next run sweeps nothing.
+        second = await self.r.run(h)
+        self.assertEqual(second["swept"]["removed"], [])
+        self.assertTrue(second["cleanup"]["ok"], second["cleanup"]["sentence"])
+
+    async def test_a_leftover_automation_is_taken_out_before_planting(self):
+        h, fake = hooks_with_leftover(self.r)
+        out = await self.r.run(h)
+        self.assertEqual(out["error"], "")
+        self.assertIn(f"{self.r.PREFIX}dead_ref", out["swept"]["removed"])
+        self.assertTrue(out["swept"]["ran"])
+        self.assertIn("cleared up after an earlier run",
+                      out["swept"]["sentence"])
+
+    async def test_a_leftover_registry_entry_is_taken_out_too(self):
+        """The one of the three places only the registry can report."""
+        h, fake = hooks(self.r)
+        fake.registry[f"automation.{self.r.PREFIX}dead_ref"] = {
+            "entity_id": f"automation.{self.r.PREFIX}dead_ref"}
+        out = await self.r.run(h)
+        self.assertEqual(out["error"], "")
+        self.assertEqual(fake.registry.get(
+            f"automation.{self.r.PREFIX}dead_ref"), None)
+        self.assertTrue(out["cleanup"]["ok"], out["cleanup"]["sentence"])
+
+    async def test_a_leftover_helper_is_deleted_by_the_id_core_minted(self):
+        h, fake = hooks(self.r)
+        fake.helpers["input_number.brain_test_reading"] = 21.5
+        out = await self.r.run(h)
+        self.assertEqual(out["error"], "")
+        # Deleted by the item id Core answered `input_number/list` with,
+        # never one derived from the entity id.
+        deletes = [c for c in fake.ws_calls
+                   if c.get("type") == "input_number/delete"]
+        self.assertTrue(deletes)
+        self.assertEqual(deletes[0]["input_number_id"], fake.helper_item_id)
+
+    async def test_a_sweep_that_cannot_finish_refuses_and_names_what_is_in_the_way(self):
+        """Better than the plant's sentence, which named nothing to do."""
+        h, fake = hooks_with_leftover(self.r, remove_fails="dead_ref")
+        out = await self.r.run(h)
+        self.assertFalse(out["swept"]["ran"])
+        self.assertIn("A previous rehearsal left something behind",
+                      out["error"])
+        self.assertIn("automations.yaml", out["error"])
+        self.assertEqual(out["created"], [],
+                         "nothing may be planted on a refused sweep")
+
+    async def test_a_clean_house_is_swept_silently(self):
+        h, fake = hooks(self.r)
+        out = await self.r.run(h)
+        self.assertTrue(out["swept"]["ran"])
+        self.assertEqual(out["swept"]["removed"], [])
+        self.assertEqual(out["swept"]["sentence"], "")
+
+    async def test_only_the_prefix_is_ever_swept(self):
+        """The whole safety argument: it removes brAIn's own litter."""
+        h, fake = hooks_with_leftover(self.r)
+        fake.automations["morning_lights"] = {"id": "morning_lights"}
+        fake.registry["light.kitchen"] = {"entity_id": "light.kitchen"}
+        fake.helpers["input_number.thermostat_offset"] = 2.0
+        await self.r.run(h)
+        self.assertIn("morning_lights", fake.automations)
+        self.assertIn("light.kitchen", fake.registry)
+        self.assertIn("input_number.thermostat_offset", fake.helpers)
+
+
+class TestAlreadyGoneIsNotAFailure(RehearsalCase):
+    """`_remove_automation` answers "already gone" as a removal.
+
+    The hook flattens that to `(False, "")`, so reading the first value
+    alone reported it as a failure carrying no reason — `brain_test_x: `
+    — which is the one fault shape nobody can act on.
+    """
+
+    async def test_an_empty_error_is_not_a_problem(self):
+        h, fake = hooks(self.r)
+
+        async def already_gone(entry_id, entity_id=""):
+            fake.automations.pop(entry_id, None)
+            return False, ""
+
+        h.remove = already_gone
+        out = await self.r.run(h)
+        self.assertTrue(out["cleanup"]["ok"], out["cleanup"]["sentence"])
+        self.assertNotIn(": ;", out["cleanup"]["sentence"])
+
+
+def hooks_with_leftover(mod, **over):
+    """A house carrying what a failed cleanup really leaves."""
+    h, fake = hooks(mod, **over)
+    fake.automations[f"{mod.PREFIX}dead_ref"] = {"id": f"{mod.PREFIX}dead_ref"}
+    fake.registry[f"automation.{mod.PREFIX}dead_ref"] = {
+        "entity_id": f"automation.{mod.PREFIX}dead_ref"}
+    return h, fake
+
 
 
 if __name__ == "__main__":

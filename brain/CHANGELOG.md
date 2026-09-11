@@ -2,6 +2,76 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.50.0
+
+**Every report now opens with what is wrong.** A `brain report` used to
+begin *"Nothing failed to produce this file"* and then hand you six hundred
+lines of JSON. The install that prompted this release had seven separate
+faults inside the file it sent — a rehearsal that could not clean up, a
+usage credential refused for a reason nothing recognised, a deep check that
+had failed, a house check that could not look, a measurement store reading
+zero, a notification that would not deliver, and a check the homeowner had
+marked Wrong six times out of six. Every one of them was in that file, and
+not one was findable. So **What is wrong right now** is the first section of
+every report and the first block in ⚙ → Diagnostics: one flat list gathered
+from every surface brAIn has — the health verdict, failed runs, checks that
+could not run, snapshot keys that could not be fetched, the measurement
+stores, the rehearsal, the deep check, notifications, the usage tracker, the
+producers you keep marking Wrong, the daemons. A refusal doing its job is
+deliberately not in it, and a healthy install says so in one sentence.
+
+**The rehearsal can un-stick itself.** One rehearsal that failed to clean up
+left `brain_test_dead_ref` in `automations.yaml`, and every run after it
+refused with *"something with this proposal's id is already in
+automations.yaml"* — the plant could not write it, and the cleanup only ever
+takes back what that run created, which was nothing. Identical failure, for
+ever, with the one thing that would end it sitting in a file the panel is
+perfectly able to edit. It now clears up under its own prefix before
+planting, says what it took out, and a sweep it cannot finish refuses the
+run naming what is in the way instead of failing three steps later with a
+sentence nobody could act on.
+
+**The usage 403 is recognised.** The endpoint answers with Anthropic's
+standard error envelope and the reader looked one level too shallow, so the
+one refusal the whole narrowing exists for came back as a bare `http_403`:
+no explanation, retried every hour for ever, and the health verdict stuck at
+*degraded*. It reads the real body now — including `required_scopes`, which
+is the endpoint saying in as many words which scope it wanted — and says
+what to do about it: that token can run Claude and cannot read a usage
+figure, and only `claude /login` in the Terminal tab asks for the scope that
+can.
+
+**"Check again" says what it is doing, and what it found.** The button went
+quiet for the two seconds a checks pass takes and then, on the commonest
+answer — the problem is still there — left the card looking exactly as it
+did before. It now says *Checking…* while it runs, and a row that is still
+there carries **confirmed just now**, which is a more useful fact than the
+press: a problem filed on Tuesday and one confirmed a minute ago are
+different things.
+
+**`dev.frozen` stopped firing on numbers that are not measurements.** A
+fixed tariff, a rated capacity, a configured current limit, a count of
+devices on a hub — each reads exactly one value for a week because that is
+what it *is*, and "a real sensor moves" is a true sentence about the wrong
+kind of number. Ten of these arrived in one pass on the house that reported
+it, against six already marked Wrong. The rule now needs the sensor to say
+what kind of quantity it measures, which every stuck thermometer, plug and
+barometer does, and it says nothing at all past a handful at once.
+
+**Two small ones found in the same report.** A notification that could not
+be delivered now appears in the diagnostics as well as filing its own
+incident — its whole symptom is silence on a phone, and its only trace was
+one line in a log tail. And `claude_cli` no longer reports `unknown` on a
+house whose Claude is running fine: the panel looked for the binary by bare
+name on a PATH that does not carry it, where the rest of the add-on has
+always resolved it properly.
+
+**Measure the house now.** Baselines, doors and windows, machines and how
+rooms hold heat are all written by one nightly pass, so a fix to any of them
+was invisible for up to a day and could not be checked at all. There is a
+button in ⚙ → Diagnostics — it starts the pass rather than holding the page
+open for the several minutes it takes, and costs no Claude turns.
+
 ## 1.49.0
 
 **You can see the prompt now.** A card's Edit dialog had a box labelled

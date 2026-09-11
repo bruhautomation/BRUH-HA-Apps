@@ -991,10 +991,13 @@ async def _send_notification(rows: list[dict], held: bool = False) -> bool:
             data={"actions": buttons} if buttons else None)
     except Exception as exc:  # noqa: BLE001 — a bad target can't fail the run
         log.warning("findings notification via %s failed: %s", service, exc)
+        NOTIFY_LAST.update(error=str(exc)[:200], at=int(time.time()),
+                           service=service)
         _report_async(reports.notify_failure, service, str(exc),
                       context=f"{len(rows)} finding(s)"
                       + (", held overnight" if held else ""))
         return False
+    NOTIFY_LAST.update(error="", at=int(time.time()), service=service)
     log.info("notified %s of %d finding(s)%s", service, len(rows),
              " held overnight" if held else "")
     return True
@@ -1021,6 +1024,12 @@ async def _flush_held_findings() -> int:
     return len(rows)
 
 
+# The last delivery's outcome, cleared by the next one that works: a stale
+# error beside a working notifier is the "a reading nothing can correct"
+# failure the usage sensors already paid for.
+NOTIFY_LAST: dict = {"error": "", "at": 0, "service": ""}
+
+
 def _notify_diagnostics() -> dict:
     """What the router is holding, and what window it is holding it for."""
     start, end = _quiet_hours()
@@ -1038,7 +1047,17 @@ def _notify_diagnostics() -> dict:
             time.time(), start, end, _tz),
         "held": len(queued),
         "held_since": oldest,
+        # What happened to the last message that went out. A delivery that
+        # failed already files an incident, which is the right producer —
+        # but a notifier that cannot deliver is the answer to "what is
+        # wrong right now" and that question is asked of this payload, so
+        # the fact has to be IN it. A failure whose only trace is a log
+        # line scrolls off, and its whole symptom is silence on a phone.
+        "last_error": str(NOTIFY_LAST.get("error") or "")[:200],
+        "last_error_at": int(NOTIFY_LAST.get("at") or 0),
+        "last_service": str(NOTIFY_LAST.get("service") or ""),
     }
+
 
 
 # The brief is checked for often and sent at most once a day; the loop is
@@ -4640,7 +4659,7 @@ async def _checks_loop() -> None:
 # changed. `base.stale` is what reports this loop having stopped.
 BASELINE_INTERVAL_S = 24 * 3600
 BASELINE_FIRST_DELAY_S = 300
-BASELINE_STATE: dict = {"running": False, "last": None}
+BASELINE_STATE: dict = {"running": False, "starting": False, "last": None}
 
 
 async def build_baselines(reason: str = "schedule") -> dict:
@@ -4797,7 +4816,7 @@ async def h_baselines(request: web.Request) -> web.Response:
         "days": store.get("days", baselines.HISTORY_DAYS),
         "measured": len(store.get("entities") or {}),
         "stale": baselines.is_stale(store) if store.get("built_at") else True,
-        "running": BASELINE_STATE["running"],
+        "running": _baselines_busy(),
         "last": BASELINE_STATE["last"],
     }
     if entity_id:
@@ -4810,9 +4829,54 @@ async def h_baselines(request: web.Request) -> web.Response:
 
 
 async def h_baselines_run(request: web.Request) -> web.Response:
-    summary = await build_baselines("manual")
-    status = 409 if summary.get("error", "").startswith("a baseline pass") else 200
-    return web.json_response(summary, status=status)
+    """Start a measurement pass. Does NOT wait for it.
+
+    A pass reads a month of hourly statistics for every numeric sensor in
+    the house, plus ten days of five-minute statistics for the power ones
+    — minutes of recorder work, which is longer than ingress will hold a
+    request open. Awaiting it here handed the browser the *absence* of a
+    reply while the pass ran on and wrote its stores anyway, which is
+    BRight's `_claude_job` failure with a different clock. The outcome is
+    read back from `GET /api/baselines`, which has carried `running` and
+    `last` since the loop existed.
+
+    It had no caller at all until this — no button, no CLI, nothing in
+    the integration — which is the "a button that exists only in prose is
+    a button nobody can press" rule, and it is the whole reason a fix to
+    a nightly measurement took a day to be visible and could not be
+    checked at all: the doors-and-windows fix shipped, the store went on
+    reading `0 of 18` because the nightly pass had not come round yet,
+    and there was nothing anywhere to ask it to measure now.
+    """
+    if _baselines_busy():
+        return web.json_response(
+            {"running": True, "error": "a baseline pass is already running",
+             "last": BASELINE_STATE["last"]}, status=409)
+    # `starting` rather than `running`, and flipped synchronously, for
+    # `start_auth_check`'s reason: `create_task` only schedules, so
+    # nothing inside the coroutine has run when the next request arrives
+    # — two presses in one tick would both pass a guard reading the flag
+    # their own task has not set yet. It is a second flag because
+    # `build_baselines` owns `running` and is also called by the nightly
+    # loop, and one function setting another's guard is how the two
+    # callers stop agreeing about what is in flight.
+    BASELINE_STATE["starting"] = True
+
+    async def run_it() -> None:
+        try:
+            await build_baselines("manual")
+        finally:
+            BASELINE_STATE["starting"] = False
+            publish_diagnostics()
+
+    asyncio.create_task(run_it())
+    return web.json_response({"running": True, "started": True,
+                              "last": BASELINE_STATE["last"]}, status=202)
+
+
+def _baselines_busy() -> bool:
+    """Whether a measurement pass is in flight, however it was started."""
+    return bool(BASELINE_STATE["running"] or BASELINE_STATE.get("starting"))
 
 
 async def h_weekly(request: web.Request) -> web.Response:
@@ -5397,6 +5461,10 @@ async def _run_rehearsal(job_id: str) -> None:
         await asyncio.to_thread(rehearsal.save, payload)
         DOCTOR_STATE["progress"] = {}
         _set_job(job_id, state="done", error="")
+        swept = (payload.get("swept") or {}).get("removed") or []
+        if swept:
+            log.warning("rehearsal: an earlier run left %s behind; taken "
+                        "out before planting", ", ".join(map(str, swept[:8])))
         log.info("rehearsal: %s of %s planted defects found, cleanup %s",
                  (payload.get("checks") or {}).get("found", 0),
                  (payload.get("checks") or {}).get("planted", 0),
@@ -5570,11 +5638,26 @@ def _window_hours(start: float, end: float) -> float:
 # ---------------------------------------------------------------------------
 
 def _cli_version() -> str:
-    """`claude --version`, probed once per process."""
+    """`claude --version`, probed once per process.
+
+    Through `engine.resolve_claude_bin()`, never the bare name. The panel
+    runs as root and the CLI is installed under the `claude` user's home
+    with a symlink into `/root/.local/bin` — neither is on root's default
+    PATH, so `["claude", "--version"]` resolves to nothing and this
+    reported `unknown` on installs where Claude was working perfectly.
+    That is the same "where does the CLI live" question `_claude_argv`
+    answers, and two answers to it is one too many — which is exactly how
+    it drifted: the resolver was written for the exec path and this probe
+    kept the guess it had.
+
+    `unknown` in a bundle is a fact nobody can supply afterwards, and it
+    is the first line of every bug report about a CLI-version-dependent
+    failure.
+    """
     if _CLI_VERSION["value"] is None:
         try:
-            out = subprocess.run(["claude", "--version"], capture_output=True,
-                                 text=True, timeout=15)
+            out = subprocess.run([engine.resolve_claude_bin(), "--version"],
+                                 capture_output=True, text=True, timeout=15)
             _CLI_VERSION["value"] = (out.stdout or out.stderr or "").strip().splitlines()[0][:80] \
                 if (out.stdout or out.stderr) else "unknown"
         except (OSError, subprocess.SubprocessError, IndexError):
@@ -5747,6 +5830,16 @@ def _diagnostics_payload() -> dict:
     # whether brAIn is working — which is exactly the kind of drift a second
     # copy of a rule produces.
     payload["health"] = health.verdict(payload, safe_options)
+    # And the flat sweep, derived last for the same reason and from the
+    # same payload the report reads — so ⚙ → Diagnostics, the mirror,
+    # Home Assistant's Download-diagnostics button and `brain report` all
+    # answer "what is wrong with this install" with one list. `health` is
+    # the VERDICT (a state and a sentence, and deliberately only the worst
+    # thing); this is the inventory, and the two are different questions:
+    # a check that could not look, a rehearsal that left something behind
+    # and a producer the homeowner keeps marking Wrong are all faults and
+    # none of them is brAIn failing to work.
+    payload["faults"] = reports.faults(payload)
     return payload
 
 
@@ -6166,6 +6259,12 @@ async def h_finding_recheck(request: web.Request) -> web.Response:
         # that is still there comes back with today's number rather than
         # the one it was filed with. Often that IS the answer.
         findings_store.refresh_details(found)
+        # And the stamp that makes a "still there" answer survive the
+        # toast. Without it the one outcome people actually get most of
+        # the time — the problem is still there — left the card looking
+        # exactly as it did before the press, which is what "it is an
+        # invisible action" was.
+        findings_store.mark_checked([f["text"] for f in found], started)
         cleared = findings_store.clear_resolved(
             {checks.source_for(check_id)}, keys)
         return len(created), len(cleared), _findings_payload()
