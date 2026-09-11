@@ -5638,11 +5638,26 @@ def _window_hours(start: float, end: float) -> float:
 # ---------------------------------------------------------------------------
 
 def _cli_version() -> str:
-    """`claude --version`, probed once per process."""
+    """`claude --version`, probed once per process.
+
+    Through `engine.resolve_claude_bin()`, never the bare name. The panel
+    runs as root and the CLI is installed under the `claude` user's home
+    with a symlink into `/root/.local/bin` — neither is on root's default
+    PATH, so `["claude", "--version"]` resolves to nothing and this
+    reported `unknown` on installs where Claude was working perfectly.
+    That is the same "where does the CLI live" question `_claude_argv`
+    answers, and two answers to it is one too many — which is exactly how
+    it drifted: the resolver was written for the exec path and this probe
+    kept the guess it had.
+
+    `unknown` in a bundle is a fact nobody can supply afterwards, and it
+    is the first line of every bug report about a CLI-version-dependent
+    failure.
+    """
     if _CLI_VERSION["value"] is None:
         try:
-            out = subprocess.run(["claude", "--version"], capture_output=True,
-                                 text=True, timeout=15)
+            out = subprocess.run([engine.resolve_claude_bin(), "--version"],
+                                 capture_output=True, text=True, timeout=15)
             _CLI_VERSION["value"] = (out.stdout or out.stderr or "").strip().splitlines()[0][:80] \
                 if (out.stdout or out.stderr) else "unknown"
         except (OSError, subprocess.SubprocessError, IndexError):

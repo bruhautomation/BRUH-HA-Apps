@@ -198,7 +198,24 @@ ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 # the right bucket, where an invented one might not.
 UA_FALLBACK_CLI_VERSION = "2.1.252"
 # Where the add-on keeps the CLI it updates at boot (run.sh), then PATH.
-CLI_PROBE_COMMANDS = ("/root/.local/bin/claude", "claude")
+# **The same list `engine.CLAUDE_BIN_CANDIDATES` walks, in the same order**,
+# because "where does the Claude CLI live" having two answers is how one of
+# them goes stale: run.sh installs the native binary under the `claude`
+# user's home and the image symlinks it into `/root/.local/bin`, and
+# neither is on the default PATH — so a probe that only tries the bare name
+# resolves to nothing on a working install. The panel's own version probe
+# had exactly that and reported `unknown` in every bug report from a house
+# whose Claude was running perfectly; it goes through
+# `engine.resolve_claude_bin()` now, and this list is the same one written
+# where a standalone script can read it (`tests/test_usage_tracker.py`
+# compares the two, so they cannot drift apart quietly).
+CLI_PROBE_COMMANDS = (
+    os.path.join(os.environ.get("BRAIN_HOME", "/data/home"),
+                 ".local", "bin", "claude"),
+    "/root/.local/bin/claude",
+    "/usr/local/bin/claude",
+    "claude",
+)
 # Read at import like every other env constant here (the tests' loader
 # relies on that): a caller that already knows the installed version can
 # hand it over and skip the probe entirely.

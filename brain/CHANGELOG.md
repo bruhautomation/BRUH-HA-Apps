@@ -58,6 +58,14 @@ it, against six already marked Wrong. The rule now needs the sensor to say
 what kind of quantity it measures, which every stuck thermometer, plug and
 barometer does, and it says nothing at all past a handful at once.
 
+**Two small ones found in the same report.** A notification that could not
+be delivered now appears in the diagnostics as well as filing its own
+incident — its whole symptom is silence on a phone, and its only trace was
+one line in a log tail. And `claude_cli` no longer reports `unknown` on a
+house whose Claude is running fine: the panel looked for the binary by bare
+name on a PATH that does not carry it, where the rest of the add-on has
+always resolved it properly.
+
 **Measure the house now.** Baselines, doors and windows, machines and how
 rooms hold heat are all written by one nightly pass, so a fix to any of them
 was invisible for up to a day and could not be checked at all. There is a

@@ -1205,6 +1205,70 @@ class TestAScopeRefusalMovesTheSearchAlong(unittest.TestCase):
         _, error = self.mod._fetch_with_any_credential(state)
         self.assertEqual(error, self.mod.SCOPE_ERROR)
 
+class TestOneAnswerToWhereTheCliLives(unittest.TestCase):
+    """Two answers to "where is the Claude CLI" is how one goes stale.
+
+    `engine.resolve_claude_bin()` walks a list because run.sh installs the
+    binary under the `claude` user's home and the image symlinks it into
+    `/root/.local/bin` — neither on the default PATH. The panel's version
+    probe kept the bare name it was written with and reported `unknown`
+    in every bug report from a house whose Claude was running fine, and
+    this tracker's list had drifted to two of the four entries.
+    """
+
+    def test_the_tracker_tries_every_place_engine_knows_about(self):
+        import os
+        import sys
+        panel = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "brain", "panel")
+        sys.path.insert(0, panel)
+        try:
+            import engine
+        finally:
+            sys.path.remove(panel)
+        mod = load_tracker({})
+        for candidate in engine.CLAUDE_BIN_CANDIDATES:
+            self.assertIn(candidate, mod.CLI_PROBE_COMMANDS, candidate)
+        # ...and the bare name last, which is what `shutil.which` answers.
+        self.assertEqual(mod.CLI_PROBE_COMMANDS[-1], "claude")
+
+    def test_the_panel_probes_the_binary_the_resolver_names(self):
+        """Driven rather than grepped: what was wrong is the call site,
+        and a grep for the old shape matches the comment explaining it."""
+        import os
+        import subprocess
+        import sys
+        panel = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "brain", "panel")
+        sys.path.insert(0, panel)
+        try:
+            import engine
+            import server
+        finally:
+            sys.path.remove(panel)
+
+        seen = []
+        real_run, real_resolve = subprocess.run, engine.resolve_claude_bin
+
+        def fake_run(argv, **kw):
+            seen.append(argv)
+            class Out:
+                stdout, stderr = "2.1.252 (Claude Code)", ""
+            return Out()
+
+        try:
+            engine.resolve_claude_bin = lambda: "/data/home/.local/bin/claude"
+            server.subprocess.run = fake_run
+            server._CLI_VERSION["value"] = None
+            self.assertIn("2.1.252", server._cli_version())
+        finally:
+            server.subprocess.run = real_run
+            engine.resolve_claude_bin = real_resolve
+            server._CLI_VERSION["value"] = None
+        self.assertEqual(seen, [["/data/home/.local/bin/claude", "--version"]],
+                         "the bare name resolves to nothing for root, which "
+                         "is how this reported `unknown` on a working house")
+
 
 if __name__ == "__main__":
     unittest.main()

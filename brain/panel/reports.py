@@ -492,8 +492,7 @@ def _faults(diag) -> list[dict]:
     # options and is the right place for a verdict; this is here because a
     # bug report has to carry the fact as well as the interpretation.
     down = sorted(name for name, row in (diag.get("daemons") or {}).items()
-                  if not (row or {}).get("running")
-                  if isinstance(row, dict))
+                  if isinstance(row, dict) and not row.get("running"))
     if down:
         _row(out, "Daemons", "not running: " + ", ".join(down),
              "some of these are optional — the health verdict above says "
