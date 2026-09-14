@@ -1062,6 +1062,68 @@ class TestEverythingThatIsWrongRightNow(unittest.TestCase):
                    "daemons": {}}
         self.assertEqual(reports.faults(payload), [])
 
+    def test_the_unchosen_assist_implementation_is_not_a_fault(self):
+        """The roll-call is descriptive; reading it raw reported a choice.
+
+        `assist_fast_mode` picks which of two implementations answers
+        voice, so the other is CORRECTLY absent — and this opened every
+        fast-mode install's report with `not running: assist_listener`,
+        softened by a sentence sending the reader up to a health verdict
+        that had deliberately not mentioned it. That is a refusal doing
+        its job, listed by the one function whose docstring forbids it.
+        """
+        payload = {"options": {"enable_assist_integration": True,
+                               "assist_fast_mode": True,
+                               "enable_terminal": True},
+                   "daemons": {"assist_worker_pool": {"running": True},
+                               "assist_listener": {"running": False},
+                               "usage_tracker": {"running": True},
+                               "ttyd": {"running": True}}}
+        self.assertEqual(reports.faults(payload), [])
+
+    def test_a_daemon_that_was_asked_for_and_is_down_still_is(self):
+        payload = {"options": {"enable_assist_integration": True,
+                               "assist_fast_mode": True,
+                               "enable_terminal": True},
+                   "daemons": {"assist_worker_pool": {"running": False},
+                               "assist_listener": {"running": False},
+                               "usage_tracker": {"running": True},
+                               "ttyd": {"running": True}}}
+        said = _said(reports.faults(payload))
+        self.assertIn("assist_worker_pool", said)
+        self.assertNotIn("assist_listener", said)
+
+    def test_a_daemon_whose_option_is_off_is_not_a_fault(self):
+        payload = {"options": {"enable_terminal": False},
+                   "daemons": {"ttyd": {"running": False},
+                               "usage_tracker": {"running": True}}}
+        self.assertEqual(reports.faults(payload), [])
+
+    def test_a_heal_that_worked_is_not_a_fault(self):
+        """The row the field report opened with: `Run (healing): ended
+        healed`, with nothing in its detail. `journal.summary` put a
+        success in `failures` and this rendered it — one rule, in the
+        module that owns the outcome word, answers both now."""
+        payload = {"journal": {"failures": []},
+                   "by_outcome": {"healed": 1}}
+        self.assertEqual(reports.faults(payload), [])
+        self.assertNotIn("healed", _said(reports.faults(payload)))
+
+    def test_the_two_modules_agree_on_which_outcomes_are_failures(self):
+        """`reports` kept its own copy while `journal.summary` used a
+        different rule, so a successful heal was not worth a report and
+        was worth the top row of the fault list."""
+        self.assertEqual(set(reports.FAILURE_OUTCOMES),
+                         set(journal.FAILURE_OUTCOMES))
+        # Equality is what two copies would also satisfy, so the claim
+        # that matters is that there is only one: this module reloads
+        # `reports` in places, which breaks identity without breaking the
+        # rule. A grep, on purpose — "this literal is absent" is the one
+        # claim a grep can honestly make.
+        src = (BASE_DIR / "brain" / "panel" / "reports.py").read_text()
+        self.assertIn("FAILURE_OUTCOMES = journal.FAILURE_OUTCOMES", src)
+        self.assertNotIn("FAILURE_OUTCOMES = frozenset", src)
+
     def test_a_notification_that_did_not_go_is_named(self):
         """The one failure whose only symptom is silence on a phone.
 

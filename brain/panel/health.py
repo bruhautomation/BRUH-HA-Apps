@@ -64,6 +64,21 @@ HELD_TOO_LONG_H = 30.0
 
 # Which daemons matter, and what turns each one on. A daemon whose option
 # is off is not missing; it was not asked for.
+#
+# **The option names are `config.yaml`'s, and two of them were not.** This
+# table asked after `enable_assist` and `enable_automations`, which the
+# add-on has never had — they are `enable_assist_integration` and
+# `enable_automation_integration`, which is what `run.sh` reads when it
+# decides whether to start either. `options.get()` answered `None` on
+# every real install, so both entries were skipped every time: the
+# automation listener dying was reported by nothing, and `_assist_daemon`
+# — the one `failed` verdict about voice — returned on its first line and
+# could never fire. A guard keyed on a name that does not exist is a
+# guard that is off, and it is off silently, which is why
+# `tests/test_health.py` now pins every name here against the add-on's
+# own schema rather than writing them down from the same guess the code
+# did. (`enable_terminal` and `learning` were right, which is exactly
+# what made the other two invisible.)
 DAEMONS = {
     "usage_tracker": {
         "always": True,
@@ -90,7 +105,7 @@ DAEMONS = {
         "severity": "degraded",
     },
     "automation_listener": {
-        "option": "enable_automations",
+        "option": "enable_automation_integration",
         "what": "the automation listener",
         "fix": "brain.run_task and brain.send_prompt will time out with "
                "nothing reading them. Restart the add-on; if it stays "
@@ -111,6 +126,35 @@ def _problem(state: str, what: str, fix: str, key: str) -> dict:
     return {"state": state, "what": what, "fix": fix, "id": key}
 
 
+def expected_daemons(options: dict | None = None) -> frozenset[str]:
+    """Which daemons this configuration actually asked to have running.
+
+    The roll-call in `/api/diagnostics` is deliberately descriptive — it
+    reports every daemon by name, running or not — and a reader that
+    takes it literally reports a choice as a fault. Two kinds of daemon
+    are absent on purpose. One whose **option is off** was not asked for.
+    And the assist channel is one JOB with two implementations: either
+    the worker pool or the classic listener answers voice and
+    `assist_fast_mode` picks, so whichever one is not chosen is correctly
+    absent — asking after both by name is how `not running:
+    assist_listener` ended up at the top of the fault list on every
+    fast-mode install.
+
+    Returned as a set rather than as a verdict because the two callers
+    want different loudness from the same fact: :func:`problems` turns a
+    missing one into a state and a sentence, while `reports.faults` only
+    needs to know it was wanted. Two answers to *was this asked for* is
+    the drift a second copy always produces.
+    """
+    options = options or {}
+    out = {name for name, spec in DAEMONS.items()
+           if spec.get("always") or options.get(spec["option"])}
+    if options.get("enable_assist_integration"):
+        out.add("assist_worker_pool" if options.get("assist_fast_mode", True)
+                else "assist_listener")
+    return frozenset(out)
+
+
 def _assist_daemon(diag: dict, options: dict) -> list[dict]:
     """The assist channel is one job with two implementations.
 
@@ -119,7 +163,7 @@ def _assist_daemon(diag: dict, options: dict) -> list[dict]:
     name would report the one that is correctly absent. What matters is
     that *something* is listening.
     """
-    if not options.get("enable_assist"):
+    if not options.get("enable_assist_integration"):
         return []
     daemons = diag.get("daemons") or {}
     if not daemons:

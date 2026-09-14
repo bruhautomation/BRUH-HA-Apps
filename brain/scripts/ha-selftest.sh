@@ -573,7 +573,7 @@ brain_test_leftovers() {
         return
     fi
     warn "a rehearsal left something behind: ${found}"
-    info "Fix: run 'brain doctor --rehearse' again (its cleanup runs first), or delete the ${prefix}* entries from ${autos} and reload automations"
+    info "Fix: run 'brain doctor --sweep' — it takes these out and creates nothing (or ⚙ → Diagnostics → Clear up what was left)"
 }
 brain_test_leftovers
 

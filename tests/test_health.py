@@ -13,6 +13,7 @@ and the ones about a verdict going stale, which is the same failure the
 usage sensors had: a reading nothing can correct.
 """
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -37,8 +38,15 @@ def diag(**over) -> dict:
         "checks": {"finished_at": int(NOW - 1800), "ran": ["a"], "error": ""},
         "journal": {"runs": 20, "by_outcome": {"ok": 19, "error": 1}},
         "usage": {"source": "account", "used_percent": 12},
-        "options": {"enable_terminal": True, "enable_assist": True,
-                    "enable_automations": True, "learning": True,
+        # `config.yaml`'s own names. They were `enable_assist` and
+        # `enable_automations` here and in `health.DAEMONS`, which the
+        # add-on has never had — so the fixture agreed with the code and
+        # both were wrong, and two `failed` verdicts could never fire on
+        # a real install. See TestTheOptionNamesAreTheAddonsOwn.
+        "options": {"enable_terminal": True,
+                    "enable_assist_integration": True,
+                    "assist_fast_mode": True,
+                    "enable_automation_integration": True, "learning": True,
                     "checks_interval_hours": 6},
     }
     payload.update(over)
@@ -69,8 +77,9 @@ class TestAHealthyAddOnIsSilent(unittest.TestCase):
                              "automation_listener": {"running": False},
                              "assist_worker_pool": {"running": False},
                              "assist_listener": {"running": False}},
-                    options={"enable_terminal": False, "enable_assist": False,
-                             "enable_automations": False,
+                    options={"enable_terminal": False,
+                             "enable_assist_integration": False,
+                             "enable_automation_integration": False,
                              "checks_interval_hours": 6})
         self.assertEqual(health.verdict(snap, now=NOW)["state"], "ok")
 
@@ -314,6 +323,102 @@ class TestAHoldThatNeverEnds(unittest.TestCase):
 
     def test_a_payload_with_no_notify_block_at_all_is_silent(self):
         self.assertNotIn("notify-hold", self.keys(diag()))
+
+
+class TestTheOptionNamesAreTheAddonsOwn(unittest.TestCase):
+    """Every option this module gates a daemon on has to exist.
+
+    `DAEMONS` asked after `enable_assist` and `enable_automations`; the
+    add-on's options are `enable_assist_integration` and
+    `enable_automation_integration`, which is what `run.sh` reads when it
+    decides whether to start either. `dict.get` answers `None` for a name
+    that is not there, so both entries were skipped on every install: the
+    automation listener dying was reported by nothing, and
+    `_assist_daemon` — the one `failed` verdict about voice — returned on
+    its first line and could never fire. Nothing failed; two guards were
+    simply off.
+
+    The suite could not see it because the fixture wrote the same names
+    down that the code did, which is what makes reading them out of
+    `config.yaml` the load-bearing half of the fix rather than a tidy-up:
+    a name is checked against the file that defines it, never against a
+    second copy of somebody's memory of it.
+    """
+
+    @staticmethod
+    def schema_keys() -> set:
+        text = (BASE_DIR / "brain" / "config.yaml").read_text(encoding="utf-8")
+        body = text.split("\nschema:", 1)[1]
+        return set(re.findall(r"^  ([a-z_]+):", body, re.M))
+
+    def test_every_daemon_option_is_a_real_option(self):
+        known = self.schema_keys()
+        self.assertIn("enable_assist_integration", known)
+        for name, spec in health.DAEMONS.items():
+            if spec.get("always"):
+                continue
+            self.assertIn(spec["option"], known,
+                          f"{name} is gated on an option that does not exist")
+
+    def test_the_assist_gate_is_a_real_option(self):
+        """`_assist_daemon`'s own name, driven rather than grepped for."""
+        known = self.schema_keys()
+        asked = [k for k in known
+                 if health._assist_daemon(
+                     {"daemons": {"assist_worker_pool": {"running": False},
+                                  "assist_listener": {"running": False}}},
+                     {k: True})]
+        self.assertTrue(asked, "no option in config.yaml switches the assist "
+                               "check on, so it can never fire")
+        self.assertIn("enable_assist_integration", asked)
+
+
+class TestWhichDaemonsWereAskedFor(unittest.TestCase):
+    """`expected_daemons` — the inventory's half of the same question.
+
+    `reports.faults` read the roll-call raw and opened every fast-mode
+    install's report with `not running: assist_listener`, which is a
+    choice reported as a fault by the one function whose docstring says
+    a refusal doing its job is not one.
+    """
+
+    def test_the_unchosen_assist_implementation_is_not_expected(self):
+        fast = health.expected_daemons({"enable_assist_integration": True,
+                                        "assist_fast_mode": True})
+        self.assertIn("assist_worker_pool", fast)
+        self.assertNotIn("assist_listener", fast)
+        classic = health.expected_daemons({"enable_assist_integration": True,
+                                           "assist_fast_mode": False})
+        self.assertIn("assist_listener", classic)
+        self.assertNotIn("assist_worker_pool", classic)
+
+    def test_assist_switched_off_expects_neither(self):
+        got = health.expected_daemons({"enable_assist_integration": False})
+        self.assertNotIn("assist_listener", got)
+        self.assertNotIn("assist_worker_pool", got)
+
+    def test_an_option_that_is_off_is_not_expected(self):
+        self.assertNotIn("ttyd", health.expected_daemons({}))
+        self.assertIn("ttyd", health.expected_daemons({"enable_terminal": True}))
+
+    def test_the_always_on_ones_are_always_expected(self):
+        self.assertIn("usage_tracker", health.expected_daemons({}))
+
+    def test_it_agrees_with_the_verdict_about_what_was_asked_for(self):
+        """One answer to "was this wanted", two loudnesses.
+
+        Anything `expected_daemons` leaves out must not produce a problem
+        when it is down, or the inventory and the verdict disagree about
+        the same house.
+        """
+        options = {"enable_terminal": True, "enable_assist_integration": True,
+                   "assist_fast_mode": True,
+                   "enable_automation_integration": False, "learning": False}
+        wanted = health.expected_daemons(options)
+        down = {name: {"running": name in wanted} for name in ALL_DAEMONS}
+        got = health.problems({"daemons": down, "auth": {"state": "ok"}},
+                              options, now=NOW)
+        self.assertEqual([p["id"] for p in got], [])
 
 
 if __name__ == "__main__":

@@ -56,6 +56,44 @@ OUTCOMES = (
     "error",         # anything else
 )
 
+# Which of those is a PROBLEM. Five of the fourteen non-`ok` outcomes are
+# not: `applied` and `healed` are successes, `heal_skipped` and `denied`
+# are refusals doing their job, and `fallback` is a quieter path that
+# still produced a card.
+#
+# :func:`summary` used to decide this with ``outcome != "ok"``, and a
+# successful overnight heal therefore arrived in ``failures`` — where
+# `reports.faults` renders it, at the top of *what is wrong right now*,
+# as ``Run (healing): ended healed`` with **no detail on it**, which is
+# the fault shape nobody can act on. The row was already carrying the
+# answer: `record` takes `ok` from the caller (healing passes
+# ``ok=True``) and writes it down, and the summary read past it.
+#
+# The set lives here rather than in `reports.py`, which had its own copy
+# and is the module that imports this one: two answers to "is this row a
+# failure" is how a producer ends up in one list and not the other.
+FAILURE_OUTCOMES = frozenset({
+    "timeout", "crash", "unparseable", "auth", "no_cli", "error",
+    "heal_failed", "max_turns",
+})
+
+
+def is_failure(row: dict) -> bool:
+    """Whether this journal row is something that went wrong.
+
+    ``ok`` is the authority, because it is the caller's own claim about
+    its own run and the outcome word cannot always carry it: `healing`
+    records ``healed`` with ``ok=True``. The outcome set is the floor
+    under a row written before `ok` was on one, or by a caller that let
+    it default.
+    """
+    if not isinstance(row, dict):
+        return False
+    if row.get("ok"):
+        return False
+    return str(row.get("outcome") or "error") in FAILURE_OUTCOMES
+
+
 _LOCK = threading.Lock()
 # Who wants to hear about a row once it has landed. `server` registers the
 # problem-report writer here so a failed run of ANY kind is reported without
@@ -224,9 +262,13 @@ def summary(hours: float = 24.0, now: float | None = None) -> dict:
     """What happened in the window, by source and by outcome.
 
     ``{"hours", "runs", "by_source": {src: {outcome: n}}, "by_outcome":
-    {outcome: n}, "tokens", "failures": [last few non-ok rows]}`` — the
-    numbers a diagnostics bundle carries, and the numbers the Diagnostics
-    section under ⚙ renders.
+    {outcome: n}, "tokens", "failures": [last few rows that went wrong]}``
+    — the numbers a diagnostics bundle carries, and the numbers the
+    Diagnostics section under ⚙ renders.
+
+    ``failures`` is :func:`is_failure`'s set and not "everything that is
+    not `ok`": five of the outcome words are successes and refusals, and
+    counting them made the fault list open with a heal that worked.
     """
     now = time.time() if now is None else now
     cutoff = now - hours * 3600
@@ -243,7 +285,7 @@ def summary(hours: float = 24.0, now: float | None = None) -> dict:
         by_outcome[outcome] = by_outcome.get(outcome, 0) + 1
         if isinstance(r.get("tokens"), int):
             tokens += r["tokens"]
-        if outcome != "ok":
+        if is_failure(r):
             failures.append(r)
     return {
         "hours": hours,

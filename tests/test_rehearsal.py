@@ -738,6 +738,61 @@ class TestTheRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(body["not_rehearsable"])
         self.assertFalse(body["running"])
 
+    async def test_the_sweep_needs_no_consent_because_it_creates_nothing(self):
+        """The 428 exists because a rehearsal WRITES to somebody's config.
+
+        This only ever removes what the leftovers scan already sees under
+        brAIn's own prefix — the same thing `brain doctor` warned about —
+        so an offer to read before agreeing would be an offer to re-read
+        that warning.
+        """
+        resp = await self.server.h_rehearse_sweep(self.R({}))
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(self.server.JOBS["doctor-sweep"]["kind"], "sweep")
+        self.assertEqual(self.server.QUEUE.get_nowait(), "doctor-sweep")
+
+    async def test_a_run_in_flight_blocks_a_sweep(self):
+        self.server.DOCTOR_STATE.update(running=True, kind="rehearse")
+        try:
+            resp = await self.server.h_rehearse_sweep(self.R({}))
+        finally:
+            self.server.DOCTOR_STATE.update(running=False, kind="")
+        self.assertEqual(resp.status, 409)
+        self.assertTrue(self.server.QUEUE.empty())
+
+    async def test_the_get_says_whether_there_is_anything_to_sweep(self):
+        """The button renders off this, so the panel and the report's
+        fault row cannot disagree about whether the house is clean."""
+        import rehearsal
+        body = json.loads((await self.server.h_rehearse_get(self.R({}))).text)
+        self.assertEqual(body["leftovers"], [])
+        self.assertFalse(body["sweeping"])
+
+        rehearsal.save({"finished_at": 5, "cleanup": {
+            "ok": False, "left": ["automation.brain_test_dead_ref"]}})
+        body = json.loads((await self.server.h_rehearse_get(self.R({}))).text)
+        self.assertEqual(body["leftovers"],
+                         ["automation.brain_test_dead_ref"])
+
+    async def test_the_two_presses_have_their_own_in_flight_states(self):
+        """A button that greys itself out while the OTHER one runs is the
+        pair of controls nobody can tell apart."""
+        self.server.DOCTOR_STATE.update(running=True, kind="sweep")
+        try:
+            body = json.loads(
+                (await self.server.h_rehearse_get(self.R({}))).text)
+        finally:
+            self.server.DOCTOR_STATE.update(running=False, kind="")
+        self.assertTrue(body["sweeping"])
+        self.assertFalse(body["running"])
+
+    async def test_the_route_is_registered(self):
+        """A route with no caller is the `unsettle` failure; a handler with
+        no route is the same thing one layer down."""
+        paths = {r.resource.canonical for r in self.server.make_app().router.routes()
+                 if r.resource is not None}
+        self.assertIn("/api/doctor/rehearse/sweep", paths)
+
     async def test_diagnostics_carries_the_rehearsal_summary(self):
         import asyncio
         import rehearsal
@@ -796,7 +851,7 @@ class TestTheLeftoverCheck(unittest.TestCase):
             "- id: brain_test_dead_ref\n  alias: brain_test_dead_ref\n").stdout
         self.assertIn("WARN a rehearsal left something behind", out)
         self.assertIn("automations.yaml", out)
-        self.assertIn("brain doctor --rehearse", out)
+        self.assertIn("brain doctor --sweep", out)
 
     def test_a_missing_automations_file_is_not_a_leftover(self):
         self.assertIn("PASS no rehearsal leftovers", self.run_block(None).stdout)
@@ -825,7 +880,7 @@ class TestAStuckRehearsalUnsticksItself(RehearsalCase):
     async def test_the_old_recipe_fails_the_same_way_every_time(self):
         """The loop, reproduced: two runs with no sweep, no progress.
 
-        Driven rather than described — with `_sweep` doing what it did
+        Driven rather than described — with `sweep` doing what it did
         before it existed, the run ends on the first row with nothing
         planted, and the run after it does exactly the same.
         """
@@ -834,7 +889,7 @@ class TestAStuckRehearsalUnsticksItself(RehearsalCase):
         async def no_sweep(_hooks):
             return {"ran": True, "removed": [], "left": [], "sentence": ""}
 
-        self.r._sweep = no_sweep
+        self.r.sweep = no_sweep
         for _ in range(2):
             out = await self.r.run(h)
             self.assertIn("already in automations.yaml", out["error"])
@@ -858,7 +913,7 @@ class TestAStuckRehearsalUnsticksItself(RehearsalCase):
         self.assertEqual(out["error"], "")
         self.assertIn(f"{self.r.PREFIX}dead_ref", out["swept"]["removed"])
         self.assertTrue(out["swept"]["ran"])
-        self.assertIn("cleared up after an earlier run",
+        self.assertIn("took out what an earlier run left behind",
                       out["swept"]["sentence"])
 
     async def test_a_leftover_registry_entry_is_taken_out_too(self):
@@ -933,6 +988,110 @@ class TestAlreadyGoneIsNotAFailure(RehearsalCase):
         out = await self.r.run(h)
         self.assertTrue(out["cleanup"]["ok"], out["cleanup"]["sentence"])
         self.assertNotIn(": ;", out["cleanup"]["sentence"])
+
+
+class TestClearingUpWithoutRehearsing(RehearsalCase):
+    """The sweep as a press of its own.
+
+    `sweep` has always run inside `run`, before planting — so the only
+    documented way out of *"a rehearsal left something behind"* was
+    **another whole rehearsal**: two automations written into somebody's
+    `automations.yaml`, a helper created, a checks pass and a Claude
+    turn, to delete three things. The other suggestion was to open
+    `automations.yaml` and edit it by hand. Both are heavier than the
+    fault, and one of them is the panel asking a person to do what the
+    panel can do — the `unsettle` route's failure in a new place: the
+    machinery existed and nothing could reach it.
+    """
+
+    async def test_it_takes_the_litter_out_and_plants_nothing(self):
+        h, fake = hooks_with_leftover(self.r)
+        out = await self.r.sweep_only(h)
+        self.assertTrue(out["ran"], out)
+        self.assertEqual(self.r.leftovers(await fake.snapshot()), [])
+        # Nothing from PLAN was created on the way through.
+        for row in self.r.PLAN:
+            self.assertNotIn(row["id"], fake.automations)
+        self.assertNotIn("brain_test", str(fake.helpers))
+
+    async def test_a_clean_house_gets_a_sentence_rather_than_silence(self):
+        """`sweep` is silent on a clean house because it runs before every
+        plant; a PRESS always has an answer, because somebody asked."""
+        h, _ = hooks(self.r)
+        out = await self.r.sweep_only(h)
+        self.assertTrue(out["ran"])
+        self.assertIn("nothing", out["sentence"].lower())
+        self.assertEqual(out["removed"], [])
+
+    async def test_it_re_earns_the_stored_verdict(self):
+        """`cleanup_ok` was written once, by the run that failed.
+
+        So after the litter was gone the report went on opening with
+        *Rehearsal: left something behind*, for ever — a verdict nothing
+        could correct, which is the auth re-check's rule with the timer
+        taken off.
+        """
+        self.r.save({"finished_at": 100,
+                     "checks": {"planted": 2, "found": 2, "extra": 0},
+                     "cleanup": {"ok": False, "left": ["brain_test_dead_ref"],
+                                 "sentence": "SOMETHING WAS LEFT BEHIND"}})
+        self.assertFalse(self.r.summary()["cleanup_ok"])
+        self.assertEqual(self.r.outstanding(), ["brain_test_dead_ref"])
+
+        h, _ = hooks_with_leftover(self.r)
+        await self.r.sweep_only(h)
+
+        self.assertTrue(self.r.summary()["cleanup_ok"])
+        self.assertEqual(self.r.outstanding(), [])
+        # And the run's own failure is still on the record: it is the
+        # evidence a cleanup failed, and the one thing editing it loses.
+        last = self.r.load()
+        self.assertFalse(last["cleanup"]["ok"])
+        self.assertIn("LEFT BEHIND", last["cleanup"]["sentence"])
+        self.assertTrue(last["cleared"]["at"])
+
+    async def test_a_sweep_that_could_not_finish_re_earns_nothing(self):
+        """"I could not look" and "it went away" are different claims, and
+        only the second may clear the verdict."""
+        self.r.save({"finished_at": 100,
+                     "cleanup": {"ok": False, "left": ["brain_test_dead_ref"]}})
+        h, fake = hooks_with_leftover(self.r)
+
+        async def refuse(_entry_id, _entity_id=""):
+            return False, "Home Assistant would not reload"
+
+        h.remove = refuse
+        out = await self.r.sweep_only(h)
+        self.assertFalse(out["ran"])
+        self.assertFalse(self.r.summary()["cleanup_ok"])
+        self.assertTrue(self.r.outstanding())
+
+    async def test_it_reports_the_newer_look_rather_than_the_older_one(self):
+        """A sweep's own re-check is newer than the run's, both ways."""
+        self.r.save({"finished_at": 100,
+                     "cleanup": {"ok": False, "left": ["brain_test_dead_ref"]}})
+        h, _ = hooks(self.r)          # the litter has since gone by hand
+        await self.r.sweep_only(h)
+        self.assertEqual(self.r.outstanding(), [])
+
+    async def test_it_survives_never_having_rehearsed(self):
+        """Nothing stored, nothing to re-earn, and no crash."""
+        h, _ = hooks(self.r)
+        out = await self.r.sweep_only(h)
+        self.assertTrue(out["ran"])
+        self.assertEqual(self.r.load(), {})
+        self.assertEqual(self.r.outstanding(), [])
+
+    async def test_the_press_is_counted(self):
+        """A sweep that keeps being needed is a fact about this install."""
+        import journal
+        h, _ = hooks_with_leftover(self.r)
+        await self.r.sweep_only(h)
+        rows = [r for r in journal.tail(20)
+                if (r.get("extra") or {}).get("stage") == "sweep"]
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["ok"])
+        self.assertEqual(rows[0]["extra"]["left"], 0)
 
 
 def hooks_with_leftover(mod, **over):

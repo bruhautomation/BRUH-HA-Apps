@@ -18,6 +18,7 @@
 # Usage:
 #   brain doctor --deep [--json]
 #   brain doctor --rehearse [--yes] [--json]
+#   brain doctor --sweep [--json]
 
 set -uo pipefail
 
@@ -49,11 +50,16 @@ Usage:
   brain doctor --rehearse --yes    Skip the confirmation
   brain doctor --rehearse --json   The whole object
 
+  brain doctor --sweep         Take out anything named brain_test_* a
+                               rehearsal left behind. Creates nothing,
+                               asks no model, spends nothing.
+
 --deep spends a handful of Claude turns (roughly five: a no-tool run, an
 analyst run, one chat turn, one automation task, one consolidation pass and
 one fix run). --rehearse spends one analyst run and writes to
 automations.yaml through the same path an accepted proposal uses, then
-takes it back out again. Neither ever runs on a timer.
+takes it back out again. Neither ever runs on a timer. --sweep is free:
+it only ever removes what `brain doctor` warns about.
 EOF
     exit "${1:-0}"
 }
@@ -259,9 +265,53 @@ PYREFUSED
     print_score "$raw" "$payload"
 }
 
+run_sweep() {
+    # No consent step and no plan to print: nothing is created, and what
+    # is removed is exactly what `brain doctor` has already named. The
+    # remedy it used to offer was another whole rehearsal — two
+    # automations written into somebody's config and a Claude turn, to
+    # delete three things — or editing automations.yaml by hand.
+    local raw="" started payload waited=0
+    [ "${1:-}" = "--json" ] && raw=--json
+
+    started=$(curl -s -m 30 -X POST -H 'Content-Type: application/json' \
+        -d '{}' "$PANEL/api/doctor/rehearse/sweep" 2>/dev/null)
+    need_panel "$started"
+    [ "$raw" = "--json" ] || echo "Clearing up…" >&2
+    while [ "$waited" -lt "$MAX_WAIT_S" ]; do
+        payload=$(curl -s -m 30 "$PANEL/api/doctor/rehearse" 2>/dev/null)
+        need_panel "$payload"
+        printf '%s' "$payload" | grep -q '"sweeping": *true' || break
+        sleep "$POLL_S"
+        waited=$((waited + POLL_S))
+    done
+
+    if [ "$raw" = "--json" ]; then
+        printf '%s\n' "$payload"
+    fi
+    # The heredoc takes the payload as an ARGUMENT: a heredoc is stdin, so
+    # piping the JSON in arrives empty and reads as "nothing was left"
+    # rather than as an error. Same rule the other blocks in this file
+    # were fixed under.
+    python3 - "$payload" <<'PYSWEEP'
+import json, sys
+d = json.loads(sys.argv[1] or "{}")
+cleared = ((d.get("last") or {}).get("cleared") or {})
+left = d.get("leftovers") or []
+if cleared.get("sentence"):
+    print(cleared["sentence"])
+elif not cleared:
+    print("The sweep did not report anything.")
+if left:
+    print("Still in the house: " + ", ".join(str(x) for x in left))
+    sys.exit(1)
+PYSWEEP
+}
+
 case "${1:-}" in
     --deep)     shift; run_deep "${1:-}" ;;
     --rehearse) shift; run_rehearsal "$@" ;;
+    --sweep)    shift; run_sweep "${1:-}" ;;
     help|--help|-h|"") usage ;;
     *)
         echo -e "${RED}Unknown flag: $1${NC}" >&2

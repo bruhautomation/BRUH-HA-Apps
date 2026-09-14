@@ -1865,6 +1865,15 @@ up. And **cleanup is the first thing the plain \`brain doctor\` verifies on its
 next run**: it warns if any \`brain_test_*\` automation, entity or helper is still
 there, and names the command that removes it.
 
+**If something was left behind, one press takes it out.** ⚙ → Diagnostics grows a
+**Clear up what was left** button while there is anything to clear, and
+\`brain doctor --sweep\` does the same from the Terminal tab. It creates nothing,
+asks no model and spends nothing — it only ever removes what is already named
+\`brain_test_*\`. Until it existed, the only way out of a failed cleanup was to run
+another whole rehearsal (which writes two automations into your
+\`automations.yaml\` and spends a Claude turn, to delete three things) or to edit
+\`automations.yaml\` by hand.
+
 The rehearsal never runs on its own either, and it refuses before asking for
 consent if \`protected_entities\` would match a \`brain_test_*\` id.
 

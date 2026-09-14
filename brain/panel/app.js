@@ -2975,17 +2975,45 @@ function renderRehearsal(d) {
       rows.push(diagRow("Before starting", esc(swept.sentence), !swept.ran));
     }
     rows.push(diagRow("Cleanup", esc(clean.sentence || "?"), !clean.ok));
+    // A sweep that ran afterwards is the newer claim about the house, and
+    // it goes UNDER the cleanup rather than over it: the run's own failure
+    // is the evidence a cleanup failed, and deleting it would leave the
+    // record agreeing with itself about a problem that did happen.
+    const cleared = last.cleared || {};
+    if (cleared.at) {
+      const took = (cleared.removed || []).length
+        ? ` <span class="hint">took out ${esc((cleared.removed || []).join(", "))}</span>`
+        : "";
+      rows.push(diagRow("Cleared up since",
+        (cleared.ok ? "nothing named brain_test_* is left"
+          : "could not finish — " + esc((cleared.left || []).join(", ") || "?"))
+        + took,
+        !cleared.ok));
+    }
     if (last.error) rows.push(diagRow("Error", esc(last.error), true));
   }
   body.innerHTML = rows.join("");
   body.hidden = !rows.length;
   const step = (d.progress || {}).step;
-  $("#rehearseLast").textContent = d.running
-    ? `Rehearsing — ${step || "starting"}…`
-    : (last.finished_at
-      ? `Last rehearsal ${timeAgo(new Date(last.finished_at * 1000).toISOString())}`
-      : "Not rehearsed on this install yet.");
-  $("#rehearseRun").disabled = !!d.running;
+  const busy = !!(d.running || d.sweeping);
+  $("#rehearseLast").textContent = d.sweeping
+    ? "Clearing up…"
+    : (d.running
+      ? `Rehearsing — ${step || "starting"}…`
+      : (last.finished_at
+        ? `Last rehearsal ${timeAgo(new Date(last.finished_at * 1000).toISOString())}`
+        : "Not rehearsed on this install yet."));
+  $("#rehearseRun").disabled = busy;
+  // The button exists only while there is something for it to take out —
+  // `leftovers` is the server's derivation, so this and the fault row in
+  // the report cannot disagree about whether the house is clean.
+  const left = d.leftovers || [];
+  const sweep = $("#rehearseSweep");
+  sweep.hidden = !left.length;
+  sweep.disabled = busy;
+  sweep.title = left.length
+    ? "Still in the house: " + left.join(", ")
+    : "";
 }
 
 async function loadRehearsal(poll) {
@@ -2993,7 +3021,7 @@ async function loadRehearsal(poll) {
     const d = await api("api/doctor/rehearse");
     renderRehearsal(d);
     clearTimeout(rehearsePoll);
-    rehearsePoll = d.running && poll
+    rehearsePoll = (d.running || d.sweeping) && poll
       ? setTimeout(() => loadRehearsal(true), 3000) : null;
   } catch (e) {
     $("#rehearseLast").textContent = "Could not read the rehearsal: " + e.message;
@@ -3032,6 +3060,22 @@ $("#rehearseRun").addEventListener("click", async () => {
     await api("api/doctor/rehearse",
       { method: "POST", body: JSON.stringify({ consent: true }) });
     toast("Rehearsal started — it writes to automations.yaml and takes it back out");
+  } catch (e) {
+    toast(e.message);
+  }
+  loadRehearsal(true);
+});
+
+// No confirmation, because nothing is created: this removes what the
+// rehearsal's own leftovers scan already sees under `brain_test_*`, which
+// is brAIn's own litter and the thing `brain doctor` sent you here about.
+// Asking "are you sure you want to delete the thing you were just warned
+// about" is the offer nobody can answer usefully.
+$("#rehearseSweep").addEventListener("click", async () => {
+  $("#rehearseSweep").disabled = true;
+  try {
+    await api("api/doctor/rehearse/sweep", { method: "POST" });
+    toast("Clearing up what the last rehearsal left behind…");
   } catch (e) {
     toast(e.message);
   }

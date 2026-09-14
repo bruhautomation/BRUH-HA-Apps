@@ -2,6 +2,62 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.50.1
+
+**Two of the eight faults in the report that prompted 1.50.0 were not
+faults.** The list opened with `Run (healing): ended healed` — an overnight
+repair that *worked* — and closed with `not running: assist_listener`, which
+is the voice implementation `assist_fast_mode` correctly does not start.
+Both were in the one section whose stated rule is that a refusal doing its
+job is not a fault, and a section with two non-problems at the top is the
+section people learn to skim.
+
+`journal.summary` decided a run had failed with `outcome != "ok"`, and five
+of the fourteen outcome words are not failures: `applied` and `healed` are
+successes, `heal_skipped` and `denied` are refusals doing their job, and
+`fallback` is a quieter path that still produced a card. The row was already
+carrying the answer — `record` takes `ok` from the caller, and healing
+passes `ok=True` — and the summary read past it. The set of outcomes that
+*are* a problem now lives in `journal.py` and `reports.py` reads it, because
+the two modules had different rules and a successful heal was therefore not
+worth a report and *was* worth the top row of the fault list.
+
+**And two health guards were keyed on options that do not exist.**
+`health.DAEMONS` asked after `enable_assist` and `enable_automations`; the
+add-on's options are `enable_assist_integration` and
+`enable_automation_integration`, which is what `run.sh` reads when it
+decides whether to start either. `dict.get` answers `None` for a name that
+is not there, so both entries were skipped on every install: **the
+automation listener dying was reported by nothing**, and the one `failed`
+verdict about voice — "nothing is listening" — returned on its first line
+and could never fire. Nothing failed; two guards were simply off. The suite
+could not see it because the fixture wrote the same names down that the code
+did, so the names are now checked against `config.yaml`'s own schema.
+
+The report's daemon row reads the roll-call against the options too, the way
+the health verdict always has — a daemon whose option is off was not asked
+for, and the assist implementation `assist_fast_mode` did not choose is
+correctly absent.
+
+**A rehearsal that left something behind can be cleared up in one press.**
+The sweep has always run inside a rehearsal, before planting, so the only
+documented way out of *"a rehearsal left something behind"* was **another
+whole rehearsal** — two automations written into your `automations.yaml`, a
+helper created, a checks pass and a Claude turn, to delete three things —
+or opening `automations.yaml` and editing it by hand. Both are heavier than
+the fault. **Clear up what was left** is now a button of its own in ⚙ →
+Diagnostics and `brain doctor --sweep` on the command line: it creates
+nothing, asks no model, spends nothing, and only ever removes what `brain
+doctor` has already named under the `brain_test_` prefix. It renders only
+while there is something to take out.
+
+It also **re-earns the verdict**. `cleanup_ok` was written once, by the run
+that failed, so once the litter was gone the report went on opening with
+*Rehearsal: left something behind* for ever — a verdict nothing could
+correct. A sweep that proves the house clean is recorded beside the
+cleanup rather than over it: the run's own failure stays on the record,
+because it is the evidence that a cleanup failed.
+
 ## 1.50.0
 
 **Every report now opens with what is wrong.** A `brain report` used to
