@@ -2,6 +2,63 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.50.2
+
+**The deep check's fixer stage blamed the Supervisor token for a helper it
+had just created.** Home Assistant mints a storage collection's id by
+slugifying the NAME it was given, so the entity id is a consequence of what
+brAIn calls a thing and never a second constant to be stated beside it. This
+file stated both: the helper was created as `"brAIn deep check"`, which
+slugifies to `input_boolean.brain_deep_check`, while the stage polled ten
+seconds for `input_boolean.brain_test_doctor` and then reported *"brAIn could
+not create ... check that the Supervisor token is valid"* — about a token
+that had done exactly what it was asked. The cleanup keyed on the same
+guessed id and so deleted nothing, and because `brain_deep_check` is not
+under the `brain_test_` prefix, neither `brain doctor`'s leftover warning nor
+the sweep could see what was piling up: one more helper per run, in the one
+place nothing was looking.
+
+The name is now what is chosen and the id is what is read back off the create
+call — the rule `rehearsal.py` already carried one module over — and
+everything downstream keys on it: the instruction handed to the fix run, the
+verification, and the delete. A sweep before each run takes out helpers an
+earlier deep check left behind, matched on the name brAIn gave them, asking
+`protected_entities` about each — the stage's own ask is about the id it
+expects, and these carry ids an older build chose — and says so in the
+stage's detail rather than removing them quietly. It also clears
+the collision rather than surviving it: without it the litter holds
+`brain_test_doctor` and Core answers the next create with
+`brain_test_doctor_2`.
+
+The suite could not see any of this, because its fake answered
+`input_boolean/create` by appending a row whose entity id was the constant —
+it wrote down the same guess the code did. It mints ids from the name now,
+`_2` and all.
+
+**And the memory stage reported a working consolidator as a broken one.**
+Its probe read "… is a diagnostic entity brAIn creates while checking itself;
+**it is removed again straight away**", while the consolidator's own prompt
+says "NEVER include secrets, credentials, transient device states, or one-off
+commands". A line whose second half states that its subject is about to be
+deleted is a transient device state written out longhand, so the pass that
+dropped it was the pass working — and the stage answered with *"a pass
+consumed it without writing it down"*, which is the sentence for a broken
+memory pipeline. 1.49.0's rewrite removed the "ignore this line" and kept
+the clause that made it droppable.
+
+So the probe says one durable thing about the add-on installed here, dated
+the way a device note is dated, with no claim about its own lifetime. And the
+verdict is honest about what it can tell: a drained queue is the one thing
+that *proves* the pipeline ran, because the consolidator archives the inbox
+only after `memory.md` has been written and every failure before that returns
+with the queue standing. What is left unproven is whether this particular
+line was worth keeping, which is the model's judgement — the consolidator's
+own log already calls it "a judgement, not a failure" — so it is a **skip**
+naming the case, not a fault. A queue that did not move is still a failure,
+and now takes the probe back out of the inbox with it, so a stalled pass
+cannot leave this check's own marker to be filed into somebody's memory later
+with nothing left to remove it.
+
 ## 1.50.1
 
 **Two of the eight faults in the report that prompted 1.50.0 were not

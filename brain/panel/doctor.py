@@ -116,9 +116,34 @@ CLAIM_GRACE_S = 30
 # The helper `fixer_dry` renames. An `input_boolean` because it is the
 # cheapest thing in Home Assistant that has a name worth changing and no
 # effect on anything when it changes.
+#
+# **Core mints the entity id from the NAME, and this file used to state
+# both independently.** A storage collection derives its item id with
+# `IDManager.generate_id`, which slugifies whatever it was called, so the
+# name is the input and the entity id is the consequence — and
+# `FIXER_HELPER_NAME` was "brAIn deep check", which slugifies to
+# `brain_deep_check` while `FIXER_HELPER` said `brain_test_doctor`. Every
+# deep check therefore created a helper, polled ten seconds for a
+# different one, and reported *"brAIn could not create
+# input_boolean.brain_test_doctor ... check that the Supervisor token is
+# valid"* — about a token that had just done exactly what it was asked.
+# The cleanup keyed on the same guessed id and deleted nothing, so each
+# run left one more helper behind, and because `brain_deep_check` is not
+# under `PREFIX` neither `rehearsal.leftovers` nor the sweep could see
+# them: litter that accumulated where nothing was looking for it.
+#
+# So the name is what is chosen and the id is what is read back
+# (`_ensure_helper`), the two are named so that a free slug lands under
+# the prefix, and `FIXER_LEGACY_NAME` is what the broken build called its
+# helpers so that installs carrying them can be tidied up. Matching is on
+# the NAME for `rehearsal._helper_items`' reason: an item whose own slug
+# collided still carries the name brAIn gave it.
+FIXER_HELPER_NAME = "brAIn test doctor"
+FIXER_RENAMED = f"{FIXER_HELPER_NAME} (renamed)"
+# What a free slug mints, and so what is asked of `protected_entities`
+# before anything is created. Never assumed after that.
 FIXER_HELPER = f"input_boolean.{PREFIX}doctor"
-FIXER_HELPER_NAME = "brAIn deep check"
-FIXER_RENAMED = "brAIn deep check (renamed)"
+FIXER_LEGACY_NAME = "brAIn deep check"
 
 # Per-stage budgets. A deep run is a handful of minutes at worst and each
 # number is the one the face it tests already lives under: the
@@ -678,9 +703,27 @@ def _assist_speech(reply: dict) -> str:
 # about a device, in the form the document is full of. It still says what
 # it is, so anybody who sees one left behind knows where it came from,
 # and the cleanup below still takes it out and still fails if it cannot.
-MEMORY_FACT_PREFIX = "The brAIn deep check helper"
-MEMORY_FACT_SUFFIX = ("is a diagnostic entity brAIn creates while checking "
-                      "itself; it is removed again straight away.")
+#
+# **That rewrite kept the clause that made the old one droppable.** What
+# shipped was "… is a diagnostic entity brAIn creates while checking
+# itself; **it is removed again straight away**" — and the consolidator's
+# own prompt says in as many words: "NEVER include secrets, credentials,
+# transient device states, or one-off commands". A line whose second half
+# states that its subject is about to be deleted is a transient device
+# state written out longhand, and the pass that drops it is the pass
+# working. It also carried a bare epoch in the middle of the prose, which
+# is what machine litter looks like to a turn told to drop "the
+# lowest-value facts first", and it was a note about a helper that — see
+# `FIXER_HELPER_NAME` — the deep check was never actually creating.
+#
+# What is left says one durable thing about the add-on this house has
+# installed, dates it the way a device note is dated, and makes no claim
+# about its own lifetime. It cannot GUARANTEE the pass keeps it: that is
+# an editorial judgement belonging to the model, which is exactly why
+# `stage_memory` no longer reports the judgement going the other way as a
+# failure.
+MEMORY_FACT_PREFIX = "brAIn's own memory filing was last checked end to end on"
+MEMORY_FACT_SUFFIX = ("by `brain doctor --deep`, the add-on's self-check.")
 
 
 async def stage_memory(hooks: Hooks) -> dict:
@@ -695,9 +738,17 @@ async def stage_memory(hooks: Hooks) -> dict:
     the marker is taken out through `FORGET:`, which is the same route
     `brain memory forget` uses, and the stage FAILS if the document still
     holds it. A self-test that writes into somebody's memory and leaves it
-    there has done more harm than the check was worth.
+    there has done more harm than the check was worth — so every ending
+    that is not the happy one drops the marker back out of the inbox
+    first, and the happy one FORGETs it out of the document.
+
+    Three endings, and only two of them are faults: the queue not moving
+    is the consolidator not filing, the document keeping the line is a
+    cleanup that failed, and the pass dropping the line is the model's
+    judgement — see below for why the last is a skip.
     """
-    marker = f"{MEMORY_FACT_PREFIX} {int(time.time())} {MEMORY_FACT_SUFFIX}"
+    marker = (f"{MEMORY_FACT_PREFIX} "
+              f"{time.strftime('%Y-%m-%d %H:%M')} {MEMORY_FACT_SUFFIX}")
     before = await asyncio.to_thread(hooks.inbox_pending)
     await asyncio.to_thread(hooks.queue_memory, marker, SOURCE)
     queued = await asyncio.to_thread(hooks.inbox_pending)
@@ -719,24 +770,49 @@ async def stage_memory(hooks: Hooks) -> dict:
     document = await asyncio.to_thread(hooks.memory_text)
     landed = MEMORY_FACT_PREFIX in document
     if after >= queued and not landed:
+        # Taken back out, the same as the two failures above it. The queue
+        # did not move, so the marker is still in the inbox and the next
+        # ordinary pass would file this check's own probe into somebody's
+        # memory.md with nothing left to remove it — which is the harm the
+        # docstring promises not to do, arriving by the one path that had
+        # not been given the line that prevents it.
+        await asyncio.to_thread(hooks.drop_memory, SOURCE, marker)
         return _fail(
             "The consolidator finished and the queue did not move. See the "
-            "add-on log's [brain-memory] lines for why it kept the facts.",
+            "add-on log's [brain-memory] lines for why it kept the facts; "
+            "the fact this check queued has been taken back out.",
             f"{queued} queued before, {after} after")
     if not landed:
-        return _fail(
-            "The queue drained and the fact is not in memory.md, so a pass "
-            "consumed it without writing it down. This is the failure the "
-            "Memory tab cannot see; report it with `brain report`.",
-            # Named, because the one thing this cannot tell apart is a
-            # broken pass from a pass that read the fact and judged it
-            # not worth keeping. The probe is worded as an ordinary
-            # durable fact to make the second unlikely; it cannot make
-            # it impossible, and a check that hid that would be
-            # overstating what it knows.
-            "the pass ran and rewrote the document without this line — "
-            "either it is filing nothing, or it judged this one not worth "
-            "keeping")
+        # A SKIP, and the demotion is the fix for the thing this used to
+        # report. It said "a pass consumed it without writing it down" —
+        # the sentence for a broken memory pipeline — and it said it
+        # about a queue that had drained, which is the one thing that
+        # PROVES the pipeline worked: the consolidator archives the inbox
+        # only after memory.md has been written, and every failure path
+        # above that returns without archiving, leaving the queue
+        # standing. So a drained queue means the pass read the facts,
+        # rewrote the document and filed the inbox away; the only thing
+        # that did not happen is that this particular line survived, and
+        # the consolidator's own log calls that "a judgement, not a
+        # failure" in as many words.
+        #
+        # Which leaves a stage that cannot tell a dropped probe from a
+        # pass that has quietly stopped filing — and nothing here can,
+        # because the discrimination is per-fact and the drain is
+        # per-pass. `clear_resolved`'s rule holds wherever that is true:
+        # "I could not tell" and "it is broken" are different claims and
+        # only the second may be reported as a fault. The case is named
+        # rather than hidden, which is what a skip is for.
+        return _skip(
+            "The pass ran and filed the queue, and did not keep the line "
+            "this check queued — which is the consolidator's judgement to "
+            "make, not a fault. brAIn's memory filing could not be proved "
+            "end to end on this run.",
+            f"queue {before} → {queued} → {after}; the document was "
+            "rewritten and archived the inbox, so the pipeline ran. Run of "
+            "these with nothing else landing either means memory has "
+            "stopped growing — the add-on log's [brain-memory] lines say "
+            "how many lines each pass filed.")
 
     # Cleanup, and it is the other half of the check.
     await asyncio.to_thread(hooks.queue_memory, f"FORGET: {marker}", SOURCE)
@@ -861,18 +937,30 @@ async def stage_fixer_dry(hooks: Hooks) -> dict:
             "list is doing its job.",
             "patterns: " + ", ".join(patterns[:6]))
 
-    created = await _ensure_helper(hooks)
-    if created is None:
+    helper, why = await _ensure_helper(hooks, patterns)
+    if helper is None:
         return _fail(
-            f"brAIn could not create {FIXER_HELPER} in Home Assistant, so "
-            "there is nothing safe for the fixer to change. Check that the "
-            "Supervisor token is valid — `brain doctor` reports it.")
+            "brAIn could not create the helper it renames in Home "
+            "Assistant, so there is nothing safe for the fixer to change. "
+            "Check that the Supervisor token is valid — `brain doctor` "
+            "reports it.", why)
+    entity_id = helper["entity_id"]
     edits_before = _edit_journal_lines()
 
     try:
+        # Asked again because the id is read back rather than assumed: a
+        # slug this run did not get is an entity the list above was never
+        # asked about, and "I could not tell" may not read as "nothing is
+        # protected" here any more than it does in `automation_writer`.
+        if entity_id != FIXER_HELPER and automation_writer.is_protected(
+                entity_id, patterns):
+            return _skip(
+                f"protected_entities covers {entity_id}, which is the id "
+                "Home Assistant minted for the helper this check renames.",
+                "patterns: " + ", ".join(patterns[:6]))
         result = await asyncio.to_thread(
-            engine.run_agent, _FIXER_PROMPT, _FIXER_SYSTEM, hooks.model,
-            TIMEOUTS["fixer_dry"], 12, SOURCE)
+            engine.run_agent, _fixer_prompt(entity_id), _FIXER_SYSTEM,
+            hooks.model, TIMEOUTS["fixer_dry"], 12, SOURCE)
         hooks.record_usage(result, "doctor-fixer")
         if not result.get("ok"):
             bad = _engine_failure(
@@ -880,7 +968,7 @@ async def stage_fixer_dry(hooks: Hooks) -> dict:
                 f"the fix run passed its {TIMEOUTS['fixer_dry']}s limit "
                 "and was stopped")
             return _fail(bad["sentence"], bad["detail"])
-        name = await _helper_name(hooks)
+        name = await _helper_name(hooks, entity_id)
         if name != FIXER_RENAMED:
             return _fail(
                 "The fix run finished and the helper's name did not "
@@ -892,62 +980,150 @@ async def stage_fixer_dry(hooks: Hooks) -> dict:
                   if edits else
                   "no file was edited, so the snapshot hook had nothing to "
                   "take — a registry rename is not a file change")
+        # Said out loud, `rehearsal.sweep`'s rule: a sweep that quietly
+        # removed things is indistinguishable from a house that never had
+        # them, and the line reporting it is also the only evidence that
+        # an earlier run failed to clean up after itself.
+        if helper["swept"]:
+            detail += (f"; cleared {len(helper['swept'])} helper(s) an "
+                       "earlier deep check left behind")
         return _ok("A fix run changed the house and it was verified in "
                    "Core.", detail)
     finally:
-        await _delete_helper(hooks)
+        await _delete_helper(hooks, helper["object_id"])
 
 
 _FIXER_SYSTEM = (
     "You are running a connectivity check on a Home Assistant add-on. Make "
     "exactly the one change asked for, using the Home Assistant tools, and "
     "then stop. Do not touch anything else.")
-_FIXER_PROMPT = (
-    f"Rename the helper {FIXER_HELPER} so that its friendly name is "
-    f"exactly \"{FIXER_RENAMED}\". Use the Home Assistant tools available "
-    "to you. Change nothing else in the house, and reply with one short "
-    "sentence saying what you did.")
 
 
-async def _ensure_helper(hooks: Hooks) -> bool | None:
-    """The helper, created if it is not there. ``None`` when it could not be.
+def _fixer_prompt(entity_id: str) -> str:
+    """The one instruction, naming the entity Core actually minted.
 
-    Returns whether this call created it, so the cleanup knows the
-    difference between putting a name back and deleting something that was
-    never anybody's.
+    A constant here would be the assumption this stage was built on: the
+    run would be told to rename an entity that does not exist, and would
+    be graded on a different one.
     """
-    name = await _helper_name(hooks)
-    if name is not None:
-        return False
-    result = (await hooks.ws([{"type": "input_boolean/create",
-                               "name": FIXER_HELPER_NAME}]))[0]
-    if not result:
-        return None
+    return (f"Rename the helper {entity_id} so that its friendly name is "
+            f"exactly \"{FIXER_RENAMED}\". Use the Home Assistant tools "
+            "available to you. Change nothing else in the house, and reply "
+            "with one short sentence saying what you did.")
+
+
+def _is_fixer_helper(name: str) -> bool:
+    """Whether a helper's name is one brAIn's deep check gave out.
+
+    `startswith`, because the rename this stage performs is part of the
+    name: a run that died between the rename and the cleanup leaves
+    "… (renamed)" behind, and a sweep that only knew the original name
+    would walk past exactly the leftover a failed run produces.
+    """
+    return any(name.startswith(known)
+               for known in (FIXER_HELPER_NAME, FIXER_LEGACY_NAME))
+
+
+async def _sweep_helpers(hooks: Hooks, patterns) -> list[str]:
+    """Take out helpers an earlier deep check left behind. The ids removed.
+
+    `rehearsal.sweep`'s argument, reached by a different route. Three
+    things keep it from being a licence to delete: it removes only items
+    carrying a name brAIn itself chose (`_is_fixer_helper`), it runs
+    inside the consent a deep check already has to create one, and it is
+    reported rather than silent. Matching on the name and not on the id
+    is `rehearsal._helper_items`' rule — an item whose slug collided is
+    exactly the one a derived id cannot name.
+
+    It is also what keeps the id this stage mints free: without it, the
+    helpers a broken build left behind take `brain_test_doctor` and Core
+    answers the next create with `brain_test_doctor_2`. Clearing the
+    collision is better than surviving it.
+
+    `protected_entities` is asked a fourth time here, and not because the
+    stage has not asked it: it asked about `FIXER_HELPER`, which covers
+    the broad pattern somebody actually writes, and these are ids under
+    names an older build chose. An unattended delete of something a list
+    says not to touch is the one thing that must not fall through a gap
+    between two spellings of nearly the same entity.
+    """
+    stale = await _stale_helpers(hooks, patterns)
+    for object_id in stale:
+        await _delete_helper(hooks, object_id)
+    if not stale:
+        return []
+    # Read back, because the number goes on the report. `_delete_helper`
+    # swallows a refusal by design — the stage's answer is the rename, not
+    # the tidying — so the list of what was ASKED for is not the list of
+    # what went, and "cleared 3" over a house that still has them is the
+    # claim `clear_resolved` refuses one store over.
+    left = set(await _stale_helpers(hooks, patterns))
+    return [object_id for object_id in stale if object_id not in left]
+
+
+async def _stale_helpers(hooks: Hooks, patterns) -> list[str]:
+    """The item ids of every helper the sweep may take out, right now."""
+    import automation_writer  # noqa: PLC0415 — see stage_fixer_dry
+
+    rows = (await hooks.ws([{"type": "input_boolean/list"}]))[0] or []
+    return [str(row["id"]) for row in rows
+            if isinstance(row, dict) and row.get("id")
+            and _is_fixer_helper(str(row.get("name") or ""))
+            and not automation_writer.is_protected(
+                f"input_boolean.{row['id']}", patterns)]
+
+
+async def _ensure_helper(hooks: Hooks,
+                         patterns) -> tuple[dict | None, str]:
+    """A fresh helper, and the id Core MINTED for it. Or None and a reason.
+
+    The item id is read off the create call rather than derived from
+    `FIXER_HELPER`, because it is Core's to choose: `IDManager.generate_id`
+    slugifies the name while the slug is free and appends `_2` otherwise,
+    so the entity id is a fact to be read back and never one to be stated
+    twice. Everything downstream — the prompt, the verification, the
+    delete — is keyed on what comes back here.
+    """
+    swept = await _sweep_helpers(hooks, patterns)
+    made = (await hooks.ws([{"type": "input_boolean/create",
+                             "name": FIXER_HELPER_NAME}]))[0]
+    if not isinstance(made, dict) or not made.get("id"):
+        return None, "Home Assistant refused input_boolean/create"
+    object_id = str(made["id"])
+    entity_id = f"input_boolean.{object_id}"
     for _ in range(20):
-        if await _helper_name(hooks) is not None:
-            return True
+        if await _helper_name(hooks, entity_id) is not None:
+            return {"object_id": object_id, "entity_id": entity_id,
+                    "swept": swept}, ""
         await asyncio.sleep(0.5)
-    return None
+    # Created and never registered: take it back out rather than leave a
+    # helper behind on the one path that never reaches the stage's
+    # `finally`, which is the shape that produced the litter above.
+    await _delete_helper(hooks, object_id)
+    return None, (f"{entity_id} was created and did not reach the entity "
+                  "registry within 10s")
 
 
-async def _helper_name(hooks: Hooks) -> str | None:
+async def _helper_name(hooks: Hooks, entity_id: str) -> str | None:
     """The helper's current friendly name, or None when it does not exist."""
     rows = (await hooks.ws([{"type": "config/entity_registry/list"}]))[0] or []
     for row in rows:
-        if str(row.get("entity_id") or "") == FIXER_HELPER:
+        if str(row.get("entity_id") or "") == entity_id:
             return str(row.get("name") or row.get("original_name") or "")
     return None
 
 
-async def _delete_helper(hooks: Hooks) -> None:
-    """Take the helper back out, whatever happened above.
+async def _delete_helper(hooks: Hooks, object_id: str) -> None:
+    """Take one helper back out, whatever happened above.
 
-    `input_boolean/delete` keys on the object id rather than the entity id,
-    which is the detail that makes a cleanup silently do nothing.
+    `input_boolean/delete` keys on the storage collection's item id rather
+    than the entity id, which is the detail that makes a cleanup silently
+    do nothing — so the id comes from the create call or from the list,
+    never from splitting an entity id this did not mint.
     """
     try:
         await hooks.ws([{"type": "input_boolean/delete",
-                         "input_boolean_id": FIXER_HELPER.split(".", 1)[1]}])
+                         "input_boolean_id": object_id}])
     except Exception:  # noqa: BLE001 — the stage's answer is above; a
         # cleanup that could not run is reported by the leftover check on
         # the next plain `brain doctor`, which is where it belongs.
