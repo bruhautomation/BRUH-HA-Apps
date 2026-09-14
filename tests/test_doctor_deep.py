@@ -40,6 +40,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -526,7 +527,8 @@ class TestAssistStage(DoctorCase):
 class TestMemoryStage(DoctorCase):
     """The queue is counted either side, and the marker is taken out again."""
 
-    def _hooks(self, *, lands=True, forgets=True, consolidate=(True, "")):
+    def _hooks(self, *, lands=True, forgets=True, drains=True,
+               consolidate=(True, "")):
         d = self.doctor
         state = {"pending": 0, "doc": ""}
         passes = []
@@ -551,7 +553,16 @@ class TestMemoryStage(DoctorCase):
                             state["doc"] = ""
                     elif lands:
                         state["doc"] += fact + "\n"
-                state["pending"] = 0
+                # `drains` is the whole discrimination this stage rests
+                # on. The real consolidator archives the inbox only after
+                # memory.md has been written, so a queue that emptied is
+                # proof the pass ran; one that did not is the pass
+                # keeping the facts. A fake that always emptied it made
+                # those two cases render as one.
+                if drains:
+                    state["pending"] = 0
+                else:
+                    state["queued"] = list(queued)
             return consolidate
 
         h, fake = hooks()
@@ -571,10 +582,42 @@ class TestMemoryStage(DoctorCase):
         self.assertNotIn(d.MEMORY_FACT_PREFIX, state["doc"])
 
     async def test_a_consolidator_that_kept_the_facts_is_a_failure(self):
-        d, h, state, _ = self._hooks(lands=False)
+        """The queue did not move: the pass did not file, and that is a
+        fault. The marker goes back out with it — it is still in the inbox,
+        and the next ordinary pass would file this check's own probe into
+        somebody's memory with nothing left to remove it."""
+        d, h, state, _ = self._hooks(lands=False, drains=False)
         out = await d.stage_memory(h)
         self.assertEqual(out["state"], "failed")
-        self.assertIn("consumed it without writing it down", out["sentence"])
+        self.assertIn("queue did not move", out["sentence"])
+        self.assertIn(d.MEMORY_FACT_PREFIX,
+                      " ".join(state.get("dropped") or []))
+
+    async def test_a_pass_that_dropped_the_probe_is_a_skip_not_a_failure(self):
+        """The reported bug. A drained queue is the one thing that PROVES
+        the pipeline ran — the consolidator archives the inbox only after
+        memory.md is written — so the line not surviving is the model's
+        editorial judgement, which the consolidator's own log calls "a
+        judgement, not a failure". Reporting it as "a pass consumed it
+        without writing it down" is the sentence for a broken memory
+        pipeline, said about a memory system that is working."""
+        d, h, state, _ = self._hooks(lands=False, drains=True)
+        out = await d.stage_memory(h)
+        self.assertEqual(out["state"], "skipped", out["sentence"])
+        self.assertNotIn("consumed it without writing it down",
+                         out["sentence"])
+        self.assertIn("judgement", out["sentence"])
+
+    async def test_the_probe_does_not_describe_itself_as_transient(self):
+        """The consolidator's prompt says "NEVER include ... transient
+        device states", so a probe that says its subject is removed again
+        straight away is a line a working pass is told to drop. The check
+        cannot be graded on a line it asked to have dropped."""
+        d = self.doctor
+        probe = f"{d.MEMORY_FACT_PREFIX} {d.MEMORY_FACT_SUFFIX}".lower()
+        for tell in ("removed again", "ignore this", "straight away",
+                     "temporary", "delete"):
+            self.assertNotIn(tell, probe)
 
     async def test_a_consolidator_that_would_not_run_takes_the_fact_back(self):
         d, h, state, _ = self._hooks(consolidate=(False, "it exploded"))
@@ -709,65 +752,209 @@ class TestFindingsStage(DoctorCase):
 # The fixer
 # ---------------------------------------------------------------------------
 
+def _slug(name: str) -> str:
+    """`homeassistant.util.slugify`, near enough for an id.
+
+    The point is not the exact algorithm — it is that a storage
+    collection's id is a function of the NAME, which is what this file
+    used to assume it was not.
+    """
+    out = "".join(c.lower() if c.isalnum() else "_" for c in name)
+    while "__" in out:
+        out = out.replace("__", "_")
+    return out.strip("_")
+
+
+def _mint(name: str, taken) -> str:
+    """`collection.IDManager.generate_id`: the slug while it is free."""
+    base = _slug(name)
+    seen = {item["id"] for item in taken}
+    candidate, n = base, 1
+    while candidate in seen:
+        n += 1
+        candidate = f"{base}_{n}"
+    return candidate
+
+
 class TestFixerStage(DoctorCase):
-    def _registry(self, name):
-        rows = [] if name is None else [
-            {"entity_id": self.doctor.FIXER_HELPER, "name": name}]
+    """Driven against a fake that mints ids the way Core does.
+
+    The fake this replaces answered `input_boolean/create` by appending a
+    row whose `entity_id` was `doctor.FIXER_HELPER` — it wrote down the
+    same guess the code did, so the suite could not see that the helper
+    Core really created was `input_boolean.brain_deep_check` while the
+    stage spent ten seconds polling for `input_boolean.brain_test_doctor`
+    and then blamed the Supervisor token. A collection's id comes from the
+    name, so the fake derives it from the name.
+    """
+
+    def _core(self, existing=()):
+        items: list[dict] = []
+        for name in existing:
+            items.append({"id": _mint(name, items), "name": name})
 
         def reply(cmds):
             kind = cmds[0]["type"]
-            if kind == "config/entity_registry/list":
-                return [list(rows)]
+            if kind == "input_boolean/list":
+                return [[dict(item) for item in items]]
             if kind == "input_boolean/create":
-                rows.append({"entity_id": self.doctor.FIXER_HELPER,
-                             "name": self.doctor.FIXER_HELPER_NAME})
-                return [{"id": "x"}]
+                item = {"id": _mint(cmds[0]["name"], items),
+                        "name": cmds[0]["name"]}
+                items.append(item)
+                return [dict(item)]
             if kind == "input_boolean/delete":
-                rows.clear()
-                return [{}]
+                wanted = cmds[0]["input_boolean_id"]
+                for i, item in enumerate(items):
+                    if item["id"] == wanted:
+                        items.pop(i)
+                        break
+                # Core answers a successful delete with `result: null`.
+                return [None]
+            if kind == "config/entity_registry/list":
+                return [[{"entity_id": f"input_boolean.{item['id']}",
+                          "name": item["name"]} for item in items]]
             return [None]
-        return reply, rows
+        return reply, items
+
+    def _renamer(self, items, to=None):
+        """A `run_agent` that does what the fix run is asked to do."""
+        def run_agent(prompt, *a, **k):
+            self.prompts.append(prompt)
+            for item in items:
+                if item["name"] == self.doctor.FIXER_HELPER_NAME:
+                    item["name"] = (self.doctor.FIXER_RENAMED
+                                    if to is None else to)
+            return envelope("Renamed it.")
+        return run_agent
+
+    def setUp(self):
+        super().setUp()
+        self.prompts = []
+
+    def _with_agent(self, run_agent):
+        import engine
+        old = engine.run_agent
+        engine.run_agent = run_agent
+        self.addCleanup(lambda: setattr(engine, "run_agent", old))
+
+    # -- the bug ---------------------------------------------------------
+
+    async def test_the_name_mints_the_id_the_stage_looks_for(self):
+        """Core derives the entity id from the name, so the two constants
+        are one fact: `FIXER_HELPER_NAME` has to slugify to the object id
+        part of `FIXER_HELPER`. It did not, and every deep check created a
+        helper, polled for a different one and reported that Home
+        Assistant would not create it."""
+        d = self.doctor
+        self.assertEqual(f"input_boolean.{_slug(d.FIXER_HELPER_NAME)}",
+                         d.FIXER_HELPER)
+
+    async def test_the_minted_id_is_under_the_prefix_so_litter_is_visible(self):
+        """`rehearsal.leftovers` and the sweep both scan for `PREFIX`, so a
+        helper whose slug lands outside it is litter nothing can see —
+        which is what `brain_deep_check` was."""
+        d = self.doctor
+        self.assertIn(d.PREFIX, _slug(d.FIXER_HELPER_NAME))
+
+    async def test_a_deep_check_leaves_no_helper_behind(self):
+        reply, items = self._core()
+        h, _ = hooks(ws_replies=reply)
+        self._with_agent(self._renamer(items))
+        out = await self.doctor.stage_fixer_dry(h)
+        self.assertEqual(out["state"], "ok", out["sentence"])
+        self.assertEqual(items, [], "the helper was deleted afterwards")
+
+    async def test_helpers_an_earlier_broken_run_left_are_cleared(self):
+        """The shipped bug created one per run and could delete none of
+        them. They carry the name brAIn gave them, which is the only
+        handle on an item whose own slug is not ours to predict."""
+        reply, items = self._core(existing=[
+            "brAIn deep check", "brAIn deep check", "brAIn deep check (renamed)"])
+        h, _ = hooks(ws_replies=reply)
+        self._with_agent(self._renamer(items))
+        out = await self.doctor.stage_fixer_dry(h)
+        self.assertEqual(out["state"], "ok", out["sentence"])
+        self.assertEqual(items, [])
+        self.assertIn("3 helper(s)", out["detail"])
+
+    async def test_the_sweep_counts_what_went_not_what_it_asked_for(self):
+        """`_delete_helper` swallows a refusal by design, so the list of
+        what was asked for is not the list of what went — and the number
+        goes on the report."""
+        reply, items = self._core(existing=["brAIn deep check"])
+
+        def stubborn(cmds):
+            if cmds[0]["type"] == "input_boolean/delete" \
+                    and cmds[0]["input_boolean_id"] == "brain_deep_check":
+                return [None]          # accepted, and nothing happens
+            return reply(cmds)
+
+        h, _ = hooks(ws_replies=stubborn)
+        self._with_agent(self._renamer(items))
+        out = await self.doctor.stage_fixer_dry(h)
+        self.assertEqual(out["state"], "ok", out["sentence"])
+        self.assertNotIn("helper(s)", out["detail"])
+        self.assertEqual([i["name"] for i in items], ["brAIn deep check"])
+
+    async def test_somebody_elses_helpers_are_left_alone(self):
+        reply, items = self._core(existing=["Kitchen holiday mode"])
+        h, _ = hooks(ws_replies=reply)
+        self._with_agent(self._renamer(items))
+        out = await self.doctor.stage_fixer_dry(h)
+        self.assertEqual(out["state"], "ok", out["sentence"])
+        self.assertEqual([i["name"] for i in items], ["Kitchen holiday mode"])
+        self.assertNotIn("helper(s)", out["detail"])
+
+    async def test_a_taken_slug_is_read_back_and_not_assumed(self):
+        """`generate_id` appends `_2` when the slug is taken, and the item
+        id and the entity's object id part company from there. A helper of
+        somebody else's under that slug is not one the sweep may remove,
+        so the collision is real and everything downstream — the prompt,
+        the verification, the delete — has to key on what came back."""
+        reply, items = self._core(existing=["brain test doctor"])
+        h, fake = hooks(ws_replies=reply)
+        self._with_agent(self._renamer(items))
+        out = await self.doctor.stage_fixer_dry(h)
+        self.assertEqual(out["state"], "ok", out["sentence"])
+        self.assertIn("input_boolean.brain_test_doctor_2", self.prompts[0])
+        deletes = [c[0]["input_boolean_id"] for c in fake.ws_calls
+                   if c[0]["type"] == "input_boolean/delete"]
+        self.assertEqual(deletes, ["brain_test_doctor_2"])
+        self.assertEqual([i["name"] for i in items], ["brain test doctor"])
+
+    # -- the stage's own answers -----------------------------------------
 
     async def test_a_protected_helper_is_a_skip_and_not_a_failure(self):
         """The list doing its job is not a fault."""
-        reply, _ = self._registry("brAIn deep check")
+        reply, _ = self._core()
         h, _ = hooks(ws_replies=reply,
                      options={"protected_entities": ["input_boolean.*"]})
         out = await self.doctor.stage_fixer_dry(h)
         self.assertEqual(out["state"], "skipped")
         self.assertIn("protected_entities", out["sentence"])
 
-    async def test_the_rename_is_verified_in_core(self):
-        import engine
-        reply, rows = self._registry(None)
-        h, fake = hooks(ws_replies=reply)
-
-        def run_agent(*a, **k):
-            rows[0]["name"] = self.doctor.FIXER_RENAMED
-            return envelope("Renamed it.")
-
-        old = engine.run_agent
-        engine.run_agent = run_agent
-        try:
-            out = await self.doctor.stage_fixer_dry(h)
-        finally:
-            engine.run_agent = old
+    async def test_the_sweep_leaves_a_protected_leftover_alone(self):
+        """The stage asks about `FIXER_HELPER`, and the leftovers carry ids
+        an older build chose — so a list naming one of those would fall
+        through the gap between two spellings of nearly the same entity,
+        into an unattended delete."""
+        reply, items = self._core(existing=["brAIn deep check"])
+        h, _ = hooks(ws_replies=reply, options={
+            "protected_entities": ["input_boolean.brain_deep_check"]})
+        self._with_agent(self._renamer(items))
+        out = await self.doctor.stage_fixer_dry(h)
         self.assertEqual(out["state"], "ok", out["sentence"])
-        self.assertEqual(rows, [], "the helper was deleted afterwards")
+        self.assertEqual([i["name"] for i in items], ["brAIn deep check"])
+        self.assertNotIn("helper(s)", out["detail"])
 
     async def test_a_run_that_changed_nothing_is_a_failure(self):
-        import engine
-        reply, rows = self._registry(None)
+        reply, items = self._core()
         h, _ = hooks(ws_replies=reply)
-        old = engine.run_agent
-        engine.run_agent = lambda *a, **k: envelope("I have renamed it.")
-        try:
-            out = await self.doctor.stage_fixer_dry(h)
-        finally:
-            engine.run_agent = old
+        self._with_agent(self._renamer(items, to=self.doctor.FIXER_HELPER_NAME))
+        out = await self.doctor.stage_fixer_dry(h)
         self.assertEqual(out["state"], "failed")
         self.assertIn("did not change", out["sentence"])
-        self.assertEqual(rows, [], "and the helper still went away")
+        self.assertEqual(items, [], "and the helper still went away")
 
     async def test_a_helper_that_cannot_be_created_is_a_failure(self):
         h, _ = hooks(ws_replies=lambda cmds: [[] if cmds[0]["type"].endswith("list")
@@ -775,23 +962,31 @@ class TestFixerStage(DoctorCase):
         out = await self.doctor.stage_fixer_dry(h)
         self.assertEqual(out["state"], "failed")
         self.assertIn("could not create", out["sentence"])
+        self.assertIn("refused input_boolean/create", out["detail"])
 
-    async def test_the_delete_uses_the_object_id_not_the_entity_id(self):
-        """`input_boolean/delete` keys on the object id, and getting that
-        wrong is a cleanup that silently does nothing."""
-        import engine
-        reply, rows = self._registry(None)
-        h, fake = hooks(ws_replies=reply)
-        old = engine.run_agent
-        engine.run_agent = lambda *a, **k: envelope("done")
-        try:
-            await self.doctor.stage_fixer_dry(h)
-        finally:
-            engine.run_agent = old
-        deletes = [c[0] for c in fake.ws_calls
-                   if c[0]["type"] == "input_boolean/delete"]
-        self.assertEqual(len(deletes), 1)
-        self.assertEqual(deletes[0]["input_boolean_id"], "brain_test_doctor")
+    async def test_a_helper_that_never_registers_is_taken_back_out(self):
+        """The one path that does not reach the stage's `finally`, and so
+        the one that would leave a helper behind."""
+        made = []
+
+        def reply(cmds):
+            kind = cmds[0]["type"]
+            if kind == "input_boolean/create":
+                return [{"id": "brain_test_doctor", "name": cmds[0]["name"]}]
+            if kind == "input_boolean/delete":
+                made.append(cmds[0]["input_boolean_id"])
+            return [[]]
+
+        h, _ = hooks(ws_replies=reply)
+        with unittest.mock.patch("asyncio.sleep", new=_nosleep):
+            out = await self.doctor.stage_fixer_dry(h)
+        self.assertEqual(out["state"], "failed")
+        self.assertIn("entity registry", out["detail"])
+        self.assertEqual(made, ["brain_test_doctor"])
+
+
+async def _nosleep(_seconds):
+    return None
 
 
 # ---------------------------------------------------------------------------
