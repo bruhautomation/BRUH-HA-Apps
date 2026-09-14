@@ -148,5 +148,66 @@ class TestEngineHooksIntoTheJournal(unittest.TestCase):
                 journal.JOURNAL_FILE = old
 
 
+class TestWhatCountsAsAFailure(JournalCase):
+    """`failures` is the outcomes that are a problem, not "everything that
+    is not `ok`".
+
+    The summary decided this with ``outcome != "ok"``, and five of the
+    fourteen words are not problems: `applied` and `healed` are
+    successes, `heal_skipped` and `denied` are refusals doing their job,
+    and `fallback` is a quieter path that still produced a card. So a
+    successful overnight heal arrived in `failures` — where
+    `reports.faults` renders the list — and the report opened *what is
+    wrong right now* with ``Run (healing): ended healed`` and **no detail
+    on it**, which is the fault shape nobody can act on.
+
+    The row was already carrying the answer: `record` takes `ok` from the
+    caller and writes it down. `healing` passes ``ok=True``, and the
+    summary read past it.
+    """
+
+    def test_a_heal_that_worked_is_not_a_failure(self):
+        journal.record("healing", "healed", ok=True, now=1000,
+                       extra={"remedy": "entry.reload"})
+        self.assertEqual(journal.summary(now=1001)["failures"], [])
+
+    def test_a_heal_that_did_not_work_is(self):
+        journal.record("healing", "heal_failed", ok=False, error="503",
+                       now=1000)
+        got = journal.summary(now=1001)["failures"]
+        self.assertEqual([r["outcome"] for r in got], ["heal_failed"])
+
+    def test_every_success_and_refusal_stays_out_of_the_list(self):
+        for outcome in ("applied", "healed", "heal_skipped", "denied",
+                        "fallback"):
+            journal.record("x", outcome, ok=True, now=1000)
+        self.assertEqual(journal.summary(now=1001)["failures"], [])
+        # And they are still counted: a fallback nobody counts is a
+        # fallback read as the real thing.
+        self.assertEqual(journal.summary(now=1001)["by_outcome"]["fallback"], 1)
+
+    def test_every_real_failure_still_lands_in_it(self):
+        for outcome in sorted(journal.FAILURE_OUTCOMES):
+            journal.record("x", outcome, now=1000)
+        self.assertEqual(len(journal.summary(now=1001)["failures"]),
+                         len(journal.FAILURE_OUTCOMES))
+
+    def test_a_row_with_no_ok_field_falls_back_to_the_outcome(self):
+        """An older line, or one written by a caller that let `ok`
+        default. "I cannot tell from the flag" must not read as fine."""
+        self.assertTrue(journal.is_failure({"outcome": "crash"}))
+        self.assertFalse(journal.is_failure({"outcome": "healed"}))
+        self.assertFalse(journal.is_failure("not a row"))
+        # A row with no outcome at all reads as `error`, which is the
+        # same default `summary` counts one under and the same coercion
+        # `record` applies to a word it does not know. One answer.
+        self.assertTrue(journal.is_failure({}))
+
+    def test_ok_outranks_a_failure_word(self):
+        """The caller's own claim about its own run wins: that is the one
+        thing the outcome vocabulary cannot always carry."""
+        self.assertFalse(journal.is_failure({"outcome": "error", "ok": True}))
+
+
 if __name__ == "__main__":
     unittest.main()

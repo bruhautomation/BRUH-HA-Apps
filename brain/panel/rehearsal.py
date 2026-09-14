@@ -387,7 +387,7 @@ async def run(hooks: Hooks, *, progress=None) -> dict:
         # and `automation_writer.apply` refuses a duplicate id. Without
         # this the failure repeats identically for ever.
         say("clearing up after the last run")
-        out["swept"] = await _sweep(hooks)
+        out["swept"] = await sweep(hooks)
         if not out["swept"].get("ran"):
             out["error"] = out["swept"].get("sentence") or (
                 "brAIn could not check for leftovers before planting")
@@ -580,7 +580,7 @@ async def _helper_items(hooks: Hooks) -> tuple[list[dict], str]:
     return out, ""
 
 
-async def _sweep(hooks: Hooks) -> dict:
+async def sweep(hooks: Hooks) -> dict:
     """Take out what an earlier run left behind, BEFORE planting.
 
     The rehearsal plants under a fixed set of ids, so anything already
@@ -676,8 +676,60 @@ async def _sweep(hooks: Hooks) -> dict:
               "automations, and run the rehearsal again.")
         return out
     out["ran"] = True
-    out["sentence"] = ("cleared up after an earlier run first: "
+    out["sentence"] = ("took out what an earlier run left behind: "
                        + ", ".join(removed[:8]))
+    return out
+
+
+async def sweep_only(hooks: Hooks) -> dict:
+    """Take the litter out, and plant nothing.
+
+    :func:`sweep` runs inside :func:`run`, before planting — which made
+    "a rehearsal left something behind" a problem whose only documented
+    remedy was **another rehearsal**: two automations written into
+    somebody's `automations.yaml`, a helper created, a checks pass and a
+    Claude turn, to delete three things. `brain doctor`'s other
+    suggestion was to open `automations.yaml` and edit it by hand. Both
+    are heavier than the fault, and one of them is the panel asking a
+    person to do what the panel is perfectly able to do — which is the
+    same shape as the `unsettle` route that lived only in prose: the
+    machinery existed and nothing could reach it.
+
+    So the sweep is a press of its own. It creates nothing, scores
+    nothing, asks no model and costs no tokens.
+
+    **And it re-earns the stored verdict.** `cleanup_ok` is what
+    `reports.faults` and the panel read, and it is written once by the
+    run that failed — so after the litter was gone the report went on
+    opening with *Rehearsal: left something behind* until somebody ran a
+    whole rehearsal, which is a verdict nothing can correct, the auth
+    re-check's rule with the timer taken off. A sweep that proves the
+    house clean writes `cleared` beside the cleanup rather than over it:
+    the run's own failure stays on the record (it is the evidence that a
+    cleanup failed, and the one thing that would be lost by editing it),
+    and :func:`summary` reads the pair.
+    """
+    out = await sweep(hooks)
+    out["at"] = int(time.time())
+    # `sweep` is deliberately SILENT on a clean house — it runs before
+    # every plant, and a "nothing to clear up" row above every rehearsal
+    # is the noise that makes the one that DID remove something skimmable.
+    # A press is the other way round: somebody asked, so there is an
+    # answer either way, and this is the one case the shared sentence has
+    # none for rather than a second way of writing the ones it has.
+    if out.get("ran") and not out.get("sentence"):
+        out["sentence"] = ("nothing named " + PREFIX + "* is in this house — "
+                           "there was nothing to take out")
+    last = load()
+    if last:
+        last["cleared"] = out
+        save(last)
+    journal.record(SOURCE, "ok" if out.get("ran") else "error",
+                   ok=bool(out.get("ran")), error=out.get("sentence", "")
+                   if not out.get("ran") else "",
+                   extra={"stage": "sweep",
+                          "removed": len(out.get("removed") or []),
+                          "left": len(out.get("left") or [])})
     return out
 
 
@@ -834,6 +886,61 @@ def load() -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def outstanding(last: dict | None = None) -> list[str]:
+    """What the record says is still in the house under the prefix.
+
+    The one derivation of "is there anything to sweep", so the button
+    that offers to clear it, the sentence beside that button and the
+    fault row `reports.faults` writes cannot disagree.
+
+    Read off the stored record rather than a fresh snapshot: this is
+    asked on every poll of an open dialog, and collecting the states and
+    both registries to answer it would be a read nobody pressed anything
+    for. The record is what every other surface reports from, and a
+    sweep's own re-check is what corrects it.
+
+    A later sweep that proved the house clean wins over the run that
+    failed — that is the whole point of `cleared` — and a sweep that
+    could not finish reports **its** leftovers, which are newer than the
+    run's.
+    """
+    last = load() if last is None else (last or {})
+    cleared = last.get("cleared")
+    if isinstance(cleared, dict) and cleared.get("at"):
+        return [str(x) for x in (cleared.get("left") or [])][:8]
+    out: list[str] = []
+    for block in (last.get("cleanup"), last.get("swept")):
+        if isinstance(block, dict):
+            out.extend(str(x) for x in (block.get("left") or []))
+    return sorted(set(out))[:8]
+
+
+def _cleared_ok(last: dict) -> bool:
+    """Whether a standalone sweep has since found the house clean.
+
+    `ran` is not enough: `sweep` sets it on a pass that removed things
+    and found nothing left, and clears it on one that could not finish —
+    so a sweep is only evidence the litter is gone when it also SAW
+    nothing left, which is the same "I could not look is not it went
+    away" rule the checks clear rows under.
+    """
+    cleared = last.get("cleared")
+    if not isinstance(cleared, dict):
+        return False
+    return bool(cleared.get("ran")) and not (cleared.get("left") or [])
+
+
+def _cleared_summary(last: dict) -> dict:
+    """The numbers from the last standalone sweep, never the rows."""
+    cleared = last.get("cleared")
+    if not isinstance(cleared, dict):
+        return {}
+    return {"at": int(cleared.get("at") or 0),
+            "ok": _cleared_ok(last),
+            "removed": list(cleared.get("removed") or [])[:8],
+            "left": list(cleared.get("left") or [])[:8]}
+
+
 def summary() -> dict:
     """What `/api/diagnostics` carries: the numbers, never the rows."""
     last = load()
@@ -849,7 +956,17 @@ def summary() -> dict:
                     "recall": analyst.get("recall"),
                     "model": analyst.get("model", ""),
                     "ran": bool(analyst.get("ran"))},
-        "cleanup_ok": bool((last.get("cleanup") or {}).get("ok")),
+        # The cleanup's own verdict, OR a later sweep having proved the
+        # house clean. Written once by the run, this was a verdict
+        # nothing could re-earn: after the litter was taken out by hand
+        # the report went on opening with *Rehearsal: left something
+        # behind*, for ever, because the only thing that rewrote the
+        # record was another whole rehearsal. The run's failure stays on
+        # the record — it is the evidence a cleanup failed — and what
+        # changes is that the standing claim is about the house NOW.
+        "cleanup_ok": bool((last.get("cleanup") or {}).get("ok")
+                           or _cleared_ok(last)),
+        "cleared": _cleared_summary(last),
         # What the run had to take out before it could start. A rehearsal
         # that swept something is a rehearsal reporting that the one
         # before it did not clean up, which is a fact about this install

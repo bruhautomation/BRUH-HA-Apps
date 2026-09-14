@@ -17,6 +17,7 @@
 #   brain doctor [--json]          End-to-end diagnostic
 #   brain doctor --deep            Every face, one real round trip each
 #   brain doctor --rehearse        Plant defects, score the checks, clean up
+#   brain doctor --sweep           Take out what a rehearsal left behind
 #   brain report                   One redacted text file for a bug report
 #   brain help                     This help
 
@@ -78,6 +79,9 @@ Usage:
                                  against them, score both, then remove
                                  everything. Asks first, and says exactly
                                  what it would create
+  brain doctor --sweep           Take out anything named brain_test_* a
+                                 rehearsal left behind. Creates nothing and
+                                 spends nothing
   brain report [--no-names]      Write one redacted text file to
                                  /share/brain/reports (also under ⚙ → Problems)
   brain login [--status|--share] Sign in to Claude, and share that login with
@@ -128,7 +132,7 @@ case "$action" in
         # two costed checks are a different script rather than a flag
         # inside it, so nothing about the free one can drift.
         case "${1:-}" in
-            --deep|--rehearse) delegate brain-doctor-deep.sh "$@" ;;
+            --deep|--rehearse|--sweep) delegate brain-doctor-deep.sh "$@" ;;
             *)                 delegate ha-selftest.sh "$@" ;;
         esac
         ;;

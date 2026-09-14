@@ -1135,6 +1135,11 @@
         would create.</p>
       <div class="row">
         <button id="rehearseRun" class="btn">Rehearse…</button>
+        <!-- Rendered only when the record says something is still in the
+             house: a button that clears nothing is a control asking to be
+             understood, and the whole reason this exists is that the only
+             documented way out of a failed cleanup was another rehearsal. -->
+        <button id="rehearseSweep" class="btn" hidden>Clear up what was left</button>
         <span id="rehearseLast" class="hint tight"></span>
       </div>
       <div id="rehearseBody" class="diag" hidden></div>

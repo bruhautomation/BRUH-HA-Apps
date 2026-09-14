@@ -2495,6 +2495,8 @@ async def _worker() -> None:
                 await _run_doctor_deep(job_id)
             elif kind == "rehearse":
                 await _run_rehearsal(job_id)
+            elif kind == "sweep":
+                await _run_sweep(job_id)
             else:
                 await _generate(job_id)
         finally:
@@ -5327,6 +5329,7 @@ async def h_doctor_deep_start(request: web.Request) -> web.Response:
 # The rehearsal — planted defects on the real house
 # ---------------------------------------------------------------------------
 REHEARSE_JOB = "doctor-rehearse"
+SWEEP_JOB = "doctor-sweep"
 
 
 def _rehearsal_hooks() -> "rehearsal.Hooks":
@@ -5439,11 +5442,25 @@ def _rehearsal_payload() -> dict:
     API rather than only of the button.
     """
     protected = (addon_options.snapshot() or {}).get("protected_entities")
+    last = rehearsal.load() or None
     return {
         "running": DOCTOR_STATE["running"] and DOCTOR_STATE["kind"] == "rehearse",
+        # The sweep is its own press and its own in-flight state: a button
+        # that greys itself out while the OTHER one runs is the pair of
+        # controls nobody can tell apart.
+        "sweeping": DOCTOR_STATE["running"] and DOCTOR_STATE["kind"] == "sweep",
         "started_at": DOCTOR_STATE["started_at"],
         "progress": DOCTOR_STATE.get("progress") or {},
-        "last": rehearsal.load() or None,
+        "last": last,
+        # Whether there is anything for a sweep to take out, derived HERE
+        # rather than in the panel: a control that offers to clear
+        # nothing is a control asking to be understood, and two answers
+        # to "is there litter" is how the button and the fault row start
+        # disagreeing. Off the stored record, never a live snapshot — a
+        # registry-and-states collect on every poll of a dialog somebody
+        # has open is a read nobody asked for, and the record is what
+        # every other surface reports from.
+        "leftovers": rehearsal.outstanding(last),
         **rehearsal.plan(protected),
     }
 
@@ -5511,6 +5528,48 @@ async def h_rehearse_start(request: web.Request) -> web.Response:
     QUEUE.put_nowait(REHEARSE_JOB)
     return web.json_response({"started": True, "job": REHEARSE_JOB,
                               **offer, **_rehearsal_payload()})
+
+
+async def _run_sweep(job_id: str) -> None:
+    """Take out what an earlier rehearsal left, and plant nothing."""
+    DOCTOR_STATE.update(running=True, kind="sweep", stages=[],
+                        progress={"step": "clearing up"},
+                        started_at=int(time.time()))
+    _set_job(job_id, state="generating", error="")
+    try:
+        out = await rehearsal.sweep_only(_rehearsal_hooks())
+        DOCTOR_STATE["progress"] = {}
+        _set_job(job_id, state="done", error="")
+        log.info("rehearsal sweep: %s", out.get("sentence") or "nothing to do")
+    except Exception as exc:  # noqa: BLE001 — `sweep_only` has its own
+        # refusals; this is the belt for anything outside them.
+        log.warning("rehearsal sweep failed: %s", exc)
+        _set_job(job_id, state="error", error=str(exc)[:500])
+    finally:
+        DOCTOR_STATE.update(running=False, kind="")
+        publish_diagnostics()
+
+
+async def h_rehearse_sweep(request: web.Request) -> web.Response:
+    """Clear the `brain_test_*` litter, creating nothing.
+
+    **No consent step, because nothing is created.** The 428 on
+    `h_rehearse_start` exists because a rehearsal writes automations into
+    somebody's config; this only ever removes what `rehearsal.leftovers`
+    already sees under brAIn's own prefix — the same scan `brain doctor`
+    warns about — so the thing being asked for is the thing being
+    removed, and an offer to read would be an offer to re-read the
+    warning that sent them here.
+    """
+    if DOCTOR_STATE["running"]:
+        return web.json_response(
+            {"error": f"a {DOCTOR_STATE['kind'] or 'deep'} check is already "
+                      "running", "job": SWEEP_JOB, **_rehearsal_payload()},
+            status=409)
+    _set_job(SWEEP_JOB, kind="sweep", state="queued", error="")
+    QUEUE.put_nowait(SWEEP_JOB)
+    return web.json_response({"started": True, "job": SWEEP_JOB,
+                              **_rehearsal_payload()})
 
 
 # ---------------------------------------------------------------------------
@@ -8764,6 +8823,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/doctor/deep", h_doctor_deep_start)
     app.router.add_get("/api/doctor/rehearse", h_rehearse_get)
     app.router.add_post("/api/doctor/rehearse", h_rehearse_start)
+    app.router.add_post("/api/doctor/rehearse/sweep", h_rehearse_sweep)
     app.router.add_get("/api/diagnostics", h_diagnostics)
     app.router.add_get("/api/reports", h_reports_list)
     # The two fixed names before the {name} pattern, which would otherwise

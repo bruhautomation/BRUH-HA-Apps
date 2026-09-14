@@ -53,6 +53,12 @@ import urllib.request
 from pathlib import Path
 
 import atomic_write
+# Aliased because `health` is already a local name in this file three
+# times over — the verdict dict in `abridge` and `faults`, and a
+# keyword argument on `file_incident`. A module shadowed by a dict
+# fails at the attribute rather than at the import, which is a
+# traceback a long way from its cause.
+import health as health_rules
 import journal
 
 log = logging.getLogger("brain.reports")
@@ -71,14 +77,15 @@ LOG_TIMEOUT_S = 5
 # scroll is an issue nobody reads.
 MAX_EXTRA_CHARS = 200_000
 
-# The journal outcomes that are a problem. `ok` with `extra.landed` is a run
-# that worked; `fallback` is a quieter path that still produced a card;
-# `applied`/`healed` are successes; `heal_skipped` and `denied` are refusals
-# doing their job, and a refusal is not a fault.
-FAILURE_OUTCOMES = frozenset({
-    "timeout", "crash", "unparseable", "auth", "no_cli", "error",
-    "heal_failed", "max_turns",
-})
+# The journal outcomes that are a problem — `journal`'s own set, not a
+# second copy of it. `ok` with `extra.landed` is a run that worked;
+# `fallback` is a quieter path that still produced a card; `applied` and
+# `healed` are successes; `heal_skipped` and `denied` are refusals doing
+# their job, and a refusal is not a fault. This module had its own list
+# and `journal.summary` had a different rule (`outcome != "ok"`), so a
+# successful heal was not worth a report and *was* worth a row at the top
+# of the fault list — one answer now, in the module that owns the word.
+FAILURE_OUTCOMES = journal.FAILURE_OUTCOMES
 
 # Which option bounds a run of each source. The timeout sentence names the
 # switch rather than the symptom, and the switch differs by who ran.
@@ -403,7 +410,9 @@ def _faults(diag) -> list[dict]:
         if not reh.get("cleanup_ok"):
             _row(out, "Rehearsal", "left something behind",
                  "a `brain_test_*` automation, entity or helper is still in "
-                 "the house — `brain doctor` names it")
+                 "the house — `brain doctor` names it and `brain doctor "
+                 "--sweep` takes it out (⚙ → Diagnostics → Clear up what "
+                 "was left). It creates nothing and spends nothing.")
         if reh.get("swept"):
             _row(out, "Rehearsal", "had to clear up after an earlier run",
                  "took out: " + ", ".join(str(x) for x in reh["swept"][:8]))
@@ -488,15 +497,31 @@ def _faults(diag) -> list[dict]:
              "a tick in the To-do app or a notification button that named a "
              "finding already gone")
 
-    # And the roll-call, read raw. `health` interprets it against the
-    # options and is the right place for a verdict; this is here because a
-    # bug report has to carry the fact as well as the interpretation.
-    down = sorted(name for name, row in (diag.get("daemons") or {}).items()
-                  if isinstance(row, dict) and not row.get("running"))
+    # And the roll-call — read against the options, never raw. A daemon
+    # whose option is off was not asked for, and the assist channel is one
+    # JOB with two implementations (`assist_fast_mode` decides which), so
+    # the classic listener is CORRECTLY absent on a house running the
+    # worker pool. Read raw this opened with `not running: assist_listener`
+    # on every fast-mode install, softened by a sentence sending the reader
+    # back up to a verdict that had deliberately not mentioned it — which
+    # is "a refusal doing its job is not a fault" broken by the one
+    # function whose docstring states it.
+    #
+    # `health.expected_daemons` is asked rather than answered again
+    # here:
+    # this module is the INVENTORY and `health` is the VERDICT, and they
+    # may differ on how loud a thing is without ever differing on whether
+    # it was wanted.
+    daemons = diag.get("daemons") or {}
+    options = diag.get("options") or {}
+    wanted = health_rules.expected_daemons(options)
+    down = sorted(name for name, row in daemons.items()
+                  if isinstance(row, dict) and not row.get("running")
+                  and name in wanted)
     if down:
         _row(out, "Daemons", "not running: " + ", ".join(down),
-             "some of these are optional — the health verdict above says "
-             "which of them matters")
+             "each of these was asked for by an option that is on — the "
+             "health verdict above says which of them stops brAIn working")
 
     if len(out) > MAX_FAULTS:
         extra = len(out) - MAX_FAULTS
