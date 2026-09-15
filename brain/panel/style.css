@@ -3259,37 +3259,106 @@ body.term-classic #termMode .ico-out { display: block; }
 .actnav { display: flex; align-items: center; gap: 10px; }
 .actrange { color: var(--ink-2); font-size: 13px; white-space: nowrap; }
 
-.actoverrides {
+/* When the house was empty. Above the list rather than in it, because it
+   is the context every row below is read in — the same reason the
+   overrides block it replaced sat there, for a fact that is a good deal
+   more useful than a count of them. */
+.actaway {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
   border: 1px solid var(--hairline);
-  border-left: 3px solid var(--warning);
+  border-left: 3px solid var(--ink-3);
   border-radius: 10px;
-  padding: 12px 14px;
-  margin-bottom: 16px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
   font-size: 13.5px;
   color: var(--ink-2);
-  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
 }
-.actoverrides h3 { margin: 0 0 6px; font-size: 14px; color: var(--ink-1); }
-.actoverrides b { color: var(--ink-1); font-weight: 600; }
-
-.actlist { display: grid; gap: 2px; }
-
-.acthour {
-  color: var(--ink-3);
-  font-size: 12px;
+.actawaylabel {
+  font-size: 11.5px;
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
-  padding: 16px 4px 6px;
+  color: var(--ink-3);
 }
 
-/* A row is a button because tapping it does something. 44px is the touch
-   floor, and it is set here rather than on a media query because a row
-   people miss is a row they stop tapping on any pointer. */
-.actrow {
+/* The press that spends, and the paragraph it buys. */
+.actask { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.actaskerr { color: var(--warning); font-size: 13px; }
+.actsum {
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.actsum p { margin: 0; font-size: 14.5px; line-height: 1.65; }
+.actsumfoot {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-top: 10px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+/* `minmax(0, 1fr)` and not the implicit `auto`: an auto grid column is
+   sized to its content's MIN-content, so one row whose cause and time
+   refuse to wrap makes the whole column wider than the page — measured at
+   390px as 1.45px of sideways scroll, which is invisible to read and
+   exactly what the measure is for. */
+.actlist { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+
+/* One section per kind of thing a house is made of. The heading and the
+   sentence under it are what make a row legible without its neighbours:
+   "9×" means something under Cameras & motion and nothing on its own. */
+.actsec { margin: 0 0 22px; min-width: 0; }
+.actsechead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 0 4px 2px;
+  border-bottom: 1px solid var(--hairline);
+}
+.actsechead h3 { margin: 0; font-size: 15px; }
+.actseccount {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.actsecblurb {
+  margin: 6px 4px 8px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.5;
+  max-width: 64ch;
+}
+
+.actfoot {
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.6;
+  padding: 4px 4px 0;
+  border-top: 1px solid var(--hairline);
+  max-width: 68ch;
+}
+
+/* The row WRAPS rather than shrinking, which is what makes the fit binary
+   and what keeps the cause on screen: a row that solved a narrow width by
+   ellipsising the name of the automation that did something would be
+   deleting the whole point of the row. `.what` is the flexible one and
+   everything else takes its own content, so what gives way at 390px is
+   the line and never a fact. */
+.actrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
   width: 100%;
   min-height: 44px;
   padding: 6px 10px;
@@ -3302,51 +3371,63 @@ body.term-classic #termMode .ico-out { display: block; }
   cursor: pointer;
 }
 .actrow:hover { background: var(--surface-2); }
-.actrow .t {
-  color: var(--ink-3);
-  font-size: 12.5px;
-  font-variant-numeric: tabular-nums;
-  flex: none;
-  width: 52px;
-}
-.actrow .who {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: none;
-  background: var(--ink-3);
-}
 .actrow .what {
-  flex: 1 1 auto;
+  flex: 1 1 180px;
   min-width: 0;
   font-size: 13.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
 }
 .actrow .what b { font-weight: 600; }
-.actrow .st { color: var(--ink-2); }
-.actrow .cause {
+.actrow .st { color: var(--ink-2); font-size: 12.5px; }
+/* When it happened is the second question and it is tabular, because a
+   column of times somebody is scanning down has to line up. */
+.actrow .when {
   flex: none;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.actrow .cause {
+  flex: 0 1 auto;
+  min-width: 0;
   color: var(--ink-3);
   font-size: 12.5px;
-  max-width: 34%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* The cause's own colour, on the dot and nowhere else. Six causes is more
-   than a palette can carry as text colour without the list turning into
-   confetti. */
-.actrow[data-cause="brain"] .who { background: var(--accent); }
-.actrow[data-cause="automation"] .who { background: #46b06a; }
-.actrow[data-cause="script"] .who { background: #46b06a; }
-.actrow[data-cause="scene"] .who { background: #46b06a; }
-.actrow[data-cause="voice"] .who { background: #a071e0; }
-.actrow[data-cause="person"] .who { background: var(--warning); }
+/* A person putting back what an automation had just done. It is on the ROW
+   now rather than in a block above the list: a count of "somebody put
+   things back 4×" is not something anybody can act on, where *this* row
+   being the one they undid is. */
+.actundid {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--warning);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* The cause's own colour, on the left edge and nowhere else. Six causes is
+   more than a palette can carry as text colour without the list turning
+   into confetti — and the words are on the row either way, which is what
+   makes the colour reinforcement rather than the signal. */
+.actrow { border-left: 3px solid transparent; }
+.actrow[data-cause="brain"] { border-left-color: var(--accent); }
+.actrow[data-cause="automation"],
+.actrow[data-cause="script"],
+.actrow[data-cause="scene"] { border-left-color: #46b06a; }
+.actrow[data-cause="voice"] { border-left-color: #a071e0; }
+.actrow[data-cause="person"] { border-left-color: var(--warning); }
 
 .actwhy {
-  margin: 2px 0 10px 62px;
+  margin: 2px 0 10px 14px;
   padding: 10px 12px;
   border-left: 2px solid var(--hairline);
   color: var(--ink-2);

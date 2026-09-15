@@ -2,6 +2,42 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.56.0
+
+**The Activity tab says what happened, not every time a value changed.**
+You said it had basically zero utility, and it did: it was Home Assistant's
+own logbook with a cause column added, which on a real house is hundreds of
+rows an hour of a sensor reporting a number. Nobody thinks in state changes.
+
+- **A run is one row.** The TV paused for an ad break and switched off three
+  hours later is one episode of *three hours*, not four rows. A door opened
+  twice in a minute is one trip through it. A motion sensor is **counted** —
+  "9×, 14:02–14:11" — because a momentary sensor's duration is an artefact
+  of when it last happened to fire.
+- **Sensor readings are not rows at all**, and the foot says how many were
+  left out. A list that silently drops nine tenths of its input is one
+  nobody can trust.
+- **It is sorted into the parts of a house you would go looking in** — locks
+  and safety, people, heating, doors and blinds, media, cameras and motion,
+  lights and switches — each with a line saying what is in it. A section
+  with nothing in it is not drawn.
+- **It says when the house was empty**, above the rows it is the context
+  for. A person brAIn never saw change is not a person who was out, so it
+  stays silent unless it really knows.
+- **A row somebody undid says so on the row.** That used to be a count in a
+  block above the list, which is not something anybody can act on.
+- Every row still names its cause, and tapping one still opens that
+  entity's own recent history.
+
+**And one button: "What does this add up to?"** One Claude run over the
+window you are looking at, for a paragraph rather than a list read back. It
+is a *press* — a run behind a tab that refreshes on arrival is a bill nobody
+asked for — and the answer is kept against the window, so coming back is
+free. It writes about the house and never about the person.
+
+Everything else on that tab is still arithmetic over one fetch: opening it
+costs nothing, however often.
+
 ## 1.55.0
 
 **A house check's finding is looked at before you are shown it.**

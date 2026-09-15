@@ -7251,8 +7251,15 @@ const actState = {
   cause: "",
   data: null,
   loading: false,
-  open: "",         // "entity_id|ts" of the row whose history is expanded
+  open: "",         // "entity_id|started" of the row whose history is expanded
   why: null,
+  // The one thing on this tab that spends. Kept per window rather than
+  // per visit, and cleared by every window change (`refreshActivity`),
+  // because a paragraph about Tuesday under Wednesday's rows is the one
+  // answer worse than none.
+  summary: null,
+  summaryBusy: false,
+  summaryError: "",
 };
 
 const CAUSE_WORDS = {
@@ -7280,6 +7287,11 @@ function actDayLabel(end) {
 
 async function refreshActivity() {
   actState.loading = true;
+  // The window is about to change (a day step, a cause filter), so what
+  // was said about the old one no longer describes what is on screen.
+  // The server caches it against the window, so coming back is free.
+  actState.summary = null;
+  actState.summaryError = "";
   renderActivity();
   const q = new URLSearchParams({ hours: String(actState.hours) });
   if (actState.end) q.set("end", String(Math.round(actState.end)));
@@ -7319,29 +7331,139 @@ function renderActFilters(counts) {
   });
 }
 
-function renderActOverrides(overrides) {
-  const el = $("#actOverrides");
-  if (!el) return;
-  if (!overrides || !overrides.length) { el.hidden = true; return; }
-  const byAuto = new Map();
-  overrides.forEach((o) => {
-    const key = o.by || o.by_name;
-    if (!byAuto.has(key)) byAuto.set(key, { name: o.by_name || key, n: 0 });
-    byAuto.get(key).n += 1;
-  });
-  const parts = [...byAuto.values()]
-    .sort((a, b) => b.n - a.n)
-    .map((g) => `<b>${esc(g.name)}</b> ${g.n}&times;`);
-  el.innerHTML = `<h3>Somebody put things back</h3>`
-    + `<div>${parts.join(" &middot; ")}</div>`
-    + `<div>Each of these is a moment an automation did something and a person `
-    + `undid it within a few minutes. It is the clearest signal a house gives `
-    + `about an automation being wrong for it, and it is invisible everywhere `
-    + `else &mdash; the automation ran, nothing errored, and the light is off.</div>`;
-  el.hidden = false;
+// How long an episode covered, in the units a person would say it in.
+function epFor(secs) {
+  const s = Math.max(0, Math.round(secs || 0));
+  if (s < 60) return s + " s";
+  const m = Math.round(s / 60);
+  if (m < 60) return m + " min";
+  const h = Math.floor(m / 60);
+  const rest = m % 60;
+  return rest ? `${h}h ${rest}m` : `${h}h`;
 }
 
-function actRowKey(a) { return a.entity_id + "|" + a.ts; }
+// What one row of this section is ABOUT. The three sentences are three
+// different claims about the same shape of record and the SERVER decides
+// which (`episodes.SUBJECTS[].reads`), because a renderer guessing would be
+// a fourth answer: a momentary motion sensor's "span" is an artefact of
+// when it last happened to fire, and reading it as a duration is how a
+// hall sensor comes out as "on for 83 minutes".
+function epWhen(ep, reads) {
+  const at = actTime(ep.started);
+  if (reads === "moment") {
+    return ep.open ? `since ${at}` : `at ${at}`;
+  }
+  if (reads === "count") {
+    const span = ep.count > 1 ? ` · ${at}–${actTime(ep.ended)}` : ` · ${at}`;
+    return `${ep.count}×${span}`;
+  }
+  if (ep.open) return `since ${at} · ${epFor(ep.duration_s)} so far`;
+  if (ep.duration_s < 60) return at;
+  return `${at}–${actTime(ep.ended)} · ${epFor(ep.duration_s)}`;
+}
+
+// The state, in as few words as it takes. A single-change episode is one
+// word; a run is where it started and where it ended.
+function epStates(ep) {
+  if (!ep.last || ep.last === ep.first) return ep.first || "";
+  return `${ep.first} → ${ep.last}`;
+}
+
+function epCause(ep) {
+  if (!ep.cause || ep.cause === "unattributed") return CAUSE_WORDS.unattributed;
+  return (CAUSE_WORDS[ep.cause] || ep.cause) + (ep.by_name ? ": " + ep.by_name : "");
+}
+
+function epKey(ep) { return ep.entity_id + "|" + Math.round(ep.started); }
+
+// When the house was empty — the one thing on this tab that Home Assistant
+// holds every fact for and has never said, and the reason it is above the
+// list rather than in it: it is the context the rows below are read in.
+function renderAwayBand(host, away) {
+  if (!away || !away.length) return;
+  const box = el("div", "actaway");
+  box.appendChild(el("span", "actawaylabel", "Nobody home"));
+  box.appendChild(el("span", null, away.slice(0, 6).map((s) =>
+    `${actTime(s.start)}–${s.ongoing ? "now" : actTime(s.end)}`).join(" · ")));
+  host.appendChild(box);
+}
+
+// The paragraph, and the press that buys it. Rendered as three states,
+// because "nobody has asked" and "it could not answer" are different
+// things and only one of them is worth pressing again.
+function renderSummary(host) {
+  const sum = actState.summary;
+  if (sum && sum.text) {
+    const box = el("div", "actsum");
+    box.appendChild(el("p", null, sum.text));
+    const foot = el("div", "actsumfoot");
+    foot.appendChild(el("span", null, sum.cached
+      ? "brAIn read this window earlier" : "brAIn read this window"));
+    const again = el("button", "btn tiny ghost", "Ask again");
+    tip(again, "Spends one Claude run on this window. The rest of this tab "
+      + "costs nothing and never has.");
+    again.addEventListener("click", () => askActivitySummary(true));
+    foot.appendChild(again);
+    box.appendChild(foot);
+    host.appendChild(box);
+    return;
+  }
+  const row = el("div", "actask");
+  const btn = el("button", "btn small",
+    actState.summaryBusy ? "Reading the day…" : "✧  What does this add up to?");
+  btn.disabled = !!actState.summaryBusy;
+  tip(btn, "One Claude run over what is on this screen. Everything else "
+    + "here is read straight from the logbook and costs nothing.");
+  btn.addEventListener("click", () => askActivitySummary(false));
+  row.appendChild(btn);
+  if (actState.summaryError) {
+    row.appendChild(el("span", "actaskerr", actState.summaryError));
+  }
+  host.appendChild(row);
+}
+
+async function askActivitySummary(again) {
+  if (actState.summaryBusy) return;
+  actState.summaryBusy = true;
+  actState.summaryError = "";
+  if (again) actState.summary = null;
+  renderActivity();
+  const q = new URLSearchParams({ hours: String(actState.hours) });
+  if (actState.end) q.set("end", String(Math.round(actState.end)));
+  try {
+    const data = await api("api/activity/summary?" + q.toString(),
+                           { method: "POST" });
+    actState.summary = { text: data.summary || "", cached: !!data.cached,
+                         run_id: data.run_id || "" };
+  } catch (e) {
+    actState.summaryError = e.message || String(e);
+  }
+  actState.summaryBusy = false;
+  renderActivity();
+}
+
+function renderActFilters(counts) {
+  const el2 = $("#actFilters");
+  if (!el2) return;
+  const kinds = ["", ...Object.keys(CAUSE_WORDS)];
+  el2.innerHTML = "";
+  kinds.forEach((kind) => {
+    const n = kind ? (counts[kind] || 0) : Object.values(counts)
+      .reduce((a, b) => a + b, 0);
+    // A filter for a cause this window does not contain is a control that
+    // can only ever empty the list.
+    if (kind && !n) return;
+    const b = document.createElement("button");
+    b.className = "fchip" + (actState.cause === kind ? " active" : "");
+    b.textContent = (kind ? CAUSE_WORDS[kind] : "Everything") + " · " + n;
+    b.addEventListener("click", () => {
+      actState.cause = actState.cause === kind ? "" : kind;
+      actState.open = "";
+      refreshActivity();
+    });
+    el2.appendChild(b);
+  });
+}
 
 function renderActivity() {
   const list = $("#actList");
@@ -7350,6 +7472,8 @@ function renderActivity() {
   $("#actRange").textContent = actDayLabel(actState.end);
   // "Later" is meaningless on the window that already ends now.
   $("#actNext").disabled = !actState.end;
+  const head = $("#actSummary");
+  if (head) head.textContent = "";
 
   if (actState.loading && !data) {
     list.innerHTML = `<div class="actempty">Reading the logbook&hellip;</div>`;
@@ -7359,9 +7483,8 @@ function renderActivity() {
 
   if (!data.available) {
     renderActFilters({});
-    renderActOverrides([]);
     list.innerHTML = `<div class="actempty">Home Assistant's logbook could not be `
-      + `read, so nothing here can say what caused a change.`
+      + `read, so nothing here can say what happened or what caused it.`
       + (data.error ? ` <code>${esc(data.error)}</code>` : "")
       + ` The <code>logbook</code> integration is part of the default config; `
       + `if it has been removed from <code>configuration.yaml</code>, this tab `
@@ -7370,62 +7493,78 @@ function renderActivity() {
   }
 
   renderActFilters(data.counts || {});
-  renderActOverrides(data.overrides);
+  const sections = data.sections || [];
+  if (head) {
+    renderAwayBand(head, data.away);
+    if (sections.length) renderSummary(head);
+  }
 
-  if (!data.actions.length) {
-    list.innerHTML = `<div class="actempty">Nothing changed in this window.</div>`;
+  if (!sections.length) {
+    list.innerHTML = `<div class="actempty">Nothing happened in this window.`
+      + (data.dropped
+         ? ` ${data.dropped.toLocaleString()} sensor readings did arrive — `
+           + `a reading is not something that happened, so they are not listed.`
+         : "")
+      + `</div>`;
     return;
   }
 
   const frag = document.createDocumentFragment();
-  let hour = null;
-  data.actions.forEach((a) => {
-    const h = new Date(a.ts * 1000).getHours();
-    if (h !== hour) {
-      hour = h;
-      const head = document.createElement("div");
-      head.className = "acthour";
-      head.textContent = String(h).padStart(2, "0") + ":00";
-      frag.appendChild(head);
-    }
-    const key = actRowKey(a);
-    const row = document.createElement("button");
-    row.className = "actrow";
-    row.dataset.cause = a.cause;
-    row.dataset.key = key;
-    row.dataset.entity = a.entity_id;
-    const cause = a.cause === "unattributed"
-      ? CAUSE_WORDS.unattributed
-      : `${CAUSE_WORDS[a.cause] || a.cause}${a.by_name ? ": " + a.by_name : ""}`;
-    // The root user is the other half of an automation somebody started by
-    // hand: reporting only the automation loses the one fact that explains
-    // an unexpected run.
-    const root = (a.root_user_name && a.cause !== "person")
-      ? ` (started by ${a.root_user_name})` : "";
-    row.innerHTML = `<span class="t">${esc(actTime(a.ts))}</span>`
-      + `<span class="who"></span>`
-      + `<span class="what"><b>${esc(a.name)}</b> <span class="st">&rarr; `
-      + `${esc(a.state)}</span></span>`
-      + `<span class="cause">${esc(cause + root)}</span>`;
-    frag.appendChild(row);
-    if (actState.open === key) {
-      const why = document.createElement("div");
-      why.className = "actwhy";
-      why.innerHTML = actWhyHtml(a);
-      frag.appendChild(why);
-    }
-  });
+  sections.forEach((sec) => frag.appendChild(actSection(sec)));
+  // What this list is NOT showing, said out loud. A view that silently
+  // drops nine tenths of its input is the one it replaced.
+  const foot = el("div", "actfoot");
+  const shown = `${data.episodes} thing${data.episodes === 1 ? "" : "s"} `
+    + `happened, across ${data.changes.toLocaleString()} changes`;
+  foot.textContent = data.dropped
+    ? `${shown}. ${data.dropped.toLocaleString()} sensor readings are not `
+      + `listed — a reading is not something that happened.`
+    : `${shown}.`;
+  frag.appendChild(foot);
   list.innerHTML = "";
   list.appendChild(frag);
 }
 
-function actWhyHtml(a) {
+function actSection(sec) {
+  const box = el("section", "actsec");
+  box.dataset.section = sec.id;
+  const h = el("div", "actsechead");
+  h.appendChild(el("h3", null, sec.label));
+  h.appendChild(el("span", "actseccount", sec.total > sec.episodes.length
+    ? `${sec.episodes.length} of ${sec.total}`
+    : String(sec.total)));
+  box.appendChild(h);
+  box.appendChild(el("p", "actsecblurb", sec.blurb));
+  sec.episodes.forEach((ep) => {
+    const key = epKey(ep);
+    const row = document.createElement("button");
+    row.className = "actrow";
+    row.dataset.cause = ep.cause;
+    row.dataset.key = key;
+    row.dataset.entity = ep.entity_id;
+    row.innerHTML = `<span class="what"><b>${esc(ep.name)}</b>`
+      + `<span class="st">${esc(epStates(ep))}</span></span>`
+      + `<span class="when">${esc(epWhen(ep, sec.reads))}</span>`
+      + `<span class="cause">${esc(epCause(ep))}</span>`
+      + (ep.undid
+         ? `<span class="actundid">a person undid ${esc(ep.undid)}</span>` : "");
+    box.appendChild(row);
+    if (actState.open === key) {
+      const why = el("div", "actwhy");
+      why.innerHTML = actWhyHtml(ep);
+      box.appendChild(why);
+    }
+  });
+  return box;
+}
+
+function actWhyHtml(ep) {
   const why = actState.why;
-  if (!why || why.entity_id !== a.entity_id) return "Reading&hellip;";
+  if (!why || why.entity_id !== ep.entity_id) return "Reading&hellip;";
   if (!why.changes.length) {
-    return `Nothing else changed <code>${esc(a.entity_id)}</code> in this window.`;
+    return `Nothing else changed <code>${esc(ep.entity_id)}</code> in this window.`;
   }
-  return `<div>Everything that changed <code>${esc(a.entity_id)}</code> `
+  return `<div>Everything that changed <code>${esc(ep.entity_id)}</code> `
     + `in this window, newest first:</div>`
     + why.changes.map((c) => {
       // Escaped as one string rather than assembled from escaped parts:

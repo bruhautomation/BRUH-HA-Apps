@@ -480,10 +480,11 @@
   <section class="actwrap">
     <div class="acthead">
       <div>
-        <h2>What changed</h2>
-        <p class="sub">Every state change in the house with the thing that caused it —
-          an automation, a script, a scene, a person, a voice command, or brAIn.
-          Read straight from the logbook: no Claude run, nothing spent.
+        <h2>What happened</h2>
+        <p class="sub">Not every state change &mdash; the things that actually
+          happened, grouped into episodes and sorted into the parts of a house
+          you would go looking in, each with what caused it. Read straight from
+          the logbook: no Claude run, nothing spent.
           Tap a row for that entity's own recent history.</p>
       </div>
       <div class="actside">
@@ -497,11 +498,12 @@
         </div>
       </div>
     </div>
-    <!-- The times somebody put back what an automation had just done. It is
-         the one thing in this window that is evidence rather than history,
-         so it is called out above the list rather than left to be spotted
-         in it. -->
-    <div id="actOverrides" class="actoverrides" hidden></div>
+    <!-- When the house was empty, and the one paragraph on this tab that
+         costs anything. Everything below is arithmetic over one fetch and
+         so is free however often somebody opens this; the summary is a
+         PRESS, because a Claude run behind a tab that refreshes on arrival
+         is the "refresh everything" control this panel deleted. -->
+    <div id="actSummary" class="actsummary"></div>
     <div id="actList" class="actlist"></div>
   </section>
 </div>

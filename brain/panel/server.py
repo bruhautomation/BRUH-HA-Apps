@@ -140,6 +140,7 @@ import curiosity
 import doctor
 import energy
 import engine
+import episodes
 import feedback_store
 import finding_requests
 import findings_store
@@ -6116,12 +6117,49 @@ async def _activity(start: float, end: float, entity_id: str = "") -> dict:
         return await actions.collect(session, start, end, users, entity_id)
 
 
+async def _device_classes() -> dict[str, str]:
+    """`{entity_id: device_class}` for the whole house, in one call.
+
+    A `binary_sensor` with no class is a door, a motion sensor, a leak
+    detector or a plug's own power flag, and `episodes.subject_for` will not
+    guess between them — so without this every one of them lands in
+    *Everything else*, which is the section people scroll past. One REST
+    read of `/states` is what the checks pass and every insight run already
+    spend, and a fetch that fails is an empty map rather than an error: a
+    tab that could not tell a door from a motion sensor is still a tab, and
+    that is what the refusal-to-guess is for.
+    """
+    import aiohttp
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+    try:
+        async with aiohttp.ClientSession() as session:
+            raw = await ha_data._rest_get(session, "/states", timeout=30)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not read device classes for the activity tab: %s", exc)
+        return {}
+    out: dict[str, str] = {}
+    for st in raw or []:
+        if not isinstance(st, dict):
+            continue
+        eid = str(st.get("entity_id") or "")
+        klass = str(((st.get("attributes") or {}).get("device_class")) or "")
+        if eid and klass:
+            out[eid] = klass
+    return out
+
+
 async def h_activity(request: web.Request) -> web.Response:
-    """A window of the house's own history, with a cause on every row.
+    """A window of the house's own history, as what HAPPENED in it.
+
+    This used to answer with the mined rows themselves — one per state
+    change, newest first — which is Home Assistant's own logbook with a
+    cause column added, and on a real house it is hundreds of rows an hour
+    of a sensor reporting a number. `episodes.group` is what turns that into
+    the things a person would say happened, in sections they would look for.
 
     Fetched per request and never cached: this is a question somebody is
-    asking now, the answer changes every few seconds, and a cache would be
-    a second copy of the logbook to keep true.
+    asking now, the answer changes every few seconds, and a cache would be a
+    second copy of the logbook to keep true.
     """
     start, end = _activity_window(request)
     try:
@@ -6129,32 +6167,129 @@ async def h_activity(request: web.Request) -> web.Response:
     except Exception as exc:  # noqa: BLE001 — a failed look is an answer
         log.warning("activity fetch failed: %s", exc)
         return web.json_response({"available": False, "error": str(exc)[:200],
-                                  "actions": [], "overrides": [],
-                                  "counts": {}, "start": start, "end": end})
-    cause = (request.query.get("cause") or "").strip()
-    if cause and cause in actions.CAUSES:
-        mined = dict(mined)
-        mined["actions"] = [a for a in mined["actions"] if a["cause"] == cause]
-    limit = 400
+                                  "sections": [], "away": [], "counts": {},
+                                  "dropped": 0, "changes": 0, "episodes": 0,
+                                  "start": start, "end": end})
+    classes = await _device_classes() if mined.get("available") else {}
+    now = time.time()
+
+    def shape() -> dict:
+        rows = mined["actions"]
+        cause = (request.query.get("cause") or "").strip()
+        if cause and cause in actions.CAUSES:
+            rows = [a for a in rows if a["cause"] == cause]
+        grouped = episodes.group(rows, classes, now)
+        # On the row it happened in, never in a block above the list: a
+        # count of "somebody put things back 4×" is not something anybody
+        # can act on, where *this* row being the one they undid is.
+        episodes.mark_overrides(grouped, mined.get("overrides") or [])
+        return {
+            "available": True,
+            "error": "",
+            "start": mined["start"],
+            "end": mined["end"],
+            # The window that was actually used, not the one asked for: a
+            # request for a week gets two days, and a caller echoing its
+            # own argument would report a window it never had.
+            "hours": _window_hours(mined["start"], mined["end"]),
+            "sections": episodes.sections(grouped),
+            # When the house was empty — the one thing here Home Assistant
+            # holds every fact for and has never said.
+            "away": episodes.away_spans(grouped, now),
+            "counts": mined["counts"],
+            "causes": list(actions.CAUSES),
+            "capped": mined.get("capped", False),
+            # What was NOT shown, and why. A list that quietly drops nine
+            # tenths of its input is the thing this replaced.
+            "dropped": grouped["dropped"],
+            "changes": sum(e["count"] for e in grouped["episodes"]),
+            "episodes": len(grouped["episodes"]),
+        }
+
+    return web.json_response(await asyncio.to_thread(shape))
+
+
+# One paragraph per window, kept against the window it is about. Pressing
+# twice must not cost twice, and the answer cannot change without the
+# window changing — but a window that ends "now" moves, so the key rounds
+# to the minute rather than pretending an open-ended one is stable.
+_ACTIVITY_SUMMARIES: dict[tuple[int, int], dict] = {}
+_ACTIVITY_SUMMARY_MAX = 12
+
+
+async def h_activity_summary(request: web.Request) -> web.Response:
+    """What this window adds up to, in a paragraph — and it is a PRESS.
+
+    Everything else on this tab is arithmetic over one fetch, so opening it
+    is free however often somebody does. This is the part that spends, so
+    it is a button rather than something that happens on arrival: a Claude
+    run behind a tab that refreshes on every visit is the "refresh
+    everything" control this panel deleted, with a nicer name.
+
+    It skips the usage budget and not the credential — `_ask_why`'s split,
+    which is one promise with two halves: automatic runs pause, and asking
+    by hand always runs.
+    """
+    if not await asyncio.to_thread(engine.get_auth):
+        raise web.HTTPConflict(
+            text="brAIn is not signed in, so there is nothing to ask.")
+    start, end = _activity_window(request)
+    key = (int(start // 60), int(end // 60))
+    cached = _ACTIVITY_SUMMARIES.get(key)
+    if cached:
+        return web.json_response({**cached, "cached": True})
     try:
-        limit = max(1, min(2000, int(request.query.get("limit") or limit)))
-    except ValueError:
-        # A typed limit is a preference, not a request. Refusing the whole
-        # window over an unparseable one would be a blank tab.
-        pass
-    rows = sorted(mined["actions"], key=lambda a: a["ts"], reverse=True)
-    mined = dict(mined)
-    # The count is of everything in the window; the list is capped. Two
-    # numbers that disagree quietly is what the memory queue's list and
-    # count were, so the cap is reported rather than applied silently.
-    mined["total"] = len(rows)
-    mined["actions"] = rows[:limit]
-    mined["causes"] = list(actions.CAUSES)
-    # The window that was actually used, not the one that was asked for: a
-    # request for a week gets two days, and a caller echoing its own
-    # argument would report a window it never had.
-    mined["hours"] = _window_hours(mined["start"], mined["end"])
-    return web.json_response(mined)
+        mined = await _activity(start, end)
+    except Exception as exc:  # noqa: BLE001
+        raise web.HTTPBadGateway(
+            text=f"The logbook could not be read: {str(exc)[:200]}") from exc
+    if not mined.get("available"):
+        raise web.HTTPBadGateway(
+            text="Home Assistant's logbook could not be read, so there is "
+                 "nothing to summarise.")
+    classes = await _device_classes()
+    now = time.time()
+
+    def build() -> tuple[dict, str]:
+        grouped = episodes.group(mined["actions"], classes, now)
+        episodes.mark_overrides(grouped, mined.get("overrides") or [])
+        payload = {
+            "start": mined["start"], "end": mined["end"],
+            "sections": episodes.sections(grouped),
+            "away": episodes.away_spans(grouped, now),
+            "dropped": grouped["dropped"],
+        }
+        # The house's own zone, named rather than assumed: every clock in
+        # the prompt is this process's local time, and a run told which
+        # zone it is reading cannot place an evening in somebody's morning.
+        _tz, tz_name = baselines.house_timezone()
+        return payload, episodes.summary_prompt(payload, tz_name)
+
+    payload, prompt = await asyncio.to_thread(build)
+    if not payload["sections"]:
+        raise web.HTTPConflict(
+            text="Nothing happened in this window, so there is nothing to "
+                 "say about it.")
+    result = await asyncio.to_thread(
+        engine.run_analyst, prompt, episodes.SUMMARY_SYSTEM, eff_model(),
+        episodes.SUMMARY_TIMEOUT_S, episodes.SUMMARY_MAX_TURNS, "activity")
+    text = str(result.get("text") or "").strip()
+    if not result.get("ok"):
+        raise web.HTTPBadGateway(
+            text=str(result.get("error") or "the run did not finish")[:200])
+    if len(text) < episodes.SUMMARY_MIN_CHARS:
+        # `brief.py`'s floor: a four-word summary is worse than the silence
+        # it replaced, and reporting one as an answer teaches somebody the
+        # button does nothing.
+        raise web.HTTPBadGateway(
+            text="The reply was too short to be an answer. Try again.")
+    answer = {"summary": text, "start": mined["start"], "end": mined["end"],
+              "run_id": str((result.get("meta") or {}).get("session_id") or ""),
+              "cached": False}
+    _ACTIVITY_SUMMARIES[key] = answer
+    while len(_ACTIVITY_SUMMARIES) > _ACTIVITY_SUMMARY_MAX:
+        _ACTIVITY_SUMMARIES.pop(next(iter(_ACTIVITY_SUMMARIES)))
+    return web.json_response(answer)
 
 
 async def h_activity_entity(request: web.Request) -> web.Response:
@@ -9716,6 +9851,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/weekly/run", h_weekly_run)
     app.router.add_get("/api/activity", h_activity)
     app.router.add_get("/api/activity/entity/{entity_id}", h_activity_entity)
+    app.router.add_post("/api/activity/summary", h_activity_summary)
     app.router.add_post("/api/finding/{ts}/fix", h_finding_fix)
     app.router.add_post("/api/finding/{ts}/snooze", h_finding_snooze)
     app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)

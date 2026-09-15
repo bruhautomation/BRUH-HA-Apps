@@ -1448,23 +1448,64 @@ answer waits for it rather than being lost.
 `,
   },
   {
-    id: "it-knows-what-changed-and-what-changed-it",
-    icon: "🕵️",
-    title: "It knows what changed, and what changed it",
+    id: "it-knows-what-happened-and-what-caused-it",
+    icon: "📄",
+    title: "It knows what happened, and what caused it",
     body: `
-# It knows what changed, and what changed it
+# It knows what happened, and what caused it
 
 A state does not carry a cause. Nothing in \`light.kitchen\` being on says
 whether somebody pressed a switch, an automation fired, a voice command
 asked, or brAIn did it — and that is the question behind most of what people
 ask their house.
 
-The **Activity** tab reads Home Assistant's own logbook and puts a cause on
-every row: the automation by name, the script, the scene, the person, the
-voice assistant, or brAIn. Tap a row for that entity's own recent history.
-Page back a day at a time; filter by cause. It costs nothing — no Claude run,
-no stored copy — and it needs the \`logbook\` integration, which is part of
-Home Assistant's default config.
+The **Activity** tab reads Home Assistant's own logbook and answers with what
+**happened**, which is not the same as what changed. Nobody thinks in state
+changes: a person thinks in **episodes**. The TV was on in the lounge from
+eight until eleven. Somebody got home at 17:40. The bedroom heating ran from
+six until half past seven. The hall sensor saw something nine times between
+two and three. Every one of those is derivable from the logbook, and until
+1.56.0 none of them was on any screen — in brAIn or in Home Assistant.
+
+So four things happen to the window before you see it.
+
+**A run is one row.** A media player paused for an ad break and switched off
+three hours later is one episode of three hours, not four rows; a door opened
+twice in a minute is one trip through it; a motion sensor is counted rather
+than listed. The pause that ends an episode belongs to the kind of thing it
+is, because a television and a doorway happen on different scales.
+
+**Sensor readings are not rows at all.** A thermometer reporting every thirty
+seconds is most of a house's logbook and none of it is something that
+happened. The tab says how many it left out, at the foot — a list that
+silently drops nine tenths of its input is one nobody can trust.
+
+**It is sorted into the parts of a house you would go looking in** — locks and
+safety, people, heating, doors and blinds, media, cameras and motion, lights
+and switches — rather than into one stream. A section with nothing in it is
+not drawn.
+
+**And it says when the house was empty**, from the same window, above the
+rows it is the context for. A person brAIn never saw change is not a person
+who was out, so it is silent unless it really knows.
+
+Every row still names its cause, a row somebody undid says so on the row, and
+tapping one opens that entity's own recent history. Page back a day at a
+time; filter by cause. All of that costs nothing — no Claude run, no stored
+copy — and it needs the \`logbook\` integration, which is part of Home
+Assistant's default config.
+
+## What does this add up to?
+
+One button, and it is the only thing on the tab that spends anything. It puts
+the window you are looking at in front of Claude and asks for a paragraph:
+what today adds up to, rather than a list read back. It is a press rather
+than something that happens when you open the tab, because a Claude run
+behind a tab that refreshes on arrival is a bill nobody asked for — and the
+answer is kept against the window, so coming back to it is free.
+
+It is told to write about the **house** and never about the person: "the house
+was empty from 09:10" is about a house, and what anybody was doing is not.
 
 Some rows say **no cause recorded**. That is deliberate: a press on a wall
 switch and a push from a device's own integration arrive identically, so
