@@ -23,7 +23,7 @@ POST /api/auth/logout        — forget the stored credential {shared: bool}
 POST /api/auth/share         — publish it to /config for the other add-ons
 POST /api/auth/unshare       — withdraw that copy
 POST /api/auth/recheck       — verify the credential now, not at the next ageing
-POST /api/auth/setup/start   — begin guided `claude setup-token` OAuth flow
+POST /api/auth/setup/start   — begin a guided sign-in {mode: account|token}
 POST /api/auth/setup/code    — submit the pasted one-time code
 GET  /api/auth/setup/status  — poll the guided flow
 POST /api/auth/setup/cancel  — abort the guided flow
@@ -8147,7 +8147,20 @@ async def h_auth_recheck(request: web.Request) -> web.Response:
 
 
 async def h_setup_start(request: web.Request) -> web.Response:
-    status = await asyncio.to_thread(engine.SETUP_FLOW.start)
+    """Begin a guided sign-in. `mode` picks which one — see `engine.FLOW_MODES`.
+
+    An absent or unknown mode is the account sign-in, which is the one that
+    can read your usage; the flow re-checks it, so nothing off the wire
+    decides what gets run.
+    """
+    mode = ""
+    if request.can_read_body:
+        try:
+            mode = str((await request.json()).get("mode") or "")
+        except Exception:  # noqa: BLE001 — a body that is not JSON is no mode
+            mode = ""
+    status = await asyncio.to_thread(
+        engine.SETUP_FLOW.start, mode or engine.DEFAULT_FLOW_MODE)
     return web.json_response(status)
 
 

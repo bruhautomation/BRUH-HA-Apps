@@ -975,12 +975,58 @@ def extract_json(text: str) -> dict | None:
 # Guided `claude setup-token` flow (subscription OAuth, no API key)
 # ---------------------------------------------------------------------------
 
+# The two sign-ins, and the difference between them is a SCOPE.
+#
+# `claude setup-token` asks Anthropic for `user:inference` and nothing else.
+# `claude auth login` asks for `org:create_api_key user:profile user:inference
+# user:sessions:claude_code user:mcp_servers user:file_upload`. Measured off
+# the authorize URL each one prints, which is the only place either states it.
+#
+# `user:profile` is what `/api/oauth/usage` requires, so a house signed in
+# with the first can never report its usage — not because anything is broken
+# but because nobody ever asked for the permission. brAIn knew that and said
+# so, and then named the remedy as `claude /login` **in the Terminal tab**:
+# a shell command, in a tab `enable_terminal` can remove and whose default
+# face is a chat with no shell in it. So the panel's own sign-in screen minted
+# the usage-blind credential, and the only cure it could name was somewhere a
+# person may have no way to reach. That is the whole of the complaint.
+#
+# `auth login` is a plain subcommand rather than the TUI's `/login`, so it
+# drives on a pty exactly like `setup-token` does: it prints an authorize URL
+# and waits for a pasted code. One flow serves both — the argv is the only
+# real difference, because success for `auth login` arrives as the credential
+# file being rewritten, which `_signed_in_here` already is.
+#
+# Neither replaces the other. A session credential refreshes itself and so
+# cannot be copied to the shared file other BRUH add-ons read; a long-lived
+# token can, and is the whole point of `ha login --share`. So the account
+# sign-in is what the panel offers first and the token is what you add when
+# something else needs it.
+FLOW_MODES = {
+    "account": {
+        "argv": ["auth", "login"],
+        "label": "auth login",
+        "what": "your Claude account",
+    },
+    "token": {
+        "argv": ["setup-token"],
+        "label": "setup-token",
+        "what": "a long-lived token",
+    },
+}
+DEFAULT_FLOW_MODE = "account"
+
+
 class SetupTokenFlow:
-    """Drives `claude setup-token` on a pty.
+    """Drives `claude auth login` (or `claude setup-token`) on a pty.
 
     Phases: idle → starting → awaiting_code → working → done | error.
     The panel polls status(); when phase == awaiting_code it shows `url`
     and posts the pasted code to submit_code().
+
+    The mode picks the argv and nothing else. `setup-token` prints a token
+    this scrapes and saves; `auth login` prints none and writes the CLI's
+    own credential file, which `_signed_in_here` reads as the success it is.
     """
 
     def __init__(self) -> None:
@@ -989,6 +1035,7 @@ class SetupTokenFlow:
 
     def _reset_locked(self) -> None:
         self.phase = "idle"
+        self.mode = DEFAULT_FLOW_MODE
         self.url = ""
         self.error = ""
         self.output = ""
@@ -1017,9 +1064,11 @@ class SetupTokenFlow:
                     detail = OAUTH_TOKEN_RE.sub("sk-ant-oat…", line)[:200]
                     break
             return {"phase": self.phase, "url": self.url, "error": self.error,
-                    "detail": detail}
+                    "detail": detail, "mode": self.mode}
 
-    def start(self) -> dict:
+    def start(self, mode: str = DEFAULT_FLOW_MODE) -> dict:
+        if mode not in FLOW_MODES:
+            mode = DEFAULT_FLOW_MODE
         with self._lock:
             active = self.phase in ("starting", "awaiting_code", "working")
             proc_dead = self._proc is None or self._proc.poll() is not None
@@ -1036,6 +1085,7 @@ class SetupTokenFlow:
             self.cancel()
         with self._lock:
             self._reset_locked()
+            self.mode = mode
             self.phase = "starting"
             self._deadline = time.time() + 600
             self._cred_before = _credential_fingerprint()
@@ -1049,7 +1099,7 @@ class SetupTokenFlow:
                 # A pty that will not take a window size still works — the only cost
                 # is that a long OAuth URL may wrap.
                 pass
-            argv = _claude_argv() + ["setup-token"]
+            argv = _claude_argv() + list(FLOW_MODES[mode]["argv"])
             env = dict(os.environ)
             env["HOME"] = CLAUDE_HOME
             env["TERM"] = "xterm-256color"
@@ -1067,7 +1117,7 @@ class SetupTokenFlow:
         except Exception as exc:  # noqa: BLE001
             with self._lock:
                 self.phase = "error"
-                self.error = f"Could not start claude setup-token: {exc}"
+                self.error = f"Could not start claude {self._label()}: {exc}"
         return self.status()
 
     def submit_code(self, code: str) -> dict:
@@ -1106,6 +1156,10 @@ class SetupTokenFlow:
                 pass
 
     # -- internals ---------------------------------------------------------
+
+    def _label(self) -> str:
+        """The command this flow is driving, for the log and for a failure."""
+        return FLOW_MODES.get(self.mode, FLOW_MODES[DEFAULT_FLOW_MODE])["label"]
 
     def _signed_in_here(self) -> bool:
         """True when the CLI wrote a usable credential *during this flow*.
@@ -1163,7 +1217,7 @@ class SetupTokenFlow:
                     fresh = redacted[logged:] if logged <= len(redacted) else ""
                     logged = len(redacted)
                     if fresh.strip():
-                        log.info("setup-token: %s", fresh.strip()[:400])
+                        log.info("%s: %s", self._label(), fresh.strip()[:400])
                     with self._lock:
                         self.output = buf
                     self._scan(buf, tokens)
@@ -1182,7 +1236,7 @@ class SetupTokenFlow:
                 # some CLI versions save the credential without printing the
                 # token — the credentials file appearing IS success
                 if self._signed_in_here():
-                    log.info("setup-token: credentials file written — success")
+                    log.info("%s: credentials file written — success", self._label())
                     with self._lock:
                         self.phase = "done"
                     break
@@ -1191,7 +1245,7 @@ class SetupTokenFlow:
                 for i, at in enumerate(NUDGE_TIMES):
                     if elapsed > at and self._nudges <= i:
                         self._nudges = i + 1
-                        log.info("setup-token: no output for %.0fs — nudging with Enter", elapsed)
+                        log.info("%s: no output for %.0fs — nudging with Enter", self._label(), elapsed)
                         try:
                             os.write(fd, b"\r")
                         except OSError:
@@ -1211,7 +1265,7 @@ class SetupTokenFlow:
                             "The 'Paste a token' tab is a reliable alternative."
                             + (f" CLI output: …{tail}" if tail else "")
                         )
-                    log.warning("setup-token: exchange timed out after %.0fs", elapsed)
+                    log.warning("%s: exchange timed out after %.0fs", self._label(), elapsed)
                     break
         finally:
             # process ended (or timed out) — one final scan, then settle state
@@ -1224,7 +1278,7 @@ class SetupTokenFlow:
                         self.phase = "done"
                     else:
                         self.phase = "error"
-                        tail = buf.strip()[-300:] or "setup-token exited unexpectedly"
+                        tail = buf.strip()[-300:] or f"claude {self._label()} exited unexpectedly"
                         self.error = self.error or f"Setup did not complete: …{tail}"
             if proc and proc.poll() is None:
                 try:

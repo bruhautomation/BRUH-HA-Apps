@@ -712,7 +712,7 @@ if [ -f "$USAGE_FILE" ]; then
         # sign-in worked, and the command that performed it is what cannot
         # mint a token the usage endpoint accepts.
         warn "Usage sensors: this sign-in has no permission to read usage limits"
-        info "Fix: run 'claude /login' in the Terminal tab — 'ha login' is built on 'claude setup-token', which cannot ask for that permission"
+        info "Fix: in the panel, Settings -> Claude account -> Sign in again -> 'Sign in to your Claude account' — 'ha login' is built on 'claude setup-token', which cannot ask for that permission"
     elif [ -n "$uerr" ]; then
         warn "Usage sensors unavailable: ${uerr}"
         udetail=$(jq -r '.detail // empty' "$USAGE_FILE" 2>/dev/null)

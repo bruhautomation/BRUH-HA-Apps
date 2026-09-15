@@ -2,6 +2,42 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.51.0
+
+**brAIn can now perform the sign-in that reads your usage, from the panel, with
+no terminal.** The report people kept meeting said the fix was to *"open the
+Terminal tab and run `claude /login`"* — and the reply to it was the right one:
+there may be no terminal. `enable_terminal` removes that tab, and its default
+face is the chat, which has no shell in it. Worse, the panel's own guided
+sign-in ran `claude setup-token` too, so **every sign-in brAIn's UI offered
+minted a credential that could never read usage**, and the only cure it knew
+how to name was somewhere a person may have no way to reach.
+
+The two commands differ by an OAuth **scope**, measured off the authorize URL
+each one prints — the only place either states it:
+
+| command | scopes asked for |
+|---|---|
+| `claude setup-token` (what `ha login` and the old panel sign-in both ran) | `user:inference` |
+| `claude auth login` | `org:create_api_key` **`user:profile`** `user:inference` `user:sessions:claude_code` `user:mcp_servers` `user:file_upload` |
+
+`user:profile` is what `/api/oauth/usage` requires. And `auth login` is a plain
+subcommand rather than the TUI's `/login`, so it drives on a pty exactly as
+`setup-token` does: it prints an authorize URL and waits for a pasted code.
+That is the whole reason this is a button rather than an instruction — the
+flow already had the machinery, including the credential-file-changed success
+signal `auth login` needs, since it prints no token to scrape.
+
+⚙ → Claude account now leads with **Sign in to your Claude account**, and
+**Mint a shareable token** sits behind a disclosure beside it. Neither replaces
+the other and the screen says why: a session credential refreshes itself, so it
+cannot be copied into the file BRight and BRUH Print read, which is what
+`ha login --share` is for. Every surface that reported the under-scoped token —
+the usage popover, the tracker's log line and its diagnostic detail,
+`brain doctor`, the HA sensor's own documentation and the docs — now names the
+button instead of a shell command, and a test scans all four so no remedy can
+send somebody back to a terminal they may not have.
+
 ## 1.50.2
 
 **The deep check's fixer stage blamed the Supervisor token for a helper it

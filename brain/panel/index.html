@@ -156,14 +156,23 @@
 
     <div class="pane active" data-pane="guided">
       <ol class="steps">
-        <li>Click <b>Start sign-in</b> — we'll prepare a secure Anthropic sign-in link.</li>
+        <li>Click <b>Sign in to your Claude account</b> — we'll prepare a secure Anthropic sign-in link.</li>
         <li>Open the link, sign in with your Claude account, and copy the code it gives you.</li>
         <li>Paste the code below. Done — no API key needed.</li>
       </ol>
       <div class="row">
-        <button id="setupStart" class="btn primary">Start sign-in</button>
+        <button id="setupStart" class="btn primary">Sign in to your Claude account</button>
         <span id="setupPhase" class="chip hidden"><span class="dot"></span><span id="setupPhaseText"></span></span>
       </div>
+      <p class="hint">Signs in the same way <b>claude /login</b> does, from here — no
+        terminal needed. This is the one that can read your account's usage limits.</p>
+      <details id="setupShareBox" class="hint">
+        <summary>Also share this login with other BRUH add-ons</summary>
+        <p>A Claude account sign-in refreshes itself, so it cannot be copied to the file
+          BRight and BRUH Print read. This mints a second, long-lived token that can be —
+          it runs Claude everywhere and, by design, cannot read usage.</p>
+        <button id="setupStartToken" class="btn ghost">Mint a shareable token</button>
+      </details>
       <div id="setupUrlBox" class="urlbox hidden">
         Open this link to authorize:<br>
         <a id="setupUrl" href="#" target="_blank" rel="noopener"></a>
