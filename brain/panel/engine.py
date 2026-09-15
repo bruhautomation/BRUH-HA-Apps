@@ -701,6 +701,12 @@ ANALYST_DENIED = [
     f"{MCP}control_light", f"{MCP}control_climate", f"{MCP}control_media_player",
     f"{MCP}control_cover", f"{MCP}control_fan", f"{MCP}control_switch",
     f"{MCP}control_lock", f"{MCP}control_alarm", f"{MCP}control_vacuum",
+    # Denied because it changes nothing and MEANS nothing here: it offers a
+    # person the ways a finding could end, and an unattended run has nobody
+    # to offer them to. A tool in neither list fails when it is reached,
+    # which from a card reads as a broken tool rather than as the policy it
+    # is — so this says which, the way every other name here does.
+    f"{MCP}offer_resolutions",
 ]
 
 

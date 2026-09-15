@@ -6701,12 +6701,18 @@ async def h_finding_todo(request: web.Request) -> web.Response:
     body = await _json_body(request)
     note = str((body or {}).get("note") or "").strip()[:findings_store.MAX_NOTE]
     key = findings_store.normalize(finding["text"])
+    # The step, if the caller has a better one than the producer's. A
+    # resolution pressed in the chat does: "replace the CR2032 behind the
+    # garage sensor" is what the conversation worked out, where `fix` is
+    # whatever the check could say without looking. The item still carries
+    # the finding's own text, because that is what the chore is ABOUT.
+    fix = str((body or {}).get("fix") or "").strip()[:findings_store.MAX_NOTE]
 
     def place() -> dict | None:
         return todo_store.add(
             finding["text"],
             detail=finding.get("detail") or "",
-            fix=finding.get("fix") or "",
+            fix=fix or finding.get("fix") or "",
             entity_id=finding.get("entity_id") or "",
             severity=finding.get("severity") or "warning",
             origin="finding",
@@ -7738,7 +7744,12 @@ Severity: {severity}
 You flagged this as broken in my home. Look into it and tell me what is
 actually going on — check the current state and the history before you
 answer, and say plainly whether you think it is really a problem here.
-Do not change anything yet; I will decide."""
+Do not change anything yet; I will decide.
+
+Then end your answer by calling offer_resolutions with the ways this could
+actually be settled, so they are buttons I can press here. Offer only what
+your own look supports, name each one the way I would say it, and leave out
+any you cannot justify — two honest options beat four."""
 
 
 async def h_finding_discuss(request: web.Request) -> web.Response:
@@ -7757,6 +7768,11 @@ async def h_finding_discuss(request: web.Request) -> web.Response:
     # question about the heating, and the reply answered both at once.
     try:
         await session.reset()
+        # After the reset, which clears it: this is what every resolution
+        # card in this conversation will be stamped with, and the model is
+        # never asked for it — so it cannot offer to settle a finding other
+        # than the one on screen.
+        session.finding_ts = int(finding["ts"])
         await session.send(prompt)
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=str(exc))

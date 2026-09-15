@@ -3722,14 +3722,19 @@ function updateFindBadge(n) {
 // same {findings, hypotheses, open}, so there is one place that knows what
 // to do with it. `note` is the homeowner's reason, sent with the endings
 // that have somewhere to put it.
-async function findAction(finding, verb, done, btns, note) {
+async function findAction(finding, verb, done, btns, note, extra) {
   btns.forEach((b) => { b.disabled = true; });
   const del = verb === "forget";
+  // `extra` is for a field only one caller has: a resolution pressed in the
+  // chat sends the step it named as the to-do item's `fix`, because what the
+  // conversation worked out is a better instruction than what the check
+  // could say without looking.
+  const body = { ...(note ? { note } : {}), ...(extra || {}) };
   try {
     const data = await api(
       del ? `api/finding/${finding.ts}` : `api/finding/${finding.ts}/${verb}`,
       { method: del ? "DELETE" : "POST",
-        ...(note ? { body: JSON.stringify({ note }) } : {}) });
+        ...(Object.keys(body).length ? { body: JSON.stringify(body) } : {}) });
     takeFindings(data);
     // Accepting one moves it to the other list, so that tab's count moves
     // with it. Every other verb answers without these keys and leaves the
@@ -7547,6 +7552,7 @@ const chatState = {
   liveThink: null,   // the think box thinking deltas are streaming into
   thinkBoxes: [],    // streamed think boxes awaiting their final block
   permCard: null,    // the approval card currently on screen, if any
+  chosen: {},        // resolutions card id -> the option pressed, this session
   ready: false,      // has a snapshot been drawn
   session: "chat",   // "chat" | "classic"
   runState: "idle",
@@ -7990,6 +7996,12 @@ function chatRender(ev) {
     case "tool_result":
       chatToolResult(ev);
       chatStatus("Working…");
+      break;
+    case "resolutions":
+      chatCloseLiveThink();
+      chatSealLive();
+      chatAppend(chatResolutionsNode(ev));
+      chatStatus();
       break;
     case "permission":
       chatPermission(ev);
@@ -8635,6 +8647,111 @@ $("#chatFindingLater").addEventListener("click", (ev) => {
   if (!f) return;
   openSnoozePop(ev.currentTarget, f, [ev.currentTarget]);
 });
+
+// ------------------------------------------------- settling it from the chat
+//
+// The strip above the composer carries the four endings a finding always
+// has; this carries the one the CONVERSATION arrived at. Discussing a
+// finding is how you work out what to actually do about it, and until now
+// that answer had nowhere to go but a reason box you had to retype it into.
+//
+// Claude offers them by calling `offer_resolutions`, which changes nothing:
+// the panel reads the call off the stream it was already reading and draws
+// the buttons. Three rules make that safe to press.
+//
+// The PRESS is the consent — nothing is settled until one happens, and it
+// goes to the same route the tab's own buttons use. The LABEL is the record:
+// one string, the button and the note it writes, so nothing is recorded that
+// a person did not read first. And no resolution TOUCHES the house: the
+// verbs are the three that record a decision, so the worst a mis-tap can do
+// is settle a finding, which the toast's Undo takes back whole. "Fix it" is
+// deliberately not offerable here — it is the one button that sends Claude
+// at the house, it stays on the strip where it is pressed deliberately, and
+// it does not end a finding anyway.
+//
+// What each press DOES is written beside it rather than left to the label,
+// because "Replace the CR2032" and "Replaced the CR2032" are one word apart
+// and land in different places.
+const RESOLUTION_KINDS = {
+  done: {
+    does: "Marks it fixed, and puts that into memory",
+    toast: "Fixed — that's gone into memory",
+  },
+  todo: {
+    does: "Adds it to your to-do list; memory waits until you tick it off",
+    toast: "On your to-do list",
+  },
+  wrong: {
+    does: "Tells brAIn it has misread your house, so it stops reporting it",
+    toast: "Noted — brAIn won't raise it again",
+  },
+};
+
+function chatResolutionsNode(ev) {
+  const box = el("div", "chatres");
+  box.appendChild(el("div", "creshead", "How this could end"));
+  const body = el("div", "cresbody");
+  box.appendChild(body);
+  const options = (ev.options || []).filter((o) => RESOLUTION_KINDS[o.verb]);
+
+  // Whether there is anything to press is DERIVED, never remembered: the
+  // transcript replays this card after a reload, and by then the finding may
+  // have been settled here, on the Findings tab, or from a phone. Reading
+  // the list each paint is what makes those agree — and a card offering to
+  // settle something that is already gone is the one thing it must not do.
+  const paint = () => {
+    body.textContent = "";
+    const chose = chatState.chosen[ev.id];
+    if (chose) {
+      body.appendChild(el("p", "cresnote", `You chose: ${chose}`));
+      return;
+    }
+    if (!ev.finding_ts) {
+      body.appendChild(el("p", "cresnote", "This conversation isn't about a "
+        + "finding, so there is nothing here to settle."));
+      return;
+    }
+    const f = (state.findings || []).find((x) => x.ts === ev.finding_ts);
+    if (!f) {
+      body.appendChild(el("p", "cresnote", "That finding has been settled "
+        + "already, so there is nothing left to press."));
+      return;
+    }
+    options.forEach((option) => {
+      // The row IS the button, with what it does inside it — the question
+      // card's own shape, for the question card's own reason: what a press
+      // means is half the value of an option, and it must be inside the
+      // thing you press rather than beside it.
+      const btn = el("button", "cresopt");
+      btn.appendChild(el("span", "creslabel", option.label));
+      btn.appendChild(el("span", "cresdoes", RESOLUTION_KINDS[option.verb].does));
+      body.appendChild(btn);
+      btn.addEventListener("click", () => chooseResolution(
+        ev, option, f, [...body.querySelectorAll("button")], paint));
+    });
+  };
+  paint();
+  return box;
+}
+
+async function chooseResolution(ev, option, finding, btns, paint) {
+  const spec = RESOLUTION_KINDS[option.verb];
+  if (!spec) return;
+  await findAction(finding, option.verb, spec.toast, btns, option.label,
+                   option.verb === "todo" ? { fix: option.label } : null);
+  // findAction reports its own failures and re-enables the row, so success
+  // is read the way the paint reads it: the row is gone from the list. A
+  // refused press (a full to-do list) leaves the buttons exactly as they
+  // were, which is what lets somebody press a different one.
+  if ((state.findings || []).some((x) => x.ts === finding.ts)) return;
+  chatState.chosen[ev.id] = option.label;
+  // Settled: it is no longer a decision waiting on you, so the strip goes
+  // the same way it does when the strip's own buttons are pressed.
+  if (chatState.finding && chatState.finding.ts === finding.ts) {
+    setChatFinding(null);
+  }
+  paint();
+}
 
 // ------------------------------------------------------- conversations
 //

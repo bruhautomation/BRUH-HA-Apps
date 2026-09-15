@@ -61,7 +61,7 @@ subscription — or your own API key.
 
 Most AI integrations can turn on a light. brAIn administers the installation.
 
-It reaches Home Assistant three ways at once — a **native MCP server** (40 tools) for
+It reaches Home Assistant three ways at once — a **native MCP server** (41 tools) for
 reading and controlling, **65 registry-management services** for the parts of Home
 Assistant that normally only exist behind the Settings UI, and a **real shell** in
 \`/config\` for everything that is still a YAML file.
@@ -127,6 +127,14 @@ Each one gets a severity, a plain-English explanation, and what to do about it:
 - **Discuss** — hands it to the chat with everything brAIn knows about it and asks
   whether it really is a problem **here**. The discussion changes nothing; the decisions
   ride along above the composer, so agreeing to the fix at the end of it is one press.
+  And when Claude has finished looking it offers **the ways this could actually end**,
+  as buttons under its answer: "Replaced the CR2032", "Replace the CR2032 in the garage
+  sensor", "That cupboard is never opened". Pressing one settles the finding in those
+  words — the card clears, and what the button said is what goes into memory, onto your
+  to-do list, or into the correction, depending on which one it was. Each button says
+  which, because "Replace it" and "Replaced it" land in different places. Nothing is
+  settled until you press: Claude proposes the endings, and none of them touches your
+  house — **Fix it** is deliberately not one of them and stays where it is.
 - **I fixed it** — you handled it yourself. brAIn remembers that you did, and there
   is an optional box for **how** ("replaced the CR2032 — it's a 3-monthly job on that
   one"), which goes into memory beside the fact.

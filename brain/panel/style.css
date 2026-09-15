@@ -2212,7 +2212,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   gap: 6px;
   margin-top: 8px;
 }
-.qcard .qopt {
+.qcard .qopt, .chatres .cresopt {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -2228,13 +2228,14 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   font-size: 13px;
   cursor: pointer;
 }
-.qcard .qopt:hover { border-color: var(--accent); }
+.qcard .qopt:hover, .chatres .cresopt:hover { border-color: var(--accent); }
 .qcard .qopt.on {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, var(--surface));
 }
-.qcard .qopt .qlabel { font-weight: 600; }
-.qcard .qopt .qdesc { color: var(--ink-2); font-size: 12px; }
+.qcard .qopt .qlabel, .chatres .cresopt .creslabel { font-weight: 600; }
+.qcard .qopt .qdesc,
+.chatres .cresopt .cresdoes { color: var(--ink-2); font-size: 12px; }
 .qcard .qother {
   width: 100%;
   margin-top: 8px;
@@ -2245,6 +2246,32 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   color: var(--ink);
   font-size: 13px;
 }
+
+/* The resolutions card — the ways the finding under discussion could end,
+   offered by Claude and pressed by a person. It borrows the question card's
+   option rows above (one definition, two cards: they are the same control,
+   and a second copy of it is a second copy that drifts) and differs only in
+   what it is made of, which is why its accent is the same one a finding
+   card uses rather than the chat's. */
+.chatres {
+  max-width: 760px;
+  width: 100%;
+  align-self: center;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--warning);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+}
+.chatres .creshead { font-weight: 600; color: var(--ink); }
+.chatres .cresbody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.chatres .cresnote { margin: 0; color: var(--ink-3); font-size: 12.5px; }
 
 .chatempty {
   margin: auto;
@@ -3913,6 +3940,11 @@ body.term-classic #termMode .ico-out { display: block; }
   .prob .probpick, .prob .probdel, .probbtns .btn { min-height: 44px; }
   .prob .probdel { min-width: 44px; }
   .prob .probcheck { width: 22px; height: 22px; }
+  /* A resolution settles a finding — a decision somebody makes on purpose,
+     in answer to a conversation they have just read, and the row carries
+     two lines of text inside the press target. Scoped like the blocks
+     above rather than raised globally, for the reason they give. */
+  .chatres .cresopt { min-height: 44px; }
   /* The first-run flow. Every press here is a decision made once and lived
      with: where brAIn may reach you, whether it may wake the house, which
      cards exist at all. Scoped like the four blocks above rather than

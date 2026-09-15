@@ -2,6 +2,49 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.54.0
+
+**The conversation about a finding can now end it, in its own words.**
+Discussing a card is how you work out what to actually do about it, and until
+now that answer had nowhere to go: the buttons above the composer are the four
+endings every finding has, while the useful answer is the specific one you
+just arrived at.
+
+So when Claude has finished looking it offers the ways this could actually be
+settled, as buttons under its answer — *Replaced the CR2032*, *Replace the
+CR2032 in the garage sensor*, *That cupboard is never opened*. Press one and
+the finding is settled in those words: the card clears and what the button
+said is what goes into memory, onto your to-do list, or into the correction.
+
+- **The label is the record.** One string per option — it is both the button
+  and the note that ending writes, so nothing is recorded that you did not
+  read first.
+- **Each button says where the press lands**, because "Replace it" and
+  "Replaced it" are one letter apart and end up in different places.
+- **Nothing touches your house.** The three verbs all record a *decision*, so
+  the worst a mis-tap can do is settle a finding — which the toast's Undo
+  takes back whole. **Fix it** is deliberately not offerable and stays on the
+  strip, pressed on purpose.
+- **Nothing is settled until you press.** Claude proposes; the press is the
+  consent, and it goes through the same route the Findings tab's own buttons
+  use, so an ending means the same thing wherever it was given.
+- A chore made this way carries the step the conversation worked out
+  ("replace the CR2032 behind the garage sensor") rather than the generic fix
+  the check could write without looking.
+
+**Fixed: `get_dashboard` said "default" instead of which dashboard it read.**
+Asking for a dashboard without naming one reported `url_path: "default"` — an
+echo of the argument that could not tell "I asked for nothing" from "I asked
+for one called default", and a word the same tool then refused, so reading a
+dashboard and fetching it again by what the answer printed came back
+*Dashboard not found: default*. It now reports the dashboard it actually
+returned, with the title Home Assistant gave it and a `url_path` that fetches
+it again — the same word `brain.update_dashboard` already takes for the
+default one. And a missing config on an unreadable dashboard list is no
+longer reported as "registered but never saved": that was a claim about
+registration it had no way to check, and it sent you to a save that would
+fail.
+
 ## 1.53.0
 
 **A finding you have accepted is not a decision any more, so it stops being

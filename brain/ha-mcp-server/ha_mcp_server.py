@@ -1705,11 +1705,62 @@ def list_dashboards(include_resources=False):
 MAX_DASHBOARD_BYTES = 200_000
 
 
+# The token that means "the one you get when you ask for nothing". It is
+# `brain.update_dashboard`'s own (`power_tools._dashboard_key` maps it and
+# None to the same storage key), and the two tools have to agree on it: the
+# documented workflow is fetch, edit, save, so a word one of them hands back
+# and the other refuses breaks the round trip at the first step. `url_path:
+# "default"` is exactly what get_dashboard used to report and then reject.
+DEFAULT_DASHBOARD = "default"
+
+
+def _dashboard_wire_path(url_path):
+    """What to put on the wire — None for the default dashboard.
+
+    `lovelace/config` takes the real url_path or null, and has never heard
+    of "default": passing it through asks for a dashboard nobody has, which
+    comes back as config_not_found and reads as "you have no such dashboard".
+    """
+    if url_path in (None, "", DEFAULT_DASHBOARD):
+        return None
+    return url_path
+
+
+def _dashboard_named(url_path, config=None, registered=None):
+    """Which dashboard this actually is, never an echo of the argument.
+
+    The old report was `url_path or "default"`, which says nothing a caller
+    did not already know and cannot tell "I asked for nothing and got the
+    default" from "I asked for a dashboard called default". What is useful is
+    the same two facts every time: the token that fetches it again, and
+    enough of a name to recognise it by — so a fetch that read the wrong
+    dashboard is visible in its own answer rather than at the save.
+    """
+    wire = _dashboard_wire_path(url_path)
+    out = {"url_path": wire or DEFAULT_DASHBOARD, "is_default": wire is None}
+    title = None
+    if isinstance(config, dict) and isinstance(config.get("title"), str):
+        title = config["title"]
+    if not title and isinstance(registered, list):
+        for row in registered:
+            if isinstance(row, dict) and row.get("url_path") == wire:
+                title = row.get("title")
+                break
+    if not title and wire is None:
+        # The one dashboard with no registry row of its own: Home Assistant
+        # serves it at /lovelace and reports no url_path for it at all.
+        title = "the default dashboard (served at /lovelace)"
+    if title:
+        out["dashboard"] = title
+    return out
+
+
 def get_dashboard(url_path=None, view_index=None):
     """Fetch a dashboard's configuration (default dashboard when url_path
-    is omitted). Pair with brain.update_dashboard to edit: fetch,
-    modify the JSON, save — the service backs up the old config
-    automatically.
+    is omitted, or url_path="default"). Pair with brain.update_dashboard to
+    edit: fetch, modify the JSON, save — the service backs up the old config
+    automatically. The answer says which dashboard it actually read and the
+    url_path that fetches it again.
 
     Large dashboards are retrievable in full through view_index: when the
     whole config exceeds MAX_DASHBOARD_BYTES the response is a view
@@ -1718,8 +1769,10 @@ def get_dashboard(url_path=None, view_index=None):
     (HA's delayed writes) and must never be treated as a source of truth.
     """
     try:
-        result = _ws_command({"type": "lovelace/config", "url_path": url_path or None},
-                             timeout=30)
+        result = _ws_command(
+            {"type": "lovelace/config",
+             "url_path": _dashboard_wire_path(url_path)},
+            timeout=30)
     except ImportError:
         return {"error": "websockets package not available in this environment"}
     except Exception as e:  # noqa: BLE001
@@ -1731,7 +1784,8 @@ def get_dashboard(url_path=None, view_index=None):
             # url_path that doesn't exist at all. Distinguish them — the old
             # blanket "save it to take control" note pointed callers at an
             # update_dashboard call that cannot succeed for the latter.
-            if url_path:
+            registered = None
+            if _dashboard_wire_path(url_path):
                 try:
                     registered = _ws_command({"type": "lovelace/dashboards/list"})
                 except Exception:  # noqa: BLE001
@@ -1744,8 +1798,18 @@ def get_dashboard(url_path=None, view_index=None):
                             f"Dashboard not found: {url_path}."
                             + (f" Existing: {available}" if available else "")
                         )}
+                else:
+                    # "I could not look" is not "it is registered". Claiming
+                    # the second sends a caller to take_control on a
+                    # dashboard that may not exist, and the save is where
+                    # they find out.
+                    return {"error": (
+                        f"Home Assistant has no stored config for "
+                        f"{url_path}, and the dashboard list could not be "
+                        "read — so whether it exists at all is unknown. "
+                        "Try list_dashboards.")}
             return {
-                "url_path": url_path or "default",
+                **_dashboard_named(url_path, registered=registered),
                 "note": ("This dashboard is registered but has no stored "
                          "config yet (it is auto-generated). Saving with "
                          "brain.update_dashboard (take_control: true) "
@@ -1765,16 +1829,16 @@ def get_dashboard(url_path=None, view_index=None):
                               f"dashboard has {len(views)} views (0-"
                               f"{max(len(views) - 1, 0)})")}
         return {
-            "url_path": url_path or "default",
+            **_dashboard_named(url_path, result),
             "view_index": view_index,
             "view_count": len(views),
             "view": views[view_index],
         }
 
-    payload = {"url_path": url_path or "default", "config": result}
+    payload = {**_dashboard_named(url_path, result), "config": result}
     if len(json.dumps(payload)) > MAX_DASHBOARD_BYTES:
         return {
-            "url_path": url_path or "default",
+            **_dashboard_named(url_path, result),
             "note": (f"Config too large to return whole (> {MAX_DASHBOARD_BYTES} "
                      "bytes) — view summary below. Fetch each view with "
                      "get_dashboard(url_path, view_index=N). Do NOT read "
@@ -1904,6 +1968,65 @@ def remember_fact(fact, confidence="high"):
         "fact": fact.strip(),
         "confidence": confidence,
         "note": "Queued for memory consolidation.",
+    }
+
+
+# ---------------------------------------------------------------------------
+# The ways a finding could end, offered inside the conversation about it
+# ---------------------------------------------------------------------------
+
+# What an option may be. These are the panel's own ending verbs rather than
+# a friendlier set translated at the far end: one vocabulary from the tool
+# schema to the HTTP route is one fewer place for two answers to the same
+# question to drift apart.
+RESOLUTION_KINDS = ("done", "wrong", "todo")
+MAX_RESOLUTIONS = 4
+MAX_RESOLUTION_LABEL = 90
+
+
+def offer_resolutions(options):
+    """Put the ways this finding could end on the homeowner's screen.
+
+    This tool changes NOTHING — not the house, not brAIn, not the finding.
+    The panel is already streaming this conversation, so it reads the call
+    itself and renders one button per option; pressing one is what settles
+    the finding, and it settles it in the words of the option pressed.
+
+    Which is why the label IS the record: there is no second string a person
+    cannot see before they press. A label written as "Replaced the CR2032"
+    is what goes into memory; one written as "that cupboard is never opened"
+    is what corrects brAIn about the house.
+
+    It only means anything inside a finding discussion, which is the panel's
+    Discuss button. Anywhere else there is no finding to attach options to
+    and nothing is shown — so this is not a way to ask a general question.
+    """
+    if not isinstance(options, list) or not options:
+        return {"error": "options must be a non-empty list of "
+                         "{label, kind} objects"}
+    if len(options) > MAX_RESOLUTIONS:
+        return {"error": f"at most {MAX_RESOLUTIONS} options — this is a row "
+                         "of buttons on a phone, not a menu"}
+    cleaned = []
+    for option in options:
+        if not isinstance(option, dict):
+            return {"error": "each option is an object with label and kind"}
+        label = option.get("label")
+        kind = option.get("kind")
+        if not isinstance(label, str) or not label.strip():
+            return {"error": "every option needs a label — it is both the "
+                             "button and what gets recorded"}
+        if kind not in RESOLUTION_KINDS:
+            return {"error": "kind must be one of "
+                             + ", ".join(RESOLUTION_KINDS)}
+        cleaned.append({"label": label.strip()[:MAX_RESOLUTION_LABEL],
+                        "kind": kind})
+    return {
+        "status": "offered",
+        "options": cleaned,
+        "note": "Shown as buttons under this message. The homeowner presses "
+                "one, or none — you are not told which, and nothing is "
+                "settled until they do.",
     }
 
 
@@ -2060,7 +2183,7 @@ TOOLS = [
             "properties": {
                 "url_path": {
                     "type": "string",
-                    "description": "Dashboard url_path from list_dashboards; omit for the default dashboard"
+                    "description": "Dashboard url_path from list_dashboards; omit or pass \"default\" for the default dashboard (the same word brain.update_dashboard takes for it). The answer says which dashboard it actually read."
                 },
                 "view_index": {
                     "type": "integer",
@@ -2881,6 +3004,51 @@ TOOLS = [
             "required": ["target"]
         }
     },
+    {
+        "name": "offer_resolutions",
+        "description": (
+            "Offer the homeowner the ways the finding you are discussing "
+            "could end, as buttons under your message. Use it once you have "
+            "looked into the problem and can name what would actually "
+            "settle it. Each option's label is BOTH the button and what "
+            "gets recorded, so write it in the voice of its kind: 'done' is "
+            "something they have already done (\"Replaced the CR2032\"), "
+            "'todo' is work to put on their list (\"Replace the CR2032 in "
+            "the garage sensor\"), 'wrong' is a fact about the house that "
+            "means this was never a problem (\"That cupboard is never "
+            "opened\"). Offer only endings your own investigation supports, "
+            "and leave out any you cannot justify — two honest options beat "
+            "four. This changes nothing by itself: nothing is settled until "
+            "they press, and you are not told whether they did. It works "
+            "only inside a finding discussion."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "options": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "description": "Up to 4 ways this could end, best first.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {
+                                "type": "string",
+                                "description": "What the button says, and what gets recorded. One short line, in the voice of its kind."
+                            },
+                            "kind": {
+                                "type": "string",
+                                "enum": ["done", "todo", "wrong"],
+                                "description": "done = they have already done this, and it goes into memory as a fix. todo = work for their to-do list, written as an instruction. wrong = brAIn has misread the house, and the label is the correction."
+                            }
+                        },
+                        "required": ["label", "kind"]
+                    }
+                }
+            },
+            "required": ["options"]
+        }
+    },
 ]
 
 
@@ -2940,6 +3108,8 @@ TOOL_IMPLEMENTATIONS = {
     "reload_config": "reload_config",
     # Memory / learning
     "remember_fact": "remember_fact",
+    # Talking to the person who is reading
+    "offer_resolutions": "offer_resolutions",
 }
 
 
