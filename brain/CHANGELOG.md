@@ -2,6 +2,42 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.52.1
+
+**A live card has two ages, and the foot was reporting one of them.**
+
+A card can declare entities whose state brAIn keeps current while the card is
+on screen — so the numbers in the chart are seconds old, while every sentence
+Claude wrote *about* those numbers is from whenever the analysis last ran. The
+foot said `Updated 3 d ago`, once, for both.
+
+That is wrong in both directions at the same time. It invites you to distrust
+a reading that is genuinely current, and to trust a conclusion written three
+days ago against data that has since moved. And nothing on the card said it
+was live at all, so a live card and a frozen one looked identical — as did a
+working live card and one whose readings had quietly stopped arriving.
+
+So a card that keeps readings current now says **`Analysed 3 d ago`**, which is
+a claim about the writing and nothing else, with the readings on their own line
+beside it: `· 4 readings live · just now`. Three states, because they are three
+different claims — `waiting` before the first reading lands, the age once it
+has, and **`not updating`** when the fetches have started failing. That last
+one is the one that must not read like the second: a frozen number under a
+live label is a reading nothing can correct. A card with no live entities still
+says `Updated 3 d ago` — one age, one line.
+
+**And a card pinned to a past run is no longer given live readings at all.**
+Paging back with `‹ ›` is how you see what a card said in March; overlaying
+this afternoon's door state on March's chart made it a hybrid of the two with
+nothing on screen able to say so. It applied to the expanded view as well.
+
+Nothing about how live cards work has changed, and nothing new is configurable.
+To re-run an analysis it is still **⋯ → ↻ Regenerate** on the card.
+
+`tests/manual/measure-cardlive.mjs` drives the real card renderer and was
+checked against the old behaviour first — nineteen failures, including the
+pinned-run overlay, which nothing had noticed.
+
 ## 1.52.0
 
 **brAIn now asks why you did something.** Everything it could say about a home

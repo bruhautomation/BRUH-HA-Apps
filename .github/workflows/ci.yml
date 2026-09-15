@@ -122,6 +122,10 @@ jobs:
       - name: Measure the Problems section
         run: node tests/manual/measure-problems.mjs
 
+      # A live card has two ages; the foot used to report one of them.
+      - name: Measure a live card's two ages
+        run: node tests/manual/measure-cardlive.mjs
+
       - name: Measure BRight's light map
         run: node tests/manual/measure-lightmap.mjs
 

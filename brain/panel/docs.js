@@ -1762,6 +1762,27 @@ The list is fixed when the card is written and capped at 12. A card cannot ask f
 entity its own run did not declare, which is what keeps a page of generated HTML from
 being able to read the rest of your house.
 
+**A live card has two ages, and its foot shows both.** The numbers in the chart are
+seconds old; everything Claude concluded **about** them is from whenever the analysis
+last ran. So a live card's foot says **\`Analysed 3 d ago\`** — a claim about the
+writing, not the readings — with a second line beside it:
+
+| the foot says | what it means |
+|---|---|
+| \`Analysed 3 d ago\` | when Claude last read your home and wrote these conclusions |
+| \`· 4 readings live · just now\` | those four entities are current, and arrived just now |
+| \`· 4 readings live · waiting\` | the card is on screen and the first reading has not landed yet |
+| \`· 4 readings live · not updating\` | readings have **stopped** arriving — the chart is frozen |
+
+A card with no live entities says \`Updated 3 d ago\` as it always has: there is only one
+age, so there is only one line. **To re-run the analysis**, use **⋯ → ↻ Regenerate** on
+the card; the foot's other line already says when brAIn will do it on its own, or what
+it is waiting for.
+
+Paging back to an older run (the \`‹ ›\` controls in the foot) shows \`Generated …\` and no
+live line at all. A past run is a record of what the card said then, so brAIn does not
+overlay today's readings on it.
+
 **⚙ > Diagnostics** opens with **Anything wrong?** — one flat list of everything
 brAIn can currently see that is not working, gathered from every surface it has: the
 health verdict, runs that failed in the last day, house checks that could not run,
