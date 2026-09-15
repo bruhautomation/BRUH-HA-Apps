@@ -38,6 +38,25 @@ To re-run an analysis it is still **⋯ → ↻ Regenerate** on the card.
 checked against the old behaviour first — nineteen failures, including the
 pinned-run overlay, which nothing had noticed.
 
+### Also: a duration sensor is not a stuck sensor
+
+`dev.frozen` says "a real sensor moves", and 1.50.0 narrowed it to sensors
+that declare what kind of quantity they measure — which dropped the fixed
+tariffs and rated capacities it had been firing on. `duration` was missed.
+
+A duration is a **span**, and the spans a house publishes are almost all
+configured or last-measured: a button's hold time, a timer's length, how long
+the last run took, a track's length. Each reads one value until somebody
+changes it or runs the thing again, which on anything used occasionally is
+weeks — so a `Hype Button duration` sitting at one value for seven days was
+reported as a sensor that had stopped updating, on a sensor working exactly as
+intended. It is skipped now.
+
+The test names it beside a real `current` sensor on purpose: a *configured*
+current limit carries no device class and is skipped, while a current sensor
+that has not moved in a week is exactly what this check is for. Adding a class
+to that set must not quietly take a neighbour with it.
+
 ## 1.52.0
 
 **brAIn now asks why you did something.** Everything it could say about a home
