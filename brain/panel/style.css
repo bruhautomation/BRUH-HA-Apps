@@ -388,6 +388,14 @@ html, body {
 .card .foot .because,
 .card .foot .hold { flex: 0 1 auto; }
 .card .foot .hold { color: var(--ink-2); }
+/* The live half of a card's age. Slightly less recessive than the rest of
+   the foot, because it is the one line saying which numbers on the card
+   are current -- and `stale` takes the warning colour, since a card
+   labelled live whose readings have stopped arriving is the reading
+   nothing can correct. The words say it too: colour is never the only
+   signal. */
+.card .foot .livemark { flex: 0 1 auto; color: var(--ink-2); }
+.card .foot .livemark.stale { color: var(--warning); }
 
 /* dimmed disabled category */
 .card.off > :not(.card-head) { opacity: 0.45; }

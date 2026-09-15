@@ -2,6 +2,104 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.52.1
+
+**A live card has two ages, and the foot was reporting one of them.**
+
+A card can declare entities whose state brAIn keeps current while the card is
+on screen — so the numbers in the chart are seconds old, while every sentence
+Claude wrote *about* those numbers is from whenever the analysis last ran. The
+foot said `Updated 3 d ago`, once, for both.
+
+That is wrong in both directions at the same time. It invites you to distrust
+a reading that is genuinely current, and to trust a conclusion written three
+days ago against data that has since moved. And nothing on the card said it
+was live at all, so a live card and a frozen one looked identical — as did a
+working live card and one whose readings had quietly stopped arriving.
+
+So a card that keeps readings current now says **`Analysed 3 d ago`**, which is
+a claim about the writing and nothing else, with the readings on their own line
+beside it: `· 4 readings live · just now`. Three states, because they are three
+different claims — `waiting` before the first reading lands, the age once it
+has, and **`not updating`** when the fetches have started failing. That last
+one is the one that must not read like the second: a frozen number under a
+live label is a reading nothing can correct. A card with no live entities still
+says `Updated 3 d ago` — one age, one line.
+
+**And a card pinned to a past run is no longer given live readings at all.**
+Paging back with `‹ ›` is how you see what a card said in March; overlaying
+this afternoon's door state on March's chart made it a hybrid of the two with
+nothing on screen able to say so. It applied to the expanded view as well.
+
+Nothing about how live cards work has changed, and nothing new is configurable.
+To re-run an analysis it is still **⋯ → ↻ Regenerate** on the card.
+
+`tests/manual/measure-cardlive.mjs` drives the real card renderer and was
+checked against the old behaviour first — nineteen failures, including the
+pinned-run overlay, which nothing had noticed.
+
+### Also: a duration sensor is not a stuck sensor
+
+`dev.frozen` says "a real sensor moves", and 1.50.0 narrowed it to sensors
+that declare what kind of quantity they measure — which dropped the fixed
+tariffs and rated capacities it had been firing on. `duration` was missed.
+
+A duration is a **span**, and the spans a house publishes are almost all
+configured or last-measured: a button's hold time, a timer's length, how long
+the last run took, a track's length. Each reads one value until somebody
+changes it or runs the thing again, which on anything used occasionally is
+weeks — so a `Hype Button duration` sitting at one value for seven days was
+reported as a sensor that had stopped updating, on a sensor working exactly as
+intended. It is skipped now.
+
+The test names it beside a real `current` sensor on purpose: a *configured*
+current limit carries no device class and is skipped, while a current sensor
+that has not moved in a week is exactly what this check is for. Adding a class
+to that set must not quietly take a neighbour with it.
+
+### Also: a cap with a retry, and its sibling with none
+
+Reported from a real install: the memory queue had stopped draining and
+nothing in the add-on's configuration could start it again.
+
+A consolidation pass writes two files — `memory.md` and the small `voice.md`
+distillate the voice path reads on every request — and each has a size cap.
+1.18.0 gave the document's cap a retry, because a guard that refuses has to
+change the next attempt or it is a loop: an over-size `memory.md` feeds the
+measured overshoot back to the model and only the second attempt fails, with
+a message naming `memory_max_kb` as the setting that ends it.
+
+**`voice.md` got none of that.** An over-long distillate returned on its first
+overshoot — no note fed back, no attempt spent, the identical prompt again
+five minutes later, for ever — the same bug 1.18.0 had just fixed, left
+standing in the sibling branch six lines below the fix, for thirty-four
+releases. And worse in one way: `memory_max_kb` is an option a person can
+raise, while the 2 KB voice budget is a constant in the script, so that
+failure named no remedy anybody could perform. The queue could not drain by
+any route.
+
+Both caps are measured together now and either sends the pass round again,
+with the retry naming whichever overshot — both, when both did, since a note
+about one half invites an answer that fixes that half and breaks the other.
+
+What happens when the attempts run out differs, and it differs because the
+two files are not the same kind of thing. `memory.md` **is** the memory: a
+document cut short loses facts nothing else holds, so an over-size one is
+still refused whole. `voice.md` is derived from it — rewritten from scratch by
+every pass, holding nothing the document does not — so it is **trimmed** to
+its budget on whole bullets and filed with the merge, and the log says it was
+trimmed, because a file quietly missing its tail is worse than a short one.
+Its last few nicknames cost one voice turn until the next pass; refusing cost
+the entire memory pipeline.
+
+One subtlety worth naming: the erasure guard that catches a rewrite
+pretending to be a merge is deliberately skipped on a retry, because a pass
+explicitly told to drop facts is not one. A retry that asked only for a
+shorter `voice.md` said nothing of the kind — so the guard keys on that
+request specifically, not on "a retry happened". Keyed the loose way, a
+distillate over its own budget would wave through a wiped document; the test
+that pins it fails against exactly that.
+
 ## 1.52.0
 
 **brAIn now asks why you did something.** Everything it could say about a home

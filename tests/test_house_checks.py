@@ -604,6 +604,13 @@ class TestDeviceChecks(unittest.TestCase):
              {"unit_of_measurement": "A", "friendly_name": "Charge limit"}),
             ("sensor.air_quality",
              {"device_class": "aqi", "friendly_name": "Air quality"}),
+            # A duration is a SPAN, and the spans a house publishes are
+            # configured or last-measured: a button's hold time, a timer's
+            # length, how long the last run took. Reported from a real
+            # house on a sensor that was working exactly as intended.
+            ("sensor.hype_button_duration",
+             {"device_class": "duration", "unit_of_measurement": "s",
+              "friendly_name": "Hype Button duration"}),
         ):
             snap = house()
             snap["states"][eid] = {
@@ -624,6 +631,12 @@ class TestDeviceChecks(unittest.TestCase):
             ("sensor.study_pressure", "pressure", "hPa"),
             ("sensor.bath_humidity", "humidity", "%"),
             ("sensor.hall_lux", "illuminance", "lx"),
+            # Deliberately the pair to `sensor.charge_current_limit` in
+            # the test above: a CONFIGURED current limit names no class
+            # and is skipped, while a real `current` sensor that has not
+            # moved in a week is exactly what this check is for. Adding a
+            # class to the skip set must not take a neighbour with it.
+            ("sensor.feed_current", "current", "A"),
         ):
             snap = house()
             snap["states"][eid] = {

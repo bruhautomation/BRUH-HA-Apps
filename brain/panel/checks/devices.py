@@ -41,9 +41,18 @@ FROZEN_MIN_DAYS = 5
 # `monetary` is named as well because a fixed tariff carries it and sits
 # still for years, and `aqi`/`enum` because neither is a continuous
 # quantity. `battery` and `signal_strength` were already out.
+#
+# `duration` is the one the first cut missed, and it is the clearest case
+# in the set: a duration is a SPAN, and the spans a house publishes are
+# almost all either configured or last-measured. A button's hold time, a
+# timer's length, how long the last run took, a track's length — each
+# reads one value until somebody changes it or runs the thing again,
+# which on anything used occasionally is weeks. It reached the list the
+# way `temperature`'s ambient gap did: a real house, a real row, and a
+# sensor that was working exactly as intended.
 FROZEN_SKIP_CLASSES = frozenset({
     "battery", "signal_strength", "monetary", "enum", "aqi",
-    "timestamp", "date",
+    "timestamp", "date", "duration",
 })
 # And a cap, for `base.unusual`'s reason. More than a handful of sensors
 # frozen at once is not a house with a handful of broken sensors — it is

@@ -153,6 +153,10 @@ const state = {
   history: {},    // id -> [{ts, generated_at, title}] newest first (lazy)
   prevLatest: {}, // id -> full previous-run object (for "prev:" diffs)
   viewing: {},    // id -> {ts, data, prev} when a card is pinned to a past run
+  // id -> {at, n, ok} — when live readings last ARRIVED for a card, how
+  // many, and whether the last attempt got through. A live card has TWO
+  // ages and the foot used to report one of them; see `liveAgeText`.
+  liveSeen: {},
 };
 
 // ---------------------------------------------------------------- helpers
@@ -375,18 +379,64 @@ async function liveTick() {
     try {
       const d = await api(`api/insight/${insightId}/live`);
       if (d.poll_s) livePollS = d.poll_s;
+      const states = d.states || {};
       frames.forEach(({ frameId, frame }) => {
         if (!frame.contentWindow) return;
         frame.contentWindow.postMessage(
-          { type: "bruh-live", id: frameId, states: d.states || {} }, "*");
+          { type: "bruh-live", id: frameId, states }, "*");
       });
+      // When readings last ARRIVED, which is the one age the card could
+      // not report: `generated_at` is when Claude wrote the prose, and on
+      // a live card the numbers beside it are seconds old.
+      state.liveSeen[insightId] = {
+        at: Date.now(), n: Object.keys(states).length, ok: true,
+      };
     } catch (e) {
       // A refresh that did not arrive leaves the card showing what it
       // last had, which is the same thing a card with no live entities
-      // shows and is never worse than blanking it.
+      // shows and is never worse than blanking it — but it must not go on
+      // claiming the readings are current. The arrival stamp is KEPT so
+      // the foot can age from the last real one rather than resetting.
+      const prev = state.liveSeen[insightId] || {};
+      state.liveSeen[insightId] = { ...prev, ok: false };
     }
   }
+  // Painted from the tick rather than by re-rendering the card:
+  // `renderIfChanged` deliberately does not rebuild an iframe it does not
+  // have to, and a re-render every 15s to move one word would rebuild
+  // every visualization on the page.
+  paintLiveAge();
   if (liveFrames.size) livePoll = setTimeout(liveTick, livePollS * 1000);
+}
+
+// How old the live half of a card is, in the foot's own voice. Three
+// states and they are three different claims: nothing has arrived yet,
+// readings are current, and the last fetch did not get through — the
+// third is the one that must not read as the second, because a frozen
+// number under a "live" label is the reading nothing can correct.
+function liveAgeText(insightId, declared) {
+  const seen = state.liveSeen[insightId];
+  const n = (seen && seen.n) || declared || 0;
+  const what = `${n} reading${n === 1 ? "" : "s"} live`;
+  if (!seen || !seen.at) return `· ${what} · waiting`;
+  if (!seen.ok) return `· ${what} · not updating`;
+  return `· ${what} · ${timeAgo(new Date(seen.at).toISOString())}`;
+}
+
+// Text AND the class, from one function, so the two can never disagree
+// about whether this card's readings are arriving. The words carry the
+// state on their own and the colour only reinforces it — status by colour
+// alone is what the design system forbids, and this line is read at
+// 11.5px in a muted row.
+function paintLive(span) {
+  const id = span.dataset.liveAge;
+  const seen = state.liveSeen[id];
+  span.textContent = liveAgeText(id, Number(span.dataset.liveN) || 0);
+  span.classList.toggle("stale", !!(seen && seen.at && !seen.ok));
+}
+
+function paintLiveAge() {
+  document.querySelectorAll("[data-live-age]").forEach(paintLive);
 }
 
 window.addEventListener("message", (ev) => {
@@ -1107,7 +1157,13 @@ async function stepRun(id, insight, dir) {
   viewRun(id, entries[next] || null);
 }
 
-function makeFrame(insight) {
+// `live` decides whether this frame is offered live readings. A card
+// pinned to a PAST run must not be: paging back is how you see what the
+// card said in March, and pushing today's door state into March's
+// visualization makes it a hybrid of that run's prose and this
+// afternoon's numbers — which is the two-ages confusion in its worst
+// form, because nothing on screen could tell you it had happened.
+function makeFrame(insight, live = true) {
   const wrapper = el("div", "viz");
   const frame = document.createElement("iframe");
   frame.setAttribute("sandbox", "allow-scripts");
@@ -1117,7 +1173,7 @@ function makeFrame(insight) {
   frame.dataset.frame = frameId;
   frame.srcdoc = insight.html + SIZE_SNIPPET(frameId) + LIVE_SNIPPET(frameId);
   wrapper.appendChild(frame);
-  watchLive(frameId, insight);
+  if (live) watchLive(frameId, insight);
   return wrapper;
 }
 
@@ -1246,7 +1302,7 @@ function makeCard(catInfo, insight, fallbackId) {
   if (shown) {
     const expand = el("button", "btn icon", "⤢");
     tip(expand, "Expand");
-    expand.addEventListener("click", () => openModal(shown));
+    expand.addEventListener("click", () => openModal(shown, !view));
     actions.appendChild(expand);
   }
 
@@ -1335,7 +1391,7 @@ function makeCard(catInfo, insight, fallbackId) {
     // same three claims were on the card, in the Memory tab, and counted
     // by neither, so answering one left the other two on screen looking
     // unanswered. The card reports; it no longer asks.
-    card.appendChild(makeFrame(shown));
+    card.appendChild(makeFrame(shown, !view));
     // Tags belong to the card, not to the run being viewed — editing them
     // while pinned to March's run must still change the card's tags.
     if (insight) {
@@ -1343,8 +1399,41 @@ function makeCard(catInfo, insight, fallbackId) {
       if (tagRow) card.appendChild(tagRow);
     }
     const foot = el("div", "foot");
-    foot.appendChild(el("span", null,
-      view ? `Generated ${timeAgo(shown.generated_at)}` : `Updated ${timeAgo(shown.generated_at)}`));
+    // A live card has TWO ages and the foot reported one of them.
+    // `generated_at` is when CLAUDE last read this home and wrote these
+    // conclusions; a card that declares `live` entities also carries
+    // numbers that are seconds old. Calling that single stamp "Updated"
+    // was wrong in both directions at once: it invites you to distrust a
+    // reading that is current, and to trust a sentence written three days
+    // ago against different data. So a live card says **Analysed**, which
+    // is a claim about the prose, and the readings get their own line.
+    const liveEnts = (!view && Array.isArray(shown.live)) ? shown.live : [];
+    const analysed = el("span", null,
+      view ? `Generated ${timeAgo(shown.generated_at)}`
+        : liveEnts.length ? `Analysed ${timeAgo(shown.generated_at)}`
+          : `Updated ${timeAgo(shown.generated_at)}`);
+    if (liveEnts.length) {
+      tip(analysed, "When Claude last read this home and wrote these "
+        + "conclusions. The readings in the chart are kept current "
+        + "separately — see the next line. Re-run the analysis with "
+        + "⋯ → Regenerate.");
+    }
+    foot.appendChild(analysed);
+    // And the other age. Rendered for every card that declares live
+    // entities, including before the first fetch has landed: a live card
+    // that says nothing is indistinguishable from a frozen one, which is
+    // also how a live card whose callback never fires goes unnoticed.
+    if (liveEnts.length) {
+      const live = el("span", "livemark", "");
+      live.dataset.liveAge = id;
+      live.dataset.liveN = String(liveEnts.length);
+      paintLive(live);
+      tip(live, `This card keeps ${liveEnts.length} entit`
+        + `${liveEnts.length === 1 ? "y" : "ies"} up to date while it is on `
+        + "screen, so those numbers are current. Everything Claude "
+        + "concluded about them is from the analysis above.");
+      foot.appendChild(live);
+    }
     // WHY this run happened, beside when it did. The scheduler's own
     // sentence when it queued one ("3 more finding(s) on the list", "memory
     // was updated"), and "you asked" / "you pressed Generate" otherwise —
@@ -1820,7 +1909,9 @@ function fastPoll() {
 
 // ------------------------------------------------------------------ modal
 
-function openModal(insight) {
+// `live` for `makeFrame`'s reason: expanding a card pinned to a past run
+// must not overlay today's readings on March's visualization.
+function openModal(insight, live = true) {
   $("#modalIcon").textContent = insight.icon || "✨";
   $("#modalTitle").textContent = insight.title || "";
   const frame = $("#modalFrame");
@@ -1833,7 +1924,7 @@ function openModal(insight) {
   // rather than a rebuilt one, so it stays in the DOM after the modal
   // closes; `liveTick`'s visibility test is what stops it being polled
   // for the rest of the session.
-  watchLive(frameId, insight);
+  if (live) watchLive(frameId, insight);
 }
 
 $("#modalClose").addEventListener("click", () => closeBox("#modal"));
