@@ -4,8 +4,13 @@
 A house check reads one instant and cannot go and check anything, so the
 Findings tab filled with rows that were true of a reading and wrong about
 the house. Triage is the step between filing and surfacing: one Claude
-run per pass, over the rows no rule could verify, answering `elevated` or
-`held` about each.
+run per drain, over the rows nothing has looked at, answering `elevated`
+or `held` about each.
+
+**Every producer files through it**, which is the correction 1.57.0
+makes: the first cut triaged house checks alone, and the runs it spared
+had read the house to write a card or study a topic — never to decide
+whether what they noticed in passing belongs on a list of decisions.
 
 The load-bearing rule is the one about what happens when that run cannot
 be made or cannot be read, so most of this file is that rule from seven
@@ -57,27 +62,28 @@ def check_row(n: int = 0) -> dict:
 # ---------------------------------------------------------------------------
 
 class TestWhoIsTriaged(unittest.TestCase):
-    """Only a producer that filed without looking at anything."""
+    """Everyone. The gate is unconditional, and that is the whole of it."""
 
-    def test_a_house_check_has_not_looked(self):
-        self.assertTrue(triage.needs_triage("check:dev.frozen"))
-        self.assertTrue(triage.needs_triage("check:base.unusual"))
-
-    def test_everything_that_spent_a_claude_turn_has(self):
-        """An insight run, a study session and a curiosity run each read the
-        house before filing, so triaging one is paying full price to have a
-        model grade its own answer a minute later."""
-        for source in ("energy", "automations", "study", "curiosity", ""):
-            self.assertFalse(triage.needs_triage(source), source)
-        self.assertFalse(triage.needs_triage(None))
-
-    def test_the_gate_marks_only_those_rows(self):
+    def test_the_gate_marks_every_row_whoever_filed_it(self):
+        """A check, an insight run, a study session, the fixer and a row
+        with no source at all. The producer's name is context for the
+        prompt now — it decides nothing."""
         rows = triage.gate([
             {"text": "a", "source": "check:dev.frozen"},
             {"text": "b", "source": "energy"},
+            {"text": "c", "source": "study"},
+            {"text": "d", "source": "fix"},
+            {"text": "e"},
         ])
-        self.assertEqual(rows[0]["status"], "triaging")
-        self.assertNotIn("status", rows[1])
+        self.assertEqual([r["status"] for r in rows], ["triaging"] * 5)
+
+    def test_a_status_a_producer_claimed_for_itself_is_overwritten(self):
+        """A line in the study inbox is JSON another process wrote, so it
+        can name its own status and `coerce` honours one in
+        `PRE_STATUSES`. The gate is what closes that door."""
+        [row] = triage.gate([{"text": "a", "source": "study",
+                              "status": "open"}])
+        self.assertEqual(row["status"], "triaging")
 
     def test_the_gate_does_not_mutate_what_it_is_given(self):
         """The same list is handed to `refresh_details` and `clear_resolved`
@@ -381,7 +387,10 @@ class PassCase(unittest.TestCase):
             self.server._house_prompt_block, self.server._read_shared_memory,
             self.server.INSIGHTS_DIR, self.server.MEMORY_INBOX_DIR,
             self.server.CARD_TOKEN_FILE, self.server.WWW_CARD_DIR,
+            findings_store.INBOX_DIR,
         )
+        findings_store.INBOX_DIR = base / "findings-inbox"
+        findings_store.INBOX_DIR.mkdir(parents=True, exist_ok=True)
         self.server.INSIGHTS_DIR = base
         self.server.MEMORY_INBOX_DIR = base / "memory-inbox"
         self.server.CARD_TOKEN_FILE = base / "secrets" / "card_token"
@@ -421,7 +430,8 @@ class PassCase(unittest.TestCase):
          engine.run_analyst, engine.get_auth, engine.run_claude,
          self.server._house_prompt_block, self.server._read_shared_memory,
          self.server.INSIGHTS_DIR, self.server.MEMORY_INBOX_DIR,
-         self.server.CARD_TOKEN_FILE, self.server.WWW_CARD_DIR) = self._olds
+         self.server.CARD_TOKEN_FILE, self.server.WWW_CARD_DIR,
+         findings_store.INBOX_DIR) = self._olds
         self.server.JOBS.clear()
         self.tmp.cleanup()
 
@@ -435,9 +445,10 @@ class PassCase(unittest.TestCase):
             "text": json.dumps({"verdicts": verdicts}),
             "meta": {"session_id": run_id}})
 
-    def run_pass(self, created: list[dict], now: float | None = None):
+    def run_pass(self, now: float | None = None):
+        """The drain reads the queue, so nothing is handed to it."""
         return asyncio.run(self.server._triage_findings(
-            created, now if now is not None else time.time()))
+            now if now is not None else time.time()))
 
     def statuses(self) -> list[str]:
         return [f["status"] for f in
@@ -455,7 +466,7 @@ class TestSilenceSurfaces(PassCase):
     """
 
     def assert_all_shown(self, created, expect_reason=None):
-        surfaced = self.run_pass(created)
+        surfaced = self.run_pass()
         self.assertEqual(sorted(f["ts"] for f in surfaced),
                          sorted(f["ts"] for f in created))
         self.assertEqual(set(self.statuses()), {"open"})
@@ -503,7 +514,7 @@ class TestSilenceSurfaces(PassCase):
     def test_a_row_the_reply_did_not_mention(self):
         created = self.file(2)
         self.reply([{"id": 1, "verdict": "held", "reason": "a cupboard"}])
-        surfaced = self.run_pass(created)
+        surfaced = self.run_pass()
         self.assertEqual([f["ts"] for f in surfaced], [created[1]["ts"]])
         rows = {f["ts"]: f for f in findings_store.list_all()}
         self.assertEqual(rows[created[0]["ts"]]["status"], "held")
@@ -511,25 +522,18 @@ class TestSilenceSurfaces(PassCase):
         self.assertEqual(rows[created[1]["ts"]]["triage"]["reason"],
                          triage.NOT_MENTIONED)
 
-    def test_more_arrived_than_one_look_can_cover(self):
-        """The surplus surfaces rather than waiting for the next pass.
-        Waiting is silence, and silence is what this step must never be
-        mistaken for a verdict."""
-        created = self.file(triage.MAX_BATCH + 3)
-        self.reply([{"id": i, "verdict": "held", "reason": "a cupboard"}
-                    for i in range(1, triage.MAX_BATCH + 1)])
-        surfaced = self.run_pass(created)
-        spilled = created[triage.MAX_BATCH:]
-        self.assertEqual(sorted(f["ts"] for f in surfaced),
-                         sorted(f["ts"] for f in spilled))
-        rows = {f["ts"]: f for f in findings_store.list_all()}
-        for row in spilled:
-            self.assertEqual(rows[row["ts"]]["status"], "open")
-            self.assertEqual(rows[row["ts"]]["triage"]["reason"],
-                             triage.TOO_MANY)
-        # ...and the batch was the batch, not the whole pile.
-        self.assertEqual(len([f for f in rows.values()
-                              if f["status"] == "held"]), triage.MAX_BATCH)
+    def test_a_row_left_unjudged_because_a_drain_stopped_coming_back(self):
+        """The one that makes the surplus WAITING honest rather than a
+        second kind of silence: the queue is bounded by the clock, not by
+        a drain being polite."""
+        self.file(1)
+        entry = json.loads(findings_store.FINDINGS_FILE.read_text())
+        entry["findings"][0]["ts"] = int(time.time() - triage.STALE_S - 60)
+        findings_store.FINDINGS_FILE.write_text(json.dumps(entry))
+        surfaced = self.run_pass()
+        self.assertEqual(len(surfaced), 1)
+        self.assertEqual(findings_store.list_all()[0]["triage"]["reason"],
+                         triage.UNJUDGED)
 
     def test_a_row_left_unjudged_by_an_earlier_pass(self):
         """A panel that died between filing and judging. The next pass is
@@ -538,7 +542,7 @@ class TestSilenceSurfaces(PassCase):
         entry = json.loads(findings_store.FINDINGS_FILE.read_text())
         entry["findings"][0]["ts"] = int(time.time() - triage.STALE_S - 60)
         findings_store.FINDINGS_FILE.write_text(json.dumps(entry))
-        surfaced = self.run_pass([])
+        surfaced = self.run_pass()
         self.assertEqual(len(surfaced), 1)
         [row] = findings_store.list_all()
         self.assertEqual(row["status"], "open")
@@ -547,19 +551,21 @@ class TestSilenceSurfaces(PassCase):
     def test_a_pass_with_nothing_new_spawns_nothing(self):
         """The decision about what a run costs is taken before a process
         exists — a pass that filed nothing is the ordinary case."""
-        self.assertEqual(self.run_pass([]), [])
+        self.assertEqual(self.run_pass(), [])
         self.assertEqual(self.prompts, [])
 
-    def test_a_row_from_a_producer_that_looked_is_never_held(self):
-        """An insight run's finding never enters `triaging`, so no verdict
-        can reach it — asserted end to end rather than off `needs_triage`,
-        because the gate and the pass are two places it could go wrong."""
+    def test_a_row_from_a_producer_that_read_the_house_is_judged_too(self):
+        """The correction. An insight run's finding goes through the same
+        gate and the same run — asserted end to end, because the gate and
+        the drain are two places it could go wrong."""
         [row] = findings_store.add_many(triage.gate(
-            [{**check_row(0), "source": "energy"}]))
-        self.assertEqual(row["status"], "open")
-        self.assertEqual(self.run_pass([row]), [])
-        self.assertEqual(self.prompts, [])
-        self.assertEqual(findings_store.get(row["ts"])["status"], "open")
+            [{**check_row(0), "source": "energy",
+              "source_title": "Energy"}]))
+        self.assertEqual(row["status"], "triaging")
+        self.reply([{"id": 1, "verdict": "held", "reason": "a cupboard"}])
+        self.assertEqual(self.run_pass(), [])
+        self.assertIn("Energy", self.prompts[0])
+        self.assertEqual(findings_store.get(row["ts"])["status"], "held")
 
 
 class TestHoldingSomethingBack(PassCase):
@@ -570,7 +576,7 @@ class TestHoldingSomethingBack(PassCase):
              "reason": "its history has 40 changes today — it is a button"},
             {"id": 2, "verdict": "elevated", "reason": "that battery is real"},
         ], run_id="sess-abc")
-        surfaced = self.run_pass(created)
+        surfaced = self.run_pass()
         self.assertEqual([f["ts"] for f in surfaced], [created[1]["ts"]])
         rows = {f["ts"]: f for f in findings_store.list_all()}
         held = rows[created[0]["ts"]]
@@ -587,9 +593,9 @@ class TestHoldingSomethingBack(PassCase):
         re-litigates every correction they have ever made."""
         self.server._read_shared_memory = \
             lambda: "The pantry contact is on a cupboard nobody opens."
-        created = self.file(1)
+        self.file(1)
         self.reply([{"id": 1, "verdict": "held", "reason": "they said so"}])
-        self.run_pass(created)
+        self.run_pass()
         self.assertIn("cupboard nobody opens", self.prompts[0])
 
 
@@ -630,6 +636,180 @@ class TestTheRoute(PassCase):
             return await client.post(f"/api/finding/{row['ts']}/elevate")
 
         self.assertEqual(self.drive(body).status, 409)
+
+
+# ---------------------------------------------------------------------------
+# Every producer, and the queue they share
+# ---------------------------------------------------------------------------
+
+class TestEveryProducerFilesThroughTheGate(PassCase):
+    """The correction 1.57.0 makes. Five producers file findings and one of
+    them is a tab fetch that must not spend a Claude run, so the claim is
+    two halves: nothing reaches the list without being gated, and the
+    gating does not make the tab expensive."""
+
+    def drive(self, body):
+        async def run():
+            from aiohttp.test_utils import TestClient, TestServer
+            client = TestClient(TestServer(self.server.make_app()))
+            await client.start_server()
+            try:
+                return await body(client)
+            finally:
+                await client.close()
+        return asyncio.run(run())
+
+    def queue_study_finding(self, status: str | None = None):
+        row = {"text": "the study session noticed the loft light is on",
+               "source": "study", "source_title": "Study session",
+               "severity": "info"}
+        if status is not None:
+            row["status"] = status
+        (findings_store.INBOX_DIR / "1-study.jsonl").write_text(
+            json.dumps(row) + "\n", encoding="utf-8")
+
+    def test_a_study_session_arrives_waiting_to_be_looked_at(self):
+        self.queue_study_finding()
+
+        async def body(client):
+            return await (await client.get("/api/findings")).json()
+
+        payload = self.drive(body)
+        [row] = payload["findings"]
+        self.assertEqual(row["status"], "triaging")
+        self.assertEqual(payload["open"], 0)
+
+    def test_a_status_the_inbox_file_claimed_does_not_survive_the_gate(self):
+        """The one producer whose rows are JSON another process wrote.
+        `coerce` honours a status in `PRE_STATUSES`, so without the gate a
+        study session could file straight onto the list."""
+        self.queue_study_finding(status="open")
+
+        async def body(client):
+            return await (await client.get("/api/findings")).json()
+
+        [row] = self.drive(body)["findings"]
+        self.assertEqual(row["status"], "triaging")
+
+    def test_the_tab_fetch_that_sweeps_does_not_spend_a_run(self):
+        """A Claude run behind a tab fetch is the "refresh everything"
+        control this panel deleted, with a nicer name. The drain on the
+        scheduler's own minute is what looks at it."""
+        self.queue_study_finding()
+
+        async def body(client):
+            await (await client.get("/api/findings")).json()
+            return await (await client.get("/api/findings")).json()
+
+        self.drive(body)
+        self.assertEqual(self.prompts, [])
+
+    def test_no_call_site_in_the_panel_can_file_past_the_gate(self):
+        """A behaviour test covers the producer a request can reach; this
+        covers the four it cannot without a real house behind it. It is a
+        claim a read CAN honestly make — that no `add_many` call anywhere
+        in the panel is missing its gate — rather than a stand-in for
+        driving one."""
+        import ast
+        tree = ast.parse((PANEL_DIR / "server.py").read_text())
+        calls = [n for n in ast.walk(tree)
+                 if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Attribute)
+                 and n.func.attr == "add_many"
+                 and isinstance(n.func.value, ast.Name)
+                 and n.func.value.id == "findings_store"]
+        self.assertGreaterEqual(len(calls), 4)
+        for call in calls:
+            arg = call.args[0] if call.args else None
+            gated = (isinstance(arg, ast.Call)
+                     and isinstance(arg.func, ast.Attribute)
+                     and arg.func.attr == "gate"
+                     and isinstance(arg.func.value, ast.Name)
+                     and arg.func.value.id == "triage")
+            self.assertTrue(gated, f"line {call.lineno} files past the gate")
+
+    def test_the_store_sweep_gates_only_when_it_is_handed_one(self):
+        """`sweep_inbox` is the one `add_many` inside the store, so the
+        policy is passed in rather than reached for — a store that knew it
+        would be a second place it is decided."""
+        self.queue_study_finding()
+        [ungated] = findings_store.sweep_inbox()
+        self.assertEqual(ungated["status"], "open")
+
+
+class TestTheDrainReadsTheQueue(PassCase):
+    """Not what a caller just filed. Four of the five producers do not run
+    a checks pass, so a drain that could only judge its own caller's rows
+    would leave theirs to the stale sweep an hour later."""
+
+    def test_a_row_another_producer_filed_is_judged_by_whoever_drains(self):
+        queued = findings_store.add_many(triage.gate(
+            [{**check_row(0), "source": "study",
+              "source_title": "Study session"}]))
+        self.reply([{"id": 1, "verdict": "held", "reason": "a cupboard"}])
+        self.assertEqual(self.run_pass(), [])
+        self.assertEqual(findings_store.get(queued[0]["ts"])["status"],
+                         "held")
+
+    def test_the_surplus_waits_rather_than_surfacing_unjudged(self):
+        """Surfacing it would spend the cap on exactly the rows this
+        exists to catch, and on the busiest houses first."""
+        created = self.file(triage.MAX_BATCH + 3)
+        self.reply([{"id": i, "verdict": "held", "reason": "a cupboard"}
+                    for i in range(1, triage.MAX_BATCH + 1)])
+        self.assertEqual(self.run_pass(), [])
+        rows = {f["ts"]: f["status"] for f in findings_store.list_all()}
+        self.assertEqual(
+            [rows[f["ts"]] for f in created[triage.MAX_BATCH:]],
+            ["triaging"] * 3)
+        self.assertEqual(len([v for v in rows.values() if v == "held"]),
+                         triage.MAX_BATCH)
+
+    def test_the_next_drain_takes_the_oldest_first(self):
+        """Which is what stops a row losing the same lottery twice."""
+        created = self.file(triage.MAX_BATCH + 3)
+        self.reply([{"id": i, "verdict": "held", "reason": "a cupboard"}
+                    for i in range(1, triage.MAX_BATCH + 1)])
+        self.run_pass()
+        self.reply([{"id": i, "verdict": "elevated", "reason": "real"}
+                    for i in (1, 2, 3)])
+        surfaced = self.run_pass()
+        self.assertEqual(sorted(f["ts"] for f in surfaced),
+                         sorted(f["ts"] for f in created[triage.MAX_BATCH:]))
+        self.assertEqual(findings_store.list_all("triaging"), [])
+
+    def test_a_gate_that_answered_before_any_run_covers_the_whole_queue(self):
+        """`MAX_BATCH` is what one run may READ. Rationing an excuse no run
+        was spawned for would leave the rest waiting on a drain that gives
+        the identical answer a minute later."""
+        import engine
+        engine.get_auth = lambda: None
+        created = self.file(triage.MAX_BATCH + 3)
+        surfaced = self.run_pass()
+        self.assertEqual(len(surfaced), len(created))
+        self.assertEqual(set(self.statuses()), {"open"})
+        for row in findings_store.list_all():
+            self.assertEqual(row["triage"]["reason"], triage.NO_CREDENTIAL)
+
+    def test_two_drains_at_once_spend_one_run(self):
+        """`create_task` and `await` both only schedule, so a guard reading
+        a state its own call has not set yet is no guard — the flag is set
+        before the first await. The loser files nothing: its rows are in
+        the queue the winner is draining."""
+        created = self.file(2)
+        self.reply([{"id": i, "verdict": "elevated", "reason": "real"}
+                    for i in (1, 2)])
+
+        async def both():
+            return await asyncio.gather(
+                self.server._triage_findings(time.time()),
+                self.server._triage_findings(time.time()))
+
+        first, second = asyncio.run(both())
+        self.assertEqual(len(self.prompts), 1)
+        self.assertEqual(sorted(f["ts"] for f in first + second),
+                         sorted(f["ts"] for f in created))
+        self.assertEqual(findings_store.list_all("triaging"), [])
 
 
 # ---------------------------------------------------------------------------

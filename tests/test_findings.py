@@ -930,7 +930,13 @@ class TestFindingRoutes(ServerCase):
                 data = await (await client.get("/api/findings")).json()
                 self.assertEqual([f["text"] for f in data["findings"]],
                                  ["Found while studying"])
-                self.assertEqual(data["open"], 1)
+                # In the store on the tab's own fetch, which is all this
+                # sweep is for; waiting to be looked at, so not yet work.
+                # A tab fetch may not spend a Claude run, so the drain on
+                # the scheduler's minute is what puts it on the list.
+                self.assertEqual([f["status"] for f in data["findings"]],
+                                 ["triaging"])
+                self.assertEqual(data["open"], 0)
             finally:
                 await client.close()
 

@@ -365,13 +365,21 @@ def _shape(entry: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 @_mutates
-def sweep_inbox() -> list[dict]:
+def sweep_inbox(shape=None) -> list[dict]:
     """Fold `/config/.brain/findings/inbox/*.jsonl` into the store.
 
     Same contract as the memory inbox: append-only JSONL, one JSON object
     per line, consumed once. A torn or unparseable line is skipped rather
     than taking the whole file down — a study session that dies mid-write
     must not be able to wedge the Findings tab.
+
+    ``shape`` is `triage.gate`, passed in rather than reached for: this is
+    the one producer whose `add_many` call is inside the store, and a
+    store that knew the triage policy would be a second place it is
+    decided. Passing it is also what closes the bypass the other four do
+    not have — a line in the inbox is JSON from another process, so it can
+    name its own ``status``, and `coerce` honours one in `PRE_STATUSES`.
+    The gate overwrites it.
 
     Returns the findings that were actually NEW — the callers that log a
     count take a len(), and the notify hook needs the entries themselves,
@@ -402,7 +410,7 @@ def sweep_inbox() -> list[dict]:
     # One write for the whole sweep, not one per finding: a study session
     # that files five would otherwise rewrite the store five times, which on
     # an SD card is five erase cycles for one batch of results.
-    added = add_many(pending)
+    added = add_many(shape(pending) if shape else pending)
     for path in swept:
         try:
             path.unlink()
@@ -697,6 +705,38 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
 
 
 @_mutates
+def statuses(rows: list[int]) -> dict[int, str]:
+    """Where each of these rows stands now, from ONE read and no shaping.
+
+    The checks pass files, then a drain judges some of what is waiting —
+    including rows other producers filed — so "what happened to the ones
+    I filed" is a question only the store can answer afterwards, and it
+    is asked once per pass for a summary line.
+    """
+    want = {int(t) for t in rows}
+    return {int(e.get("ts") or 0): str(e.get("status") or "")
+            for e in _load() if int(e.get("ts") or 0) in want}
+
+
+def awaiting_triage() -> list[dict]:
+    """Every row still waiting for something to look at it, OLDEST FIRST.
+
+    The drain reads this rather than being handed what a caller just
+    filed, because five producers file and one of them is a tab fetch
+    that must not spend. A row filed by any of them is picked up by the
+    next drain whoever ran it, which is what makes "every finding is
+    triaged" true of the producer that cannot triage its own.
+
+    Oldest first is the half that makes `MAX_BATCH` waiting honest: a row
+    that did not fit this batch is at the front of the next one, so it
+    cannot lose the same lottery twice.
+    """
+    rows = [s for s in (_shape(e) for e in _load())
+            if s["text"] and s["status"] == "triaging"]
+    rows.sort(key=lambda f: f["ts"])
+    return rows
+
+
 def stale_triaging(cutoff: float) -> list[int]:
     """The ids of rows left mid-triage before ``cutoff``.
 
