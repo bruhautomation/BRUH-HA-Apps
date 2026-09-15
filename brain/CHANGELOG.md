@@ -2,6 +2,105 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.53.0
+
+**A finding you have accepted is not a decision any more, so it stops being
+one.** There is a To-do list now, and moving a card onto it is the fourth
+ending a finding can have.
+
+The Findings tab is a list of **decisions** waiting on you, and the commonest
+honest answer to a finding was one it had nowhere to put. Not "I fixed it",
+not "you have this wrong" — *yes, that is real, and I will do it*. So a flat
+battery sat there as an open question for as long as it took to get round to,
+the badge counted it every day, and a list of decisions filled up with chores
+nobody could clear without lying about one of them.
+
+### The fourth ending
+
+**＋ To-do** on a finding does what every ending does — the row is deleted and
+the key is settled, so brAIn will not raise it at you again while it waits —
+with one thing deliberately missing:
+
+| | what it writes |
+|---|---|
+| **I fixed it** | a memory line, now |
+| **Wrong** | a correction, now |
+| **Got it** | nothing (the fix already wrote its own) |
+| **＋ To-do** | **nothing yet** |
+
+Nothing is true about the house when you put something on a list. The battery
+is still flat. So the memory line is written at the moment it becomes true,
+which is when you tick the chore off, in exactly the words **I fixed it**
+would have used — and the ledger entry is upgraded from `accepted` to `fixed`
+in place, so one problem stays one row of the producer scorecard.
+
+An accepted report counts as **confirmed** on that scorecard, because agreeing
+to do something is agreeing it was real. Counting it as nothing until the
+chore was finished would have made a producer look worse the more of its
+reports people took seriously and had not got round to.
+
+### The tab
+
+Items carry everything the card held — the text, the evidence, the suggested
+fix, the entity, who found it. Copied rather than referenced, because the card
+is about to stop existing, which is the whole point of the move.
+
+Two presses on a chore:
+
+- **✓ Done** — sorted. The memory line, in your own words if you add them.
+- **⌫ Off the list** — not doing it. On a chore that came from a finding this
+  **releases the suppression**: deciding not to do something is not evidence
+  it stopped being true, so the next checks pass is free to file it again. If
+  it really is over, nothing comes back.
+
+Both hand back an Undo, and so does ＋ To-do — one token reverses every half of
+it, because the row back with the item still there is the same chore twice.
+
+Finished chores stay, behind a **Done** filter that is absent until there is
+something in it, counted by nothing, capped, one verb: *Put it back*. The
+Findings tab refuses an archive because memory is the record of a decision;
+this is a list of chores, and one that forgets what you did this week cannot
+answer "did I already do that". Putting one back does not take the memory line
+with it — that was written when you said it was done, and once a consolidation
+has filed it, editing the document is the only honest correction.
+
+### You can add your own
+
+In the box at the top of the tab, in Home Assistant's own To-do app, or through
+the new **`brain.add_todo`** service. A list that only holds what brAIn noticed
+is a queue of brAIn's opinions rather than a list of what needs doing.
+
+### `todo.brain` carries both lists
+
+Home Assistant's To-do panel now shows the findings brAIn is still asking about
+*and* the chores you have accepted, as one list — from the app's side they are
+the same thing, which is work — with each row doing on completion what it would
+have done on its own screen. The uid says which store it came from
+(`f:` / `t:`), prefixed so the two id spaces cannot collide by accident; a bare
+integer is still read as a finding, because that is what every uid handed out
+before this release was.
+
+**Adding an item is offered there now, and was refused before.** That refusal
+was right about what the list then was: an item created against a derived view
+of the findings store would have had nothing behind it and would have vanished
+on the next poll, and a list that silently deletes what you put on it is worse
+than one that will not take it. There is a store behind it now, so the
+condition the refusal protected is met rather than argued away.
+
+### Also
+
+The top bar's one-row breakpoint moved from 1340 to **1430**. An eighth tab is
+about 90px of row, and the one-row shape stopped fitting the two trouble states
+at 1340 — 1413px paused, 1425px on a failed login. Both numbers come from
+`measure-topbar`, which is the whole reason that script exists.
+
+`tests/manual/measure-todo.mjs` is new and in CI's `layout` job. It drives the
+real renderer and, on its first run, caught a bug in this release's own CSS: the
+add box was styled `font: inherit`, which is class-qualified and so outranks the
+bare 16px touch floor — iOS would have zoomed the ingress iframe in on focus and
+never back out. Written down one control over already, and found here by
+measuring rather than by somebody's phone.
+
 ## 1.52.1
 
 **A live card has two ages, and the foot was reporting one of them.**

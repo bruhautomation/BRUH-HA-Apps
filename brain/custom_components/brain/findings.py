@@ -25,7 +25,8 @@ import os
 
 from homeassistant.core import HomeAssistant
 
-from .const import EVENT_FINDING, FINDINGS_STATE_FILENAME, SHARED_DIR
+from .const import (EVENT_FINDING, FINDINGS_STATE_FILENAME, SHARED_DIR,
+                    TODO_STATE_FILENAME)
 
 # The mirror is capped by the add-on (STATE_MAX_ROWS = 50 short rows), but a
 # corrupted or hand-edited file must not be able to stall the event loop.
@@ -55,6 +56,38 @@ def read_findings_state(hass: HomeAssistant) -> dict | None:
         return None
     rows = data.get("findings")
     data["findings"] = [f for f in rows if isinstance(f, dict) and f.get("text")] \
+        if isinstance(rows, list) else []
+    return data
+
+
+def todo_state_path(hass: HomeAssistant) -> str:
+    return hass.config.path(SHARED_DIR, TODO_STATE_FILENAME)
+
+
+def read_todo_state(hass: HomeAssistant) -> dict | None:
+    """The add-on's published to-do mirror, or None if it never wrote one.
+
+    Shape: {generated_at, open, items: [{id, text, detail, fix, entity_id,
+    severity, origin, source_title, added_at}, ...]} — open items only,
+    worst first.
+
+    It lives beside the findings reader because it is the same contract
+    read twice — a file the add-on owns, never written here, stale rather
+    than wrong when the add-on is stopped — and a second module for
+    fifteen lines of that would be a second place for the rule to drift.
+    """
+    path = todo_state_path(hass)
+    try:
+        if os.path.getsize(path) > MAX_STATE_BYTES:
+            return None
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    rows = data.get("items")
+    data["items"] = [i for i in rows if isinstance(i, dict) and i.get("text")] \
         if isinstance(rows, list) else []
     return data
 

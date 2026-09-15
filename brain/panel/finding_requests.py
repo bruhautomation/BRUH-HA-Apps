@@ -80,10 +80,23 @@ SNOOZE_DEFAULT_H = 24
 SNOOZE_MAX_H = 24 * 30
 
 
+TODO_ACTIONS = ("done", "drop", "add")
+TODO_TEXT_MAX = 200
+
+
 def parse(obj) -> dict | None:
-    """A validated request, or None for anything that is not one."""
+    """A validated request, or None for anything that is not one.
+
+    Two kinds share this queue, because they arrive from the same two
+    surfaces and their order matters between them — a tick on an item the
+    same burst created has to be applied after the create. A request with
+    no `kind` is a finding's, which is what every request written before
+    the to-do list existed is.
+    """
     if not isinstance(obj, dict):
         return None
+    if str(obj.get("kind") or "finding").strip().lower() == "todo":
+        return _parse_todo(obj)
     ts = obj.get("ts")
     if isinstance(ts, bool) or not isinstance(ts, (int, float)):
         return None
@@ -102,6 +115,36 @@ def parse(obj) -> dict | None:
         # Where the answer came from, for the log line and for nothing
         # else: an ending is an ending whichever surface gave it, and a
         # per-surface rule here would be a second policy nobody can see.
+        "via": str(obj.get("via") or "")[:32],
+    }
+
+
+def _parse_todo(obj: dict) -> dict | None:
+    """A validated to-do request, or None. Every field is another process's.
+
+    `add` carries a sentence and no id because the item does not exist
+    yet; everything else carries an id and no sentence. A request that
+    could never be applied is rejected here rather than reaching the
+    panel and being dropped there with a puzzled log line.
+    """
+    action = str(obj.get("action") or "").strip().lower()
+    if action not in TODO_ACTIONS:
+        return None
+    item_id = obj.get("id")
+    if isinstance(item_id, bool) or not isinstance(item_id, (int, float)):
+        item_id = 0
+    text = str(obj.get("text") or "").strip()[:TODO_TEXT_MAX]
+    if action == "add":
+        if not text:
+            return None
+    elif not item_id:
+        return None
+    return {
+        "kind": "todo",
+        "action": action,
+        "id": int(item_id),
+        "text": text,
+        "note": str(obj.get("note") or "").strip()[:NOTE_MAX],
         "via": str(obj.get("via") or "")[:32],
     }
 
@@ -193,5 +236,6 @@ def pending() -> int:
 __all__ = [
     "ACTIONS", "KEEP_S", "MAX_BYTES", "MAX_PER_PASS", "MAX_QUEUED",
     "NOTE_MAX", "REQUEST_DIR", "SNOOZE_DEFAULT_H", "SNOOZE_MAX_H",
+    "TODO_ACTIONS", "TODO_TEXT_MAX",
     "collect", "parse", "pending", "verb_for",
 ]

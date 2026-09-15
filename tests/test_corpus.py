@@ -45,7 +45,7 @@ import scoring  # noqa: E402
 # own `required` lists below, so the two cannot drift.
 REQUIRED = ("schema", "kind", "id", "captured_at", "labels")
 KINDS = ("checks", "analyst")
-VERBS = ("done", "wrong", "got_it")
+VERBS = ("done", "wrong", "got_it", "accepted")
 ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\-]{0,127}")
 CHECK_RE = re.compile(r"[a-z]+\.[a-z_]+")
 
@@ -128,7 +128,7 @@ class TestTheValidatorMatchesThePublishedSchema(unittest.TestCase):
         # entry with its labels filled in later.
         self.assertEqual(sorted(capture.KINDS), sorted(KINDS))
 
-    def test_the_ending_words_are_the_same_three(self):
+    def test_the_ending_words_are_the_same_everywhere(self):
         analyst = self.schema["properties"]["labels"]["items"]["oneOf"][1]
         self.assertEqual(sorted(analyst["properties"]["verb"]["enum"]),
                          sorted(VERBS))

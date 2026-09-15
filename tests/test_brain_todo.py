@@ -267,7 +267,10 @@ class TestTheItems(unittest.TestCase):
 
     def test_a_finding_becomes_an_item_the_addon_can_be_told_about(self):
         item = brain_todo.item_for(self.finding())
-        self.assertEqual(item.uid, "1720")
+        # Prefixed: two stores feed this list and a finding's ts is
+        # seconds where an item's id is milliseconds, which makes a
+        # collision unlikely rather than impossible.
+        self.assertEqual(item.uid, "f:1720")
         self.assertIn("hall sensor", item.summary)
         self.assertEqual(item.status, TodoItemStatus.NEEDS_ACTION)
         # The description is what somebody reads before deciding to get
@@ -340,7 +343,7 @@ class TestTheList(WriterCase):
         self.publish([self.row(1720)])
         asyncio.run(self.list.async_update())
         asyncio.run(self.list.async_update_todo_item(
-            TodoItem(uid="1720", summary="x",
+            TodoItem(uid="f:1720", summary="x",
                      status=TodoItemStatus.COMPLETED)))
         rows = self.written()
         self.assertEqual(len(rows), 1)
@@ -352,7 +355,7 @@ class TestTheList(WriterCase):
     def test_deleting_one_is_not_a_problem_here(self):
         self.publish([self.row(1720), self.row(1721)])
         asyncio.run(self.list.async_update())
-        asyncio.run(self.list.async_delete_todo_items(["1720", "1721"]))
+        asyncio.run(self.list.async_delete_todo_items(["f:1720", "f:1721"]))
         rows = self.written()
         self.assertEqual([r["action"] for r in rows], ["wrong", "wrong"])
         self.assertEqual(self.list._attr_todo_items, [])
@@ -364,7 +367,7 @@ class TestTheList(WriterCase):
         self.publish([self.row(1720)])
         asyncio.run(self.list.async_update())
         asyncio.run(self.list.async_update_todo_item(
-            TodoItem(uid="1720", summary="renamed",
+            TodoItem(uid="f:1720", summary="renamed",
                      status=TodoItemStatus.NEEDS_ACTION)))
         self.assertEqual(self.written(), [])
         self.assertEqual(len(self.list._attr_todo_items), 1)
@@ -373,20 +376,42 @@ class TestTheList(WriterCase):
         asyncio.run(self.list.async_delete_todo_items(["not-a-number", ""]))
         self.assertEqual(self.written(), [])
 
-    def test_adding_an_item_is_not_offered(self):
-        # A list that silently deletes what you put on it is worse than
-        # one that does not offer to take it: an item created here would
-        # have nothing behind it and would vanish on the next poll.
+    def test_adding_an_item_asks_the_addon_to_create_a_real_one(self):
+        """The refusal that was here is narrowed, not dropped.
+
+        It said: a list that silently deletes what you put on it is worse
+        than one that does not offer to take it, because an item created
+        against a *derived* list would have nothing behind it and would
+        vanish on the next poll. That was right about what this was, and
+        the condition it protected is now met rather than argued away —
+        there is a store behind it. So what is pinned is the condition:
+        the add is a request the add-on will turn into a real row, and
+        nothing is optimistically shown here under an id nothing issued.
+        """
         feature = sys.modules["homeassistant.components.todo"].TodoListEntityFeature
-        self.assertFalse(
-            brain_todo.BrainTodoList._attr_supported_features
-            & feature.CREATE_TODO_ITEM)
-        self.assertTrue(
-            brain_todo.BrainTodoList._attr_supported_features
-            & feature.DELETE_TODO_ITEM)
-        self.assertTrue(
-            brain_todo.BrainTodoList._attr_supported_features
-            & feature.UPDATE_TODO_ITEM)
+        for wanted in ("CREATE_TODO_ITEM", "DELETE_TODO_ITEM",
+                       "UPDATE_TODO_ITEM"):
+            self.assertTrue(
+                brain_todo.BrainTodoList._attr_supported_features
+                & getattr(feature, wanted), wanted)
+
+        asyncio.run(self.list.async_create_todo_item(
+            TodoItem(uid=None, summary="Replace the smoke alarm battery",
+                     status=TodoItemStatus.NEEDS_ACTION)))
+        rows = self.written()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["kind"], "todo")
+        self.assertEqual(rows[0]["action"], "add")
+        self.assertEqual(rows[0]["text"], "Replace the smoke alarm battery")
+        # Not shown until the add-on has minted an id for it: a row here
+        # under an id nothing issued is one that cannot be ticked off.
+        self.assertEqual(self.list._attr_todo_items, [])
+
+    def test_a_blank_summary_asks_for_nothing(self):
+        asyncio.run(self.list.async_create_todo_item(
+            TodoItem(uid=None, summary="   ",
+                     status=TodoItemStatus.NEEDS_ACTION)))
+        self.assertEqual(self.written(), [])
 
 
 if __name__ == "__main__":

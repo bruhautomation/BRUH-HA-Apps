@@ -40,6 +40,9 @@ POST /api/finding/{ts}/wrong  — you've got this wrong / not a problem here,
                                 is handed to the analyst and the consolidator
                                 rather than acted on literally
                                 (/ignore is the old name for the same thing)
+POST /api/finding/{ts}/todo  — it's real and you'll do it: off this list,
+                                onto the to-do list, key settled so nothing
+                                raises it again while it waits
 POST /api/finding/{ts}/done  — you fixed it yourself
 POST /api/finding/{ts}/ack   — you've read what brAIn's fix changed
                                 (all three END it: memory line, then the
@@ -50,6 +53,13 @@ POST /api/finding/{ts}/snooze — remind me later; NOT a decision, so the
 POST /api/finding/{ts}/discuss — open it as a conversation in the chat
 POST /api/findings/unsettle  — {key}: let brAIn raise an answered one again
 DELETE /api/finding/{ts}     — forget it (unlike ignore, it can return)
+
+GET  /api/todo               — the work you have accepted, open and done
+POST /api/todo               — add one by hand
+POST /api/todo/{id}/done     — done: the memory line the move did not write
+POST /api/todo/{id}/reopen   — back on the list; the fact stays written
+DELETE /api/todo/{id}        — off the list undone, and the problem back in
+                                play if it came from a finding
 POST /api/memory/consolidate — file the inbox into memory.md now
 GET  /api/insight/{id}/history       — past runs of a category (no html)
 GET  /api/insight/{id}/history/{ts}  — one stored past run in full
@@ -161,6 +171,7 @@ import shadow
 import shadow_findings
 import terminal_proxy
 import thermal
+import todo_store
 import trials
 import undo_store
 import usage_store
@@ -1522,6 +1533,9 @@ async def _apply_finding_requests() -> list[dict]:
     requests = await asyncio.to_thread(finding_requests.collect)
     out: list[dict] = []
     for req in requests:
+        if req.get("kind") == "todo":
+            out.append(await _apply_todo_request(req))
+            continue
         ts, action = req["ts"], req["action"]
         result = {"ts": ts, "action": action, "via": req.get("via", ""),
                   "ok": False, "why": "no such finding"}
@@ -1550,6 +1564,54 @@ async def _apply_finding_requests() -> list[dict]:
                  "" if result["ok"] else f" — {result['why']}")
         out.append(result)
     return out
+
+
+async def _apply_todo_request(req: dict) -> dict:
+    """One request about the to-do list, applied through the tab's own code.
+
+    `h_todo_done`'s three steps are not repeated here — the store, the
+    ledger upgrade and the memory line are what "done" means, and a second
+    implementation would be a tick in the To-do app teaching brAIn
+    something different from the identical press on the tab. What is
+    absent on purpose is the undo token: `undo_store` is the toast's, and
+    there is no toast on a lock screen.
+    """
+    action = req["action"]
+    result = {"kind": "todo", "id": req.get("id", 0), "action": action,
+              "via": req.get("via", ""), "ok": False, "why": "no such item"}
+
+    if action == "add":
+        item = await asyncio.to_thread(
+            todo_store.add, req["text"], origin="hand")
+        result["ok"] = item is not None
+        if item is None:
+            result["why"] = "the list is full"
+        else:
+            result["id"] = item["id"]
+    elif action == "done":
+        item = await asyncio.to_thread(todo_store.get, req["id"])
+        if item:
+            await _complete_todo(item, req.get("note", ""))
+            result["ok"] = True
+    elif action == "drop":
+        def drop() -> bool:
+            removed = todo_store.remove(req["id"])
+            if removed and removed.get("finding_key"):
+                findings_store.unsettle(removed["finding_key"])
+            return removed is not None
+
+        result["ok"] = await asyncio.to_thread(drop)
+
+    if result["ok"]:
+        result["why"] = ""
+        REQUESTS_STATE["applied"] += 1
+    else:
+        REQUESTS_STATE["missed"] += 1
+    REQUESTS_STATE["last"] = time.time()
+    log.info("to-do %s %s from %s%s", action, result["id"],
+             result["via"] or "elsewhere",
+             "" if result["ok"] else f" — {result['why']}")
+    return result
 
 
 async def _one_intent(req: dict, now: float) -> dict | None:
@@ -6451,6 +6513,14 @@ FINDING_VERBS = {
     # "I've read what brAIn changed" — the ending for an automated fix,
     # which already wrote its own memory line when it made the change.
     "ack": {"kind": "fixed", "memory": "", "label": "got_it"},
+    # "Yes, that is real, and I will do it." The fourth ending, and the
+    # only one that writes no memory line: "I will get to it" says nothing
+    # true about the house — the battery is still flat — so the fact is
+    # written when the chore is actually done and not when it is accepted.
+    # The key is settled all the same, because a report you have agreed to
+    # act on must not be raised at you again while it sits on your list.
+    # `h_finding_todo` is what routes here; the spec is the ending half.
+    "todo": {"kind": "accepted", "memory": "", "label": "accepted"},
     # Not an ending: puts a legacy row (dismissed before the ledger existed,
     # and still on disk) back on the list.
     "reopen": {"status": "open"},
@@ -6539,6 +6609,245 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
                                date=time.strftime("%Y-%m-%d"))
         await _submit_memory(fact, source=spec.get("source", "homeowner"))
     return payload, fact
+
+
+# ---------------------------------------------------------------------------
+# The to-do list — work you have accepted, and the card it came from
+# ---------------------------------------------------------------------------
+#
+# Every ending a finding had was a decision made on the spot. The one thing
+# people actually say most often — *yes, that is real, I will do it* — had
+# nowhere to go, so a battery that needed replacing stayed on the Findings
+# tab as an open question until somebody got round to it, and a list of
+# decisions waiting on you filled up with chores instead.
+#
+# Moving one here is that ending. Three things happen and they are the same
+# three every ending does, with one deliberately missing:
+#
+#   * the row is deleted     — it is not a decision any more
+#   * the key is settled     — as `accepted`, so nothing re-raises it while
+#                              it sits on your list
+#   * the fact is NOT written — because none is true yet. `done` on this
+#                              tab writes the line `done` on the Findings
+#                              tab would have, at the moment it becomes true
+#
+# and a fourth that only this ending does: the card's evidence is copied
+# onto an item, because the row it came from is about to stop existing.
+
+
+def _todo_payload() -> dict:
+    """What the To-do tab reads, and the only thing it reads."""
+    return todo_store.listing()
+
+
+async def h_todo(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_todo_payload))
+
+
+async def h_todo_add(request: web.Request) -> web.Response:
+    """Put something on the list by hand.
+
+    A list that only holds what brAIn noticed is not a list of what needs
+    doing — it is a queue of brAIn's opinions — so this takes a plain
+    sentence and nothing else is required. It settles no key and carries
+    none, which is what `origin` records: there is no report behind it to
+    suppress, and dropping it later releases nothing.
+    """
+    body = await _json_body(request)
+    text = str((body or {}).get("text") or "").strip()
+    if not text:
+        raise web.HTTPBadRequest(text="what needs doing?")
+    detail = str((body or {}).get("detail") or "").strip()
+    severity = str((body or {}).get("severity") or "warning")
+    if severity not in todo_store.SEVERITIES:
+        severity = "warning"
+
+    def write() -> tuple[dict | None, dict]:
+        item = todo_store.add(text, detail=detail, severity=severity,
+                              origin="hand")
+        return item, _todo_payload()
+
+    item, payload = await asyncio.to_thread(write)
+    if item is None:
+        raise web.HTTPConflict(
+            text=f"the list is full — {todo_store.MAX_OPEN} is the cap, and "
+                 "making room would mean dropping something you put there")
+    payload["added"] = item
+    return web.json_response(payload)
+
+
+def _todo_or_404(request: web.Request) -> dict:
+    try:
+        item_id = int(request.match_info["id"])
+    except (TypeError, ValueError):
+        raise web.HTTPNotFound(text="no such item") from None
+    item = todo_store.get(item_id)
+    if item is None:
+        raise web.HTTPNotFound(text="no such item")
+    return item
+
+
+async def h_finding_todo(request: web.Request) -> web.Response:
+    """Accept a finding as work: off the list, onto the list.
+
+    A separate handler rather than a row in the generic verb table because
+    it does one thing the table cannot express — it has to create the item
+    BEFORE the row is deleted, since the row is where the evidence is. If
+    the item cannot be created nothing is settled and nothing is deleted,
+    because a finding that vanished into a list that refused it is the one
+    outcome with no way back.
+    """
+    finding = _finding_or_404(request)
+    body = await _json_body(request)
+    note = str((body or {}).get("note") or "").strip()[:findings_store.MAX_NOTE]
+    key = findings_store.normalize(finding["text"])
+
+    def place() -> dict | None:
+        return todo_store.add(
+            finding["text"],
+            detail=finding.get("detail") or "",
+            fix=finding.get("fix") or "",
+            entity_id=finding.get("entity_id") or "",
+            severity=finding.get("severity") or "warning",
+            origin="finding",
+            source=finding.get("source") or "",
+            source_title=finding.get("source_title") or "",
+            finding_key=key,
+            run_id=finding.get("run_id") or "")
+
+    item = await asyncio.to_thread(place)
+    if item is None:
+        raise web.HTTPConflict(
+            text=f"the to-do list is full — {todo_store.MAX_OPEN} is the cap. "
+                 "The finding is untouched.")
+
+    payload, _fact = await _end_finding(finding, FINDING_VERBS["todo"], note)
+    payload["todo"] = todo_store.counts()
+    payload["added"] = item
+    # One token reverses both halves, because half of this undone is worse
+    # than none of it: the row back with the item still there is the same
+    # chore twice, and the item gone with the row still settled is work
+    # that has silently disappeared.
+    payload["undo"] = undo_store.record(
+        "finding_todo", finding=finding, key=key, item=item, fact="",
+        fact_source="homeowner")
+    return web.json_response(payload)
+
+
+async def h_todo_done(request: web.Request) -> web.Response:
+    """Tick one off — and write the fact the move deliberately did not.
+
+    This is the moment it becomes true, so this is the moment memory hears
+    about it, in exactly the sentence the Findings tab's own "I fixed it"
+    would have written. The ledger entry is upgraded from `accepted` to
+    `fixed` in place, keyed on what the item stored rather than on a second
+    derivation from a copy of the text.
+    """
+    item = _todo_or_404(request)
+    body = await _json_body(request)
+    note = str((body or {}).get("note") or "").strip()[:todo_store.MAX_NOTE]
+
+    done, fact = await _complete_todo(item, note)
+    if done is None:
+        raise web.HTTPNotFound(text="no such item")
+    payload = await asyncio.to_thread(_todo_payload)
+    payload["undo"] = undo_store.record(
+        "todo_done", item=item, fact=fact,
+        fact_source=FINDING_VERBS["done"]["source"])
+    return web.json_response(payload)
+
+
+async def _complete_todo(item: dict, note: str) -> tuple[dict | None, str]:
+    """Finish a chore, wherever the press came from. One implementation.
+
+    `_end_finding`'s rule, one store over: the tab's Done button and a tick
+    in the To-do app both reach this, because "done" is three things — the
+    item closed, the ledger entry upgraded from `accepted` to `fixed`, and
+    the memory line the move deliberately did not write — and a second copy
+    would be the same press teaching brAIn two different things depending
+    on where it was made.
+    """
+    def finish() -> dict | None:
+        closed = todo_store.complete(item["id"], note=note)
+        if closed and item.get("finding_key"):
+            findings_store.remember_answer(
+                item["finding_key"], item["text"], "fixed", note=note,
+                source=item.get("source", ""),
+                source_title=item.get("source_title", ""))
+        return closed
+
+    done = await asyncio.to_thread(finish)
+    if done is None:
+        return None, ""
+
+    # The same sentence "I fixed it" writes on the Findings tab, because it
+    # is the same claim — said later, which is the only difference the to-do
+    # list makes to it.
+    spec = FINDING_VERBS["done"]
+    template = spec["noted"] if note else spec["memory"]
+    fact = template.format(text=item["text"], note=note,
+                           date=time.strftime("%Y-%m-%d"))
+    await _submit_memory(fact, source=spec["source"])
+    if item.get("run_id"):
+        await asyncio.to_thread(
+            capture.add_label, item["run_id"],
+            finding_key=item.get("finding_key") or "",
+            verb=spec["label"], note=note)
+    return done, fact
+
+
+async def h_todo_reopen(request: web.Request) -> web.Response:
+    """Put a finished chore back on the list.
+
+    The one verb the Done filter carries, because a chore ticked off early
+    is an ordinary mistake in a way a settled finding is not. What it does
+    NOT do is take the memory line back: that was written when the thing
+    was reported done, a consolidation may have filed it since, and editing
+    the document is the only honest correction once it has — the same
+    admission the undo token's five-minute life makes. The ledger goes back
+    to `accepted`, because the work is waiting again.
+    """
+    item = _todo_or_404(request)
+
+    def back() -> tuple[dict | None, dict]:
+        restored = todo_store.reopen(item["id"])
+        if restored and item.get("finding_key"):
+            findings_store.remember_answer(
+                item["finding_key"], item["text"], "accepted",
+                source=item.get("source", ""),
+                source_title=item.get("source_title", ""))
+        return restored, _todo_payload()
+
+    restored, payload = await asyncio.to_thread(back)
+    if restored is None:
+        raise web.HTTPNotFound(text="no such item")
+    return web.json_response(payload)
+
+
+async def h_todo_delete(request: web.Request) -> web.Response:
+    """Take it off the list without doing it — and put the problem back.
+
+    Deciding not to do something is not evidence it stopped being true, so
+    a moved finding's key is released and the next checks pass is free to
+    file it again. That is `clear_resolved`'s own argument: if it really is
+    over, nothing comes back. A hand-added item carries no key and releases
+    nothing, which is the whole of what `origin` is for.
+    """
+    item = _todo_or_404(request)
+
+    def drop() -> tuple[dict | None, bool, dict]:
+        removed = todo_store.remove(item["id"])
+        unsettled = False
+        if removed and removed.get("finding_key"):
+            unsettled = findings_store.unsettle(removed["finding_key"])
+        return removed, unsettled, _todo_payload()
+
+    removed, unsettled, payload = await asyncio.to_thread(drop)
+    if removed is None:
+        raise web.HTTPNotFound(text="no such item")
+    payload["unsettled"] = unsettled
+    payload["undo"] = undo_store.record("todo_removed", item=removed)
+    return web.json_response(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -7247,6 +7556,13 @@ async def h_undo(request: web.Request) -> web.Response:
                                 "could not be put back on the list")
         return web.json_response(payload)
 
+    if entry["kind"] in ("finding_todo", "todo_done", "todo_removed"):
+        restored, payload = await asyncio.to_thread(_undo_todo, entry)
+        payload["undone"] = restored
+        if not restored:
+            payload["error"] = "that has already moved on — nothing to put back"
+        return web.json_response(payload)
+
     if entry["kind"] == "conversations":
         # A batch delete's Undo: every row goes back, each by the same move
         # the single restore makes. Partial success is reported as such —
@@ -7266,6 +7582,51 @@ async def h_undo(request: web.Request) -> web.Response:
     restored, payload = await asyncio.to_thread(_undo_finding, entry)
     payload["undone"] = restored
     return web.json_response(payload)
+
+
+def _undo_todo(entry: dict) -> tuple[bool, dict]:
+    """Reverse a press on the to-do list. Module-level, `_undo_finding`'s rule.
+
+    Three presses, and each one is reversed as a whole or not at all —
+    half of any of them is worse than none. Accepting a finding put a row
+    away and an item up, so its undo takes the item down and the row back;
+    completing wrote a fact and an upgraded ledger entry, so its undo puts
+    the item back on the list, drops the queued fact and restates the entry
+    as `accepted`; dropping released a suppression, so its undo re-settles.
+    """
+    kind = entry["kind"]
+    item = entry.get("item") or {}
+    restored = False
+
+    if kind == "finding_todo":
+        # The item first: if it has already been ticked off or dropped,
+        # putting the finding row back would be the same work twice.
+        gone = todo_store.remove(item.get("id") or 0) is not None
+        restored = gone and findings_store.restore(entry["finding"]) is not None
+        if restored and entry.get("key"):
+            findings_store.unsettle(entry["key"])
+    elif kind == "todo_done":
+        restored = todo_store.reopen(item.get("id") or 0) is not None
+        if restored and item.get("finding_key"):
+            findings_store.remember_answer(
+                item["finding_key"], item["text"], "accepted",
+                source=item.get("source", ""),
+                source_title=item.get("source_title", ""))
+    elif kind == "todo_removed":
+        restored = todo_store.restore(item) is not None
+        if restored and item.get("finding_key"):
+            findings_store.remember_answer(
+                item["finding_key"], item["text"], "accepted",
+                source=item.get("source", ""),
+                source_title=item.get("source_title", ""))
+
+    # The memory line has not been consolidated — the token is younger than
+    # any pass — so it comes out of the inbox the way a queued fact does.
+    if restored and entry.get("fact"):
+        _drop_from_inbox(_inbox_id(entry["fact_source"], entry["fact"]))
+    payload = _todo_payload()
+    payload["findings"] = findings_store.listing()["findings"]
+    return restored, payload
 
 
 def _undo_finding(entry: dict) -> tuple[bool, dict]:
@@ -9194,8 +9555,17 @@ def make_app() -> web.Application:
     # and "recheck" is not an ending, so it must not fall into the table
     # of them.
     app.router.add_post("/api/finding/{ts}/recheck", h_finding_recheck)
+    # Before the generic {verb} route, like snooze and discuss: this ending
+    # has to create the item before the row it reads is deleted, which the
+    # verb table cannot express.
+    app.router.add_post("/api/finding/{ts}/todo", h_finding_todo)
     app.router.add_post("/api/finding/{ts}/{verb}", h_finding_verb)
     app.router.add_delete("/api/finding/{ts}", h_finding_delete)
+    app.router.add_get("/api/todo", h_todo)
+    app.router.add_post("/api/todo", h_todo_add)
+    app.router.add_post("/api/todo/{id}/done", h_todo_done)
+    app.router.add_post("/api/todo/{id}/reopen", h_todo_reopen)
+    app.router.add_delete("/api/todo/{id}", h_todo_delete)
     app.router.add_get("/api/insight/{id}/live", h_insight_live)
     app.router.add_get("/api/insight/{id}/history", h_history_list)
     app.router.add_get("/api/insight/{id}/history/{ts}", h_history_get)
@@ -9282,6 +9652,9 @@ def make_app() -> web.Application:
         # Republish the shared-volume mirror so the integration's findings
         # sensor reads the current list, not the one from the last change.
         await asyncio.to_thread(findings_store.publish_state)
+        # ...and the to-do mirror beside it, for the same reason: a boot
+        # must not serve last week's list to the To-do app.
+        await asyncio.to_thread(todo_store.publish_state)
         # Transcripts from before the pool's reflection pass and one-shot
         # voice fallback claimed their ids sat in the person's own Chats
         # list. Label the backlog once, by our own shipped prompt openers

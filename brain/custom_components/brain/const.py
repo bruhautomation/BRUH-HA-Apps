@@ -79,6 +79,12 @@ QUESTIONS_FILE = "questions.jsonl"
 # findings_store._publish_state): {ts, open, by_severity, findings[]}.
 FINDINGS_STATE_FILENAME = "findings_state.json"
 
+# The to-do mirror, beside the findings one and published the same way.
+# A separate file rather than a key on that one because they are separate
+# stores with separate lifetimes — an item outlives the finding that
+# raised it, which is the whole reason the list exists.
+TODO_STATE_FILENAME = "todo_state.json"
+
 # Where an answer given outside the panel is dropped for the add-on to
 # pick up. The panel owns the findings store and is deliberately its only
 # writer — port 8099 is unpublished and stays that way — so what crosses

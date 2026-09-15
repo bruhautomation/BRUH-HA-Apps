@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import time
+from functools import partial
 
 import voluptuous as vol
 
@@ -160,6 +161,12 @@ STUDY_SCHEMA = vol.Schema(
 INTENT_SCHEMA = vol.Schema(
     {
         vol.Required("sentence"): vol.All(str, vol.Length(min=1, max=300)),
+    }
+)
+
+ADD_TODO_SCHEMA = vol.Schema(
+    {
+        vol.Required("text"): vol.All(str, vol.Length(min=1, max=200)),
     }
 )
 
@@ -904,6 +911,25 @@ def _register_services(hass: HomeAssistant) -> None:
             write_intent, hass, sentence, "service")
         _LOGGER.info("Queued a one-off intent: %s", sentence)
 
+    async def handle_add_todo(call: ServiceCall):
+        """Put something on brAIn's to-do list.
+
+        The same drop the To-do app's own Add button writes, so an
+        automation and a person land on one list through one path — and
+        it is fire-and-forget for `handle_intent`'s reason, narrowed:
+        the add-on may be stopped, and a chore that could not be written
+        for thirty seconds is worth waiting for where a service call
+        that blocked on it is not.
+        """
+        from .requests import write_todo_request  # noqa: PLC0415 — that
+        # module imports homeassistant.core and nothing else on purpose
+
+        text = call.data["text"]
+        await hass.async_add_executor_job(
+            partial(write_todo_request, hass, "add", text=text,
+                    via="service"))
+        _LOGGER.info("Queued a to-do: %s", text)
+
     async def handle_answer_question(call: ServiceCall):
         memory_dir = hass.config.path(SHARED_DIR, MEMORY_DIR)
         await hass.async_add_executor_job(
@@ -975,6 +1001,13 @@ def _register_services(hass: HomeAssistant) -> None:
         "intent",
         handle_intent,
         schema=INTENT_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "add_todo",
+        handle_add_todo,
+        schema=ADD_TODO_SCHEMA,
     )
 
     # BRUH Power Tools: registry-management admin services (power_tools.py)

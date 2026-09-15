@@ -108,6 +108,16 @@ MAX_CHANGED = 8
 # that twenty of them still fit in a prompt beside everything else.
 MAX_NOTE = 400
 
+# What an ending can say. `fixed` and `ignored` are the two the tab has
+# always had; `accepted` is the third and it is a different claim from
+# both — the report was right AND the work is not done yet, which is what
+# moving a card to the to-do list means. It has to be its own word for two
+# reasons: the scorecard counts it as the report being confirmed (agreeing
+# to do something is agreeing it is real), and completing the chore later
+# re-settles the same key as `fixed`, which is an upgrade a shared word
+# could not express.
+SETTLE_KINDS = ("fixed", "ignored", "accepted")
+
 SEVERITIES = ("info", "warning", "serious", "critical")
 STATUSES = ("open", "fixing", "fixed", "failed", "needs_you", "ignored")
 # Statuses that still want the homeowner's attention on the Findings tab.
@@ -634,7 +644,7 @@ def settle_and_clear(ts: int, kind: str, note: str = "") -> dict | None:
     ``note`` is the homeowner's reason, kept verbatim on the ledger entry so
     the analyst reads why rather than only what.
     """
-    if kind not in ("fixed", "ignored"):
+    if kind not in SETTLE_KINDS:
         raise ValueError(f"unknown settlement: {kind}")
     items = _load()
     settled = None
@@ -653,9 +663,17 @@ def settle_and_clear(ts: int, kind: str, note: str = "") -> dict | None:
 
 
 def _remember_settled(shaped: dict, kind: str, when: int = 0,
-                      note: str = "") -> None:
+                      note: str = "", key: str = "") -> None:
+    """Write the answer into the ledger, replacing anything under that key.
+
+    ``key`` is normally derived from the text, which is the only key any
+    caller holding a row could have. A caller holding an item whose row
+    was deleted weeks ago passes the key it stored then, because deriving
+    it a second time from a copy of the text is a second answer to "which
+    entry is this" — and the two would agree right up until they did not.
+    """
     ledger = _load_settled()
-    key = normalize(shaped["text"])
+    key = str(key or "").strip() or normalize(shaped["text"])
     ledger = [e for e in ledger if e.get("key") != key]
     ledger.append({
         "key": key,
@@ -705,7 +723,12 @@ def scorecard() -> list[dict]:
         row = by.setdefault(src, {
             "source": src, "title": str(e.get("source_title") or src),
             "confirmed": 0, "wrong": 0})
-        if e.get("kind") == "fixed":
+        # Agreeing to do something is agreeing the report was right, so
+        # an accepted row scores exactly as a fixed one. The alternative
+        # was to count it as nothing until the chore is done, which would
+        # make a producer look worse the more of its reports people took
+        # seriously and had not got round to yet.
+        if e.get("kind") in ("fixed", "accepted"):
             row["confirmed"] += 1
         elif e.get("kind") == "ignored":
             row["wrong"] += 1
@@ -714,6 +737,31 @@ def scorecard() -> list[dict]:
         r["total"] = r["confirmed"] + r["wrong"]
     rows.sort(key=lambda r: (-r["total"], r["source"]))
     return rows
+
+
+@_mutates
+def remember_answer(key: str, text: str, kind: str, *, note: str = "",
+                    source: str = "", source_title: str = "") -> bool:
+    """Record an answer for a problem whose row is already gone.
+
+    `settle_and_clear` is the ordinary door and it needs a row to delete.
+    A chore completed on the To-do tab has no row — the move deleted it
+    weeks ago — and the answer still has to reach the ledger, because the
+    entry written then said `accepted` and the truth now is `fixed`.
+    `_remember_settled` replaces by key, so this is an upgrade in place
+    rather than a second entry, which is what keeps one problem one row of
+    the scorecard.
+
+    Returns False for a key it will not write, so a caller cannot read
+    "nothing to record" as "recorded".
+    """
+    key = str(key or "").strip()
+    text = str(text or "").strip()
+    if not key or not text or kind not in SETTLE_KINDS:
+        return False
+    _remember_settled({"text": text, "source": source,
+                       "source_title": source_title}, kind, note=note, key=key)
+    return True
 
 
 def settled_listing() -> list[dict]:

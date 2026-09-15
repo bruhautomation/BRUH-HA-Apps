@@ -15,6 +15,9 @@
     "add_memory": {
       "service": "mdi:brain"
     },
+    "add_todo": {
+      "service": "mdi:clipboard-check-outline"
+    },
     "answer_question": {
       "service": "mdi:comment-question-outline"
     },
