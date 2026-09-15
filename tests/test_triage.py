@@ -315,12 +315,15 @@ class TestAHeldRowReachesNobody(StoreCase):
             {rows[1]["ts"]: ("elevated", "real")})[0]
 
     def test_the_badge_does_not_count_it(self):
-        held, shown = self.held_and_open()
+        """One held row and one elevated one, and the badge counts one.
+        Neither row is named here on purpose: what is being asserted is the
+        NUMBER, and binding them would be two names nothing reads."""
+        self.held_and_open()
         self.assertEqual(findings_store.open_count(), 1)
         self.assertEqual(findings_store.listing()["open"], 1)
 
     def test_the_live_filter_does_not_hold_it(self):
-        held, shown = self.held_and_open()
+        _held, shown = self.held_and_open()
         live = [f["ts"] for f in findings_store.list_all("live")]
         self.assertEqual(live, [shown["ts"]])
 
@@ -350,7 +353,7 @@ class TestAHeldRowReachesNobody(StoreCase):
     def test_it_is_still_on_the_payload_the_tab_reads(self):
         """Because the tab has a filter for it — the one place a held row is
         meant to be visible, and the one press that reverses it."""
-        held, shown = self.held_and_open()
+        held, _shown = self.held_and_open()
         rows = findings_store.listing()["findings"]
         self.assertIn(held["ts"], [f["ts"] for f in rows])
 
