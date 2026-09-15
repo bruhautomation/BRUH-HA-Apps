@@ -445,6 +445,24 @@ class TestTheTab(unittest.TestCase):
         self.assertEqual(media["episodes"][0]["count"], 2)
         self.assertEqual(media["reads"], "span")
 
+    def test_a_failed_fetch_does_not_put_its_own_exception_in_the_reply(self):
+        """One sentence a person can act on, and the exception in the log.
+        A fetch that raised and a logbook that answered `available: false`
+        are the same thing from out here, so they share the sentence."""
+        async def boom(start, end, entity_id=""):
+            raise RuntimeError("Traceback: /opt/panel/ha_data.py line 412")
+        self.server._activity = boom
+
+        async def body(client):
+            res = await client.post("/api/activity/summary")
+            return res.status, await res.text()
+
+        status, text = self.drive(body)
+        self.assertEqual(status, 502)
+        self.assertNotIn("Traceback", text)
+        self.assertNotIn("ha_data.py", text)
+        self.assertIn("logbook could not be read", text)
+
     def test_a_logbook_that_could_not_be_read_says_so_and_shows_nothing(self):
         async def boom(start, end, entity_id=""):
             raise RuntimeError("no logbook")

@@ -6238,15 +6238,20 @@ async def h_activity_summary(request: web.Request) -> web.Response:
     cached = _ACTIVITY_SUMMARIES.get(key)
     if cached:
         return web.json_response({**cached, "cached": True})
+    unreadable = ("Home Assistant's logbook could not be read, so there is "
+                  "nothing to summarise.")
     try:
         mined = await _activity(start, end)
     except Exception as exc:  # noqa: BLE001
-        raise web.HTTPBadGateway(
-            text=f"The logbook could not be read: {str(exc)[:200]}") from exc
+        # The exception's own text goes to the LOG and not into the reply.
+        # A fetch that raised and a logbook that answered `available: false`
+        # are the same thing from out here — which is why they share a
+        # sentence — and the half a person could act on is the same either
+        # way, where the half they could not is a stack trace in a panel.
+        log.warning("activity summary: the logbook could not be read: %s", exc)
+        raise web.HTTPBadGateway(text=unreadable) from exc
     if not mined.get("available"):
-        raise web.HTTPBadGateway(
-            text="Home Assistant's logbook could not be read, so there is "
-                 "nothing to summarise.")
+        raise web.HTTPBadGateway(text=unreadable)
     classes = await _device_classes()
     now = time.time()
 
