@@ -294,16 +294,28 @@ temperature of 220°C is impossible for a room and ordinary for a 3D
 printer. A number far outside its own normal is a fault, or it is the
 heating season starting.
 
-So a check's finding is not a card yet. Once a pass has filed what it
-found, **one Claude run goes and looks** — at the entity's history, at what
-else is in that area, at what brAIn has already been told about your house
-— and decides, for each one, whether it is worth putting in front of you.
-What it elevates lands on **Needs you** carrying the reason, in one line:
-*brAIn checked — its own month of statistics really does drift upward, and
-no other freezer here does.* What it holds back goes to **Looked at**, a
-filter that appears only once something is in it, where each row says what
-was checked, opens the conversation brAIn had about it, and carries one
-button that puts it back on the work list.
+So a finding is not a card yet. Once it has been filed, **one Claude run
+goes and looks** — at the entity's history, at what else is in that area,
+at what brAIn has already been told about your house — and decides whether
+it is worth putting in front of you. What it elevates lands on **Needs
+you** carrying the reason, in one line: *brAIn checked — its own month of
+statistics really does drift upward, and no other freezer here does.* What
+it holds back goes to **Looked at**, a filter that appears only once
+something is in it, where each row says what was checked, opens the
+conversation brAIn had about it, and carries one button that puts it back
+on the work list.
+
+**Everything goes through it, whoever raised it.** The house checks, the
+findings an insight run mentions, what a study session turned up, what the
+fixer noticed while it was in there, and the rows a "Check again" press
+finds. Those last four each came out of a Claude run that had read your
+house — and that run was asked to write a report, or to study a topic, or
+to make a repair. Nothing anywhere asked it whether what it noticed in
+passing was worth your evening, and that is the only question being asked
+here.
+
+The look runs about once a minute, so a finding appears on the tab shortly
+after it is raised rather than the moment it is filed.
 
 A held finding is **held, not deleted**. The row stays, which is what stops
 the next pass filing the same thing again every six hours, and it clears
@@ -311,15 +323,17 @@ itself exactly as an open one does when the check stops reporting it.
 
 The rule under all of it: **triage can only hold something back by saying
 so.** If brAIn is not signed in, if automatic runs are paused, if the usage
-budget is spent, if the run fails or answers something unreadable, if more
-arrive at once than one look can cover — the finding is on the list, saying
-*Not checked first* and why. "I could not look" and "it is not real" are
-different claims, and only the second may keep a problem off your screen.
+budget is spent, if the run fails or answers something unreadable, if it
+skips a row — the finding is on the list, saying *Not checked first* and
+why. "I could not look" and "it is not real" are different claims, and only
+the second may keep a problem off your screen.
 
-Nothing that came from a Claude run is triaged: an insight run, a study
-session and a curiosity run have each already read the house before filing
-anything, so checking one again is paying full price to have a model grade
-its own answer a minute later.
+One look covers ten findings, and when more than that are waiting the rest
+go to the front of the next one rather than being shown unchecked — showing
+them would spend the whole idea on exactly the houses with the most to
+look at. Anything that has waited an hour with nothing coming back for it
+is shown anyway, saying so. ⚙ → Diagnostics reports how long the oldest
+waiting one has waited.
 
 A check's finding clears itself when the check stops finding it — the device
 came back, the battery was changed — and it is simply removed, so it can be

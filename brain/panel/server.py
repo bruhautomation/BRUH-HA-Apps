@@ -2316,11 +2316,17 @@ async def _generate(insight_id: str) -> None:
         # no id here, and nothing downstream pretends otherwise.
         run_id = capture.run_id_from(result.get("meta") or {})
         model_findings = _model_findings(obj.get("findings"))
-        filed = findings_store.add_many([
+        # Gated like every other producer. This run read the house — and
+        # it was asked to write a card, not to decide whether what it
+        # noticed on the way past belongs on a list of decisions, which
+        # are two different jobs and only one of them has been done here.
+        # Nothing is announced from this call site any more: a `triaging`
+        # row must not ring a phone, and the drain announces what it puts
+        # on the list.
+        filed = findings_store.add_many(triage.gate([
             {**f, "source": cat["id"], "source_title": cat.get("title", "Insight"),
              "run_id": run_id}
-            for f in model_findings])
-        await _announce_findings(filed)
+            for f in model_findings]))
         tags = card_tags.clean_tags(_clean_strings(obj.get("tags"), 4, 24))
         insight = {
             "id": insight_id,
@@ -2465,12 +2471,16 @@ async def _run_fix(job_id: str) -> None:
                 f"{finding['text']} — {'; '.join(parsed['changed'])}",
                 source="fix")
         # Anything it noticed on the way in becomes its own finding rather
-        # than an edit it was not asked to make.
-        noticed = findings_store.add_many([
+        # than an edit it was not asked to make — and goes through triage
+        # like every other producer's, because "I saw this while I was in
+        # there" is the most side-channel of all the side channels.
+        also = findings_store.add_many(triage.gate([
             {"text": extra, "source": "fix",
              "source_title": f"Noticed while fixing “{finding['text']}”"}
-            for extra in parsed["also_found"]])
-        await _announce_findings(noticed)
+            for extra in parsed["also_found"]]))
+        if also:
+            log.info("the fix run also filed %d finding(s) for triage",
+                     len(also))
         _set_job(job_id, state="done", error="")
         log.info("finding %s → %s", ts, status)
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
@@ -2891,12 +2901,25 @@ async def _scheduler() -> None:
         # by /api/status. Sweeping only on tab open made that circular — the
         # badge couldn't count a finding until you'd already visited.
         try:
-            swept = await asyncio.to_thread(findings_store.sweep_inbox)
+            swept = await asyncio.to_thread(findings_store.sweep_inbox,
+                                            triage.gate)
             if swept:
                 log.info("swept %d finding(s) from study sessions", len(swept))
-                await _announce_findings(swept)
         except Exception as exc:  # never let this kill the loop
             log.debug("findings sweep failed: %s", exc)
+        # And the one drain every producer's rows reach. It is HERE, above
+        # the insights gate, because a finding is not an insight: switching
+        # `enable_insights` off hides two tabs and leaves the Findings tab,
+        # so the rows a checks pass files still have to be looked at. It is
+        # on the minute rather than on the checks pass's own six hours
+        # because four of the five producers do not run a checks pass, and
+        # a row waiting hours for one is a row nobody is shown.
+        try:
+            shown = await _triage_findings(time.time())
+            if shown:
+                await _announce_findings(shown)
+        except Exception as exc:  # never let this kill the loop
+            log.warning("the triage drain failed: %s", exc)
         # The face is off: nothing is queued, ever. Checked before the
         # auth gate on purpose — a switched-off face is the answer to "why
         # are my cards not updating" whatever the sign-in says.
@@ -4137,29 +4160,68 @@ def _record_manual(snapshot: dict, now: float) -> int:
         return 0
 
 
-async def _triage_findings(created: list[dict], now: float) -> list[dict]:
-    """Decide which newly filed check rows are worth showing, and move them.
+# One drain at a time. Set synchronously by `_triage_findings`, which is
+# what makes it a guard rather than a comment — see its docstring.
+_TRIAGE_RUNNING = False
+
+
+async def _triage_findings(now: float) -> list[dict]:
+    """Look at the rows nothing has looked at yet, and move them.
 
     Returns the rows that are on the list afterwards — the ones a run
     elevated plus the ones nothing could judge — because that is exactly
     the set `_announce_findings` is owed and deriving it a second time
     from the store would be a second answer to the same question.
 
+    **It reads what is WAITING, not what a caller just filed.** Five
+    producers gate now (`triage.gate`) and one of them is a tab fetch
+    that must not spend a Claude run, so a drain that could only judge
+    its own caller's rows would leave that producer's findings to the
+    stale sweep an hour later. Taking the queue from the store instead
+    makes the drain callable from anywhere: whoever runs next picks up
+    whatever is there.
+
     **Every failure surfaces.** No credential, the automatic switch off,
     the budget spent, the run failed, the reply unparseable, a row the
-    reply did not mention, more rows than one run may take: each of those
-    ends with the finding on the tab carrying an `untriaged` verdict. A
-    triage that could not look must never be able to hide a problem,
-    which is `clear_resolved`'s rule moved one step earlier.
+    reply did not mention: each of those ends with the finding on the tab
+    carrying an `untriaged` verdict. A triage that could not look must
+    never be able to hide a problem, which is `clear_resolved`'s rule
+    moved one step earlier. What does NOT surface immediately is the
+    surplus past `MAX_BATCH` — it is at the front of the next drain a
+    minute later, and the stale sweep is the promise that a queue which
+    stopped draining is still shown.
 
     The stale sweep is here rather than in a loop of its own for the same
-    reason: a pass that died between filing and judging left rows nothing
-    will ever come back for, and the next pass is the thing that does
-    come back.
+    reason, and `STALE_S` is best read as **the longest a finding may be
+    invisible**: a queue that is draining clears in minutes, so a row that
+    has waited an hour waited it because nothing was coming back — a panel
+    that died mid-judgement, or one that was off. It surfaces saying so
+    rather than taking its turn, because it has already been invisible for
+    the hour and another minute is not what it is owed.
+
+    Two drains at once would spend two runs on one queue and race over
+    the same rows, so the flag is set SYNCHRONOUSLY before the first
+    await — `start_auth_check`'s rule, for its reason: `create_task` and
+    `await` both only schedule, and a guard reading a state its own call
+    has not set yet is no guard. A caller that loses is not an error and
+    files nothing: its rows are in the queue the winner is draining, or
+    in the one the next minute drains.
     """
-    # Anything an older pass left mid-triage, whether or not this one
-    # filed a thing. Promoted first, so a row that has already waited an
-    # hour is not held up behind this pass's own batch.
+    global _TRIAGE_RUNNING
+    if _TRIAGE_RUNNING:
+        return []
+    _TRIAGE_RUNNING = True
+    try:
+        return await _triage_drain(now)
+    finally:
+        _TRIAGE_RUNNING = False
+
+
+async def _triage_drain(now: float) -> list[dict]:
+    """`_triage_findings` with the in-flight guard already held."""
+    # Anything left waiting past the hour, whether or not this drain has
+    # a batch of its own. Promoted first, so a row that has already waited
+    # that long does not queue behind rows filed since.
     stale = await asyncio.to_thread(findings_store.stale_triaging,
                                     now - triage.STALE_S)
     surfaced: list[dict] = []
@@ -4171,19 +4233,18 @@ async def _triage_findings(created: list[dict], now: float) -> list[dict]:
             {ts: ("untriaged", triage.UNJUDGED) for ts in stale},
             "", now)
 
-    pending = [f for f in created if f.get("status") == "triaging"]
+    # Oldest first, and everything that is waiting rather than everything
+    # this caller filed. The stale rows above have already left the queue
+    # by the time it is read, so they cannot be judged twice.
+    pending = await asyncio.to_thread(findings_store.awaiting_triage)
     if not pending:
         return surfaced
 
-    # The surplus surfaces rather than waiting for the next pass. Waiting
-    # is silence, and silence is the thing this step must not be mistaken
-    # for a verdict.
-    batch, spill = pending[:triage.MAX_BATCH], pending[triage.MAX_BATCH:]
-    if spill:
-        surfaced += await asyncio.to_thread(
-            findings_store.record_triage,
-            {int(f["ts"]): ("untriaged", triage.TOO_MANY)
-             for f in spill}, "", now)
+    # What does not fit waits for the next drain. Surfacing it unjudged
+    # would spend the cap on exactly the rows this exists to catch, and
+    # on the busiest houses first; waiting is only silence if nothing
+    # comes back, and `STALE_S` is what says something does.
+    batch = pending[:triage.MAX_BATCH]
 
     # The three gates every scheduled Claude run answers to (`_ask_why`'s
     # rule): a credential, the automatic switch, and the usage budget.
@@ -4199,9 +4260,13 @@ async def _triage_findings(created: list[dict], now: float) -> list[dict]:
     else:
         excuse = ""
     if excuse:
+        # Over the WHOLE queue rather than this batch: the cap is what one
+        # run may read, and a gate that answered before any run started
+        # has nothing to ration. Rationing it would leave the rest waiting
+        # on a drain that will give the identical answer next minute.
         return surfaced + await asyncio.to_thread(
             findings_store.record_triage,
-            {int(f["ts"]): ("untriaged", excuse) for f in batch}, "", now)
+            {int(f["ts"]): ("untriaged", excuse) for f in pending}, "", now)
 
     prompt = triage.frame(
         batch,
@@ -4245,8 +4310,9 @@ async def _triage_findings(created: list[dict], now: float) -> list[dict]:
     # No journal line of its own: `engine._run_cli` already writes one per
     # invocation under the source it was given, and a second row for the
     # same run is two answers to "how many triage runs happened".
-    log.info("triage: %d looked at, %d held back, %d shown",
-             len(batch), len(held), len(moved) - len(held))
+    log.info("triage: %d looked at, %d held back, %d shown, %d still waiting",
+             len(batch), len(held), len(moved) - len(held),
+             max(len(pending) - len(batch), 0))
     return surfaced + [f for f in moved if f["status"] != "held"]
 
 
@@ -4890,12 +4956,11 @@ async def run_checks(reason: str = "schedule") -> dict:
 
         def apply() -> tuple[list[dict], int, list[dict], dict]:
             ran_sources = {checks.source_for(c) for c in result["ran"]}
-            # A check has read one instant and nothing else, so its rows
-            # are filed as waiting to be looked at rather than as work
-            # (`triage.gate`). Everything else here already came out of a
-            # Claude run that read the house. Nothing is hidden by this on
-            # its own: a row only leaves `triaging` for `held` when a run
-            # says so about that row, and every other ending is `open`.
+            # Filed as waiting to be looked at rather than as work
+            # (`triage.gate`), which every producer does now. Nothing is
+            # hidden by this on its own: a row only leaves `triaging` for
+            # `held` when a run says so about that row, and every other
+            # ending is `open`.
             created = findings_store.add_many(triage.gate(result["findings"]))
             refreshed = findings_store.refresh_details(result["findings"])
             cleared = findings_store.clear_resolved(
@@ -4918,18 +4983,21 @@ async def run_checks(reason: str = "schedule") -> dict:
 
         created, refreshed, cleared, shadow_counts = await asyncio.to_thread(apply)
         # Between filing and surfacing: one run that goes and looks at the
-        # rows no rule could check. What comes back is the set that is on
-        # the list afterwards — elevated, plus everything nothing could
+        # rows nothing has looked at. What comes back is the set that is
+        # on the list afterwards — elevated, plus everything nothing could
         # judge — and that, not `created`, is what a phone is told about.
+        # It drains the whole queue's front, so a row another producer
+        # filed a minute ago can ride out on this pass's run.
         try:
-            surfaced = await _triage_findings(created, started)
+            surfaced = await _triage_findings(started)
         except Exception as exc:  # noqa: BLE001 — the findings are filed
             # either way; a triage that fell over must not also take out
             # the pass that found them.
             log.warning("could not triage this pass's findings: %s", exc)
             surfaced = []
-        announce = [f for f in created if f.get("status") == "open"] + surfaced
-        await _announce_findings(announce)
+        await _announce_findings(surfaced)
+        triaged = await asyncio.to_thread(
+            findings_store.statuses, [f["ts"] for f in created])
         # After the findings, and outside them. A proposal is not a
         # finding: different store, different tab, and a habit miner
         # that could fail this pass would cost a house its list of what
@@ -5008,13 +5076,18 @@ async def run_checks(reason: str = "schedule") -> dict:
             "per_check": result["per_check"],
             "found": len(result["findings"]),
             "created": created,
-            # What of `created` reached the list. A pass that filed nine
-            # and showed two is a pass worth being able to read back, and
-            # the difference is the only number that says triage is doing
-            # anything at all.
-            "surfaced": len(announce),
-            "held": len([f for f in created
-                         if f["ts"] not in {a["ts"] for a in announce}]),
+            # What the drain put on the list, and what became of this
+            # pass's own rows. They are different questions now that the
+            # drain reads the whole queue: `surfaced` can include a row a
+            # study session filed a minute ago, and one of this pass's own
+            # can still be `waiting` for the next minute's drain. A pass
+            # that filed nine and showed two is worth being able to read
+            # back — the difference is the only number that says triage is
+            # doing anything at all.
+            "surfaced": len(surfaced),
+            "held": len([t for t, st in triaged.items() if st == "held"]),
+            "waiting": len([t for t, st in triaged.items()
+                            if st == "triaging"]),
             "refreshed": refreshed,
             "cleared": cleared,
             "proposed": offered,
@@ -6427,6 +6500,16 @@ def _diagnostics_payload() -> dict:
             "by_status": by_status,
             "by_severity": by_severity,
             "settled": len(findings_store.settled_listing()),
+            # How long the oldest row still waiting for a look has waited.
+            # `by_status` already carries the count and a count is not the
+            # question: three rows waiting is a drain a minute from now,
+            # and three rows that have waited since Tuesday is a drain that
+            # stopped. Past `triage.STALE_S` the next drain shows them and
+            # says nothing looked, so a number above it is the window
+            # between the two.
+            "triage_oldest_wait_s": max(
+                [int(time.time() - f["ts"]) for f in rows
+                 if f["status"] == "triaging"] or [0]),
             "scorecard": findings_store.scorecard(),
         },
         "memory": {
@@ -6738,13 +6821,18 @@ async def h_findings(request: web.Request) -> web.Response:
     # so opening the tab right after a study session finishes doesn't wait
     # out the tick. Both are idempotent, and an empty inbox costs one glob.
     def listing() -> tuple[list[dict], dict]:
-        return findings_store.sweep_inbox(), _findings_payload()
+        return findings_store.sweep_inbox(triage.gate), _findings_payload()
 
     swept, payload = await asyncio.to_thread(listing)
-    # The tab is open in front of somebody, but the phone still gets the
-    # courtesy copy: whoever configured the notify target may not be the
-    # person looking, and add_many's dedup means this can't ring twice.
-    await _announce_findings(swept)
+    # Nothing is announced and nothing is triaged here. A study session's
+    # finding arrives gated like any other, and the drain on the
+    # scheduler's own minute is what looks at it and tells the phone — a
+    # Claude run behind a tab fetch is the "refresh everything" control
+    # this panel deleted, with a nicer name. The sweep stays because it
+    # is only about latency: the row is in the store the moment the tab
+    # is opened rather than up to a minute later.
+    if swept:
+        log.info("swept %d finding(s) on a tab fetch", len(swept))
     return web.json_response(payload)
 
 
@@ -7238,7 +7326,7 @@ async def h_finding_recheck(request: web.Request) -> web.Response:
         # before it clears: a check looking again may find the problem has
         # moved rather than gone (the same hub, a different device), and
         # filing that in the same breath is what makes one press enough.
-        created = findings_store.add_many(found)
+        created = findings_store.add_many(triage.gate(found))
         # The number in a detail is the half that is allowed to change —
         # the text is stable because the store dedupes on it — so a row
         # that is still there comes back with today's number rather than

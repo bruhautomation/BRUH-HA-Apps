@@ -3806,8 +3806,12 @@ async function recheckFinding(f, btns, button) {
     // "Still there" is the commonest answer and the one that has to say
     // what it checked: the card now carries `confirmed just now`, so the
     // toast names the check rather than repeating the row.
+    // A new row is not on the tab yet — everything a producer files waits
+    // for a look first — so the toast says where it went rather than
+    // sending somebody to a list that has not got it.
     toast(data.created
-      ? "Still there, and the check found something new as well"
+      ? "Still there — and it found something new, which brAIn is looking "
+        + "at before showing you"
       : `Still there — ${esc(f.source_title || "that check")} looked again `
         + "just now and reported it");
   } catch (e) {

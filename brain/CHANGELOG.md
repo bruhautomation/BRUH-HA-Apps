@@ -2,6 +2,38 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.57.0
+
+**Every finding is looked at before you see one, not just the ones a rule
+filed.** 1.55.0 put a Claude run between filing and surfacing and then
+excused four of the five producers from it, on the argument that an
+insight run, a study session and the fixer had each read the house before
+they filed anything. That is about the wrong question. Those runs were
+asked to write a card, to study a topic, to make a repair — a finding is
+the side channel they drop what they noticed into on the way past, and
+nothing anywhere asked them whether it was worth a person's evening.
+
+- **All five producers file through the same gate now**: the house checks,
+  an insight run's `findings`, a study session's, whatever the fixer
+  noticed while it was in there, and the rows a "Check again" press turns
+  up. A producer's name is context in the prompt now rather than a reason
+  to skip the question.
+- **The look runs every minute rather than once a checks pass.** Four of
+  the five producers do not run a checks pass, so a row waiting hours for
+  one is a row nobody is shown. It reads whatever is waiting, so whoever
+  drains next picks up what anybody filed.
+- **What does not fit one run now WAITS for the next one** instead of
+  surfacing unchecked. Surfacing the overflow spent the cap on exactly the
+  rows this exists to catch, on the busiest houses first; the queue is
+  taken oldest first, so nothing loses the same lottery twice, and a row
+  nothing ever came back for still surfaces after an hour saying so.
+- Unchanged, and the reason all of the above is safe: **silence surfaces.**
+  Not signed in, runs paused, the budget spent, the run failed or came back
+  unreadable, a row it skipped — every one of those still ends with the
+  finding on the list marked *Not checked first*, and why.
+- ⚙ → Diagnostics carries how long the oldest row still waiting has waited.
+  A queue nobody can see is a queue that silently swallows.
+
 ## 1.56.0
 
 **The Activity tab says what happened, not every time a value changed.**

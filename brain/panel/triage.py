@@ -17,22 +17,21 @@ what the house has already been told. It answers one word per row,
 **elevated** or **held**, with a sentence; only the first reaches the
 tab, the badge, the notification and the analyst's prompt block.
 
-Four rules, and the first is the one the others serve.
+Five rules, and the first is the one the others serve.
 
 **Silence surfaces.** Triage can only ever hold a row back by SAYING so,
 about that row, in a reply that parsed. No credential, the budget spent,
 the automatic switch off, the run failed, the reply unparseable, a row the
-reply did not mention, more rows than one run may take, a pass that died
-halfway — every one of those ends with the finding on the tab, marked
-`untriaged`. "I could not look" and "it is not real" are different
-claims and only the second may hide a problem, which is `clear_resolved`'s
-rule moved one step earlier in the lifecycle.
+reply did not mention, a pass that died halfway — every one of those ends
+with the finding on the tab, marked `untriaged`. "I could not look" and
+"it is not real" are different claims and only the second may hide a
+problem, which is `clear_resolved`'s rule moved one step earlier in the
+lifecycle.
 
-**One run per pass, never one per finding.** The batch is capped and the
+**One run per drain, never one per finding.** The batch is capped and the
 decision to spend anything at all is arithmetic taken before a process is
-spawned — `curiosity.py`'s rule with less riding on it, because a pass
-that filed nothing new is the ordinary case and it costs one list
-comprehension.
+spawned — `curiosity.py`'s rule with less riding on it, because a drain
+with nothing waiting is the ordinary case and it costs one read.
 
 **A held row is a row, not a deletion.** It stays in the store, which is
 what makes the next pass's re-report dedupe against it rather than file
@@ -42,11 +41,33 @@ conversation that reached it, and one press elevates it — a verdict
 nothing can correct is a verdict nobody should trust, which is the
 `unsettle` press one store over.
 
-**Only a producer that has not looked is triaged.** A check has read one
-snapshot and nothing else. An insight run, a study session and a
-curiosity run each spent a Claude turn reading the house before they
-filed anything, so triaging one is paying full price to ask a model to
-grade its own answer a minute later.
+**EVERY finding is triaged, and the first cut of this was wrong about
+that.** What shipped gated on the source and triaged house checks alone,
+on the argument that an insight run, a study session and the fixer had
+each spent a Claude turn reading the house before they filed anything, so
+grading one is paying full price to have a model mark its own homework.
+The argument is about the wrong question. A run that read the house was
+asked to write a card, or to study a topic, or to make a change; a
+finding is the side channel it drops what it noticed into on the way
+past, and **nothing anywhere asked it whether that was worth a person's
+evening**. Reading the house and judging whether a row belongs on a list
+of decisions are two different jobs, and only one of them had ever been
+done. It is also backwards about which rows do the damage: the ones
+people give up on a list over are the small ones, the obvious ones, the
+ones that are technically true — which is exactly the set a model can
+drop without being asked twice. So `gate` marks every row whoever filed
+it, and what a producer's name still does here is ride into the prompt as
+context rather than decide anything.
+
+**The surplus WAITS, and the clock is what makes that honest.** `gate` is
+applied by five producers and the drain is one run, so more can arrive at
+once than one run may read. Surfacing the overflow unjudged — which is
+what the first cut did — spends the cap on exactly the rows this exists
+to catch, on the busiest houses first. Waiting is only silence if nothing
+comes back for it, and something does: the drain runs on the scheduler's
+own minute, and `STALE_S` is the promise that a row nothing ever came
+back for surfaces anyway. The batch is taken **oldest first**, so a row
+cannot lose the same lottery twice.
 """
 from __future__ import annotations
 
@@ -57,11 +78,10 @@ import json
 # is why it surfaces like any untriaged finding and says so on the card.
 VERDICTS = ("elevated", "held", "untriaged")
 
-# The most rows one run may judge. Past this the surplus SURFACES rather
-# than waiting for the next pass: waiting is silence, and silence is what
-# this whole module exists to avoid being mistaken for a verdict. Ten is
-# what one turn can read the house about without the reply becoming a
-# list it skims.
+# The most rows one run may judge. What does not fit waits for the next
+# drain rather than surfacing unjudged — see the fifth rule. Ten is what
+# one turn can read the house about without the reply becoming a list it
+# skims.
 MAX_BATCH = 10
 
 # A run that reads history for ten entities is an insight run's shape, so
@@ -69,10 +89,11 @@ MAX_BATCH = 10
 TIMEOUT_S = 420
 MAX_TURNS = 40
 
-# A row left mid-triage by a panel that died. Anything older than this
-# surfaces untriaged on the next pass — a guard that refuses has to change
-# the next attempt, and a row nothing will ever judge is a problem nobody
-# is ever shown.
+# A row left waiting by a panel that died, or by a drain that has not run
+# since. Anything older than this surfaces untriaged on the next pass — a
+# guard that refuses has to change the next attempt, and a row nothing
+# will ever judge is a problem nobody is ever shown. It is also what
+# bounds the wait the fifth rule asks a queued row to accept.
 STALE_S = 3600
 
 # One sentence, shown on the card. Long enough to name what was looked at
@@ -81,22 +102,22 @@ STALE_S = 3600
 MAX_REASON = 300
 
 # Every way a finding reaches the tab without anything having looked at
-# it, in the words the card shows. They are here rather than at the seven
+# it, in the words the card shows. They are here rather than at the six
 # call sites for the reason every closed vocabulary in this add-on is one
 # table: these are the sentences that say "this card was NOT checked", and
-# seven copies is seven chances for one of them to quietly stop saying it.
+# six copies is six chances for one of them to quietly stop saying it.
 #
 # Each one names what happened rather than apologising for it, because the
 # person reading has to be able to tell an unchecked card from a checked
-# one and then decide whether to believe it.
+# one and then decide whether to believe it. None of them names the
+# producer: every one of the five files through `gate` now, so a sentence
+# about "the check" would be wrong about four of them.
 UNJUDGED = ("Nothing finished looking at this one, so it is on the list as "
-            "the check filed it.")
-TOO_MANY = ("More arrived at once than one look can cover, so this one is "
-            "on the list unchecked.")
-RUN_FAILED = ("The check on this one did not finish, so it is on the list "
-              "as the rule filed it.")
+            "it was filed.")
+RUN_FAILED = ("The look at this one did not finish, so it is on the list "
+              "as it was filed.")
 NOT_MENTIONED = ("Nothing came back about this one, so it is on the list as "
-                 "the check filed it.")
+                 "it was filed.")
 NO_CREDENTIAL = ("brAIn is not signed in, so nothing looked at this before "
                  "showing it.")
 PAUSED = ("Automatic runs are paused, so nothing looked at this before "
@@ -108,44 +129,33 @@ NO_BUDGET = ("The usage budget is spent, so nothing looked at this before "
 # imperative form of each beside it. See `parse`.
 _SAME_WORD = {"hold": "held", "elevate": "elevated"}
 
-_CHECK_PREFIX = "check:"
-
-
-def needs_triage(source: str | None) -> bool:
-    """True for a producer that filed without looking at anything.
-
-    Deliberately a property of the SOURCE and not of the row: a producer
-    is a line of code and a row is a sentence a rule or a model wrote, so
-    keying this on the text would be keying it on the thing that gets
-    reworded. Everything but a house check reached its finding through a
-    Claude run that had already read the house.
-    """
-    return str(source or "").startswith(_CHECK_PREFIX)
-
 
 def gate(rows: list[dict]) -> list[dict]:
-    """The wire-shaped findings a pass is about to file, with the ones
-    nothing has looked at marked as waiting for something to.
+    """The wire-shaped findings a producer is about to file, every one of
+    them marked as waiting for something to look at it.
 
     One place decides this, so the store never has to know the policy and
-    a second producer cannot file straight past it by accident.
+    a second producer cannot file straight past it by accident. It is
+    unconditional on purpose — see the fourth rule. It does not mutate
+    what it is handed, because the same list goes on to `refresh_details`
+    and `clear_resolved` in the same pass.
     """
-    out = []
-    for row in rows:
-        if isinstance(row, dict) and needs_triage(row.get("source")):
-            out.append({**row, "status": "triaging"})
-        else:
-            out.append(row)
-    return out
+    return [{**row, "status": "triaging"} if isinstance(row, dict) else row
+            for row in rows]
 
 
 SYSTEM = """You are checking whether problems a smart home found are real.
 
-A house check is one rule reading one instant. It cannot look anything up,
-so it reports things that are true of the reading and wrong about the
-house: a sensor that has not moved because it watches a cupboard nobody
-opens, a temperature that is impossible for a room and ordinary for an
-oven, a reading far from normal because the season changed.
+Some of these came from a rule reading one instant of the house. It cannot
+look anything up, so it reports things that are true of the reading and
+wrong about the house: a sensor that has not moved because it watches a
+cupboard nobody opens, a temperature that is impossible for a room and
+ordinary for an oven, a reading far from normal because the season changed.
+
+Others were mentioned in passing by a run that was doing something else —
+writing a report, studying a topic, making a repair. That run read the
+house, but nothing asked it whether what it noticed was worth putting in
+front of a person, which is the question here.
 
 Your job is to look — history, the area, what else the house says, what
 the homeowner has told brAIn before — and decide, for each one, whether
@@ -161,7 +171,7 @@ nobody was shown is much worse than one card too many.
 "held" — only when you have LOOKED and the finding is not a problem in
 this house. Not because it is minor, not because it is old, not because
 you would not have raised it — because you checked and it is not what the
-rule thought it was. Say what you checked.
+one who raised it thought it was. Say what you checked.
 
 Never hold anything about safety, security, a battery that will die, a
 device that has stopped answering, or data loss.
@@ -246,6 +256,5 @@ def parse(obj, count: int) -> dict[int, tuple[str, str]]:
 __all__ = [
     "MAX_BATCH", "MAX_REASON", "MAX_TURNS", "NOT_MENTIONED", "NO_BUDGET",
     "NO_CREDENTIAL", "PAUSED", "RUN_FAILED", "STALE_S", "SYSTEM",
-    "TIMEOUT_S", "TOO_MANY", "UNJUDGED", "VERDICTS", "frame", "gate",
-    "needs_triage", "parse",
+    "TIMEOUT_S", "UNJUDGED", "VERDICTS", "frame", "gate", "parse",
 ]

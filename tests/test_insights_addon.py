@@ -2145,7 +2145,11 @@ class TestGenerateFlow(InsightsServerCase):
         listed = findings_store.list_all()
         self.assertEqual(len(listed), 1)
         self.assertEqual(listed[0]["text"], "Back Door battery is dead")
-        self.assertEqual(listed[0]["status"], "open")
+        # Waiting to be looked at, not on the list. This run read the house
+        # to write a card; nothing asked it whether what it noticed on the
+        # way past is worth a person's evening, which is the question the
+        # triage drain answers a minute later.
+        self.assertEqual(listed[0]["status"], "triaging")
         self.assertEqual(listed[0]["severity"], "serious")
         self.assertFalse(listed[0]["fixable"], "a dead battery needs hands")
         self.assertEqual(listed[0]["source"], "energy")
