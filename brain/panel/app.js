@@ -3663,7 +3663,7 @@ const FIND_SEVERITY = {
 // that is news until you have read it. The card's only button then is
 // "Got it", which ends it like every other ending does.
 //
-// There are two filters and no more. There used to be four: "Answered",
+// Three filters and a ledger. There used to be four: "Answered",
 // which listed the settled ledger, and "Everything", which existed mostly
 // to reach it. Both contradicted the thing that makes an ending an ending —
 // settling a finding writes a plain fact into memory and DELETES the row,
@@ -3675,11 +3675,23 @@ const FIND_SEVERITY = {
 // The ledger itself is untouched and must stay: it is the dedup index that
 // stops the analyst re-raising next week what you answered today. It is
 // simply not a view any more.
+//
+// "Looked at" is not that pile and is the opposite claim. Those rows are
+// live in the store and nobody has answered them — a run went and checked
+// and decided they were not worth your attention, which is a decision
+// BRAIN made and so is exactly the kind a person has to be able to see
+// and overturn. Hence a reason on every row, the conversation behind it
+// one press away, and one verb that puts it back.
 const FIND_FILTERS = [
   { id: "live", label: "Needs you", match: (f) =>
     ["open", "fixing", "fixed", "failed", "needs_you"].includes(f.status)
     && !findings_isSnoozed(f) },
   { id: "snoozed", label: "Later", match: (f) => findings_isSnoozed(f) },
+  // What was brought up and looked at and is not worth your time. These
+  // ARE rows — held rather than deleted, which is what keeps the next
+  // checks pass deduping against them instead of filing them again — and
+  // the reason and the conversation that reached it are on each one.
+  { id: "held", label: "Looked at", match: (f) => f.status === "held" },
   // Not a list of findings — the rows are gone. What is here is the ledger
   // of answers, so that changing your mind has somewhere to happen.
   { id: "settled", label: "Answered", match: () => false },
@@ -3929,6 +3941,86 @@ async function discussFinding(f, btns) {
   }
 }
 
+// One line about whether anything looked at this finding before it
+// reached the tab, plus the way into the conversation that did.
+//
+// Absent entirely for a row from a producer that never needed triaging
+// (an insight run had already read the house) — a badge on every card
+// saying nothing happened is a badge people stop reading.
+function triageLine(f) {
+  const t = f.triage || {};
+  if (!t.verdict) return null;
+  const box = el("p", "findtriage");
+  if (t.verdict === "untriaged") {
+    box.classList.add("unchecked");
+    box.appendChild(el("span", "findtriagelabel", "Not checked first"));
+  } else if (t.elevated_by_person) {
+    box.appendChild(el("span", "findtriagelabel", "You brought this back"));
+  } else {
+    box.appendChild(el("span", "findtriagelabel", "brAIn checked"));
+  }
+  if (t.reason) box.appendChild(el("span", null, t.reason));
+  if (t.run_id) box.appendChild(triageLink(f));
+  return box;
+}
+
+// The record of the run that judged it. Opened through the same reader
+// every other engine-store run uses: those turns ran under the analyst's
+// read-only scoping, so they are read and never resumed.
+function triageLink(f) {
+  const t = f.triage || {};
+  const btn = el("button", "btn tiny ghost", "See what it checked");
+  tip(btn, "Opens the conversation brAIn had about this finding. It is a "
+    + "record — you can read it and ask a new chat about it, not continue it.");
+  btn.addEventListener("click", () => viewConversation({
+    id: t.run_id,
+    source: "triage",
+    title: f.text || "",
+    age: t.at ? timeAgo(new Date(t.at * 1000).toISOString()) : "",
+  }));
+  return btn;
+}
+
+// One finding brAIn looked at and decided not to show you. There is
+// exactly one press on it and it is `unsettle`'s: it stops the
+// suppression and changes nothing else — the row goes onto the work list
+// as it was filed, and the verdict stays on it, because what the run said
+// is the only evidence it was wrong about this house.
+function makeHeld(f) {
+  const card = el("article", `finding held sev-${f.severity}`);
+  const line = el("div", "findmeta");
+  line.appendChild(el("span", "findsev", FIND_SEVERITY[f.severity] || "Degraded"));
+  line.appendChild(el("span", "findstate", "Not shown"));
+  if (f.source_title) line.appendChild(el("span", "findsrc", f.source_title));
+  card.appendChild(line);
+  card.appendChild(el("h3", "findtitle", f.text));
+  if (f.detail) card.appendChild(el("p", "finddetail", f.detail));
+  const seen = triageLine(f);
+  if (seen) card.appendChild(seen);
+
+  const actions = el("div", "findactions");
+  const up = el("button", "btn small", "↑  Bring it to the front");
+  tip(up, "Puts it on the work list as the check filed it. Nothing else "
+    + "changes — brAIn's reasoning stays on the card.");
+  up.addEventListener("click", async () => {
+    up.disabled = true;
+    up.textContent = "Bringing it back…";
+    try {
+      const data = await api(`api/finding/${f.ts}/elevate`, { method: "POST" });
+      takeFindings(data);
+      renderFindings();
+      toast("It is on the work list now");
+    } catch (e) {
+      toast(e.message);
+      up.disabled = false;
+      up.textContent = "↑  Bring it to the front";
+    }
+  });
+  actions.appendChild(up);
+  card.appendChild(actions);
+  return card;
+}
+
 function makeFinding(f) {
   const meta = FIND_STATUS[f.status] || FIND_STATUS.open;
   const card = el("article", `finding sev-${f.severity} st-${meta.cls}`);
@@ -3951,6 +4043,14 @@ function makeFinding(f) {
 
   if (f.detail) card.appendChild(el("p", "finddetail", f.detail));
   if (f.entity_id) card.appendChild(el("code", "findentity", f.entity_id));
+  // What looked at it before you were shown it, in one line. Both words
+  // are worth saying and they are different claims: "brAIn checked" is
+  // evidence the card is real, and "nothing checked this one" is the
+  // honest label on a row that surfaced because triage could not run —
+  // which must never be silent, or an unchecked card reads as a checked
+  // one.
+  const seen = triageLine(f);
+  if (seen) card.appendChild(seen);
 
   // The proposed fix is shown before anything is done, and replaced by what
   // actually happened afterwards — a stale "here's what I'd do" sitting
@@ -4260,6 +4360,22 @@ function renderFindings() {
     // beside a list that is meant to empty invites people to read the wrong
     // one as the record. Memory is the record.
     answered.slice(0, 30).forEach((e) => list.appendChild(makeSettled(e)));
+    return;
+  }
+  if (state.findFilter === "held") {
+    const looked = state.findings.filter((f) => f.status === "held");
+    if (!looked.length) {
+      list.appendChild(el("div", "findempty", "Nothing held back."));
+      return;
+    }
+    // The sentence is the whole point of the view: without it a list of
+    // problems under a tab is read as a list of problems you have, and
+    // these are the ones brAIn is saying you do not.
+    list.appendChild(el("div", "findlede",
+      "Problems the house checks raised that brAIn looked into and decided "
+      + "were not worth your time. Each one says what it checked, and you "
+      + "can read the conversation or put it back on the list."));
+    looked.slice(0, 40).forEach((f) => list.appendChild(makeHeld(f)));
     return;
   }
   const active = FIND_FILTERS.find((f) => f.id === state.findFilter) || FIND_FILTERS[0];
@@ -9168,7 +9284,8 @@ async function resumeConversation(conv) {
 // house and what came back, tool calls and all.
 async function viewConversation(conv) {
   openBox("#convViewModal");
-  $("#convViewTitle").textContent = conv.source === "fix" ? "Fix run" : "Card run";
+  $("#convViewTitle").textContent = { fix: "Fix run", triage: "Checking a finding" }[conv.source]
+    || "Card run";
   $("#convViewMeta").textContent = `${conv.title} · ${conv.age}`;
   const log = $("#convViewLog");
   log.textContent = "Loading…";

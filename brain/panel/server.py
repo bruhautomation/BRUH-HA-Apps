@@ -172,6 +172,7 @@ import shadow_findings
 import terminal_proxy
 import thermal
 import todo_store
+import triage
 import trials
 import undo_store
 import usage_store
@@ -4135,6 +4136,119 @@ def _record_manual(snapshot: dict, now: float) -> int:
         return 0
 
 
+async def _triage_findings(created: list[dict], now: float) -> list[dict]:
+    """Decide which newly filed check rows are worth showing, and move them.
+
+    Returns the rows that are on the list afterwards — the ones a run
+    elevated plus the ones nothing could judge — because that is exactly
+    the set `_announce_findings` is owed and deriving it a second time
+    from the store would be a second answer to the same question.
+
+    **Every failure surfaces.** No credential, the automatic switch off,
+    the budget spent, the run failed, the reply unparseable, a row the
+    reply did not mention, more rows than one run may take: each of those
+    ends with the finding on the tab carrying an `untriaged` verdict. A
+    triage that could not look must never be able to hide a problem,
+    which is `clear_resolved`'s rule moved one step earlier.
+
+    The stale sweep is here rather than in a loop of its own for the same
+    reason: a pass that died between filing and judging left rows nothing
+    will ever come back for, and the next pass is the thing that does
+    come back.
+    """
+    # Anything an older pass left mid-triage, whether or not this one
+    # filed a thing. Promoted first, so a row that has already waited an
+    # hour is not held up behind this pass's own batch.
+    stale = await asyncio.to_thread(findings_store.stale_triaging,
+                                    now - triage.STALE_S)
+    surfaced: list[dict] = []
+    if stale:
+        log.warning("triage: %d finding(s) were left unjudged and are being "
+                    "shown as they are", len(stale))
+        surfaced += await asyncio.to_thread(
+            findings_store.record_triage,
+            {ts: ("untriaged", triage.UNJUDGED) for ts in stale},
+            "", now)
+
+    pending = [f for f in created if f.get("status") == "triaging"]
+    if not pending:
+        return surfaced
+
+    # The surplus surfaces rather than waiting for the next pass. Waiting
+    # is silence, and silence is the thing this step must not be mistaken
+    # for a verdict.
+    batch, spill = pending[:triage.MAX_BATCH], pending[triage.MAX_BATCH:]
+    if spill:
+        surfaced += await asyncio.to_thread(
+            findings_store.record_triage,
+            {int(f["ts"]): ("untriaged", triage.TOO_MANY)
+             for f in spill}, "", now)
+
+    # The three gates every scheduled Claude run answers to (`_ask_why`'s
+    # rule): a credential, the automatic switch, and the usage budget.
+    # Failing one is not a reason to hide anything — it is a reason to
+    # show everything, which is what the sentence on the card says.
+    settings = settings_store.load()
+    if not engine.get_auth():
+        excuse = triage.NO_CREDENTIAL
+    elif not settings["auto_enabled"]:
+        excuse = triage.PAUSED
+    elif usage_store.budget_state(settings)["blocked"]:
+        excuse = triage.NO_BUDGET
+    else:
+        excuse = ""
+    if excuse:
+        return surfaced + await asyncio.to_thread(
+            findings_store.record_triage,
+            {int(f["ts"]): ("untriaged", excuse) for f in batch}, "", now)
+
+    prompt = triage.frame(
+        batch,
+        house=await _house_prompt_block(now),
+        # The load-bearing half. "That contact is on a cupboard nobody
+        # opens" is exactly the kind of thing a homeowner has already
+        # said once, and a triage run that cannot read it re-litigates
+        # every correction they have ever made.
+        memory=memory_excerpt(await asyncio.to_thread(_read_shared_memory)),
+    )
+    try:
+        result = await asyncio.to_thread(
+            engine.run_analyst, prompt, triage.SYSTEM, eff_model(),
+            triage.TIMEOUT_S, triage.MAX_TURNS, "triage")
+    except Exception as exc:  # noqa: BLE001 — the findings are already
+        # filed; what is at stake here is only whether anything looked.
+        log.warning("a triage run failed: %s", exc)
+        result = {"ok": False, "error": str(exc)}
+    run_id = str((result.get("meta") or {}).get("session_id") or "")
+    if not result.get("ok"):
+        return surfaced + await asyncio.to_thread(
+            findings_store.record_triage,
+            {int(f["ts"]): ("untriaged", triage.RUN_FAILED)
+             for f in batch}, run_id, now)
+
+    verdicts = triage.parse(
+        engine.extract_json(result.get("text") or result.get("raw") or ""),
+        len(batch))
+    decided: dict[int, tuple[str, str]] = {}
+    for i, row in enumerate(batch, 1):
+        ts = int(row["ts"])
+        if i in verdicts:
+            decided[ts] = verdicts[i]
+        else:
+            # A row the reply skipped. The default is the finding, not
+            # the silence: "it was not mentioned" is not "it is not real".
+            decided[ts] = ("untriaged", triage.NOT_MENTIONED)
+    moved = await asyncio.to_thread(
+        findings_store.record_triage, decided, run_id, now)
+    held = [f for f in moved if f["status"] == "held"]
+    # No journal line of its own: `engine._run_cli` already writes one per
+    # invocation under the source it was given, and a second row for the
+    # same run is two answers to "how many triage runs happened".
+    log.info("triage: %d looked at, %d held back, %d shown",
+             len(batch), len(held), len(moved) - len(held))
+    return surfaced + [f for f in moved if f["status"] != "held"]
+
+
 async def _ask_why(now: float, reason: str = "schedule") -> int:
     """Spend at most one Claude run working out why somebody did something.
 
@@ -4775,7 +4889,13 @@ async def run_checks(reason: str = "schedule") -> dict:
 
         def apply() -> tuple[list[dict], int, list[dict], dict]:
             ran_sources = {checks.source_for(c) for c in result["ran"]}
-            created = findings_store.add_many(result["findings"])
+            # A check has read one instant and nothing else, so its rows
+            # are filed as waiting to be looked at rather than as work
+            # (`triage.gate`). Everything else here already came out of a
+            # Claude run that read the house. Nothing is hidden by this on
+            # its own: a row only leaves `triaging` for `held` when a run
+            # says so about that row, and every other ending is `open`.
+            created = findings_store.add_many(triage.gate(result["findings"]))
             refreshed = findings_store.refresh_details(result["findings"])
             cleared = findings_store.clear_resolved(
                 ran_sources,
@@ -4796,7 +4916,19 @@ async def run_checks(reason: str = "schedule") -> dict:
                 "created": len(hidden), "found": len(shadow_rows)}
 
         created, refreshed, cleared, shadow_counts = await asyncio.to_thread(apply)
-        await _announce_findings(created)
+        # Between filing and surfacing: one run that goes and looks at the
+        # rows no rule could check. What comes back is the set that is on
+        # the list afterwards — elevated, plus everything nothing could
+        # judge — and that, not `created`, is what a phone is told about.
+        try:
+            surfaced = await _triage_findings(created, started)
+        except Exception as exc:  # noqa: BLE001 — the findings are filed
+            # either way; a triage that fell over must not also take out
+            # the pass that found them.
+            log.warning("could not triage this pass's findings: %s", exc)
+            surfaced = []
+        announce = [f for f in created if f.get("status") == "open"] + surfaced
+        await _announce_findings(announce)
         # After the findings, and outside them. A proposal is not a
         # finding: different store, different tab, and a habit miner
         # that could fail this pass would cost a house its list of what
@@ -4875,6 +5007,13 @@ async def run_checks(reason: str = "schedule") -> dict:
             "per_check": result["per_check"],
             "found": len(result["findings"]),
             "created": created,
+            # What of `created` reached the list. A pass that filed nine
+            # and showed two is a pass worth being able to read back, and
+            # the difference is the only number that says triage is doing
+            # anything at all.
+            "surfaced": len(announce),
+            "held": len([f for f in created
+                         if f["ts"] not in {a["ts"] for a in announce}]),
             "refreshed": refreshed,
             "cleared": cleared,
             "proposed": offered,
@@ -6890,6 +7029,29 @@ async def h_todo_delete(request: web.Request) -> web.Response:
 # of its three rows gone clears both. Clearing only the row that was
 # pressed would leave the other two to be pressed individually about a
 # thing the same look already proved is over.
+async def h_finding_elevate(request: web.Request) -> web.Response:
+    """Put a held finding on the list, because a person said to.
+
+    The one press on the Looked-at filter, and it is `unsettle`'s: it
+    stops the suppression and changes nothing else. What triage said is
+    kept beside the row rather than erased — it is the only evidence that
+    a verdict was wrong about this house, and a verdict nothing can
+    correct is a verdict nobody should trust.
+
+    A row that is not held is a 409 naming what it is instead, because
+    "already on the list" and "somebody settled it while you were
+    reading" are different things and only one of them is a surprise.
+    """
+    ts = _finding_ts(request)
+    shaped = await asyncio.to_thread(findings_store.elevate, ts)
+    if shaped is None:
+        raise web.HTTPConflict(
+            text="That one is not being held back any more — it is either "
+                 "already on the list or it has been answered.")
+    return web.json_response({
+        "elevated": True, **(await asyncio.to_thread(_findings_payload))})
+
+
 async def h_finding_recheck(request: web.Request) -> web.Response:
     finding = _finding_or_404(request)
     source = str(finding.get("source") or "")
@@ -9571,6 +9733,7 @@ def make_app() -> web.Application:
     # and "recheck" is not an ending, so it must not fall into the table
     # of them.
     app.router.add_post("/api/finding/{ts}/recheck", h_finding_recheck)
+    app.router.add_post("/api/finding/{ts}/elevate", h_finding_elevate)
     # Before the generic {verb} route, like snooze and discuss: this ending
     # has to create the item before the row it reads is deleted, which the
     # verb table cannot express.

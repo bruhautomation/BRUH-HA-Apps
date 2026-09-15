@@ -134,6 +134,10 @@ jobs:
       - name: Measure the resolutions card
         run: node tests/manual/measure-chatres.mjs
 
+      # A card nothing checked must not read like one something did.
+      - name: Measure the triage view
+        run: node tests/manual/measure-triage.mjs
+
       - name: Measure BRight's light map
         run: node tests/manual/measure-lightmap.mjs
 

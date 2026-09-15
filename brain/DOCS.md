@@ -285,6 +285,42 @@ ordinary findings under a "check" label, with no Claude run at all.
   two triggers fired in, which is not something anybody designed. No trace
   shows it, because nothing went wrong in either run.
 
+#### Something looks at it before you do
+
+A check is one rule reading one instant, and that is the whole of why some
+of its findings are not real: it cannot go and look. A sensor that has not
+moved in a week is stuck, or it is a contact on a cupboard nobody opens. A
+temperature of 220°C is impossible for a room and ordinary for a 3D
+printer. A number far outside its own normal is a fault, or it is the
+heating season starting.
+
+So a check's finding is not a card yet. Once a pass has filed what it
+found, **one Claude run goes and looks** — at the entity's history, at what
+else is in that area, at what brAIn has already been told about your house
+— and decides, for each one, whether it is worth putting in front of you.
+What it elevates lands on **Needs you** carrying the reason, in one line:
+*brAIn checked — its own month of statistics really does drift upward, and
+no other freezer here does.* What it holds back goes to **Looked at**, a
+filter that appears only once something is in it, where each row says what
+was checked, opens the conversation brAIn had about it, and carries one
+button that puts it back on the work list.
+
+A held finding is **held, not deleted**. The row stays, which is what stops
+the next pass filing the same thing again every six hours, and it clears
+itself exactly as an open one does when the check stops reporting it.
+
+The rule under all of it: **triage can only hold something back by saying
+so.** If brAIn is not signed in, if automatic runs are paused, if the usage
+budget is spent, if the run fails or answers something unreadable, if more
+arrive at once than one look can cover — the finding is on the list, saying
+*Not checked first* and why. "I could not look" and "it is not real" are
+different claims, and only the second may keep a problem off your screen.
+
+Nothing that came from a Claude run is triaged: an insight run, a study
+session and a curiosity run have each already read the house before filing
+anything, so checking one again is paying full price to have a model grade
+its own answer a minute later.
+
 A check's finding clears itself when the check stops finding it — the device
 came back, the battery was changed — and it is simply removed, so it can be
 raised again if the problem returns. What a person ends stays ended, exactly

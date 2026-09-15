@@ -3634,6 +3634,40 @@ body.term-classic #termMode .ico-out { display: block; }
 .finding.settled { border-left-color: var(--hairline); }
 .findsaid { margin: 6px 0 0; color: var(--ink-2); font-size: 13px; }
 
+/* What looked at a finding before it reached the tab, and the way into the
+   conversation that did. A held card is drawn quieter than a live one --
+   these are problems brAIn is saying you do NOT have -- but the state is
+   carried by the words on it ("Not shown", "brAIn checked", "Not checked
+   first"), never by the colour alone, which the design system forbids and
+   which matters most on a row read at 13px. */
+.finding.held { border-left-color: var(--hairline); opacity: 0.92; }
+.findtriage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.findtriagelabel {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-3, var(--ink-2));
+}
+.findtriage.unchecked .findtriagelabel { color: var(--warning); }
+.findlede {
+  margin: 0 0 14px;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.5;
+  max-width: 62ch;
+}
+
 /* ------------------------------------------------------------ proposals
    The fifth kind of knowledge, and the only list here that is not about
    something being wrong. It reads like the findings list on purpose --
@@ -3940,6 +3974,13 @@ body.term-classic #termMode .ico-out { display: block; }
   .prob .probpick, .prob .probdel, .probbtns .btn { min-height: 44px; }
   .prob .probdel { min-width: 44px; }
   .prob .probcheck { width: 22px; height: 22px; }
+  /* A filter chip is how you reach a view at all, and at 33px it was under
+     a thumb on every phone. Raised on the CLASS rather than on the Findings
+     tab's strip, because the To-do tab renders the same control and a floor
+     one of them held and the other did not would be the inconsistency
+     rather than the fix — which is the argument the blocks around this one
+     make for staying scoped, applied to a control two tabs share. */
+  .fchip { min-height: 40px; }
   /* A resolution settles a finding — a decision somebody makes on purpose,
      in answer to a conversation they have just read, and the row carries
      two lines of text inside the press target. Scoped like the blocks

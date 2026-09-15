@@ -2,6 +2,41 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.55.0
+
+**A house check's finding is looked at before you are shown it.**
+You said most of what surfaces is not actually real, and that is a property
+of how a check works: it is one rule reading one instant, and it cannot go
+and look. A sensor that has not moved in a week is stuck, or it is a contact
+on a cupboard nobody opens. 220°C is impossible for a room and ordinary for
+a 3D printer. Nothing in the rule can tell the difference.
+
+So there is a step between filing and surfacing. After each checks pass, one
+Claude run reads the history, the area, and what brAIn already knows about
+your house, and decides per finding whether it is worth your attention.
+
+- **What it elevates carries the reason** on the card: *brAIn checked — its
+  own month of statistics really does drift upward, and no other freezer
+  here does.*
+- **What it holds back goes to a new "Looked at" filter** on the Findings
+  tab, which appears only once something is in it. Every row there says what
+  was checked, opens **the conversation brAIn had about it**, and carries one
+  button that puts it back on the work list.
+- **Held is held, not deleted.** The row stays, so the next pass does not
+  file the same thing again, and it clears itself when the check stops
+  reporting it — exactly as an open one does.
+- **Silence always surfaces.** Not signed in, automatic runs paused, the
+  usage budget spent, the run failed or unreadable, more arriving at once
+  than one look can cover: the finding is on the list saying *Not checked
+  first*, and why. "I could not look" and "it is not real" are different
+  things, and only the second may keep a problem off your screen.
+- **One run per pass, not one per finding**, capped — and a pass that filed
+  nothing new spends nothing at all.
+- Nothing that came out of a Claude run is re-checked: an insight run, a
+  study session and a curiosity run already read the house before filing.
+
+Also: the Findings and To-do filter chips are 40px on touch. They were 33.
+
 ## 1.54.0
 
 **The conversation about a finding can now end it, in its own words.**
