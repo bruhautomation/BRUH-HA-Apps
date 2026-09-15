@@ -627,6 +627,12 @@ function limitsNote(u) {
         + `<b>Sign in to your Claude account</b>: it asks for the permission `
         + `this figure needs, no terminal involved, and the real numbers come `
         + `back on the next poll.`);
+    case "oauth_token_awaiting_refresh":
+      return say("Your sign-in is fine — its token is between refreshes.",
+        `An access token lives for a few hours and Claude Code mints the `
+        + `next one itself, the first time anything runs Claude. Nothing is `
+        + `wrong and <b>signing in again will not make it arrive sooner</b>. `
+        + `The figure above is an estimate until the next poll after that.`);
     case "http_403":
       return say("Anthropic refused to show your usage.",
         `It did not say why. The figure above is an estimate; signing in `
@@ -2543,6 +2549,47 @@ function renderDiagnostics(d) {
       + (rt.automated_keys != null
           ? `, ${rt.automated_keys} already automated` : "")));
   }
+  // Why somebody does what they do, and — far more often — why brAIn is
+  // not currently asking. A feature that asks one question a day is quiet
+  // nearly all the time, so "nothing it cannot account for", "asked
+  // already this morning" and "the loop died in March" are three silences
+  // that look identical from every other surface, and this is the only
+  // place they are told apart.
+  const cu = d.curiosity || {};
+  if (cu.error) {
+    rows.push(diagRow("Why you did something", esc(cu.error), true));
+  } else if (cu.enabled != null) {
+    const b = cu.budget || {};
+    const counts = cu.counts || {};
+    const ev = cu.evidence || {};
+    const parts = [];
+    if (!cu.enabled) {
+      parts.push("<b>off</b> — turn on <i>Ask why you did something</i> in "
+        + "the add-on configuration");
+    } else if (ev.state === "collecting") {
+      // A floor's cost is silence. Say which floor.
+      parts.push(`watching — ${esc(ev.note || "not enough days yet")}`);
+    } else {
+      parts.push(`${cu.manual_actions ?? 0} manual action`
+        + `${cu.manual_actions === 1 ? "" : "s"} kept, `
+        + `${cu.curious_total ?? 0} brAIn cannot account for`);
+      parts.push(`asked ${b.day ?? 0} of ${b.per_day ?? 1} today, `
+        + `${b.week ?? 0} of ${b.per_week ?? 3} this week`);
+      if (cu.holding) parts.push(esc(cu.holding));
+      parts.push(`worked out ${counts.explained ?? 0}, asked you about `
+        + `${counts.guessed ?? 0}, could not tell ${counts.unknown ?? 0}`);
+    }
+    const queue = (cu.curious_about || []).slice(0, 5).map((c) =>
+      `<li>${esc(c.why || c.subject || "")}`
+      + (c.skip ? ` <i>— ${esc(c.skip)}</i>` : "") + "</li>");
+    const learned = (cu.learned || []).slice(0, 4).map((r) =>
+      `<li><b>${esc(r.name || r.subject || "")}</b> — ${esc(r.because || "")}`
+      + (r.filed ? ` <i>(${esc(r.filed)})</i>` : "") + "</li>");
+    rows.push(diagRow("Why you did something",
+      `<ul>${parts.map((t) => `<li>${t}</li>`).join("")}</ul>`
+      + (queue.length ? `<p class="hint">Curious about:</p><ul>${queue.join("")}</ul>` : "")
+      + (learned.length ? `<p class="hint">Lately:</p><ul>${learned.join("")}</ul>` : "")));
+  }
   // The roll-call, because "the consolidator is not running" is invisible
   // from every other line in this dialog — and an EMPTY roll-call is /proc
   // unreadable, which is a different claim from seven dead daemons.
@@ -2585,6 +2632,7 @@ async function loadDiagnostics() {
   // The nightly pass may be running right now, in which case the button
   // has to say so rather than offer a press that answers 409.
   measureState(false);
+  curiousState(false);
 }
 
 // "Copy for a bug report" writes a report file first and copies THAT: the
@@ -2663,6 +2711,64 @@ $("#diagMeasure").addEventListener("click", async () => {
     toast(e.message);
   }
   measureState(true);
+});
+
+// One press, and it spends a Claude run — which is why it says so on the
+// button rather than in a tooltip, and why it is worded as a question
+// rather than as a refresh. It starts the run and reads the outcome back
+// off `/api/curiosity`, `diagMeasure`'s clock: a run is minutes of model
+// time and ingress will not hold a request open for it.
+//
+// It carries its own in-flight state rather than sharing the measure
+// button's, BRUH Print's rule about a pair of controls: a button that
+// greys itself out while the other one runs is a pair nobody can tell
+// apart.
+let curiousPoll = null;
+
+async function curiousState(poll) {
+  const btn = $("#diagCurious");
+  if (!btn) return;
+  try {
+    const d = await api("api/curiosity");
+    btn.disabled = !!d.running;
+    btn.textContent = d.running ? "Working it out…" : "Ask why now";
+    // Renders only while there is something to ask about — the `Forget`
+    // rule: a button that cannot do anything is a control asking to be
+    // understood. `curious_total` counts the eligible ones, held or not,
+    // because the press deliberately ignores the daily budget.
+    btn.hidden = !(d.enabled && (d.curious_total || 0) > 0);
+    clearTimeout(curiousPoll);
+    curiousPoll = d.running && poll
+      ? setTimeout(() => curiousState(true), 5000) : null;
+    if (!d.running && poll) {
+      // The rows above are what the press was about, so they are what has
+      // to change on screen when it lands.
+      loadDiagnostics();
+      const last = (d.learned || [])[0] || {};
+      toast(last.because
+        ? `${last.status === "explained" ? "Worked it out" :
+            last.status === "guessed" ? "A guess, and a question for you" :
+            "Could not tell"}: ${last.because}`
+        : "Nothing came back — the add-on log says why");
+    }
+  } catch (e) {
+    clearTimeout(curiousPoll);
+    curiousPoll = null;
+    btn.disabled = false;
+  }
+}
+
+$("#diagCurious")?.addEventListener("click", async () => {
+  const btn = $("#diagCurious");
+  btn.disabled = true;
+  btn.textContent = "Working it out…";
+  try {
+    const r = await api("api/curiosity/ask", { method: "POST" });
+    toast(r.why ? `Asking: ${r.why}` : "Asking — this takes a few minutes");
+  } catch (e) {
+    toast(e.message);
+  }
+  curiousState(true);
 });
 
 // ------------------------------------------------------------ problem reports

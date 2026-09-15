@@ -126,6 +126,7 @@ import checks
 import cli_commands
 import conditions
 import conversations
+import curiosity
 import doctor
 import energy
 import engine
@@ -140,6 +141,7 @@ import hypotheses
 import intents
 import journal
 import knowledge_store
+import manual_ledger
 import milestones
 import notify_router
 import override_ledger
@@ -1234,6 +1236,44 @@ def _rhythm_diagnostics() -> dict:
         "brief_last_reasons": len(BRIEF_STATE["last_reasons"]),
         "brief_last_error": BRIEF_STATE["last_error"],
     }
+
+
+def _curiosity_diagnostics() -> dict:
+    """What brAIn is curious about, what it has asked, and what it learned.
+
+    Pure over the two stores, and every failure reads as a sentence
+    rather than taking the payload down: six sections and a note about
+    the seventh is a screen somebody can read, where a 500 is not
+    (`house.py`'s rule).
+    """
+    try:
+        on = _curiosity_enabled()
+        tz, _name = baselines.house_timezone()
+        now = time.time()
+        ledger = manual_ledger.load()
+        store = curiosity.load()
+        found = manual_ledger.candidates(ledger, tz, now)
+        ranked = curiosity.worth_asking(found, store, now, tz)
+        return {
+            "enabled": on,
+            "evidence": manual_ledger.progress(ledger, now),
+            "manual_actions": len(ledger.get("rows") or []),
+            "budget": {"per_day": curiosity.MAX_PER_DAY,
+                       "per_week": curiosity.MAX_PER_WEEK,
+                       **curiosity.spent(store, now, tz)},
+            # Empty when there is room; a sentence when there is not.
+            "holding": curiosity.budget_reason(store, now, tz),
+            "counts": curiosity.counts(store),
+            # Capped, and the count beside it, so an over-long queue says
+            # what it is not showing rather than disagreeing more quietly
+            # (the memory queue's rule).
+            "curious_about": ranked[:8],
+            "curious_total": len(ranked),
+            "learned": curiosity.recent(store, 8),
+        }
+    except Exception as exc:  # noqa: BLE001 — a section that took the
+        # report down would be worse than the section being a sentence.
+        return {"error": str(exc)[:200]}
 
 
 def _routines_diagnostics() -> dict:
@@ -4009,6 +4049,180 @@ def _record_routines(snapshot: dict, now: float) -> int:
         return 0
 
 
+def _record_manual(snapshot: dict, now: float) -> int:
+    """File the manual actions this pass saw, for the curiosity miner.
+
+    The fourth of these and the widest in domain but the narrowest in
+    claim: only what a *person* or a *voice command* caused, only on the
+    domains where reaching for a control is a decision, and never on the
+    ones `manual_ledger.EXCLUDED` refuses to be curious about. Same shape
+    and the same reason as `_record_overrides`: the window is a day and
+    the question is about a fortnight.
+    """
+    mined = snapshot.get("actions") or {}
+    if not mined.get("available"):
+        # "I could not look" is not "nobody did anything" — `clear_resolved`'s
+        # rule, and here it is the difference between a quiet house and a
+        # logbook that 404'd.
+        return 0
+    try:
+        return manual_ledger.record(mined.get("actions") or [], now)
+    except Exception as exc:  # noqa: BLE001 — accounting must not fail the
+        # pass it is accounting for; same rule as `journal.record`.
+        log.warning("could not file this pass's manual actions: %s", exc)
+        return 0
+
+
+async def _ask_why(now: float, reason: str = "schedule") -> int:
+    """Spend at most one Claude run working out why somebody did something.
+
+    The decision is made before anything is spawned and it is arithmetic
+    (`curiosity.worth_asking`), so a pass with nothing to be curious
+    about costs one read of a JSON file. What a run produces goes to a
+    store that already exists — a fact to the memory inbox, a guess to
+    the hypothesis queue — because a new kind of knowledge would be a
+    fourth store and this is not a fourth kind. It is the *why* behind
+    the first one.
+
+    Deliberately outside the findings, like every other producer here: an
+    explanation is not a finding, and a curiosity run that could fail a
+    checks pass would cost a house its list of what is broken to answer
+    a question nobody had asked yet.
+    """
+    if not _curiosity_enabled():
+        return 0
+    # A scheduled Claude run answers to the three gates every scheduled
+    # Claude run answers to, `_offer_milestones`' rule: a credential, the
+    # automatic switch, and the usage budget. Without them a house whose
+    # session window has passed its cap — the state whose whole promise is
+    # that the rest of the account is yours — would go on spending one run
+    # a day on a question nobody asked. The *pressed* route deliberately
+    # skips the budget, because "asking a question by hand always runs" is
+    # the other half of that promise.
+    settings = settings_store.load()
+    if not engine.get_auth() or not settings["auto_enabled"]:
+        return 0
+    if usage_store.budget_state(settings)["blocked"]:
+        return 0
+    try:
+        tz, _name = await asyncio.to_thread(baselines.house_timezone)
+        ledger = await asyncio.to_thread(manual_ledger.load)
+        found = await asyncio.to_thread(
+            manual_ledger.candidates, ledger, tz, now)
+        picked = await asyncio.to_thread(curiosity.ready, found, None, now, tz)
+    except Exception as exc:  # noqa: BLE001 — a question is optional; the
+        # pass that would have asked it is not.
+        log.warning("could not decide what to be curious about: %s", exc)
+        return 0
+    if not picked:
+        return 0
+
+    asked = 0
+    for candidate in picked:
+        subject = candidate["subject"]
+        # Settled BEFORE the run. A run that crashes having spent the
+        # money must not leave the identical question to be asked again
+        # in six hours for ever — `_brief_loop`'s stamp, for the same
+        # reason and with more at stake.
+        await asyncio.to_thread(curiosity.mark_asked, candidate, now)
+        asked += 1
+        try:
+            filed, error = await _run_curiosity(candidate, ledger, tz, now)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("a curiosity run failed: %s", exc)
+            await asyncio.to_thread(curiosity.record_answer, subject, None,
+                                    "", str(exc)[:200], now)
+            continue
+        log.info("curiosity (%s): %s — %s", reason, candidate.get("why"),
+                 filed or error or "nothing filed")
+    return asked
+
+
+async def _run_curiosity(candidate: dict, ledger: dict, tz,
+                         now: float) -> tuple[str, str]:
+    """One asking, end to end. Returns `(what was filed, error)`."""
+    rows = manual_ledger.by_subject(ledger.get("rows") or []).get(
+        candidate["subject"], [])
+    prompt = curiosity.frame(
+        candidate,
+        house=await _house_prompt_block(now),
+        # The load-bearing half: without it a run happily rediscovers
+        # something the document already says and spends a question
+        # asking somebody to confirm what they told brAIn once.
+        memory=memory_excerpt(await asyncio.to_thread(_read_shared_memory)),
+        recent=list(reversed(rows)),
+    )
+    result = await asyncio.to_thread(
+        engine.run_analyst, prompt, curiosity.SYSTEM, eff_model(),
+        curiosity.TIMEOUT_S, curiosity.MAX_TURNS, "curiosity")
+    if not result.get("ok"):
+        error = str(result.get("error") or "no reply")
+        await asyncio.to_thread(curiosity.record_answer, candidate["subject"],
+                                None, "", error, now)
+        return "", error
+
+    answer = curiosity.parse(
+        engine.extract_json(result.get("text") or result.get("raw") or ""))
+    if answer is None:
+        await asyncio.to_thread(
+            curiosity.record_answer, candidate["subject"], None, "",
+            "the reply was not the shape the contract asked for", now)
+        return "", "unparseable"
+
+    filed = await asyncio.to_thread(_file_curiosity, candidate, answer)
+    await asyncio.to_thread(curiosity.record_answer, candidate["subject"],
+                            answer, filed, "", now)
+    return filed, ""
+
+
+def _file_curiosity(candidate: dict, answer: dict) -> str:
+    """Put one answer where it belongs, and say where that was.
+
+    Three answers, three places that already exist, and no new surface:
+
+    * **explained** — a durable fact, queued to the memory inbox. Never
+      to `memory.md`: one writer owns that document, which is what lets
+      the terminal, voice, insights and study sessions all feed the same
+      memory without a lock between them.
+    * **guess** — a hypothesis, which is exactly what that queue is for:
+      a claim brAIn believes and wants confirmed, capped at three open,
+      expiring in a fortnight, riding down `/api/findings` as work
+      waiting on a person, and becoming a plain memory line the moment
+      somebody ticks it. The reason travels in the claim, because a
+      question with no reasoning under it is one nobody can answer well.
+    * **unknown** — nothing. A run that could not tell has learned
+      nothing about the house, and filing "brAIn could not work out why"
+      would be filing a fact about brAIn into a document about a home.
+    """
+    if answer["confidence"] == "explained" and answer["fact"]:
+        _queue_memory_fact(answer["fact"], source="curiosity",
+                           confidence="medium")
+        return "memory"
+    if answer["confidence"] == "guess" and answer["ask"]:
+        name = candidate.get("name") or candidate.get("entity_id") or ""
+        claim = f"{answer['because']} — {answer['ask']}"
+        if hypotheses.propose(claim[:hypotheses.MAX_TEXT_CHARS],
+                              topic=f"why: {name}"):
+            return "hypothesis"
+        # The cap, the TTL or a near-duplicate refused it. Not an error:
+        # three open questions is the whole design of that queue, and a
+        # fourth waiting behind them is what it exists to prevent.
+        return "hypothesis-refused"
+    return ""
+
+
+def _curiosity_enabled() -> bool:
+    """The `ask_why` option: live from the Supervisor, the run.sh export
+    otherwise. On by default — it is the feature, and the budget rather
+    than the switch is what bounds it."""
+    snap = addon_options.snapshot() or {}
+    value = snap.get("ask_why")
+    if value is None:
+        raw = os.environ.get("BRAIN_ASK_WHY", "true").strip().lower()
+        return raw not in ("false", "0", "no", "")
+    return bool(value)
+
+
 async def _offer_routines(now: float) -> int:
     """Turn what the ledger can prove into proposals. Returns how many landed.
 
@@ -4494,6 +4708,7 @@ async def run_checks(reason: str = "schedule") -> dict:
         await asyncio.to_thread(_record_overrides, snapshot, started)
         await asyncio.to_thread(_record_rhythm, snapshot, started)
         await asyncio.to_thread(_record_routines, snapshot, started)
+        await asyncio.to_thread(_record_manual, snapshot, started)
         result = checks.run_all(snapshot, started)
 
         def apply() -> tuple[list[dict], int, list[dict], dict]:
@@ -4578,6 +4793,15 @@ async def run_checks(reason: str = "schedule") -> dict:
         except Exception as exc:  # noqa: BLE001
             log.warning("could not check the armed one-offs: %s", exc)
             fired = 0
+        # And the one that asks rather than reports: at most one Claude
+        # run, on the manual action brAIn can least account for. Last,
+        # because it is the only producer here that costs real money on a
+        # schedule, and a pass whose cheap work failed should not spend it.
+        try:
+            wondered = await _ask_why(started, reason)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not ask why: %s", exc)
+            wondered = 0
         summary = {
             "reason": reason,
             "started_at": int(started),
@@ -4595,6 +4819,7 @@ async def run_checks(reason: str = "schedule") -> dict:
             "milestones": made,
             "trials_evaluated": graded,
             "intents_fired": fired,
+            "wondered": wondered,
             # Filed where nobody will see them, on purpose. The count is
             # the only thing that says a trialled check is running at all.
             "shadow": shadow_counts,
@@ -4618,7 +4843,7 @@ async def run_checks(reason: str = "schedule") -> dict:
                    "finished_at": int(time.time()), "error": str(exc)[:300],
                    "ran": [], "created": [], "cleared": [], "refreshed": 0,
                    "skipped": {}, "errors": {}, "per_check": {}, "found": 0,
-                   "milestones": 0,
+                   "milestones": 0, "wondered": 0,
                    "shadow": {"created": 0, "found": 0},
                    "snapshot_errors": {}}
     finally:
@@ -4828,6 +5053,84 @@ async def h_baselines(request: web.Request) -> web.Response:
         payload["entity_id"] = entity_id
         payload["baseline"] = (store.get("entities") or {}).get(entity_id)
     return web.json_response(payload)
+
+
+CURIOSITY_STATE: dict = {"starting": False}
+
+
+async def h_curiosity(request: web.Request) -> web.Response:
+    """What brAIn is curious about, and what it has worked out."""
+    payload = await asyncio.to_thread(_curiosity_diagnostics)
+    payload["running"] = bool(CURIOSITY_STATE["starting"])
+    return web.json_response(payload)
+
+
+async def h_curiosity_ask(request: web.Request) -> web.Response:
+    """Ask the next question now, rather than waiting for a checks pass.
+
+    **It spends a Claude run**, which is why it is a press and not a
+    poll, and why it answers with what it started rather than with what
+    it found: a run is minutes of model time, longer than ingress will
+    hold a request open — `h_baselines_run`'s clock, and BRight's
+    `_claude_job` failure before it. The outcome is read back from
+    `GET /api/curiosity`.
+
+    It deliberately ignores the day-and-week budget and nothing else. The
+    budget exists to stop an *unattended* schedule spending money nobody
+    asked it to; somebody pressing this has asked, which is the whole
+    difference, and the same reason `budget_state` lets a typed question
+    run while automatic insights are paused. What it does not ignore is
+    the settling: a subject already asked about stays asked about, or the
+    button would be a way to buy the same answer twice.
+    """
+    if CURIOSITY_STATE["starting"]:
+        return web.json_response(
+            {"running": True, "error": "brAIn is already working one out"},
+            status=409)
+    now = time.time()
+    try:
+        tz, _name = await asyncio.to_thread(baselines.house_timezone)
+        ledger = await asyncio.to_thread(manual_ledger.load)
+        found = await asyncio.to_thread(
+            manual_ledger.candidates, ledger, tz, now)
+        store = await asyncio.to_thread(curiosity.load)
+        ranked = await asyncio.to_thread(
+            curiosity.worth_asking, found, store, now, tz)
+    except Exception as exc:  # noqa: BLE001
+        return web.json_response({"error": str(exc)[:200]}, status=500)
+    # The budget is skipped and the settling is not, so what is askable
+    # here is "eligible, whether or not there is room today" — which is
+    # `why` or `hold`, never `skip`.
+    askable = [r for r in ranked if r.get("why") or r.get("hold")]
+    if not askable:
+        return web.json_response(
+            {"asked": 0, "error": "there is nothing brAIn cannot already "
+                                  "account for"}, status=409)
+    candidate = dict(askable[0])
+    candidate.pop("hold", None)
+    candidate["why"] = candidate.get("why") or curiosity.describe(candidate)
+    # Flipped synchronously, for `start_auth_check`'s reason: a task that
+    # has not been scheduled yet has set no flag, so two presses in one
+    # tick would both pass a guard reading their own task's state.
+    CURIOSITY_STATE["starting"] = True
+    await asyncio.to_thread(curiosity.mark_asked, candidate, now)
+
+    async def run_it() -> None:
+        try:
+            await _run_curiosity(candidate, ledger, tz, now)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("a curiosity run failed: %s", exc)
+            await asyncio.to_thread(curiosity.record_answer,
+                                    candidate["subject"], None, "",
+                                    str(exc)[:200], now)
+        finally:
+            CURIOSITY_STATE["starting"] = False
+            await asyncio.to_thread(publish_diagnostics)
+
+    asyncio.create_task(run_it())
+    return web.json_response({"asked": 1, "running": True,
+                              "subject": candidate["subject"],
+                              "why": candidate["why"]})
 
 
 async def h_baselines_run(request: web.Request) -> web.Response:
@@ -5838,6 +6141,12 @@ def _diagnostics_payload() -> dict:
         # An empty Proposals tab reads the same whether the miner found
         # no habit or the ledger has been empty for a month.
         "routines": _routines_diagnostics(),
+        # And why. The queue is the whole point of this one being here:
+        # a feature that asks one question a day is silent nearly all the
+        # time, and "nothing to be curious about", "asked already this
+        # morning" and "the loop died in March" are three silences that
+        # look identical from every other surface.
+        "curiosity": _curiosity_diagnostics(),
         "proposals": _proposals_diagnostics(),
         # Numbers, not the buckets: a bug report needs to know whether
         # the house has been watched and when, not 168 fractions for
@@ -8851,6 +9160,8 @@ def make_app() -> web.Application:
     app.router.add_delete("/api/capture/{run_id}", h_capture_delete)
     app.router.add_get("/api/baselines", h_baselines)
     app.router.add_post("/api/baselines/run", h_baselines_run)
+    app.router.add_get("/api/curiosity", h_curiosity)
+    app.router.add_post("/api/curiosity/ask", h_curiosity_ask)
     app.router.add_get("/api/appliances", h_appliances)
     # The fixed prefix before the {name} pattern, which would otherwise
     # answer the aggregate with a 404 for a store called "".

@@ -1378,6 +1378,73 @@ a state.
 `,
   },
   {
+    id: "it-asks-why-you-did-something",
+    icon: "📄",
+    title: "It asks why you did something",
+    body: `
+# It asks why you did something
+
+Everything above is about what your house **does**. This is the only part that
+asks **why** — and it is the one fact a house never records anywhere.
+
+brAIn can already see that somebody turned the sprinklers on at 19:04, and
+that they do it most evenings at about seven. What it cannot see is that the
+lawn is in full sun until six, or that the water is metered cheaply after
+seven. That reason is not in any state, any statistic or the logbook, and it
+is the difference between a useful automation and a useless one: a rule built
+on **"most evenings at seven"** fires at seven for ever and is wrong the first
+week it rains.
+
+So, **once a day at most**, brAIn picks the one manual action it can least
+account for and spends a single Claude run working it out — looking at the
+weather and the sun at that moment, the season, the history of that switch
+and of things near it, and what else in the house moved around then. Then one
+of three things happens:
+
+- **It worked out the reason.** A plain fact about your home goes into
+  memory, where every future card, question and answer can see it.
+- **It has a guess.** One short question appears on the **Findings** tab —
+  **"the garden faces west, so is this about the afternoon sun?"** Tick it and
+  the guess becomes a memory line; say it is wrong, and the reason you give
+  is recorded instead. This is the part that actually teaches brAIn your
+  house, and it takes a sentence.
+- **It could not tell.** Nothing is filed. It will look again once there is
+  more to go on — never just because time has passed, since asking again
+  over the same evidence buys the same answer.
+
+**One a day and three a week is the whole cost**, and brAIn never asks twice
+about the same thing. It pays attention to two shapes: something done by hand
+over and over at about the same time (**why do you do this?**) and something
+done well outside its own usual hour (**what was different last night?**). A
+voice command counts, and counts for more — you said what you wanted in
+words.
+
+Some things it will not ask about, ever: locks, alarm panels, and anything
+that tracks where people are. **"Why did you unlock the door at 02:40"** has an
+answer, and no software has any business composing it. For the same reason
+the run is forbidden to reason about anybody's health, sleep, whereabouts or
+household — if the only explanation it can think of is about a person rather
+than about the house, the answer is "could not tell".
+
+You can see what it is curious about, what it has worked out, and how much of
+today's budget is left under **⚙ → Diagnostics**, along with an **Ask why
+now** button that asks the next question without waiting. That button is the
+one control in that dialog that costs a Claude turn, and it says so.
+
+From a terminal:
+
+\`\`\`bash
+brain why          # what it is curious about, and what it has worked out
+brain why ask      # ask the next question now — this spends a Claude run
+\`\`\`
+
+Turn the whole thing off with **Ask why you did something** in the add-on
+configuration. Like every scheduled Claude run it also stops on its own when
+the usage budget pauses automatic insights — pressing the button still works,
+because asking by hand always does.
+`,
+  },
+  {
     id: "it-says-when-it-is-not-working",
     icon: "❤️",
     title: "It says when it is not working",
@@ -1491,6 +1558,17 @@ estimate and reports \`oauth_token_lacks_usage_scope\`. That is not a broken sig
 running \`ha login\` again cannot change it — open **⚙ → Claude account → Sign in
 again** and choose **Sign in to your Claude account**, which needs no terminal and
 does not replace the shared file.
+
+Once you have done that, the pill may still say the numbers are missing for a
+while, and there is one status that means **nothing is wrong**:
+\`oauth_token_awaiting_refresh\`. An access token lives for a few hours and Claude
+Code mints the next one itself, from the refresh token beside it, the first time
+anything runs Claude — an insight, a chat message, a checks pass. The real numbers
+come back on the first poll after that, and **signing in again will not make it
+arrive sooner**. Before that status existed, a token between refreshes read as no
+credential at all: the search fell through to an older \`ha login\` token, reported
+**that** one's scope refusal, and so told you to perform the sign-in you had just
+performed — which is why it looked like signing in never took.
 
 From a terminal, \`ha login\` and \`brain login\` are the same command:
 

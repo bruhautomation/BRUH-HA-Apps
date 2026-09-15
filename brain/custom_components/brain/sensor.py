@@ -310,6 +310,18 @@ class BrainUsageTrackerSensor(SensorEntity):
                                         `user:profile` scope this endpoint
                                         requires; the panel's own "Sign in
                                         to your Claude account" asks for it
+      ``oauth_token_awaiting_refresh``
+                                        the account sign-in's access token
+                                        has lapsed and Claude Code mints
+                                        the next one itself on its next
+                                        run — nothing is wrong, and this is
+                                        the one status whose remedy is to
+                                        do nothing. Before it existed the
+                                        search fell through such a token to
+                                        an older `ha login` one and
+                                        reported that one's scope refusal,
+                                        which is why signing in again
+                                        seemed never to help
       ``http_403``                      refused permission, no reason
                                         given — usually the same thing,
                                         unattributed

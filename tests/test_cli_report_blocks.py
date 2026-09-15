@@ -226,3 +226,132 @@ class TestBrainWeeklyPrinting(_Blocks):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBrainWhyPrinting(_Blocks):
+    """`brain why`'s block, driven for the same reason the other two are.
+
+    And it carries one claim the others do not: this is the only surface
+    where a *silence* is the usual answer, so the interesting cases are
+    all the ones where nothing is happening. "Off", "still watching",
+    "asked already this morning" and "there is nothing it cannot account
+    for" are four different states and the block has to tell them apart —
+    a feature that asks one question a day and reports the four as one
+    blank screen is one nobody can tell from a loop that has died.
+    """
+
+    SCRIPT = SCRIPTS / "brain-why.sh"
+
+    READY = {
+        "enabled": True,
+        "evidence": {"state": "ready", "note": "58 actions over 12 days"},
+        "manual_actions": 58,
+        "curious_total": 2,
+        "budget": {"per_day": 1, "per_week": 3, "day": 0, "week": 1},
+        "holding": "",
+        "counts": {"explained": 4, "guessed": 2, "unknown": 1, "failed": 0},
+        "curious_about": [
+            {"subject": "switch.sprinklers|on",
+             "why": "Lawn sprinklers is set to on by hand at about 19:04"},
+            {"subject": "fan.study|on", "why": "Study fan at about 08:10",
+             "skip": "asked already (unknown); 2 of 6 further times seen since"},
+        ],
+        "learned": [
+            {"name": "Lawn sprinklers", "status": "explained",
+             "because": "the garden is in full sun until six",
+             "filed": "memory"},
+        ],
+    }
+
+    def show(self, payload) -> subprocess.CompletedProcess:
+        return self.run_sh(["print_state"],
+                           f"print_state '{json.dumps(payload)}'\n")
+
+    def test_it_says_what_it_is_curious_about_and_what_it_learned(self):
+        proc = self.show(self.READY)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("58 manual actions kept", proc.stdout)
+        self.assertIn("2 brAIn cannot account for", proc.stdout)
+        self.assertIn("Asked 0 of 1 today, 1 of 3 this week", proc.stdout)
+        self.assertIn("Worked out 4", proc.stdout)
+        self.assertIn("Lawn sprinklers", proc.stdout)
+        self.assertIn("full sun until six", proc.stdout)
+        self.assertIn("into memory", proc.stdout)
+
+    def test_a_subject_it_will_not_ask_about_says_why_not(self):
+        proc = self.show(self.READY)
+        self.assertIn("2 of 6 further times seen since", proc.stdout)
+
+    def test_off_is_not_the_same_silence_as_quiet(self):
+        proc = self.show({"enabled": False})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Off", proc.stdout)
+        self.assertIn("Ask why you did something", proc.stdout)
+
+    def test_a_house_still_being_watched_says_which_floor(self):
+        proc = self.show({
+            "enabled": True, "manual_actions": 3,
+            "evidence": {"state": "collecting", "note": "2 of 4 days seen"},
+            "budget": {"per_day": 1, "per_week": 3, "day": 0, "week": 0},
+            "counts": {}, "curious_about": [], "learned": []})
+        self.assertIn("Watching", proc.stdout)
+        self.assertIn("2 of 4 days seen", proc.stdout)
+
+    def test_a_spent_budget_says_so_rather_than_nothing(self):
+        payload = dict(self.READY,
+                       budget={"per_day": 1, "per_week": 3, "day": 1,
+                               "week": 2},
+                       holding="brAIn has already asked 1 question today")
+        proc = self.show(payload)
+        self.assertIn("already asked 1 question today", proc.stdout)
+
+    def test_a_run_in_flight_says_so(self):
+        proc = self.show(dict(self.READY, running=True))
+        self.assertIn("Working one out right now", proc.stdout)
+
+    def test_a_question_waiting_on_a_person_is_named_as_that(self):
+        proc = self.show(dict(self.READY, learned=[
+            {"name": "Study fan", "status": "guessed",
+             "because": "probably the afternoon heat",
+             "filed": "hypothesis"}]))
+        self.assertIn("Findings tab", proc.stdout)
+
+    def test_a_failed_run_shows_its_reason_rather_than_a_blank(self):
+        """A fault with an empty explanation is the one nobody can act on."""
+        proc = self.show(dict(self.READY, learned=[
+            {"name": "Study fan", "status": "failed", "because": "",
+             "error": "the analysis passed its 300s limit", "filed": ""}]))
+        self.assertIn("300s limit", proc.stdout)
+
+    def test_an_unreadable_section_is_a_sentence_not_a_traceback(self):
+        proc = self.show({"error": "no such file"})
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("no such file", proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_a_torn_payload_is_an_error_not_a_traceback(self):
+        proc = self.run_sh(["print_state"], "print_state 'not json'\n")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("not JSON", proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_the_started_run_names_what_it_is_asking_about(self):
+        """A press that answers "Started." and nothing else is a press
+        nobody can judge."""
+        proc = self.run_sh(
+            ["print_why"],
+            'print_why \'{"asked": 1, "why": "Lawn sprinklers at 19:04"}\'\n')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Lawn sprinklers at 19:04", proc.stdout)
+
+    def test_a_reply_with_no_reason_on_it_prints_nothing_rather_than_none(self):
+        for payload in ('{"asked": 1}', "not json", ""):
+            with self.subTest(payload=payload):
+                proc = self.run_sh(["print_why"],
+                                   f"print_why '{payload}'\n")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(proc.stdout.strip(), "")
+
+    def test_it_uses_neither_shape_that_only_works_on_the_image(self):
+        self.assert_no_dash_c()
+        self.assert_no_pipe_into_heredoc()

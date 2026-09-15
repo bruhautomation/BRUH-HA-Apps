@@ -403,6 +403,25 @@ def _faults(diag) -> list[dict]:
             _row(out, label, "has gone stale",
                  "the nightly pass has not written it recently")
 
+    # And the one that asks rather than measures. Only its own failure is
+    # a fault: a feature that is off, still watching, or simply has
+    # nothing it cannot account for is a refusal doing its job, and a
+    # section that listed those is one people learn to skim — which is
+    # the failure this sweep was written against.
+    curious = diag.get("curiosity")
+    if isinstance(curious, dict):
+        if curious.get("error"):
+            _row(out, "Why you did something", "could not be read",
+                 curious.get("error"))
+        else:
+            failed = int((curious.get("counts") or {}).get("failed") or 0)
+            if failed:
+                _row(out, "Why you did something",
+                     f"{failed} asking{'' if failed == 1 else 's'} ended "
+                     "without an answer",
+                     "the run spent its money and filed nothing; the run "
+                     "journal above says what happened to it")
+
     # The rehearsal and the deep check: both are opt-in and both leave a
     # verdict nothing else reports.
     reh = diag.get("rehearsal") or {}

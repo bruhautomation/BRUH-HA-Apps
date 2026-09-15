@@ -104,6 +104,23 @@ EXPIRY_SKEW_S = 60
 # figure, and no amount of retrying, backing off or re-running `ha login`
 # changes that.
 SCOPE_ERROR = "oauth_token_lacks_usage_scope"
+# And the status that keeps that verdict honest. An access token lives for
+# hours and Claude Code mints the next one from the `refreshToken` beside
+# it on its next run — so a lapsed token in that file is not a dead
+# credential, it is the *right* credential between refreshes. Reading one
+# as nothing at all is what made the scope verdict unclearable: the
+# account sign-in that carries `user:profile` stopped being offered a few
+# hours after it landed, the search fell through to the older `ha login`
+# setup token, that earned the scope refusal, and the popover then told
+# somebody to perform the sign-in they had just performed. It worked for
+# an afternoon each time, which is why it reads as "I keep signing in over
+# and over and the message never goes away".
+#
+# It is deliberately NOT in AUTH_PROBLEMS: it says nothing is wrong with
+# the sign-in, so — `http_429`'s rule — it must let a good reading age out
+# rather than blank four working sensors. And it is not settled, because
+# the one thing that clears it is anything at all running Claude.
+REFRESH_PENDING = "oauth_token_awaiting_refresh"
 AUTH_PROBLEMS = ("no_oauth_token", "api_key_has_no_usage_limits", "http_401",
                  SCOPE_ERROR)
 # A bare `http_403` is deliberately NOT in that list. The narrowed code above
@@ -139,6 +156,14 @@ ERROR_DETAIL = {
         "Sign in again and choose \"Sign in to your Claude account\": that "
         "one asks for the scope, and the numbers come back on the next poll. "
         "No terminal is needed — it is `claude auth login`, run for you."
+    ),
+    REFRESH_PENDING: (
+        "The signed-in account credential's access token has lapsed and "
+        "Claude Code mints the next one itself, from the refresh token "
+        "beside it, the next time anything runs Claude — an insight, a chat "
+        "message, a checks pass. Nothing is wrong with the sign-in and "
+        "signing in again will not make it arrive sooner. The real numbers "
+        "come back on the first poll after that refresh."
     ),
     "http_403": (
         "Anthropic refused this credential permission to read usage limits "
@@ -179,6 +204,14 @@ CREDENTIAL_REFUSALS = ("http_401", "http_403", SCOPE_ERROR)
 # blacklisting a credential for the life of the process over the second is
 # how a working sign-in stays unread. A scope verdict is structural.
 SETTLED_REFUSALS = (SCOPE_ERROR,)
+# And the verdicts a credential merely between refreshes must not be
+# reported as. Both of them would tell somebody who is signed in to sign
+# in — the scope refusal names the account flow they have already done,
+# and `no_oauth_token` says nothing has signed in at all — so both are
+# answers about a house with a different problem. A 401 is deliberately
+# absent: it is a real refusal of a real credential and saying so is
+# right even while another one waits on a refresh.
+MASKED_BY_REFRESH = SETTLED_REFUSALS + ("no_oauth_token",)
 
 ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 
@@ -362,8 +395,17 @@ def oauth_tokens(state=None):
     for path in CREDENTIAL_PATHS:
         if not unread(path):
             continue
-        token = _read_token_from_file(path)
-        if token and unseen(token):
+        kind, token = _credential_state(path)
+        if kind == CRED_LAPSED:
+            # Noted rather than yielded. This is the one store an account
+            # sign-in writes, and it always ranks first, so a lapse here
+            # means "the credential that can read usage is between
+            # refreshes" — which is why _fetch_with_any_credential will
+            # not let a lower store's settled verdict speak for it.
+            if state is not None:
+                state["lapsed"] = True
+            continue
+        if kind == CRED_TOKEN and token and unseen(token):
             _note_source(state, "claude cli")
             yield token
 
@@ -442,29 +484,64 @@ def _oauth_expired(oauth):
     return expires / 1000.0 <= time.time() + EXPIRY_SKEW_S
 
 
-def _read_token_from_file(path):
-    """Read a live OAuth access token from a credentials JSON file."""
+def _refreshable(oauth):
+    """Does this credential carry the means to mint its own next token?
+
+    The question `engine._cli_credentials_present` asks, for the same
+    reason and with the opposite conclusion. There, "can the CLI still get
+    a live token out of this" decides whether the panel reports itself
+    signed in; here the access token is what goes on the wire, so a lapsed
+    one still cannot be sent — what the refresh token changes is not
+    whether this credential is usable *now* but what its being unusable
+    MEANS, which is "wait" rather than "this is the wrong sign-in".
+    """
+    token = oauth.get("refreshToken")
+    return isinstance(token, str) and bool(token.strip())
+
+
+# What one credentials file holds, as a verdict this module can act on.
+# Three answers rather than two, because "there is nothing here" and
+# "there is a credential here, between refreshes" send the search to the
+# same next store and must not send the same message to the person.
+CRED_NONE = "none"
+CRED_TOKEN = "token"
+CRED_LAPSED = "lapsed"
+
+
+def _credential_state(path):
+    """``(CRED_*, token or None)`` for one credentials JSON file."""
     try:
         with open(path) as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError):
-        return None
+        return CRED_NONE, None
     if not isinstance(data, dict):
-        return None
+        return CRED_NONE, None
 
     # Standard format: {"claudeAiOauth": {"accessToken": "sk-ant-oat01-..."}}
     oauth = data.get("claudeAiOauth")
-    if isinstance(oauth, dict) and not _oauth_expired(oauth):
+    if isinstance(oauth, dict):
         token = oauth.get("accessToken")
-        if isinstance(token, str) and token.strip():
-            return token.strip()
+        has_token = isinstance(token, str) and bool(token.strip())
+        if has_token and not _oauth_expired(oauth):
+            return CRED_TOKEN, token.strip()
+        if has_token and _refreshable(oauth):
+            # The account sign-in, an hour after it landed. Not offered —
+            # a known-dead access token on a rate-limited endpoint is a
+            # guaranteed 401 — and not silence either.
+            return CRED_LAPSED, None
 
     # Fallback: check for a flat "accessToken" key
     token = data.get("accessToken")
     if isinstance(token, str) and token.strip():
-        return token.strip()
+        return CRED_TOKEN, token.strip()
 
-    return None
+    return CRED_NONE, None
+
+
+def _read_token_from_file(path):
+    """Read a live OAuth access token from a credentials JSON file."""
+    return _credential_state(path)[1]
 
 
 def _load_brain_auth(path):
@@ -918,6 +995,11 @@ def _fetch_with_any_credential(state):
     if state is not None:
         # Whether this pass put a request on the wire at all — see main().
         state["asked"] = False
+        # And whether the account credential was merely between refreshes
+        # this pass. Reset here rather than in oauth_tokens, because
+        # `state` outlives a pass and a stale True would go on excusing a
+        # real scope refusal after the credential was revoked.
+        state["lapsed"] = False
     data = error = settled = None
     for token in oauth_tokens(state):
         if token in unusable:
@@ -944,7 +1026,24 @@ def _fetch_with_any_credential(state):
                 "usage-limits-tracker: that credential was refused, "
                 "trying the next store\n"
             )
-    return data, (error or settled or credential_problem())
+    verdict = error or settled or credential_problem()
+    if (data is None and verdict in MASKED_BY_REFRESH
+            and (state or {}).get("lapsed")):
+        # A structural verdict earned by a *lower* store must not be the
+        # pass's answer while the account credential was only between
+        # refreshes. It is true of the token that earned it and useless as
+        # a message, because its remedy — sign in to your Claude account —
+        # is the thing the person has already done, which is how the same
+        # popover survived being obeyed. The keying is on the KIND of
+        # verdict and not on whether it was remembered: a scope refusal
+        # arriving for the first time this pass says exactly what a
+        # remembered one says, and the first pass after a lapse is the one
+        # somebody is most likely to be looking at.
+        #
+        # The scope memory is kept either way — that credential really
+        # cannot read usage, and nothing here asks it again.
+        return None, REFRESH_PENDING
+    return data, verdict
 
 
 def run_once(state):

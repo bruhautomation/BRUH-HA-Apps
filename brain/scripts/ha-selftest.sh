@@ -713,6 +713,13 @@ if [ -f "$USAGE_FILE" ]; then
         # mint a token the usage endpoint accepts.
         warn "Usage sensors: this sign-in has no permission to read usage limits"
         info "Fix: in the panel, Settings -> Claude account -> Sign in again -> 'Sign in to your Claude account' — 'ha login' is built on 'claude setup-token', which cannot ask for that permission"
+    elif [ "$uerr" = "oauth_token_awaiting_refresh" ]; then
+        # Not a fault, and the one status here whose remedy is to do
+        # nothing: the access token lapsed and Claude Code mints the next
+        # one itself the first time anything runs Claude. Reported as info
+        # rather than a warning, because a report whose warnings include
+        # things that are working is a report people learn to skim.
+        info "Usage sensors: the sign-in's access token is between refreshes — the numbers come back after the next Claude run; signing in again will not help"
     elif [ -n "$uerr" ]; then
         warn "Usage sensors unavailable: ${uerr}"
         udetail=$(jq -r '.detail // empty' "$USAGE_FILE" 2>/dev/null)

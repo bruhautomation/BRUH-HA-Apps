@@ -14,6 +14,7 @@
 #   brain undo [n]                 Review and revert Claude's file edits
 #   brain login                    Sign in to Claude (same as `ha login`)
 #   brain check                    Run the house checks now (no Claude run)
+#   brain why [ask]                Why somebody did something by hand
 #   brain doctor [--json]          End-to-end diagnostic
 #   brain doctor --deep            Every face, one real round trip each
 #   brain doctor --rehearse        Plant defects, score the checks, clean up
@@ -63,6 +64,9 @@ Usage:
   brain undo [n]                 Review and revert Claude's edits to /config
   brain check [list]             Run the house checks now — no Claude run,
                                  findings land on the Findings tab
+  brain why [ask]                Why somebody here does something by hand —
+                                 what brAIn is curious about and what it has
+                                 worked out. `ask` spends one Claude run
   brain weekly [send]            The week's report: energy, findings, what was
                                  learned, and the one thing to do
   brain doctor [--json]          End-to-end diagnostic of brAIn itself —
@@ -126,6 +130,7 @@ case "$action" in
     ask)        delegate brain-ask.sh "$@" ;;
     undo)       delegate brain-undo.sh "$@" ;;
     check)      delegate brain-check.sh "$@" ;;
+    why)        delegate brain-why.sh "$@" ;;
     weekly)     delegate brain-weekly.sh "$@" ;;
     doctor)
         # Plain `brain doctor` is unchanged: it is the free one, and the
