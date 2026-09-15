@@ -57,6 +57,49 @@ current limit carries no device class and is skipped, while a current sensor
 that has not moved in a week is exactly what this check is for. Adding a class
 to that set must not quietly take a neighbour with it.
 
+### Also: a cap with a retry, and its sibling with none
+
+Reported from a real install: the memory queue had stopped draining and
+nothing in the add-on's configuration could start it again.
+
+A consolidation pass writes two files — `memory.md` and the small `voice.md`
+distillate the voice path reads on every request — and each has a size cap.
+1.18.0 gave the document's cap a retry, because a guard that refuses has to
+change the next attempt or it is a loop: an over-size `memory.md` feeds the
+measured overshoot back to the model and only the second attempt fails, with
+a message naming `memory_max_kb` as the setting that ends it.
+
+**`voice.md` got none of that.** An over-long distillate returned on its first
+overshoot — no note fed back, no attempt spent, the identical prompt again
+five minutes later, for ever — the same bug 1.18.0 had just fixed, left
+standing in the sibling branch six lines below the fix, for thirty-four
+releases. And worse in one way: `memory_max_kb` is an option a person can
+raise, while the 2 KB voice budget is a constant in the script, so that
+failure named no remedy anybody could perform. The queue could not drain by
+any route.
+
+Both caps are measured together now and either sends the pass round again,
+with the retry naming whichever overshot — both, when both did, since a note
+about one half invites an answer that fixes that half and breaks the other.
+
+What happens when the attempts run out differs, and it differs because the
+two files are not the same kind of thing. `memory.md` **is** the memory: a
+document cut short loses facts nothing else holds, so an over-size one is
+still refused whole. `voice.md` is derived from it — rewritten from scratch by
+every pass, holding nothing the document does not — so it is **trimmed** to
+its budget on whole bullets and filed with the merge, and the log says it was
+trimmed, because a file quietly missing its tail is worse than a short one.
+Its last few nicknames cost one voice turn until the next pass; refusing cost
+the entire memory pipeline.
+
+One subtlety worth naming: the erasure guard that catches a rewrite
+pretending to be a merge is deliberately skipped on a retry, because a pass
+explicitly told to drop facts is not one. A retry that asked only for a
+shorter `voice.md` said nothing of the kind — so the guard keys on that
+request specifically, not on "a retry happened". Keyed the loose way, a
+distillate over its own budget would wave through a wiped document; the test
+that pins it fails against exactly that.
+
 ## 1.52.0
 
 **brAIn now asks why you did something.** Everything it could say about a home

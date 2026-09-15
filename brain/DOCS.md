@@ -2234,7 +2234,7 @@ That is the point of it, and it is worth knowing where the edges are.
 | Path | What |
 | --- | --- |
 | `/config/.brain/memory/memory.md` | The memory document. Yours to edit. |
-| `/config/.brain/memory/voice.md` | A ≤2 KB distillate spliced into voice prompts. Derived; don't edit. |
+| `/config/.brain/memory/voice.md` | A ≤2 KB distillate spliced into voice prompts. Derived; don't edit. The cap is fixed in the add-on and is not a setting: a pass that comes back over it is asked once for a shorter one, then trimmed to fit on whole bullets and filed — the distillate is rewritten from scratch by every pass, so refusing it would stop the whole queue over a file nothing reads twice. |
 | `/config/.brain/memory/inbox/` | Candidate facts awaiting consolidation. |
 | `/config/.brain/findings/inbox/` | Problems study sessions found, awaiting filing. |
 | `/config/CLAUDE.md` | The generated description of your installation. |
