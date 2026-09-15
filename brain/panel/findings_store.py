@@ -58,7 +58,6 @@ Stdlib only, so the test suite can import it without the add-on runtime.
 """
 from __future__ import annotations
 
-import atomic_write
 
 import functools
 import json
@@ -69,6 +68,9 @@ import threading
 import time
 import unicodedata
 from pathlib import Path
+
+import atomic_write
+import triage
 
 log = logging.getLogger("brain.findings")
 
@@ -119,7 +121,22 @@ MAX_NOTE = 400
 SETTLE_KINDS = ("fixed", "ignored", "accepted")
 
 SEVERITIES = ("info", "warning", "serious", "critical")
-STATUSES = ("open", "fixing", "fixed", "failed", "needs_you", "ignored")
+# `triaging` and `held` are `triage.py`'s two words and they bracket
+# `open` rather than joining the lifecycle after it: a house check files
+# into `triaging` because nothing has looked at its row yet, and a run
+# that looked moves it to `open` (real) or `held` (looked at, not worth
+# showing). Both are deliberately absent from LIVE_STATUSES and
+# UNSETTLED_STATUSES — a row nothing has judged is not work waiting on
+# anybody, and a held one is not either — and both are CLEARABLE, because
+# a check that stops reporting something has stopped reporting it whether
+# or not it ever reached a screen.
+STATUSES = ("triaging", "open", "fixing", "fixed", "failed", "needs_you",
+            "ignored", "held")
+# The statuses a PRODUCER may file into. Everything else is reached by a
+# person pressing something or by brAIn acting, so `coerce` takes only
+# these two off the wire: a row arriving as `ignored` would be a producer
+# settling a finding nobody was ever shown.
+PRE_STATUSES = ("open", "triaging")
 # Statuses that still want the homeowner's attention on the Findings tab.
 # `fixed` is in here: an automated fix changed something in the house, and
 # that stays on the list until somebody has read what it did.
@@ -266,6 +283,33 @@ def _clean_changed(value) -> list[str]:
     return out
 
 
+def _clean_triage(value) -> dict:
+    """The triage record on a row, normalized — `{}` when nothing looked.
+
+    An empty dict rather than a `None` because every reader of it asks
+    `.get("verdict")` and an absent verdict is the honest answer for a
+    row nothing has judged. `triage.VERDICTS` is the closed vocabulary,
+    imported lazily so the store keeps no import of the module that
+    decides policy about it.
+    """
+    if not isinstance(value, dict):
+        return {}
+    verdict = str(value.get("verdict") or "").strip().lower()
+    if verdict not in triage.VERDICTS:
+        return {}
+    return {
+        "verdict": verdict,
+        "reason": str(value.get("reason") or "").strip()[:triage.MAX_REASON],
+        "run_id": str(value.get("run_id") or "").strip()[:64],
+        "at": int(value.get("at") or 0),
+        # Set when a person pressed "Bring it to the front" on a held row.
+        # Kept beside the verdict rather than over it: the verdict is what
+        # the run said, and overwriting it would lose the one piece of
+        # evidence that triage got this one wrong.
+        "elevated_by_person": bool(value.get("elevated_by_person")),
+    }
+
+
 def _shape(entry: dict) -> dict:
     """One stored finding, normalized for the API."""
     status = entry.get("status")
@@ -300,6 +344,13 @@ def _shape(entry: dict) -> dict:
         # to leave the finding exactly as open as it was and just stop it
         # asking. A separate field is the only way to keep those apart.
         "snoozed_until": int(entry.get("snoozed_until") or 0),
+        # What looked at this before it was shown, if anything did.
+        # `{verdict, reason, run_id, at, elevated_by}` — `run_id` is the
+        # triage conversation, which the panel opens as a record through
+        # the reader every other engine-store run uses, because "I can see
+        # the discussion you had about it" is the half that makes a
+        # verdict arguable rather than a word.
+        "triage": _clean_triage(entry.get("triage")),
         # When somebody last pressed "Check again" and the check still
         # reported it. Written only by that press, never by the scheduled
         # pass: the schedule confirms every open row every few hours and a
@@ -511,7 +562,13 @@ def coerce(obj: dict) -> dict | None:
         "source": str(obj.get("source") or "").strip()[:64],
         "source_title": str(obj.get("source_title") or "").strip()[:120],
         "run_id": str(obj.get("run_id") or "").strip()[:64],
-        "status": "open",
+        # A producer may file a row as not-yet-looked-at and nothing else
+        # (`PRE_STATUSES`). `triage.gate` is the one caller that does, and
+        # an unrecognised status reads as `open` rather than being
+        # refused: the safe direction here is the one that shows the
+        # finding.
+        "status": (obj.get("status")
+                   if obj.get("status") in PRE_STATUSES else "open"),
         "result": "",
         "changed": [],
         "settled_at": 0,
@@ -596,6 +653,86 @@ def set_status(ts: int, status: str, result: str = "",
         if changed is not None:
             entry["changed"] = _clean_changed(changed)
         entry["settled_at"] = 0 if status in ("open", "fixing") else int(time.time())
+        _write(items)
+        return _shape(entry)
+    return None
+
+
+@_mutates
+def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
+                  when: float | None = None) -> list[dict]:
+    """Write what looked at a batch, and move each row to where it belongs.
+
+    ``verdicts`` is ``{ts: (verdict, reason)}``. An ``elevated`` or
+    ``untriaged`` row becomes ``open`` — the second because nothing
+    looked, which surfaces exactly like the first and says so on the card
+    — and a ``held`` row becomes ``held``.
+
+    Only a row still in ``triaging`` is touched. Everything else is a row
+    a person or the fixer has already moved on from, and a verdict
+    arriving late about one of those must not drag it back: a run that
+    took four minutes can easily be answering about a finding somebody
+    settled in the meantime.
+
+    Returns the rows it changed, shaped.
+    """
+    stamp = int(when if when is not None else time.time())
+    items = _load()
+    changed: list[dict] = []
+    for entry in items:
+        ts = int(entry.get("ts") or 0)
+        if ts not in verdicts or entry.get("status") != "triaging":
+            continue
+        verdict, reason = verdicts[ts]
+        if verdict not in triage.VERDICTS:
+            continue
+        entry["status"] = "held" if verdict == "held" else "open"
+        entry["triage"] = _clean_triage({
+            "verdict": verdict, "reason": reason,
+            "run_id": run_id, "at": stamp})
+        changed.append(_shape(entry))
+    if changed:
+        _write(items)
+    return changed
+
+
+@_mutates
+def stale_triaging(cutoff: float) -> list[int]:
+    """The ids of rows left mid-triage before ``cutoff``.
+
+    A panel that died between filing and judging leaves rows nothing will
+    ever come back for, and a problem nobody is ever shown is the one
+    outcome this whole step must not be able to produce. The caller
+    promotes them through :func:`record_triage` with an ``untriaged``
+    verdict, so they surface carrying the reason they were never judged.
+    """
+    return [int(e.get("ts") or 0) for e in _load()
+            if e.get("status") == "triaging"
+            and int(e.get("ts") or 0) < int(cutoff)]
+
+
+@_mutates
+def elevate(ts: int) -> dict | None:
+    """Put a held finding on the list, because a person said to.
+
+    The verdict is kept and flagged rather than erased: what the run said
+    is the only evidence that triage was wrong about this house, and it
+    is what the scorecard and anybody reading the row afterwards are
+    owed. `unsettle`'s rule — the press stops the suppression and changes
+    nothing else.
+
+    Refuses anything that is not held: an open row is already on the list
+    and a settled one has an answer on it.
+    """
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) != ts or entry.get("status") != "held":
+            continue
+        entry["status"] = "open"
+        entry["settled_at"] = 0
+        record = _clean_triage(entry.get("triage"))
+        record["elevated_by_person"] = True
+        entry["triage"] = record
         _write(items)
         return _shape(entry)
     return None
@@ -904,8 +1041,10 @@ def reconcile_running(reason: str) -> int:
 
 # What the house checks may take back. A row somebody has sent Claude at,
 # or that Claude has changed, is theirs to end — a check clears only what
-# is still simply *open*.
-CLEARABLE = ("open", "needs_you", "failed")
+# is still simply *open*, or has not got there: a row waiting on triage
+# and one triage held are both rows the homeowner has never answered, so
+# a check that no longer reports the problem may take either back.
+CLEARABLE = ("open", "needs_you", "failed", "triaging", "held")
 
 
 @_mutates

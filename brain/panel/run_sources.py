@@ -76,6 +76,14 @@ SOURCES: dict[str, dict[str, str]] = {
     "curiosity": {"label": "Curiosity",
                   "blurb": "working out why somebody did something by hand",
                   "store": "engine"},
+    # Deciding whether a house check's finding is worth showing. A probe
+    # like `doctor` and `curiosity`, and the one whose transcript somebody
+    # is most likely to open on purpose: the Findings tab links a held row
+    # straight to it, because "I can see the discussion you had about it"
+    # is what makes a verdict arguable rather than a word.
+    "triage": {"label": "Triage",
+               "blurb": "checking whether a finding is worth showing",
+               "store": "engine"},
     # `tests/corpus/replay.py` — the same argument as `doctor`, one step
     # further from a person: a replay re-runs somebody else's captured
     # prompt to score this release's version of it, so every turn is a

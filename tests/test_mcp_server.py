@@ -507,6 +507,9 @@ class TestMCPProtocol(unittest.TestCase):
             "get_supervisor_info", "reload_config",
             # Memory
             "remember_fact",
+            # Talking to the person reading: the ways a finding could end,
+            # offered as buttons inside the conversation about it
+            "offer_resolutions",
         }
         self.assertEqual(tool_names, expected_tools)
 

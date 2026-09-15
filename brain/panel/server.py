@@ -140,6 +140,7 @@ import curiosity
 import doctor
 import energy
 import engine
+import episodes
 import feedback_store
 import finding_requests
 import findings_store
@@ -172,6 +173,7 @@ import shadow_findings
 import terminal_proxy
 import thermal
 import todo_store
+import triage
 import trials
 import undo_store
 import usage_store
@@ -4135,6 +4137,119 @@ def _record_manual(snapshot: dict, now: float) -> int:
         return 0
 
 
+async def _triage_findings(created: list[dict], now: float) -> list[dict]:
+    """Decide which newly filed check rows are worth showing, and move them.
+
+    Returns the rows that are on the list afterwards — the ones a run
+    elevated plus the ones nothing could judge — because that is exactly
+    the set `_announce_findings` is owed and deriving it a second time
+    from the store would be a second answer to the same question.
+
+    **Every failure surfaces.** No credential, the automatic switch off,
+    the budget spent, the run failed, the reply unparseable, a row the
+    reply did not mention, more rows than one run may take: each of those
+    ends with the finding on the tab carrying an `untriaged` verdict. A
+    triage that could not look must never be able to hide a problem,
+    which is `clear_resolved`'s rule moved one step earlier.
+
+    The stale sweep is here rather than in a loop of its own for the same
+    reason: a pass that died between filing and judging left rows nothing
+    will ever come back for, and the next pass is the thing that does
+    come back.
+    """
+    # Anything an older pass left mid-triage, whether or not this one
+    # filed a thing. Promoted first, so a row that has already waited an
+    # hour is not held up behind this pass's own batch.
+    stale = await asyncio.to_thread(findings_store.stale_triaging,
+                                    now - triage.STALE_S)
+    surfaced: list[dict] = []
+    if stale:
+        log.warning("triage: %d finding(s) were left unjudged and are being "
+                    "shown as they are", len(stale))
+        surfaced += await asyncio.to_thread(
+            findings_store.record_triage,
+            {ts: ("untriaged", triage.UNJUDGED) for ts in stale},
+            "", now)
+
+    pending = [f for f in created if f.get("status") == "triaging"]
+    if not pending:
+        return surfaced
+
+    # The surplus surfaces rather than waiting for the next pass. Waiting
+    # is silence, and silence is the thing this step must not be mistaken
+    # for a verdict.
+    batch, spill = pending[:triage.MAX_BATCH], pending[triage.MAX_BATCH:]
+    if spill:
+        surfaced += await asyncio.to_thread(
+            findings_store.record_triage,
+            {int(f["ts"]): ("untriaged", triage.TOO_MANY)
+             for f in spill}, "", now)
+
+    # The three gates every scheduled Claude run answers to (`_ask_why`'s
+    # rule): a credential, the automatic switch, and the usage budget.
+    # Failing one is not a reason to hide anything — it is a reason to
+    # show everything, which is what the sentence on the card says.
+    settings = settings_store.load()
+    if not engine.get_auth():
+        excuse = triage.NO_CREDENTIAL
+    elif not settings["auto_enabled"]:
+        excuse = triage.PAUSED
+    elif usage_store.budget_state(settings)["blocked"]:
+        excuse = triage.NO_BUDGET
+    else:
+        excuse = ""
+    if excuse:
+        return surfaced + await asyncio.to_thread(
+            findings_store.record_triage,
+            {int(f["ts"]): ("untriaged", excuse) for f in batch}, "", now)
+
+    prompt = triage.frame(
+        batch,
+        house=await _house_prompt_block(now),
+        # The load-bearing half. "That contact is on a cupboard nobody
+        # opens" is exactly the kind of thing a homeowner has already
+        # said once, and a triage run that cannot read it re-litigates
+        # every correction they have ever made.
+        memory=memory_excerpt(await asyncio.to_thread(_read_shared_memory)),
+    )
+    try:
+        result = await asyncio.to_thread(
+            engine.run_analyst, prompt, triage.SYSTEM, eff_model(),
+            triage.TIMEOUT_S, triage.MAX_TURNS, "triage")
+    except Exception as exc:  # noqa: BLE001 — the findings are already
+        # filed; what is at stake here is only whether anything looked.
+        log.warning("a triage run failed: %s", exc)
+        result = {"ok": False, "error": str(exc)}
+    run_id = str((result.get("meta") or {}).get("session_id") or "")
+    if not result.get("ok"):
+        return surfaced + await asyncio.to_thread(
+            findings_store.record_triage,
+            {int(f["ts"]): ("untriaged", triage.RUN_FAILED)
+             for f in batch}, run_id, now)
+
+    verdicts = triage.parse(
+        engine.extract_json(result.get("text") or result.get("raw") or ""),
+        len(batch))
+    decided: dict[int, tuple[str, str]] = {}
+    for i, row in enumerate(batch, 1):
+        ts = int(row["ts"])
+        if i in verdicts:
+            decided[ts] = verdicts[i]
+        else:
+            # A row the reply skipped. The default is the finding, not
+            # the silence: "it was not mentioned" is not "it is not real".
+            decided[ts] = ("untriaged", triage.NOT_MENTIONED)
+    moved = await asyncio.to_thread(
+        findings_store.record_triage, decided, run_id, now)
+    held = [f for f in moved if f["status"] == "held"]
+    # No journal line of its own: `engine._run_cli` already writes one per
+    # invocation under the source it was given, and a second row for the
+    # same run is two answers to "how many triage runs happened".
+    log.info("triage: %d looked at, %d held back, %d shown",
+             len(batch), len(held), len(moved) - len(held))
+    return surfaced + [f for f in moved if f["status"] != "held"]
+
+
 async def _ask_why(now: float, reason: str = "schedule") -> int:
     """Spend at most one Claude run working out why somebody did something.
 
@@ -4775,7 +4890,13 @@ async def run_checks(reason: str = "schedule") -> dict:
 
         def apply() -> tuple[list[dict], int, list[dict], dict]:
             ran_sources = {checks.source_for(c) for c in result["ran"]}
-            created = findings_store.add_many(result["findings"])
+            # A check has read one instant and nothing else, so its rows
+            # are filed as waiting to be looked at rather than as work
+            # (`triage.gate`). Everything else here already came out of a
+            # Claude run that read the house. Nothing is hidden by this on
+            # its own: a row only leaves `triaging` for `held` when a run
+            # says so about that row, and every other ending is `open`.
+            created = findings_store.add_many(triage.gate(result["findings"]))
             refreshed = findings_store.refresh_details(result["findings"])
             cleared = findings_store.clear_resolved(
                 ran_sources,
@@ -4796,7 +4917,19 @@ async def run_checks(reason: str = "schedule") -> dict:
                 "created": len(hidden), "found": len(shadow_rows)}
 
         created, refreshed, cleared, shadow_counts = await asyncio.to_thread(apply)
-        await _announce_findings(created)
+        # Between filing and surfacing: one run that goes and looks at the
+        # rows no rule could check. What comes back is the set that is on
+        # the list afterwards — elevated, plus everything nothing could
+        # judge — and that, not `created`, is what a phone is told about.
+        try:
+            surfaced = await _triage_findings(created, started)
+        except Exception as exc:  # noqa: BLE001 — the findings are filed
+            # either way; a triage that fell over must not also take out
+            # the pass that found them.
+            log.warning("could not triage this pass's findings: %s", exc)
+            surfaced = []
+        announce = [f for f in created if f.get("status") == "open"] + surfaced
+        await _announce_findings(announce)
         # After the findings, and outside them. A proposal is not a
         # finding: different store, different tab, and a habit miner
         # that could fail this pass would cost a house its list of what
@@ -4875,6 +5008,13 @@ async def run_checks(reason: str = "schedule") -> dict:
             "per_check": result["per_check"],
             "found": len(result["findings"]),
             "created": created,
+            # What of `created` reached the list. A pass that filed nine
+            # and showed two is a pass worth being able to read back, and
+            # the difference is the only number that says triage is doing
+            # anything at all.
+            "surfaced": len(announce),
+            "held": len([f for f in created
+                         if f["ts"] not in {a["ts"] for a in announce}]),
             "refreshed": refreshed,
             "cleared": cleared,
             "proposed": offered,
@@ -5977,12 +6117,49 @@ async def _activity(start: float, end: float, entity_id: str = "") -> dict:
         return await actions.collect(session, start, end, users, entity_id)
 
 
+async def _device_classes() -> dict[str, str]:
+    """`{entity_id: device_class}` for the whole house, in one call.
+
+    A `binary_sensor` with no class is a door, a motion sensor, a leak
+    detector or a plug's own power flag, and `episodes.subject_for` will not
+    guess between them — so without this every one of them lands in
+    *Everything else*, which is the section people scroll past. One REST
+    read of `/states` is what the checks pass and every insight run already
+    spend, and a fetch that fails is an empty map rather than an error: a
+    tab that could not tell a door from a motion sensor is still a tab, and
+    that is what the refusal-to-guess is for.
+    """
+    import aiohttp
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+    try:
+        async with aiohttp.ClientSession() as session:
+            raw = await ha_data._rest_get(session, "/states", timeout=30)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not read device classes for the activity tab: %s", exc)
+        return {}
+    out: dict[str, str] = {}
+    for st in raw or []:
+        if not isinstance(st, dict):
+            continue
+        eid = str(st.get("entity_id") or "")
+        klass = str(((st.get("attributes") or {}).get("device_class")) or "")
+        if eid and klass:
+            out[eid] = klass
+    return out
+
+
 async def h_activity(request: web.Request) -> web.Response:
-    """A window of the house's own history, with a cause on every row.
+    """A window of the house's own history, as what HAPPENED in it.
+
+    This used to answer with the mined rows themselves — one per state
+    change, newest first — which is Home Assistant's own logbook with a
+    cause column added, and on a real house it is hundreds of rows an hour
+    of a sensor reporting a number. `episodes.group` is what turns that into
+    the things a person would say happened, in sections they would look for.
 
     Fetched per request and never cached: this is a question somebody is
-    asking now, the answer changes every few seconds, and a cache would be
-    a second copy of the logbook to keep true.
+    asking now, the answer changes every few seconds, and a cache would be a
+    second copy of the logbook to keep true.
     """
     start, end = _activity_window(request)
     try:
@@ -5990,32 +6167,134 @@ async def h_activity(request: web.Request) -> web.Response:
     except Exception as exc:  # noqa: BLE001 — a failed look is an answer
         log.warning("activity fetch failed: %s", exc)
         return web.json_response({"available": False, "error": str(exc)[:200],
-                                  "actions": [], "overrides": [],
-                                  "counts": {}, "start": start, "end": end})
-    cause = (request.query.get("cause") or "").strip()
-    if cause and cause in actions.CAUSES:
-        mined = dict(mined)
-        mined["actions"] = [a for a in mined["actions"] if a["cause"] == cause]
-    limit = 400
+                                  "sections": [], "away": [], "counts": {},
+                                  "dropped": 0, "changes": 0, "episodes": 0,
+                                  "start": start, "end": end})
+    classes = await _device_classes() if mined.get("available") else {}
+    now = time.time()
+
+    def shape() -> dict:
+        rows = mined["actions"]
+        cause = (request.query.get("cause") or "").strip()
+        if cause and cause in actions.CAUSES:
+            rows = [a for a in rows if a["cause"] == cause]
+        grouped = episodes.group(rows, classes, now)
+        # On the row it happened in, never in a block above the list: a
+        # count of "somebody put things back 4×" is not something anybody
+        # can act on, where *this* row being the one they undid is.
+        episodes.mark_overrides(grouped, mined.get("overrides") or [])
+        return {
+            "available": True,
+            "error": "",
+            "start": mined["start"],
+            "end": mined["end"],
+            # The window that was actually used, not the one asked for: a
+            # request for a week gets two days, and a caller echoing its
+            # own argument would report a window it never had.
+            "hours": _window_hours(mined["start"], mined["end"]),
+            "sections": episodes.sections(grouped),
+            # When the house was empty — the one thing here Home Assistant
+            # holds every fact for and has never said.
+            "away": episodes.away_spans(grouped, now),
+            "counts": mined["counts"],
+            "causes": list(actions.CAUSES),
+            "capped": mined.get("capped", False),
+            # What was NOT shown, and why. A list that quietly drops nine
+            # tenths of its input is the thing this replaced.
+            "dropped": grouped["dropped"],
+            "changes": sum(e["count"] for e in grouped["episodes"]),
+            "episodes": len(grouped["episodes"]),
+        }
+
+    return web.json_response(await asyncio.to_thread(shape))
+
+
+# One paragraph per window, kept against the window it is about. Pressing
+# twice must not cost twice, and the answer cannot change without the
+# window changing — but a window that ends "now" moves, so the key rounds
+# to the minute rather than pretending an open-ended one is stable.
+_ACTIVITY_SUMMARIES: dict[tuple[int, int], dict] = {}
+_ACTIVITY_SUMMARY_MAX = 12
+
+
+async def h_activity_summary(request: web.Request) -> web.Response:
+    """What this window adds up to, in a paragraph — and it is a PRESS.
+
+    Everything else on this tab is arithmetic over one fetch, so opening it
+    is free however often somebody does. This is the part that spends, so
+    it is a button rather than something that happens on arrival: a Claude
+    run behind a tab that refreshes on every visit is the "refresh
+    everything" control this panel deleted, with a nicer name.
+
+    It skips the usage budget and not the credential — `_ask_why`'s split,
+    which is one promise with two halves: automatic runs pause, and asking
+    by hand always runs.
+    """
+    if not await asyncio.to_thread(engine.get_auth):
+        raise web.HTTPConflict(
+            text="brAIn is not signed in, so there is nothing to ask.")
+    start, end = _activity_window(request)
+    key = (int(start // 60), int(end // 60))
+    cached = _ACTIVITY_SUMMARIES.get(key)
+    if cached:
+        return web.json_response({**cached, "cached": True})
+    unreadable = ("Home Assistant's logbook could not be read, so there is "
+                  "nothing to summarise.")
     try:
-        limit = max(1, min(2000, int(request.query.get("limit") or limit)))
-    except ValueError:
-        # A typed limit is a preference, not a request. Refusing the whole
-        # window over an unparseable one would be a blank tab.
-        pass
-    rows = sorted(mined["actions"], key=lambda a: a["ts"], reverse=True)
-    mined = dict(mined)
-    # The count is of everything in the window; the list is capped. Two
-    # numbers that disagree quietly is what the memory queue's list and
-    # count were, so the cap is reported rather than applied silently.
-    mined["total"] = len(rows)
-    mined["actions"] = rows[:limit]
-    mined["causes"] = list(actions.CAUSES)
-    # The window that was actually used, not the one that was asked for: a
-    # request for a week gets two days, and a caller echoing its own
-    # argument would report a window it never had.
-    mined["hours"] = _window_hours(mined["start"], mined["end"])
-    return web.json_response(mined)
+        mined = await _activity(start, end)
+    except Exception as exc:  # noqa: BLE001
+        # The exception's own text goes to the LOG and not into the reply.
+        # A fetch that raised and a logbook that answered `available: false`
+        # are the same thing from out here — which is why they share a
+        # sentence — and the half a person could act on is the same either
+        # way, where the half they could not is a stack trace in a panel.
+        log.warning("activity summary: the logbook could not be read: %s", exc)
+        raise web.HTTPBadGateway(text=unreadable) from exc
+    if not mined.get("available"):
+        raise web.HTTPBadGateway(text=unreadable)
+    classes = await _device_classes()
+    now = time.time()
+
+    def build() -> tuple[dict, str]:
+        grouped = episodes.group(mined["actions"], classes, now)
+        episodes.mark_overrides(grouped, mined.get("overrides") or [])
+        payload = {
+            "start": mined["start"], "end": mined["end"],
+            "sections": episodes.sections(grouped),
+            "away": episodes.away_spans(grouped, now),
+            "dropped": grouped["dropped"],
+        }
+        # The house's own zone, named rather than assumed: every clock in
+        # the prompt is this process's local time, and a run told which
+        # zone it is reading cannot place an evening in somebody's morning.
+        _tz, tz_name = baselines.house_timezone()
+        return payload, episodes.summary_prompt(payload, tz_name)
+
+    payload, prompt = await asyncio.to_thread(build)
+    if not payload["sections"]:
+        raise web.HTTPConflict(
+            text="Nothing happened in this window, so there is nothing to "
+                 "say about it.")
+    result = await asyncio.to_thread(
+        engine.run_analyst, prompt, episodes.SUMMARY_SYSTEM, eff_model(),
+        episodes.SUMMARY_TIMEOUT_S, episodes.SUMMARY_MAX_TURNS, "activity")
+    text = str(result.get("text") or "").strip()
+    if not result.get("ok"):
+        raise web.HTTPBadGateway(
+            text=str(result.get("error") or "the run did not finish")[:200])
+    if len(text) < episodes.SUMMARY_MIN_CHARS:
+        # `brief.py`'s floor: a four-word summary is worse than the silence
+        # it replaced, and reporting one as an answer teaches somebody the
+        # button does nothing.
+        raise web.HTTPBadGateway(
+            text="The reply was too short to be an answer. Try again.")
+    answer = {"summary": text, "start": mined["start"], "end": mined["end"],
+              "run_id": str((result.get("meta") or {}).get("session_id") or ""),
+              "cached": False}
+    _ACTIVITY_SUMMARIES[key] = answer
+    while len(_ACTIVITY_SUMMARIES) > _ACTIVITY_SUMMARY_MAX:
+        _ACTIVITY_SUMMARIES.pop(next(iter(_ACTIVITY_SUMMARIES)))
+    return web.json_response(answer)
 
 
 async def h_activity_entity(request: web.Request) -> web.Response:
@@ -6701,12 +6980,18 @@ async def h_finding_todo(request: web.Request) -> web.Response:
     body = await _json_body(request)
     note = str((body or {}).get("note") or "").strip()[:findings_store.MAX_NOTE]
     key = findings_store.normalize(finding["text"])
+    # The step, if the caller has a better one than the producer's. A
+    # resolution pressed in the chat does: "replace the CR2032 behind the
+    # garage sensor" is what the conversation worked out, where `fix` is
+    # whatever the check could say without looking. The item still carries
+    # the finding's own text, because that is what the chore is ABOUT.
+    fix = str((body or {}).get("fix") or "").strip()[:findings_store.MAX_NOTE]
 
     def place() -> dict | None:
         return todo_store.add(
             finding["text"],
             detail=finding.get("detail") or "",
-            fix=finding.get("fix") or "",
+            fix=fix or finding.get("fix") or "",
             entity_id=finding.get("entity_id") or "",
             severity=finding.get("severity") or "warning",
             origin="finding",
@@ -6884,6 +7169,29 @@ async def h_todo_delete(request: web.Request) -> web.Response:
 # of its three rows gone clears both. Clearing only the row that was
 # pressed would leave the other two to be pressed individually about a
 # thing the same look already proved is over.
+async def h_finding_elevate(request: web.Request) -> web.Response:
+    """Put a held finding on the list, because a person said to.
+
+    The one press on the Looked-at filter, and it is `unsettle`'s: it
+    stops the suppression and changes nothing else. What triage said is
+    kept beside the row rather than erased — it is the only evidence that
+    a verdict was wrong about this house, and a verdict nothing can
+    correct is a verdict nobody should trust.
+
+    A row that is not held is a 409 naming what it is instead, because
+    "already on the list" and "somebody settled it while you were
+    reading" are different things and only one of them is a surprise.
+    """
+    ts = _finding_ts(request)
+    shaped = await asyncio.to_thread(findings_store.elevate, ts)
+    if shaped is None:
+        raise web.HTTPConflict(
+            text="That one is not being held back any more — it is either "
+                 "already on the list or it has been answered.")
+    return web.json_response({
+        "elevated": True, **(await asyncio.to_thread(_findings_payload))})
+
+
 async def h_finding_recheck(request: web.Request) -> web.Response:
     finding = _finding_or_404(request)
     source = str(finding.get("source") or "")
@@ -7738,7 +8046,12 @@ Severity: {severity}
 You flagged this as broken in my home. Look into it and tell me what is
 actually going on — check the current state and the history before you
 answer, and say plainly whether you think it is really a problem here.
-Do not change anything yet; I will decide."""
+Do not change anything yet; I will decide.
+
+Then end your answer by calling offer_resolutions with the ways this could
+actually be settled, so they are buttons I can press here. Offer only what
+your own look supports, name each one the way I would say it, and leave out
+any you cannot justify — two honest options beat four."""
 
 
 async def h_finding_discuss(request: web.Request) -> web.Response:
@@ -7757,6 +8070,11 @@ async def h_finding_discuss(request: web.Request) -> web.Response:
     # question about the heating, and the reply answered both at once.
     try:
         await session.reset()
+        # After the reset, which clears it: this is what every resolution
+        # card in this conversation will be stamped with, and the model is
+        # never asked for it — so it cannot offer to settle a finding other
+        # than the one on screen.
+        session.finding_ts = int(finding["ts"])
         await session.send(prompt)
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=str(exc))
@@ -9538,6 +9856,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/weekly/run", h_weekly_run)
     app.router.add_get("/api/activity", h_activity)
     app.router.add_get("/api/activity/entity/{entity_id}", h_activity_entity)
+    app.router.add_post("/api/activity/summary", h_activity_summary)
     app.router.add_post("/api/finding/{ts}/fix", h_finding_fix)
     app.router.add_post("/api/finding/{ts}/snooze", h_finding_snooze)
     app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)
@@ -9555,6 +9874,7 @@ def make_app() -> web.Application:
     # and "recheck" is not an ending, so it must not fall into the table
     # of them.
     app.router.add_post("/api/finding/{ts}/recheck", h_finding_recheck)
+    app.router.add_post("/api/finding/{ts}/elevate", h_finding_elevate)
     # Before the generic {verb} route, like snooze and discuss: this ending
     # has to create the item before the row it reads is deleted, which the
     # verb table cannot express.

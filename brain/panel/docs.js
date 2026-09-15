@@ -61,7 +61,7 @@ subscription — or your own API key.
 
 Most AI integrations can turn on a light. brAIn administers the installation.
 
-It reaches Home Assistant three ways at once — a **native MCP server** (40 tools) for
+It reaches Home Assistant three ways at once — a **native MCP server** (41 tools) for
 reading and controlling, **65 registry-management services** for the parts of Home
 Assistant that normally only exist behind the Settings UI, and a **real shell** in
 \`/config\` for everything that is still a YAML file.
@@ -127,6 +127,14 @@ Each one gets a severity, a plain-English explanation, and what to do about it:
 - **Discuss** — hands it to the chat with everything brAIn knows about it and asks
   whether it really is a problem **here**. The discussion changes nothing; the decisions
   ride along above the composer, so agreeing to the fix at the end of it is one press.
+  And when Claude has finished looking it offers **the ways this could actually end**,
+  as buttons under its answer: "Replaced the CR2032", "Replace the CR2032 in the garage
+  sensor", "That cupboard is never opened". Pressing one settles the finding in those
+  words — the card clears, and what the button said is what goes into memory, onto your
+  to-do list, or into the correction, depending on which one it was. Each button says
+  which, because "Replace it" and "Replaced it" land in different places. Nothing is
+  settled until you press: Claude proposes the endings, and none of them touches your
+  house — **Fix it** is deliberately not one of them and stays where it is.
 - **I fixed it** — you handled it yourself. brAIn remembers that you did, and there
   is an optional box for **how** ("replaced the CR2032 — it's a 3-monthly job on that
   one"), which goes into memory beside the fact.
@@ -292,6 +300,42 @@ ordinary findings under a "check" label, with no Claude run at all.
   the result is different from one day to the next depending on the order
   two triggers fired in, which is not something anybody designed. No trace
   shows it, because nothing went wrong in either run.
+
+## Something looks at it before you do
+
+A check is one rule reading one instant, and that is the whole of why some
+of its findings are not real: it cannot go and look. A sensor that has not
+moved in a week is stuck, or it is a contact on a cupboard nobody opens. A
+temperature of 220°C is impossible for a room and ordinary for a 3D
+printer. A number far outside its own normal is a fault, or it is the
+heating season starting.
+
+So a check's finding is not a card yet. Once a pass has filed what it
+found, **one Claude run goes and looks** — at the entity's history, at what
+else is in that area, at what brAIn has already been told about your house
+— and decides, for each one, whether it is worth putting in front of you.
+What it elevates lands on **Needs you** carrying the reason, in one line:
+*brAIn checked — its own month of statistics really does drift upward, and
+no other freezer here does.* What it holds back goes to **Looked at**, a
+filter that appears only once something is in it, where each row says what
+was checked, opens the conversation brAIn had about it, and carries one
+button that puts it back on the work list.
+
+A held finding is **held, not deleted**. The row stays, which is what stops
+the next pass filing the same thing again every six hours, and it clears
+itself exactly as an open one does when the check stops reporting it.
+
+The rule under all of it: **triage can only hold something back by saying
+so.** If brAIn is not signed in, if automatic runs are paused, if the usage
+budget is spent, if the run fails or answers something unreadable, if more
+arrive at once than one look can cover — the finding is on the list, saying
+**Not checked first** and why. "I could not look" and "it is not real" are
+different claims, and only the second may keep a problem off your screen.
+
+Nothing that came from a Claude run is triaged: an insight run, a study
+session and a curiosity run have each already read the house before filing
+anything, so checking one again is paying full price to have a model grade
+its own answer a minute later.
 
 A check's finding clears itself when the check stops finding it — the device
 came back, the battery was changed — and it is simply removed, so it can be
@@ -1404,23 +1448,64 @@ answer waits for it rather than being lost.
 `,
   },
   {
-    id: "it-knows-what-changed-and-what-changed-it",
-    icon: "🕵️",
-    title: "It knows what changed, and what changed it",
+    id: "it-knows-what-happened-and-what-caused-it",
+    icon: "📄",
+    title: "It knows what happened, and what caused it",
     body: `
-# It knows what changed, and what changed it
+# It knows what happened, and what caused it
 
 A state does not carry a cause. Nothing in \`light.kitchen\` being on says
 whether somebody pressed a switch, an automation fired, a voice command
 asked, or brAIn did it — and that is the question behind most of what people
 ask their house.
 
-The **Activity** tab reads Home Assistant's own logbook and puts a cause on
-every row: the automation by name, the script, the scene, the person, the
-voice assistant, or brAIn. Tap a row for that entity's own recent history.
-Page back a day at a time; filter by cause. It costs nothing — no Claude run,
-no stored copy — and it needs the \`logbook\` integration, which is part of
-Home Assistant's default config.
+The **Activity** tab reads Home Assistant's own logbook and answers with what
+**happened**, which is not the same as what changed. Nobody thinks in state
+changes: a person thinks in **episodes**. The TV was on in the lounge from
+eight until eleven. Somebody got home at 17:40. The bedroom heating ran from
+six until half past seven. The hall sensor saw something nine times between
+two and three. Every one of those is derivable from the logbook, and until
+1.56.0 none of them was on any screen — in brAIn or in Home Assistant.
+
+So four things happen to the window before you see it.
+
+**A run is one row.** A media player paused for an ad break and switched off
+three hours later is one episode of three hours, not four rows; a door opened
+twice in a minute is one trip through it; a motion sensor is counted rather
+than listed. The pause that ends an episode belongs to the kind of thing it
+is, because a television and a doorway happen on different scales.
+
+**Sensor readings are not rows at all.** A thermometer reporting every thirty
+seconds is most of a house's logbook and none of it is something that
+happened. The tab says how many it left out, at the foot — a list that
+silently drops nine tenths of its input is one nobody can trust.
+
+**It is sorted into the parts of a house you would go looking in** — locks and
+safety, people, heating, doors and blinds, media, cameras and motion, lights
+and switches — rather than into one stream. A section with nothing in it is
+not drawn.
+
+**And it says when the house was empty**, from the same window, above the
+rows it is the context for. A person brAIn never saw change is not a person
+who was out, so it is silent unless it really knows.
+
+Every row still names its cause, a row somebody undid says so on the row, and
+tapping one opens that entity's own recent history. Page back a day at a
+time; filter by cause. All of that costs nothing — no Claude run, no stored
+copy — and it needs the \`logbook\` integration, which is part of Home
+Assistant's default config.
+
+## What does this add up to?
+
+One button, and it is the only thing on the tab that spends anything. It puts
+the window you are looking at in front of Claude and asks for a paragraph:
+what today adds up to, rather than a list read back. It is a press rather
+than something that happens when you open the tab, because a Claude run
+behind a tab that refreshes on arrival is a bill nobody asked for — and the
+answer is kept against the window, so coming back to it is free.
+
+It is told to write about the **house** and never about the person: "the house
+was empty from 09:10" is about a house, and what anybody was doing is not.
 
 Some rows say **no cause recorded**. That is deliberate: a press on a wall
 switch and a push from a device's own integration arrive identically, so

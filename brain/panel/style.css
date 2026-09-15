@@ -2212,7 +2212,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   gap: 6px;
   margin-top: 8px;
 }
-.qcard .qopt {
+.qcard .qopt, .chatres .cresopt {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -2228,13 +2228,14 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   font-size: 13px;
   cursor: pointer;
 }
-.qcard .qopt:hover { border-color: var(--accent); }
+.qcard .qopt:hover, .chatres .cresopt:hover { border-color: var(--accent); }
 .qcard .qopt.on {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, var(--surface));
 }
-.qcard .qopt .qlabel { font-weight: 600; }
-.qcard .qopt .qdesc { color: var(--ink-2); font-size: 12px; }
+.qcard .qopt .qlabel, .chatres .cresopt .creslabel { font-weight: 600; }
+.qcard .qopt .qdesc,
+.chatres .cresopt .cresdoes { color: var(--ink-2); font-size: 12px; }
 .qcard .qother {
   width: 100%;
   margin-top: 8px;
@@ -2245,6 +2246,32 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   color: var(--ink);
   font-size: 13px;
 }
+
+/* The resolutions card — the ways the finding under discussion could end,
+   offered by Claude and pressed by a person. It borrows the question card's
+   option rows above (one definition, two cards: they are the same control,
+   and a second copy of it is a second copy that drifts) and differs only in
+   what it is made of, which is why its accent is the same one a finding
+   card uses rather than the chat's. */
+.chatres {
+  max-width: 760px;
+  width: 100%;
+  align-self: center;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--warning);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+}
+.chatres .creshead { font-weight: 600; color: var(--ink); }
+.chatres .cresbody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.chatres .cresnote { margin: 0; color: var(--ink-3); font-size: 12.5px; }
 
 .chatempty {
   margin: auto;
@@ -3232,37 +3259,106 @@ body.term-classic #termMode .ico-out { display: block; }
 .actnav { display: flex; align-items: center; gap: 10px; }
 .actrange { color: var(--ink-2); font-size: 13px; white-space: nowrap; }
 
-.actoverrides {
+/* When the house was empty. Above the list rather than in it, because it
+   is the context every row below is read in — the same reason the
+   overrides block it replaced sat there, for a fact that is a good deal
+   more useful than a count of them. */
+.actaway {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
   border: 1px solid var(--hairline);
-  border-left: 3px solid var(--warning);
+  border-left: 3px solid var(--ink-3);
   border-radius: 10px;
-  padding: 12px 14px;
-  margin-bottom: 16px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
   font-size: 13.5px;
   color: var(--ink-2);
-  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
 }
-.actoverrides h3 { margin: 0 0 6px; font-size: 14px; color: var(--ink-1); }
-.actoverrides b { color: var(--ink-1); font-weight: 600; }
-
-.actlist { display: grid; gap: 2px; }
-
-.acthour {
-  color: var(--ink-3);
-  font-size: 12px;
+.actawaylabel {
+  font-size: 11.5px;
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
-  padding: 16px 4px 6px;
+  color: var(--ink-3);
 }
 
-/* A row is a button because tapping it does something. 44px is the touch
-   floor, and it is set here rather than on a media query because a row
-   people miss is a row they stop tapping on any pointer. */
-.actrow {
+/* The press that spends, and the paragraph it buys. */
+.actask { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.actaskerr { color: var(--warning); font-size: 13px; }
+.actsum {
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.actsum p { margin: 0; font-size: 14.5px; line-height: 1.65; }
+.actsumfoot {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-top: 10px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+/* `minmax(0, 1fr)` and not the implicit `auto`: an auto grid column is
+   sized to its content's MIN-content, so one row whose cause and time
+   refuse to wrap makes the whole column wider than the page — measured at
+   390px as 1.45px of sideways scroll, which is invisible to read and
+   exactly what the measure is for. */
+.actlist { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+
+/* One section per kind of thing a house is made of. The heading and the
+   sentence under it are what make a row legible without its neighbours:
+   "9×" means something under Cameras & motion and nothing on its own. */
+.actsec { margin: 0 0 22px; min-width: 0; }
+.actsechead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 0 4px 2px;
+  border-bottom: 1px solid var(--hairline);
+}
+.actsechead h3 { margin: 0; font-size: 15px; }
+.actseccount {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.actsecblurb {
+  margin: 6px 4px 8px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.5;
+  max-width: 64ch;
+}
+
+.actfoot {
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.6;
+  padding: 4px 4px 0;
+  border-top: 1px solid var(--hairline);
+  max-width: 68ch;
+}
+
+/* The row WRAPS rather than shrinking, which is what makes the fit binary
+   and what keeps the cause on screen: a row that solved a narrow width by
+   ellipsising the name of the automation that did something would be
+   deleting the whole point of the row. `.what` is the flexible one and
+   everything else takes its own content, so what gives way at 390px is
+   the line and never a fact. */
+.actrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
   width: 100%;
   min-height: 44px;
   padding: 6px 10px;
@@ -3275,51 +3371,63 @@ body.term-classic #termMode .ico-out { display: block; }
   cursor: pointer;
 }
 .actrow:hover { background: var(--surface-2); }
-.actrow .t {
-  color: var(--ink-3);
-  font-size: 12.5px;
-  font-variant-numeric: tabular-nums;
-  flex: none;
-  width: 52px;
-}
-.actrow .who {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: none;
-  background: var(--ink-3);
-}
 .actrow .what {
-  flex: 1 1 auto;
+  flex: 1 1 180px;
   min-width: 0;
   font-size: 13.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
 }
 .actrow .what b { font-weight: 600; }
-.actrow .st { color: var(--ink-2); }
-.actrow .cause {
+.actrow .st { color: var(--ink-2); font-size: 12.5px; }
+/* When it happened is the second question and it is tabular, because a
+   column of times somebody is scanning down has to line up. */
+.actrow .when {
   flex: none;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.actrow .cause {
+  flex: 0 1 auto;
+  min-width: 0;
   color: var(--ink-3);
   font-size: 12.5px;
-  max-width: 34%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* The cause's own colour, on the dot and nowhere else. Six causes is more
-   than a palette can carry as text colour without the list turning into
-   confetti. */
-.actrow[data-cause="brain"] .who { background: var(--accent); }
-.actrow[data-cause="automation"] .who { background: #46b06a; }
-.actrow[data-cause="script"] .who { background: #46b06a; }
-.actrow[data-cause="scene"] .who { background: #46b06a; }
-.actrow[data-cause="voice"] .who { background: #a071e0; }
-.actrow[data-cause="person"] .who { background: var(--warning); }
+/* A person putting back what an automation had just done. It is on the ROW
+   now rather than in a block above the list: a count of "somebody put
+   things back 4×" is not something anybody can act on, where *this* row
+   being the one they undid is. */
+.actundid {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--warning);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* The cause's own colour, on the left edge and nowhere else. Six causes is
+   more than a palette can carry as text colour without the list turning
+   into confetti — and the words are on the row either way, which is what
+   makes the colour reinforcement rather than the signal. */
+.actrow { border-left: 3px solid transparent; }
+.actrow[data-cause="brain"] { border-left-color: var(--accent); }
+.actrow[data-cause="automation"],
+.actrow[data-cause="script"],
+.actrow[data-cause="scene"] { border-left-color: #46b06a; }
+.actrow[data-cause="voice"] { border-left-color: #a071e0; }
+.actrow[data-cause="person"] { border-left-color: var(--warning); }
 
 .actwhy {
-  margin: 2px 0 10px 62px;
+  margin: 2px 0 10px 14px;
   padding: 10px 12px;
   border-left: 2px solid var(--hairline);
   color: var(--ink-2);
@@ -3606,6 +3714,40 @@ body.term-classic #termMode .ico-out { display: block; }
    press and takes nothing back. */
 .finding.settled { border-left-color: var(--hairline); }
 .findsaid { margin: 6px 0 0; color: var(--ink-2); font-size: 13px; }
+
+/* What looked at a finding before it reached the tab, and the way into the
+   conversation that did. A held card is drawn quieter than a live one --
+   these are problems brAIn is saying you do NOT have -- but the state is
+   carried by the words on it ("Not shown", "brAIn checked", "Not checked
+   first"), never by the colour alone, which the design system forbids and
+   which matters most on a row read at 13px. */
+.finding.held { border-left-color: var(--hairline); opacity: 0.92; }
+.findtriage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.findtriagelabel {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-3, var(--ink-2));
+}
+.findtriage.unchecked .findtriagelabel { color: var(--warning); }
+.findlede {
+  margin: 0 0 14px;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.5;
+  max-width: 62ch;
+}
 
 /* ------------------------------------------------------------ proposals
    The fifth kind of knowledge, and the only list here that is not about
@@ -3913,6 +4055,18 @@ body.term-classic #termMode .ico-out { display: block; }
   .prob .probpick, .prob .probdel, .probbtns .btn { min-height: 44px; }
   .prob .probdel { min-width: 44px; }
   .prob .probcheck { width: 22px; height: 22px; }
+  /* A filter chip is how you reach a view at all, and at 33px it was under
+     a thumb on every phone. Raised on the CLASS rather than on the Findings
+     tab's strip, because the To-do tab renders the same control and a floor
+     one of them held and the other did not would be the inconsistency
+     rather than the fix — which is the argument the blocks around this one
+     make for staying scoped, applied to a control two tabs share. */
+  .fchip { min-height: 40px; }
+  /* A resolution settles a finding — a decision somebody makes on purpose,
+     in answer to a conversation they have just read, and the row carries
+     two lines of text inside the press target. Scoped like the blocks
+     above rather than raised globally, for the reason they give. */
+  .chatres .cresopt { min-height: 44px; }
   /* The first-run flow. Every press here is a decision made once and lived
      with: where brAIn may reach you, whether it may wake the house, which
      cards exist at all. Scoped like the four blocks above rather than

@@ -3663,7 +3663,7 @@ const FIND_SEVERITY = {
 // that is news until you have read it. The card's only button then is
 // "Got it", which ends it like every other ending does.
 //
-// There are two filters and no more. There used to be four: "Answered",
+// Three filters and a ledger. There used to be four: "Answered",
 // which listed the settled ledger, and "Everything", which existed mostly
 // to reach it. Both contradicted the thing that makes an ending an ending —
 // settling a finding writes a plain fact into memory and DELETES the row,
@@ -3675,11 +3675,23 @@ const FIND_SEVERITY = {
 // The ledger itself is untouched and must stay: it is the dedup index that
 // stops the analyst re-raising next week what you answered today. It is
 // simply not a view any more.
+//
+// "Looked at" is not that pile and is the opposite claim. Those rows are
+// live in the store and nobody has answered them — a run went and checked
+// and decided they were not worth your attention, which is a decision
+// BRAIN made and so is exactly the kind a person has to be able to see
+// and overturn. Hence a reason on every row, the conversation behind it
+// one press away, and one verb that puts it back.
 const FIND_FILTERS = [
   { id: "live", label: "Needs you", match: (f) =>
     ["open", "fixing", "fixed", "failed", "needs_you"].includes(f.status)
     && !findings_isSnoozed(f) },
   { id: "snoozed", label: "Later", match: (f) => findings_isSnoozed(f) },
+  // What was brought up and looked at and is not worth your time. These
+  // ARE rows — held rather than deleted, which is what keeps the next
+  // checks pass deduping against them instead of filing them again — and
+  // the reason and the conversation that reached it are on each one.
+  { id: "held", label: "Looked at", match: (f) => f.status === "held" },
   // Not a list of findings — the rows are gone. What is here is the ledger
   // of answers, so that changing your mind has somewhere to happen.
   { id: "settled", label: "Answered", match: () => false },
@@ -3722,14 +3734,19 @@ function updateFindBadge(n) {
 // same {findings, hypotheses, open}, so there is one place that knows what
 // to do with it. `note` is the homeowner's reason, sent with the endings
 // that have somewhere to put it.
-async function findAction(finding, verb, done, btns, note) {
+async function findAction(finding, verb, done, btns, note, extra) {
   btns.forEach((b) => { b.disabled = true; });
   const del = verb === "forget";
+  // `extra` is for a field only one caller has: a resolution pressed in the
+  // chat sends the step it named as the to-do item's `fix`, because what the
+  // conversation worked out is a better instruction than what the check
+  // could say without looking.
+  const body = { ...(note ? { note } : {}), ...(extra || {}) };
   try {
     const data = await api(
       del ? `api/finding/${finding.ts}` : `api/finding/${finding.ts}/${verb}`,
       { method: del ? "DELETE" : "POST",
-        ...(note ? { body: JSON.stringify({ note }) } : {}) });
+        ...(Object.keys(body).length ? { body: JSON.stringify(body) } : {}) });
     takeFindings(data);
     // Accepting one moves it to the other list, so that tab's count moves
     // with it. Every other verb answers without these keys and leaves the
@@ -3924,6 +3941,86 @@ async function discussFinding(f, btns) {
   }
 }
 
+// One line about whether anything looked at this finding before it
+// reached the tab, plus the way into the conversation that did.
+//
+// Absent entirely for a row from a producer that never needed triaging
+// (an insight run had already read the house) — a badge on every card
+// saying nothing happened is a badge people stop reading.
+function triageLine(f) {
+  const t = f.triage || {};
+  if (!t.verdict) return null;
+  const box = el("p", "findtriage");
+  if (t.verdict === "untriaged") {
+    box.classList.add("unchecked");
+    box.appendChild(el("span", "findtriagelabel", "Not checked first"));
+  } else if (t.elevated_by_person) {
+    box.appendChild(el("span", "findtriagelabel", "You brought this back"));
+  } else {
+    box.appendChild(el("span", "findtriagelabel", "brAIn checked"));
+  }
+  if (t.reason) box.appendChild(el("span", null, t.reason));
+  if (t.run_id) box.appendChild(triageLink(f));
+  return box;
+}
+
+// The record of the run that judged it. Opened through the same reader
+// every other engine-store run uses: those turns ran under the analyst's
+// read-only scoping, so they are read and never resumed.
+function triageLink(f) {
+  const t = f.triage || {};
+  const btn = el("button", "btn tiny ghost", "See what it checked");
+  tip(btn, "Opens the conversation brAIn had about this finding. It is a "
+    + "record — you can read it and ask a new chat about it, not continue it.");
+  btn.addEventListener("click", () => viewConversation({
+    id: t.run_id,
+    source: "triage",
+    title: f.text || "",
+    age: t.at ? timeAgo(new Date(t.at * 1000).toISOString()) : "",
+  }));
+  return btn;
+}
+
+// One finding brAIn looked at and decided not to show you. There is
+// exactly one press on it and it is `unsettle`'s: it stops the
+// suppression and changes nothing else — the row goes onto the work list
+// as it was filed, and the verdict stays on it, because what the run said
+// is the only evidence it was wrong about this house.
+function makeHeld(f) {
+  const card = el("article", `finding held sev-${f.severity}`);
+  const line = el("div", "findmeta");
+  line.appendChild(el("span", "findsev", FIND_SEVERITY[f.severity] || "Degraded"));
+  line.appendChild(el("span", "findstate", "Not shown"));
+  if (f.source_title) line.appendChild(el("span", "findsrc", f.source_title));
+  card.appendChild(line);
+  card.appendChild(el("h3", "findtitle", f.text));
+  if (f.detail) card.appendChild(el("p", "finddetail", f.detail));
+  const seen = triageLine(f);
+  if (seen) card.appendChild(seen);
+
+  const actions = el("div", "findactions");
+  const up = el("button", "btn small", "↑  Bring it to the front");
+  tip(up, "Puts it on the work list as the check filed it. Nothing else "
+    + "changes — brAIn's reasoning stays on the card.");
+  up.addEventListener("click", async () => {
+    up.disabled = true;
+    up.textContent = "Bringing it back…";
+    try {
+      const data = await api(`api/finding/${f.ts}/elevate`, { method: "POST" });
+      takeFindings(data);
+      renderFindings();
+      toast("It is on the work list now");
+    } catch (e) {
+      toast(e.message);
+      up.disabled = false;
+      up.textContent = "↑  Bring it to the front";
+    }
+  });
+  actions.appendChild(up);
+  card.appendChild(actions);
+  return card;
+}
+
 function makeFinding(f) {
   const meta = FIND_STATUS[f.status] || FIND_STATUS.open;
   const card = el("article", `finding sev-${f.severity} st-${meta.cls}`);
@@ -3946,6 +4043,14 @@ function makeFinding(f) {
 
   if (f.detail) card.appendChild(el("p", "finddetail", f.detail));
   if (f.entity_id) card.appendChild(el("code", "findentity", f.entity_id));
+  // What looked at it before you were shown it, in one line. Both words
+  // are worth saying and they are different claims: "brAIn checked" is
+  // evidence the card is real, and "nothing checked this one" is the
+  // honest label on a row that surfaced because triage could not run —
+  // which must never be silent, or an unchecked card reads as a checked
+  // one.
+  const seen = triageLine(f);
+  if (seen) card.appendChild(seen);
 
   // The proposed fix is shown before anything is done, and replaced by what
   // actually happened afterwards — a stale "here's what I'd do" sitting
@@ -4255,6 +4360,22 @@ function renderFindings() {
     // beside a list that is meant to empty invites people to read the wrong
     // one as the record. Memory is the record.
     answered.slice(0, 30).forEach((e) => list.appendChild(makeSettled(e)));
+    return;
+  }
+  if (state.findFilter === "held") {
+    const looked = state.findings.filter((f) => f.status === "held");
+    if (!looked.length) {
+      list.appendChild(el("div", "findempty", "Nothing held back."));
+      return;
+    }
+    // The sentence is the whole point of the view: without it a list of
+    // problems under a tab is read as a list of problems you have, and
+    // these are the ones brAIn is saying you do not.
+    list.appendChild(el("div", "findlede",
+      "Problems the house checks raised that brAIn looked into and decided "
+      + "were not worth your time. Each one says what it checked, and you "
+      + "can read the conversation or put it back on the list."));
+    looked.slice(0, 40).forEach((f) => list.appendChild(makeHeld(f)));
     return;
   }
   const active = FIND_FILTERS.find((f) => f.id === state.findFilter) || FIND_FILTERS[0];
@@ -7130,8 +7251,15 @@ const actState = {
   cause: "",
   data: null,
   loading: false,
-  open: "",         // "entity_id|ts" of the row whose history is expanded
+  open: "",         // "entity_id|started" of the row whose history is expanded
   why: null,
+  // The one thing on this tab that spends. Kept per window rather than
+  // per visit, and cleared by every window change (`refreshActivity`),
+  // because a paragraph about Tuesday under Wednesday's rows is the one
+  // answer worse than none.
+  summary: null,
+  summaryBusy: false,
+  summaryError: "",
 };
 
 const CAUSE_WORDS = {
@@ -7159,6 +7287,11 @@ function actDayLabel(end) {
 
 async function refreshActivity() {
   actState.loading = true;
+  // The window is about to change (a day step, a cause filter), so what
+  // was said about the old one no longer describes what is on screen.
+  // The server caches it against the window, so coming back is free.
+  actState.summary = null;
+  actState.summaryError = "";
   renderActivity();
   const q = new URLSearchParams({ hours: String(actState.hours) });
   if (actState.end) q.set("end", String(Math.round(actState.end)));
@@ -7198,29 +7331,139 @@ function renderActFilters(counts) {
   });
 }
 
-function renderActOverrides(overrides) {
-  const el = $("#actOverrides");
-  if (!el) return;
-  if (!overrides || !overrides.length) { el.hidden = true; return; }
-  const byAuto = new Map();
-  overrides.forEach((o) => {
-    const key = o.by || o.by_name;
-    if (!byAuto.has(key)) byAuto.set(key, { name: o.by_name || key, n: 0 });
-    byAuto.get(key).n += 1;
-  });
-  const parts = [...byAuto.values()]
-    .sort((a, b) => b.n - a.n)
-    .map((g) => `<b>${esc(g.name)}</b> ${g.n}&times;`);
-  el.innerHTML = `<h3>Somebody put things back</h3>`
-    + `<div>${parts.join(" &middot; ")}</div>`
-    + `<div>Each of these is a moment an automation did something and a person `
-    + `undid it within a few minutes. It is the clearest signal a house gives `
-    + `about an automation being wrong for it, and it is invisible everywhere `
-    + `else &mdash; the automation ran, nothing errored, and the light is off.</div>`;
-  el.hidden = false;
+// How long an episode covered, in the units a person would say it in.
+function epFor(secs) {
+  const s = Math.max(0, Math.round(secs || 0));
+  if (s < 60) return s + " s";
+  const m = Math.round(s / 60);
+  if (m < 60) return m + " min";
+  const h = Math.floor(m / 60);
+  const rest = m % 60;
+  return rest ? `${h}h ${rest}m` : `${h}h`;
 }
 
-function actRowKey(a) { return a.entity_id + "|" + a.ts; }
+// What one row of this section is ABOUT. The three sentences are three
+// different claims about the same shape of record and the SERVER decides
+// which (`episodes.SUBJECTS[].reads`), because a renderer guessing would be
+// a fourth answer: a momentary motion sensor's "span" is an artefact of
+// when it last happened to fire, and reading it as a duration is how a
+// hall sensor comes out as "on for 83 minutes".
+function epWhen(ep, reads) {
+  const at = actTime(ep.started);
+  if (reads === "moment") {
+    return ep.open ? `since ${at}` : `at ${at}`;
+  }
+  if (reads === "count") {
+    const span = ep.count > 1 ? ` · ${at}–${actTime(ep.ended)}` : ` · ${at}`;
+    return `${ep.count}×${span}`;
+  }
+  if (ep.open) return `since ${at} · ${epFor(ep.duration_s)} so far`;
+  if (ep.duration_s < 60) return at;
+  return `${at}–${actTime(ep.ended)} · ${epFor(ep.duration_s)}`;
+}
+
+// The state, in as few words as it takes. A single-change episode is one
+// word; a run is where it started and where it ended.
+function epStates(ep) {
+  if (!ep.last || ep.last === ep.first) return ep.first || "";
+  return `${ep.first} → ${ep.last}`;
+}
+
+function epCause(ep) {
+  if (!ep.cause || ep.cause === "unattributed") return CAUSE_WORDS.unattributed;
+  return (CAUSE_WORDS[ep.cause] || ep.cause) + (ep.by_name ? ": " + ep.by_name : "");
+}
+
+function epKey(ep) { return ep.entity_id + "|" + Math.round(ep.started); }
+
+// When the house was empty — the one thing on this tab that Home Assistant
+// holds every fact for and has never said, and the reason it is above the
+// list rather than in it: it is the context the rows below are read in.
+function renderAwayBand(host, away) {
+  if (!away || !away.length) return;
+  const box = el("div", "actaway");
+  box.appendChild(el("span", "actawaylabel", "Nobody home"));
+  box.appendChild(el("span", null, away.slice(0, 6).map((s) =>
+    `${actTime(s.start)}–${s.ongoing ? "now" : actTime(s.end)}`).join(" · ")));
+  host.appendChild(box);
+}
+
+// The paragraph, and the press that buys it. Rendered as three states,
+// because "nobody has asked" and "it could not answer" are different
+// things and only one of them is worth pressing again.
+function renderSummary(host) {
+  const sum = actState.summary;
+  if (sum && sum.text) {
+    const box = el("div", "actsum");
+    box.appendChild(el("p", null, sum.text));
+    const foot = el("div", "actsumfoot");
+    foot.appendChild(el("span", null, sum.cached
+      ? "brAIn read this window earlier" : "brAIn read this window"));
+    const again = el("button", "btn tiny ghost", "Ask again");
+    tip(again, "Spends one Claude run on this window. The rest of this tab "
+      + "costs nothing and never has.");
+    again.addEventListener("click", () => askActivitySummary(true));
+    foot.appendChild(again);
+    box.appendChild(foot);
+    host.appendChild(box);
+    return;
+  }
+  const row = el("div", "actask");
+  const btn = el("button", "btn small",
+    actState.summaryBusy ? "Reading the day…" : "✧  What does this add up to?");
+  btn.disabled = !!actState.summaryBusy;
+  tip(btn, "One Claude run over what is on this screen. Everything else "
+    + "here is read straight from the logbook and costs nothing.");
+  btn.addEventListener("click", () => askActivitySummary(false));
+  row.appendChild(btn);
+  if (actState.summaryError) {
+    row.appendChild(el("span", "actaskerr", actState.summaryError));
+  }
+  host.appendChild(row);
+}
+
+async function askActivitySummary(again) {
+  if (actState.summaryBusy) return;
+  actState.summaryBusy = true;
+  actState.summaryError = "";
+  if (again) actState.summary = null;
+  renderActivity();
+  const q = new URLSearchParams({ hours: String(actState.hours) });
+  if (actState.end) q.set("end", String(Math.round(actState.end)));
+  try {
+    const data = await api("api/activity/summary?" + q.toString(),
+                           { method: "POST" });
+    actState.summary = { text: data.summary || "", cached: !!data.cached,
+                         run_id: data.run_id || "" };
+  } catch (e) {
+    actState.summaryError = e.message || String(e);
+  }
+  actState.summaryBusy = false;
+  renderActivity();
+}
+
+function renderActFilters(counts) {
+  const el2 = $("#actFilters");
+  if (!el2) return;
+  const kinds = ["", ...Object.keys(CAUSE_WORDS)];
+  el2.innerHTML = "";
+  kinds.forEach((kind) => {
+    const n = kind ? (counts[kind] || 0) : Object.values(counts)
+      .reduce((a, b) => a + b, 0);
+    // A filter for a cause this window does not contain is a control that
+    // can only ever empty the list.
+    if (kind && !n) return;
+    const b = document.createElement("button");
+    b.className = "fchip" + (actState.cause === kind ? " active" : "");
+    b.textContent = (kind ? CAUSE_WORDS[kind] : "Everything") + " · " + n;
+    b.addEventListener("click", () => {
+      actState.cause = actState.cause === kind ? "" : kind;
+      actState.open = "";
+      refreshActivity();
+    });
+    el2.appendChild(b);
+  });
+}
 
 function renderActivity() {
   const list = $("#actList");
@@ -7229,6 +7472,8 @@ function renderActivity() {
   $("#actRange").textContent = actDayLabel(actState.end);
   // "Later" is meaningless on the window that already ends now.
   $("#actNext").disabled = !actState.end;
+  const head = $("#actSummary");
+  if (head) head.textContent = "";
 
   if (actState.loading && !data) {
     list.innerHTML = `<div class="actempty">Reading the logbook&hellip;</div>`;
@@ -7238,9 +7483,8 @@ function renderActivity() {
 
   if (!data.available) {
     renderActFilters({});
-    renderActOverrides([]);
     list.innerHTML = `<div class="actempty">Home Assistant's logbook could not be `
-      + `read, so nothing here can say what caused a change.`
+      + `read, so nothing here can say what happened or what caused it.`
       + (data.error ? ` <code>${esc(data.error)}</code>` : "")
       + ` The <code>logbook</code> integration is part of the default config; `
       + `if it has been removed from <code>configuration.yaml</code>, this tab `
@@ -7249,62 +7493,78 @@ function renderActivity() {
   }
 
   renderActFilters(data.counts || {});
-  renderActOverrides(data.overrides);
+  const sections = data.sections || [];
+  if (head) {
+    renderAwayBand(head, data.away);
+    if (sections.length) renderSummary(head);
+  }
 
-  if (!data.actions.length) {
-    list.innerHTML = `<div class="actempty">Nothing changed in this window.</div>`;
+  if (!sections.length) {
+    list.innerHTML = `<div class="actempty">Nothing happened in this window.`
+      + (data.dropped
+         ? ` ${data.dropped.toLocaleString()} sensor readings did arrive — `
+           + `a reading is not something that happened, so they are not listed.`
+         : "")
+      + `</div>`;
     return;
   }
 
   const frag = document.createDocumentFragment();
-  let hour = null;
-  data.actions.forEach((a) => {
-    const h = new Date(a.ts * 1000).getHours();
-    if (h !== hour) {
-      hour = h;
-      const head = document.createElement("div");
-      head.className = "acthour";
-      head.textContent = String(h).padStart(2, "0") + ":00";
-      frag.appendChild(head);
-    }
-    const key = actRowKey(a);
-    const row = document.createElement("button");
-    row.className = "actrow";
-    row.dataset.cause = a.cause;
-    row.dataset.key = key;
-    row.dataset.entity = a.entity_id;
-    const cause = a.cause === "unattributed"
-      ? CAUSE_WORDS.unattributed
-      : `${CAUSE_WORDS[a.cause] || a.cause}${a.by_name ? ": " + a.by_name : ""}`;
-    // The root user is the other half of an automation somebody started by
-    // hand: reporting only the automation loses the one fact that explains
-    // an unexpected run.
-    const root = (a.root_user_name && a.cause !== "person")
-      ? ` (started by ${a.root_user_name})` : "";
-    row.innerHTML = `<span class="t">${esc(actTime(a.ts))}</span>`
-      + `<span class="who"></span>`
-      + `<span class="what"><b>${esc(a.name)}</b> <span class="st">&rarr; `
-      + `${esc(a.state)}</span></span>`
-      + `<span class="cause">${esc(cause + root)}</span>`;
-    frag.appendChild(row);
-    if (actState.open === key) {
-      const why = document.createElement("div");
-      why.className = "actwhy";
-      why.innerHTML = actWhyHtml(a);
-      frag.appendChild(why);
-    }
-  });
+  sections.forEach((sec) => frag.appendChild(actSection(sec)));
+  // What this list is NOT showing, said out loud. A view that silently
+  // drops nine tenths of its input is the one it replaced.
+  const foot = el("div", "actfoot");
+  const shown = `${data.episodes} thing${data.episodes === 1 ? "" : "s"} `
+    + `happened, across ${data.changes.toLocaleString()} changes`;
+  foot.textContent = data.dropped
+    ? `${shown}. ${data.dropped.toLocaleString()} sensor readings are not `
+      + `listed — a reading is not something that happened.`
+    : `${shown}.`;
+  frag.appendChild(foot);
   list.innerHTML = "";
   list.appendChild(frag);
 }
 
-function actWhyHtml(a) {
+function actSection(sec) {
+  const box = el("section", "actsec");
+  box.dataset.section = sec.id;
+  const h = el("div", "actsechead");
+  h.appendChild(el("h3", null, sec.label));
+  h.appendChild(el("span", "actseccount", sec.total > sec.episodes.length
+    ? `${sec.episodes.length} of ${sec.total}`
+    : String(sec.total)));
+  box.appendChild(h);
+  box.appendChild(el("p", "actsecblurb", sec.blurb));
+  sec.episodes.forEach((ep) => {
+    const key = epKey(ep);
+    const row = document.createElement("button");
+    row.className = "actrow";
+    row.dataset.cause = ep.cause;
+    row.dataset.key = key;
+    row.dataset.entity = ep.entity_id;
+    row.innerHTML = `<span class="what"><b>${esc(ep.name)}</b>`
+      + `<span class="st">${esc(epStates(ep))}</span></span>`
+      + `<span class="when">${esc(epWhen(ep, sec.reads))}</span>`
+      + `<span class="cause">${esc(epCause(ep))}</span>`
+      + (ep.undid
+         ? `<span class="actundid">a person undid ${esc(ep.undid)}</span>` : "");
+    box.appendChild(row);
+    if (actState.open === key) {
+      const why = el("div", "actwhy");
+      why.innerHTML = actWhyHtml(ep);
+      box.appendChild(why);
+    }
+  });
+  return box;
+}
+
+function actWhyHtml(ep) {
   const why = actState.why;
-  if (!why || why.entity_id !== a.entity_id) return "Reading&hellip;";
+  if (!why || why.entity_id !== ep.entity_id) return "Reading&hellip;";
   if (!why.changes.length) {
-    return `Nothing else changed <code>${esc(a.entity_id)}</code> in this window.`;
+    return `Nothing else changed <code>${esc(ep.entity_id)}</code> in this window.`;
   }
-  return `<div>Everything that changed <code>${esc(a.entity_id)}</code> `
+  return `<div>Everything that changed <code>${esc(ep.entity_id)}</code> `
     + `in this window, newest first:</div>`
     + why.changes.map((c) => {
       // Escaped as one string rather than assembled from escaped parts:
@@ -7547,6 +7807,7 @@ const chatState = {
   liveThink: null,   // the think box thinking deltas are streaming into
   thinkBoxes: [],    // streamed think boxes awaiting their final block
   permCard: null,    // the approval card currently on screen, if any
+  chosen: {},        // resolutions card id -> the option pressed, this session
   ready: false,      // has a snapshot been drawn
   session: "chat",   // "chat" | "classic"
   runState: "idle",
@@ -7990,6 +8251,12 @@ function chatRender(ev) {
     case "tool_result":
       chatToolResult(ev);
       chatStatus("Working…");
+      break;
+    case "resolutions":
+      chatCloseLiveThink();
+      chatSealLive();
+      chatAppend(chatResolutionsNode(ev));
+      chatStatus();
       break;
     case "permission":
       chatPermission(ev);
@@ -8636,6 +8903,111 @@ $("#chatFindingLater").addEventListener("click", (ev) => {
   openSnoozePop(ev.currentTarget, f, [ev.currentTarget]);
 });
 
+// ------------------------------------------------- settling it from the chat
+//
+// The strip above the composer carries the four endings a finding always
+// has; this carries the one the CONVERSATION arrived at. Discussing a
+// finding is how you work out what to actually do about it, and until now
+// that answer had nowhere to go but a reason box you had to retype it into.
+//
+// Claude offers them by calling `offer_resolutions`, which changes nothing:
+// the panel reads the call off the stream it was already reading and draws
+// the buttons. Three rules make that safe to press.
+//
+// The PRESS is the consent — nothing is settled until one happens, and it
+// goes to the same route the tab's own buttons use. The LABEL is the record:
+// one string, the button and the note it writes, so nothing is recorded that
+// a person did not read first. And no resolution TOUCHES the house: the
+// verbs are the three that record a decision, so the worst a mis-tap can do
+// is settle a finding, which the toast's Undo takes back whole. "Fix it" is
+// deliberately not offerable here — it is the one button that sends Claude
+// at the house, it stays on the strip where it is pressed deliberately, and
+// it does not end a finding anyway.
+//
+// What each press DOES is written beside it rather than left to the label,
+// because "Replace the CR2032" and "Replaced the CR2032" are one word apart
+// and land in different places.
+const RESOLUTION_KINDS = {
+  done: {
+    does: "Marks it fixed, and puts that into memory",
+    toast: "Fixed — that's gone into memory",
+  },
+  todo: {
+    does: "Adds it to your to-do list; memory waits until you tick it off",
+    toast: "On your to-do list",
+  },
+  wrong: {
+    does: "Tells brAIn it has misread your house, so it stops reporting it",
+    toast: "Noted — brAIn won't raise it again",
+  },
+};
+
+function chatResolutionsNode(ev) {
+  const box = el("div", "chatres");
+  box.appendChild(el("div", "creshead", "How this could end"));
+  const body = el("div", "cresbody");
+  box.appendChild(body);
+  const options = (ev.options || []).filter((o) => RESOLUTION_KINDS[o.verb]);
+
+  // Whether there is anything to press is DERIVED, never remembered: the
+  // transcript replays this card after a reload, and by then the finding may
+  // have been settled here, on the Findings tab, or from a phone. Reading
+  // the list each paint is what makes those agree — and a card offering to
+  // settle something that is already gone is the one thing it must not do.
+  const paint = () => {
+    body.textContent = "";
+    const chose = chatState.chosen[ev.id];
+    if (chose) {
+      body.appendChild(el("p", "cresnote", `You chose: ${chose}`));
+      return;
+    }
+    if (!ev.finding_ts) {
+      body.appendChild(el("p", "cresnote", "This conversation isn't about a "
+        + "finding, so there is nothing here to settle."));
+      return;
+    }
+    const f = (state.findings || []).find((x) => x.ts === ev.finding_ts);
+    if (!f) {
+      body.appendChild(el("p", "cresnote", "That finding has been settled "
+        + "already, so there is nothing left to press."));
+      return;
+    }
+    options.forEach((option) => {
+      // The row IS the button, with what it does inside it — the question
+      // card's own shape, for the question card's own reason: what a press
+      // means is half the value of an option, and it must be inside the
+      // thing you press rather than beside it.
+      const btn = el("button", "cresopt");
+      btn.appendChild(el("span", "creslabel", option.label));
+      btn.appendChild(el("span", "cresdoes", RESOLUTION_KINDS[option.verb].does));
+      body.appendChild(btn);
+      btn.addEventListener("click", () => chooseResolution(
+        ev, option, f, [...body.querySelectorAll("button")], paint));
+    });
+  };
+  paint();
+  return box;
+}
+
+async function chooseResolution(ev, option, finding, btns, paint) {
+  const spec = RESOLUTION_KINDS[option.verb];
+  if (!spec) return;
+  await findAction(finding, option.verb, spec.toast, btns, option.label,
+                   option.verb === "todo" ? { fix: option.label } : null);
+  // findAction reports its own failures and re-enables the row, so success
+  // is read the way the paint reads it: the row is gone from the list. A
+  // refused press (a full to-do list) leaves the buttons exactly as they
+  // were, which is what lets somebody press a different one.
+  if ((state.findings || []).some((x) => x.ts === finding.ts)) return;
+  chatState.chosen[ev.id] = option.label;
+  // Settled: it is no longer a decision waiting on you, so the strip goes
+  // the same way it does when the strip's own buttons are pressed.
+  if (chatState.finding && chatState.finding.ts === finding.ts) {
+    setChatFinding(null);
+  }
+  paint();
+}
+
 // ------------------------------------------------------- conversations
 //
 // The list is Claude Code's, not ours: it files every conversation under
@@ -9051,7 +9423,8 @@ async function resumeConversation(conv) {
 // house and what came back, tool calls and all.
 async function viewConversation(conv) {
   openBox("#convViewModal");
-  $("#convViewTitle").textContent = conv.source === "fix" ? "Fix run" : "Card run";
+  $("#convViewTitle").textContent = { fix: "Fix run", triage: "Checking a finding" }[conv.source]
+    || "Card run";
   $("#convViewMeta").textContent = `${conv.title} · ${conv.age}`;
   const log = $("#convViewLog");
   log.textContent = "Loading…";
