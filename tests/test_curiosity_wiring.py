@@ -22,8 +22,11 @@ import sys
 import tempfile
 import time
 import unittest
+# `import unittest.mock` rather than `from unittest import mock`: the
+# repo's own convention (five other test files) and what clears CodeQL's
+# py/import-and-import-from on the same module.
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PANEL = BASE_DIR / "brain" / "panel"
@@ -83,7 +86,7 @@ class ServerCase(unittest.IsolatedAsyncioTestCase):
         the full suite: the same shared-table hazard `test_power_tools`
         documents about `sys.modules`.
         """
-        patcher = mock.patch.object(target, name, value)
+        patcher = unittest.mock.patch.object(target, name, value)
         patcher.start()
         self.addCleanup(patcher.stop)
 
