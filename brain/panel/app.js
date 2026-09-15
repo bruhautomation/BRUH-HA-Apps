@@ -607,8 +607,8 @@ function limitsNote(u) {
     case "no_oauth_token":
       return say("Your account's real usage is not available.",
         `Nothing has signed in with a Claude subscription yet — the figure `
-        + `above is an estimate from brAIn's own runs. Sign in from the `
-        + `terminal, or with <b>ha login</b>.`);
+        + `above is an estimate from brAIn's own runs. Sign in from `
+        + `<b>⚙ → Claude account</b>.`);
     case "api_key_has_no_usage_limits":
       return say("An API key has no usage window.",
         `It bills per token instead, so there is no session or weekly `
@@ -621,14 +621,16 @@ function limitsNote(u) {
     case "oauth_token_lacks_usage_scope":
       return say("This sign-in cannot read your usage.",
         `The saved token runs Claude perfectly, but <b>ha login</b> is built `
-        + `on <b>claude setup-token</b>, which mints a token without the `
-        + `permission this figure needs — so running it again will not help. `
-        + `Open the <b>Terminal</b> tab and run <b>claude /login</b>; the `
-        + `real numbers come back on the next poll.`);
+        + `on <b>claude setup-token</b>, which asks Anthropic only for `
+        + `permission to run Claude — so running it again will not help. `
+        + `Open <b>⚙ → Claude account → Sign in again</b> and choose `
+        + `<b>Sign in to your Claude account</b>: it asks for the permission `
+        + `this figure needs, no terminal involved, and the real numbers come `
+        + `back on the next poll.`);
     case "http_403":
       return say("Anthropic refused to show your usage.",
         `It did not say why. The figure above is an estimate; signing in `
-        + `again with <b>claude /login</b> in the Terminal tab is what `
+        + `again from <b>⚙ → Claude account → Sign in again</b> is what `
         + `usually fixes it.`);
     case "http_429":
       return say("Anthropic is rate-limiting the usage endpoint itself.",
@@ -822,17 +824,29 @@ function bindSetup() {
     });
   });
 
-  $("#setupStart").addEventListener("click", async () => {
-    $("#setupStart").disabled = true;
+  // Two sign-ins, and the difference is an OAuth SCOPE rather than a style.
+  // `account` is `claude auth login`, which asks Anthropic for `user:profile`
+  // among others and so can read the usage figures; `token` is
+  // `claude setup-token`, which asks for `user:inference` alone and is the
+  // only one of the two that can be copied into the file the other BRUH
+  // add-ons read. Neither replaces the other — see `engine.FLOW_MODES`.
+  const startSetup = async (mode) => {
+    const btns = [$("#setupStart"), $("#setupStartToken")];
+    btns.forEach((b) => { if (b) b.disabled = true; });
     $("#setupErr").classList.add("hidden");
     try {
-      await api("api/auth/setup/start", { method: "POST" });
+      await api("api/auth/setup/start", {
+        method: "POST", body: JSON.stringify({ mode }),
+      });
       pollSetup();
     } catch (e) {
       showSetupError(e.message);
-      $("#setupStart").disabled = false;
+      btns.forEach((b) => { if (b) b.disabled = false; });
     }
-  });
+  };
+
+  $("#setupStart").addEventListener("click", () => startSetup("account"));
+  $("#setupStartToken").addEventListener("click", () => startSetup("token"));
 
   $("#setupSubmit").addEventListener("click", async () => {
     const code = $("#setupCode").value.trim();
@@ -877,6 +891,7 @@ function showSetupError(msg) {
 function resetSetupUI() {
   clearTimeout(state.setupTimer);
   $("#setupStart").disabled = false;
+  if ($("#setupStartToken")) $("#setupStartToken").disabled = false;
   $("#setupUrlBox").classList.add("hidden");
   $("#setupCodeRow").classList.add("hidden");
   $("#setupPhase").classList.add("hidden");
@@ -3102,7 +3117,7 @@ function fmtSaved(epoch) {
 const AUTH_SOURCE = {
   local: ["Signed in here", "Stored by this panel, in the add-on's own storage."],
   shared: ["The shared login", "Published to /config for every BRUH add-on to read."],
-  cli: ["Claude Code's own login", "From `claude /login` or `ha login` in the Terminal tab."],
+  cli: ["Claude Code's own login", "From the panel's account sign-in, or `claude auth login` / `ha login` in a terminal."],
 };
 
 function renderAuthBox(a) {
@@ -3168,8 +3183,8 @@ function renderAuthBox(a) {
       // would read as a broken feature rather than as a real distinction.
       : a.authenticated
         ? "This login is Claude Code's own session token, which refreshes itself and cannot "
-          + "be shared — a copy would stop working within hours. Sign in here (or run "
-          + "`ha login` in the Terminal tab) to mint a long-lived token that can be."
+          + "be shared — a copy would stop working within hours. Use “Mint a shareable "
+          + "token” on the sign-in screen for a long-lived one that can be."
         : "Sign in first.";
   $("#authSignout").classList.toggle("hidden", !a.authenticated);
 }

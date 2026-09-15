@@ -137,9 +137,9 @@ write_auth_file() {
         # a broken sign-in and sends people back here to run this again.
         echo -e "${YELLOW}Note: this token runs Claude, but cannot read your account's usage limits.${NC}"
         echo -e "${DIM}\`claude setup-token\` mints a token scoped for inference only; the usage"
-        echo -e "endpoint needs a permission that only the interactive sign-in asks for. If you"
-        echo -e "want the usage sensors, also run \`claude /login\` in the Terminal tab — it does"
-        echo -e "not replace this shared file.${NC}"
+        echo -e "endpoint needs a permission only the account sign-in asks for. If you want the"
+        echo -e "usage sensors, also press \"Sign in to your Claude account\" in the panel's"
+        echo -e "Settings -> Claude account — it does not replace this shared file.${NC}"
     fi
     echo -e "${GREEN}Other BRUH add-ons will now use this login automatically.${NC}"
 }

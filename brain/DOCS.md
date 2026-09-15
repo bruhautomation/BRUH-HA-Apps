@@ -1295,7 +1295,7 @@ authenticates, in this order; the fourth is a safety net brAIn keeps for itself:
 
 | Where | Written by | Notes |
 | --- | --- | --- |
-| Claude Code's own store | `claude` / `claude /login` in the Terminal tab | The only one that records an expiry — and a **session** token, which the CLI refreshes for itself |
+| Claude Code's own store | the panel's **Sign in to your Claude account**, or `claude auth login` in a terminal | The only one that records an expiry — and a **session** token, which the CLI refreshes for itself |
 | The panel's store | the ✨ Connect screen, ⚙ Settings → Claude account | Lives in the add-on's own storage |
 | The shared file | **Share it**, or `ha login --share` | On `/config`, so it is the one other BRUH add-ons can read |
 | The backup copy | the add-on, at every start | The last known-good copy of Claude Code's own store, put back if that file goes missing. **Sign out clears this one too** — otherwise signing out and restarting, which is the first thing anybody locked out tries, would put the old credential straight back. |
@@ -1308,11 +1308,19 @@ hours and then break every add-on reading it with nothing to say why. Sign in fr
 the panel (or run `ha login`) to mint a long-lived token that can be shared.
 
 A long-lived token has one thing it cannot do: **read your account's usage limits.**
-The permission for that is only asked for by the interactive sign-in, so a box whose
-only credential came from `ha login` or the panel will show the usage pill as an
-estimate and report `oauth_token_lacks_usage_scope`. That is not a broken sign-in and
-running `ha login` again cannot change it — run `claude /login` in the **Terminal**
-tab as well, which does not replace the shared file.
+The two sign-ins ask Anthropic for different permissions, and this is the whole of the
+difference:
+
+| Sign-in | Asks for | Runs Claude | Reads usage | Shareable |
+|---|---|---|---|---|
+| **Sign in to your Claude account** (panel) — `claude auth login` | `user:profile` and five more | yes | **yes** | no — it refreshes itself |
+| **Mint a shareable token** (panel) / `ha login` — `claude setup-token` | `user:inference` | yes | no | **yes** |
+
+So a box whose only credential came from `ha login` shows the usage pill as an
+estimate and reports `oauth_token_lacks_usage_scope`. That is not a broken sign-in and
+running `ha login` again cannot change it — open **⚙ → Claude account → Sign in
+again** and choose **Sign in to your Claude account**, which needs no terminal and
+does not replace the shared file.
 
 From a terminal, `ha login` and `brain login` are the same command:
 
@@ -1363,17 +1371,19 @@ brAIn's schedule.
 | **Morning brief** | **off** | a notify service **and** `morning_brief` | Within 45 minutes of the measured wake time, and only when there is something worth saying. Until rhythm has answered it uses `morning_brief_hour`. |
 | **Weekly report** | **off** | a notify service **and** `weekly_report` | On `weekly_report_day`, once there is material. |
 | **Overnight self-healing** | **off** | `self_healing`, plus quiet hours or a measured settle time | The first night after it is switched on. With neither a quiet window nor a rhythm it does **not** run, and says so in Diagnostics. |
-| **Usage sensors** | on | `claude /login` in the **Terminal** tab | Within five minutes of that sign-in. A pasted token or `ha login` cannot read them — see below. |
+| **Usage sensors** | on | ⚙ → Claude account → Sign in again → **Sign in to your Claude account** | Within five minutes of that sign-in. A pasted token or `ha login` cannot read them — see below. |
 
 Two of these are worth spelling out.
 
-**The usage sensors need the interactive login specifically.** `ha login` and the
+**The usage sensors need the account sign-in specifically.** `ha login` and the
 panel's paste box mint a long-lived token, which is the only kind that can be
 shared with the other BRUH add-ons — and the permission to read your account's
-usage windows is only ever asked for by `claude /login`. Without it the pill in the
-top bar shows brAIn's own local estimate, prefixed `~`, and the tracker reports
-`oauth_token_lacks_usage_scope`. That is not a broken sign-in and running `ha login`
-again cannot change it.
+usage windows (`user:profile`) is asked for only by the account sign-in. Without it
+the pill in the top bar shows brAIn's own local estimate, prefixed `~`, and the
+tracker reports `oauth_token_lacks_usage_scope`. That is not a broken sign-in and
+running `ha login` again cannot change it — open **⚙ → Claude account → Sign in
+again** and choose **Sign in to your Claude account**. It needs no terminal, and it
+leaves any shared token alone.
 
 **"Not started", "collecting" and "not available" are three different answers.**
 A measurement this house cannot supply — no outdoor thermometer, no doors, no

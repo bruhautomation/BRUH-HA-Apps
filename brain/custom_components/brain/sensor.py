@@ -308,8 +308,8 @@ class BrainUsageTrackerSensor(SensorEntity):
                                         built on `claude setup-token`,
                                         which mints a token without the
                                         `user:profile` scope this endpoint
-                                        requires; only the interactive
-                                        `claude /login` asks for it
+                                        requires; the panel's own "Sign in
+                                        to your Claude account" asks for it
       ``http_403``                      refused permission, no reason
                                         given — usually the same thing,
                                         unattributed

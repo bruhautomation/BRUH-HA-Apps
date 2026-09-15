@@ -135,14 +135,15 @@ ERROR_DETAIL = {
         "usage limits: `claude setup-token`, which `ha login` is built on, "
         "mints a token without the `user:profile` scope this endpoint "
         "requires. Retrying cannot clear it and neither can running "
-        "`ha login` again. Run `claude /login` in the Terminal tab — the "
-        "interactive sign-in asks for that scope — and the numbers come "
-        "back on the next poll."
+        "`ha login` again. In the panel, open Settings -> Claude account -> "
+        "Sign in again and choose \"Sign in to your Claude account\": that "
+        "one asks for the scope, and the numbers come back on the next poll. "
+        "No terminal is needed — it is `claude auth login`, run for you."
     ),
     "http_403": (
         "Anthropic refused this credential permission to read usage limits "
-        "and did not say why. Signing in again with `claude /login` in the "
-        "Terminal tab is what usually fixes it."
+        "and did not say why. Signing in again from the panel's Settings -> "
+        "Claude account -> Sign in again is what usually fixes it."
     ),
     "http_429": (
         "Anthropic rate-limited the usage endpoint itself — this is not your "
@@ -970,8 +971,9 @@ def run_once(state):
             _say_once(
                 state, error,
                 f"usage-limits-tracker: no usable OAuth credential ({error}) — "
-                + ("run `claude /login` in the Terminal tab; `ha login` "
-                   "cannot mint a token with the usage scope"
+                + ("sign in from the panel's Settings -> Claude account -> "
+                   "Sign in again; `ha login` cannot mint a token with the "
+                   "usage scope"
                    if error == SCOPE_ERROR else
                    "sign in from the panel, the terminal, or with `ha login`")
                 + "\n"

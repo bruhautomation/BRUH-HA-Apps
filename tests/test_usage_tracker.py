@@ -976,9 +976,18 @@ class TestTheBodyIsWhatNamesTheRefusal(unittest.TestCase):
         self.assertEqual(error, self.mod.SCOPE_ERROR)
 
     def test_it_is_in_both_tables_with_the_actual_fix_in_the_text(self):
+        """The remedy has to be one the reader can actually perform.
+
+        It used to be `claude /login` **in the Terminal tab** — a shell
+        command, in a tab `enable_terminal` removes and whose default face
+        is a chat with no shell. The panel performs that sign-in itself now
+        (`claude auth login`, which asks for `user:profile`), so the remedy
+        is a button and the test is that no surface points at a terminal.
+        """
         self.assertIn(self.mod.SCOPE_ERROR, self.mod.AUTH_PROBLEMS)
         detail = self.mod.ERROR_DETAIL[self.mod.SCOPE_ERROR]
-        self.assertIn("claude /login", detail)
+        self.assertIn("Claude account", detail)
+        self.assertNotIn("Terminal tab", detail)
         # And it must not send somebody back to the command that caused it
         # without saying so.
         self.assertIn("ha login", detail)
@@ -1121,7 +1130,8 @@ class TestTheRemedyIsSaidOnceAndSaidAgain(unittest.TestCase):
         self.mod.fetch_usage_limits = lambda t: (None, self.mod.SCOPE_ERROR)
         self.mod.run_once({})
         line = self._remedies()[0]
-        self.assertIn("claude /login", line)
+        self.assertIn("Claude account", line)
+        self.assertNotIn("Terminal tab", line)
         self.assertIn("cannot mint", line)
 
     def test_the_ordinary_remedy_is_unchanged(self):
