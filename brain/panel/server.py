@@ -577,6 +577,11 @@ def _rebind_queue() -> None:
 # summary of the last one — which is what /api/checks, `brain check list`
 # and the diagnostics bundle read.
 CHECKS_STATE: dict = {"running": False, "last": None}
+# Whether a triage drain is in flight. A dict for `CHECKS_STATE`'s reason
+# rather than a module-level flag rebound through `global`: the two are
+# the same guard three lines apart in `run_checks`, and one of them
+# spelled differently is the drift a second idiom always produces.
+TRIAGE_STATE: dict = {"running": False}
 CHECKS_FIRST_DELAY_S = 120
 CHECKS_TICK_S = 300
 # How far back a replay reaches by default. A month is what the recorder
@@ -4160,11 +4165,6 @@ def _record_manual(snapshot: dict, now: float) -> int:
         return 0
 
 
-# One drain at a time. Set synchronously by `_triage_findings`, which is
-# what makes it a guard rather than a comment — see its docstring.
-_TRIAGE_RUNNING = False
-
-
 async def _triage_findings(now: float) -> list[dict]:
     """Look at the rows nothing has looked at yet, and move them.
 
@@ -4207,14 +4207,13 @@ async def _triage_findings(now: float) -> list[dict]:
     files nothing: its rows are in the queue the winner is draining, or
     in the one the next minute drains.
     """
-    global _TRIAGE_RUNNING
-    if _TRIAGE_RUNNING:
+    if TRIAGE_STATE["running"]:
         return []
-    _TRIAGE_RUNNING = True
+    TRIAGE_STATE["running"] = True
     try:
         return await _triage_drain(now)
     finally:
-        _TRIAGE_RUNNING = False
+        TRIAGE_STATE["running"] = False
 
 
 async def _triage_drain(now: float) -> list[dict]:
