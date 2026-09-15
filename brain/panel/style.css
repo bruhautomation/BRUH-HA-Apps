@@ -2693,8 +2693,8 @@ body.term-classic #termMode .ico-out { display: block; }
    controls to fit either. What changes with width is the layout, and there
    are two layouts:
 
-     >=1340   one row, tabs labelled             needs 1328px (failed login)
-     390-1339 two rows, tabs on their own strip   fits from 390px
+     >=1430   one row, tabs labelled             needs 1425px (failed login)
+     390-1429 two rows, tabs on their own strip   fits from 390px
      <390     the same, without the wordmark      fits from 320px
 
    There used to be a third band — 960 to 1239, one row with the tab labels
@@ -2709,14 +2709,16 @@ body.term-classic #termMode .ico-out { display: block; }
    Measured by tests/manual/measure-topbar.mjs across the three states the
    bar can be in (running, paused, a failed login) — none is a superset of
    the others, and the two trouble states are the ones that put a second
-   chip in the row. Below 1340 they simply take a third line rather than
+   chip in the row. Below 1430 they simply take a third line rather than
    costing anyone their tab labels.
 
-   The number moved from 1240 when the Proposals tab arrived: a seventh
-   tab is ~90px of row, and the one-row shape stopped fitting the two
-   trouble states at 1240 and at 1280. It is taken from what the measure
-   reports — 1302px paused, 1328px on a failed login — and not guessed,
-   which is the whole reason that script exists. */
+   The number moved from 1240 when the Proposals tab arrived and from 1340
+   when the To-do tab did: a tab is ~90px of row, and each time the one-row
+   shape stopped fitting the two trouble states at the old number. Both are
+   taken from what the measure reports — 1302/1328 for the seventh tab,
+   1413 paused and 1425 on a failed login for the eighth — and not guessed,
+   which is the whole reason that script exists. Adding a ninth will move it
+   again, and the measure is what says where to. */
 
 /* Nothing in the bar may shrink; only the spacer flexes. A shrinking chip
    compresses its own nowrap text and reads as a rendering glitch rather than
@@ -2725,7 +2727,7 @@ body.term-classic #termMode .ico-out { display: block; }
 .topbar > * { flex: none; }
 .topbar .spacer { flex: 1; min-width: 0; }
 
-@media (max-width: 1339px) {
+@media (max-width: 1429px) {
   /* The two-row bar. One row cannot hold five thumb-sized targets and a
      labelled status pill at 320px — and dropping the labels to make it fit
      is what made the bar unreadable on the only device where hovering isn't
@@ -2833,7 +2835,7 @@ body.term-classic #termMode .ico-out { display: block; }
    it there is no such pressure, so the tab is typeset like the rest of the
    panel instead of like a phone's tab bar. The shape does not change; only
    the type does. */
-@media (min-width: 600px) and (max-width: 1339px) {
+@media (min-width: 600px) and (max-width: 1429px) {
   :root { --bar-h: 109px; }
   .viewtab { height: 56px; font-size: 0.8rem; gap: 4px; }
   .viewtab .ico { width: 22px; height: 22px; }
@@ -2874,6 +2876,44 @@ body.term-classic #termMode .ico-out { display: block; }
 .findscore b { color: var(--ink-2); font-weight: 500; }
 
 .findlist { display: grid; gap: 14px; }
+
+/* Adding something to the to-do list. One row, and it wraps rather than
+   shrinking: a text box squeezed to a sliver beside a button is the design
+   bar's own failure, and a wrap is something a measure can see. The input
+   takes the 16px floor from the `pointer: coarse` block like every other
+   text control — it must not set its own, or it beats that rule on
+   specificity and iOS zooms the panel inside the ingress iframe. */
+.todoadd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+.todoadd input {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  /* `font-family: inherit`, never `font: inherit`. The 16px touch floor is
+     a bare `input[type="text"]` selector in the first `pointer: coarse`
+     block, and any class-qualified rule outranks it — so the shorthand
+     quietly pulls this box back to the panel's 15px and iOS zooms the
+     ingress iframe in on focus and never back out. Already written down
+     one control over (`.propnote textarea`), and `measure-todo` is what
+     caught it here rather than a phone. */
+  font-family: inherit;
+}
+.todoadd input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--hairline));
+}
+/* A finished chore reads as finished without relying on colour alone: the
+   words on the row already say "done <when>", and this only reinforces it. */
+.finding.st-done { opacity: 0.72; }
+.finding.st-done .findtitle { text-decoration: line-through; }
 
 .findempty {
   color: var(--ink-3);
@@ -3884,6 +3924,14 @@ body.term-classic #termMode .ico-out { display: block; }
   /* The one control on the Knowledge tab that asks brAIn for a Claude run,
      on the card it would rewrite. */
   .kcard .foot .btn { min-height: 44px; padding-inline: 14px; }
+  /* The To-do tab's add form: the whole of "put something on the list
+     yourself", and the one press on that tab somebody makes on purpose
+     rather than in answer to a card. Scoped like the five blocks above
+     rather than raised globally, for the reason they give — the rest of
+     the panel's card buttons are a separate, real problem, and the rows
+     on this tab are the Findings tab's own row of six. */
+  .todoadd input, .todoadd .btn { min-height: 44px; }
+  .todoadd .btn { padding-inline: 14px; }
 }
 /* The reason box replaces the buttons INSIDE the card, so what you are
    explaining stays on screen while you write about it. */

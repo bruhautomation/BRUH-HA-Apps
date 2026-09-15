@@ -38,8 +38,39 @@ import ha_mcp_server  # noqa: E402
 # exactly these plus the catalog.
 CORE_SERVICES = {
     "send_prompt", "run_task", "clear_conversation", "run_insight",
-    "add_memory", "answer_question", "study", "intent",
+    "add_memory", "answer_question", "study", "intent", "add_todo",
 }
+
+
+def registered_own_services() -> set[str]:
+    """The integration's own service names, read off its registrations.
+
+    `CORE_SERVICES` here and `PRE_EXISTING_SERVICES` in
+    `test_power_tools.py` are the same eight-and-counting names written
+    down twice, which is the drift this repo keeps finding in pairs of
+    sibling modules — `proposals.add` without the id guard `intents.note`
+    had, `reports.py`'s own copy of the failure outcomes. Neither list is
+    the authority: `__init__.py` is, because a service nobody registered
+    is a service nobody can call. This reads it, and the test below holds
+    both copies against it, so adding a service and forgetting one of
+    them fails here rather than in a catalog test whose message is a
+    number.
+
+    Power tools are registered in a loop out of their own catalog, which
+    is what makes them absent from this and why `power_tool_count` exists
+    separately.
+    """
+    source = (INTEGRATION_DIR / "__init__.py").read_text()
+    names = set()
+    for node in ast.walk(ast.parse(source)):
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "async_register"
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)):
+            names.add(node.args[1].value)
+    return names
 
 
 def power_tool_count() -> int:
@@ -105,6 +136,16 @@ class TestDocumentedCounts(unittest.TestCase):
         below would 'pass' against a number nobody meant."""
         self.assertGreater(self.services, 50)
         self.assertGreater(self.tools, 20)
+
+    def test_both_copies_of_the_core_service_list_agree_with_the_code(self):
+        """One list, written down in two test modules — see the reader."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import test_power_tools  # noqa: PLC0415 — a sibling test module
+
+        registered = registered_own_services()
+        self.assertTrue(registered, "no service registrations found at all")
+        self.assertEqual(CORE_SERVICES, registered)
+        self.assertEqual(test_power_tools.PRE_EXISTING_SERVICES, registered)
 
     def test_services_yaml_agrees_with_the_registrations(self):
         """The count is only meaningful if the two places that define it

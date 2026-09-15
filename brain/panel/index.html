@@ -45,6 +45,15 @@
       <span>Findings</span>
       <span id="findBadge" class="badge hidden"></span>
     </button>
+    <button class="viewtab" data-view="todo" role="tab" data-tip="To-do">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg>
+      <span>To-do</span>
+      <!-- A badge, and it counts a different thing from Findings': that one
+           counts decisions waiting on you, this one counts work you have
+           already agreed to. Moving a card across moves the count with it,
+           which is the whole point of the move. -->
+      <span id="todoBadge" class="badge hidden"></span>
+    </button>
     <button class="viewtab" data-view="proposals" role="tab" data-tip="Proposals">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v4M12 21v-2M5.6 5.6l2.8 2.8M18.4 5.6l-2.8 2.8M9 17h6a4 4 0 0 0-1.2-6.4 3.6 3.6 0 0 0-3.6 0A4 4 0 0 0 9 17z"/></svg>
       <span>Proposals</span>
@@ -409,6 +418,33 @@
      way, so "unattributed" is the honest answer for both, and a timeline
      that guessed between them would be a timeline nobody could use as
      evidence. -->
+<!-- Work you have accepted. A finding is brAIn asking a question; an item
+     here is one you have already answered with "yes, and I'll do it", so
+     nothing on this list is a decision — it is a chore with the evidence
+     still attached to it. The card that raised it is gone, which is why
+     every word of it was copied here when it moved. -->
+<div id="viewTodo" class="view">
+  <section class="findwrap">
+    <div class="findhead">
+      <div>
+        <h2>What you're going to do</h2>
+        <p class="sub">Findings you've accepted as real work, plus anything you add
+          yourself. brAIn won't raise an accepted one again while it sits here —
+          and if you take it off without doing it, it's free to find it again.</p>
+      </div>
+      <div class="findside">
+        <div class="findfilters" id="todoFilters"></div>
+      </div>
+    </div>
+    <form id="todoAdd" class="todoadd">
+      <input id="todoText" type="text" maxlength="200" autocomplete="off"
+             placeholder="Something else that needs doing…" aria-label="Add a to-do">
+      <button type="submit" class="btn small primary">Add</button>
+    </form>
+    <div id="todoList" class="findlist"></div>
+  </section>
+</div>
+
 <div id="viewProposals" class="view">
   <section class="propwrap">
     <div class="prophead">

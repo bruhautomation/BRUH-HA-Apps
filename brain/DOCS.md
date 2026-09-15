@@ -150,17 +150,66 @@ Each one gets a severity, a plain-English explanation, and what to do about it:
   into memory as a correction, so the same non-problem is never raised at you twice
   in new words. The garage fridge that runs 24/7 gets flagged once.
 
-The three that end a finding — **I fixed it**, **Wrong** and **Got it** after an
-automated fix — each do the same three things: a plain line into memory, a key in the
-settled ledger so it is never re-raised, and the row deleted. The buttons on a
-**notification** are the same endings under their own wording (*I've fixed it*,
-*Not a problem*, *Later*), because that message is written for a lock screen rather
-than for a list.
+- **＋ To-do** — it is real, and you are going to do it. The row leaves this list
+  and arrives on the **To-do** tab carrying everything the card held; the key is
+  settled, so brAIn will not raise it again while it waits there. This is the one
+  ending that writes **no** memory line, because nothing is true yet — the battery
+  is still flat. The line gets written when you tick the chore off.
+
+The four that end a finding — **I fixed it**, **Wrong**, **Got it** after an
+automated fix, and **＋ To-do** — each do the same three things: a plain line into
+memory, a key in the settled ledger so it is never re-raised, and the row deleted.
+(＋ To-do defers the first of those; see above.) The buttons on a **notification**
+are the same endings under their own wording (*I've fixed it*, *Not a problem*,
+*Later*), because that message is written for a lock screen rather than for a list.
 
 An **Answered** filter appears once the settled ledger holds something — capped,
 hidden until then, no badge, and one verb on each row: *Let brAIn raise it again*,
 which stops the suppression and nothing more. Nothing "comes back" unless the next
 analysis finds it still there.
+
+### The to-do list
+
+The Findings tab is a list of **decisions** waiting on you. The To-do tab is the
+list of **work** you have already decided about, and it exists because the
+commonest honest answer to a finding is neither "fixed" nor "wrong" — it is *yes,
+that is real, and I will do it*. Without somewhere for that to go, a flat battery
+sat on the Findings tab as an open question for as long as it took to get round
+to, and a list of decisions filled up with chores.
+
+Press **＋ To-do** on a finding and it moves: the card goes, the key is settled so
+nothing re-raises it while it waits, and an item appears here carrying the text,
+the evidence, the suggested fix, the entity and who found it. The card it came
+from no longer exists, which is why every word of it is copied rather than
+referenced.
+
+Two presses on a chore, and they are different claims:
+
+- **✓ Done** — it is sorted. *This* is the moment the memory line gets written,
+  in the same words the Findings tab's **I fixed it** would have used, and the
+  ledger entry is upgraded from "accepted" to "fixed". The box asks what you did,
+  optionally, and that goes into memory with it.
+- **⌫ Off the list** — you are not going to do it. For a chore that came from a
+  finding, this **releases the suppression**: deciding not to do something is not
+  evidence it stopped being true, so the next checks pass is free to report it
+  again. If it really is over, nothing comes back. A chore you added yourself has
+  no report behind it and releases nothing.
+
+Both hand back an **Undo** on the toast, and so does ＋ To-do — one press reverses
+every half of it, because the row back with the item still there is the same chore
+twice.
+
+Finished chores stay, behind a **Done** filter that is absent until there is
+something in it, counted by nothing, capped, and carrying one verb: *Put it back*.
+The Findings tab refuses an archive because memory is the record of a decision;
+this is a list of chores, and a chore list that forgets what you did this week
+cannot answer "did I already do that". Putting one back does not take the memory
+line with it — that was written when you said it was done, and once a
+consolidation has filed it, editing the document is the only honest correction.
+
+And you can **add your own**, in the box at the top or through
+`brain.add_todo`. A list that only holds what brAIn noticed is a queue of brAIn's
+opinions rather than a list of what needs doing.
 
 ### It checks the house without spending a token
 
@@ -1164,19 +1213,24 @@ that run fails you get *Morning*, *Day*, *Evening*, *Night*, which work fine.
 
 Two places show brAIn's work list, and both of them can end an item.
 
-**`todo.brain_system_brain`** is the open findings in Home Assistant's own To-do
-panel and mobile app — the same list the Findings tab shows, as items. Completing
-one is the tab's **I fixed it**; deleting one is its **Wrong**. Both are the tab's
-own endings, so the memory line, the settled key and the row leaving the list all
-happen exactly as they would have — the To-do app has its own two verbs and there
-is no third vocabulary here.
+**`todo.brain_system_brain`** is Home Assistant's own To-do panel and mobile app,
+showing both of brAIn's lists as one: the findings it is still asking about, and
+the chores you have already accepted. From the app's side they are the same
+thing — work — so they are one list, and each row does on completion what it
+would have done on its own screen. Completing a finding is the Findings tab's
+**I fixed it** and deleting it is its **Wrong**; completing a chore is the To-do
+tab's **Done**, which is the moment the memory line is written, and deleting one
+is taking it off the list undone, which lets brAIn report the problem again. No
+new vocabulary: each row's own list already had these.
 
-You cannot *add* an item. There would be nothing behind it and it would vanish
-on the next refresh, and a list that silently deletes what you put on it is
-worse than one that does not offer to take it. There are no due dates yet
-either: a forecast's date lives in the prose of its detail ("about 9 days
-left"), and a date parsed out of a sentence is a guess with a calendar entry
-attached to it.
+You **can** add an item now, and until 1.53.0 you could not. The old refusal was
+right about what the list then was — an item created against a derived view of
+the findings store would have had nothing behind it and would have vanished on
+the next refresh — and there is a real store behind it now, so what you add is
+still there on the next poll. `brain.add_todo` does the same thing from an
+automation. There are still no due dates: a forecast's date lives in the prose
+of its detail ("about 9 days left"), and a date parsed out of a sentence is a
+guess with a calendar entry attached to it.
 
 The list needs Home Assistant 2023.11 or newer (the To-do panel's own floor).
 On anything older it is simply absent.

@@ -145,6 +145,13 @@ const state = {
   // route to `POST /api/findings/unsettle`, which had no caller at all.
   settled: [],
   findFilter: "live",
+  // The to-do list: work you have accepted. A separate store from findings
+  // on purpose — an item outlives the card that raised it, which is the
+  // whole feature — so it is a separate fetch and a separate count.
+  todo: [],
+  todoDone: [],
+  todoOpen: 0,
+  todoFilter: "open",
   filter: "all",
   editingTags: null, // card id whose tag row is in edit mode
   pollTimer: null,
@@ -3724,6 +3731,11 @@ async function findAction(finding, verb, done, btns, note) {
       { method: del ? "DELETE" : "POST",
         ...(note ? { body: JSON.stringify({ note }) } : {}) });
     takeFindings(data);
+    // Accepting one moves it to the other list, so that tab's count moves
+    // with it. Every other verb answers without these keys and leaves the
+    // to-do list exactly as it was.
+    if (data.todo) updateTodoBadge(data.todo.open);
+    if (data.added) { state.todo.unshift(data.added); state.todoOpen += 1; }
     renderFindings();
     // `undo` is present on the presses that took a row away, and absent on
     // Fix it (a Claude run is already touching the house) and on the snooze
@@ -4024,6 +4036,17 @@ function makeFinding(f) {
     // brAIn knowing a problem is over, and "replaced the CR2032, it's a
     // 3-monthly job on that sensor" leaves it knowing the house. So it goes
     // into memory beside the fact rather than as evidence against a report.
+    // The fourth ending, and the one people reach for most: it is real, and
+    // it is not getting done in the next thirty seconds. It sits before "I
+    // fixed it" because it is the honest answer far more often \u2014 a flat
+    // battery is a trip to a drawer, not a decision \u2014 and a list of
+    // decisions that fills up with chores is a list nobody empties.
+    const accept = add(el("button", "btn small", "➕  To-do"));
+    tip(accept, "It's real and you'll do it. Off this list, onto your to-do "
+      + "list \u2014 brAIn won't raise it again while it's there.");
+    accept.addEventListener("click", () => findAction(
+      f, "todo", "On your to-do list", btns));
+
     const done = add(el("button", "btn small", "✓  I fixed it"));
     tip(done, "It was a real problem and it's sorted now. Say what you did, "
       + "if it's worth remembering.");
@@ -4251,6 +4274,174 @@ function renderFindings() {
   }
   claims.forEach((h) => list.appendChild(makeHypothesis(h)));
   shown.forEach((f) => list.appendChild(makeFinding(f)));
+}
+
+// ---------------------------------------------------------------------------
+// The to-do list
+// ---------------------------------------------------------------------------
+// Accepted work, and the one list on which nothing is a decision. Every
+// endpoint answers the same {items, done, open, done_count}, so there is one
+// place that unpacks it — `takeFindings`' rule, one store over.
+
+function takeTodo(data) {
+  if (!data) return;
+  state.todo = data.items || [];
+  state.todoDone = data.done || [];
+  state.todoOpen = data.open || 0;
+  updateTodoBadge(state.todoOpen);
+  // An accept answers with both lists, because it moved a row from one to
+  // the other and a tab showing the old count of either is wrong.
+  if (data.findings) state.findings = data.findings;
+}
+
+function updateTodoBadge(n) {
+  const badge = $("#todoBadge");
+  if (!badge) return;
+  badge.textContent = n ? String(n) : "";
+  badge.classList.toggle("hidden", !n);
+}
+
+async function refreshTodo() {
+  try {
+    takeTodo(await api("api/todo"));
+  } catch (err) {
+    console.warn("could not load the to-do list", err);
+  }
+}
+
+// Every press on this tab goes through here: they all answer with the same
+// payload, and the undo token rides on the ones that took something away.
+async function todoAction(item, path, method, message, btns, body) {
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    const data = await api(path, {
+      method,
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    takeTodo(data);
+    renderTodo();
+    // `undo` rides the presses that took something away and is absent from
+    // the ones that did not — `toast` carries the offer only while it is up.
+    if (message) toast(message, data.undo);
+  } catch (err) {
+    btns.forEach((b) => { b.disabled = false; });
+    toast(err.message || "that didn't work");
+  }
+}
+
+const TODO_FILTERS = [
+  { id: "open", label: "To do" },
+  { id: "done", label: "Done" },
+];
+
+function renderTodo() {
+  const chips = $("#todoFilters");
+  if (!chips) return;
+  chips.textContent = "";
+  const counts = { open: state.todo.length, done: state.todoDone.length };
+  TODO_FILTERS.forEach((f) => {
+    // "To do" is always offered because it is where the work is; "Done"
+    // appears only once there is something in it, so a fresh list is one
+    // chip rather than a row of empty ones — the Findings tab's own rule.
+    if (f.id !== "open" && !counts[f.id]) return;
+    const chip = el("button", "fchip" + (state.todoFilter === f.id ? " active" : ""),
+      counts[f.id] ? `${f.label} · ${counts[f.id]}` : f.label);
+    chip.addEventListener("click", () => { state.todoFilter = f.id; renderTodo(); });
+    chips.appendChild(chip);
+  });
+
+  const list = $("#todoList");
+  list.textContent = "";
+  const rows = state.todoFilter === "done" ? state.todoDone : state.todo;
+  if (!rows.length) {
+    list.appendChild(el("div", "findempty", state.todoFilter === "done"
+      ? "Nothing finished yet."
+      : "Nothing on your list. Accept a finding with \u2795 To-do, or add "
+        + "something yourself above."));
+    return;
+  }
+  rows.forEach((i) => list.appendChild(makeTodo(i)));
+}
+
+function makeTodo(item) {
+  const done = item.status === "done";
+  const card = el("article", `finding sev-${item.severity}${done ? " st-done" : ""}`);
+
+  const line = el("div", "findmeta");
+  line.appendChild(el("span", "findsev", FIND_SEVERITY[item.severity] || "Degraded"));
+  // Where it came from, and it is not decoration: a moved finding is
+  // holding a suppression open on brAIn's side and a hand-added one is
+  // not, which is exactly what taking it off the list does differently.
+  line.appendChild(el("span", "findstate",
+    item.origin === "finding" ? "From a finding" : "Added by you"));
+  if (item.source_title) line.appendChild(el("span", "findsrc", item.source_title));
+  if (done && item.done_at) {
+    line.appendChild(el("span", "findchecked", "done "
+      + timeAgo(new Date(item.done_at * 1000).toISOString())));
+  } else if (item.added_at) {
+    line.appendChild(el("span", "findchecked", "added "
+      + timeAgo(new Date(item.added_at * 1000).toISOString())));
+  }
+  card.appendChild(line);
+  card.appendChild(el("h3", "findtitle", item.text));
+  if (item.detail) card.appendChild(el("p", "finddetail", item.detail));
+  if (item.entity_id) card.appendChild(el("code", "findentity", item.entity_id));
+  if (item.fix) {
+    const box = el("div", "findfix");
+    box.appendChild(el("span", "findfixlabel", "You'd need to"));
+    box.appendChild(el("span", null, item.fix));
+    card.appendChild(box);
+  }
+  if (done && item.note) {
+    const box = el("div", "findresult");
+    box.appendChild(el("p", null, item.note));
+    card.appendChild(box);
+  }
+
+  const actions = el("div", "findactions");
+  const btns = [];
+  const add = (node) => { btns.push(node); actions.appendChild(node); return node; };
+
+  if (done) {
+    // One verb, and it is a restore rather than a delete — a chore ticked
+    // off early is an ordinary mistake in a way a settled finding is not.
+    // What it does not take back is the memory line: that was written when
+    // you said it was done, and once a consolidation has filed it, editing
+    // the document is the only honest correction.
+    const back = add(el("button", "btn small ghost", "\u21b6  Put it back"));
+    tip(back, "Back on the list. What went into memory when you ticked it "
+      + "off stays there.");
+    back.addEventListener("click", () => todoAction(
+      item, `api/todo/${item.id}/reopen`, "POST", "Back on the list", btns));
+  } else {
+    const finish = add(el("button", "btn small primary", "\u2713  Done"));
+    tip(finish, "It's sorted. Say what you did, if it's worth remembering — "
+      + "this is the moment it goes into memory.");
+    finish.addEventListener("click", () => openNoteForm(card, actions,
+      (note, formBtns) => todoAction(
+        item, `api/todo/${item.id}/done`, "POST",
+        note ? "Done \u2014 that's gone into memory" : "Done \u2014 written into memory",
+        btns.concat(formBtns), note ? { note } : null),
+      {
+        hint: "What did you do? Optional \u2014 it goes into memory with the "
+          + "fix, so brAIn knows how this house works next time.",
+        placeholder: "Replaced the CR2032 \u2014 it's a 3-monthly job on that one.",
+        send: "Done",
+      }));
+
+    const drop = add(el("button", "btn small ghost", "\u232b  Off the list"));
+    tip(drop, item.origin === "finding"
+      ? "Take it off without doing it. brAIn is free to report it again."
+      : "Take it off the list.");
+    drop.addEventListener("click", () => todoAction(
+      item, `api/todo/${item.id}`, "DELETE",
+      item.origin === "finding"
+        ? "Off the list \u2014 brAIn may raise it again"
+        : "Off the list",
+      btns));
+  }
+  card.appendChild(actions);
+  return card;
 }
 
 // How right each producer has been, from the endings people gave: "I did
@@ -7219,6 +7410,9 @@ function switchView(name) {
     chatDisconnect();
   }
   applyTermChrome();
+  // Rendered from what we have, then again once the fetch lands — Findings'
+  // own shape, so opening the tab is never a blank frame.
+  if (name === "todo") { renderTodo(); refreshTodo().then(renderTodo); }
   if (name === "memory") renderKnowledge();
   if (name === "docs") renderDocs();
   // Re-fetched on every entry rather than kept: the window ends "now", and
@@ -7236,6 +7430,33 @@ function switchView(name) {
 
 document.querySelectorAll(".viewtab").forEach((b) =>
   b.addEventListener("click", () => switchView(b.dataset.view)));
+
+// Add one by hand. Nothing here is required beyond the sentence: a to-do
+// list that made you pick a severity before it would take a note is a form,
+// and the whole point of this one is that it takes what brAIn cannot see.
+$("#todoAdd").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const input = $("#todoText");
+  const text = input.value.trim();
+  if (!text) return;
+  const btn = ev.currentTarget.querySelector("button");
+  btn.disabled = true;
+  try {
+    takeTodo(await api("api/todo", {
+      method: "POST", body: JSON.stringify({ text }),
+    }));
+    input.value = "";
+    // Whichever filter was showing, what you just added is on the open
+    // list — landing on "Done" after adding something would read as the
+    // add having failed.
+    state.todoFilter = "open";
+    renderTodo();
+  } catch (err) {
+    toast(err.message || "could not add that");
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 $("#kAddForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
@@ -9436,6 +9657,7 @@ document.addEventListener("visibilitychange", () => {
   // At boot too, not only when the tab is opened: the badge is how anybody
   // learns there is something waiting on this list at all.
   refreshProposals();
+  refreshTodo();
   // resume a guided sign-in if one is mid-flight (page reload)
   try {
     const st = await api("api/auth/setup/status");

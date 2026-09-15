@@ -71,11 +71,11 @@
             }
           },
           {
-            "$comment": "An analyst label: somebody ended this finding, and which button they pressed is what it means. done/got_it = the report was right; wrong = it was not, and reporting it again is a false positive rather than a miss.",
+            "$comment": "An analyst label: somebody ended this finding, and which button they pressed is what it means. done/got_it/accepted = the report was right (accepted being 'real work, on my to-do list'); wrong = it was not, and reporting it again is a false positive rather than a miss.",
             "required": ["finding_key", "verb"],
             "properties": {
               "finding_key": {"type": "string", "description": "findings_store.normalize of the finding's text, as it was when the ending was given."},
-              "verb": {"enum": ["done", "wrong", "got_it"]},
+              "verb": {"enum": ["done", "wrong", "got_it", "accepted"]},
               "note": {"type": "string", "description": "The homeowner's own words, redacted like everything else in the entry."},
               "entity_id": {"type": "string"},
               "ended_at": {"type": "integer"}

@@ -46,6 +46,12 @@ _LOGGER = logging.getLogger(__name__)
 
 ACTIONS = ("fixed", "wrong", "snooze")
 
+# What can be asked of the to-do list from out here. They are the tab's
+# own presses and nothing new: tick one off, take it off the list, put a
+# new one on. `add` is the one that carries text instead of an id, which
+# is why the writer takes both and checks which the action needs.
+TODO_ACTIONS = ("done", "drop", "add")
+
 # Breaks the tie between answers given inside one millisecond.
 # A restart resets it, which cannot matter: the millisecond
 # stamp in front of it has moved on by then.
@@ -96,9 +102,50 @@ def write_request(hass: HomeAssistant, ts: int, action: str,
             "via": str(via or "")[:32]}
     if hours:
         body["hours"] = float(hours)
-    directory = requests_dir(hass)
-    # Sorts chronologically by name, and the random tail keeps two
-    # answers in the same millisecond from being one file.
+    return _drop(hass, requests_dir(hass), body,
+                 what=f"the answer for finding {ts}")
+
+
+def write_todo_request(hass: HomeAssistant, action: str, *, item_id: int = 0,
+                       text: str = "", note: str = "", via: str = "") -> bool:
+    """Drop one request about the to-do list. Returns whether it landed.
+
+    Same directory and same drain as a finding's answer, with a ``kind``
+    naming which store it is about. A second directory was the obvious
+    shape and is the wrong one: these arrive from the same two surfaces,
+    in an order that matters between them (ticking off an item brAIn has
+    just created), and two queues sorted into one at the far end is the
+    arrangement `INTENT_REQUESTS_DIRNAME` exists because it is NOT.
+
+    An id is required for everything except `add`, which has no item yet
+    — checked here rather than left to the add-on, because a request that
+    can never be applied should not be written.
+    """
+    if action not in TODO_ACTIONS:
+        _LOGGER.warning("refusing to write an unknown to-do action: %s", action)
+        return False
+    text = str(text or "").strip()[:200]
+    if action == "add" and not text:
+        _LOGGER.warning("refusing to add an empty to-do")
+        return False
+    if action != "add" and not item_id:
+        _LOGGER.warning("refusing a to-do %s with no item", action)
+        return False
+    body = {"kind": "todo", "action": action, "id": int(item_id),
+            "text": text, "note": str(note or "")[:500],
+            "via": str(via or "")[:32]}
+    return _drop(hass, requests_dir(hass), body, what=f"to-do {action}")
+
+
+def _drop(hass: HomeAssistant, directory: str, body: dict,
+          *, what: str) -> bool:
+    """The write itself: atomic, chronologically named, never waited on.
+
+    Lifted out of `write_request` when the to-do half arrived rather than
+    copied into it — the three rules in this module's docstring are one
+    implementation or they are two that drift, and the atomic rename is
+    exactly the kind of detail a copy gets subtly wrong.
+    """
     name = (f"{int(time.time() * 1000):013d}"
             f"-{next(_SEQUENCE):06d}-{uuid.uuid4().hex[:8]}.json")
     target = os.path.join(directory, name)
@@ -111,7 +158,7 @@ def write_request(hass: HomeAssistant, ts: int, action: str,
         # it until this rename makes the file whole and visible at once.
         os.replace(scratch, target)
     except OSError as exc:
-        _LOGGER.warning("could not record the answer for finding %s: %s", ts, exc)
+        _LOGGER.warning("could not record %s: %s", what, exc)
         try:
             os.unlink(scratch)
         except OSError:

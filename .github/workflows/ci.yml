@@ -126,6 +126,11 @@ jobs:
       - name: Measure a live card's two ages
         run: node tests/manual/measure-cardlive.mjs
 
+      # A chore you cannot finish from the screen it is on is
+      # indistinguishable from one nobody has got round to.
+      - name: Measure the To-do tab
+        run: node tests/manual/measure-todo.mjs
+
       - name: Measure BRight's light map
         run: node tests/manual/measure-lightmap.mjs
 

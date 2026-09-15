@@ -126,6 +126,22 @@ intent:
       selector:
         text:
 
+add_todo:
+  name: Add to the to-do list
+  description: >-
+    Put something on brAIn's to-do list. The same list findings land on when you accept
+    one as real work, so a chore brAIn spotted and one you thought of yourself sit
+    together — on the To-do tab in the panel, and in Home Assistant's own To-do app.
+  fields:
+    text:
+      name: What needs doing
+      description: >-
+        One line. For example: "Replace the hallway smoke alarm battery" or "Re-pair the
+        bedroom blind". There is nothing else to fill in — brAIn does not ask for a
+        priority or a date it would have to guess at.
+      required: true
+      example: Replace the hallway smoke alarm battery
+
 add_memory:
   name: Add memory fact
   description: Queue a durable fact about your home for Claude's long-term memory (merged into /config/.brain/memory/memory.md
