@@ -2,6 +2,102 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.52.0
+
+**brAIn now asks why you did something.** Everything it could say about a home
+was about what that home *does* — what is broken, what is unusual, what you do
+by hand often enough to be a habit. None of it could say **why**, and the why
+is the fact worth having.
+
+brAIn could already see that somebody turns the sprinklers on at 19:04, and
+that they do it most evenings at about seven. What it could not see is that
+the lawn is in full sun until six, or that the water is metered cheaply after
+seven. Neither of those is in any state, any statistic or the logbook — and
+the difference matters, because an automation built on the *when* alone fires
+at seven o'clock for ever and is wrong the first week it rains.
+
+So once a day at most, brAIn picks the one manual action it can least account
+for and spends a single Claude run working it out: the weather and the sun at
+that moment, the season, the history of that switch and of things near it,
+what else in the house moved around then. Three answers, and each goes
+somewhere that already existed:
+
+- **it worked out the reason** — a plain fact about the home, into memory,
+  where every future card and answer can see it;
+- **it has a guess** — one short question on the **Findings** tab. Tick it and
+  the guess becomes a memory line; say it is wrong and the reason you give is
+  recorded instead. That is the half that actually teaches brAIn your house,
+  and it costs a sentence;
+- **it could not tell** — nothing is filed, and it looks again once there is
+  more to go on.
+
+**The selection is the feature.** A house produces tens of manual actions a
+day and a run costs real money, so most of the new code is the decision *not*
+to ask — and nothing asks a model which events are interesting, because that
+would be a model call per event to decide whether to make a model call per
+event. `curiosity.worth_asking` is arithmetic over a ledger, taken before
+anything is spawned, and an empty answer costs nothing at all. One question a
+day and three a week is the whole budget; a subject is never asked about
+twice; and a subject is settled *before* the run, so one that crashes having
+spent the money cannot leave the same question to be asked again every six
+hours for ever.
+
+It pays attention to two shapes. Something done by hand over and over at about
+the same time — *why does this home do this?* — and something done well
+outside its own usual hour, which no measurement brAIn had could see: *what
+was different last night?* A voice command counts, and counts for more, since
+the person said what they wanted in words.
+
+**Some questions a house should not ask.** Locks, alarm panels and anything
+that tracks where people are are refused outright rather than ranked low —
+*"why did you unlock the front door at 02:40"* has a correct answer and no
+good reason to be asked by a piece of software, and one badly-judged question
+of that shape costs more trust than every well-judged one earns. The run
+itself is forbidden to reason about anybody's health, sleep, whereabouts or
+household: if the only explanation it can think of is about a person rather
+than about the house, the answer is "could not tell".
+
+From a terminal, `brain why` shows the same thing and `brain why ask` asks the
+next question now.
+
+⚙ → Diagnostics shows what brAIn is curious about, what it has worked out, and
+how much of today's budget is left, with an **Ask why now** button beside it —
+the one control in that dialog that costs a Claude turn, and it says so. The
+whole thing is **Ask why you did something** in the configuration, and like
+every scheduled Claude run it stops on its own when the usage budget pauses
+automatic insights. Pressing the button still works, because asking by hand
+always does.
+
+### Fixed: the usage message that never went away however often you signed in
+
+Reported as *"I keep signing in over and over and this message never goes
+away"*, with a screenshot of the popover telling somebody to perform the
+account sign-in they had just performed.
+
+1.51.0 added that account sign-in, and it worked. What it landed in is Claude
+Code's own `.credentials.json`, whose access token lives for a few hours and
+whose refresh token is what the CLI mints the next one from on its next run —
+and the usage tracker read a lapsed access token as **no credential at all**.
+So a few hours after each sign-in it stopped being offered, the search fell
+through to the older `ha login` token, *that* one earned the scope refusal,
+and the refusal was reported and remembered. Signing in again fixed it for an
+afternoon and then it came back, for ever.
+
+A known-dead access token still is not sent — that would be a guaranteed 401
+on an endpoint that counts requests. What changed is the conclusion drawn from
+it: the answer to *"the right credential is between refreshes"* is **wait**,
+not fall through to one that can never work and settle its verdict. There is a
+new status for exactly that, `oauth_token_awaiting_refresh`, and it is the one
+status whose remedy is to do nothing — the numbers come back on the first poll
+after anything runs Claude. It never blanks a good reading, and it is glossed
+in all five places a person reads one.
+
+Every neighbouring case is pinned by a test rather than described, because a
+guard that swallowed a *real* scope refusal would hide the one verdict whose
+remedy is real: a revoked session with no refresh token still earns it, a box
+that only ever ran `ha login` still earns it, a working credential in a lower
+store still wins, and a 401 is never masked.
+
 ## 1.51.0
 
 **brAIn can now perform the sign-in that reads your usage, from the panel, with

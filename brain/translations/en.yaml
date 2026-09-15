@@ -163,6 +163,20 @@ configuration:
       never call Claude, so they cost nothing; what they find lands on the
       Findings tab. 0 turns the schedule off (`brain check` still runs them
       by hand).
+  ask_why:
+    name: Ask why you did something
+    description: >-
+      brAIn notices the things somebody here does by hand — running the
+      sprinklers, pushing the heating up, starting a script — and once a
+      day, at most, it spends one Claude run working out WHY. It looks at
+      the weather, the sun, the season and the history around the moment,
+      and either records what it worked out or puts one short question on
+      the Findings tab. Manual actions are the only place a home says
+      what it actually wants, and the timing alone never explains itself:
+      an automation built from "most evenings at seven" is wrong the
+      first week it rains. One a day and three a week is the whole cost;
+      brAIn never asks twice about the same thing, and it will not ask
+      about locks, alarms or where anybody is.
   self_healing:
     name: Fix three things overnight
     description: >-

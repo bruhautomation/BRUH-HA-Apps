@@ -1282,3 +1282,214 @@ class TestOneAnswerToWhereTheCliLives(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestATokenBetweenRefreshes(unittest.TestCase):
+    """The bug that made the scope verdict unclearable by obeying it.
+
+    Reported as *"I keep signing in over and over and this message never
+    goes away"*, with a screenshot of the popover telling somebody to
+    perform the account sign-in they had already performed. What was
+    happening: the account sign-in writes Claude Code's own
+    `.credentials.json`, whose access token lives for a few hours. Once it
+    lapsed, `_read_token_from_file` read it as **no credential at all** —
+    so it was not offered, the search fell through to the older `ha login`
+    setup token, that earned the scope refusal, and the refusal was
+    reported and settled. Signing in again worked for an afternoon and
+    then reverted, for ever.
+
+    The fix is not to send a dead token. It is that a verdict about the
+    WRONG credential may not be the pass's answer while the right one is
+    merely between refreshes, and that "wait" and "this sign-in cannot do
+    it" are two messages.
+
+    Every case the fix must NOT change is asserted here too, because a
+    guard that swallows a real scope refusal — on a box that genuinely
+    only ever ran `ha login` — would hide the one verdict whose remedy is
+    real.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = os.path.join(self.tmp.name, "home")
+        self.secrets = os.path.join(self.tmp.name, "secrets")
+        self.shared = os.path.join(self.tmp.name, "shared", "claude_auth.json")
+        os.makedirs(os.path.join(self.home, ".claude"))
+        os.makedirs(self.secrets)
+        os.makedirs(os.path.dirname(self.shared))
+        self.mod = load_tracker({
+            "BRAIN_HOME": self.home,
+            "BRAIN_SECRETS": self.secrets,
+            "BRAIN_SHARED_AUTH": self.shared,
+            "CLAUDE_CONFIG_DIR": None,
+        })
+        self.asked = []
+
+        def fetch(token):
+            self.asked.append(token)
+            if "SETUP" in token:
+                return None, self.mod.SCOPE_ERROR
+            if "REVOKED" in token:
+                return None, "http_401"
+            return {"five_hour": {"utilization": 12}}, None
+
+        self.mod.fetch_usage_limits = fetch
+
+    # -- fixtures ---------------------------------------------------------
+
+    def _cli(self, **oauth):
+        with open(os.path.join(self.home, ".claude",
+                               ".credentials.json"), "w") as fh:
+            json.dump({"claudeAiOauth": oauth}, fh)
+
+    def _account_between_refreshes(self):
+        """What `claude auth login` leaves behind, an hour later."""
+        self._cli(accessToken="sk-ant-oat01-ACCOUNT",
+                  refreshToken="sk-ant-ort01-refresh",
+                  expiresAt=int((time.time() - 3600) * 1000))
+
+    def _account_live(self):
+        self._cli(accessToken="sk-ant-oat01-ACCOUNT",
+                  refreshToken="sk-ant-ort01-refresh",
+                  expiresAt=int((time.time() + 3600) * 1000))
+
+    def _setup_token(self):
+        """What `ha login` leaves in the panel store: runs Claude, cannot
+        read usage."""
+        with open(os.path.join(self.secrets, "claude_auth.json"), "w") as fh:
+            json.dump({"type": "oauth_token",
+                       "value": "sk-ant-oat01-SETUP"}, fh)
+
+    def _panel_token(self, value):
+        with open(os.path.join(self.secrets, "claude_auth.json"), "w") as fh:
+            json.dump({"type": "oauth_token", "value": value}, fh)
+
+    # -- the report -------------------------------------------------------
+
+    def test_the_reported_loop(self):
+        """The whole bug, in one assertion."""
+        self._account_between_refreshes()
+        self._setup_token()
+        data, error = self.mod._fetch_with_any_credential({})
+        self.assertIsNone(data)
+        self.assertEqual(error, self.mod.REFRESH_PENDING)
+
+    def test_a_lapsed_token_is_never_put_on_the_wire(self):
+        """The half of the strict rule that was right: a known-dead access
+        token is a guaranteed 401 on an endpoint that counts requests."""
+        self._account_between_refreshes()
+        self._setup_token()
+        self.mod._fetch_with_any_credential({})
+        self.assertNotIn("sk-ant-oat01-ACCOUNT", self.asked)
+
+    def test_the_first_pass_says_it_too(self):
+        """Keyed on the KIND of verdict, not on whether it was remembered.
+
+        The first pass after a lapse is the one somebody is most likely to
+        be looking at, and a scope refusal arriving fresh says exactly
+        what a remembered one says. An earlier cut of the fix required the
+        refusal to be settled already, so poll one still told the person
+        to sign in again and poll two did not.
+        """
+        self._account_between_refreshes()
+        self._setup_token()
+        state = {}
+        first = self.mod._fetch_with_any_credential(state)[1]
+        second = self.mod._fetch_with_any_credential(state)[1]
+        self.assertEqual(first, self.mod.REFRESH_PENDING)
+        self.assertEqual(second, self.mod.REFRESH_PENDING)
+
+    def test_a_lapsed_account_credential_alone_is_not_no_sign_in(self):
+        """`no_oauth_token` renders as "nothing has signed in yet", which
+        is the same wrong advice in different words."""
+        self._account_between_refreshes()
+        data, error = self.mod._fetch_with_any_credential({})
+        self.assertIsNone(data)
+        self.assertEqual(error, self.mod.REFRESH_PENDING)
+
+    # -- and every case it must not change --------------------------------
+
+    def test_a_revoked_account_credential_still_earns_the_scope_verdict(self):
+        """No refresh token means nothing will mint another, so this really
+        is a dead session and signing in again really is the remedy."""
+        self._cli(accessToken="sk-ant-oat01-ACCOUNT",
+                  expiresAt=int((time.time() - 3600) * 1000))
+        self._setup_token()
+        self.assertEqual(self.mod._fetch_with_any_credential({})[1],
+                         self.mod.SCOPE_ERROR)
+
+    def test_a_box_that_only_ever_ran_ha_login_still_hears_the_truth(self):
+        """The case the scope verdict was written for. There is no account
+        credential to be waiting on, so the remedy is real."""
+        self._setup_token()
+        self.assertEqual(self.mod._fetch_with_any_credential({})[1],
+                         self.mod.SCOPE_ERROR)
+
+    def test_a_live_account_credential_reports_numbers(self):
+        self._account_live()
+        self._setup_token()
+        data, error = self.mod._fetch_with_any_credential({})
+        self.assertIsNone(error)
+        self.assertEqual(data["five_hour"]["utilization"], 12)
+
+    def test_a_working_lower_store_still_wins(self):
+        """A reading beats an excuse. The guard only ever replaces a
+        verdict, never data."""
+        self._account_between_refreshes()
+        self._panel_token("sk-ant-oat01-GOOD")
+        data, error = self.mod._fetch_with_any_credential({})
+        self.assertIsNone(error)
+        self.assertTrue(data)
+
+    def test_a_real_401_is_not_masked(self):
+        """A 401 is a real refusal of a real credential, and saying so is
+        right even while another one waits on a refresh."""
+        self._account_between_refreshes()
+        self._panel_token("sk-ant-oat01-REVOKED")
+        self.assertEqual(self.mod._fetch_with_any_credential({})[1],
+                         "http_401")
+
+    def test_no_credential_anywhere_is_still_no_credential(self):
+        self.assertEqual(self.mod._fetch_with_any_credential({})[1],
+                         "no_oauth_token")
+
+    def test_the_lapse_flag_does_not_outlive_its_pass(self):
+        """`state` outlives a pass, so a stale True would go on excusing a
+        real scope refusal after the credential was revoked."""
+        self._account_between_refreshes()
+        self._setup_token()
+        state = {}
+        self.assertEqual(self.mod._fetch_with_any_credential(state)[1],
+                         self.mod.REFRESH_PENDING)
+        # The session is revoked: the refresh token goes, so nothing will
+        # mint another and the scope verdict is the honest answer again.
+        self._cli(accessToken="sk-ant-oat01-ACCOUNT",
+                  expiresAt=int((time.time() - 3600) * 1000))
+        self.assertEqual(self.mod._fetch_with_any_credential(state)[1],
+                         self.mod.SCOPE_ERROR)
+
+    # -- and the thing it must not become ---------------------------------
+
+    def test_waiting_is_not_an_auth_problem(self):
+        """`http_429`'s rule. A status that says nothing is wrong must let
+        a good reading age out rather than blank four working sensors."""
+        self.assertNotIn(self.mod.REFRESH_PENDING, self.mod.AUTH_PROBLEMS)
+        self.assertNotIn(self.mod.REFRESH_PENDING, self.mod.SETTLED_REFUSALS)
+
+    def test_it_is_glossed_everywhere_a_person_reads_one(self):
+        """A code with no gloss is a code the one person who needs it reads
+        on a support thread instead — and this one's whole content is that
+        the remedy is to do nothing, so it is useless as a bare string."""
+        self.assertIn(self.mod.REFRESH_PENDING, self.mod.ERROR_DETAIL)
+        root = BASE_DIR / "brain"
+        for path, needle in (
+            (root / "panel" / "app.js", self.mod.REFRESH_PENDING),
+            (root / "panel" / "docs.js", self.mod.REFRESH_PENDING),
+            (root / "DOCS.md", self.mod.REFRESH_PENDING),
+            (root / "scripts" / "ha-selftest.sh", self.mod.REFRESH_PENDING),
+            (root / "custom_components" / "brain" / "sensor.py",
+             self.mod.REFRESH_PENDING),
+        ):
+            self.assertIn(needle, path.read_text(encoding="utf-8"),
+                          f"{path.name} never mentions {needle}")

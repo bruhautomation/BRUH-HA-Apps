@@ -91,22 +91,27 @@ def circular_median(minutes: list[int]) -> float | None:
             + offset) % MINUTES_PER_DAY
 
 
-def circular_spread(minutes: list[int], centre: float) -> float:
-    """How far these times stray from their centre, the short way round.
+def circular_distance(a: float, b: float) -> float:
+    """How far apart two times of day are, the short way round.
 
-    The distance between two times of day is never more than twelve
-    hours: 23:50 is twenty minutes from 00:10, not twenty-three hours and
-    forty.
+    Never more than twelve hours: 23:50 is twenty minutes from 00:10, not
+    twenty-three hours and forty. Lifted out of `circular_spread` so that
+    "how far is this press from its usual time" has one implementation —
+    `manual_ledger.off_pattern` asks it of a single press, where a second
+    copy of the modular arithmetic is the drift this file already exists
+    to prevent one of.
     """
+    d = abs(a - b) % MINUTES_PER_DAY
+    return min(d, MINUTES_PER_DAY - d)
+
+
+def circular_spread(minutes: list[int], centre: float) -> float:
+    """How far these times stray from their centre, the short way round."""
     import baselines  # noqa: PLC0415
 
     if not minutes:
         return 0.0
-    away = []
-    for m in minutes:
-        d = abs(m - centre) % MINUTES_PER_DAY
-        away.append(min(d, MINUTES_PER_DAY - d))
-    return baselines.median(away)
+    return baselines.median([circular_distance(m, centre) for m in minutes])
 
 
 def clock(minutes: float | None) -> str:

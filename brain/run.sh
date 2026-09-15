@@ -397,6 +397,15 @@ MEMORYMD
     local self_healing
     self_healing=$(bashio::config 'self_healing' 'false')
     export BRAIN_SELF_HEALING="$self_healing"
+    # "Why did you do that": at most one Claude run a day, on the manual
+    # action brAIn can least account for. ON by default, unlike the
+    # brief and the healing above — it is the feature rather than an
+    # extra, and what bounds its cost is the one-a-day budget rather
+    # than the switch. The panel prefers the live Supervisor option and
+    # this export is the fallback, exactly as the others are.
+    local ask_why
+    ask_why=$(bashio::config 'ask_why' 'true')
+    export BRAIN_ASK_WHY="$ask_why"
 
     local env_file="/data/.brain_env"
     cat > "$env_file" << ENVEOF
@@ -423,6 +432,7 @@ export BRAIN_LEARN_TIMEOUT="${study_timeout_s}"
 export BRAIN_CHECKS_INTERVAL_HOURS="${checks_interval_hours}"
 export BRAIN_PROTECTED_ENTITIES="${protected_entities}"
 export BRAIN_SELF_HEALING="${self_healing}"
+export BRAIN_ASK_WHY="${ask_why}"
 export TZ="${TZ:-}"
 export CLAUDE_CODE_DISABLE_MCP_DISCOVERY=1
 export CLAUDE_MCP_SERVERS_OVERRIDE="/config/.mcp.json"
