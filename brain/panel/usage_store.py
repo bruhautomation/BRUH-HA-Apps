@@ -47,6 +47,14 @@ LIMITS_FILE = os.environ.get(
 # Real utilization older than this is considered stale (tracker not running)
 LIMITS_MAX_AGE_S = 2 * 3600
 
+# The tracker polls on a slow heartbeat and asks immediately when brAIn
+# has just finished a Claude run — see `nudge`. The path is spelled here
+# and in usage-limits-tracker.py, which is a separate process that imports
+# nothing from the panel, so `tests/test_usage_nudge.py` reads both ends:
+# a rename that goes silent on one side is the failure `AUTH_BACKUP_FILE`
+# already had once.
+NUDGE_FILE = os.environ.get("BRAIN_USAGE_NUDGE", "/data/usage-nudge")
+
 SESSION_HOURS = 5.0
 KEEP_HOURS = 24.0
 DEFAULT_BUDGET = 25
@@ -214,6 +222,43 @@ def _tracker_file() -> dict | None:
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def nudge() -> bool:
+    """Tell the tracker the account's usage has just moved. Never raises.
+
+    The figure changes when a run spends tokens and at no other time, so a
+    finished run is the moment worth one request — and it is also the only
+    moment the credential is certain to be usable, because the CLI mints
+    the next access token from the refresh token as part of a run and
+    nothing else on the box can. A quiet house therefore has nothing to
+    ask with, which is why the heartbeat is slow and this exists.
+
+    It is a file's mtime rather than a signal: the tracker is a separate
+    process started by run.sh, both ends run as root, and a pid to signal
+    is one more thing that can be stale. Content is deliberately not read
+    — the only question is "has anything happened since I last asked".
+
+    Best-effort by construction. This is called from the journal listener,
+    which may not fail the run it is being told about.
+    """
+    try:
+        os.makedirs(os.path.dirname(NUDGE_FILE) or ".", exist_ok=True)
+        with open(NUDGE_FILE, "w") as fh:
+            fh.write("")
+        return True
+    except OSError:
+        # A nudge that could not be written costs freshness until the next
+        # heartbeat, which is the state this was in before it existed.
+        return False
+
+
+def nudged_at() -> float:
+    """When the last nudge landed, or 0.0. Never raises."""
+    try:
+        return os.path.getmtime(NUDGE_FILE)
+    except OSError:
+        return 0.0
 
 
 def _fresh_payload() -> dict | None:

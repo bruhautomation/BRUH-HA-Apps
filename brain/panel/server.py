@@ -624,6 +624,32 @@ def _journal_report_listener(row: dict) -> None:
     having recorded itself."""
     if isinstance(row, dict) and row.get("outcome") in reports.FAILURE_OUTCOMES:
         _report_async(reports.file_run_failure, row)
+
+
+def _journal_usage_listener(row: dict) -> None:
+    """A finished run tells the usage tracker to ask again.
+
+    Hooked on the journal for the same reason the report writer is: every
+    Claude run of every kind already records itself here, so voice, the
+    chat, a card, a fix, study and the consolidator are covered by having
+    done so rather than by six callers remembering to.
+
+    The account's figure moves when a run spends tokens and at no other
+    time, so this is the moment one request is worth making — and it is
+    also the only moment the credential is certainly usable, because the
+    CLI mints the next access token from the refresh token as part of a
+    run and nothing else on the box can. A checks pass or a baseline build
+    with no model behind it is not a nudge (`journal.is_claude_run`), and
+    the tracker spaces the requests out itself: this says what happened,
+    not how often to ask.
+
+    Synchronous on purpose — it is one `open` and a close, where the
+    report writer's five-second log fetch is what needed a thread.
+    """
+    if journal.is_claude_run(row):
+        usage_store.nudge()
+
+
 _CLI_VERSION: dict = {"value": None}
 AUTH_CHECK: dict = {"state": "unchecked", "error": "", "checked_at": 0,
                     "running": False}
@@ -6613,7 +6639,15 @@ def _diagnostics_payload() -> dict:
         # `checks.SHADOW`, which is a code change.
         "shadow_checks": shadow_findings.diagnostics(),
         "daemons": _daemon_rollcall(),
-        "usage": {k: usage.get(k) for k in ("source", "used_percent", "limits")},
+        "usage": {
+            **{k: usage.get(k) for k in ("source", "used_percent", "limits")},
+            # When a finished run last told the tracker to ask. The
+            # heartbeat is slow on purpose, so "the figure is 40 minutes
+            # old" and "nothing has run since Tuesday" are different
+            # reports of the same stale number, and only one of them is
+            # something to look into.
+            "nudged_at": int(usage_store.nudged_at()) or None,
+        },
     }
     # Derived last, from everything above it. The verdict is part of the
     # payload rather than a route of its own so that the panel, the mirror,
@@ -10075,6 +10109,9 @@ def make_app() -> web.Application:
         # Every failed run of any kind becomes one readable file: hooked on
         # the journal so a new run path is covered by having recorded itself.
         journal.on_record(_journal_report_listener)
+        # And every run that spent something tells the usage tracker, which
+        # is asking on a 30-minute heartbeat rather than every 5 minutes.
+        journal.on_record(_journal_usage_listener)
         # The work queue belongs to the loop the worker runs on, and it
         # is a module global — so the first loop to touch it owns it for
         # the life of the process. In the add-on that is one loop and one

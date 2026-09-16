@@ -72,17 +72,41 @@ from email.utils import parsedate_to_datetime
 CLAUDE_HOME = os.environ.get("BRAIN_HOME") or os.environ.get("HOME", "/data/home")
 CLAUDE_CONFIG_DIR = os.environ.get("CLAUDE_CONFIG_DIR", "")
 USAGE_FILE = "/config/.brain/usage_limits.json"
-# Every 5 minutes. The interval was 30 minutes for as long as the tracker
-# introduced itself as `brain/1.0` — the wrong User-Agent put it in the
-# endpoint's hostile rate-limit bucket, where 2-minute polling bought nine
-# working hours and then a 429 wall, which read as a daily meter. With the
-# CLI's own UA (see user_agent below) the endpoint serves the statusline
-# ecosystem at 1–5 minute cadences sustainably; 5 minutes keeps the sensors
-# close to live (the five-hour window moves ~1% every three minutes at a
-# hard sprint) while still asking for far less than the tools that poll on
-# every keystroke's response. The hour-scale 429 ladder below stays as the
-# safety net either way.
-POLL_INTERVAL = int(os.environ.get("USAGE_LIMITS_INTERVAL", "300"))  # seconds
+# Touched by the panel when a Claude run finishes — see `_nudged_at` and
+# usage_store.nudge, which spells this same path. A separate process
+# importing nothing from the panel means two spellings of one path, so
+# tests/test_usage_nudge.py reads both ends.
+NUDGE_FILE = os.environ.get("BRAIN_USAGE_NUDGE", "/data/usage-nudge")
+# Every 30 minutes, and immediately when a run has just spent something.
+#
+# The number was 30 minutes when the tracker introduced itself as
+# `brain/1.0`, then 5 when the User-Agent fix (see user_agent below) moved
+# it out of the endpoint's hostile bucket — on the argument that the
+# five-hour window moves ~1% every three minutes at a hard sprint, so a
+# tight timer is what keeps the sensors close to live. That argument was
+# answering the wrong question. The figure moves when a run spends tokens
+# and at no other time, so 288 requests a day bought a fresh reading on
+# the handful of occasions anything had changed and re-asked an unchanged
+# question 280-odd times — against an endpoint Claude Code itself calls
+# only from the /usage screen, on demand, never on a timer.
+#
+# So freshness comes from the event now and the timer is the floor under
+# it: the panel touches NUDGE_FILE when a run ends and this wakes within
+# NUDGE_CHECK_S, which is both when the number changed AND the only moment
+# the credential is certain to work — the CLI mints the next access token
+# from the refresh token as part of a run, and nothing else on the box
+# can, which is why a quiet house reports nothing however hard it polls.
+POLL_INTERVAL = int(os.environ.get("USAGE_LIMITS_INTERVAL", "1800"))  # seconds
+# How often the ordinary wait looks for a nudge. Small enough that the
+# sensors move while somebody is watching the run that moved them.
+NUDGE_CHECK_S = 5
+# The floor between two requests, however many runs finish. A checks pass
+# that triages, files and heals is several runs in a minute and that is
+# one thing that happened to the figure, not five questions to ask about
+# it. Deliberately not a "coalesce the batch" debounce: the last run of a
+# burst is the one whose number we want, and waiting this long after the
+# first gets it without machinery to detect the end of a burst.
+MIN_SPACING_S = 120
 # How long a reading stays usable when polls start failing. Matches
 # usage_store.LIMITS_MAX_AGE_S, which is the panel's own staleness rule for
 # the same file — two answers to "is this still true" would be one too many.
@@ -865,6 +889,57 @@ def _restate_next_attempt(delay_s, strikes):
     _record_failure(error, delay_s, strikes)
 
 
+def _nudged_at():
+    """When the panel last said a run finished, or 0.0. Never raises."""
+    try:
+        return os.path.getmtime(NUDGE_FILE)
+    except OSError:
+        return 0.0
+
+
+def _wait(delay, seen, interruptible=True, sleeper=time.sleep,
+          clock=time.monotonic, stamp=_nudged_at):
+    """Sleep `delay`, cut short by a finished run. → the stamp acted on.
+
+    `seen` is the nudge stamp this process has already answered; the
+    return value replaces it, so a nudge that lands *during* a request is
+    still pending when the wait starts and is not lost.
+
+    Two rules, and the second is why this takes `interruptible` rather
+    than reading the delay and deciding for itself:
+
+    A nudge may only ever SHORTEN THE ORDINARY CADENCE. A 429 backoff and
+    the five-failure backoff are promises of quiet, and the whole reason
+    they exist is that asking again cannot help — a run finishing is not
+    news to an endpoint that has just refused us, and letting it through
+    would be `Retry-After: 0` obeyed literally, which is how a tracker
+    retries straight back into the limit it was told about. So those waits
+    are served whole.
+
+    And MIN_SPACING_S is a floor, not a filter: a nudge inside it is held
+    until the floor passes rather than dropped, because the run that
+    fired it is exactly the one whose spend we have not read yet.
+    """
+    if not interruptible:
+        sleeper(delay)
+        return seen
+    started = clock()
+    while True:
+        waited = clock() - started
+        left = delay - waited
+        if left <= 0:
+            return seen
+        latest = stamp()
+        pending = latest > seen
+        if pending and waited >= MIN_SPACING_S:
+            return latest
+        nap = min(NUDGE_CHECK_S, left)
+        if pending:
+            # Wake when the floor lifts rather than one slice later.
+            nap = min(nap, max(MIN_SPACING_S - waited, 0.01))
+        sleeper(nap)
+
+
 def _resume_backoff():
     """(seconds still owed to a pre-restart 429 backoff, strikes to resume).
 
@@ -1128,7 +1203,8 @@ def _next_failure_count(count, asked):
 
 def main():
     sys.stderr.write(
-        f"usage-limits-tracker: starting (interval={POLL_INTERVAL}s)\n"
+        f"usage-limits-tracker: starting (heartbeat={POLL_INTERVAL}s, and "
+        f"on any finished run, at most one request per {MIN_SPACING_S}s)\n"
     )
 
     # A rate-limit backoff promised before a restart is still owed after it.
@@ -1152,6 +1228,10 @@ def main():
     # is the one failure that retrying makes worse. Seeded by _resume_backoff
     # so a restart mid-wall picks the ladder up where it left it.
     last_logged = None
+    # The nudge stamp already answered. Seeded from disk rather than 0, so
+    # a restart does not read a nudge left by a run this process has never
+    # been able to report on as news — the first poll happens anyway.
+    seen_nudge = _nudged_at()
     # Which credential store answered last time, so the log says so once
     # rather than every poll.
     state = {}
@@ -1216,10 +1296,13 @@ def main():
                     f"(not your account's usage) — waiting {delay / 60:.0f} "
                     "minutes before asking again\n"
                 )
+            heartbeat = False
         elif consecutive_failures >= 5:
             delay = FAILURE_BACKOFF_S
+            heartbeat = False
         else:
             delay = POLL_INTERVAL
+            heartbeat = True
 
         if not success:
             # The reason and the next attempt, on disk, before the wait —
@@ -1227,7 +1310,19 @@ def main():
             _record_failure(error or "tracker_error", delay,
                             rate_limit_strikes)
 
-        time.sleep(delay)
+        # A backoff is a promise of quiet and is served whole; only the
+        # ordinary cadence gives way to a finished run. `heartbeat` is set
+        # beside the delay it describes rather than re-deriving the same
+        # three conditions, because a threshold moved in one of two copies
+        # is a promise of quiet a nudge quietly starts cutting short.
+        answered = _wait(delay, seen_nudge, interruptible=heartbeat)
+        if answered != seen_nudge:
+            seen_nudge = answered
+            # `next_attempt_at` promised `delay` and we are asking now, so
+            # the promise on disk is no longer true — _restate_next_attempt's
+            # rule, which a restart already owed for the same reason. It
+            # writes nothing when there is no failure on record.
+            _restate_next_attempt(0, rate_limit_strikes)
 
 
 if __name__ == "__main__":

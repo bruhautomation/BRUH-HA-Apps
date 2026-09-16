@@ -2,6 +2,36 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.59.0
+
+**The usage sensors ask when the number has changed, instead of every five
+minutes on the off-chance.**
+
+- **A usage figure only moves when a run spends tokens.** The tracker was
+  polling your account every 5 minutes — 288 requests a day to find a
+  changed answer on the handful of occasions anything had run, against an
+  endpoint Claude Code itself calls only from its `/usage` screen, on
+  demand, never on a timer. The heartbeat is **30 minutes** now, and
+  freshness comes from the event instead: brAIn touches a file when any
+  Claude run of any kind finishes and the tracker asks within seconds.
+- **That is also the only moment the credential is certain to work.** Your
+  access token lives a few hours and Claude Code mints the next one from
+  the refresh token *as part of a run* — nothing else on the box can — so a
+  house where nothing has run has nothing to ask with, however hard it
+  polls. Asking right after a run is asking at the one moment both halves
+  are true.
+- **A burst of runs is one request.** A checks pass that triages, files and
+  heals is several runs in a minute, which is one thing that happened to
+  the figure; there is at most one request every two minutes however many
+  runs land.
+- **A rate limit or a failure backoff is still served whole.** Those waits
+  exist because asking again cannot help, and a finished run is not news to
+  an endpoint that has just refused us — a nudge may only ever shorten the
+  ordinary cadence, never a promised quiet.
+- Diagnostics carries `usage.nudged_at`, so "the figure is 40 minutes old"
+  and "nothing has run since Tuesday" are different reports of the same
+  number and only one of them is worth looking into.
+
 ## 1.58.0
 
 **Three things a real report showed, all of them brAIn being wrong about a
