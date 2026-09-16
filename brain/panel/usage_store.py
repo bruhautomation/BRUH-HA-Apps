@@ -235,6 +235,47 @@ def _fresh_payload() -> dict | None:
     return data
 
 
+# The tracker's own codes that mean "no figure, and nobody has anything to
+# do about it". They are still reported on the pill and in the popover —
+# the number really is brAIn's local estimate and saying so is the whole
+# point of `limits_problem` — but they are not the ADD-ON being degraded,
+# which is a different question with a different reader.
+#
+# `oauth_token_awaiting_refresh` is the one this was written for. It says
+# in as many words that nothing is wrong with the sign-in and that signing
+# in again will not help: Claude Code mints the next access token itself
+# on its next run. It is deliberately absent from the tracker's own
+# `AUTH_PROBLEMS` for exactly that reason, and health was the one reader
+# that had not been told — so `sensor.brain_health` went `degraded`, HA's
+# Repairs raised `health_degraded`, and `reports.file_incident` wrote a
+# problem file, several hours out of every day, about a credential doing
+# what credentials do. A verdict that fires on a healthy install is the
+# check catalog's own first rule, one module over.
+#
+# `api_key_has_no_usage_limits` is here for the opposite reason: it can
+# never clear, because an API key has no subscription window to report.
+# Permanently degraded over an account that is working is worse noise than
+# the daily kind. And `http_429` is the endpoint's limit rather than the
+# account's — the tracker answers it with a backoff ladder built for it,
+# which is a refusal doing its job.
+#
+# Everything else stays a problem, because everything else names something
+# a person can do: sign in, re-run the account sign-in for the scope, or
+# find out why the tracker has written nothing at all.
+NEEDS_NOTHING = ("oauth_token_awaiting_refresh", "api_key_has_no_usage_limits",
+                 "http_429")
+
+
+def needs_nothing(code: str) -> bool:
+    """Whether this code's remedy is to do nothing.
+
+    A code this does not recognise answers False: "I do not know what
+    this means" and "there is nothing to do" are different claims, and
+    only the second may keep a fault off a verdict.
+    """
+    return str(code or "") in NEEDS_NOTHING
+
+
 def limits_problem() -> dict:
     """Why the account's real numbers are missing, in the tracker's words.
 
@@ -269,6 +310,14 @@ def limits_problem() -> dict:
     nxt = _parse_iso_epoch(data.get("next_attempt_at"))
     if nxt:
         out["next_attempt"] = nxt
+    # Carried rather than re-derived by whoever reads it. `health.py` is
+    # stdlib-only and pure over the payload it is handed — it answers "is
+    # brAIn working" off the diagnostics dict and nothing else — so the
+    # module that owns this vocabulary is the one that says what a code
+    # means, and the answer rides in the file a person reads too. An older
+    # mirror carries no flag, which reads as False: the fault surfaces,
+    # which is the safe direction.
+    out["needs_nothing"] = needs_nothing(code)
     return out
 
 

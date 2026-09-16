@@ -357,7 +357,15 @@ def _faults(diag) -> list[dict]:
              auth.get("error"))
     usage = diag.get("usage") or {}
     limits = usage.get("limits") if isinstance(usage.get("limits"), dict) else {}
-    if limits.get("code"):
+    if limits.get("needs_nothing"):
+        # A refusal doing its job is not a fault, which is this sweep's own
+        # rule and the one it was breaking most often: a credential between
+        # refreshes put a row at the top of a report several hours out of
+        # every day, under a heading that says what is wrong right now,
+        # carrying a detail that says nothing is wrong. `usage_store`
+        # decides which codes those are; this reads its answer.
+        pass
+    elif limits.get("code"):
         _row(out, "Usage figures",
              f"the tracker last answered {limits.get('code')}",
              limits.get("detail"))

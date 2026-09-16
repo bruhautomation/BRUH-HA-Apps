@@ -836,6 +836,17 @@ area. Without an outdoor reference there is no model at all and ⚙ Diagnostics
 says so in as many words — every number here is a *difference* from outside,
 so there is nothing to measure a room against.
 
+**It has to be the outdoor air temperature, and brAIn refuses anything that
+only looks like one.** A weather integration publishes a dew point, a
+feels-like, a wet bulb and a heat index, and every one of them carries the
+same `device_class: temperature` with no area — so without a rule the
+reference was settled by whichever sorted first, and `dewpoint` sorts before
+`temperature`. A dew point sits well above the night air and moves with the
+humidity, which makes every room's loss rate wrong and is what had a check
+reporting an irrigation pump manifold as a room with a window open. Those
+readings are skipped now, and ⚙ Diagnostics names the sensor that was chosen
+— a reference nobody can check is a reference nobody can correct.
+
 **The measurement is taken at night on purpose.** A south-facing room warms
 with the heating off, and a fit that includes an afternoon reports a room that
 gains heat as it gets colder outside. Deep night has no sun and, in most
@@ -1448,6 +1459,18 @@ It is a state and a sentence, never a score: one number over a house hides
 its worst problem inside an average. A face you have switched off is never
 counted as a fault. The same verdict appears at the top of **Diagnostics**
 under ⚙ and in `brain doctor`.
+
+**And neither is something whose remedy is to do nothing.** The commonest
+one is a usage figure that is briefly missing: your account's access token
+lives for a few hours and Claude Code mints the next one itself on its next
+run, so the pill shows brAIn's own estimate in the gap and says why. That
+used to make the verdict `degraded`, raise a Repairs issue and write a
+problem report — several hours out of every day, about a credential doing
+exactly what credentials do. The same goes for an API key, which has no
+subscription window to report and never will, and for the usage endpoint's
+own rate limit, which brAIn already answers by waiting. A missing figure
+that names something *you* can do — not signed in, the credential refused,
+the wrong sign-in for the usage scope — is still a fault and still says so.
 
 ### Everything it does can be undone
 

@@ -1047,6 +1047,37 @@ class TestEverythingThatIsWrongRightNow(unittest.TestCase):
         self.assertEqual(reports.faults(clean), [])
         self.assertIn("Nothing", reports.faults_text([]))
 
+    def test_a_missing_figure_nobody_can_act_on_is_not_a_fault(self):
+        """The sweep's own rule, broken by the row it produced most often.
+
+        A credential between refreshes put a row at the top of a report
+        several hours out of every day, under a heading that says what is
+        wrong RIGHT NOW, carrying a detail whose own words are that
+        nothing is wrong and signing in again will not help."""
+        payload = {"health": {"state": "ok", "problems": []},
+                   "journal": {"failures": []},
+                   "checks": {"skipped": {}, "errors": {},
+                              "snapshot_errors": {}},
+                   "usage": {"source": "estimate", "needs_nothing": True,
+                             "limits": {
+                                 "code": "oauth_token_awaiting_refresh",
+                                 "needs_nothing": True,
+                                 "detail": "Nothing is wrong with the sign-in."}},
+                   "daemons": {}}
+        self.assertEqual(reports.faults(payload), [])
+
+    def test_a_missing_figure_somebody_CAN_act_on_is_still_a_fault(self):
+        payload = {"health": {"state": "ok", "problems": []},
+                   "journal": {"failures": []},
+                   "checks": {"skipped": {}, "errors": {},
+                              "snapshot_errors": {}},
+                   "usage": {"source": "estimate",
+                             "limits": {"code": "oauth_token_lacks_usage_scope",
+                                        "detail": "Use the account sign-in."}},
+                   "daemons": {}}
+        self.assertIn("oauth_token_lacks_usage_scope",
+                      _said(reports.faults(payload)))
+
     def test_a_refusal_doing_its_job_is_not_a_fault(self):
         """`heal_skipped`, a producer standing down, a shadow check with
         nothing in it — a section that listed those is one people skim."""

@@ -2,6 +2,42 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.58.0
+
+**Three things a real report showed, all of them brAIn being wrong about a
+house that was fine.**
+
+- **The outdoor reference could be a dew point, and every room's physics was
+  measured against it.** A weather integration publishes a dew point, a
+  feels-like, a wet bulb and a heat index, all carrying `device_class:
+  temperature` with no area — which is exactly the branch the reference
+  falls through to — and `dewpoint` sorts before `temperature`, so the
+  alphabet chose it. A dew point sits well above the night air and moves
+  with the humidity, so every loss rate in the house was wrong. Derived
+  readings are refused now, in both halves of the pick and as rooms; a house
+  with nothing else says it has no reference rather than using one that
+  cannot work.
+- **"Losing heat faster than it can" now refuses a fall that ends BELOW
+  outdoors.** A room cooling toward the outdoors approaches that reading and
+  cannot pass it — that is the law the whole model is — so a span that ends
+  under it disproves its own premise: this is outdoors, or being cooled on
+  purpose, or the reference is wrong. It is what filed *"Irrigation is
+  losing heat faster than it can"* about a pump manifold that fell to 47.6°F
+  against a reference reading 59.5.
+- **A usage figure that is briefly missing is not brAIn being unwell.** Your
+  access token lives a few hours and Claude Code mints the next one itself
+  on its next run — the pill says so and shows its own estimate in the gap —
+  and that was making `sensor.brain_health` go `degraded`, raising a Repairs
+  issue and writing a problem report, several hours out of every day. Same
+  for an API key, which has no window to report and never will, and for the
+  usage endpoint's own rate limit, which brAIn answers by waiting. Anything
+  naming something *you* can do is still a fault.
+
+The health fixture had written `limits` down as a bare string for four
+releases where the code produces a dict, which is why `if usage.get(...)`
+passed on it and nothing could see that every code was being reported as a
+fault. It is copied from a real report now.
+
 ## 1.57.0
 
 **Every finding is looked at before you see one, not just the ones a rule
