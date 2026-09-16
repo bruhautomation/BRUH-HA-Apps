@@ -56,6 +56,23 @@ const STORES = [
 
 const NOW = Math.floor(Date.now() / 1000);
 
+// "This morning" is a claim about the CALENDAR DAY, and `NOW - 3h` stops
+// being one for the three hours after local midnight: renderBrief compares
+// toDateString(), so a run at 00:09 measures a stamp dated yesterday, gets
+// yesterday's date back where the assertion wants the word, and fails on all
+// three widths. That is the clock deciding whether a layout measure is green
+// — it passed for twenty-one hours of every day and failed for three, which
+// reads as flakiness rather than as a fixture that is wrong. The stamp is the
+// later of three hours ago and a minute past today's local midnight, capped
+// at now: today wherever and whenever this runs, never in the future, and
+// three hours ago on every run outside that window.
+const LOCAL_MIDNIGHT = (() => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return Math.floor(d.getTime() / 1000);
+})();
+const BRIEF_SENT = Math.min(NOW, Math.max(NOW - 3 * 3600, LOCAL_MIDNIGHT + 60));
+
 // One house with all five states on it at once. That is not a realistic
 // morning and it is the point: every state has to render, and the ones that
 // only happen in the first fortnight of an install are exactly the ones
@@ -63,7 +80,7 @@ const NOW = Math.floor(Date.now() / 1000);
 const HOUSE = {
   generated_at: NOW,
   brief: {
-    enabled: true, last_sent: NOW - 3 * 3600, error: '',
+    enabled: true, last_sent: BRIEF_SENT, error: '',
     text: 'The freezer has been drifting warmer for a week and the hall '
       + 'motion sensor stopped reporting on Tuesday.',
     reasons: ['base.trend', 'dev.unavailable'],

@@ -45,8 +45,10 @@ SCAN_INTERVAL = timedelta(seconds=30)
 
 USAGE_LIMITS_FILENAME = "usage_limits.json"
 
-# A reading the tracker stopped refreshing is not a reading. It polls every
-# half hour, so anything this old means it is failing or not running, and
+# A reading the tracker stopped refreshing is not a reading. It asks after
+# every Claude run brAIn makes and on a half-hourly heartbeat besides — the
+# figure only moves when a run spends something — so anything this old
+# means it is failing or not running, and
 # reporting last night's utilization as if it were now is the one answer
 # worse than "unavailable". Same window the panel's usage_store applies to
 # the same file. The tracker's 429 backoff waits are deliberately longer

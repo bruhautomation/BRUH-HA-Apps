@@ -590,6 +590,17 @@ def window(snap: dict, now: float) -> list[dict]:
             continue
         if fall["from"] - outside < min_delta:
             continue
+        # A room cooling toward outdoors approaches the outdoor reading and
+        # cannot pass it — that is the law the whole model is. So a span
+        # that ENDS below the reference disproves its own premise: either
+        # this is not a room (it is outdoors, or refrigerated, or being
+        # cooled on purpose) or the reference is wrong, and in both cases
+        # `expected_fall` was computed from something that did not happen.
+        # It costs one comparison and it is the guard that would have
+        # caught an irrigation manifold reported as a room with a window
+        # open, measured against a dew point.
+        if fall["to"] <= outside:
+            continue
         # Measured against where the room STARTED, which is the fastest
         # the model ever claims over this span: as the room falls its own
         # prediction falls with it, so using the start is the reading that

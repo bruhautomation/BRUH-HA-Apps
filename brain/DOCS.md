@@ -836,6 +836,17 @@ area. Without an outdoor reference there is no model at all and ⚙ Diagnostics
 says so in as many words — every number here is a *difference* from outside,
 so there is nothing to measure a room against.
 
+**It has to be the outdoor air temperature, and brAIn refuses anything that
+only looks like one.** A weather integration publishes a dew point, a
+feels-like, a wet bulb and a heat index, and every one of them carries the
+same `device_class: temperature` with no area — so without a rule the
+reference was settled by whichever sorted first, and `dewpoint` sorts before
+`temperature`. A dew point sits well above the night air and moves with the
+humidity, which makes every room's loss rate wrong and is what had a check
+reporting an irrigation pump manifold as a room with a window open. Those
+readings are skipped now, and ⚙ Diagnostics names the sensor that was chosen
+— a reference nobody can check is a reference nobody can correct.
+
 **The measurement is taken at night on purpose.** A south-facing room warms
 with the heating off, and a fit that includes an afternoon reports a room that
 gains heat as it gets colder outside. Deep night has no sun and, in most
@@ -1449,6 +1460,20 @@ its worst problem inside an average. A face you have switched off is never
 counted as a fault. The same verdict appears at the top of **Diagnostics**
 under ⚙ and in `brain doctor`.
 
+**And neither is something whose remedy is to do nothing.** The commonest
+one is a usage figure that is briefly missing: your account's access token
+lives for a few hours and Claude Code mints the next one itself on its next
+run — so on a quiet house the gap lasts until brAIn next runs Claude, which
+is also the moment the figure was going to change. The pill shows brAIn's own
+estimate in the gap and says why. That used to make the verdict `degraded`,
+raise a Repairs issue and write a
+problem report — several hours out of every day, about a credential doing
+exactly what credentials do. The same goes for an API key, which has no
+subscription window to report and never will, and for the usage endpoint's
+own rate limit, which brAIn already answers by waiting. A missing figure
+that names something *you* can do — not signed in, the credential refused,
+the wrong sign-in for the usage scope — is still a fault and still says so.
+
 ### Everything it does can be undone
 
 Before Claude writes to any file under `/config`, brAIn snapshots the previous
@@ -1596,7 +1621,7 @@ brAIn's schedule.
 | **Morning brief** | **off** | a notify service **and** `morning_brief` | Within 45 minutes of the measured wake time, and only when there is something worth saying. Until rhythm has answered it uses `morning_brief_hour`. |
 | **Weekly report** | **off** | a notify service **and** `weekly_report` | On `weekly_report_day`, once there is material. |
 | **Overnight self-healing** | **off** | `self_healing`, plus quiet hours or a measured settle time | The first night after it is switched on. With neither a quiet window nor a rhythm it does **not** run, and says so in Diagnostics. |
-| **Usage sensors** | on | ⚙ → Claude account → Sign in again → **Sign in to your Claude account** | Within five minutes of that sign-in. A pasted token or `ha login` cannot read them — see below. |
+| **Usage sensors** | on | ⚙ → Claude account → Sign in again → **Sign in to your Claude account** | Within a minute or two of that sign-in — it ends with a real Claude turn, and a finished run is what asks. After that they refresh whenever brAIn runs Claude, and on a 30-minute heartbeat besides. A pasted token or `ha login` cannot read them — see below. |
 
 Two of these are worth spelling out.
 
@@ -2269,6 +2294,13 @@ To keep it from eating the plan you also use for your own work:
   spend. Past it, scheduled cards pause and say so in the bar; anything you ask for by
   hand still runs.
 - Usage is also exposed as Home Assistant sensors, so you can chart it or alert on it.
+  **They refresh when something has actually run**: the figure only moves when a run
+  spends tokens, so brAIn asks your account right after each Claude run it makes —
+  the chat, a card, voice, a fix, the consolidator — and otherwise on a slow
+  30-minute heartbeat. That is deliberate. The endpoint behind these numbers is the
+  one Claude Code itself calls only from its `/usage` screen, on demand, and it
+  answers a caller that polls it hard with `429` while your account still has plenty
+  of quota left. If the pill has not moved, nothing has run.
 - Fixed daily times ("07:00, 19:00") cost far fewer tokens than a short refresh
   interval, and cards you never look at can simply be deleted.
 
