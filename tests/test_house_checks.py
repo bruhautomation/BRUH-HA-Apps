@@ -457,6 +457,29 @@ class TestDeviceChecks(unittest.TestCase):
             attributes={"restored": True})
         self.assertEqual(devices.unavailable(snap, NOW), [])
 
+    def test_brain_does_not_file_a_device_finding_about_its_own_sensors(self):
+        """"brAIn Usage Limits has been unavailable for more than a day —
+        check its power and its connection (batteries, Wi-Fi, the hub it
+        pairs through)" is the add-on filing a bug report against itself
+        under somebody else's remedy. The usage tracker being stuck is
+        `health.py`'s to report, with the switch named. The same sensor on
+        any other platform is exactly what the check is for."""
+        snap = house()
+        snap["states"]["sensor.brain_usage_limits_weekly_usage"] = {
+            "state": "unavailable", "attributes": {},
+            "last_changed": iso(3 * DAY)}
+        snap["entities"].append({
+            "entity_id": "sensor.brain_usage_limits_weekly_usage",
+            "platform": "brain", "device_id": "dev-brain"})
+        snap["devices"].append({"id": "dev-brain", "name": "brAIn Usage Limits"})
+        self.assertEqual(devices.unavailable(snap, NOW), [])
+        for row in snap["entities"]:
+            if row["entity_id"] == "sensor.brain_usage_limits_weekly_usage":
+                row["platform"] = "mqtt"
+        found = devices.unavailable(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("brAIn Usage Limits", found[0]["text"])
+
     def test_battery_low_threshold_and_the_silent_case(self):
         snap = house()
         snap["states"]["sensor.back_door_battery"]["state"] = "9"

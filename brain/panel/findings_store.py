@@ -307,6 +307,11 @@ def _clean_triage(value) -> dict:
         # the run said, and overwriting it would lose the one piece of
         # evidence that triage got this one wrong.
         "elevated_by_person": bool(value.get("elevated_by_person")),
+        # Whether the row's `fix` is the run's own sentence rather than
+        # the generic one the rule filed. The text itself lives in `fix`,
+        # where every reader of a finding already looks; this is the
+        # record of who wrote it.
+        "wrote_fix": bool(value.get("wrote_fix")),
     }
 
 
@@ -671,10 +676,24 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
                   when: float | None = None) -> list[dict]:
     """Write what looked at a batch, and move each row to where it belongs.
 
-    ``verdicts`` is ``{ts: (verdict, reason)}``. An ``elevated`` or
-    ``untriaged`` row becomes ``open`` — the second because nothing
-    looked, which surfaces exactly like the first and says so on the card
-    — and a ``held`` row becomes ``held``.
+    ``verdicts`` is ``{ts: (verdict, reason)}`` or ``{ts: (verdict,
+    reason, fix)}``. An ``elevated`` or ``untriaged`` row becomes ``open``
+    — the second because nothing looked, which surfaces exactly like the
+    first and says so on the card — and a ``held`` row becomes ``held``.
+
+    **An elevated row that came with a ``fix`` takes it as its own.** The
+    rule that filed the row wrote the same sentence it writes for every
+    row of its kind ("check its power and its connection… then reload its
+    integration"), which is what the card showed under *What you'd need to
+    do* and what a person reading it called generic and useless. The run
+    that elevated the row has looked at the entity, its integration and
+    its area, so what it says to do is about THIS device in THIS house,
+    and the card carries that instead. The generic sentence is not kept:
+    it says nothing the check's own docs do not, and a second field for it
+    would be one more thing to render. ``refresh_details`` never touches
+    ``fix``, so a re-report on the next pass does not put the generic
+    sentence back. An empty ``fix`` leaves whatever was there — the run
+    wrote none, and the card is then the card it always was.
 
     Only a row still in ``triaging`` is touched. Everything else is a row
     a person or the fixer has already moved on from, and a verdict
@@ -691,13 +710,17 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
         ts = int(entry.get("ts") or 0)
         if ts not in verdicts or entry.get("status") != "triaging":
             continue
-        verdict, reason = verdicts[ts]
+        verdict, reason, *rest = verdicts[ts]
         if verdict not in triage.VERDICTS:
             continue
+        fix = str(rest[0] if rest else "").strip()[:MAX_FIX]
+        wrote_fix = bool(fix) and verdict == "elevated"
+        if wrote_fix:
+            entry["fix"] = fix
         entry["status"] = "held" if verdict == "held" else "open"
         entry["triage"] = _clean_triage({
             "verdict": verdict, "reason": reason,
-            "run_id": run_id, "at": stamp})
+            "run_id": run_id, "at": stamp, "wrote_fix": wrote_fix})
         changed.append(_shape(entry))
     if changed:
         _write(items)

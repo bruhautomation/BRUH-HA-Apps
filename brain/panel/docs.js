@@ -1744,15 +1744,25 @@ again** and choose **Sign in to your Claude account**, which needs no terminal a
 does not replace the shared file.
 
 Once you have done that, the pill may still say the numbers are missing for a
-while, and there is one status that means **nothing is wrong**:
-\`oauth_token_awaiting_refresh\`. An access token lives for a few hours and Claude
-Code mints the next one itself, from the refresh token beside it, the first time
-anything runs Claude — an insight, a chat message, a checks pass. The real numbers
-come back on the first poll after that, and **signing in again will not make it
-arrive sooner**. Before that status existed, a token between refreshes read as no
-credential at all: the search fell through to an older \`ha login\` token, reported
-**that** one's scope refusal, and so told you to perform the sign-in you had just
-performed — which is why it looked like signing in never took.
+poll or two, and there is one status that means **nothing is wrong**:
+\`oauth_token_awaiting_refresh\`. An access token lives for a few hours, and
+**brAIn renews it itself** from the refresh token beside it — on every poll,
+whether or not anything has run Claude. The real numbers come back on the first
+poll after that, and **signing in again will not make it arrive sooner**. Two
+things are worth knowing about it. Up to 1.59.0 brAIn waited for Claude Code to
+do that renewal "on its next run", and on a box that also holds a pasted token or
+an \`ha login\` one, every run is handed **that** token and never opens the account
+credential — so the wait was for ever, and the pill went on saying nothing was
+wrong for a day at a time. And because "wait" is only an answer while waiting
+can work, the status now has a clock on it: one that has stood for more than
+three hours stops counting as fine, the health sensor says so, and the add-on log
+says what the renewal ran into. A renewal Anthropic **refuses** is a session that
+has been revoked or has expired for good; that is reported as \`http_401\`, and the
+remedy is the account sign-in again. Before any of this, a token between
+refreshes read as no credential at all: the search fell through to an older
+token from \`ha login\`, reported **that** one's scope refusal, and so told you to
+perform the sign-in you had just performed — which is why it looked like signing
+in never took.
 
 From a terminal, \`ha login\` and \`brain login\` are the same command:
 

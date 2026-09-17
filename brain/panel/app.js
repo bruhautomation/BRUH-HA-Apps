@@ -685,11 +685,24 @@ function limitsNote(u) {
         + `this figure needs, no terminal involved, and the real numbers come `
         + `back on the next poll.`);
     case "oauth_token_awaiting_refresh":
+      // Bounded: `usage_store` flips `needs_nothing` off once this has
+      // stood for hours, because "wait" is only an answer while waiting
+      // can work — and the sentence has to change with it, or a stuck
+      // tracker reads exactly like a working one for a day.
+      if (lim.stuck) {
+        return say("Your sign-in's token has lapsed and brAIn has not "
+          + "managed to renew it.",
+          `brAIn renews it itself and has been trying for hours without an `
+          + `answer it can use, so something is in the way — the add-on log `
+          + `says what. The figure above is an estimate meanwhile. If the log `
+          + `says the renewal was refused, sign in again from `
+          + `<b>⚙ → Claude account → Sign in again</b>.`);
+      }
       return say("Your sign-in is fine — its token is between refreshes.",
-        `An access token lives for a few hours and Claude Code mints the `
-        + `next one itself, the first time anything runs Claude. Nothing is `
-        + `wrong and <b>signing in again will not make it arrive sooner</b>. `
-        + `The figure above is an estimate until the next poll after that.`);
+        `An access token lives for a few hours and brAIn renews it itself `
+        + `on the next poll. Nothing is wrong and <b>signing in again will `
+        + `not make it arrive sooner</b>. The figure above is an estimate `
+        + `until then.`);
     case "http_403":
       return say("Anthropic refused to show your usage.",
         `It did not say why. The figure above is an estimate; signing in `
