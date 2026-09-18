@@ -685,11 +685,24 @@ function limitsNote(u) {
         + `this figure needs, no terminal involved, and the real numbers come `
         + `back on the next poll.`);
     case "oauth_token_awaiting_refresh":
+      // Bounded: `usage_store` flips `needs_nothing` off once this has
+      // stood for hours, because "wait" is only an answer while waiting
+      // can work — and the sentence has to change with it, or a stuck
+      // tracker reads exactly like a working one for a day.
+      if (lim.stuck) {
+        return say("Your sign-in's token has lapsed and brAIn has not "
+          + "managed to renew it.",
+          `brAIn renews it itself and has been trying for hours without an `
+          + `answer it can use, so something is in the way — the add-on log `
+          + `says what. The figure above is an estimate meanwhile. If the log `
+          + `says the renewal was refused, sign in again from `
+          + `<b>⚙ → Claude account → Sign in again</b>.`);
+      }
       return say("Your sign-in is fine — its token is between refreshes.",
-        `An access token lives for a few hours and Claude Code mints the `
-        + `next one itself, the first time anything runs Claude. Nothing is `
-        + `wrong and <b>signing in again will not make it arrive sooner</b>. `
-        + `The figure above is an estimate until the next poll after that.`);
+        `An access token lives for a few hours and brAIn renews it itself `
+        + `on the next poll. Nothing is wrong and <b>signing in again will `
+        + `not make it arrive sooner</b>. The figure above is an estimate `
+        + `until then.`);
     case "http_403":
       return say("Anthropic refused to show your usage.",
         `It did not say why. The figure above is an estimate; signing in `
@@ -3717,6 +3730,7 @@ function takeFindings(data) {
   state.hypotheses = data.hypotheses || [];
   state.settled = data.settled || [];
   state.scorecard = data.scorecard || [];
+  state.muted = data.muted || [];
   updateFindBadge(data.open);
 }
 
@@ -3841,6 +3855,18 @@ function openNoteForm(card, actions, onSend, opts) {
   ta.maxLength = 400;
   ta.placeholder = opts.placeholder;
   form.appendChild(ta);
+  // An optional box beside the note, for the one ending that has a second
+  // thing to say: "Wrong — and stop raising these". `opts.check` is its
+  // label; what it sends rides back to `onSend` as the third argument.
+  let check = null;
+  if (opts.check) {
+    const line = el("label", "findnotecheck");
+    check = document.createElement("input");
+    check.type = "checkbox";
+    line.appendChild(check);
+    line.appendChild(el("span", null, opts.check));
+    form.appendChild(line);
+  }
   const row = el("div", "findnoteactions");
   const send = el("button", "btn small primary", opts.send);
   const cancel = el("button", "btn small ghost", "Cancel");
@@ -3854,7 +3880,7 @@ function openNoteForm(card, actions, onSend, opts) {
 
   send.addEventListener("click", () => {
     send.disabled = cancel.disabled = true;
-    onSend(ta.value.trim(), [send, cancel]);
+    onSend(ta.value.trim(), [send, cancel], !!(check && check.checked));
   });
   cancel.addEventListener("click", () => {
     form.remove();
@@ -4072,7 +4098,17 @@ function makeFinding(f) {
     const box = el("div", "findfix");
     box.appendChild(el("span", "findfixlabel", f.fixable
       ? "brAIn would" : "You'd need to"));
-    box.appendChild(el("span", null, f.fix));
+    const text = el("span", null, f.fix);
+    // Whose sentence it is. The rule's own is the default and says
+    // nothing; one the look wrote, or one a conversation reached, says
+    // so — a specific instruction and a generic one read alike until
+    // you know which looked at your house.
+    if (f.fix_by === "triage") {
+      text.appendChild(el("span", "findfixby", " — written after looking"));
+    } else if (f.fix_by === "chat") {
+      text.appendChild(el("span", "findfixby", " — from your conversation"));
+    }
+    box.appendChild(text);
     card.appendChild(box);
   }
 
@@ -4198,16 +4234,22 @@ function makeFinding(f) {
     tip(wrong, "brAIn has this wrong, or it's normal here — say why, and it "
       + "learns from that rather than just dropping the card.");
     wrong.addEventListener("click", () => openNoteForm(card, actions,
-      (note, formBtns) => findAction(
+      (note, formBtns, mute) => findAction(
         f, "wrong",
-        note ? "Noted — brAIn will take that into account"
-             : "Noted — brAIn won't raise it again",
-        btns.concat(formBtns), note),
+        mute ? "Noted — and brAIn has stopped raising these"
+          : note ? "Noted — brAIn will take that into account"
+                 : "Noted — brAIn won't raise it again",
+        btns.concat(formBtns), note, mute ? { mute: true } : null),
       {
         hint: "What's brAIn got wrong? Optional — it goes into memory and "
           + "into what the next analysis knows about your house.",
         placeholder: "That sensor always reads on — it's not stuck.",
         send: "Send",
+        // The box for the rule rather than the row: a mute takes every
+        // open card from this producer with it and files nothing from it
+        // again, reversible on the "Not raising" line above the list.
+        check: f.source ? `Stop raising these (${f.source_title || f.source})`
+                        : "",
       }));
   }
   if (findings_isSnoozed(f)) {
@@ -4575,19 +4617,91 @@ function makeTodo(item) {
 // not a track record, it is an anecdote — and capped, because this is a
 // line under the filters and not a table.
 const SCORE_MIN_ENDINGS = 3;
+// A producer that has been wrong at least this often and right never is
+// offered "Stop raising these" on its scorecard row. The row is the
+// argument — 0 of 3 confirmed IS the Findings tab saying this rule is wrong
+// about this house — and the press is the answer that Wrong-one-row-at-a-
+// time could never give, because a settled key suppresses one wording and
+// the next pass makes the same mistake in new words.
+const MUTE_OFFER_WRONG = 3;
 function renderScorecard() {
   const box = $("#findScore");
   if (!box) return;
-  const rows = (state.scorecard || []).filter((r) => r.total >= SCORE_MIN_ENDINGS);
+  const muted = new Set((state.muted || []).map((m) => m.source));
+  const rows = (state.scorecard || []).filter(
+    (r) => r.total >= SCORE_MIN_ENDINGS && !muted.has(r.source));
+  box.textContent = "";
+  box.hidden = !rows.length;
+  if (rows.length) {
+    box.appendChild(el("span", null, "How right it's been: "));
+    rows.slice(0, 4).forEach((r, i) => {
+      if (i) box.appendChild(el("span", null, " · "));
+      box.appendChild(el("b", null, r.title));
+      box.appendChild(el("span", null, ` ${r.confirmed} of ${r.total} confirmed`));
+      if (r.source && !r.confirmed && r.wrong >= MUTE_OFFER_WRONG) {
+        const stop = el("button", "btn tiny ghost", "Stop raising these");
+        tip(stop, "Mute this producer: its open cards come off the list and "
+          + "nothing it finds is filed again until you turn it back on here.");
+        stop.addEventListener("click", () => muteSource(r.source, stop));
+        box.appendChild(stop);
+      }
+    });
+  }
+  renderMuted();
+}
+
+// The producers switched off, each with the one press that reverses it.
+// Its own line rather than a row of the scorecard because a mute is not a
+// score — and a mute nobody can see is a check that has quietly stopped,
+// which from the list is indistinguishable from a house with nothing
+// wrong in it.
+function renderMuted() {
+  const box = $("#findMuted");
+  if (!box) return;
+  const rows = state.muted || [];
   box.textContent = "";
   box.hidden = !rows.length;
   if (!rows.length) return;
-  box.appendChild(el("span", null, "How right it's been: "));
-  rows.slice(0, 4).forEach((r, i) => {
+  box.appendChild(el("span", null, "Not raising: "));
+  rows.forEach((m, i) => {
     if (i) box.appendChild(el("span", null, " · "));
-    box.appendChild(el("b", null, r.title));
-    box.appendChild(el("span", null, ` ${r.confirmed} of ${r.total} confirmed`));
+    box.appendChild(el("b", null, m.title || m.source));
+    const again = el("button", "btn tiny ghost", "Raise again");
+    tip(again, "Turn this producer back on. Nothing comes back until it "
+      + "reports something on its next pass.");
+    again.addEventListener("click", () => unmuteSource(m.source, again));
+    box.appendChild(again);
   });
+}
+
+async function muteSource(source, btn) {
+  btn.disabled = true;
+  try {
+    const data = await api("api/findings/mute", {
+      method: "POST", body: JSON.stringify({ source }) });
+    takeFindings(data);
+    renderFindings();
+    toast(data.cleared
+      ? `Muted — ${data.cleared} card${data.cleared === 1 ? "" : "s"} taken off the list`
+      : "Muted — nothing from it will be filed again");
+  } catch (e) {
+    toast(e.message);
+    btn.disabled = false;
+  }
+}
+
+async function unmuteSource(source, btn) {
+  btn.disabled = true;
+  try {
+    const data = await api("api/findings/unmute", {
+      method: "POST", body: JSON.stringify({ source }) });
+    takeFindings(data);
+    renderFindings();
+    toast("Raising these again from its next pass");
+  } catch (e) {
+    toast(e.message);
+    btn.disabled = false;
+  }
 }
 
 // "Run checks now": one pass of the deterministic house checks, through
@@ -8944,6 +9058,13 @@ const RESOLUTION_KINDS = {
     does: "Tells brAIn it has misread your house, so it stops reporting it",
     toast: "Noted — brAIn won't raise it again",
   },
+  // Not an ending: the card keeps the finding and takes this sentence as
+  // "What you'd need to do". The consequence line has to say that the
+  // finding stays, because the three rows beside it all take it away.
+  advice: {
+    does: "Puts this on the card as what to do — the finding stays open",
+    toast: "Updated what to do on the card",
+  },
 };
 
 function chatResolutionsNode(ev) {
@@ -8996,6 +9117,25 @@ function chatResolutionsNode(ev) {
 async function chooseResolution(ev, option, finding, btns, paint) {
   const spec = RESOLUTION_KINDS[option.verb];
   if (!spec) return;
+  if (option.verb === "advice") {
+    // The one press here that ends nothing: the sentence goes onto the
+    // card and the finding stays, so the strip stays too and the card
+    // records the choice without reading the list for the row's absence.
+    btns.forEach((b) => { b.disabled = true; });
+    try {
+      const data = await api(`api/finding/${finding.ts}/advice`, {
+        method: "POST", body: JSON.stringify({ fix: option.label }) });
+      takeFindings(data);
+      renderFindings();
+      toast(spec.toast);
+      chatState.chosen[ev.id] = option.label;
+      paint();
+    } catch (e) {
+      toast(e.message);
+      btns.forEach((b) => { b.disabled = false; });
+    }
+    return;
+  }
   await findAction(finding, option.verb, spec.toast, btns, option.label,
                    option.verb === "todo" ? { fix: option.label } : null);
   // findAction reports its own failures and re-enables the row, so success

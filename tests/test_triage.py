@@ -104,8 +104,35 @@ class TestReadingTheVerdicts(unittest.TestCase):
             {"id": 1, "verdict": "elevated", "reason": "the battery is real"},
             {"id": 2, "verdict": "held", "reason": "it watches a cupboard"},
         ]}, 2)
-        self.assertEqual(out[1], ("elevated", "the battery is real"))
-        self.assertEqual(out[2], ("held", "it watches a cupboard"))
+        self.assertEqual(out[1], ("elevated", "the battery is real", ""))
+        self.assertEqual(out[2], ("held", "it watches a cupboard", ""))
+
+    def test_what_to_do_is_read_off_an_elevated_row_and_never_a_held_one(self):
+        """The run has looked, so what it says to do is about THIS device
+        in THIS house; a held row is shown to nobody and carries none."""
+        out = triage.parse({"verdicts": [
+            {"id": 1, "verdict": "elevated", "reason": "real",
+             "fix": "Power-cycle the Tuya hub in the garage; the other "
+                    "three valves on it are answering."},
+            {"id": 2, "verdict": "held", "reason": "a cupboard",
+             "fix": "nothing, and this must not be kept"},
+        ]}, 2)
+        self.assertIn("Tuya hub", out[1][2])
+        self.assertEqual(out[2][2], "")
+
+    def test_a_written_fix_is_capped_at_the_store_s_own_cap(self):
+        out = triage.parse({"verdicts": [
+            {"id": 1, "verdict": "elevated", "reason": "x", "fix": "y" * 5000}]}, 1)
+        self.assertEqual(len(out[1][2]), triage.MAX_FIX)
+        self.assertEqual(triage.MAX_FIX, findings_store.MAX_FIX)
+
+    def test_the_contract_asks_for_the_fix_and_shows_the_generic_one(self):
+        """The prompt has to ask for what the reader takes, and the run
+        cannot improve on advice it has not been shown."""
+        self.assertIn('"fix"', triage.SYSTEM)
+        text = triage.frame([check_row(1)])
+        self.assertIn("Re-pair it", text)
+        self.assertIn("brAIn can make this change itself", text)
 
     def test_an_invented_verdict_is_dropped_rather_than_coerced(self):
         """An invented verdict reads exactly like a real one, and the safe
@@ -586,6 +613,48 @@ class TestHoldingSomethingBack(PassCase):
         shown = rows[created[1]["ts"]]
         self.assertEqual(shown["status"], "open")
         self.assertEqual(shown["triage"]["verdict"], "elevated")
+
+    def test_what_to_do_comes_from_the_run_that_looked(self):
+        """The card's "What you'd need to do" was the rule's generic
+        sentence — "check its power and its connection, then reload its
+        integration" — on every row of its kind, which a person reading it
+        called useless. The run that elevated the row has looked at the
+        device, its integration and its area, so what it says to do is
+        what the card carries; and a re-report on the next pass, which
+        refreshes the detail, must not put the generic sentence back."""
+        created = self.file(2)
+        self.reply([
+            {"id": 1, "verdict": "elevated", "reason": "it really is stuck",
+             "fix": "Re-pair the hall sensor from the ZHA page; the other "
+                    "four Aqara sensors on that coordinator are reporting."},
+            {"id": 2, "verdict": "elevated", "reason": "real"},
+        ])
+        self.run_pass()
+        rows = {f["ts"]: f for f in findings_store.list_all()}
+        written = rows[created[0]["ts"]]
+        self.assertIn("ZHA page", written["fix"])
+        self.assertTrue(written["triage"]["wrote_fix"])
+        # No fix written: the card is the card it always was.
+        kept = rows[created[1]["ts"]]
+        self.assertEqual(kept["fix"], CHECK_ROW["fix"])
+        self.assertFalse(kept["triage"]["wrote_fix"])
+        # The check reports the same row again with a moved detail.
+        again = {**check_row(0), "detail": "last seen 4 Sep"}
+        findings_store.refresh_details([again])
+        after = {f["ts"]: f for f in findings_store.list_all()}[created[0]["ts"]]
+        self.assertEqual(after["detail"], "last seen 4 Sep")
+        self.assertIn("ZHA page", after["fix"])
+
+    def test_a_held_row_keeps_the_generic_fix_it_was_filed_with(self):
+        """Nothing writes advice onto a row nobody is shown."""
+        created = self.file(1)
+        self.reply([{"id": 1, "verdict": "held", "reason": "a cupboard",
+                     "fix": "must not land"}])
+        self.run_pass()
+        [row] = findings_store.list_all()
+        self.assertEqual(row["ts"], created[0]["ts"])
+        self.assertEqual(row["fix"], CHECK_ROW["fix"])
+        self.assertFalse(row["triage"]["wrote_fix"])
 
     def test_what_the_homeowner_has_already_said_is_in_the_prompt(self):
         """"That contact is on a cupboard nobody opens" is exactly the kind

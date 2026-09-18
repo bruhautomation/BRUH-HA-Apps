@@ -2,6 +2,72 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.60.0
+
+**The usage sensors renew their own credential, and a finding says what to
+do about it in this house.**
+
+- **The usage tracker renews the account sign-in itself.** The account
+  sign-in's access token lives a few hours, and brAIn waited for Claude Code
+  to mint the next one "on its next run". On a box that also holds a pasted
+  token or an `ha login` one — most boxes that followed the popover's own
+  advice — every run is handed *that* token and never opens the account
+  credential, so it lapsed a few hours after the sign-in and stayed lapsed
+  for ever: twenty-seven runs in a day, none of them renewing it, four
+  sensors unavailable the whole time under a verdict saying nothing was
+  wrong. The tracker now makes the same renewal request the CLI makes (read
+  off the installed binary, not remembered) and writes the answer back the
+  way the CLI writes it, so "between refreshes" is minutes long. It stands
+  down while the panel's guided sign-in is running, because that flow reads
+  the credential file changing as the sign-in having succeeded.
+- **"Wait" has a clock on it.** A verdict whose remedy is to do nothing is
+  only true while waiting can work, so `oauth_token_awaiting_refresh` that has
+  stood for more than three hours stops counting as fine: the health sensor
+  says so, the popover says so, and the add-on log says what the renewal ran
+  into. A renewal Anthropic refuses is a session that is over, reported once
+  as `http_401` with the remedy — sign in again — and never asked again with
+  that credential.
+- **"What you'd need to do" is written by the run that looked.** Every row of
+  a kind carried the same sentence the rule writes for all of them — "check
+  its power and its connection (batteries, Wi-Fi, the hub it pairs through),
+  then reload its integration" — which is useless to somebody holding the
+  device. Triage already looks at each finding with Home Assistant's own
+  tools before you are shown it; it now says what to do about *this* device
+  on *this* integration in *this* house, and the card carries that. A row it
+  writes nothing for keeps the card it always had.
+- **brAIn no longer files a device finding about its own sensors.** "brAIn
+  Usage Limits has been unavailable for more than a day — check its
+  batteries" was the add-on reporting itself under somebody else's remedy;
+  the health verdict is where that belongs, with the switch named.
+- **A report lists a missing measurement once.** Five climate checks skipped
+  on "snapshot is missing thermal", the snapshot row, and the Rooms store
+  were seven rows about one fact; the checks a missing key took down are now
+  named on that key's own row.
+
+And four things the Findings tab was missing:
+
+- **Stop raising these.** A rule wrong about your house had exactly one
+  answer — Wrong, one row at a time — which settles one wording and leaves
+  the next pass to make the same mistake in new words. The scorecard line now
+  offers the press on any producer that has been wrong three times and right
+  never, the Wrong form carries the same box for the row in front of you, and
+  muting takes the producer's open cards off the list and files nothing from
+  it again. Nothing is settled and nothing goes into memory: it is about the
+  rule, not the house. A *Not raising* line carries the press that reverses
+  it; nothing comes back until the producer reports it again.
+- **The conversation can write "What you'd need to do".** Discuss a finding
+  and, once Claude has worked out what to actually do, it offers that beside
+  the endings; pressing it puts the sentence on the card (*from your
+  conversation*) and leaves the finding open. The card also says when the
+  look before it was shown wrote the instruction (*written after looking*).
+- **Claude can read the Findings tab and brAIn's own health.** Two read-only
+  tools, `get_findings` and `get_health`, so the chat, a voice command and
+  any card can answer *what needs attention* and *is brAIn OK* from the
+  same list and the same verdict the panel shows, rather than guessing.
+- **A finding notification opens the panel.** Tapping one landed on Home
+  Assistant's front page with the row three taps away; on the companion app
+  it now opens brAIn's own panel.
+
 ## 1.59.0
 
 **The usage sensors ask when the number has changed, instead of every five

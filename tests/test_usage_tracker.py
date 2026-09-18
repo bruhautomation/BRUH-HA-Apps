@@ -824,6 +824,13 @@ class TestTheBodyIsWhatNamesTheRefusal(unittest.TestCase):
 
     def setUp(self):
         self.mod = load_tracker({})
+        # Three cases below stand in for `urlopen` — on the shared
+        # `urllib.request` module, not on a copy — and for a release they
+        # never put it back, so every class collected after this one that
+        # made a real request over a socket got a fake 403 instead.
+        import urllib.request
+        self.addCleanup(setattr, urllib.request, "urlopen",
+                        urllib.request.urlopen)
 
     SCOPE_BODY = json.dumps({
         "type": "permission_error",
@@ -1335,6 +1342,17 @@ class TestATokenBetweenRefreshes(unittest.TestCase):
             return {"five_hour": {"utilization": 12}}, None
 
         self.mod.fetch_usage_limits = fetch
+        # These cases are about the verdict while the account credential
+        # is genuinely between refreshes — the tracker renews it itself
+        # now (`TestTheTrackerRenewsTheCredentialItself`), so "between
+        # refreshes" here means a renewal that could not be made this
+        # pass: the token endpoint did not answer.
+        self.renewals = []
+
+        def renew(refresh, scopes):
+            self.renewals.append(refresh)
+            return None, self.mod.FAILED
+        self.mod._refresh_request = renew
 
     # -- fixtures ---------------------------------------------------------
 
@@ -1493,3 +1511,424 @@ class TestATokenBetweenRefreshes(unittest.TestCase):
         ):
             self.assertIn(needle, path.read_text(encoding="utf-8"),
                           f"{path.name} never mentions {needle}")
+
+
+class _TokenEndpoint:
+    """A real HTTP server standing in for platform.claude.com/v1/oauth/token.
+
+    The request the tracker makes is driven over a socket rather than
+    asserted off a mocked function, because the shape of that request —
+    JSON, the grant, the client id, the scopes, the User-Agent — is the
+    whole claim, and a fake that accepts whatever it is handed proves only
+    that the fake matches the code that mocked it.
+    """
+
+    def __init__(self):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        endpoint = self
+        self.requests = []
+        # (status, body) or a callable(request dict) -> (status, body)
+        self.answer = (200, {"access_token": "sk-ant-oat01-NEW",
+                             "refresh_token": "sk-ant-ort01-ROTATED",
+                             "expires_in": 28800,
+                             "refresh_token_expires_in": 86400 * 30,
+                             "scope": "user:profile user:inference"})
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length).decode("utf-8")
+                try:
+                    body = json.loads(raw)
+                except ValueError:
+                    body = raw
+                seen = {"path": self.path, "body": body,
+                        "headers": {k.lower(): v for k, v in self.headers.items()}}
+                endpoint.requests.append(seen)
+                answer = endpoint.answer
+                status, payload = answer(seen) if callable(answer) else answer
+                data = json.dumps(payload).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}/v1/oauth/token"
+        import threading
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class TestTheTrackerRenewsTheCredentialItself(unittest.TestCase):
+    """The account credential lapses a few hours after the sign-in and
+    every release up to 1.59.0 waited for Claude Code to renew it "on its
+    next run". On a box that also holds a panel-store or `ha login` token
+    — which is most boxes that have followed the popover's own advice —
+    `engine.get_auth` hands the CLI THAT token through the environment on
+    every run, so the CLI never opens its own file and never renews it.
+    The report this class is written from had twenty-seven runs in a day,
+    a credential that stayed lapsed through all of them, and four sensors
+    unavailable the whole time under a verdict saying nothing was wrong.
+
+    So the tracker makes the renewal itself, with the request the CLI
+    makes, and writes the answer back the way the CLI writes it.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = os.path.join(self.tmp.name, "home")
+        self.secrets = os.path.join(self.tmp.name, "secrets")
+        self.shared = os.path.join(self.tmp.name, "shared", "claude_auth.json")
+        os.makedirs(os.path.join(self.home, ".claude"))
+        os.makedirs(self.secrets)
+        os.makedirs(os.path.dirname(self.shared))
+        self.mod = load_tracker({
+            "BRAIN_HOME": self.home,
+            "BRAIN_SECRETS": self.secrets,
+            "BRAIN_SHARED_AUTH": self.shared,
+            "BRAIN_CLI_VERSION": "2.1.273",
+            "CLAUDE_CONFIG_DIR": None,
+        })
+        self.endpoint = _TokenEndpoint()
+        self.addCleanup(self.endpoint.close)
+        self.mod.TOKEN_URL = self.endpoint.url
+        self.cli = os.path.join(self.home, ".claude", ".credentials.json")
+        self.asked = []
+
+        def fetch(token):
+            self.asked.append(token)
+            if "SETUP" in token:
+                return None, self.mod.SCOPE_ERROR
+            if "NEW" in token or "CLI-RENEWED" in token:
+                return {"five_hour": {"utilization": 12}}, None
+            return None, "http_401"
+        self.mod.fetch_usage_limits = fetch
+
+    # -- fixtures ---------------------------------------------------------
+
+    def _lapsed(self, refresh="sk-ant-ort01-refresh", **extra):
+        oauth = {"accessToken": "sk-ant-oat01-LAPSED", "refreshToken": refresh,
+                 "expiresAt": int((time.time() - 3600) * 1000),
+                 "scopes": ["user:profile", "user:inference"],
+                 "subscriptionType": "max", "rateLimitTier": "default_claude_max_5x"}
+        oauth.update(extra)
+        with open(self.cli, "w") as fh:
+            json.dump({"claudeAiOauth": oauth}, fh)
+        os.chmod(self.cli, 0o600)
+
+    def _setup_token(self):
+        with open(os.path.join(self.secrets, "claude_auth.json"), "w") as fh:
+            json.dump({"type": "oauth_token", "value": "sk-ant-oat01-SETUP"}, fh)
+
+    def _file(self):
+        with open(self.cli) as fh:
+            return json.load(fh)["claudeAiOauth"]
+
+    # -- the request -------------------------------------------------------
+
+    def test_the_request_is_the_one_the_cli_makes(self):
+        self._lapsed()
+        data, error = self.mod._fetch_with_any_credential({})
+        self.assertIsNone(error)
+        self.assertEqual(data["five_hour"]["utilization"], 12)
+        [req] = self.endpoint.requests
+        self.assertEqual(req["path"], "/v1/oauth/token")
+        self.assertEqual(req["headers"]["content-type"], "application/json")
+        self.assertEqual(req["headers"]["user-agent"], "claude-code/2.1.273")
+        self.assertEqual(req["body"], {
+            "grant_type": "refresh_token",
+            "refresh_token": "sk-ant-ort01-refresh",
+            "client_id": self.mod.OAUTH_CLIENT_ID,
+            "scope": "user:profile user:inference",
+        })
+        # The lapsed token never went on the wire; the renewed one did.
+        self.assertEqual(self.asked, ["sk-ant-oat01-NEW"])
+
+    def test_the_client_id_is_the_one_in_the_installed_binary(self):
+        """Read off the binary once, pinned here so a retype cannot drift:
+        it is the public client the CLI's own authorize URL names."""
+        self.assertEqual(self.mod.OAUTH_CLIENT_ID,
+                         "9d1c250a-e61b-44d9-88ed-5944d1962f5e")
+        self.assertEqual(self.mod.TOKEN_URL.rsplit("/", 3)[-3:],
+                         ["v1", "oauth", "token"])
+
+    # -- the file ----------------------------------------------------------
+
+    def test_the_file_is_rewritten_the_way_the_cli_writes_it(self):
+        self._lapsed()
+        before = time.time()
+        self.mod._fetch_with_any_credential({})
+        oauth = self._file()
+        self.assertEqual(oauth["accessToken"], "sk-ant-oat01-NEW")
+        self.assertEqual(oauth["refreshToken"], "sk-ant-ort01-ROTATED")
+        self.assertAlmostEqual(oauth["expiresAt"] / 1000,
+                               before + 28800, delta=30)
+        self.assertAlmostEqual(oauth["refreshTokenExpiresAt"] / 1000,
+                               before + 86400 * 30, delta=30)
+        self.assertEqual(oauth["scopes"], ["user:profile", "user:inference"])
+        # Everything the CLI keeps in there survives.
+        self.assertEqual(oauth["subscriptionType"], "max")
+        self.assertEqual(oauth["rateLimitTier"], "default_claude_max_5x")
+        # ...and the file is still the CLI's to read: same mode, in place.
+        self.assertEqual(os.stat(self.cli).st_mode & 0o777, 0o600)
+        self.assertEqual(sorted(os.listdir(os.path.dirname(self.cli))),
+                         [".credentials.json"])
+
+    def test_an_answer_that_rotates_no_refresh_token_keeps_the_old_one(self):
+        """What the CLI assumes too — `refresh_token: U = e` in its bundle
+        — because a file with no refresh token is a session nothing can
+        renew again."""
+        self.endpoint.answer = (200, {"access_token": "sk-ant-oat01-NEW",
+                                      "expires_in": 3600})
+        self._lapsed()
+        self.mod._fetch_with_any_credential({})
+        self.assertEqual(self._file()["refreshToken"], "sk-ant-ort01-refresh")
+        self.assertEqual(self._file()["accessToken"], "sk-ant-oat01-NEW")
+
+    def test_the_next_pass_uses_the_renewed_token_and_asks_for_nothing(self):
+        self._lapsed()
+        state = {}
+        self.mod._fetch_with_any_credential(state)
+        self.mod._fetch_with_any_credential(state)
+        self.assertEqual(len(self.endpoint.requests), 1)
+        self.assertEqual(self.asked, ["sk-ant-oat01-NEW"] * 2)
+
+    def test_the_cli_getting_there_first_wins(self):
+        """The CLI's save is a compare-and-swap on the refresh token, and
+        so is this one: a refresh token may be single-use, so when both
+        renewed at once the answer on disk is the one to keep and ours is
+        dropped unread — a token the server may consider superseded is
+        not worth a 401 on an endpoint that counts them."""
+        self._lapsed()
+
+        def cli_renews_meanwhile(_request):
+            with open(self.cli, "w") as fh:
+                json.dump({"claudeAiOauth": {
+                    "accessToken": "sk-ant-oat01-CLI-RENEWED",
+                    "refreshToken": "sk-ant-ort01-CLI-ROTATED",
+                    "expiresAt": int((time.time() + 7200) * 1000)}}, fh)
+            return (200, {"access_token": "sk-ant-oat01-NEW",
+                          "refresh_token": "sk-ant-ort01-ROTATED",
+                          "expires_in": 28800})
+        self.endpoint.answer = cli_renews_meanwhile
+        data, error = self.mod._fetch_with_any_credential({})
+        self.assertIsNone(error)
+        self.assertEqual(self._file()["accessToken"], "sk-ant-oat01-CLI-RENEWED")
+        self.assertEqual(self._file()["refreshToken"], "sk-ant-ort01-CLI-ROTATED")
+        self.assertEqual(self.asked, ["sk-ant-oat01-CLI-RENEWED"])
+
+    # -- a refusal -----------------------------------------------------------
+
+    def test_a_refused_renewal_is_a_dead_session_and_is_said_once(self):
+        """`invalid_grant` is the spec's word for a refresh token that is
+        revoked, expired or already used, and no retry changes it. It is
+        remembered against that refresh token — the scope verdict's own
+        arrangement — so the tracker does not ask again with it, and the
+        verdict is a refusal of a found credential, never "nothing has
+        signed in yet"."""
+        self.endpoint.answer = (400, {"error": "invalid_grant",
+                                      "error_description": "revoked"})
+        self._lapsed()
+        state = {}
+        first = self.mod._fetch_with_any_credential(state)[1]
+        second = self.mod._fetch_with_any_credential(state)[1]
+        self.assertEqual(first, "http_401")
+        self.assertEqual(second, "http_401")
+        self.assertEqual(len(self.endpoint.requests), 1)
+        self.assertEqual(self.asked, [])
+        self.assertIn("refresh:rejected", state["said"])
+        # The file is left exactly as it was: nothing here deletes a
+        # credential, and the CLI's own next attempt is what clears it.
+        self.assertEqual(self._file()["refreshToken"], "sk-ant-ort01-refresh")
+
+    def test_a_401_or_403_on_the_grant_is_a_refusal_whatever_the_body(self):
+        for status in (401, 403):
+            self.endpoint.requests.clear()
+            self.endpoint.answer = (status, {"type": "error",
+                                             "error": {"type": "permission_error"}})
+            self._lapsed(refresh=f"sk-ant-ort01-r{status}")
+            self.assertEqual(self.mod._fetch_with_any_credential({})[1],
+                             "http_401", status)
+
+    def test_a_refusal_does_not_mask_a_lower_store_s_own_verdict(self):
+        """Both are true and both remedies are the account sign-in, so the
+        lower store's verdict stands — and it is the one with the fuller
+        gloss."""
+        self.endpoint.answer = (400, {"error": "invalid_grant"})
+        self._lapsed()
+        self._setup_token()
+        self.assertEqual(self.mod._fetch_with_any_credential({})[1],
+                         self.mod.SCOPE_ERROR)
+
+    def test_a_new_sign_in_is_tried_after_a_refusal(self):
+        self.endpoint.answer = (400, {"error": "invalid_grant"})
+        self._lapsed()
+        state = {}
+        self.mod._fetch_with_any_credential(state)
+        self.endpoint.answer = (200, {"access_token": "sk-ant-oat01-NEW",
+                                      "expires_in": 3600})
+        self._lapsed(refresh="sk-ant-ort01-FRESH-SIGN-IN")
+        data, error = self.mod._fetch_with_any_credential(state)
+        self.assertIsNone(error)
+        self.assertEqual(len(self.endpoint.requests), 2)
+
+    # -- a request that could not be made ---------------------------------
+
+    def test_a_renewal_that_could_not_be_made_is_still_waiting(self):
+        """The credential is still the right one; it is asked again next
+        pass, and the verdict meanwhile is the one whose remedy is to do
+        nothing — with a clock on it now (see `_error_since`)."""
+        self.endpoint.answer = (503, {"error": "overloaded"})
+        self._lapsed()
+        self._setup_token()
+        state = {}
+        self.assertEqual(self.mod._fetch_with_any_credential(state)[1],
+                         self.mod.REFRESH_PENDING)
+        self.assertEqual(self.mod._fetch_with_any_credential(state)[1],
+                         self.mod.REFRESH_PENDING)
+        self.assertEqual(len(self.endpoint.requests), 2)
+        self.assertEqual(self._file()["accessToken"], "sk-ant-oat01-LAPSED")
+
+    def test_a_400_with_no_recognisable_code_is_our_bug_not_a_dead_session(self):
+        """`invalid_request` is the server saying the request was
+        malformed, which is far likelier to be this file than the account
+        — sending somebody to sign in again over it would be the wrong
+        remedy for a fault of ours."""
+        self.endpoint.answer = (400, {"error": "invalid_request"})
+        self._lapsed()
+        state = {}
+        self.assertEqual(self.mod._fetch_with_any_credential(state)[1],
+                         self.mod.REFRESH_PENDING)
+        self.mod._fetch_with_any_credential(state)
+        self.assertEqual(len(self.endpoint.requests), 2)
+
+    def test_the_endpoint_being_unreachable_is_not_a_refusal(self):
+        self.endpoint.close()
+        self._lapsed()
+        self.assertEqual(self.mod._fetch_with_any_credential({})[1],
+                         self.mod.REFRESH_PENDING)
+
+    def test_a_200_with_nothing_in_it_is_a_request_problem(self):
+        self.endpoint.answer = (200, {"ok": True})
+        self._lapsed()
+        self.assertEqual(self.mod._fetch_with_any_credential({})[1],
+                         self.mod.REFRESH_PENDING)
+        self.assertEqual(self._file()["accessToken"], "sk-ant-oat01-LAPSED")
+
+    # -- while the panel is signing in --------------------------------------
+
+    def test_nothing_is_renewed_while_the_guided_sign_in_holds_the_file(self):
+        """The flow reads the credentials file CHANGING as the code
+        exchange having succeeded, so a renewal landing mid-flow would say
+        "Connected!" about a code nothing had exchanged. The panel's own
+        hold is what stops it, driven here from the real engine helpers
+        into the real tracker — two processes, one path, one spelling."""
+        sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
+        try:
+            import engine
+        finally:
+            sys.path.pop(0)
+        hold = os.path.join(self.tmp.name, "usage-signin-hold")
+        self.mod.SIGNIN_HOLD_FILE = hold
+        old = engine.SIGNIN_HOLD_FILE
+        engine.SIGNIN_HOLD_FILE = hold
+        self.addCleanup(setattr, engine, "SIGNIN_HOLD_FILE", old)
+        # Both halves default to the same path, or the hold holds nothing.
+        self.assertEqual(
+            load_tracker({"BRAIN_USAGE_SIGNIN_HOLD": None}).SIGNIN_HOLD_FILE,
+            old)
+        self._lapsed()
+        self._setup_token()
+        engine._hold_renewals()
+        state = {}
+        self.assertEqual(self.mod._fetch_with_any_credential(state)[1],
+                         self.mod.REFRESH_PENDING)
+        self.assertEqual(self.endpoint.requests, [])
+        self.assertEqual(self._file()["accessToken"], "sk-ant-oat01-LAPSED")
+        # Released: the very next pass renews.
+        engine._release_renewals()
+        data, error = self.mod._fetch_with_any_credential(state)
+        self.assertIsNone(error)
+        self.assertEqual(len(self.endpoint.requests), 1)
+
+    def test_a_hold_left_by_a_panel_that_died_ages_out(self):
+        hold = os.path.join(self.tmp.name, "usage-signin-hold")
+        self.mod.SIGNIN_HOLD_FILE = hold
+        with open(hold, "w") as fh:
+            fh.write("x")
+        stale = time.time() - self.mod.SIGNIN_HOLD_MAX_S - 1
+        os.utime(hold, (stale, stale))
+        self._lapsed()
+        self.assertIsNone(self.mod._fetch_with_any_credential({})[1])
+        self.assertEqual(len(self.endpoint.requests), 1)
+
+
+class TestAVerdictCarriesHowLongItHasStood(unittest.TestCase):
+    """Every failure writer rewrote its stamp, so nothing in the file said
+    how long a verdict had stood — and "between refreshes, nothing to do"
+    is true for twenty minutes and a fault after a day. `error_since` is
+    written when the code changes and kept across every rewrite and a
+    restart, and `usage_store.limits_problem` is what reads it."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.mod = load_tracker({"CLAUDE_CONFIG_DIR": None})
+        self.mod.USAGE_FILE = os.path.join(self.tmp.name, "usage.json")
+
+    def _file(self):
+        with open(self.mod.USAGE_FILE) as fh:
+            return json.load(fh)
+
+    def test_the_stamp_is_kept_while_the_code_is_the_same(self):
+        self.mod.write_error_status("oauth_token_awaiting_refresh")
+        first = self._file()["error_since"]
+        time.sleep(0.01)
+        self.mod.write_error_status("oauth_token_awaiting_refresh")
+        self.assertEqual(self._file()["error_since"], first)
+        self.mod._record_failure("oauth_token_awaiting_refresh", 1800)
+        self.assertEqual(self._file()["error_since"], first)
+        # A restart restates the promise and keeps the clock.
+        self.mod._restate_next_attempt(10, 0)
+        self.assertEqual(self._file()["error_since"], first)
+
+    def test_a_different_code_starts_the_clock_again(self):
+        self.mod.write_error_status("oauth_token_awaiting_refresh")
+        first = self._file()["error_since"]
+        time.sleep(0.01)
+        self.mod.write_error_status("http_401")
+        self.assertNotEqual(self._file()["error_since"], first)
+
+    def test_a_reading_clears_it(self):
+        self.mod.write_error_status("oauth_token_awaiting_refresh")
+        self.mod.write_usage({"five_hour": {"utilization": 3}})
+        self.assertNotIn("error_since", self._file())
+
+    def test_the_panel_reads_the_same_key_the_tracker_writes(self):
+        """Two processes, one file, one spelling — the nudge file's rule."""
+        sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
+        try:
+            import usage_store
+        finally:
+            sys.path.pop(0)
+        old = usage_store.LIMITS_FILE
+        usage_store.LIMITS_FILE = self.mod.USAGE_FILE
+        try:
+            self.mod.write_error_status("oauth_token_awaiting_refresh")
+            got = usage_store.limits_problem()
+            self.assertTrue(got["needs_nothing"])
+            self.assertIn("since", got)
+            self.assertAlmostEqual(got["since"], time.time(), delta=5)
+        finally:
+            usage_store.LIMITS_FILE = old

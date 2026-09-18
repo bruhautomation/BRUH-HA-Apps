@@ -2901,6 +2901,19 @@ body.term-classic #termMode .ico-out { display: block; }
 .findside { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .findscore { color: var(--ink-3); font-size: 12.5px; margin: -8px 0 14px; line-height: 1.5; }
 .findscore b { color: var(--ink-2); font-weight: 500; }
+/* The two presses on those lines sit inline with the sentence they are
+   about; a little air so a row of them does not read as one word. */
+.findscore .btn.tiny { margin-left: 8px; vertical-align: baseline; }
+.findmuted { margin-top: -6px; }
+/* Whose sentence "What you'd need to do" is. Muted because it qualifies the
+   instruction rather than being one, and inline because the instruction is
+   what the line is for. */
+.findfixby { color: var(--ink-3); font-size: 12px; }
+/* The optional box under a reason: one line, a real control, no smaller
+   than the note above it so a thumb can find it. */
+.findnotecheck { display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  font-size: 13px; color: var(--ink-2); min-height: 28px; cursor: pointer; }
+.findnotecheck input { width: 18px; height: 18px; margin: 0; }
 
 .findlist { display: grid; gap: 14px; }
 

@@ -385,6 +385,25 @@ def actions_for(rows: list[dict], service: str) -> list[dict]:
             for verb, title in ACTION_LABELS]
 
 
+def open_link(service: str, path: str | None) -> dict:
+    """What tapping the notification opens: the panel, on the Findings tab.
+
+    A notification about a finding used to land on Home Assistant's front
+    page, with the row it was about three taps away and the person having
+    to remember which add-on had sent it. The companion app takes a
+    relative path under two names — `url` on iOS and `clickAction` on
+    Android — and both are harmless on the other platform, so both are
+    sent. Gated the way the buttons are (`can_answer`): only a
+    `mobile_app_*` service reads these keys and means this by them, and a
+    payload built on a guess about another notifier is how a working
+    notification stops arriving. No path — the Supervisor has not said
+    what this add-on's slug is — is no link, never a made-up one.
+    """
+    if not path or not can_answer(service):
+        return {}
+    return {"url": path, "clickAction": path}
+
+
 def parse_action(identifier: str) -> tuple[str, int] | None:
     """`"brain.fixed.1720"` as `("fixed", 1720)`, or None for anything else.
 

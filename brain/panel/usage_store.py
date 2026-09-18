@@ -310,15 +310,37 @@ def _fresh_payload() -> dict | None:
 NEEDS_NOTHING = ("oauth_token_awaiting_refresh", "api_key_has_no_usage_limits",
                  "http_429")
 
+# ...and the one of those whose "nothing to do" has a shelf life. The
+# tracker renews the account credential itself now, on every pass, so
+# "between refreshes" is a state that lasts a poll or two — and one that
+# has lasted longer is the tracker unable to renew for hours, which is
+# something a person needs to hear about. This is the report that prompted
+# it: four usage sensors unavailable for a day, and the only thing anywhere
+# about it was a verdict saying nothing was wrong. The 429 ladder is
+# deliberately not bounded here (its rungs are hours long by design and it
+# retries on its own), and an API key can never clear, so neither gets a
+# clock. Three hours is six ordinary polls, or one renewal that failed and
+# five more chances to make it.
+STUCK_AFTER = {"oauth_token_awaiting_refresh": 3 * 3600}
 
-def needs_nothing(code: str) -> bool:
+
+def needs_nothing(code: str, since: float | None = None,
+                  now: float | None = None) -> bool:
     """Whether this code's remedy is to do nothing.
 
     A code this does not recognise answers False: "I do not know what
     this means" and "there is nothing to do" are different claims, and
-    only the second may keep a fault off a verdict.
+    only the second may keep a fault off a verdict. And a code that has
+    stood longer than its shelf life (`STUCK_AFTER`) answers False too,
+    because "wait" is only an answer for as long as waiting can work.
     """
-    return str(code or "") in NEEDS_NOTHING
+    code = str(code or "")
+    if code not in NEEDS_NOTHING:
+        return False
+    limit = STUCK_AFTER.get(code)
+    if limit and since:
+        return ((now if now is not None else time.time()) - since) < limit
+    return True
 
 
 def limits_problem() -> dict:
@@ -355,6 +377,12 @@ def limits_problem() -> dict:
     nxt = _parse_iso_epoch(data.get("next_attempt_at"))
     if nxt:
         out["next_attempt"] = nxt
+    # How long this verdict has stood. The tracker keeps the stamp across
+    # its own rewrites and across a restart, so this is the age of the
+    # PROBLEM rather than of the last poll that reported it.
+    since = _parse_iso_epoch(data.get("error_since"))
+    if since:
+        out["since"] = since
     # Carried rather than re-derived by whoever reads it. `health.py` is
     # stdlib-only and pure over the payload it is handed — it answers "is
     # brAIn working" off the diagnostics dict and nothing else — so the
@@ -362,7 +390,16 @@ def limits_problem() -> dict:
     # means, and the answer rides in the file a person reads too. An older
     # mirror carries no flag, which reads as False: the fault surfaces,
     # which is the safe direction.
-    out["needs_nothing"] = needs_nothing(code)
+    out["needs_nothing"] = needs_nothing(code, since)
+    if code in STUCK_AFTER and since and not out["needs_nothing"]:
+        # The same code, no longer the same claim: it is the reader's job
+        # to say so, because the tracker wrote the gloss when it was true.
+        hours = (time.time() - since) / 3600
+        out["stuck"] = True
+        out["detail"] = ((out.get("detail") or "") + (
+            f" It has been the answer for {hours:.0f} hours now, which is "
+            "longer than a renewal should take — the add-on log says what "
+            "the tracker ran into.")).strip()
     return out
 
 

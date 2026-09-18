@@ -67,6 +67,37 @@ SHARED_AUTH_FILE = os.environ.get(
 # holds the two together — a rename on one side only is otherwise silent.
 AUTH_BACKUP_FILE = os.environ.get(
     "BRAIN_AUTH_BACKUP", "/data/.brain_auth_backup/.credentials.json")
+# Touched while the guided sign-in is running and removed when it settles.
+# The usage tracker renews the CLI's credential file itself now, and the
+# flow below reads that file CHANGING as the code exchange having
+# succeeded — so a renewal landing mid-flow would say "Connected!" about a
+# code nothing had exchanged, which is `_signed_in_here`'s own bug in a
+# new disguise. The tracker (`usage-limits-tracker.SIGNIN_HOLD_FILE`)
+# spells the same path and writes nothing while the marker is fresh;
+# `tests/test_usage_tracker.py` holds the two spellings together, the
+# nudge file's rule.
+SIGNIN_HOLD_FILE = os.environ.get("BRAIN_USAGE_SIGNIN_HOLD",
+                                  "/data/usage-signin-hold")
+
+
+def _hold_renewals() -> None:
+    """Ask the usage tracker to leave the credentials file alone. Never
+    raises: a hold that cannot be written costs one rare race, and a
+    sign-in that failed to start over it would cost the sign-in."""
+    try:
+        os.makedirs(os.path.dirname(SIGNIN_HOLD_FILE) or ".", exist_ok=True)
+        with open(SIGNIN_HOLD_FILE, "w") as fh:
+            fh.write(str(int(time.time())))
+    except OSError as exc:
+        log.warning("could not hold usage renewals during sign-in: %s", exc)
+
+
+def _release_renewals() -> None:
+    try:
+        os.remove(SIGNIN_HOLD_FILE)
+    except OSError:
+        # Never held, or already released — nothing to take back.
+        pass
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|[\r\x08]")
 
@@ -669,6 +700,9 @@ ANALYST_TOOLS = [
     f"{MCP}explain_change",       # what CAUSED a change, not just that it happened
     f"{MCP}get_activity",
     f"{MCP}get_house_model",   # what has been MEASURED here, and what has not
+    f"{MCP}get_findings",      # what is on the Findings tab, so a run can
+                               # answer "what needs attention" without guessing
+    f"{MCP}get_health",        # whether brAIn itself is working, in its own words
     f"{MCP}get_areas",
     f"{MCP}get_registry",
     f"{MCP}get_automations",
@@ -1095,6 +1129,9 @@ class SetupTokenFlow:
             self.phase = "starting"
             self._deadline = time.time() + 600
             self._cred_before = _credential_fingerprint()
+        # From here until the flow settles, the credentials file changing
+        # means the exchange succeeded — so nothing else may change it.
+        _hold_renewals()
         try:
             leader, follower = pty.openpty()
             # ultra-wide terminal so the OAuth URL is never hard-wrapped
@@ -1124,6 +1161,8 @@ class SetupTokenFlow:
             with self._lock:
                 self.phase = "error"
                 self.error = f"Could not start claude {self._label()}: {exc}"
+            # No reader thread will run, so nothing else releases it.
+            _release_renewals()
         return self.status()
 
     def submit_code(self, code: str) -> dict:
@@ -1160,6 +1199,7 @@ class SetupTokenFlow:
             except OSError:
                 # Already exited.
                 pass
+        _release_renewals()
 
     # -- internals ---------------------------------------------------------
 
@@ -1298,6 +1338,8 @@ class SetupTokenFlow:
                 except OSError:
                     # Already closed.
                     pass
+            # Settled, whichever way: the tracker may renew again.
+            _release_renewals()
 
     def _scan(self, buf: str, tokens: str | None = None) -> None:
         """`buf` is the display text; `tokens` the boundary-preserving copy.

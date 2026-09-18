@@ -130,18 +130,41 @@ NO_BUDGET = ("The usage budget is spent, so nothing looked at this before "
 _SAME_WORD = {"hold": "held", "elevate": "elevated"}
 
 
-def gate(rows: list[dict]) -> list[dict]:
+def gate(rows: list[dict], muted: set[str] | None = None) -> list[dict]:
     """The wire-shaped findings a producer is about to file, every one of
-    them marked as waiting for something to look at it.
+    them marked as waiting for something to look at it — less the ones
+    from a producer the homeowner has muted.
 
     One place decides this, so the store never has to know the policy and
     a second producer cannot file straight past it by accident. It is
     unconditional on purpose — see the fourth rule. It does not mutate
     what it is handed, because the same list goes on to `refresh_details`
     and `clear_resolved` in the same pass.
+
+    **A muted producer's rows are dropped here and nowhere else.** "Stop
+    raising these" is the press for a rule that is wrong about this house
+    — the scorecard reading 0 confirmed against 6 marked Wrong — and Wrong
+    one row at a time was the only answer it had, which is a key in the
+    settled ledger per wording and the next pass making the same mistake
+    in new words. Dropping the row at the door, rather than filing it and
+    hiding it, is what keeps the mute out of `LIVE_STATUSES`, the mirror,
+    the badge and every dedupe; the press itself clears what that producer
+    already filed (`findings_store.clear_source`), and unmuting brings
+    nothing back until the producer reports it again, `unsettle`'s rule.
+    `muted` is read from the settings when not given, so every producer
+    gets the same answer without each caller remembering to ask.
     """
+    if muted is None:
+        try:
+            import settings_store
+            muted = settings_store.muted()
+        except Exception:  # noqa: BLE001 — a settings file that cannot
+            # be read mutes nothing: the wrong direction here hides a card.
+            muted = set()
     return [{**row, "status": "triaging"} if isinstance(row, dict) else row
-            for row in rows]
+            for row in rows
+            if not (isinstance(row, dict) and muted
+                    and str(row.get("source") or "") in muted)]
 
 
 SYSTEM = """You are checking whether problems a smart home found are real.
@@ -176,13 +199,34 @@ one who raised it thought it was. Say what you checked.
 Never hold anything about safety, security, a battery that will die, a
 device that has stopped answering, or data loss.
 
+For everything you elevate, also say what to DO about it — `fix`. Each
+finding carries the generic advice the rule that raised it always gives
+("check its power and its connection, then reload its integration"),
+which is useless to somebody who wants to know what to do about THIS
+device in THIS house. You have looked, so write what you found into the
+answer: which integration it is on and whether the rest of that
+integration is fine, whether the hub it pairs through is answering, which
+automation to open and which condition to add, which other device is
+already doing the job. Name the entity, the integration, the automation,
+the setting — not a category. One or two sentences, in plain words to
+the person who lives there, and never the generic advice restated. If
+the generic advice really is right, say it in specifics. If the honest
+answer is "there is nothing to do but wait", say that and why. A held
+finding needs no `fix`.
+
 Reply with JSON and nothing else:
 
-{"verdicts": [{"id": 1, "verdict": "elevated", "reason": "one sentence"},
+{"verdicts": [{"id": 1, "verdict": "elevated", "reason": "one sentence",
+               "fix": "what to do, specific to this house"},
               {"id": 2, "verdict": "held", "reason": "one sentence"}]}
 
 Every id you were given must appear exactly once. `reason` is one plain
-sentence naming what you looked at — it is shown to the homeowner."""
+sentence naming what you looked at — it is shown to the homeowner, and so
+is `fix`, under "What you'd need to do"."""
+
+# The most a written fix may run to on the card. The store's own cap on
+# the field, so a rewritten one cannot be longer than a filed one.
+MAX_FIX = 600
 
 
 def frame(rows: list[dict], house: str = "", memory: str = "") -> str:
@@ -204,21 +248,35 @@ def frame(rows: list[dict], house: str = "", memory: str = "") -> str:
             bits.append(f"   entity: {row['entity_id']}")
         if row.get("source_title"):
             bits.append(f"   raised by: {row['source_title']}")
+        # What the card will say under "What you'd need to do" unless the
+        # run writes something better — shown so the run can see how
+        # generic it is, and whether brAIn could make the change itself.
+        if row.get("fix"):
+            bits.append(f"   generic advice on the card now: {row['fix']}")
+        bits.append("   brAIn can make this change itself: "
+                    + ("yes" if row.get("fixable", True) is not False
+                       else "no — it needs hands"))
         parts.append("\n".join(bits))
     parts.append("\nReply with the JSON contract and nothing else.")
     return "\n".join(parts)
 
 
-def parse(obj, count: int) -> dict[int, tuple[str, str]]:
-    """`{1-based index: (verdict, reason)}` out of a reply.
+def parse(obj, count: int) -> dict[int, tuple[str, str, str]]:
+    """`{1-based index: (verdict, reason, fix)}` out of a reply.
 
     Anything this cannot read is simply absent, and an absent row
     surfaces — which is why nothing here raises and nothing here guesses.
     A verdict that is not one of the two words a run may give is dropped
     rather than coerced: an invented verdict reads exactly like a real
     one, and the safe reading is the one that shows the finding.
+
+    `fix` is what the run says to do about an elevated row, written from
+    what it looked at, and it replaces the generic sentence the rule
+    filed. It is empty when the run wrote none — the card then keeps the
+    generic one, which is the same card it showed before — and it is
+    always empty on a held row, because a held row is shown to nobody.
     """
-    out: dict[int, tuple[str, str]] = {}
+    out: dict[int, tuple[str, str, str]] = {}
     if isinstance(obj, str):
         try:
             obj = json.loads(obj)
@@ -249,12 +307,15 @@ def parse(obj, count: int) -> dict[int, tuple[str, str]]:
         verdict = _SAME_WORD.get(verdict, verdict)
         if verdict not in ("elevated", "held"):
             continue
-        out[idx] = (verdict, str(row.get("reason") or "").strip()[:MAX_REASON])
+        fix = str(row.get("fix") or "").strip()[:MAX_FIX] \
+            if verdict == "elevated" else ""
+        out[idx] = (verdict, str(row.get("reason") or "").strip()[:MAX_REASON],
+                    fix)
     return out
 
 
 __all__ = [
-    "MAX_BATCH", "MAX_REASON", "MAX_TURNS", "NOT_MENTIONED", "NO_BUDGET",
+    "MAX_BATCH", "MAX_FIX", "MAX_REASON", "MAX_TURNS", "NOT_MENTIONED", "NO_BUDGET",
     "NO_CREDENTIAL", "PAUSED", "RUN_FAILED", "STALE_S", "SYSTEM",
     "TIMEOUT_S", "UNJUDGED", "VERDICTS", "frame", "gate", "parse",
 ]

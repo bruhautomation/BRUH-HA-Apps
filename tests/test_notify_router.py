@@ -294,3 +294,21 @@ class TestEveryNamedCheckExists(unittest.TestCase):
     def test_a_full_disk_is_now(self):
         self.assertEqual(
             notify_router.urgency_of({"source": "check:sys.disk_space"}), "now")
+
+
+class TestWhereATapLands(unittest.TestCase):
+    """A notification about a finding opens the panel, not Home
+    Assistant's front page — but only where the notifier reads the keys,
+    and only once the Supervisor has said what this add-on's slug is."""
+
+    def test_a_companion_app_gets_the_panel_under_both_spellings(self):
+        self.assertEqual(
+            notify_router.open_link("notify.mobile_app_phone", "/hassio/ingress/x"),
+            {"url": "/hassio/ingress/x", "clickAction": "/hassio/ingress/x"})
+
+    def test_any_other_notifier_gets_nothing_it_might_misread(self):
+        self.assertEqual(notify_router.open_link("notify.telegram", "/x"), {})
+
+    def test_no_slug_is_no_link_never_a_guess(self):
+        self.assertEqual(notify_router.open_link("mobile_app_phone", None), {})
+        self.assertEqual(notify_router.open_link("mobile_app_phone", ""), {})

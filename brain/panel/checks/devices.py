@@ -149,11 +149,26 @@ def measures_something_hot(eid: str, name: str) -> bool:
     return bool(words & _HOT_WHEN_PAIRED and words & _PAIR_WORDS)
 
 
+# brAIn's own integration. Its entities are readings ABOUT this add-on — the
+# usage figures, the health verdict, the open-findings count — and the
+# device checks reported them as hardware: "brAIn Usage Limits has been
+# unavailable for more than a day — check its power and its connection
+# (batteries, Wi-Fi, the hub it pairs through)", on the day the usage
+# tracker was stuck. The batteries advice is wrong for a sensor with no
+# batteries, and the fault it was about is `health.py`'s to report, which
+# it does with the switch named. A check that files a finding about the
+# add-on's own sensor is the add-on filing a bug report against itself
+# under somebody else's remedy.
+SELF_PLATFORMS = frozenset({"brain"})
+
+
 def _live_hardware(house: House):
     for eid, st in house.states.items():
         if domain_of(eid) in SOFTWARE_DOMAINS:
             continue
         if not house.enabled(eid):
+            continue
+        if (house.registry.get(eid) or {}).get("platform") in SELF_PLATFORMS:
             continue
         yield eid, st
 

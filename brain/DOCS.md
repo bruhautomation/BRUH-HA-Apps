@@ -63,7 +63,7 @@ subscription — or your own API key.
 
 Most AI integrations can turn on a light. brAIn administers the installation.
 
-It reaches Home Assistant three ways at once — a **native MCP server** (41 tools) for
+It reaches Home Assistant three ways at once — a **native MCP server** (43 tools) for
 reading and controlling, **65 registry-management services** for the parts of Home
 Assistant that normally only exist behind the Settings UI, and a **real shell** in
 `/config` for everything that is still a YAML file.
@@ -317,6 +317,25 @@ here.
 The look runs about once a minute, so a finding appears on the tab shortly
 after it is raised rather than the moment it is filed.
 
+**"What you'd need to do" is written by that look.** Every rule writes one
+sentence for every row of its kind — *check its power and its connection, then
+reload its integration* — and that is what the card showed. The look has been at
+the device, its integration and its area, so it now writes what to do about
+*this* one, and the card says *written after looking* beside it. A conversation
+can do the same: when you press **Discuss** and Claude works out what to do,
+it offers that as an option beside the endings, and pressing it puts the
+sentence on the card (*from your conversation*) while the finding stays open.
+
+**Stop raising these** is the press for a rule that is wrong about your house.
+The line under the filters says how right each producer has been; one that has
+been wrong three times and right never offers the button, and the box on the
+**Wrong** form offers the same thing for the row in front of you. Muting a
+producer takes its open cards off the list and files nothing from it again —
+nothing is settled and nothing goes into memory, because this is about the rule
+and not the house — and a *Not raising* line above the list carries the one
+press that turns it back on. Nothing comes back until the producer reports it
+again on its next pass.
+
 A held finding is **held, not deleted**. The row stays, which is what stops
 the next pass filing the same thing again every six hours, and it clears
 itself exactly as an open one does when the check stops reporting it.
@@ -349,8 +368,11 @@ automation can react the moment brAIn files something. And if you set
 `findings_notify_service` in the add-on configuration to one of your
 `notify.*` services, new findings at or above `findings_notify_min_severity`
 (default `serious`) are pushed straight to it — a dead battery rings your
-phone; a naming nitpick waits on the tab. The whole tab is also scriptable as
-`brain findings` (list / fix / done / wrong / ack / snooze) from the terminal.
+phone; a naming nitpick waits on the tab. On the companion app a message
+about one finding carries buttons to answer it, and tapping the message opens
+brAIn's own panel rather than Home Assistant's front page. The whole tab is
+also scriptable as `brain findings` (list / fix / done / wrong / ack / snooze)
+from the terminal.
 
 Between `notify_quiet_start` and `notify_quiet_end` (22 to 7 by default, in
 your home's own timezone) only the **urgent** ones get through: a device that
@@ -1562,15 +1584,25 @@ again** and choose **Sign in to your Claude account**, which needs no terminal a
 does not replace the shared file.
 
 Once you have done that, the pill may still say the numbers are missing for a
-while, and there is one status that means *nothing is wrong*:
-`oauth_token_awaiting_refresh`. An access token lives for a few hours and Claude
-Code mints the next one itself, from the refresh token beside it, the first time
-anything runs Claude — an insight, a chat message, a checks pass. The real numbers
-come back on the first poll after that, and **signing in again will not make it
-arrive sooner**. Before that status existed, a token between refreshes read as no
-credential at all: the search fell through to an older `ha login` token, reported
-*that* one's scope refusal, and so told you to perform the sign-in you had just
-performed — which is why it looked like signing in never took.
+poll or two, and there is one status that means *nothing is wrong*:
+`oauth_token_awaiting_refresh`. An access token lives for a few hours, and
+**brAIn renews it itself** from the refresh token beside it — on every poll,
+whether or not anything has run Claude. The real numbers come back on the first
+poll after that, and **signing in again will not make it arrive sooner**. Two
+things are worth knowing about it. Up to 1.59.0 brAIn waited for Claude Code to
+do that renewal "on its next run", and on a box that also holds a pasted token or
+an `ha login` one, every run is handed *that* token and never opens the account
+credential — so the wait was for ever, and the pill went on saying nothing was
+wrong for a day at a time. And because "wait" is only an answer while waiting
+can work, the status now has a clock on it: one that has stood for more than
+three hours stops counting as fine, the health sensor says so, and the add-on log
+says what the renewal ran into. A renewal Anthropic *refuses* is a session that
+has been revoked or has expired for good; that is reported as `http_401`, and the
+remedy is the account sign-in again. Before any of this, a token between
+refreshes read as no credential at all: the search fell through to an older
+token from `ha login`, reported *that* one's scope refusal, and so told you to
+perform the sign-in you had just performed — which is why it looked like signing
+in never took.
 
 From a terminal, `ha login` and `brain login` are the same command:
 
@@ -1858,7 +1890,13 @@ appear on the Insights tab, which holds only the cards you asked for.
 Claude reads the same answers through the `get_house_model` tool, and the analyst,
 the morning brief and the weekly report are all handed a short block of them (2 KB,
 one line per ready measurement, in the measurement's own words) so a card does not
-re-derive "what is normal here" from a week of readings on every run.
+re-derive "what is normal here" from a week of readings on every run. Two more
+tools read the panel the same way: `get_findings` is the Findings tab as rows —
+what is wrong, what to do, who raised it and what the look concluded — so the
+chat, a voice command and any card can answer *what needs attention* without
+guessing; and `get_health` is brAIn's own verdict, the sign-in, the usage
+tracker's last word and the daemon roll-call, for *is brAIn OK*. Both are
+read-only and settle nothing.
 
 ## Checking brAIn itself
 

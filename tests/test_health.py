@@ -18,7 +18,9 @@ import os
 import re
 import sys
 import tempfile
+import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -502,6 +504,41 @@ class TestWhichMissingFiguresAreFaults(unittest.TestCase):
         day about a credential doing what credentials do."""
         got = self.problem("oauth_token_awaiting_refresh")
         self.assertTrue(got["needs_nothing"])
+
+    def _problem_since(self, code: str, hours_ago: float) -> dict:
+        since = time.time() - hours_ago * 3600
+        stamp = datetime.fromtimestamp(since, timezone.utc).isoformat()
+        with open(self.usage_store.LIMITS_FILE, "w", encoding="utf-8") as fh:
+            json.dump({"error": code, "error_since": stamp,
+                       "detail": "the tracker's own gloss"}, fh)
+        return self.usage_store.limits_problem()
+
+    def test_waiting_stops_being_nothing_after_hours(self):
+        """"Wait" is only an answer while waiting can work. The tracker
+        renews the credential itself every pass, so a verdict of "between
+        refreshes" that has stood for hours is a tracker that cannot
+        renew — which is the report this exists for: four sensors
+        unavailable for a day, and the only thing anywhere about it a
+        sentence saying nothing was wrong."""
+        fresh = self._problem_since("oauth_token_awaiting_refresh", 0.5)
+        self.assertTrue(fresh["needs_nothing"])
+        self.assertNotIn("stuck", fresh)
+        stuck = self._problem_since("oauth_token_awaiting_refresh", 5)
+        self.assertFalse(stuck["needs_nothing"])
+        self.assertTrue(stuck["stuck"])
+        self.assertIn("the tracker's own gloss", stuck["detail"])
+        self.assertIn("5 hours", stuck["detail"])
+        self.assertIn("add-on log", stuck["detail"])
+        # And the verdict the sensor reads follows the flag.
+        diag = {"usage": {"limits": stuck}, "daemons": {}, "options": {}}
+        self.assertIn("usage", [p["id"] for p in health.problems(diag)])
+
+    def test_the_clock_is_only_on_the_verdicts_that_can_clear(self):
+        """A 429 ladder has hour-long rungs by design and an API key can
+        never clear; neither may age into a fault."""
+        for code in ("http_429", "api_key_has_no_usage_limits"):
+            self.assertTrue(self._problem_since(code, 48)["needs_nothing"],
+                            code)
 
     def test_an_api_key_has_no_window_to_report(self):
         """And never will, so this one could not clear at all."""

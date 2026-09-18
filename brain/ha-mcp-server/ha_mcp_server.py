@@ -669,6 +669,104 @@ def get_house_model():
     }
 
 
+# What one finding is reported as to a model: the row's own fields, less
+# the bookkeeping (undo tokens, snooze stamps, the run id). Named so the
+# list is one shape wherever a run reads it.
+_FINDING_FIELDS = ("ts", "severity", "text", "detail", "fix", "fix_by",
+                   "entity_id", "source_title", "status", "fixable")
+
+
+def get_findings(status="open", limit=50):
+    """What is on the Findings tab, for a run that wants to know what needs
+    attention rather than guess.
+
+    Reads the panel's own listing over loopback — `brain findings`' rule:
+    one implementation, one answer, and the panel is where the store, the
+    triage verdicts and the settled ledger all meet. A panel that is not
+    up is reported as such rather than as a house with nothing wrong.
+    `held` rows are the ones a look judged not worth showing; they are
+    offered on request because "is anything broken" and "what did you
+    decide not to tell me" are both fair questions, but the default is
+    the list a person sees.
+    """
+    status = str(status or "open").strip().lower()
+    if status not in ("open", "held", "all"):
+        return {"error": "status must be open, held or all"}
+    try:
+        limit = max(1, min(200, int(limit or 50)))
+    except (TypeError, ValueError):
+        limit = 50
+    result = _panel_get("/api/findings")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    rows = (result or {}).get("findings") or []
+    if status == "open":
+        rows = [r for r in rows if r.get("status") in
+                ("open", "fixing", "fixed", "failed", "needs_you")]
+    elif status == "held":
+        rows = [r for r in rows if r.get("status") == "held"]
+    out = []
+    for row in rows[:limit]:
+        if not isinstance(row, dict):
+            continue
+        item = {k: row.get(k) for k in _FINDING_FIELDS if k in row}
+        verdict = row.get("triage") or {}
+        if isinstance(verdict, dict) and verdict.get("reason"):
+            item["looked"] = verdict.get("reason")
+        out.append(item)
+    hypotheses = [{"ts": h.get("ts"), "claim": h.get("claim") or h.get("text")}
+                  for h in ((result or {}).get("hypotheses") or [])
+                  if isinstance(h, dict)]
+    return {
+        "open": (result or {}).get("open", 0),
+        "findings": out,
+        # Guesses waiting to be confirmed ride the same tab, because they
+        # are the same job: a question only the person living there can
+        # answer.
+        "hypotheses": hypotheses[:limit],
+        "note": ("Nothing here is settled by reading it. If the homeowner "
+                 "is discussing one of these with you, offer_resolutions "
+                 "is how a decision reaches the card."),
+    }
+
+
+def get_health():
+    """Is brAIn working — the verdict the panel, the mirror and the health
+    sensor all read, and nothing derived a second time here.
+
+    The whole diagnostics payload is a page of JSON; what a model can act
+    on is the verdict with its sentence and switch, the sign-in, the usage
+    tracker's last word, and the daemon roll-call. Everything else is the
+    report's job (`brain report`).
+    """
+    result = _panel_get("/api/diagnostics")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    result = result or {}
+    health = result.get("health") or {}
+    usage = result.get("usage") or {}
+    daemons = result.get("daemons") or {}
+    return {
+        "state": health.get("state"),
+        "reason": health.get("reason"),
+        "fix": health.get("fix"),
+        "problems": [{k: p.get(k) for k in ("id", "state", "reason", "fix")}
+                     for p in (health.get("problems") or [])
+                     if isinstance(p, dict)],
+        "signed_in": (result.get("auth") or {}).get("state"),
+        "usage": {
+            "source": usage.get("source"),
+            "limits": usage.get("limits") or None,
+        },
+        "daemons": {name: bool((row or {}).get("running"))
+                    for name, row in daemons.items()
+                    if isinstance(row, dict)},
+        "versions": result.get("versions") or {},
+        "faults": [f for f in (result.get("faults") or [])
+                   if isinstance(f, dict)][:20],
+    }
+
+
 def get_activity(hours=24, cause=None, limit=200):
     """What changed in the house recently, with a cause on every row.
 
@@ -1979,9 +2077,14 @@ def remember_fact(fact, confidence="high"):
 # a friendlier set translated at the far end: one vocabulary from the tool
 # schema to the HTTP route is one fewer place for two answers to the same
 # question to drift apart.
-RESOLUTION_KINDS = ("done", "wrong", "todo")
+RESOLUTION_KINDS = ("done", "wrong", "todo", "advice")
 MAX_RESOLUTIONS = 4
 MAX_RESOLUTION_LABEL = 90
+# `advice` replaces the card's "What you'd need to do" with the sentence
+# the conversation reached, and settles nothing — so its label is a
+# paragraph's worth rather than a button's, capped at what the findings
+# store keeps for that field.
+MAX_ADVICE_LABEL = 600
 
 
 def offer_resolutions(options):
@@ -2019,14 +2122,16 @@ def offer_resolutions(options):
         if kind not in RESOLUTION_KINDS:
             return {"error": "kind must be one of "
                              + ", ".join(RESOLUTION_KINDS)}
-        cleaned.append({"label": label.strip()[:MAX_RESOLUTION_LABEL],
-                        "kind": kind})
+        cap = MAX_ADVICE_LABEL if kind == "advice" else MAX_RESOLUTION_LABEL
+        cleaned.append({"label": label.strip()[:cap], "kind": kind})
     return {
         "status": "offered",
         "options": cleaned,
         "note": "Shown as buttons under this message. The homeowner presses "
                 "one, or none — you are not told which, and nothing is "
-                "settled until they do.",
+                "settled until they do. An `advice` option settles nothing "
+                "either way: pressing it puts your sentence on the card as "
+                "what to do about it.",
     }
 
 
@@ -2836,6 +2941,46 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}}
     },
     {
+        "name": "get_findings",
+        "description": (
+            "What brAIn has found wrong with this house and is waiting on the "
+            "homeowner about: the Findings tab, as rows — each with what is "
+            "wrong, the detail, what to do, the entity, who raised it and "
+            "what the look before it was shown concluded. Use it for 'what "
+            "needs attention', 'is anything broken', 'what should I do "
+            "today', and before reporting a problem the house already "
+            "knows about. Read-only; it changes nothing and settles nothing."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "description": ("Which rows: 'open' (default — waiting on a "
+                                    "person, the tab's own list), 'held' "
+                                    "(looked at and judged not worth showing), "
+                                    "or 'all'.")
+                },
+                "limit": {
+                    "type": "number",
+                    "description": "Most rows to return (1-200, default 50)"
+                }
+            }
+        }
+    },
+    {
+        "name": "get_health",
+        "description": (
+            "Whether brAIn itself is working, in its own words: the health "
+            "verdict (ok / degraded / failed) with the sentence and the "
+            "switch for the worst thing found, whether it is signed in, what "
+            "the usage sensors last said, and which of its background jobs "
+            "are running. Use it when somebody asks whether brAIn is OK, why "
+            "the usage figure is missing, or why nothing has run. Read-only."
+        ),
+        "inputSchema": {"type": "object", "properties": {}}
+    },
+    {
         "name": "get_activity",
         "description": (
             "What changed in the house recently, with a cause on every row, plus "
@@ -3016,11 +3161,17 @@ TOOLS = [
             "'todo' is work to put on their list (\"Replace the CR2032 in "
             "the garage sensor\"), 'wrong' is a fact about the house that "
             "means this was never a problem (\"That cupboard is never "
-            "opened\"). Offer only endings your own investigation supports, "
-            "and leave out any you cannot justify — two honest options beat "
-            "four. This changes nothing by itself: nothing is settled until "
-            "they press, and you are not told whether they did. It works "
-            "only inside a finding discussion."
+            "opened\"). 'advice' is the fourth kind and is not an ending: "
+            "its label is what you would tell them to DO about it, specific "
+            "to this house (\"Power-cycle the Tuya hub in the garage — the "
+            "other three valves on it are answering\"), and pressing it "
+            "replaces the generic 'What you'd need to do' on the card with "
+            "that sentence while the finding stays open. Offer only endings "
+            "your own investigation supports, and leave out any you cannot "
+            "justify — two honest options beat four. This changes nothing "
+            "by itself: nothing is settled until they press, and you are not "
+            "told whether they did. It works only inside a finding "
+            "discussion."
         ),
         "inputSchema": {
             "type": "object",
@@ -3038,8 +3189,8 @@ TOOLS = [
                             },
                             "kind": {
                                 "type": "string",
-                                "enum": ["done", "todo", "wrong"],
-                                "description": "done = they have already done this, and it goes into memory as a fix. todo = work for their to-do list, written as an instruction. wrong = brAIn has misread the house, and the label is the correction."
+                                "enum": ["done", "todo", "wrong", "advice"],
+                                "description": "done = they have already done this, and it goes into memory as a fix. todo = work for their to-do list, written as an instruction. wrong = brAIn has misread the house, and the label is the correction. advice = not an ending: the label becomes the card's 'What you'd need to do', specific to this house, and the finding stays open."
                             }
                         },
                         "required": ["label", "kind"]
@@ -3099,6 +3250,8 @@ TOOL_IMPLEMENTATIONS = {
     "get_baseline": "get_baseline",
     "get_activity": "get_activity",
     "get_house_model": "get_house_model",
+    "get_findings": "get_findings",
+    "get_health": "get_health",
     "get_statistics": "get_statistics",
     "get_weather_forecast": "get_weather_forecast",
     "get_error_log": "get_error_log",

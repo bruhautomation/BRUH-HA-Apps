@@ -498,6 +498,8 @@ class TestMCPProtocol(unittest.TestCase):
             "get_history", "get_statistics", "get_weather_forecast",
             # Activity — what caused a change
             "explain_change", "get_activity",
+            # The panel's own list and its own verdict
+            "get_findings", "get_health",
             # Baselines — what is normal here
             "get_baseline",
             # And what has been measured at all, so a silence can be read

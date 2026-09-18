@@ -314,11 +314,16 @@ class BrainUsageTrackerSensor(SensorEntity):
                                         to your Claude account" asks for it
       ``oauth_token_awaiting_refresh``
                                         the account sign-in's access token
-                                        has lapsed and Claude Code mints
-                                        the next one itself on its next
-                                        run — nothing is wrong, and this is
-                                        the one status whose remedy is to
-                                        do nothing. Before it existed the
+                                        has lapsed and the tracker could
+                                        not renew it on this poll — it
+                                        renews it itself, so nothing is
+                                        wrong for a poll or two and the
+                                        remedy is to do nothing. One that
+                                        stands for hours is the tracker
+                                        unable to renew, and the panel's
+                                        diagnostics say so rather than
+                                        keep calling it fine. Before the
+                                        tracker renewed anything, the
                                         search fell through such a token to
                                         an older `ha login` one and
                                         reported that one's scope refusal,

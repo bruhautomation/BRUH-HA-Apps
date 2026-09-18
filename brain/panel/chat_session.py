@@ -479,9 +479,15 @@ PERMISSION_TIMEOUT = float(os.environ.get("BRAIN_CHAT_PERMISSION_TIMEOUT", "600"
 # the strip, pressed deliberately, and it does not end the finding anyway
 # (it moves it to `fixing`, which is a different lifecycle from "dismissed").
 RESOLUTION_TOOL = "offer_resolutions"
-RESOLUTION_VERBS = ("done", "wrong", "todo")
+RESOLUTION_VERBS = ("done", "wrong", "todo", "advice")
 MAX_RESOLUTIONS = 4
 MAX_RESOLUTION_LABEL = 90
+# `advice` is the one kind whose label is a paragraph rather than a
+# button's worth of words: it is the sentence that replaces "What you'd
+# need to do" on the card, so it takes the store's own cap for that field
+# (`findings_store.MAX_FIX`) and not a button's.
+MAX_ADVICE_LABEL = 600
+_LABEL_CAP = {"advice": MAX_ADVICE_LABEL}
 
 
 def resolution_offer(name: str, args: object) -> list[dict] | None:
@@ -511,8 +517,8 @@ def resolution_offer(name: str, args: object) -> list[dict] | None:
             continue
         if verb not in RESOLUTION_VERBS:
             continue
-        out.append({"label": label.strip()[:MAX_RESOLUTION_LABEL],
-                    "verb": verb})
+        out.append({"label": label.strip()[:_LABEL_CAP.get(
+            verb, MAX_RESOLUTION_LABEL)], "verb": verb})
     return out or None
 
 

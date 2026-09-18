@@ -103,6 +103,10 @@ MAX_SETTLED = 1000
 MAX_TEXT = 200
 MAX_DETAIL = 600
 MAX_FIX = 600
+# Who may have written a row's `fix` — see `_shape`. The rule's own
+# sentence is the empty string, which is what every row filed before this
+# existed reads as.
+FIX_AUTHORS = ("triage", "chat")
 MAX_RESULT = 1500
 MAX_CHANGED = 8
 # A correction is a sentence, not an essay. Long enough for "that sensor
@@ -307,6 +311,11 @@ def _clean_triage(value) -> dict:
         # the run said, and overwriting it would lose the one piece of
         # evidence that triage got this one wrong.
         "elevated_by_person": bool(value.get("elevated_by_person")),
+        # Whether the row's `fix` is the run's own sentence rather than
+        # the generic one the rule filed. The text itself lives in `fix`,
+        # where every reader of a finding already looks; this is the
+        # record of who wrote it.
+        "wrote_fix": bool(value.get("wrote_fix")),
     }
 
 
@@ -323,6 +332,11 @@ def _shape(entry: dict) -> dict:
         "text": str(entry.get("text") or "")[:MAX_TEXT],
         "detail": str(entry.get("detail") or "")[:MAX_DETAIL],
         "fix": str(entry.get("fix") or "")[:MAX_FIX],
+        # Whose sentence `fix` is: "" for the rule's own, "triage" for the
+        # run that looked at the row before it was shown, "chat" for a
+        # conversation the homeowner had about it. The card says which.
+        "fix_by": (entry.get("fix_by")
+                   if entry.get("fix_by") in FIX_AUTHORS else ""),
         "severity": severity,
         "fixable": bool(entry.get("fixable", True)),
         "entity_id": str(entry.get("entity_id") or "")[:255],
@@ -671,10 +685,24 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
                   when: float | None = None) -> list[dict]:
     """Write what looked at a batch, and move each row to where it belongs.
 
-    ``verdicts`` is ``{ts: (verdict, reason)}``. An ``elevated`` or
-    ``untriaged`` row becomes ``open`` — the second because nothing
-    looked, which surfaces exactly like the first and says so on the card
-    — and a ``held`` row becomes ``held``.
+    ``verdicts`` is ``{ts: (verdict, reason)}`` or ``{ts: (verdict,
+    reason, fix)}``. An ``elevated`` or ``untriaged`` row becomes ``open``
+    — the second because nothing looked, which surfaces exactly like the
+    first and says so on the card — and a ``held`` row becomes ``held``.
+
+    **An elevated row that came with a ``fix`` takes it as its own.** The
+    rule that filed the row wrote the same sentence it writes for every
+    row of its kind ("check its power and its connection… then reload its
+    integration"), which is what the card showed under *What you'd need to
+    do* and what a person reading it called generic and useless. The run
+    that elevated the row has looked at the entity, its integration and
+    its area, so what it says to do is about THIS device in THIS house,
+    and the card carries that instead. The generic sentence is not kept:
+    it says nothing the check's own docs do not, and a second field for it
+    would be one more thing to render. ``refresh_details`` never touches
+    ``fix``, so a re-report on the next pass does not put the generic
+    sentence back. An empty ``fix`` leaves whatever was there — the run
+    wrote none, and the card is then the card it always was.
 
     Only a row still in ``triaging`` is touched. Everything else is a row
     a person or the fixer has already moved on from, and a verdict
@@ -691,13 +719,18 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
         ts = int(entry.get("ts") or 0)
         if ts not in verdicts or entry.get("status") != "triaging":
             continue
-        verdict, reason = verdicts[ts]
+        verdict, reason, *rest = verdicts[ts]
         if verdict not in triage.VERDICTS:
             continue
+        fix = str(rest[0] if rest else "").strip()[:MAX_FIX]
+        wrote_fix = bool(fix) and verdict == "elevated"
+        if wrote_fix:
+            entry["fix"] = fix
+            entry["fix_by"] = "triage"
         entry["status"] = "held" if verdict == "held" else "open"
         entry["triage"] = _clean_triage({
             "verdict": verdict, "reason": reason,
-            "run_id": run_id, "at": stamp})
+            "run_id": run_id, "at": stamp, "wrote_fix": wrote_fix})
         changed.append(_shape(entry))
     if changed:
         _write(items)
@@ -1088,6 +1121,86 @@ CLEARABLE = ("open", "needs_you", "failed", "triaging", "held")
 
 
 @_mutates
+@_mutates
+def clear_source(source: str) -> list[dict]:
+    """Take every row a producer has filed off the list, because the
+    homeowner has muted that producer.
+
+    The press's half of "Stop raising these": `triage.gate` drops what the
+    producer files from now on, and this removes what it has already
+    filed. Only rows nobody has acted on — `open`, `triaging`, `held`,
+    `needs_you` — and never `fixing` or `fixed`, which are a conversation
+    somebody is already having or a change brAIn already made. Nothing is
+    settled and no memory line is written: a mute is a statement about
+    the RULE and not about the house, which is `clear_resolved`'s reason
+    for writing nothing when a problem goes away on its own. Returns the
+    rows taken, shaped, so the toast can say how many.
+    """
+    items = _load()
+    taken: list[dict] = []
+    kept: list[dict] = []
+    for entry in items:
+        if (str(entry.get("source") or "") == source
+                and entry.get("status") in MUTE_CLEARS):
+            taken.append(_shape(entry))
+        else:
+            kept.append(entry)
+    if taken:
+        _write(kept)
+    return taken
+
+
+@_mutates
+def set_fix(ts: int, fix: str, by: str) -> dict | None:
+    """Replace what a row says to do, and record who said it.
+
+    The chat's door onto "What you'd need to do": a discussion that has
+    worked out the specific answer offers it as an option, and the press
+    lands here. It settles nothing and takes nothing away — the row stays
+    exactly where it was with a better sentence on it — which is why it
+    hands back no undo token. Refuses an empty sentence and an author the
+    row cannot name (`FIX_AUTHORS`); answers None for a row that is gone.
+    """
+    fix = str(fix or "").strip()[:MAX_FIX]
+    if not fix or by not in FIX_AUTHORS:
+        return None
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) == int(ts):
+            entry["fix"] = fix
+            entry["fix_by"] = by
+            _write(items)
+            return _shape(entry)
+    return None
+
+
+def source_titles() -> dict[str, str]:
+    """Every producer this store has seen, id → the title it filed under.
+
+    Live rows first, then the settled ledger, so a muted producer whose
+    rows are all gone can still be named on the tab rather than shown as
+    `check:dev.frozen`. A producer nothing has recorded a title for is
+    simply absent; the caller falls back to the id.
+    """
+    out: dict[str, str] = {}
+    for entry in _load_settled():
+        src = str(entry.get("source") or "")
+        title = str(entry.get("source_title") or "")
+        if src and title and src not in out:
+            out[src] = title
+    for entry in _load():
+        src = str(entry.get("source") or "")
+        title = str(entry.get("source_title") or "")
+        if src and title:
+            out[src] = title
+    return out
+
+
+# What a mute takes off the list: everything nobody has acted on. `fixing`
+# and `fixed` are a person's or the fixer's and stay.
+MUTE_CLEARS = ("open", "triaging", "held", "needs_you")
+
+
 def refresh_details(objs: list[dict]) -> int:
     """Update the detail and severity of rows a producer has re-reported.
 
