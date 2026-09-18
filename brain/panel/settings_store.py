@@ -164,7 +164,49 @@ DEFAULTS = {
     # week, and then off again — a Configuration-tab option would cost a
     # restart at each end of that.
     "capture": False,
+    # Producers whose findings are not wanted: a check id as `check:<id>`
+    # or an insight category's id. "Stop raising these" on the Findings
+    # tab writes one here; `triage.gate` drops a row from any of them
+    # before it is filed. A panel setting because it is pressed while
+    # looking at the row that earned it, and because the scorecard that
+    # argues for it lives on the same tab.
+    "muted_sources": [],
 }
+
+# How many producers may be muted. There are about forty checks and a
+# handful of categories; a list past this is a Findings tab switched off
+# one row at a time, which is what `enable_insights` is for.
+MAX_MUTED = 60
+MAX_SOURCE_CHARS = 64
+
+
+def clean_sources(value) -> list[str]:
+    """A list of producer ids — trimmed, deduped, capped — or a ValueError."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("muted_sources must be a list of producer ids")
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError("every muted source is a string")
+        item = item.strip()[:MAX_SOURCE_CHARS]
+        if item and item not in out:
+            out.append(item)
+    if len(out) > MAX_MUTED:
+        raise ValueError(f"at most {MAX_MUTED} producers can be muted")
+    return out
+
+
+def muted() -> set[str]:
+    """The producers whose findings are not wanted, as a set. Never raises:
+    an unreadable settings file mutes nothing, which is the direction in
+    which being wrong shows a card rather than hiding one."""
+    try:
+        return set(clean_sources(load().get("muted_sources")))
+    except (ValueError, OSError):
+        return set()
+
 
 _TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 MAX_SCHEDULE_TIMES = 6
@@ -215,6 +257,12 @@ def load() -> dict:
     if isinstance(sessions, int) and not isinstance(sessions, bool) \
             and lo <= sessions <= hi:
         out["chat_max_sessions"] = sessions
+    try:
+        out["muted_sources"] = clean_sources(data.get("muted_sources"))
+    except ValueError:
+        # A list that cannot be read mutes nothing: the wrong direction
+        # here hides a card.
+        pass
     for key in ("model", "chat_model"):
         value = data.get(key)
         if isinstance(value, str) and value.strip():
@@ -288,6 +336,8 @@ def save(fields: dict) -> dict:
             if not isinstance(value, bool):
                 raise ValueError("capture must be a boolean")
             clean[key] = value
+        elif key == "muted_sources":
+            clean[key] = clean_sources(value)
         elif key == "plan":
             if value not in PLANS:
                 raise ValueError(f"plan must be one of {', '.join(PLANS)}")

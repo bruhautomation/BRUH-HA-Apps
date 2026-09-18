@@ -344,11 +344,18 @@ class TestOneVocabulary(unittest.TestCase):
 
         A resolution is a pre-filled ending, which is why nothing about the
         lifecycle changes — one implementation, whichever surface it was
-        given on.
+        given on. `advice` is the one verb that is NOT an ending — it puts a
+        sentence on the card and leaves the row — so it has a route of its
+        own rather than a row in the endings table, and the panel must
+        never send it down the {verb} path.
         """
         server = importlib.import_module("server")
         for verb in self.chat.RESOLUTION_VERBS:
+            if verb == "advice":
+                continue
             self.assertIn(verb, server.FINDING_VERBS, verb)
+        self.assertNotIn("advice", server.FINDING_VERBS)
+        self.assertIn("api/finding/${finding.ts}/advice", self.app_js)
 
     def test_an_unattended_run_may_not_offer_resolutions_to_nobody(self):
         self.assertIn(f"{self.engine.MCP}offer_resolutions",
@@ -383,3 +390,64 @@ class TestOneVocabulary(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAdviceIsNotAnEnding(unittest.TestCase):
+    """`advice` is the fourth kind and the only one that settles nothing:
+    its label is what to DO, written from the look the conversation took,
+    and pressing it replaces the card's generic "What you'd need to do"
+    while the finding stays. It is read like the others and capped like a
+    paragraph rather than a button, because a sentence naming the hub and
+    the automation does not fit in ninety characters."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.chat = importlib.import_module("chat_session")
+        cls.mcp = importlib.import_module("ha_mcp_server")
+
+    def test_the_parser_reads_it_with_a_longer_label(self):
+        long = "Power-cycle the Tuya hub in the garage — " + "x" * 700
+        out = self.chat.resolution_offer(
+            "mcp__home-assistant__offer_resolutions",
+            {"options": [{"label": long, "kind": "advice"},
+                         {"label": long, "kind": "done"}]})
+        self.assertEqual(out[0]["verb"], "advice")
+        self.assertEqual(len(out[0]["label"]), self.chat.MAX_ADVICE_LABEL)
+        self.assertEqual(len(out[1]["label"]), self.chat.MAX_RESOLUTION_LABEL)
+        self.assertEqual(self.chat.MAX_ADVICE_LABEL, findings_store.MAX_FIX)
+
+    def test_the_tool_accepts_it_and_says_it_settles_nothing(self):
+        out = self.mcp.offer_resolutions([
+            {"label": "Power-cycle the hub", "kind": "advice"}])
+        self.assertEqual(out["options"][0]["kind"], "advice")
+        self.assertIn("settles nothing", out["note"])
+
+
+class TestPressingAdvice(PanelCase):
+    def test_the_sentence_lands_on_the_card_and_the_row_stays(self):
+        row = self.file_finding()
+        payload = self.drive(lambda client: self._press(client, row, {
+            "fix": "Re-pair the hall sensor from the ZHA page."}))
+        [after] = payload["findings"]
+        self.assertEqual(after["ts"], row["ts"])
+        self.assertEqual(after["fix"], "Re-pair the hall sensor from the ZHA page.")
+        self.assertEqual(after["fix_by"], "chat")
+        self.assertEqual(after["status"], "open")
+        # Nothing settled, nothing taught, nothing to undo.
+        self.assertNotIn("undo", payload)
+        self.assertEqual(findings_store.settled_listing(), [])
+        self.assertEqual(self.queued_memory(), [])
+
+    def test_an_empty_sentence_is_refused(self):
+        row = self.file_finding()
+
+        async def run(client):
+            res = await client.post(f"/api/finding/{row['ts']}/advice",
+                                    json={"fix": "  "})
+            self.assertEqual(res.status, 400)
+        self.drive(run)
+
+    async def _press(self, client, row, body):
+        res = await client.post(f"/api/finding/{row['ts']}/advice", json=body)
+        self.assertEqual(res.status, 200, await res.text())
+        return await res.json()

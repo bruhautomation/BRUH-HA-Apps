@@ -44,6 +44,30 @@ do about it in this house.**
   were seven rows about one fact; the checks a missing key took down are now
   named on that key's own row.
 
+And four things the Findings tab was missing:
+
+- **Stop raising these.** A rule wrong about your house had exactly one
+  answer — Wrong, one row at a time — which settles one wording and leaves
+  the next pass to make the same mistake in new words. The scorecard line now
+  offers the press on any producer that has been wrong three times and right
+  never, the Wrong form carries the same box for the row in front of you, and
+  muting takes the producer's open cards off the list and files nothing from
+  it again. Nothing is settled and nothing goes into memory: it is about the
+  rule, not the house. A *Not raising* line carries the press that reverses
+  it; nothing comes back until the producer reports it again.
+- **The conversation can write "What you'd need to do".** Discuss a finding
+  and, once Claude has worked out what to actually do, it offers that beside
+  the endings; pressing it puts the sentence on the card (*from your
+  conversation*) and leaves the finding open. The card also says when the
+  look before it was shown wrote the instruction (*written after looking*).
+- **Claude can read the Findings tab and brAIn's own health.** Two read-only
+  tools, `get_findings` and `get_health`, so the chat, a voice command and
+  any card can answer *what needs attention* and *is brAIn OK* from the
+  same list and the same verdict the panel shows, rather than guessing.
+- **A finding notification opens the panel.** Tapping one landed on Home
+  Assistant's front page with the row three taps away; on the companion app
+  it now opens brAIn's own panel.
+
 ## 1.59.0
 
 **The usage sensors ask when the number has changed, instead of every five

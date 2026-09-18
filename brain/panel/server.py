@@ -1030,11 +1030,16 @@ async def _send_notification(rows: list[dict], held: bool = False) -> bool:
     # Buttons, but only where they can be answered and only when the
     # message is about one finding — see `notify_router.actions_for`.
     buttons = notify_router.actions_for(rows, service)
+    # And where a tap lands: the panel, rather than Home Assistant's front
+    # page with the row three taps away. Only where the notifier reads the
+    # keys (`open_link`), and only once the Supervisor has said what this
+    # add-on's slug is — a made-up path opens the wrong add-on or nothing.
+    data = {**({"actions": buttons} if buttons else {}),
+            **notify_router.open_link(service, addon_options.panel_path())}
     import ha_data
     try:
         await ha_data.send_notification(
-            service, title, body,
-            data={"actions": buttons} if buttons else None)
+            service, title, body, data=data or None)
     except Exception as exc:  # noqa: BLE001 — a bad target can't fail the run
         log.warning("findings notification via %s failed: %s", service, exc)
         NOTIFY_LAST.update(error=str(exc)[:200], at=int(time.time()),
@@ -6536,6 +6541,10 @@ def _diagnostics_payload() -> dict:
                 [int(time.time() - f["ts"]) for f in rows
                  if f["status"] == "triaging"] or [0]),
             "scorecard": findings_store.scorecard(),
+            # Which producers the homeowner has switched off. A quiet check
+            # and a muted one look identical from the list, and only one
+            # of them is a fault worth reading the log about.
+            "muted": [m["source"] for m in _muted_rows()],
         },
         "memory": {
             "document_bytes": memory_bytes,
@@ -6846,7 +6855,45 @@ def _findings_payload() -> dict:
     # exactly one place — a line under the filter chips — and a number
     # about the list belongs with the list.
     payload["scorecard"] = findings_store.scorecard()
+    # The producers the homeowner has muted, named. It rides here for the
+    # scorecard's reason: the one place it is read is a line under the
+    # filters, beside the scorecard rows that argue for each mute.
+    payload["muted"] = _muted_rows()
     return payload
+
+
+# What a muted producer was called when it was muted. The press clears
+# the producer's rows, which is where a non-check producer's title lived,
+# so it is remembered here at the moment it is still readable. In memory
+# only: after a restart the card's category or the settled ledger usually
+# still names it, and the id is the fallback for the rest.
+MUTED_TITLES: dict[str, str] = {}
+
+
+def _muted_rows() -> list[dict]:
+    """Every muted producer with a title a person would recognise.
+
+    In order: the check catalog's own title for a check ("Sensors frozen
+    on one value", never its group's "Device check" — a mute is per rule,
+    and three rows reading "Device check" are three things nobody can tell
+    apart); the category's title for an insight category; the title the
+    producer filed under, off a live row or the settled ledger; what it was
+    called when it was muted; and the id itself when nothing knows better.
+    """
+    titles = findings_store.source_titles()
+    out = []
+    for source in settings_store.load().get("muted_sources") or []:
+        title = ""
+        if source.startswith("check:"):
+            spec = checks.get_check(source[6:]) or {}
+            title = str(spec.get("title") or "")
+        else:
+            cat = resolve_category(source) or {}
+            title = str(cat.get("title") or "")
+        out.append({"source": source,
+                    "title": (title or titles.get(source)
+                              or MUTED_TITLES.get(source) or source)})
+    return out
 
 
 async def h_findings(request: web.Request) -> web.Response:
@@ -6971,6 +7018,21 @@ async def h_finding_verb(request: web.Request) -> web.Response:
     payload["undo"] = undo_store.record(
         "finding", finding=finding, key=findings_store.normalize(finding["text"]),
         fact=fact, fact_source=spec.get("source", "homeowner"))
+    # "Wrong — and stop raising these." The box on the Wrong form, for the
+    # row that is the fourth of its kind: the ending above is about this
+    # row, and the mute is about the rule that filed it. Only Wrong offers
+    # it, because agreeing a report was real is no argument against the
+    # producer. The rows it takes with it are counted, not undone: the
+    # undo token above puts back THIS row, and the mute is one press on
+    # the Findings tab to reverse.
+    if verb in ("wrong", "ignore") and (body or {}).get("mute") is True \
+            and finding.get("source"):
+        taken = await asyncio.to_thread(_mute_source, finding["source"])
+        payload.update(await asyncio.to_thread(_findings_payload))
+        payload["muted"] = _muted_rows()
+        payload["also_cleared"] = len(taken)
+        log.info("muted %s from a Wrong press (%d more row(s) taken off)",
+                 finding["source"], len(taken))
     return web.json_response(payload)
 
 
@@ -8124,6 +8186,90 @@ SNOOZE_CHOICES = {
 }
 
 
+def _mute_source(source: str) -> list[dict]:
+    """Stop a producer's findings, and take what it has already filed off
+    the list. One implementation for the two presses that do it (the
+    scorecard's button and the Wrong form's box), and the half `triage.
+    gate` cannot do for itself: the gate drops what arrives from now on,
+    this clears what is already there. Nothing is settled and nothing
+    goes into memory — a mute is about the RULE and not about the house."""
+    current = settings_store.load().get("muted_sources") or []
+    if source not in current:
+        settings_store.save({"muted_sources": [*current, source]})
+    # Before the rows go: they are where a non-check producer's title is.
+    title = findings_store.source_titles().get(source)
+    if title:
+        MUTED_TITLES[source] = title
+    return findings_store.clear_source(source)
+
+
+def _source_of(body: dict) -> str:
+    source = str((body or {}).get("source") or "").strip()
+    if not source or len(source) > settings_store.MAX_SOURCE_CHARS:
+        raise web.HTTPBadRequest(text="which producer? `source` names it")
+    return source
+
+
+async def h_findings_mute(request: web.Request) -> web.Response:
+    """"Stop raising these": a producer the homeowner has had enough of.
+
+    A rule wrong about this house — a scorecard reading 0 confirmed against
+    6 marked Wrong — used to have exactly one answer, Wrong one row at a
+    time, which settles one wording and leaves the next pass to make the
+    same mistake in new words. This is the press for the rule itself. It
+    takes the producer's open rows off the list and answers with how many,
+    because a press that removed six cards has to say so.
+    """
+    source = _source_of(await _json_body(request))
+
+    def apply() -> dict:
+        taken = _mute_source(source)
+        # `muted` is the payload's list of producers; the flag is `ok`.
+        return {"ok": True, "cleared": len(taken), **_findings_payload()}
+    payload = await asyncio.to_thread(apply)
+    log.info("muted %s (%d row(s) taken off the list)", source,
+             payload["cleared"])
+    return web.json_response(payload)
+
+
+async def h_findings_unmute(request: web.Request) -> web.Response:
+    """"Raise these again": stops the mute and nothing more. Nothing comes
+    back until the producer reports it on its next pass — `unsettle`'s
+    rule, for its reason: what was on the list is not necessarily still
+    true of the house."""
+    source = _source_of(await _json_body(request))
+
+    def apply() -> dict:
+        current = settings_store.load().get("muted_sources") or []
+        settings_store.save({"muted_sources": [s for s in current
+                                               if s != source]})
+        return {"ok": True, **_findings_payload()}
+    return web.json_response(await asyncio.to_thread(apply))
+
+
+async def h_finding_advice(request: web.Request) -> web.Response:
+    """Replace what a finding says to do with what the conversation reached.
+
+    The chat's door onto "What you'd need to do" — the `advice` kind an
+    `offer_resolutions` call may carry. Not an ending: the row stays
+    exactly where it is with a better sentence on it, and the press is
+    the consent, exactly as it is for the three endings beside it. No
+    undo token, because nothing was taken away.
+    """
+    finding = _finding_or_404(request)
+    body = await _json_body(request)
+    fix = str((body or {}).get("fix") or "").strip()
+    if not fix:
+        raise web.HTTPBadRequest(text="`fix` is the sentence to put on the card")
+
+    def apply() -> dict:
+        row = findings_store.set_fix(finding["ts"], fix, "chat")
+        if row is None:
+            raise web.HTTPConflict(text="that finding has gone from the list")
+        return {"advised": True, **_findings_payload()}
+    return web.json_response(await asyncio.to_thread(apply))
+
+
 async def h_finding_snooze(request: web.Request) -> web.Response:
     """Take a finding off the list for a while — without settling it.
 
@@ -8172,7 +8318,11 @@ Do not change anything yet; I will decide.
 Then end your answer by calling offer_resolutions with the ways this could
 actually be settled, so they are buttons I can press here. Offer only what
 your own look supports, name each one the way I would say it, and leave out
-any you cannot justify — two honest options beat four."""
+any you cannot justify — two honest options beat four. If your look has
+worked out what I should actually DO about it — which hub to power-cycle,
+which automation to open, which setting to change — offer that as an
+`advice` option too: pressing it puts your sentence on the card as what to
+do, and leaves the finding open."""
 
 
 async def h_finding_discuss(request: web.Request) -> web.Response:
@@ -9981,6 +10131,13 @@ def make_app() -> web.Application:
     app.router.add_post("/api/finding/{ts}/fix", h_finding_fix)
     app.router.add_post("/api/finding/{ts}/snooze", h_finding_snooze)
     app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)
+    # Not an ending either: the chat's sentence onto the card. Before the
+    # {verb} catch-all for snooze's reason.
+    app.router.add_post("/api/finding/{ts}/advice", h_finding_advice)
+    # The producer, not the row. Registered before /api/finding/{ts}/…
+    # only for tidiness; the path does not collide.
+    app.router.add_post("/api/findings/mute", h_findings_mute)
+    app.router.add_post("/api/findings/unmute", h_findings_unmute)
     # Before the {ts} pattern, which would otherwise swallow it.
     app.router.add_get("/api/proposals", h_proposals)
     app.router.add_get("/api/playbook/{ts}/rehearsal", h_playbook_rehearsal)

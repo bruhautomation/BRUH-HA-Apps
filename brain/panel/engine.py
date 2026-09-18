@@ -700,6 +700,9 @@ ANALYST_TOOLS = [
     f"{MCP}explain_change",       # what CAUSED a change, not just that it happened
     f"{MCP}get_activity",
     f"{MCP}get_house_model",   # what has been MEASURED here, and what has not
+    f"{MCP}get_findings",      # what is on the Findings tab, so a run can
+                               # answer "what needs attention" without guessing
+    f"{MCP}get_health",        # whether brAIn itself is working, in its own words
     f"{MCP}get_areas",
     f"{MCP}get_registry",
     f"{MCP}get_automations",

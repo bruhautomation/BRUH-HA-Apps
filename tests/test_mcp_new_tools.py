@@ -414,3 +414,100 @@ class TestServiceDenyList(unittest.TestCase):
         mock_api.return_value = {"ok": True}
         ha_mcp_server.fire_event("custom_event")
         mock_api.assert_called_once()
+
+
+class TestThePanelsOwnListAndVerdict(unittest.TestCase):
+    """`get_findings` and `get_health` read the panel over loopback — one
+    implementation, one answer — and trim the page of JSON each answers
+    with to what a run can act on. A panel that is not up is reported as
+    such, never as a house with nothing wrong or an add-on that is fine."""
+
+    FINDINGS = {
+        "open": 2,
+        "findings": [
+            {"ts": 1, "severity": "serious", "text": "Hose Reel is unavailable",
+             "detail": "Since 16 Sep", "fix": "Power-cycle the Tuya hub",
+             "fix_by": "triage", "entity_id": "valve.hose_reel",
+             "source_title": "Device check", "status": "open",
+             "fixable": False, "run_id": "abc", "snoozed_until": 0,
+             "triage": {"verdict": "elevated", "reason": "the hub is down",
+                        "run_id": "r1"}},
+            {"ts": 2, "severity": "warning", "text": "A cupboard contact",
+             "status": "held", "triage": {"verdict": "held",
+                                          "reason": "nobody opens it"}},
+            {"ts": 3, "severity": "info", "text": "Being fixed",
+             "status": "fixing"},
+        ],
+        "hypotheses": [{"ts": 9, "claim": "The garage is heated"}],
+        "settled": [{"key": "secret bookkeeping"}],
+    }
+
+    @patch("ha_mcp_server._panel_get")
+    def test_open_is_the_list_a_person_sees(self, panel):
+        panel.return_value = self.FINDINGS
+        out = ha_mcp_server.get_findings()
+        panel.assert_called_once_with("/api/findings")
+        self.assertEqual(out["open"], 2)
+        self.assertEqual([f["ts"] for f in out["findings"]], [1, 3])
+        first = out["findings"][0]
+        self.assertEqual(first["fix"], "Power-cycle the Tuya hub")
+        self.assertEqual(first["looked"], "the hub is down")
+        # Bookkeeping stays behind: no run id, no snooze stamp, no ledger.
+        self.assertNotIn("run_id", first)
+        self.assertNotIn("snoozed_until", first)
+        self.assertNotIn("settled", out)
+        self.assertEqual(out["hypotheses"], [{"ts": 9, "claim": "The garage is heated"}])
+
+    @patch("ha_mcp_server._panel_get")
+    def test_held_is_what_a_look_decided_not_to_show(self, panel):
+        panel.return_value = self.FINDINGS
+        out = ha_mcp_server.get_findings(status="held")
+        self.assertEqual([f["ts"] for f in out["findings"]], [2])
+        self.assertEqual(len(ha_mcp_server.get_findings(status="all")["findings"]), 3)
+        self.assertIn("error", ha_mcp_server.get_findings(status="everything"))
+
+    @patch("ha_mcp_server._panel_get")
+    def test_a_panel_that_is_down_is_not_a_quiet_house(self, panel):
+        panel.return_value = {"error": "the brAIn panel did not answer: refused"}
+        self.assertIn("error", ha_mcp_server.get_findings())
+        self.assertIn("error", ha_mcp_server.get_health())
+
+    @patch("ha_mcp_server._panel_get")
+    def test_health_is_the_verdict_and_the_switch(self, panel):
+        panel.return_value = {
+            "health": {"state": "degraded", "reason": "usage figures are "
+                       "not being reported", "fix": "Press the pill",
+                       "problems": [{"id": "usage", "state": "degraded",
+                                     "reason": "r", "fix": "f", "noise": 1}]},
+            "auth": {"state": "ok"},
+            "usage": {"source": "estimate", "limits": {"code": "http_401"}},
+            "daemons": {"ttyd": {"running": True},
+                        "usage_tracker": {"running": False}},
+            "versions": {"addon": "1.60.0"},
+            "journal_tail": [{"huge": "payload"}] * 30,
+            "faults": [{"where": "Usage figures", "what": "x"}],
+        }
+        out = ha_mcp_server.get_health()
+        panel.assert_called_once_with("/api/diagnostics")
+        self.assertEqual(out["state"], "degraded")
+        self.assertEqual(out["fix"], "Press the pill")
+        self.assertEqual(out["problems"], [{"id": "usage", "state": "degraded",
+                                            "reason": "r", "fix": "f"}])
+        self.assertEqual(out["signed_in"], "ok")
+        self.assertEqual(out["usage"]["limits"]["code"], "http_401")
+        self.assertEqual(out["daemons"], {"ttyd": True, "usage_tracker": False})
+        self.assertNotIn("journal_tail", out)
+
+    def test_both_are_read_only_tools_the_analyst_may_use(self):
+        import importlib
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "brain" / "panel"))
+        try:
+            engine = importlib.import_module("engine")
+        finally:
+            sys.path.pop(0)
+        for name in ("get_findings", "get_health"):
+            self.assertIn(name, ha_mcp_server.TOOL_IMPLEMENTATIONS)
+            self.assertIn(f"{engine.MCP}{name}", engine.ANALYST_TOOLS)
+            self.assertNotIn(f"{engine.MCP}{name}", engine.ANALYST_DENIED)

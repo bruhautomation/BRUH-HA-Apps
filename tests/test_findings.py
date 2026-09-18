@@ -2272,3 +2272,45 @@ class TestCheckAgain(ServerCase):
         self.assertEqual(data["created"], 1)
         self.assertEqual([r["text"] for r in findings_store.list_all()],
                          ["Porch sensor is unavailable"])
+
+
+class TestANotificationOpensThePanel(NotifyCase):
+    """The tap lands on the Findings tab. `addon_options.panel_path` is the
+    Supervisor's slug under the sidebar's route; `BRAIN_ADDON_SLUG` stands
+    in for it here, and the message is otherwise the message it was."""
+
+    def test_the_link_rides_beside_the_buttons(self):
+        import addon_options
+        os.environ["BRAIN_FINDINGS_NOTIFY"] = "mobile_app_phone"
+        os.environ["BRAIN_ADDON_SLUG"] = "local_brain"
+        self.addCleanup(os.environ.pop, "BRAIN_ADDON_SLUG", None)
+        self.assertEqual(addon_options.panel_path(), "/hassio/ingress/local_brain")
+        created = findings_store.add_many([{"text": "Battery dying",
+                                            "severity": "serious"}])
+        self._announce(created)
+        [data] = self.payloads
+        self.assertEqual(data["url"], "/hassio/ingress/local_brain")
+        self.assertEqual(data["clickAction"], "/hassio/ingress/local_brain")
+        self.assertTrue(data["actions"])
+
+    def test_no_slug_leaves_the_message_exactly_as_it_was(self):
+        import addon_options
+        os.environ["BRAIN_FINDINGS_NOTIFY"] = "mobile_app_phone"
+        os.environ.pop("BRAIN_ADDON_SLUG", None)
+        addon_options._info.pop("slug", None)
+        self.assertIsNone(addon_options.panel_path())
+        created = findings_store.add_many([{"text": "Battery dying",
+                                            "severity": "serious"}])
+        self._announce(created)
+        [data] = self.payloads
+        self.assertNotIn("url", data)
+        self.assertTrue(data["actions"])
+
+    def test_a_notifier_that_is_not_the_app_gets_no_data_at_all(self):
+        os.environ["BRAIN_FINDINGS_NOTIFY"] = "telegram"
+        os.environ["BRAIN_ADDON_SLUG"] = "local_brain"
+        self.addCleanup(os.environ.pop, "BRAIN_ADDON_SLUG", None)
+        created = findings_store.add_many([{"text": "Battery dying",
+                                            "severity": "serious"}])
+        self._announce(created)
+        self.assertEqual(self.payloads, [None])

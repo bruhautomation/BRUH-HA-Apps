@@ -130,18 +130,41 @@ NO_BUDGET = ("The usage budget is spent, so nothing looked at this before "
 _SAME_WORD = {"hold": "held", "elevate": "elevated"}
 
 
-def gate(rows: list[dict]) -> list[dict]:
+def gate(rows: list[dict], muted: set[str] | None = None) -> list[dict]:
     """The wire-shaped findings a producer is about to file, every one of
-    them marked as waiting for something to look at it.
+    them marked as waiting for something to look at it — less the ones
+    from a producer the homeowner has muted.
 
     One place decides this, so the store never has to know the policy and
     a second producer cannot file straight past it by accident. It is
     unconditional on purpose — see the fourth rule. It does not mutate
     what it is handed, because the same list goes on to `refresh_details`
     and `clear_resolved` in the same pass.
+
+    **A muted producer's rows are dropped here and nowhere else.** "Stop
+    raising these" is the press for a rule that is wrong about this house
+    — the scorecard reading 0 confirmed against 6 marked Wrong — and Wrong
+    one row at a time was the only answer it had, which is a key in the
+    settled ledger per wording and the next pass making the same mistake
+    in new words. Dropping the row at the door, rather than filing it and
+    hiding it, is what keeps the mute out of `LIVE_STATUSES`, the mirror,
+    the badge and every dedupe; the press itself clears what that producer
+    already filed (`findings_store.clear_source`), and unmuting brings
+    nothing back until the producer reports it again, `unsettle`'s rule.
+    `muted` is read from the settings when not given, so every producer
+    gets the same answer without each caller remembering to ask.
     """
+    if muted is None:
+        try:
+            import settings_store
+            muted = settings_store.muted()
+        except Exception:  # noqa: BLE001 — a settings file that cannot
+            # be read mutes nothing: the wrong direction here hides a card.
+            muted = set()
     return [{**row, "status": "triaging"} if isinstance(row, dict) else row
-            for row in rows]
+            for row in rows
+            if not (isinstance(row, dict) and muted
+                    and str(row.get("source") or "") in muted)]
 
 
 SYSTEM = """You are checking whether problems a smart home found are real.
