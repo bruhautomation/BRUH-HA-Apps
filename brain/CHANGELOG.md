@@ -2,6 +2,154 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.61.0
+
+**Fix it says what it would change before it changes it and can put it back, a
+finding waiting on you is a Repair, only what cannot wait rings your phone,
+and the Settings dialog is five sections instead of one scroll.**
+
+- **Pressing Fix it no longer changes anything.** It used to send Claude at
+  your house on the press, with nothing on screen first about which entity,
+  which file or which automation was about to move. The press now buys a
+  **read-only** look — it holds reading tools and cannot act, whatever it is
+  asked — which confirms the problem is still real, works out the cause, and
+  comes back with the steps it *would* take (which file, which entity, what it
+  becomes), one sentence on what could go wrong, and whether software should
+  be making this change at all. Those land on the card with **Apply** and
+  **Cancel** under them. Apply is the one press that changes the house, and
+  the run it starts is told to carry out exactly the steps you read — if the
+  house has moved on or a step turns out to be wrong it stops and says so,
+  rather than substituting a change nobody agreed to. Cancel leaves the
+  finding exactly as open as it was and **keeps the plan**, because it cost a
+  Claude run and reading it again should not cost a second one. A plan that
+  needs your hands, or that brAIn will not make itself, offers no Apply at
+  all: a button that cannot help is worse than the sentence.
+
+- **A fix can be undone from the card.** Every file the run edited under
+  `/config` goes back and the domains they belong to are reloaded — out of the
+  same edit journal `brain undo` reads in the terminal, through the same
+  reverter, so there is one answer to "put this file back" rather than two.
+  The service calls it made are **listed and never reversed**: a call records
+  what was asked for and not what the light was doing beforehand, so putting
+  one back would be a guess acted on in your house. The card says which is
+  which before you press — *brAIn changed 2 files and made 3 service calls* —
+  and a fix that ran before the add-on recorded that window says **that**
+  instead of claiming there was nothing to put back. This is not the toast's
+  five-minute Undo: it sits on the card for as long as the finding is waiting
+  to be read, because bytes on disk are not a mis-click. `brain findings`
+  carries the same four presses — `fix`, `apply`, `cancel` and `undo` — and
+  prints the plan's steps, so applying from a terminal is not a press in the
+  dark.
+
+- **A finding waiting on you is a Repair.** The Findings tab is behind ingress
+  and Settings → System → Repairs is where Home Assistant puts the things that
+  need a person — read by people who never open the brAIn panel. Every
+  mirrored row that is a *decision* (`open`, `needs_you`, `failed`) now raises
+  one, carrying what it is, what brAIn measured and what you'd need to do,
+  with the tab's own three endings behind it: **I've fixed it**, **Not a
+  problem here** (with the reason box, which is the half that teaches) and
+  **Remind me tomorrow**. A press writes the same request a tick in the To-do
+  app writes, so an ending means one thing wherever it was given. `fixing` and
+  `fixed` raise nothing — the first is a repair brAIn is running and the
+  second's one honest answer is "Got it", which is not a verb a request can
+  carry — and neither does `info`: Repairs is the list of things that need a
+  person, and a row nobody has to act on is how the page that holds the row
+  that matters stops being read. Capped at 25, oldest first, so a bad week
+  cannot fill somebody's Repairs page. The issues are **state, not news**:
+  Home Assistant throws non-persistent issues away when it boots, so they are
+  reconciled against the mirror on every poll rather than diffed once —
+  re-raised when a check refreshes the number in a row, taken down the moment
+  the row is answered anywhere, and held down between your press and the
+  add-on applying it, without which the dialog reappeared the second it
+  closed.
+
+- **`brain.check` runs the house checks now, and `button.brain_run_checks`
+  presses it.** The pass is the one thing in the add-on with an hours-long
+  timer in front of it, so "I just fixed that, is it clear yet" had no answer
+  but waiting. It rides the request queue the endings already use, which is
+  what keeps the order right: an answer given in the same breath is applied
+  *before* the pass, or the pass re-files what it just settled. Two asks in
+  one drain are one pass, and a pass already running consumes the request and
+  says so rather than queueing a second look at the same house. The button
+  sits on the brAIn System device, so a dashboard, an automation and a voice
+  command all land on one implementation.
+
+- **Only what cannot wait rings your phone, and it asks again until you
+  answer.** Every finding above `findings_notify_min_severity` was pushed once
+  and never again, so the floor was the only dial there was: turning it down
+  to hear about a freezing pipe let a dying battery through the same door, and
+  turning it up silenced both. A row is now **escalated**, **notified once**,
+  or **quiet**, decided from its severity *and* the urgency of the check that
+  raised it. Escalated is `critical` and urgent — a leak, a freeze, a hub that
+  has stopped answering. It goes out immediately, quiet hours or not, and then
+  **asks again**: one hour, four hours, twelve hours, three reminders and then
+  it stops, with the last one saying it will not ask again. Each reminder says
+  which repeat it is and how long the problem has been open, and carries the
+  same buttons and the same tap-to-open-the-panel every finding notification
+  does. Answering it in any way — fixed, wrong, snoozed, moved to your to-do
+  list, or the check simply no longer reporting it — stops the reminders at
+  the next pass, and the ladder is written to disk after every message so a
+  restart resumes the rung it was on. Notified once is what every release
+  before this one did. Quiet is not lost: a row under the floor reaches no
+  phone and is still on the Findings tab, in `todo.brain` and in Repairs —
+  places you look, rather than places that interrupt.
+
+- **`findings_notify_min_severity` now defaults to `critical`**, which is what
+  makes the tiers mean anything: a dying battery waits on the tab instead of
+  ringing a phone. Set it back to `serious` for the old behaviour — the option
+  says so, and nothing else about your configuration changes. ⚙ → Diagnostics
+  says what is escalating, when the next reminder is due and how many have
+  gone out, beside the quiet-hours hold queue.
+
+- **The Settings dialog is five sections, and three of them are shut.** ⚙ was
+  one flat scroll of a dozen headings with a paragraph of prose under nearly
+  every control — 5,910px of scrolling at 390 and 3,837 at 1,200 — so the
+  commonest visit (change the model, read the budget, check the login is still
+  good) meant scrolling past the corpus capture and the rehearsal to reach it.
+  It is now Claude account and Insights open, with Terminal & chat, Generation
+  defaults and Advanced behind a press: 1,946px and 1,372px. Advanced holds
+  Diagnostics, Problems, Capture, the deep check and the rehearsal, and its
+  five reads run when you open it rather than every time you open the dialog —
+  two of them start a three-second poll, so the old shape paid for a request
+  every three seconds behind a section nobody had looked at. Each section
+  remembers whether you left it open. Prose past two sentences moved onto a
+  **?** beside the control it is about, which is what a tooltip is for: right
+  for something wanted once, wrong as the only copy of something wanted every
+  time. The one sentence that stayed on the page is the sharing box's warning
+  that `/config` rides into Home Assistant backups — a credential leaving the
+  add-on is a fact you meet before pressing, not one you go and ask for.
+
+- **Every dropdown and number box in ⚙ stopped zooming iPhones.** The panel's
+  16px text floor is a bare `select` / `input[type=…]` selector, and the
+  dialog's own 13.5px rules are class-qualified and outrank it — so focusing a
+  picker in Settings zoomed the ingress iframe in and left it there, which is
+  the exact failure that floor exists to prevent, reached by the one route it
+  could not reach.
+
+- **A check for the updates waiting to be installed, on trial.** Nothing in
+  brAIn noticed that Home Assistant Core, the OS, the Supervisor or an add-on
+  had an update waiting — the most common thing a person opens Home Assistant
+  to check by hand. The checks snapshot asks the Supervisor for
+  `/available_updates` inside the gather it was already making for backups,
+  add-ons, the host and Core, so it costs no extra wait; it is its **own**
+  snapshot key rather than a field on `supervisor`, because a Supervisor that
+  listed its add-ons and refused this one has answered every other system
+  check and not this one. An empty list is a real answer; a refusal leaves the
+  key unavailable and the check does not run, because *"I could not look"* may
+  not read as *"you are up to date"*. `sys.update_pending` files **one** row
+  however many updates there are — installing them is a single visit to one
+  screen — with the same sentence every pass and the count that changes every
+  week in the detail. Its urgency is `whenever`: an update waiting at 23:00 is
+  the same update at 08:00. **It ships in `checks.SHADOW`**, running where
+  nobody can see it and filing to the shadow store until its numbers say it
+  should move, which is a code change somebody makes reading them. The corpus
+  is what surfaced the one real defect on the way: a frozen entry predates the
+  new key, so the check is skipped on it — the honest answer — and the replay
+  had been passing `run_all`'s per-check skip map through under the same word
+  it used for an entry it refused to grade, rendering both frozen houses as
+  skipped with nothing scored. `entry_skipped` separates the two claims, and
+  the line says how many checks could not look.
+
 ## 1.60.0
 
 **The usage sensors renew their own credential, and a finding says what to
