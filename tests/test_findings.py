@@ -420,6 +420,10 @@ class TestFindingsNotify(NotifyCase):
 
     def test_severity_floor_holds(self):
         os.environ["BRAIN_FINDINGS_NOTIFY"] = "mobile_app_phone"
+        # Named rather than left to the default: this is about the floor
+        # doing its job, and the shipped default is `critical`, which
+        # would make the case below silence both rows for the wrong reason.
+        os.environ["BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY"] = "serious"
         created = findings_store.add_many([
             {"text": "Nitpick", "severity": "info"},
             {"text": "Battery dying", "severity": "serious"},
@@ -440,7 +444,7 @@ class TestFindingsNotify(NotifyCase):
 
         os.environ["BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY"] = "apocalyptic"
         _, sev = self.server._findings_notify_target()
-        self.assertEqual(sev, "serious")
+        self.assertEqual(sev, "critical")
 
     def test_a_failed_delivery_is_swallowed(self):
         os.environ["BRAIN_FINDINGS_NOTIFY"] = "mobile_app_phone"
@@ -2279,6 +2283,12 @@ class TestANotificationOpensThePanel(NotifyCase):
     Supervisor's slug under the sidebar's route; `BRAIN_ADDON_SLUG` stands
     in for it here, and the message is otherwise the message it was."""
 
+    def setUp(self):
+        super().setUp()
+        # These are about the payload, not the floor, and a `serious` row
+        # is quiet under the shipped default.
+        os.environ["BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY"] = "serious"
+
     def test_the_link_rides_beside_the_buttons(self):
         import addon_options
         os.environ["BRAIN_FINDINGS_NOTIFY"] = "mobile_app_phone"
@@ -2314,3 +2324,257 @@ class TestANotificationOpensThePanel(NotifyCase):
                                             "severity": "serious"}])
         self._announce(created)
         self.assertEqual(self.payloads, [None])
+
+
+
+class TestTheThreeTiersInThePanel(NotifyCase):
+    """The panel's own use of the tiers, driven rather than grepped.
+
+    Only very critical things escalate; everything else above the floor
+    is the once-and-held message it always was; everything under the
+    floor reaches no phone at all and is still on the Findings tab. The
+    wiring is where the mistakes live — a floor read from the wrong
+    place, a ladder started for a row that is not on it, a reminder that
+    goes on after somebody has answered.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.notify_router = importlib.import_module("notify_router")
+        self.baselines = importlib.import_module("baselines")
+        self.ladder = str(Path(self.tmp.name) / "notify-escalation.json")
+        self.queue = str(Path(self.tmp.name) / "notify-queue.json")
+        self._old_ladder = self.notify_router.ESCALATION_FILE
+        self._old_queue = self.notify_router.QUEUE_FILE
+        self.notify_router.ESCALATION_FILE = self.ladder
+        self.notify_router.QUEUE_FILE = self.queue
+        os.environ["BRAIN_FINDINGS_NOTIFY"] = "mobile_app_phone"
+        self._old_tz = self.baselines.house_timezone
+        self.baselines.house_timezone = lambda *a, **k: (dt.timezone.utc, "UTC")
+        # A finding's id is the second it was filed, so the clock may not
+        # be pinned at zero: `begin_escalation` refuses a falsy ts, and a
+        # test that pinned it there would prove the ladder empty for a
+        # reason that has nothing to do with the ladder.
+        self.base = 1_700_000_000.0
+
+    def tearDown(self):
+        self.notify_router.ESCALATION_FILE = self._old_ladder
+        self.notify_router.QUEUE_FILE = self._old_queue
+        self.baselines.house_timezone = self._old_tz
+        for var in ("BRAIN_NOTIFY_QUIET_START", "BRAIN_NOTIFY_QUIET_END"):
+            os.environ.pop(var, None)
+        super().tearDown()
+
+    def clock(self, when):
+        old = self.server.time.time
+        self.server.time.time = lambda: when
+        self.addCleanup(lambda: setattr(self.server.time, "time", old))
+
+    def at(self, offset=0.0):
+        return self.base + offset
+
+    def rung(self, i):
+        return self.notify_router.ESCALATION_S[i]
+
+    def file(self, text, severity="critical",
+             source="check:dev.unavailable"):
+        return findings_store.add_many(
+            [{"text": text, "severity": severity, "source": source}])
+
+    def tick(self):
+        return asyncio.run(self.server._escalation_tick())
+
+    def ladder_rows(self):
+        return self.notify_router.load_escalations(self.ladder)
+
+    # -- the split ---------------------------------------------------------
+
+    def test_a_leak_escalates_and_starts_its_ladder(self):
+        self.clock(self.at())
+        self._announce(self.file("Water under the sink"))
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("Water under the sink", self.sent[0][2])
+        self.assertEqual(list(self.ladder_rows()),
+                         [findings_store.list_all()[0]["ts"]])
+
+    def test_a_critical_row_that_can_wait_is_pushed_once_and_never_again(self):
+        self.clock(self.at())
+        self._announce(self.file("Battery in three weeks",
+                                 source="check:forecast.battery"))
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.ladder_rows(), {})
+        self.clock(self.at(10 ** 9))
+        self.assertEqual(self.tick(), 0)
+        self.assertEqual(len(self.sent), 1)
+
+    def test_a_serious_row_reaches_no_phone_under_the_shipped_default(self):
+        # It is on the Findings tab either way, which is the whole point:
+        # quiet is not lost.
+        self.clock(self.at())
+        self._announce(self.file("Battery dying", severity="serious",
+                                 source="check:forecast.battery"))
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.notify_router.load_queue(self.queue), [])
+        self.assertEqual(self.ladder_rows(), {})
+        self.assertEqual(len(findings_store.list_all("open")), 1)
+
+    def test_the_same_row_is_pushed_once_when_the_floor_is_lowered(self):
+        os.environ["BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY"] = "serious"
+        self.clock(self.at())
+        self._announce(self.file("Battery dying", severity="serious",
+                                 source="check:forecast.battery"))
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.ladder_rows(), {})
+
+    def test_an_escalation_breaks_quiet_hours_and_an_ordinary_row_does_not(self):
+        os.environ["BRAIN_NOTIFY_QUIET_START"] = "22"
+        os.environ["BRAIN_NOTIFY_QUIET_END"] = "7"
+        os.environ["BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY"] = "info"
+        self.clock(dt.datetime(2026, 3, 4, 3, 30,
+                               tzinfo=dt.timezone.utc).timestamp())
+        self._announce(self.file("Pipes are about to freeze",
+                                 source="check:climate.freeze"))
+        self._announce(self.file("Something drifted", severity="warning",
+                                 source="check:forecast.decline"))
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("freeze", self.sent[0][2])
+        self.assertEqual(
+            [r["text"] for r in self.notify_router.load_queue(self.queue)],
+            ["Something drifted"])
+
+    # -- the ladder --------------------------------------------------------
+
+    def test_the_reminder_says_which_repeat_it_is(self):
+        self.clock(self.at())
+        self._announce(self.file("Water under the sink"))
+        self.clock(self.at(self.rung(0) - 1))
+        self.assertEqual(self.tick(), 0)
+        self.clock(self.at(self.rung(0)))
+        self.assertEqual(self.tick(), 1)
+        self.assertEqual(len(self.sent), 2)
+        self.assertIn("1st reminder", self.sent[1][2])
+        self.clock(self.at(self.rung(1)))
+        self.assertEqual(self.tick(), 1)
+        self.assertIn("2nd reminder", self.sent[2][2])
+
+    def test_it_stops_after_the_last_rung_and_says_so(self):
+        rungs = self.notify_router.ESCALATION_S
+        self.clock(self.at())
+        self._announce(self.file("Water under the sink"))
+        for rung in rungs:
+            self.clock(self.at(rung))
+            self.assertEqual(self.tick(), 1, rung)
+        self.assertIn("not ask about this again", self.sent[-1][2])
+        self.clock(self.at(10 ** 9))
+        self.assertEqual(self.tick(), 0)
+        self.assertEqual(len(self.sent), 1 + len(rungs))
+
+    def test_a_reminder_carries_the_buttons_and_the_panel_link(self):
+        os.environ["BRAIN_ADDON_SLUG"] = "local_brain"
+        self.addCleanup(os.environ.pop, "BRAIN_ADDON_SLUG", None)
+        self.clock(self.at())
+        self._announce(self.file("Water under the sink"))
+        ts = findings_store.list_all()[0]["ts"]
+        self.clock(self.at(self.rung(0)))
+        self.tick()
+        data = self.payloads[-1]
+        self.assertEqual([a["action"] for a in data["actions"]],
+                         [f"brain.fixed.{ts}", f"brain.wrong.{ts}",
+                          f"brain.snooze.{ts}"])
+        self.assertEqual(data["url"], "/hassio/ingress/local_brain")
+
+    # -- and it stops the moment somebody answers --------------------------
+
+    def test_settling_it_cancels_the_ladder(self):
+        self.clock(self.at())
+        self._announce(self.file("Water under the sink"))
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.settle_and_clear(ts, "fixed")
+        self.clock(self.at(self.rung(0)))
+        self.assertEqual(self.tick(), 0)
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.ladder_rows(), {})
+
+    def test_snoozing_it_cancels_the_ladder(self):
+        # "Remind me later" is somebody answering; going on reminding
+        # them is the notifier arguing with the button they pressed.
+        self.clock(self.at())
+        self._announce(self.file("Water under the sink"))
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.snooze(ts, int(self.at(self.rung(-1) + 60)))
+        self.clock(self.at(self.rung(0)))
+        self.assertEqual(self.tick(), 0)
+        self.assertEqual(self.ladder_rows(), {})
+
+    def test_a_check_clearing_it_cancels_the_ladder(self):
+        self.clock(self.at())
+        self._announce(self.file("Water under the sink"))
+        findings_store.clear_resolved({"check:dev.unavailable"}, set())
+        self.assertEqual(findings_store.list_all("open"), [])
+        self.clock(self.at(self.rung(0)))
+        self.assertEqual(self.tick(), 0)
+        self.assertEqual(self.ladder_rows(), {})
+
+    def test_moving_it_to_the_to_do_list_cancels_the_ladder(self):
+        self.clock(self.at())
+        self._announce(self.file("Water under the sink"))
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.settle_and_clear(ts, "accepted")
+        self.clock(self.at(self.rung(0)))
+        self.assertEqual(self.tick(), 0)
+        self.assertEqual(self.ladder_rows(), {})
+
+    def test_an_unreadable_store_holds_the_reminder_rather_than_sending_it(self):
+        # The opposite of the hold queue's rule, deliberately: a held row
+        # is announced once, where a ladder that cannot tell whether a
+        # problem is over would ring three more times about one somebody
+        # fixed an hour ago. The next pass is minutes away.
+        self.clock(self.at())
+        self._announce(self.file("Water under the sink"))
+        old = findings_store.list_all
+
+        def boom(status=None):
+            raise OSError("no store")
+
+        findings_store.list_all = boom
+        self.addCleanup(lambda: setattr(findings_store, "list_all", old))
+        self.clock(self.at(self.rung(0)))
+        self.assertEqual(self.tick(), 0)
+        self.assertEqual(len(self.sent), 1)
+        # ...and nothing was forgotten while it could not look.
+        self.assertEqual(len(self.ladder_rows()), 1)
+
+    # -- across a restart, and on the screen that reports it ---------------
+
+    def test_a_ladder_written_by_an_earlier_process_resumes_at_its_rung(self):
+        self.clock(self.at())
+        self._announce(self.file("Water under the sink"))
+        ts = findings_store.list_all()[0]["ts"]
+        self.notify_router.record_reminder(ts, self.at(self.rung(0)),
+                                           self.ladder)
+        self.sent.clear()
+        # Everything this process knew is on disk; nothing is in memory.
+        self.clock(self.at(self.rung(1) - 1))
+        self.assertEqual(self.tick(), 0)
+        self.clock(self.at(self.rung(1)))
+        self.assertEqual(self.tick(), 1)
+        self.assertIn("2nd reminder", self.sent[-1][2])
+
+    def test_the_diagnostics_payload_says_what_is_escalating(self):
+        self.clock(self.at())
+        self._announce(self.file("Water under the sink"))
+        diag = self.server._notify_diagnostics()
+        self.assertEqual(diag["escalating"], 1)
+        self.assertEqual(diag["escalation_reminders_sent"], 0)
+        self.assertEqual(diag["escalation_since"], int(self.base))
+        self.assertEqual(diag["escalation_next_at"], int(self.at(self.rung(0))))
+        self.assertEqual(diag["min_severity"], "critical")
+        self.clock(self.at(self.rung(0)))
+        self.tick()
+        self.assertEqual(
+            self.server._notify_diagnostics()["escalation_reminders_sent"], 1)
+
+    def test_nothing_escalating_is_a_payload_that_says_so(self):
+        diag = self.server._notify_diagnostics()
+        self.assertEqual(diag["escalating"], 0)
+        self.assertEqual(diag["escalation_next_at"], 0)

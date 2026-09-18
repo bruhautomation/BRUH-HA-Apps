@@ -352,7 +352,7 @@ MEMORYMD
     # its fallback for when the Supervisor cannot be read.
     local findings_notify findings_notify_sev
     findings_notify=$(bashio::config 'findings_notify_service' '')
-    findings_notify_sev=$(bashio::config 'findings_notify_min_severity' 'serious')
+    findings_notify_sev=$(bashio::config 'findings_notify_min_severity' 'critical')
     export BRAIN_FINDINGS_NOTIFY="$findings_notify"
     export BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY="$findings_notify_sev"
     local quiet_start quiet_end
