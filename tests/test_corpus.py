@@ -257,8 +257,21 @@ class TestTheDeterministicReplay(unittest.TestCase):
         self.assertEqual(entry["labels"], [])
         got = replay.replay_checks(entry)
         self.assertEqual(got["extra_rows"], [])
-        # And nothing was skipped, or "silent" would mean "did not look".
-        self.assertEqual(got["skipped"], {})
+        # And nothing was skipped for a reason this house could answer, or
+        # "silent" would mean "did not look". A FROZEN entry records the
+        # house as it was, so a snapshot key added after it was written is
+        # absent from its `available` map and every check that needs one is
+        # skipped — which is the honest answer rather than a check gone
+        # quiet, and regenerating the entry to make the number go away is
+        # the one thing a frozen entry exists to prevent. So what is
+        # asserted is that every skip names a key this entry predates.
+        import checks
+        have = set((entry["snapshot"].get("available") or {}))
+        for cid, why in got["skipped"].items():
+            needs = set(checks.get_check(cid)["needs"])
+            self.assertTrue(needs - have,
+                            f"{cid} was skipped over a key this house has: "
+                            f"{why}")
         self.assertEqual(got["errors"], {})
 
     def test_the_rehearsal_house_proves_the_checks_the_rehearsal_plants_for(self):

@@ -32,6 +32,12 @@ and so cannot clear anything):
                     running, how full the disk is. Each add-on row carries
                     the `boot` and `state` from its own /info, because the
                     list endpoint does not say whether it was meant to run
+    updates        [{update_type, name, version_latest, panel_path}] — what
+                    the Supervisor says is waiting to be installed: Core,
+                    the OS, the Supervisor and every add-on together. An
+                    EMPTY list is "nothing is pending"; a Supervisor that
+                    would not answer leaves the key unavailable, because
+                    "I could not look" may not read as "you are up to date"
     zha_devices    [{name, ieee, available, last_seen}] — absent unless ZHA
                     is installed, which is what makes the key unavailable
     config_entries [{entry_id, domain, title, state, source, disabled_by,
@@ -414,6 +420,14 @@ async def collect(now: float | None = None) -> dict:
         _mark("supervisor", sup.get("backups") is not None
               and sup.get("addons") is not None,
               sup.get("error") or "")
+        # Its own key, because it is its own question: a Supervisor that
+        # listed its add-ons and refused `/available_updates` has answered
+        # every other system check and not this one, and an update nobody
+        # could look for is a different claim from a house with none.
+        snap["updates"] = sup.get("updates") or []
+        _mark("updates", sup.get("updates") is not None,
+              "" if sup.get("updates") is not None
+              else "the Supervisor did not list available updates")
 
         # The appliance shapes are read from the nightly store, but what
         # each one is doing *now* is a live question, so this is the one
@@ -549,14 +563,17 @@ async def _supervisor_get(session, path: str, timeout: int = 20) -> Any:
 
 
 async def _supervisor(session) -> dict:
-    """Backups, add-ons, the host and Core — each one best effort.
+    """Backups, add-ons, the host, Core and what is waiting — best effort.
 
-    Four endpoints, gathered rather than awaited in turn: they are
+    Five endpoints, gathered rather than awaited in turn: they are
     independent, and a Supervisor that is busy restoring a backup should
-    cost the pass one wait, not four.
+    cost the pass one wait, not five. `updates` rides here rather than in
+    a fetch of its own for exactly that reason — it is one more request
+    inside a wait the pass was already making.
     """
     paths = (("backups", "/backups"), ("addons", "/addons"),
-             ("host", "/host/info"), ("core", "/core/info"))
+             ("host", "/host/info"), ("core", "/core/info"),
+             ("updates", "/available_updates"))
     results = await asyncio.gather(
         *(_supervisor_get(session, path) for _, path in paths),
         return_exceptions=True)
@@ -579,6 +596,18 @@ async def _supervisor(session) -> dict:
             out[key] = result.get("backups") or []
         elif key == "addons":
             out[key] = result.get("addons") or []
+        elif key == "updates":
+            # `{"available_updates": [...]}`, and an empty list is a real
+            # answer: nothing is pending. Anything that is not a list is a
+            # shape this cannot read, which is another way of not having
+            # been able to look — so the key stays None rather than
+            # reading as a house that is up to date.
+            rows = result.get("available_updates")
+            if isinstance(rows, list):
+                out[key] = rows
+            else:
+                out[key] = None
+                errors.append(f"{path}: unexpected response")
         else:
             out[key] = result
     if out.get("addons"):
