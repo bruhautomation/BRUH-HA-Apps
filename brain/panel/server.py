@@ -8203,9 +8203,15 @@ def _mute_source(source: str) -> list[dict]:
     return findings_store.clear_source(source)
 
 
+# What a producer id looks like: `check:dev.frozen`, `custom-1788980390`,
+# `user-1789499215`, `fix`. Anything else off the wire names nothing and
+# is refused rather than written into the settings and the log.
+_SOURCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
+
+
 def _source_of(body: dict) -> str:
     source = str((body or {}).get("source") or "").strip()
-    if not source or len(source) > settings_store.MAX_SOURCE_CHARS:
+    if not _SOURCE_RE.match(source):
         raise web.HTTPBadRequest(text="which producer? `source` names it")
     return source
 
@@ -8227,8 +8233,11 @@ async def h_findings_mute(request: web.Request) -> web.Response:
         # `muted` is the payload's list of producers; the flag is `ok`.
         return {"ok": True, "cleared": len(taken), **_findings_payload()}
     payload = await asyncio.to_thread(apply)
-    log.info("muted %s (%d row(s) taken off the list)", source,
-             payload["cleared"])
+    # `_source_of` has already refused anything that is not a producer id;
+    # the line breaks are stripped again here because this string arrived
+    # off the wire and a log line is where a scanner (rightly) looks.
+    log.info("muted %s (%d row(s) taken off the list)",
+             source.replace("\r", "").replace("\n", ""), payload["cleared"])
     return web.json_response(payload)
 
 
