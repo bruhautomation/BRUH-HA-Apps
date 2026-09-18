@@ -1129,6 +1129,83 @@ body.modal-open {
   opacity: 0.85;
 }
 
+/* ⚙ sections. The dialog is five disclosures rather than one flat scroll,
+   and the summary is the only thing you are guaranteed to read, so it
+   carries a name AND a line saying what is behind it — a row of bare nouns
+   would be five words to guess at. 44px whatever the pointer is: this is
+   the dialog's navigation, not a link inside a paragraph, and a floor that
+   only existed on touch would leave the one control every visit starts with
+   at 19px on the screen it is designed at.
+
+   The marker is drawn rather than inherited: `list-style: none` (plus the
+   WebKit pseudo-element, which ignores it) takes the browser's triangle out,
+   and the chevron is two borders on a pseudo-element so `textContent` of a
+   summary stays the section's name — which is what the measure reads. */
+.setsec { border-top: 1px solid var(--hairline); }
+.setsec:first-child { border-top: 0; }
+.setsec > summary {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-height: 44px;
+  padding: 8px 4px 8px 22px;
+  position: relative;
+  cursor: pointer;
+  list-style: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.setsec > summary::-webkit-details-marker { display: none; }
+.setsec > summary:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.setsec > summary::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: calc(50% - 5px);
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid var(--ink-3);
+  border-bottom: 2px solid var(--ink-3);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.setsec[open] > summary::before { transform: rotate(45deg) translate(-1px, -1px); }
+.setsecname { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+/* Bold only when open, so a shut dialog reads as a list of places to go and
+   an open one says which place you are in. */
+.setsec[open] > summary .setsecname { font-weight: 700; }
+.setsecsub { font-size: 11.5px; color: var(--ink-3); line-height: 1.3; }
+.setsecbody { padding: 2px 0 16px; }
+
+/* A label and the ? that carries the rest of what used to be under it. The
+   button is a sibling of the label rather than inside it: a press inside a
+   `for=` label is a press on the control, so a tooltip would toggle the
+   checkbox it explains. */
+.setrow { display: flex; align-items: center; gap: 4px; margin: 12px 0 5px; }
+.setrow.top { align-items: flex-start; }
+.setrow > label { margin: 0; flex: 1; min-width: 0; }
+.setrow .btn.icon.tiny {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid var(--hairline);
+  border-radius: 50%;
+}
+/* Inside a paragraph rather than beside a label — the section intros have no
+   control to sit next to, so the ? follows the sentence it shortened. */
+.edit-body .hint .btn.icon.tiny {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid var(--hairline);
+  border-radius: 50%;
+  vertical-align: middle;
+  margin-left: 2px;
+}
+
 /* generation-defaults section of the ⚙ dialog */
 .sethead {
   margin: 22px 0 0;
@@ -4068,6 +4145,32 @@ body.term-classic #termMode .ico-out { display: block; }
   .prob .probpick, .prob .probdel, .probbtns .btn { min-height: 44px; }
   .prob .probdel { min-width: 44px; }
   .prob .probcheck { width: 22px; height: 22px; }
+  /* ⚙ sections: the ? that carries the long version of a hint. Every one of
+     them, whether it sits beside a label or at the end of the sentence it
+     shortened — a floor one of them held and the other did not would be the
+     inconsistency rather than the fix, and the one inside a paragraph is the
+     only copy of that prose on a phone, where there is no hover to find it
+     with. It costs the line it is on its height, which is what a thumb-sized
+     control in a 12.5px paragraph costs. Scoped rather than raised on
+     `.btn.icon` globally, for the reason the blocks above give — and the
+     in-a-paragraph selector is repeated rather than left to the first,
+     because the rule it has to beat is class-qualified one level deeper and
+     order does not settle an unequal specificity. */
+  .edit-body .btn.icon.tiny,
+  .edit-body .hint .btn.icon.tiny { width: 44px; height: 44px; font-size: 14px; }
+  /* The 16px text floor at the top of this file is a bare `select` /
+     `input[type=…]` selector, and `.edit-body .selin` (and its siblings) are
+     class-qualified 13.5px rules that outrank it — so every dropdown and
+     number box in ⚙ zoomed an iPhone into the ingress iframe and left it
+     there, which is the exact failure that floor exists to prevent, reached
+     by the one route it cannot reach. Restated at a specificity that wins,
+     and scoped to this dialog rather than to `.edit-body`: this is a change
+     about the Settings dialog, and the other edit dialogs carrying the same
+     rules are a separate, real problem. */
+  #setModal .selin,
+  #setModal input[type="number"],
+  #setModal input[type="text"],
+  #setModal textarea { font-size: 16px; }
   /* A filter chip is how you reach a view at all, and at 33px it was under
      a thumb on every phone. Raised on the CLASS rather than on the Findings
      tab's strip, because the To-do tab renders the same control and a floor
