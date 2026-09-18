@@ -122,6 +122,12 @@ jobs:
       - name: Measure the Problems section
         run: node tests/manual/measure-problems.mjs
 
+      # ⚙ is five disclosures rather than one scroll, and the numbers that
+      # make that true — its open height, its lazy Advanced loaders, the
+      # prose it moved onto a ? — are only checkable by driving it.
+      - name: Measure the Settings dialog
+        run: node tests/manual/measure-settings.mjs
+
       # A live card has two ages; the foot used to report one of them.
       - name: Measure a live card's two ages
         run: node tests/manual/measure-cardlive.mjs

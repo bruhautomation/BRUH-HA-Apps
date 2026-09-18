@@ -2356,14 +2356,60 @@ function renderSettingsForm(data) {
       + "and override the add-on's Configuration tab until it is.";
 }
 
-async function openSettings() {
-  openBox("#setModal");
-  loadAuth();
+// ⚙ is five `<details>`, and a section remembers whether it was open —
+// somebody who lives in Advanced should not have to reopen it every visit,
+// and a disclosure that forgets is one people stop using. `prefGet` can
+// throw or answer null (an ingress iframe may be refused storage), so the
+// markup's own `open` is the fallback rather than an assumed shut.
+const SET_SECTIONS = ["account", "insights", "terminal", "defaults", "advanced"];
+const setSectionKey = (name) => "brain.set." + name;
+
+function restoreSettingsSections() {
+  SET_SECTIONS.forEach((name) => {
+    const box = document.querySelector(`.setsec[data-sec="${name}"]`);
+    if (!box) return;
+    const saved = prefGet(setSectionKey(name));
+    if (saved === "1") box.open = true;
+    else if (saved === "0") box.open = false;
+    box.addEventListener("toggle", () => {
+      prefSet(setSectionKey(name), box.open ? "1" : "0");
+      if (name === "advanced" && box.open) loadAdvanced();
+    });
+  });
+}
+
+// The five readings behind Advanced, fetched the first time that section is
+// opened and never on the way into the dialog. Five fetches for somebody who
+// came to change the model is the cost this arrangement is about, and two of
+// them start a 3s poll — so the old shape paid for a request every three
+// seconds behind a section nobody had looked at. `openSettings` is what
+// resets this, not the section closing: a reading that is already on screen
+// is still the reading, and re-fetching it every time the triangle is
+// pressed would be the same bill in smaller instalments. Opening the dialog
+// again DOES reset it, and not only for freshness — `closeBox` stops the
+// deep-check and rehearsal polls, so a second visit with Advanced already
+// open has to ask again or a run in flight goes quiet on the one screen
+// that reports it.
+let advancedLoaded = false;
+
+function loadAdvanced() {
+  if (advancedLoaded) return;
+  advancedLoaded = true;
   loadDiagnostics();
   loadReports();
   loadCaptures();
   loadDeep(true);
   loadRehearsal(true);
+}
+
+async function openSettings() {
+  openBox("#setModal");
+  loadAuth();
+  advancedLoaded = false;
+  // Its open state survived the close (it is remembered), so a visit that
+  // lands on an already-expanded Advanced still has to fetch: the section
+  // being open is not the same claim as its rows being current.
+  if ($("#setsecAdvanced").open) loadAdvanced();
   try {
     renderSettingsForm(await api("api/settings"));
   } catch (e) {
@@ -2410,6 +2456,9 @@ async function saveSettings(fields, note) {
 }
 
 $("#settingsBtn").addEventListener("click", openSettings);
+// Once, at load: the sections are static markup, so their listeners are not
+// something a render can leak.
+restoreSettingsSections();
 
 // The pill answers the question it raises: two readings, and when each one
 // starts over. It used to open Settings, where neither number appears.
