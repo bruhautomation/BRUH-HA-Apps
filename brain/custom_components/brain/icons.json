@@ -218,6 +218,9 @@
     },
     "intent": {
       "service": "mdi:timer-sand"
+    },
+    "check": {
+      "service": "mdi:home-search-outline"
     }
   }
 }

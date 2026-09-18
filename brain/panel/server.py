@@ -1558,6 +1558,14 @@ def _weekly_diagnostics() -> dict:
 REQUESTS_POLL_S = 15
 REQUESTS_FIRST_DELAY_S = 20
 REQUESTS_STATE: dict = {"applied": 0, "missed": 0, "last": 0.0}
+# A checks pass asked for from outside the panel. `starting` is flipped
+# synchronously for `start_auth_check`'s reason — `create_task` only
+# schedules, so two requests in one drain would both read a guard their
+# own task has not set yet — and it is a SECOND flag rather than
+# `CHECKS_STATE["running"]` because `run_checks` owns that one and is also
+# called by the loop, and one function setting another's guard is how the
+# two callers stop agreeing about what is in flight.
+CHECKS_REQUEST_STATE: dict = {"starting": False, "asked": 0, "last": 0.0}
 
 
 async def _apply_finding_requests() -> list[dict]:
@@ -1567,10 +1575,19 @@ async def _apply_finding_requests() -> list[dict]:
     request naming a finding that is gone is `ok: False`, which is an
     ordinary race — somebody's phone was a few seconds out of date — and
     never a reason to retry or to put the row back.
+
+    A `checks` request is the one kind here that is not an ending, so it
+    is collected rather than applied in the loop and the pass is started
+    **after** every answer in the drain has landed: a pass that ran first
+    would re-file what the answers in the same burst had just settled.
     """
     requests = await asyncio.to_thread(finding_requests.collect)
     out: list[dict] = []
+    asked: list[dict] = []
     for req in requests:
+        if req.get("kind") == finding_requests.CHECKS_KIND:
+            asked.append(req)
+            continue
         if req.get("kind") == "todo":
             out.append(await _apply_todo_request(req))
             continue
@@ -1601,7 +1618,48 @@ async def _apply_finding_requests() -> list[dict]:
                  result["via"] or "elsewhere",
                  "" if result["ok"] else f" — {result['why']}")
         out.append(result)
+    if asked:
+        out.append(_start_requested_checks(asked))
     return out
+
+
+def _start_requested_checks(asked: list[dict]) -> dict:
+    """Start one pass for however many asked for it in this drain.
+
+    **Coalescing is load-bearing rather than tidy.** The pass is started
+    and not awaited — a run reads the whole house and is minutes of work,
+    where this loop has to be back in fifteen seconds for the next answer
+    somebody gives from their phone, which is `h_baselines_run`'s clock —
+    and `create_task` only schedules, so two tasks made in one tick would
+    both pass `run_checks`' own guard before either had set it.
+
+    A pass already in flight means the request is **consumed and logged**,
+    never queued: a second pass over the same house a minute later finds
+    the same things, and the one running is about to answer the question
+    that was asked.
+    """
+    via = ", ".join(sorted({r.get("via") or "elsewhere" for r in asked}))
+    result = {"kind": "checks", "asked": len(asked), "via": via,
+              "ok": False, "why": "a checks pass is already running"}
+    CHECKS_REQUEST_STATE["asked"] += len(asked)
+    CHECKS_REQUEST_STATE["last"] = time.time()
+    if CHECKS_STATE["running"] or CHECKS_REQUEST_STATE["starting"]:
+        log.info("checks asked for by %s — a pass is already running", via)
+        REQUESTS_STATE["missed"] += 1
+        return result
+    CHECKS_REQUEST_STATE["starting"] = True
+
+    async def run_it() -> None:
+        try:
+            await run_checks("service")
+        finally:
+            CHECKS_REQUEST_STATE["starting"] = False
+
+    asyncio.create_task(run_it())
+    REQUESTS_STATE["applied"] += 1
+    REQUESTS_STATE["last"] = time.time()
+    log.info("running the house checks — asked for by %s", via)
+    return {**result, "ok": True, "why": ""}
 
 
 async def _apply_todo_request(req: dict) -> dict:
@@ -1798,6 +1856,11 @@ def _requests_diagnostics() -> dict:
         "applied": REQUESTS_STATE["applied"],
         "missed": REQUESTS_STATE["missed"],
         "last": int(REQUESTS_STATE["last"]),
+        # `brain.check` and the Run-checks button land here too, and a
+        # pass that was asked for and never ran leaves the same silence
+        # as one nobody asked for.
+        "checks_asked": CHECKS_REQUEST_STATE["asked"],
+        "checks_asked_last": int(CHECKS_REQUEST_STATE["last"]),
     }
 
 

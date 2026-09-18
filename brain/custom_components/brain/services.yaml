@@ -142,6 +142,15 @@ add_todo:
       required: true
       example: Replace the hallway smoke alarm battery
 
+check:
+  name: Run house checks
+  description: >-
+    Ask brAIn to run its house checks now rather than waiting for the next scheduled
+    pass. Returns immediately — a pass takes a minute or two, and what it finds arrives
+    on the Findings tab. Two calls a few seconds apart are one pass, and a call made
+    while a pass is already running is noted in the log rather than queued: a second
+    pass over the same house would find the same things.
+
 add_memory:
   name: Add memory fact
   description: Queue a durable fact about your home for Claude's long-term memory (merged into /config/.brain/memory/memory.md
