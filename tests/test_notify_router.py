@@ -593,10 +593,12 @@ class TestTheDefaultFloorIsWrittenDownOnce(unittest.TestCase):
     def test_config_run_sh_and_the_panel_all_say_critical(self):
         import re
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        conf = open(os.path.join(root, "brain", "config.yaml"),
-                    encoding="utf-8").read()
-        run = open(os.path.join(root, "brain", "run.sh"),
-                   encoding="utf-8").read()
+        with open(os.path.join(root, "brain", "config.yaml"),
+                  encoding="utf-8") as f:
+            conf = f.read()
+        with open(os.path.join(root, "brain", "run.sh"),
+                  encoding="utf-8") as f:
+            run = f.read()
         in_config = re.search(
             r"^  findings_notify_min_severity:\s*(\S+)\s*$", conf, re.M)
         in_run = re.search(
@@ -613,8 +615,9 @@ class TestTheDefaultFloorIsWrittenDownOnce(unittest.TestCase):
         # what it now does and the one word that restores the old
         # behaviour.
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        text = open(os.path.join(root, "brain", "translations", "en.yaml"),
-                    encoding="utf-8").read()
+        with open(os.path.join(root, "brain", "translations", "en.yaml"),
+                  encoding="utf-8") as f:
+            text = f.read()
         block = text.split("findings_notify_min_severity:", 1)[1]
         block = block.split("\n  notify_quiet_start:", 1)[0]
         self.assertIn('"critical" (the default)', block)
