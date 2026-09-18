@@ -7,11 +7,13 @@ expensive in a way a screenshot wouldn't show:
   * a problem is reported ONCE, across every status. Re-raising something the
     homeowner dismissed is exactly what the dismiss button buys off, so the
     dedup has to survive settling, not just be a within-run guard.
-  * "Fix it" is the only tool-enabled Claude invocation in the panel, and it
-    edits a real home. It must be reachable only by pressing the button, it
+  * the fix run is the only tool-enabled Claude invocation in the panel, and
+    it edits a real home. It must be reachable only by pressing a button, it
     must share the generation queue (one Claude at a time), and a run that
     dies has to leave the finding in a state you can see rather than stuck
-    on "fixing" forever.
+    on "fixing" forever. Since 1.61.0 the button that reaches it is Apply,
+    pressed on the steps a read-only run wrote — "Fix it" buys those steps
+    and nothing else, which `tests/test_fix_plan.py` is about.
   * a fix reply that can't be parsed still means the house was touched, so it
     reports as a failure carrying the tail rather than raising.
 """
@@ -1378,29 +1380,39 @@ class TestFindingRoutes(ServerCase):
         asyncio.run(run())
 
     def test_fix_queues_a_job_and_never_runs_on_its_own(self):
-        """Nothing may change the house except a press of this button — so
-        the route is the only thing that enqueues a fix, and a second press
-        while one is in flight is refused rather than queued behind it."""
+        """Nothing may change the house except a press — and this press is
+        no longer the one that does.
+
+        Pressing Fix it buys the READ-ONLY plan run, so what the route
+        queues is a `plan` job and the row says `planning`; the
+        tool-enabled run waits for a second press on the steps that come
+        back (see `test_fix_plan.py`). A second press while the look is in
+        flight is still refused rather than queued behind it."""
         findings_store.add("Automation can't fire")
         ts = findings_store.list_all()[0]["ts"]
-        old_run_fix = self.server._run_fix
+        old_run_plan, old_run_fix = self.server._run_plan, self.server._run_fix
 
         async def run():
             gate = asyncio.Event()
             started = asyncio.Event()
+            fixes = []
 
             async def held(job_id):
                 started.set()
                 await gate.wait()
 
-            self.server._run_fix = held
+            async def never(job_id):
+                fixes.append(job_id)
+
+            self.server._run_plan = held
+            self.server._run_fix = never
             client = self._client()
             await client.start_server()
             try:
                 data = await (await client.post(f"/api/finding/{ts}/fix")).json()
-                self.assertEqual(data["findings"][0]["status"], "fixing")
-                job = self.server.JOBS[f"{self.server.FIX_JOB_PREFIX}{ts}"]
-                self.assertEqual(job["kind"], "fix")
+                self.assertEqual(data["findings"][0]["status"], "planning")
+                job = self.server.JOBS[f"{self.server.PLAN_JOB_PREFIX}{ts}"]
+                self.assertEqual(job["kind"], "plan")
                 self.assertEqual(job["finding_ts"], ts)
                 await asyncio.wait_for(started.wait(), 5)
 
@@ -1410,7 +1422,11 @@ class TestFindingRoutes(ServerCase):
             finally:
                 gate.set()
                 await client.close()
+                self.server._run_plan = old_run_plan
                 self.server._run_fix = old_run_fix
+            self.assertEqual(fixes, [],
+                             "pressing Fix it must not start the run that "
+                             "changes the house")
 
         asyncio.run(run())
 
@@ -1499,11 +1515,29 @@ class TestFindingsUI(unittest.TestCase):
         cls.server = importlib.import_module("server")
 
     def test_every_verb_the_ui_presses_exists(self):
+        """Either it is an ending in the table, or it has a route of its own.
+
+        The second half used to be an exemption list — `{"fix", "forget"}`
+        written down here — which answers "is this verb one we already knew
+        about" rather than "does pressing it reach anything", and every verb
+        added since has had to be remembered into it. The app's own router
+        is asked instead, so a button wired to a path nobody registered
+        fails here rather than in somebody's browser.
+        """
         pressed = set(re.findall(r'findAction\(\s*f,\s*"([a-z]+)"', self.js))
         pressed |= set(re.findall(r'chatFindingAction\("([a-z]+)"', self.js))
-        # "fix" and "forget" have routes of their own rather than table rows
-        for verb in pressed - {"fix", "forget"}:
-            self.assertIn(verb, self.server.FINDING_VERBS, verb)
+        self.assertIn("fix", pressed, "the UI stopped pressing Fix it")
+
+        routed = set()
+        for resource in self.server.make_app().router.resources():
+            path = getattr(resource, "canonical", "")
+            prefix = "/api/finding/{ts}/"
+            if path.startswith(prefix) and "{verb}" not in path:
+                routed.add(path[len(prefix):])
+        # `forget` is the DELETE on the row itself rather than a verb path.
+        for verb in pressed - {"forget"}:
+            self.assertTrue(verb in self.server.FINDING_VERBS or verb in routed,
+                            f"{verb} is pressed by the panel and reaches nothing")
 
     def test_the_two_endings_read_differently(self):
         """"I did it" beside "Not a problem" was the confusion: both looked
