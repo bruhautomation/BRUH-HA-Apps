@@ -987,7 +987,7 @@ def _findings_notify_target() -> tuple[str, str]:
                    or os.environ.get("BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY",
                                      "")).strip().lower()
     if severity not in findings_store.SEVERITIES:
-        severity = "serious"
+        severity = notify_router.DEFAULT_MIN_SEVERITY
     return service, severity
 
 
@@ -1017,7 +1017,8 @@ def _quiet_hours() -> tuple[int | None, int | None]:
         _hours("notify_quiet_end", "BRAIN_NOTIFY_QUIET_END")
 
 
-async def _send_notification(rows: list[dict], held: bool = False) -> bool:
+async def _send_notification(rows: list[dict], held: bool = False,
+                             message: tuple[str, str] | None = None) -> bool:
     """Deliver one message. A failure is a log line, never an exception.
 
     The finding is already safe on the list before this is called, so a
@@ -1026,7 +1027,10 @@ async def _send_notification(rows: list[dict], held: bool = False) -> bool:
     service, _sev = _findings_notify_target()
     if not service or not rows:
         return False
-    title, body = notify_router.compose(rows, held=held)
+    # A reminder composes its own sentence (which repeat, since when) and
+    # otherwise rides this path unchanged: the buttons, the panel link and
+    # the failure reporting are the same three questions either way.
+    title, body = message or notify_router.compose(rows, held=held)
     # Buttons, but only where they can be answered and only when the
     # message is about one finding — see `notify_router.actions_for`.
     buttons = notify_router.actions_for(rows, service)
@@ -1098,6 +1102,11 @@ def _notify_diagnostics() -> dict:
             time.time(), start, end, _tz),
         "held": len(queued),
         "held_since": oldest,
+        # And what the ladder is holding. A queue nobody can see is a
+        # queue that silently swallows, and this one can fail in two
+        # directions — a house reminded about nothing, or not reminded
+        # about a leak — so both ends are on the payload.
+        **notify_router.escalation_state(),
         # What happened to the last message that went out. A delivery that
         # failed already files an incident, which is the right producer —
         # but a notifier that cannot deliver is the answer to "what is
@@ -2094,34 +2103,91 @@ def _healing_brief_lines() -> list[str]:
         return []
 
 
+# A reminder that is due in ten minutes must not wait out a nine-hour
+# night, and a loop woken every thirty seconds to find nothing climbing is
+# a poll. The floor is what stops a stamp in the past spinning the loop.
+ESCALATION_MIN_WAIT_S = 30
+
+
+async def _escalation_tick() -> int:
+    """Send the reminders that have come due, and forget the rows that ended.
+
+    The live store is read on **every** tick and the ledger's own copy
+    never is: fixed, dismissed, snoozed, moved to the to-do list and
+    cleared by the check that filed it are five endings and all of them
+    mean stop, and only the store knows which have happened. A snoozed
+    row is deliberately in that set — "remind me later" is somebody
+    answering, and going on reminding them is the notifier arguing.
+
+    **A store that could not be read holds the reminder rather than
+    sending it**, which is the opposite of what the hold queue does with
+    the same uncertainty and is deliberate: a held row is announced once
+    and never again, so a wrong send there costs one message, where a
+    ladder that cannot tell whether a problem is over would go on ringing
+    three times about one somebody fixed an hour ago. A reminder deferred
+    costs a pass, and the pass is minutes away.
+    """
+    try:
+        now = time.time()
+        live = {int(f.get("ts") or 0) for f in findings_store.list_all("open")
+                if not findings_store.is_snoozed(f, now)}
+    except Exception as exc:  # noqa: BLE001 — see the docstring: not knowing
+        # whether a problem is over is not a licence to ask again.
+        log.info("could not read the findings store before a reminder: %s", exc)
+        return 0
+    dropped = notify_router.prune_escalations(live)
+    if dropped:
+        log.info("stopped escalating %d finding(s) that were answered",
+                 len(dropped))
+    due = notify_router.due_escalations(now)
+    if not due:
+        return 0
+    tz, _name = baselines.house_timezone()
+    sent = 0
+    for row in due:
+        message = notify_router.compose_escalation(row, tz)
+        await _send_notification([row], message=message)
+        notify_router.record_reminder(int(row.get("ts") or 0), time.time())
+        sent += 1
+    return sent
+
+
 async def _notify_flush_loop():
     """Wake at the end of each quiet window and send what it held.
 
     The wait is recomputed every pass rather than slept once: the option
     can be edited from the Configuration tab without a restart, and a
     loop that had already committed to a 9-hour sleep would honour the
-    old bedtime until tomorrow.
+    old bedtime until tomorrow. It is also where the escalation ladder
+    ticks — one loop, because "is anything waiting to be said" has one
+    answer and a second loop would be a second clock to keep true.
     """
     await asyncio.sleep(NOTIFY_FLUSH_FIRST_DELAY_S)
     while True:
         try:
+            await _escalation_tick()
             start, end = _quiet_hours()
             now = time.time()
+            wait = float(NOTIFY_FLUSH_POLL_S)
             if start is None or end is None:
                 # No quiet hours: anything left in the queue is from
                 # before somebody turned them off, and has waited enough.
                 if notify_router.load_queue():
                     await _flush_held_findings()
-                await asyncio.sleep(NOTIFY_FLUSH_POLL_S)
-                continue
-            tz, _name = baselines.house_timezone()
-            if not notify_router.in_quiet_hours(now, start, end, tz):
-                if notify_router.load_queue():
-                    await _flush_held_findings()
-                await asyncio.sleep(NOTIFY_FLUSH_POLL_S)
-                continue
-            wait = notify_router.quiet_ends_at(now, end, tz) - now
-            await asyncio.sleep(max(60.0, min(wait, NOTIFY_FLUSH_POLL_S)))
+            else:
+                tz, _name = baselines.house_timezone()
+                if not notify_router.in_quiet_hours(now, start, end, tz):
+                    if notify_router.load_queue():
+                        await _flush_held_findings()
+                else:
+                    wait = max(60.0, min(
+                        notify_router.quiet_ends_at(now, end, tz) - now,
+                        float(NOTIFY_FLUSH_POLL_S)))
+            due_at = notify_router.next_escalation_at()
+            if due_at:
+                wait = max(ESCALATION_MIN_WAIT_S,
+                           min(wait, due_at - time.time()))
+            await asyncio.sleep(wait)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — the loop outlives a bad pass
@@ -2140,12 +2206,24 @@ async def _announce_findings(created: list[dict]) -> None:
     phone twice, and there is nothing to announce at startup because a
     replayed store creates nothing.
 
-    Inside quiet hours the split is by `notify_router.urgency_of`, which
-    is a different axis from severity: a `critical` battery forecast is
-    three weeks away and a `warning` about a boiler that has stopped
-    answering is now. The severity floor is applied FIRST, so a row
-    nobody wanted notifying about is not held either — otherwise it would
-    simply arrive in the morning digest instead.
+    Three tiers, decided per row by `notify_router.tier_of`. **Escalate**
+    is `critical` severity and a `now` producer — a leak, a freeze, a hub
+    that has stopped answering — and it goes out immediately whatever the
+    hour, and then asks again on a ladder until somebody answers it.
+    **Notify** is everything else above the floor: once, held through the
+    night unless it is urgent, which is exactly what every release before
+    this one did with the whole set. **Quiet** is below the floor, and it
+    is not lost — the row is on the Findings tab, in `todo.brain` and in
+    Home Assistant's own Repairs, which are places somebody looks rather
+    than places that interrupt.
+
+    Inside quiet hours the notify tier splits by
+    `notify_router.urgency_of`, which is a different axis from severity: a
+    `critical` battery forecast is three weeks away and a `warning` about
+    a boiler that has stopped answering is now. The severity floor is
+    applied FIRST, so a row nobody wanted notifying about is not held
+    either — otherwise it would simply arrive in the morning digest
+    instead.
 
     A failed delivery is a log line, never an error: the finding is already
     safe on the list, and the notification is the courtesy copy.
@@ -2153,26 +2231,39 @@ async def _announce_findings(created: list[dict]) -> None:
     service, min_severity = _findings_notify_target()
     if not service or not created:
         return
-    worthy = notify_router.worth_sending(created, min_severity)
-    if not worthy:
+    tiers = notify_router.classify(created, min_severity)
+    escalating, once = tiers["escalate"], tiers["notify"]
+    if not escalating and not once:
         return
 
+    now = time.time()
+    if escalating:
+        # Quiet hours do not hold these and are not meant to: the window
+        # protects a bedroom from a battery three weeks from dying, and
+        # a freeze warning at 3am is when it is wanted.
+        await _send_notification(escalating)
+        started = notify_router.begin_escalation(escalating, now)
+        log.info("escalating %d of %d critical finding(s)",
+                 started, len(escalating))
+
+    if not once:
+        return
     start, end = _quiet_hours()
     tz, _name = baselines.house_timezone()
-    if not notify_router.in_quiet_hours(time.time(), start, end, tz):
-        await _send_notification(worthy)
+    if not notify_router.in_quiet_hours(now, start, end, tz):
+        await _send_notification(once)
         return
 
     # Inside the quiet window only the urgent get through, and the rest
     # are HELD rather than dropped: they are on the Findings tab either
     # way, and a notifier that silently decides some problems were not
     # worth mentioning is one nobody can reason about.
-    urgent = [f for f in worthy if notify_router.urgency_of(f) == "now"]
-    later = [f for f in worthy if notify_router.urgency_of(f) != "now"]
+    urgent = [f for f in once if notify_router.urgency_of(f) == "now"]
+    later = [f for f in once if notify_router.urgency_of(f) != "now"]
     if urgent:
         await _send_notification(urgent)
     if later:
-        depth = notify_router.hold(later, time.time())
+        depth = notify_router.hold(later, now)
         log.info("held %d finding(s) until quiet hours end (%d waiting)",
                  len(later), depth)
 

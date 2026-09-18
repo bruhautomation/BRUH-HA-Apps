@@ -125,7 +125,7 @@ options:
   memory_injection: true
   memory_max_kb: 32
   findings_notify_service: ""
-  findings_notify_min_severity: serious
+  findings_notify_min_severity: critical
   notify_quiet_start: "22"
   notify_quiet_end: "7"
   morning_brief: false

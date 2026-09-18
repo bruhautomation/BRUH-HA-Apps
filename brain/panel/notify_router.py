@@ -28,6 +28,30 @@ settled or cleared while it waited is dropped from the queue rather than
 announced, because telling somebody at 07:00 about a problem that went
 away at 04:00 is worse than never mentioning it.
 
+**Most problems are not worth a phone at all.** Severity and urgency
+between them say how loud a row should be, and for a long time there were
+only two volumes: above the floor it was pushed once, below it nothing
+happened. That put a dying battery and a freezing pipe through the same
+door, so the floor was the only dial anybody had and turning it down to
+hear about the pipe let everything else in behind it. There are three
+tiers now (`tier_of`). **Escalate** is `critical` severity AND a producer
+whose rows are `now` — a leak, a freeze, a hub that has stopped answering
+— and it goes out immediately, quiet hours or not, and then *asks again*
+on a ladder until somebody answers it. **Notify** is everything else
+above the floor: exactly what happened before, once, held through the
+night unless it is urgent. **Quiet** is below the floor, and quiet does
+not mean lost — the row is on the Findings tab, in `todo.brain` and in
+Home Assistant's own Repairs, all of which are places somebody looks
+rather than places that interrupt.
+
+**A reminder is only worth sending while the problem is still there.**
+The ladder reads the findings store on every tick and never the ledger's
+own copy: fixed, dismissed, snoozed, moved to the to-do list or cleared
+by the check that filed it are five different endings and all of them
+mean stop. And the ladder *ends* — three reminders, and the last one says
+so, because a notification that will go on arriving for ever is one
+people silence rather than answer.
+
 What is deliberately not here is coalescing across those five callers.
 Each already hands over its whole batch at once, so a checks pass is one
 message however many rows it filed; two callers landing together are two
@@ -102,6 +126,48 @@ QUEUE_MAX = 200
 LINES_MAX = 12
 # HA's own notify payloads are not meant to be essays.
 MESSAGE_MAX = 1500
+
+# Where a still-open emergency's ladder lives. On disk, and written after
+# every message, because backoff that lives only in memory is a promise a
+# restart breaks — and a restart is the first thing anybody does when
+# something is wrong. `usage-limits-tracker._resume_backoff`'s reason.
+ESCALATION_FILE = os.environ.get("BRAIN_NOTIFY_ESCALATION",
+                                 "/data/notify-escalation.json")
+
+# The floor a fresh install ships with, read by the panel AND by run.sh's
+# env fallback rather than spelled separately in each — a default that
+# disagrees with itself is a second answer that wins exactly when nobody
+# is looking (`${VAR:-default}`'s rule). `critical` rather than `serious`
+# because the tiers below make the floor mean something different from
+# what it used to: everything under it is still on the Findings tab, in
+# `todo.brain` and in Repairs, and what the floor now governs is only
+# whether a phone is interrupted. Somebody who wants the old behaviour
+# sets it back to `serious`.
+DEFAULT_MIN_SEVERITY = "critical"
+
+# How loud a row is allowed to be. Ordered quietest first, the way
+# URGENCY and `findings_store.SEVERITIES` are.
+TIERS = ("quiet", "notify", "escalate")
+
+# The ladder a still-open emergency climbs, as offsets **from the first
+# message** rather than gaps between them. Offsets, because that is what
+# survives a restart with no arithmetic: the rung is the number of
+# reminders already sent, so a ledger read off disk lands on the same
+# minute the process that wrote it would have. Three, and then it stops —
+# a notification that will go on arriving for ever is one people silence
+# rather than answer, which is the opposite of what a reminder is for.
+ESCALATION_S = (60 * 60, 4 * 60 * 60, 12 * 60 * 60)
+# A ledger past this is not an emergency, it is an outage, and fifty
+# phones' worth of reminders about it helps nobody. The cap REFUSES the
+# ladder rather than making room: the room would be made by dropping a
+# row that has been escalating for hours, which is the one thing on the
+# list most likely to still matter. The row is still announced — only the
+# repeats are refused — and it is said out loud in the log.
+ESCALATION_MAX_ROWS = 50
+# One announcement plus every rung. The ladder already stops itself —
+# `_next_at` answers 0 past the last rung — so this is a bound on what a
+# file off disk can make the list grow to, not a second policy.
+ESCALATION_SENDS_MAX = len(ESCALATION_S) + 1
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +247,7 @@ def worth_sending(findings: list[dict], min_severity: str) -> list[dict]:
     import findings_store  # noqa: PLC0415 — panel-local
 
     if min_severity not in findings_store.SEVERITIES:
-        min_severity = "serious"
+        min_severity = DEFAULT_MIN_SEVERITY
     floor = findings_store.SEVERITIES.index(min_severity)
     out = []
     for f in findings or []:
@@ -190,6 +256,45 @@ def worth_sending(findings: list[dict], min_severity: str) -> list[dict]:
             sev = "warning"
         if findings_store.SEVERITIES.index(sev) >= floor:
             out.append(f)
+    return out
+
+
+def tier_of(finding: dict, min_severity: str | None = None) -> str:
+    """How loud this row is allowed to be: quiet, notify or escalate.
+
+    The floor is applied FIRST, so nothing under it can escalate however
+    urgent its producer is — that is the setting doing what it says, and
+    it is also why a house that wants the old behaviour can reach it by
+    moving one option rather than by learning a second rule.
+
+    **Escalate is severity AND urgency, never either.** A `critical`
+    battery forecast is three weeks out, and a `now` producer files
+    plenty of rows that are merely a nuisance — it is the pair that
+    describes a leak, a freeze, a hub that has stopped answering. The
+    urgency half is `urgency_of`'s, which is declared per producer, so
+    the set of rows that can wake a house is a set of lines of code
+    rather than a set of sentences a model wrote.
+    """
+    sev = str((finding or {}).get("severity") or "warning")
+    kept = worth_sending([finding or {}],
+                         min_severity or DEFAULT_MIN_SEVERITY)
+    if not kept:
+        return "quiet"
+    if sev == "critical" and urgency_of(finding) == "now":
+        return "escalate"
+    return "notify"
+
+
+def classify(findings: list[dict],
+             min_severity: str | None = None) -> dict[str, list[dict]]:
+    """The batch split three ways, each list in the order it was filed.
+
+    One pass and one answer, because a caller asking `tier_of` per row
+    and re-grouping would be a second place the split is decided.
+    """
+    out: dict[str, list[dict]] = {name: [] for name in TIERS}
+    for f in findings or []:
+        out[tier_of(f, min_severity)].append(f)
     return out
 
 
@@ -294,6 +399,193 @@ def take_queue(live_ids: set[int] | None = None,
 
 
 # ---------------------------------------------------------------------------
+# The ladder
+# ---------------------------------------------------------------------------
+
+def _escalation_row(finding: dict, now: float) -> dict:
+    """The least of an escalating finding that a reminder needs.
+
+    `_row`'s rule: not a second copy of the store. `ts` is what the live
+    store is read against on every tick and what `actions_for` puts on
+    the buttons, and `first_at` is what the ladder's rungs are measured
+    from — which is what makes a ledger read off disk land on the same
+    minute the process that wrote it would have.
+    """
+    return {
+        "ts": int(finding.get("ts") or 0),
+        "text": str(finding.get("text") or "")[:200],
+        "severity": str(finding.get("severity") or "critical"),
+        "first_at": int(now),
+        "sent_at": [int(now)],
+        "next_at": _next_at(now, 1),
+    }
+
+
+def _next_at(first_at: float, sends: int) -> float:
+    """When the next reminder is due, or 0 once the ladder has ended.
+
+    Derived from the first message and the number of messages already
+    sent rather than from the last one, so a stamp read off disk and a
+    stamp computed here cannot disagree — and so a restart resumes the
+    rung it was on instead of starting the ladder again.
+    """
+    rung = max(0, int(sends) - 1)
+    if rung >= len(ESCALATION_S):
+        return 0.0
+    return float(first_at) + ESCALATION_S[rung]
+
+
+def load_escalations(path: str | None = None) -> dict[int, dict]:
+    """The ladder, keyed by the finding's ts. `{}` for anything unreadable."""
+    try:
+        with open(path or ESCALATION_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[int, dict] = {}
+    for key, row in data.items():
+        if not isinstance(row, dict):
+            continue
+        try:
+            ts = int(key)
+        except (TypeError, ValueError):
+            continue
+        sent = [s for s in row.get("sent_at") or [] if isinstance(s, (int, float))]
+        if not sent:
+            continue
+        row = dict(row)
+        row["ts"] = ts
+        row["sent_at"] = [int(s) for s in sent]
+        row["first_at"] = int(row.get("first_at") or sent[0])
+        row["next_at"] = _next_at(row["first_at"], len(sent))
+        out[ts] = row
+    return out
+
+
+def save_escalations(rows: dict[int, dict], path: str | None = None) -> None:
+    import atomic_write  # noqa: PLC0415 — panel-local
+
+    target = path or ESCALATION_FILE
+    parent = os.path.dirname(target)
+    if parent and not os.path.isdir(parent):
+        return
+    try:
+        atomic_write.write_json(
+            target, {str(ts): row for ts, row in rows.items()})
+    except OSError as exc:
+        # Losing this file costs repeats on a problem that is still on the
+        # Findings tab, so it is a log line rather than a raised error —
+        # but it is never silent, `save_queue`'s reason.
+        log.warning("could not write the escalation ledger: %s", exc)
+
+
+def begin_escalation(findings: list[dict], now: float,
+                     path: str | None = None) -> int:
+    """Start the ladder for rows that have just been announced.
+
+    Idempotent on `ts`: a row already climbing keeps the rung it is on,
+    because a second `add_many` that somehow re-offered it must not reset
+    a ladder that is most of the way to its last reminder. Returns how
+    many were added.
+    """
+    rows = load_escalations(path)
+    added = 0
+    for f in findings or []:
+        row = _escalation_row(f, now)
+        if not row["ts"] or row["ts"] in rows:
+            continue
+        if len(rows) >= ESCALATION_MAX_ROWS:
+            log.warning(
+                "not escalating %s: %d already on the ladder (the cap)",
+                row["ts"], len(rows))
+            break
+        rows[row["ts"]] = row
+        added += 1
+    if added:
+        save_escalations(rows, path)
+    return added
+
+
+def prune_escalations(live_ids: set[int], path: str | None = None) -> list[int]:
+    """Forget every row that is no longer an open finding. Returns the ids.
+
+    Fixed, dismissed, snoozed, moved to the to-do list, cleared by the
+    check that filed it — five endings, and every one of them means stop.
+    The caller reads the findings store for this on every tick and never
+    the ledger's own copy, because the ledger cannot know.
+    """
+    rows = load_escalations(path)
+    gone = [ts for ts in rows if ts not in live_ids]
+    if gone:
+        for ts in gone:
+            rows.pop(ts, None)
+        save_escalations(rows, path)
+    return gone
+
+
+def due_escalations(now: float, path: str | None = None) -> list[dict]:
+    """The reminders that have come due, oldest ladder first."""
+    rows = [r for r in load_escalations(path).values()
+            if r.get("next_at") and float(r["next_at"]) <= now]
+    rows.sort(key=lambda r: float(r.get("first_at") or 0))
+    return rows
+
+
+def record_reminder(ts: int, now: float,
+                    path: str | None = None) -> dict | None:
+    """Write down that a reminder went out, and when the next one is due.
+
+    Written after every send, `usage-limits-tracker._resume_backoff`'s
+    reason: a ladder that lived only in memory would start again from
+    the first rung on the restart somebody performs precisely because
+    their phone is going off.
+    """
+    rows = load_escalations(path)
+    row = rows.get(int(ts))
+    if row is None:
+        return None
+    row["sent_at"] = [*row.get("sent_at", []), int(now)][-ESCALATION_SENDS_MAX:]
+    row["next_at"] = _next_at(row.get("first_at") or now, len(row["sent_at"]))
+    save_escalations(rows, path)
+    return row
+
+
+def next_escalation_at(path: str | None = None) -> float:
+    """The soonest reminder due, or 0 when nothing is climbing.
+
+    The flush loop's wait reads this, because a ladder due in ten minutes
+    must not wait out a nine-hour night.
+    """
+    due = [float(r["next_at"]) for r in load_escalations(path).values()
+           if r.get("next_at")]
+    return min(due) if due else 0.0
+
+
+def escalation_state(path: str | None = None) -> dict:
+    """What the ladder is holding, for `/api/diagnostics`.
+
+    A queue nobody can see is a queue that silently swallows — the hold
+    queue's rule, and it applies twice over here, because the failure
+    this would hide is a house being reminded about nothing or not being
+    reminded about a leak.
+    """
+    rows = load_escalations(path)
+    # Named for the diagnostics block it is spread into rather than for
+    # this function: a bare `next_at` beside the hold queue's own stamps
+    # is a number nobody reading the payload could attribute.
+    return {
+        "escalating": len(rows),
+        "escalation_next_at": int(next_escalation_at(path)),
+        "escalation_reminders_sent": sum(
+            max(0, len(r.get("sent_at") or []) - 1) for r in rows.values()),
+        "escalation_since": min((int(r.get("first_at") or 0)
+                                 for r in rows.values()), default=0),
+    }
+
+
+# ---------------------------------------------------------------------------
 # The message
 # ---------------------------------------------------------------------------
 
@@ -312,6 +604,43 @@ def compose(rows: list[dict], held: bool = False) -> tuple[str, str]:
         # Counted, never truncated: a list that stops mid-way reads as
         # the whole of what happened.
         lines.append(f"…and {n - LINES_MAX} more on the Findings tab.")
+    return title, "\n".join(lines)[:MESSAGE_MAX]
+
+
+def _ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th') }"
+
+
+def compose_escalation(row: dict, tz: dt.tzinfo | None = None) -> tuple[str, str]:
+    """The message a reminder sends, and the one that says it is the last.
+
+    **It says which repeat it is**, because the second copy of a sentence
+    somebody has already read is otherwise indistinguishable from the
+    notifier having sent it twice by mistake — and it says since when,
+    which is the fact that makes a reminder worth reading rather than
+    worth silencing.
+
+    **And the last one says so.** A notification that will go on arriving
+    for ever is one people turn off, which takes the next real emergency
+    with it; saying where the ladder ends is what makes the ones before
+    it safe to leave on. The finding does not go away — it is on the
+    Findings tab, in `todo.brain` and in Repairs — so what stops is the
+    asking rather than the problem.
+    """
+    sent = list(row.get("sent_at") or [])
+    number = max(1, len(sent))
+    last = number >= len(ESCALATION_S)
+    when = dt.datetime.fromtimestamp(
+        float(row.get("first_at") or 0), tz or dt.timezone.utc).strftime("%H:%M")
+    title = "brAIn: still open"
+    lines = [f"[{row.get('severity', 'critical')}] {row.get('text', '')}",
+             "",
+             f"Still open since {when} — {_ordinal(number)} reminder."]
+    if last:
+        lines.append("brAIn will not ask about this again; it stays on the "
+                     "Findings tab.")
     return title, "\n".join(lines)[:MESSAGE_MAX]
 
 
@@ -428,10 +757,14 @@ def parse_action(identifier: str) -> tuple[str, int] | None:
 
 
 __all__ = [
-    "ACCEPTED_URGENCY", "ACTION_LABELS", "ACTION_PREFIX", "DEFAULT_URGENCY",
-    "PRODUCER_URGENCY", "QUEUE_FILE", "URGENCY", "actions_for", "can_answer",
-    "compose", "compose_accepted", "hold",
-    "in_quiet_hours", "load_queue", "parse_action", "parse_hour",
-    "quiet_ends_at", "save_queue", "take_queue", "urgency_of",
+    "ACCEPTED_URGENCY", "ACTION_LABELS", "ACTION_PREFIX",
+    "DEFAULT_MIN_SEVERITY", "DEFAULT_URGENCY", "ESCALATION_FILE",
+    "ESCALATION_MAX_ROWS", "ESCALATION_S", "PRODUCER_URGENCY", "QUEUE_FILE",
+    "TIERS", "URGENCY", "actions_for", "begin_escalation", "can_answer",
+    "classify", "compose", "compose_accepted", "compose_escalation",
+    "due_escalations", "escalation_state", "hold", "in_quiet_hours",
+    "load_escalations", "load_queue", "next_escalation_at", "parse_action",
+    "parse_hour", "prune_escalations", "quiet_ends_at", "record_reminder",
+    "save_escalations", "save_queue", "take_queue", "tier_of", "urgency_of",
     "worth_sending",
 ]
