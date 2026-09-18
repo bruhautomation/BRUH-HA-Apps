@@ -84,6 +84,10 @@ PRODUCER_URGENCY = {
     # winter is not two degrees shorter at 3am, and a heating schedule
     # that starts late starts late again tomorrow.
     "check:climate.": "whenever",
+    # An update waiting at 23:00 is the same update at 08:00, and
+    # `check:sys.` as a family is `today` because the rest of it is a
+    # disk filling up or an add-on that is down.
+    "check:sys.update_pending": "whenever",
     # A trend, a forecast, a tidy-up. None of these change overnight.
     "check:forecast.": "whenever",
     "check:base.": "whenever",
