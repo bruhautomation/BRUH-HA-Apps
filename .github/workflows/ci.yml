@@ -138,6 +138,11 @@ jobs:
       - name: Measure the triage view
         run: node tests/manual/measure-triage.mjs
 
+      # What a fix would change, read before it changes it — and what it
+      # did change, read before the undo beside it is pressed.
+      - name: Measure the fix plan card
+        run: node tests/manual/measure-fixplan.mjs
+
       - name: Measure BRight's light map
         run: node tests/manual/measure-lightmap.mjs
 

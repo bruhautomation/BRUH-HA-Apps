@@ -9,10 +9,14 @@ name means nothing to anyone.
 The lifecycle is deliberately short, because a list of problems nobody ever
 settles is just a second inbox:
 
-  open ──fix──▶ fixing ──▶ fixed       brAIn made the change; you haven't
-                       │               read what it did yet
-                       ├─▶ failed      it tried and couldn't
-                       └─▶ needs_you   only a human can (replace the battery)
+  open ──fix──▶ planning ─▶ planned    a read-only run says what it WOULD
+                                       change; nothing has happened yet
+  planned ──"Cancel"────────▶ open     the plan stays on the row
+  planned ──"Apply"─▶ fixing ─▶ fixed  brAIn made the change; you haven't
+                            │          read what it did yet
+                            ├─▶ failed      it tried and couldn't
+                            └─▶ needs_you   only a human can (the battery)
+  fixed ──"Undo"────────────▶ open     the files it wrote are back
        ──"I've handled it"───▶ settled: you fixed it yourself
        ──"Wrong"─────────────▶ settled: it isn't a problem here, and here is
                                         why — in the homeowner's own words
@@ -134,8 +138,16 @@ SEVERITIES = ("info", "warning", "serious", "critical")
 # anybody, and a held one is not either — and both are CLEARABLE, because
 # a check that stops reporting something has stopped reporting it whether
 # or not it ever reached a screen.
-STATUSES = ("triaging", "open", "fixing", "fixed", "failed", "needs_you",
-            "ignored", "held")
+# `planning` and `planned` are the two halves of pressing Fix it, and they
+# are deliberately two words rather than one. `planning` is a read-only run
+# in flight working out what it WOULD change — nothing is waiting on a
+# person and nothing has been touched; `planned` is the answer sitting on
+# the card with Apply and Cancel under it, which is a decision and the only
+# kind of thing a badge may count. Collapsing them into one word would make
+# the badge count a run nobody can answer yet, and would make the card say
+# "apply this" over a plan that does not exist.
+STATUSES = ("triaging", "open", "planning", "planned", "fixing", "fixed",
+            "failed", "needs_you", "ignored", "held")
 # The statuses a PRODUCER may file into. Everything else is reached by a
 # person pressing something or by brAIn acting, so `coerce` takes only
 # these two off the wire: a row arriving as `ignored` would be a producer
@@ -144,10 +156,13 @@ PRE_STATUSES = ("open", "triaging")
 # Statuses that still want the homeowner's attention on the Findings tab.
 # `fixed` is in here: an automated fix changed something in the house, and
 # that stays on the list until somebody has read what it did.
-LIVE_STATUSES = ("open", "fixing", "fixed", "failed", "needs_you")
+LIVE_STATUSES = ("open", "planning", "planned", "fixing", "fixed", "failed",
+                 "needs_you")
 # ...and the subset the tab badge counts: a fix already running isn't a
-# decision anyone has to make.
-UNSETTLED_STATUSES = ("open", "fixed", "failed", "needs_you")
+# decision anyone has to make, and neither is the read-only run working out
+# what it would do. A `planned` row IS one — Apply or Cancel is exactly the
+# shape of question this badge exists to count.
+UNSETTLED_STATUSES = ("open", "planned", "fixed", "failed", "needs_you")
 
 # What goes back into the analyst's prompt. Ignored findings are the point of
 # the block — capped so it can never grow into a wall.
@@ -287,6 +302,46 @@ def _clean_changed(value) -> list[str]:
     return out
 
 
+# What a plan may say, capped. The steps are the load-bearing half — they
+# are what somebody reads before consenting to a change in their house — so
+# there are enough of them to describe a real fix and few enough that the
+# card stays a card.
+MAX_PLAN_STEPS = 10
+MAX_PLAN_STEP = 200
+MAX_PLAN_RISK = 300
+MAX_PLAN_SUMMARY = 600
+
+
+def _clean_plan(value) -> dict:
+    """One stored plan, normalized — `{}` when nothing has planned.
+
+    An empty dict rather than a `None` for `_clean_triage`'s reason: every
+    reader asks `.get("steps")`, and an absent list is the honest answer
+    for a row nothing has looked at. `can_fix` defaults FALSE, because the
+    card only offers Apply when a plan says software can do it, and a plan
+    this could not read must not be read as permission.
+    """
+    if not isinstance(value, dict):
+        return {}
+    steps = []
+    for item in value.get("steps") or []:
+        if isinstance(item, str) and item.strip():
+            steps.append(item.strip()[:MAX_PLAN_STEP])
+        if len(steps) >= MAX_PLAN_STEPS:
+            break
+    needs_you = bool(value.get("needs_you"))
+    return {
+        # Mutually exclusive by definition, the same way `fixer.parse_result`
+        # reads them: a fix that needs hands is not one software can make.
+        "can_fix": bool(value.get("can_fix")) and not needs_you,
+        "needs_you": needs_you,
+        "steps": steps,
+        "risk": str(value.get("risk") or "").strip()[:MAX_PLAN_RISK],
+        "summary": str(value.get("summary") or "").strip()[:MAX_PLAN_SUMMARY],
+        "at": int(value.get("at") or 0),
+    }
+
+
 def _clean_triage(value) -> dict:
     """The triage record on a row, normalized — `{}` when nothing looked.
 
@@ -365,6 +420,25 @@ def _shape(entry: dict) -> dict:
         # the discussion you had about it" is the half that makes a
         # verdict arguable rather than a word.
         "triage": _clean_triage(entry.get("triage")),
+        # What a read-only run said it WOULD change, if Fix it has been
+        # pressed. `{can_fix, needs_you, steps, risk, summary, at}` — see
+        # `_clean_plan`. It is kept across a Cancel on purpose: the plan
+        # cost a Claude run, and a person who wants to look at it again
+        # should not have to pay for it twice.
+        "plan": _clean_plan(entry.get("plan")),
+        # The wall-clock window the tool-enabled run ran in. It is what
+        # `unfix` reads the edit journal and the action ledger against, so
+        # it is on the row rather than in memory: the Undo button lives for
+        # as long as the row says `fixed`, which outlives any process.
+        "fix_started": float(entry.get("fix_started") or 0),
+        "fix_ended": float(entry.get("fix_ended") or 0),
+        # What that run changed, counted when it ended: files it journalled
+        # (which an undo puts back) and service calls it made (which an undo
+        # lists and never reverses). Two numbers because they are two
+        # different claims, and the card says which is which before the
+        # press rather than after it.
+        "fix_files": int(entry.get("fix_files") or 0),
+        "fix_calls": int(entry.get("fix_calls") or 0),
         # When somebody last pressed "Check again" and the check still
         # reported it. Written only by that press, never by the scheduled
         # pass: the schedule confirms every open row every few hours and a
@@ -674,7 +748,88 @@ def set_status(ts: int, status: str, result: str = "",
             entry["result"] = str(result)[:MAX_RESULT]
         if changed is not None:
             entry["changed"] = _clean_changed(changed)
-        entry["settled_at"] = 0 if status in ("open", "fixing") else int(time.time())
+        entry["settled_at"] = (
+            0 if status in ("open", "planning", "planned", "fixing")
+            else int(time.time()))
+        _write(items)
+        return _shape(entry)
+    return None
+
+
+@_mutates
+def set_plan(ts: int, plan: dict, when: float | None = None) -> dict | None:
+    """Write what a read-only run said it would change, and stop there.
+
+    The row moves to `planned`, which is the whole point: pressing Fix it
+    now buys a *sentence about a change*, and the change itself waits for
+    a second press. A plan that says software cannot do this (`can_fix`
+    false, or `needs_you`) is stored exactly the same way and is simply
+    not offered an Apply — the card says what it says and offers Cancel,
+    because a button that cannot help is worse than the sentence.
+
+    Only a row this run is actually about is touched (`planning`, or the
+    `open` a Cancel put it back to): a plan arriving late about a finding
+    somebody settled in the meantime must not drag it back onto the list,
+    which is `record_triage`'s rule for the same reason. Unknown ids and
+    rows that have moved on return None.
+    """
+    stamp = int(when if when is not None else time.time())
+    shaped = _clean_plan({**(plan or {}), "at": stamp})
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) != int(ts):
+            continue
+        if entry.get("status") not in ("planning", "open"):
+            return None
+        entry["plan"] = shaped
+        entry["status"] = "planned"
+        entry["settled_at"] = 0
+        _write(items)
+        return _shape(entry)
+    return None
+
+
+@_mutates
+def set_fix_window(ts: int, started: float | None = None,
+                   ended: float | None = None, files: int | None = None,
+                   calls: int | None = None) -> dict | None:
+    """Stamp when the tool-enabled run began, when it stopped, and what it did.
+
+    This is what makes the Undo on a fixed card possible at all: the edit
+    journal and the action ledger are both append-only files stamped in
+    epoch seconds, and "what did THIS fix change" is answerable only as
+    "everything either of them recorded between these two instants".
+    Written in two calls rather than one because the start has to be on
+    disk before the run is spawned — a panel that dies mid-fix must still
+    leave a window somebody can ask about.
+
+    ``files`` and ``calls`` are counted ONCE, when the run ends, and
+    stored — never re-derived on the tab's own fetch. The two files they
+    are counted out of are append-only and the index has no cap, so a
+    count taken per fixed row per poll would read the whole of both every
+    few seconds; and the claim being made is about what the run DID, which
+    stops being true of a live file the moment anything else writes one.
+    What the undo actually managed is reported by the undo.
+    """
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) != int(ts):
+            continue
+        if started is not None:
+            entry["fix_started"] = float(started)
+            # A second attempt is a second window. Clearing the end and the
+            # counts here rather than leaving the old ones is what stops an
+            # Undo after a retry reverting the span between the two runs,
+            # and what stops the card describing the run before this one.
+            entry["fix_ended"] = 0.0
+            entry["fix_files"] = 0
+            entry["fix_calls"] = 0
+        if ended is not None:
+            entry["fix_ended"] = float(ended)
+        if files is not None:
+            entry["fix_files"] = max(0, int(files))
+        if calls is not None:
+            entry["fix_calls"] = max(0, int(calls))
         _write(items)
         return _shape(entry)
     return None
@@ -1100,10 +1255,21 @@ def reconcile_running(reason: str) -> int:
     job that would settle it is gone, and the tab offers no buttons in that
     status — the finding becomes permanently unreachable. Called at startup,
     which is the only moment we know for certain that nothing is in flight.
+
+    `planning` is orphaned the same way and does NOT land in the same
+    place. That run holds read-only tools, so a plan that died changed
+    nothing in the house and there is nothing to report as failed: the row
+    goes back to `open` with the button it came from, where `fixing` has to
+    say out loud that something may have been half-done. Two statuses, two
+    honest answers — the whole reason they are two words.
     """
     items = _load()
-    stuck = [f for f in items if f.get("status") == "fixing"]
+    stuck = [f for f in items if f.get("status") in ("fixing", "planning")]
     for entry in stuck:
+        if entry.get("status") == "planning":
+            entry["status"] = "open"
+            entry["settled_at"] = 0
+            continue
         entry["status"] = "failed"
         entry["result"] = reason
         entry["settled_at"] = int(time.time())
@@ -1117,7 +1283,11 @@ def reconcile_running(reason: str) -> int:
 # is still simply *open*, or has not got there: a row waiting on triage
 # and one triage held are both rows the homeowner has never answered, so
 # a check that no longer reports the problem may take either back.
-CLEARABLE = ("open", "needs_you", "failed", "triaging", "held")
+# `planned` is in here and `planning` is not, for the same reason `fixing`
+# is not: a plan is a sentence about a problem, so if the check stops
+# reporting the problem the plan is about nothing and the row should go —
+# but a run in flight must not have its row deleted out from under it.
+CLEARABLE = ("open", "planned", "needs_you", "failed", "triaging", "held")
 
 
 @_mutates

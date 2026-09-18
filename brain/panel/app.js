@@ -3655,6 +3655,12 @@ $("#fbModal").addEventListener("click", (ev) => {
 
 const FIND_STATUS = {
   open:      { label: "Needs a decision", cls: "open" },
+  // Two words for the two halves of pressing Fix it, because they are two
+  // different claims: a read-only run is out working out what it would
+  // change (nothing is waiting on you), and then the steps are on the card
+  // with Apply and Cancel under them (which is a decision).
+  planning:  { label: "Working out what to change…", cls: "fixing" },
+  planned:   { label: "Here's what brAIn would do", cls: "open" },
   fixing:    { label: "brAIn is fixing it…", cls: "fixing" },
   fixed:     { label: "brAIn fixed it — have a look", cls: "fixed" },
   failed:    { label: "Couldn't fix it", cls: "failed" },
@@ -3697,7 +3703,8 @@ const FIND_SEVERITY = {
 // one press away, and one verb that puts it back.
 const FIND_FILTERS = [
   { id: "live", label: "Needs you", match: (f) =>
-    ["open", "fixing", "fixed", "failed", "needs_you"].includes(f.status)
+    ["open", "planning", "planned", "fixing", "fixed", "failed",
+     "needs_you"].includes(f.status)
     && !findings_isSnoozed(f) },
   { id: "snoozed", label: "Later", match: (f) => findings_isSnoozed(f) },
   // What was brought up and looked at and is not worth your time. These
@@ -3772,7 +3779,12 @@ async function findAction(finding, verb, done, btns, note, extra) {
     // Fix it (a Claude run is already touching the house) and on the snooze
     // (it took nothing away, and has "Bring it back now").
     toast(done, data.undo);
-    if (verb === "fix") { refreshStatus().catch(() => {}); fastPoll(); }
+    // Both halves of Fix it start a Claude run, so both want the faster
+    // poll that notices it finishing. Cancel and the undo change a row and
+    // start nothing, so neither does.
+    if (verb === "fix" || verb === "apply") {
+      refreshStatus().catch(() => {}); fastPoll();
+    }
   } catch (e) {
     toast(e.message);
     btns.forEach((b) => { b.disabled = false; });
@@ -3971,6 +3983,71 @@ async function discussFinding(f, btns) {
   }
 }
 
+// What a read-only run said it WOULD change, before it has changed
+// anything. The steps are the half a person is consenting to, so they are
+// rendered as a list rather than folded into a paragraph, and the risk
+// sentence rides under them because "what could go wrong" is the other
+// question anybody asks before pressing.
+//
+// A plan that says software should not make this change renders as the
+// sentence and nothing else — no steps, because `fixer.parse_plan` drops
+// them for exactly that case: a list of changes under a refusal reads as a
+// plan somebody can approve.
+function planBlock(f) {
+  const plan = f.plan || {};
+  if (!plan.summary && !(plan.steps || []).length) return null;
+  const box = el("div", "findplan");
+  box.appendChild(el("span", "findplanlabel", plan.can_fix
+    ? "brAIn would make these changes"
+    : plan.needs_you ? "This one needs you, not software"
+                     : "brAIn would not make this change itself"));
+  if (plan.summary) box.appendChild(el("p", null, plan.summary));
+  if ((plan.steps || []).length) {
+    const list = el("ol", "findsteps");
+    plan.steps.forEach((s) => list.appendChild(el("li", null, s)));
+    box.appendChild(list);
+  }
+  if (plan.risk) box.appendChild(el("p", "findrisk", `What could go wrong: ${plan.risk}`));
+  return box;
+}
+
+// Whether there is a window to undo out of. The server refuses the press
+// without one, so this is the card holding the same rule rather than a
+// second answer to it.
+function findCanUndo(f) {
+  return !!(f.fix_started && f.fix_ended);
+}
+
+// What the fix actually did, on a card that is offering to undo it. The
+// two numbers are separate because the undo treats them differently and
+// the difference is the thing worth knowing BEFORE pressing: files come
+// back, service calls are listed. A run that changed neither says so, or
+// the button looks like it is offering something it is not.
+function fixFootLine(f) {
+  const files = f.fix_files || 0;
+  const calls = f.fix_calls || 0;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  // A run from before the window was recorded. "I could not tell" and
+  // "nothing changed" are different claims, and only the second may sit
+  // under a button offering to put it back — so this one says which, and
+  // `findCanUndo` takes the button away rather than offering a press that
+  // would answer "there was nothing to do" about a house that was changed.
+  if (!findCanUndo(f)) {
+    return "brAIn did not record what this fix changed — it ran before the "
+      + "panel kept that window. `brain undo` in the terminal lists every "
+      + "file Claude has edited.";
+  }
+  if (!files && !calls) {
+    return "It changed no files and called no services — undoing it would "
+      + "put nothing back.";
+  }
+  const parts = [];
+  if (files) parts.push(`changed ${plural(files, "file")}`);
+  if (calls) parts.push(`made ${plural(calls, "service call")}`);
+  return `brAIn ${parts.join(" and ")}. Undo puts the files back`
+    + (calls ? "; the service calls are listed, not reversed." : ".");
+}
+
 // One line about whether anything looked at this finding before it
 // reached the tab, plus the way into the conversation that did.
 //
@@ -4112,11 +4189,46 @@ function makeFinding(f) {
     card.appendChild(box);
   }
 
+  // What a read-only run said it WOULD change, before anything has been
+  // changed. It renders wherever the row carries one — including after a
+  // Cancel, because the plan cost a Claude run and reading it again should
+  // not cost a second one.
+  const planned = planBlock(f);
+  if (planned) card.appendChild(planned);
+
+  // On a finished fix, what it touched — read before the Undo beside it
+  // rather than discovered by pressing it.
+  if (f.status === "fixed") {
+    card.appendChild(el("p", "findfixfoot", fixFootLine(f)));
+  }
+
   const actions = el("div", "findactions");
   const btns = [];
   const add = (node) => { btns.push(node); actions.appendChild(node); return node; };
 
-  if (f.status === "fixing") {
+  if (f.status === "planning") {
+    const busy = el("div", "phase");
+    busy.appendChild(el("span", "orbit"));
+    busy.appendChild(el("span", null,
+      "Working out what it would change — nothing is being changed yet"));
+    actions.appendChild(busy);
+  } else if (f.status === "planned") {
+    // Apply only where the plan says software can do it. A plan that said
+    // otherwise is a sentence to read and Cancel, because a button that
+    // cannot help is worse than the sentence — and the server refuses the
+    // same case, so the rule is not held here alone.
+    if (f.plan && f.plan.can_fix) {
+      const go = add(el("button", "btn small primary", "✦  Apply"));
+      tip(go, "Let brAIn make exactly these changes, then report back");
+      go.addEventListener("click", () => findAction(
+        f, "apply", "On it — brAIn is making the change", btns));
+    }
+    const no = add(el("button", "btn small ghost", "Cancel"));
+    tip(no, "Don't make the change. The plan stays on the card, so you can "
+      + "read it again without paying for it.");
+    no.addEventListener("click", () => findAction(
+      f, "cancel", "Left alone — the plan is still here", btns));
+  } else if (f.status === "fixing") {
     const busy = el("div", "phase");
     busy.appendChild(el("span", "orbit"));
     busy.appendChild(el("span", null, "Fixing it now — this can take a few minutes"));
@@ -4129,6 +4241,20 @@ function makeFinding(f) {
     const ok = add(el("button", "btn small primary", "✓  Got it"));
     tip(ok, "Clear it off the list — what brAIn changed is already in memory");
     ok.addEventListener("click", () => findAction(f, "ack", "Cleared", btns));
+    // The durable undo, and deliberately not the toast's: what it reverses
+    // is bytes in /config and a reload Home Assistant has done, so it lives
+    // on the card for as long as the row says fixed rather than for five
+    // minutes. A window that holds nothing still gets the button — "there
+    // was nothing to put back" is an answer worth being able to get — but
+    // a run from before the window was recorded does not, because that
+    // press could only answer it wrongly.
+    if (findCanUndo(f)) {
+      const back = add(el("button", "btn small ghost", "↩  Undo the fix"));
+      tip(back, "Put back every file brAIn changed and reload Home Assistant. "
+        + "Service calls it made are listed, not reversed.");
+      back.addEventListener("click", () => findAction(
+        f, "unfix", "Put back — read what it says", btns));
+    }
   } else if (f.status === "ignored") {
     // A row dismissed before the settled ledger existed, still on disk
     // until startup moves it. Startup normally gets there first.
@@ -8983,8 +9109,12 @@ async function chatFindingAction(verb, done, note, extraBtns) {
 }
 
 $("#chatFindingClose").addEventListener("click", () => setChatFinding(null));
+// Fix it buys the read-only look here too, so the toast says that rather
+// than announcing a change nothing has made — and it names where the steps
+// land, because this strip closes on the press and the plan is on the card.
 $("#chatFindingFix").addEventListener("click", () =>
-  chatFindingAction("fix", "On it — brAIn is making the change"));
+  chatFindingAction("fix",
+    "Working out what it would change — the steps land on the Findings tab"));
 $("#chatFindingDone").addEventListener("click", () => openNoteForm(
   $("#chatFinding"), $("#chatFinding").querySelector(".cfacts"),
   (note, formBtns) => chatFindingAction(
