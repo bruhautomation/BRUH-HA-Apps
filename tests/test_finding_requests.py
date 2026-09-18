@@ -18,15 +18,39 @@ import os
 import sys
 import tempfile
 import time
+import types
 import unittest
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+INTEGRATION_DIR = BASE_DIR / "brain" / "custom_components" / "brain"
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
 
 import finding_requests  # noqa: E402
 import findings_store  # noqa: E402
 import notify_router  # noqa: E402
+
+# The integration's own writer, for the checks half: it imports
+# `homeassistant.core` and nothing else on purpose, which is what makes it
+# drivable straight into the panel's reader from here.
+if "homeassistant" not in sys.modules:
+    sys.modules["homeassistant"] = types.ModuleType("homeassistant")
+if "homeassistant.core" not in sys.modules:
+    _core = types.ModuleType("homeassistant.core")
+    _core.HomeAssistant = type("HomeAssistant", (), {})
+    sys.modules["homeassistant.core"] = _core
+_pkg = types.ModuleType("brain_cc")
+_pkg.__path__ = [str(INTEGRATION_DIR)]
+sys.modules.setdefault("brain_cc", _pkg)
+brain_requests = importlib.import_module("brain_cc.requests")  # noqa: E402
+
+
+class _IntegrationHass:
+    """The two attributes `requests.py` reaches for, and nothing else."""
+
+    def __init__(self, base: str):
+        self.config = types.SimpleNamespace(
+            path=lambda *parts: os.path.join(base, *parts))
 
 
 class RequestCase(unittest.TestCase):
@@ -365,6 +389,142 @@ class TestBothFrontDoorsSettleTheSame(RequestCase):
         self.drop("002.json", {"ts": 2, "action": "fixed"})
         self.assertEqual(self.server._requests_diagnostics()["pending"], 2)
 
+
+class TestAskingForAChecksPass(RequestCase):
+    """`brain.check` and the Run-checks button, from both ends.
+
+    The one kind on this queue that is not an ending: it names no row,
+    carries no verb, and what it asks for is minutes of work the drain
+    loop cannot wait for. Two things have to hold — two asks in one drain
+    are ONE pass (`create_task` only schedules, so two tasks made in the
+    same tick would both clear `run_checks`' own guard), and a pass
+    already running consumes the request rather than queueing it.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.server = importlib.import_module("server")
+        self._old_inbox = self.server.MEMORY_INBOX_DIR
+        self.server.MEMORY_INBOX_DIR = Path(self.tmp.name) / "memory-inbox"
+        self._old_run = self.server.run_checks
+        self._old_state = dict(self.server.CHECKS_REQUEST_STATE)
+        self._old_running = self.server.CHECKS_STATE["running"]
+        self.runs: list[str] = []
+
+        async def fake_run_checks(reason="schedule"):
+            self.runs.append(reason)
+            return {"reason": reason}
+
+        self.server.run_checks = fake_run_checks
+
+    def tearDown(self):
+        self.server.run_checks = self._old_run
+        self.server.MEMORY_INBOX_DIR = self._old_inbox
+        self.server.CHECKS_REQUEST_STATE.clear()
+        self.server.CHECKS_REQUEST_STATE.update(self._old_state)
+        self.server.CHECKS_STATE["running"] = self._old_running
+        super().tearDown()
+
+    def a_finding(self) -> dict:
+        entry, _created = findings_store.add(
+            "The hall sensor has not reported since Tuesday",
+            severity="serious", source="check:dev.unavailable",
+            source_title="Devices")
+        return entry
+
+    def drain(self) -> list[dict]:
+        """One pass of the drain, with the started task allowed to run."""
+        async def go():
+            out = await self.server._apply_finding_requests()
+            # `_start_requested_checks` starts the pass and does not await
+            # it — the loop has to be back for the next answer somebody
+            # gives from their phone — so the test yields to let the task
+            # it created reach its first line.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            return out
+
+        return asyncio.run(go())
+
+    def test_what_the_integration_writes_is_what_the_panel_parses(self):
+        # Neither process can import the other, so the format is driven
+        # end to end rather than written down twice.
+        hass = _IntegrationHass(self.tmp.name)
+        self.assertTrue(brain_requests.write_checks_request(hass, "service"))
+        old = finding_requests.REQUEST_DIR
+        finding_requests.REQUEST_DIR = Path(brain_requests.requests_dir(hass))
+        try:
+            got = finding_requests.collect()
+        finally:
+            finding_requests.REQUEST_DIR = old
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["kind"], "checks")
+        self.assertEqual(got[0]["via"], "service")
+
+    def test_a_checks_request_starts_a_pass(self):
+        self.drop("001.json", {"kind": "checks", "via": "service"})
+        got = self.drain()
+        self.assertEqual(self.runs, ["service"])
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["kind"], "checks")
+        self.assertTrue(got[0]["ok"])
+
+    def test_two_requests_in_one_drain_are_one_pass(self):
+        self.drop("001.json", {"kind": "checks", "via": "service"})
+        self.drop("002.json", {"kind": "checks", "via": "button"})
+        got = self.drain()
+        self.assertEqual(self.runs, ["service"])
+        row = [r for r in got if r.get("kind") == "checks"][0]
+        self.assertEqual(row["asked"], 2)
+        self.assertIn("button", row["via"])
+        self.assertIn("service", row["via"])
+
+    def test_a_pass_already_running_consumes_the_request(self):
+        """Not queued: a second pass a minute later over the same house
+        finds the same things, and the one running is about to answer the
+        question that was asked."""
+        self.server.CHECKS_STATE["running"] = True
+        self.drop("001.json", {"kind": "checks", "via": "service"})
+        got = self.drain()
+        self.assertEqual(self.runs, [])
+        row = [r for r in got if r.get("kind") == "checks"][0]
+        self.assertFalse(row["ok"])
+        self.assertIn("already running", row["why"])
+        # ...and the file is gone, so it cannot be applied again later.
+        self.assertEqual(finding_requests.pending(), 0)
+
+    def test_an_ending_in_the_same_burst_is_applied_before_the_pass(self):
+        """A pass that ran first would re-file what the answer settled."""
+        entry = self.a_finding()
+        order: list[str] = []
+
+        async def watching_run_checks(reason="schedule"):
+            order.append("checks")
+            return {"reason": reason}
+
+        self.server.run_checks = watching_run_checks
+        real_end = self.server._end_finding
+
+        async def watching_end(finding, spec, note=""):
+            order.append("ending")
+            return await real_end(finding, spec, note)
+
+        self.server._end_finding = watching_end
+        try:
+            self.drop("001.json", {"kind": "checks", "via": "service"})
+            self.drop("002.json", {"ts": entry["ts"], "action": "fixed"})
+            self.drain()
+        finally:
+            self.server._end_finding = real_end
+        self.assertEqual(order, ["ending", "checks"])
+
+    def test_a_request_nobody_can_see_is_a_request_that_swallows(self):
+        self.drop("001.json", {"kind": "checks", "via": "service"})
+        before = self.server._requests_diagnostics()["checks_asked"]
+        self.drain()
+        after = self.server._requests_diagnostics()
+        self.assertEqual(after["checks_asked"] - before, 1)
+        self.assertGreater(after["checks_asked_last"], 0)
 
 
 if __name__ == "__main__":

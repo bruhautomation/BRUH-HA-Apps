@@ -73,6 +73,18 @@ if "homeassistant.components.todo" not in sys.modules:
     todo_mod.TodoListEntityFeature = _TodoListEntityFeature
     sys.modules["homeassistant.components.todo"] = todo_mod
 
+    # `findings.py` reaches the issue registry to mirror findings into
+    # Repairs; `todo.py` imports it for the two mirror readers and never
+    # touches that half, so a stub that records nothing is enough here.
+    # tests/test_brain_findings_watcher.py is what drives the real thing.
+    issues = types.ModuleType("homeassistant.helpers.issue_registry")
+    issues.IssueSeverity = type(
+        "IssueSeverity", (), {"ERROR": "error", "WARNING": "warning"})
+    issues.async_create_issue = lambda *a, **k: None
+    issues.async_delete_issue = lambda *a, **k: None
+    sys.modules["homeassistant.helpers.issue_registry"] = issues
+    sys.modules["homeassistant.helpers"].issue_registry = issues
+
     ce = sys.modules["homeassistant.config_entries"]
     ce.ConfigEntry = type("ConfigEntry", (), {})
     dr = sys.modules["homeassistant.helpers.device_registry"]

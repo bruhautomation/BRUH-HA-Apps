@@ -83,20 +83,32 @@ SNOOZE_MAX_H = 24 * 30
 TODO_ACTIONS = ("done", "drop", "add")
 TODO_TEXT_MAX = 200
 
+# The third kind on this queue, and the only one that is not an answer
+# about a row: `brain.check` and the Run-checks button ask the panel to
+# look at the house now. It is an ASK rather than an ending, so nothing
+# here applies it — `server._apply_finding_requests` starts the pass, and
+# starting one is the panel's alone.
+CHECKS_KIND = "checks"
+
 
 def parse(obj) -> dict | None:
     """A validated request, or None for anything that is not one.
 
-    Two kinds share this queue, because they arrive from the same two
+    Three kinds share this queue, because they arrive from the same few
     surfaces and their order matters between them — a tick on an item the
-    same burst created has to be applied after the create. A request with
-    no `kind` is a finding's, which is what every request written before
-    the to-do list existed is.
+    same burst created has to be applied after the create, and a checks
+    pass asked for in the same burst as an ending has to run after it, or
+    it re-files what was just settled. A request with no `kind` is a
+    finding's, which is what every request written before the to-do list
+    existed is.
     """
     if not isinstance(obj, dict):
         return None
-    if str(obj.get("kind") or "finding").strip().lower() == "todo":
+    kind = str(obj.get("kind") or "finding").strip().lower()
+    if kind == "todo":
         return _parse_todo(obj)
+    if kind == "checks":
+        return _parse_checks(obj)
     ts = obj.get("ts")
     if isinstance(ts, bool) or not isinstance(ts, (int, float)):
         return None
@@ -147,6 +159,18 @@ def _parse_todo(obj: dict) -> dict | None:
         "note": str(obj.get("note") or "").strip()[:NOTE_MAX],
         "via": str(obj.get("via") or "")[:32],
     }
+
+
+def _parse_checks(obj: dict) -> dict:
+    """A validated ask for a house checks pass. Never None.
+
+    There is nothing to validate but the word `checks`, which `parse` has
+    already read: this request names no row, carries no verb and takes no
+    argument, so the only field left is where it came from — and a `via`
+    that could not be read is a log line missing four characters, not a
+    reason to drop somebody's press.
+    """
+    return {"kind": "checks", "via": str(obj.get("via") or "")[:32]}
 
 
 def verb_for(action: str) -> str:
@@ -234,7 +258,7 @@ def pending() -> int:
 
 
 __all__ = [
-    "ACTIONS", "KEEP_S", "MAX_BYTES", "MAX_PER_PASS", "MAX_QUEUED",
+    "ACTIONS", "CHECKS_KIND", "KEEP_S", "MAX_BYTES", "MAX_PER_PASS", "MAX_QUEUED",
     "NOTE_MAX", "REQUEST_DIR", "SNOOZE_DEFAULT_H", "SNOOZE_MAX_H",
     "TODO_ACTIONS", "TODO_TEXT_MAX",
     "collect", "parse", "pending", "verb_for",

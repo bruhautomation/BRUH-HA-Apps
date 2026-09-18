@@ -137,6 +137,26 @@ def write_todo_request(hass: HomeAssistant, action: str, *, item_id: int = 0,
     return _drop(hass, requests_dir(hass), body, what=f"to-do {action}")
 
 
+def write_checks_request(hass: HomeAssistant, via: str = "") -> bool:
+    """Ask the add-on to run its house checks now. Returns whether it landed.
+
+    A third kind on one queue, and it rides here rather than in a
+    directory of its own for `write_todo_request`'s reason turned up a
+    notch: the ORDER between kinds matters. An ending given a second
+    before this — "I've fixed it", from the same phone, in the same
+    burst — has to be applied before the pass runs, or the pass re-files
+    what was just settled and the answer reads as having been ignored.
+    Two queues sorted into one at the far end is the arrangement that
+    cannot promise that.
+
+    It carries no id because it is not about a row: everything the
+    add-on needs is the word `checks`, and `via` for the log line.
+    """
+    return _drop(hass, requests_dir(hass), {"kind": "checks",
+                                            "via": str(via or "")[:32]},
+                 what="a house checks pass")
+
+
 def _drop(hass: HomeAssistant, directory: str, body: dict,
           *, what: str) -> bool:
     """The write itself: atomic, chronologically named, never waited on.
