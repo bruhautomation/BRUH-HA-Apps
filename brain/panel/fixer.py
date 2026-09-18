@@ -171,7 +171,37 @@ def build_plan_prompt(finding: dict, memory: str = "", context: str = "",
     return "\n".join(parts)
 
 
-def parse_plan(text: str) -> dict:
+# The two replies as the CLI validates them (`--json-schema`). The prose
+# contracts above still describe them for a CLI without the flag, and
+# `parse_plan`/`parse_result` read either a validated object or the text.
+PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "can_fix": {"type": "boolean"},
+        "needs_you": {"type": "boolean"},
+        "steps": {"type": "array", "items": {"type": "string"}},
+        "risk": {"type": "string"},
+        "summary": {"type": "string"},
+    },
+    "required": ["can_fix", "steps", "summary"],
+    "additionalProperties": True,
+}
+RESULT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "needs_you": {"type": "boolean"},
+        "summary": {"type": "string"},
+        "changed": {"type": "array", "items": {"type": "string"}},
+        "verified": {"type": "string"},
+        "also_found": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["ok", "summary"],
+    "additionalProperties": True,
+}
+
+
+def parse_plan(text: str, obj: dict | None = None) -> dict:
     """Read the plan run's reply. Never raises, for `parse_result`'s reason.
 
     The failure here is cheaper than the fix's — nothing has been touched
@@ -181,9 +211,13 @@ def parse_plan(text: str) -> dict:
     permission to change somebody's house**, which is also why an empty
     step list cannot be `can_fix`: Apply would send a tool-enabled run at
     a home carrying nothing it was told to do.
+
+    `obj` is the CLI's validated object when the run carried PLAN_SCHEMA;
+    the text is read only when there is none, so one reader serves both.
     """
     raw = (text or "").strip()
-    obj = engine.extract_json(raw)
+    if not isinstance(obj, dict):
+        obj = engine.extract_json(raw)
     if not isinstance(obj, dict):
         return {
             "can_fix": False,
@@ -315,7 +349,7 @@ def build_prompt(finding: dict, memory: str = "", context: str = "",
     return "\n".join(parts)
 
 
-def parse_result(text: str) -> dict:
+def parse_result(text: str, obj: dict | None = None) -> dict:
     """Read the fix run's reply.
 
     Uses the same extractor the analysis path does — a second, subtly
@@ -326,9 +360,12 @@ def parse_result(text: str) -> dict:
     still edited the house, so this never raises: an unreadable reply comes
     back as a failure carrying the raw tail, which is the only honest thing
     to show someone whose home was just touched.
+
+    `obj` is the CLI's validated object when the run carried RESULT_SCHEMA.
     """
     raw = (text or "").strip()
-    obj = engine.extract_json(raw)
+    if not isinstance(obj, dict):
+        obj = engine.extract_json(raw)
     if not isinstance(obj, dict):
         return {
             "ok": False,

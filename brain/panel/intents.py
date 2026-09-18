@@ -308,13 +308,36 @@ def prompt(sentence: str, orientation: dict | None = None) -> str:
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.S)
 
 
-def parse_answer(text: str) -> dict | None:
+# The answer as the CLI validates it (`--json-schema`). The trigger,
+# condition and action lists are left open on purpose: they are Home
+# Assistant's own shapes, and `build` is what refuses the kinds brAIn
+# cannot replay — a schema that tried to say which triggers are allowed
+# would be a second copy of that rule.
+SCHEMA = {
+    "type": "object",
+    "properties": {
+        "once": {"type": "boolean"},
+        "plain": {"type": "string"},
+        "error": {"type": "string"},
+        "trigger": {"type": "array", "items": {"type": "object"}},
+        "condition": {"type": "array", "items": {"type": "object"}},
+        "action": {"type": "array", "items": {"type": "object"}},
+    },
+    "required": ["once"],
+    "additionalProperties": True,
+}
+
+
+def parse_answer(text: str, obj: dict | None = None) -> dict | None:
     """Claude's JSON, or None if there is none in there.
 
     A fenced block is tolerated because the model sometimes adds one
     despite being told not to, and refusing over punctuation would spend
-    somebody's sentence on a formatting rule.
+    somebody's sentence on a formatting rule. `obj` is the CLI's own
+    validated object when the run carried SCHEMA, and wins when present.
     """
+    if isinstance(obj, dict):
+        return obj
     raw = str(text or "").strip()
     match = _FENCE.search(raw)
     if match:

@@ -228,6 +228,40 @@ is `fix`, under "What you'd need to do"."""
 # the field, so a rewritten one cannot be longer than a filed one.
 MAX_FIX = 600
 
+# The most rows one day of triage may spend a run on. The drain reads ten
+# per minute, and nothing else bounded it below the usage budget: on a
+# large house's first pass that is hundreds of tool-using runs in an
+# hour. Past this the queue waits for tomorrow rather than surfacing
+# unjudged — the same trade `MAX_BATCH` makes, one clock up. Counted per
+# local day and reset with it.
+MAX_PER_DAY = 200
+
+# The reply, as the CLI validates it (`--json-schema`). Same shape the
+# prose contract shows; the schema is what makes "hold" versus "held"
+# impossible rather than merely mapped, because the enum admits one
+# spelling. `parse` still reads a text reply for a CLI without the flag.
+SCHEMA = {
+    "type": "object",
+    "properties": {
+        "verdicts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer", "minimum": 1},
+                    "verdict": {"type": "string", "enum": ["elevated", "held"]},
+                    "reason": {"type": "string"},
+                    "fix": {"type": "string"},
+                },
+                "required": ["id", "verdict", "reason"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["verdicts"],
+    "additionalProperties": False,
+}
+
 
 def frame(rows: list[dict], house: str = "", memory: str = "") -> str:
     """The prompt for one batch. Rows are numbered, because a model
@@ -315,7 +349,8 @@ def parse(obj, count: int) -> dict[int, tuple[str, str, str]]:
 
 
 __all__ = [
-    "MAX_BATCH", "MAX_FIX", "MAX_REASON", "MAX_TURNS", "NOT_MENTIONED", "NO_BUDGET",
-    "NO_CREDENTIAL", "PAUSED", "RUN_FAILED", "STALE_S", "SYSTEM",
-    "TIMEOUT_S", "UNJUDGED", "VERDICTS", "frame", "gate", "parse",
+    "MAX_BATCH", "MAX_FIX", "MAX_PER_DAY", "MAX_REASON", "MAX_TURNS",
+    "NOT_MENTIONED", "NO_BUDGET", "NO_CREDENTIAL", "PAUSED", "RUN_FAILED",
+    "SCHEMA", "STALE_S", "SYSTEM", "TIMEOUT_S", "UNJUDGED", "VERDICTS",
+    "frame", "gate", "parse",
 ]

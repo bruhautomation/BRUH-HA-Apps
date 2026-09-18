@@ -78,6 +78,9 @@ TERMINAL_UIS = ("chat", "classic")
 # setting AND as the automatic fallback when a search run fails.
 GATHER_MODES = ("search", "snapshot")
 
+# The three positions of the thinking dial; see DEFAULTS["thinking"].
+THINKING_LEVELS = ("light", "normal", "generous")
+
 # When a scheduled card is allowed to spend a Claude run.
 #   "changed" — the age floor AND something the card reads has moved
 #               since the stored run: a new finding in its domains, an
@@ -159,6 +162,13 @@ DEFAULTS = {
     "timeout_minutes": None,
     "chat_model": None,
     "chat_max_sessions": DEFAULT_CHAT_SESSIONS,
+    # How hard brAIn thinks, as one word rather than a model per job. The
+    # model plan (model_plan.py) tiers every run — Haiku looks, Sonnet
+    # thinks, Opus acts — and this steps the tiers down ("light": cheaper
+    # where being wrong is cheap) or up ("generous": a stronger model on
+    # investigations and cards). The global `model` option, when typed,
+    # still overrides every job, which is what it did before.
+    "thinking": "normal",
     # See the module docstring. A settings key rather than a config.yaml
     # option because it is switched on while looking at the panel, for a
     # week, and then off again — a Configuration-tab option would cost a
@@ -236,6 +246,8 @@ def load() -> dict:
         out["gather_mode"] = data["gather_mode"]
     if data.get("refresh_mode") in REFRESH_MODES:
         out["refresh_mode"] = data["refresh_mode"]
+    if data.get("thinking") in THINKING_LEVELS:
+        out["thinking"] = data["thinking"]
     if isinstance(data.get("curated_categories"), bool):
         out["curated_categories"] = data["curated_categories"]
     if isinstance(data.get("morning_brief"), bool):
@@ -370,6 +382,11 @@ def save(fields: dict) -> dict:
             if value not in TERMINAL_UIS:
                 raise ValueError(
                     f"terminal_ui must be one of {', '.join(TERMINAL_UIS)}")
+            clean[key] = value
+        elif key == "thinking":
+            if value not in THINKING_LEVELS:
+                raise ValueError(
+                    f"thinking must be one of {', '.join(THINKING_LEVELS)}")
             clean[key] = value
         elif key == "budget_percent":
             if not isinstance(value, int) or isinstance(value, bool) \

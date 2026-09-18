@@ -11,6 +11,8 @@ This module is dependency-free so the test suite can import it directly.
 """
 from __future__ import annotations
 
+import re
+
 import json
 
 # ---------------------------------------------------------------------------
@@ -319,78 +321,134 @@ def memory_excerpt(text: str | None, limit: int = MEMORY_EXCERPT_CHARS) -> str:
 # arrived (posted whole, or fetched by the model) changes the first two
 # paragraphs and nothing else, and a second copy of a 10 KB contract is a
 # second copy that drifts.
+# The card's look, as a stylesheet rather than as prompt text.
+#
+# Until 2.0 the palette below rode inside `_CARD_CONTRACT` as ~1.5 KB of
+# hex values and mark rules, re-sent on every card, milestone and
+# onboarding run and re-typed by the model into every card's own CSS. It
+# is CSS, so it is a stylesheet now: `inject_styles` prepends it to the
+# HTML a run returns at the moment the card is saved, which keeps every
+# card self-contained wherever it is rendered (the panel's frame, the
+# dashboard mirror, a card kept in history) while the model is told only
+# the variable names. A card from before 2.0 carries its own colours and
+# is left exactly as it was.
+CARD_STYLES = """:root{--bg:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;
+--c1:#2a78d6;--c2:#008300;--c3:#e87ba4;--c4:#eda100;--c5:#1baf7a;--c6:#eb6834;--c7:#4a3aa7;--c8:#e34948;--other:#898781;
+--seq-lo:#cde2fb;--seq-hi:#0d366b;--div-mid:#f0efec;
+--good:#0ca30c;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;color-scheme:light dark}
+@media (prefers-color-scheme: dark){:root{--bg:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--muted:#898781;--grid:#2c2c2a;--axis:#383835;
+--c1:#3987e5;--c2:#008300;--c3:#d55181;--c4:#c98500;--c5:#199e70;--c6:#d95926;--c7:#9085e9;--c8:#e66767;--div-mid:#383835}}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,sans-serif}
+.tabular{font-variant-numeric:tabular-nums}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+"""
+
+STYLE_TAG = '<style data-brain="card-styles">' + CARD_STYLES + '</style>'
+
+
+def inject_styles(html: str) -> str:
+    """The card's HTML with CARD_STYLES prepended, once.
+
+    Goes just inside `<head>` when there is one, else at the top, so the
+    card's own rules (which come later) still win where they disagree —
+    the sheet supplies variables and a body default, never an override.
+    Idempotent, because a card is re-saved by several routes.
+    """
+    text = str(html or "")
+    if not text.strip() or 'data-brain="card-styles"' in text:
+        return text
+    match = re.search(r"<head[^>]*>", text, re.IGNORECASE)
+    if match:
+        return text[:match.end()] + STYLE_TAG + text[match.end():]
+    return STYLE_TAG + text
+
+
+# The reply as the CLI validates it (`--json-schema`). It is the OUTPUT
+# CONTRACT below, enforced: a run that carries it cannot come back with
+# a card missing its title or with `findings` as prose. The prose stays
+# because a CLI without the flag still has to be told, and because the
+# rules under each field are judgement the schema cannot hold.
+CARD_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "summary": {"type": "string"},
+        "highlights": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "value": {"type": "string"},
+                    "delta": {"type": "string"},
+                    "status": {"type": "string",
+                               "enum": ["good", "warning", "serious", "critical"]},
+                },
+                "required": ["label", "value"],
+                "additionalProperties": False,
+            },
+        },
+        "hypotheses": {"type": "array", "items": {"type": "string"}},
+        "learned": {"type": "array", "items": {"type": "string"}},
+        "findings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "detail": {"type": "string"},
+                    "fix": {"type": "string"},
+                    "severity": {"type": "string",
+                                 "enum": ["info", "warning", "serious", "critical"]},
+                    "fixable": {"type": "boolean"},
+                    "entity_id": {"type": "string"},
+                },
+                "required": ["text", "severity"],
+                "additionalProperties": False,
+            },
+        },
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "live": {"type": "array", "items": {"type": "string"}},
+        "html": {"type": "string"},
+    },
+    "required": ["title", "summary", "highlights", "html"],
+    "additionalProperties": False,
+}
+
+
 _CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The homeowner reads it in ten seconds on a phone. The highlights ARE the product: concrete numbers with names and times. The summary is one or two short sentences that add the single most important conclusion the numbers alone don't say. Anything long-winded is a failed run.
 
-OUTPUT CONTRACT (strict JSON; title, summary, highlights, and html are required):
-{
-  "title": "Short punchy card title (max 60 chars)",
-  "summary": "1-2 short sentences, max ~220 chars. The ONE thing worth knowing, with its number. No scene-setting, no restating the highlights, no fluff.",
-  "highlights": [ {"label": "Metric name", "value": "42 kWh", "delta": "+12% vs avg (optional)", "status": "good|warning|serious|critical (optional)"} ],
-  "hypotheses": [ "Optional: something you believe about this home, phrased so it can be answered yes or no" ],
-  "learned": [ "Optional: durable facts about this home worth remembering" ],
-  "findings": [ {"text": "ONE sentence naming what is broken, under 120 chars — it is the card's title and anything longer is cut", "detail": "The argument: the evidence, the entity, the number, when it started, what you noticed along the way", "fix": "The specific change that would resolve it", "severity": "info|warning|serious|critical", "fixable": true, "entity_id": "sensor.example (optional)"} ],
-  "tags": [ "2-4 short lowercase topic tags" ],
-  "live": [ "sensor.example", "binary_sensor.example" ],
-  "html": "<!DOCTYPE html>... one complete self-contained HTML document ..."
-}
-Provide 3-6 highlights — they are the main content. Each is one specific, checkable data point: a real value with its unit, the entity/room/person it belongs to, and a time when relevant ("Dryer", "3.1 kWh", "+40% vs weekday avg"). Use "delta" for comparison against the period and "status" only when something genuinely deserves attention. Never pad with vague or derived filler ("Overall status", "Things look normal") — fewer sharp highlights beat more dull ones. Escape the HTML correctly as a JSON string.
-"tags" (2-4): short lowercase topic tags describing what this card is actually about — single words or hyphenated (e.g. "energy", "anomaly", "batteries", "left-on", "comfort"). Tag by CONTENT, not by the requested category: a lighting card that found a battery problem should carry "batteries" too. The dashboard uses tags to group related cards, so reuse plain common words over inventive ones.
-"hypotheses" (optional — usually ZERO, and never more than the prompt's stated budget allows): do NOT ask open questions. Instead, state what you actually BELIEVE, phrased so the homeowner can answer yes or no in one tap: "The garage fridge is meant to run 24/7 — right?" rather than "What is the garage fridge for?".
+OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
+{"title": "max 60 chars", "summary": "1-2 sentences, max ~220 chars — the ONE thing worth knowing, with its number",
+ "highlights": [{"label": "Metric", "value": "42 kWh", "delta": "+12% vs avg (optional)", "status": "good|warning|serious|critical (optional)"}],
+ "hypotheses": ["optional, usually none"], "learned": ["optional, max 3"],
+ "findings": [{"text": "ONE sentence, under 120 chars", "detail": "the evidence", "fix": "the specific change", "severity": "info|warning|serious|critical", "fixable": true, "entity_id": "sensor.example (optional)"}],
+ "tags": ["2-4 lowercase topic tags"], "live": ["optional entity_ids to keep current"], "html": "one complete self-contained HTML document"}
 
-The bar is high. Propose one only when (a) you genuinely believe it, (b) the data cannot settle it on its own, and (c) knowing would change how you read this home in future. If you would not change your analysis either way, say nothing. Never propose one to seem thorough, never one whose answer is already in the memory document, and never a vague catch-all ("anything else I should know?").
-
-A guess the homeowner confirms becomes a plain remembered fact; one they reject is recorded as a dead end and never revisited. Omitting the field entirely is the normal, expected case.
-"learned" (optional, max 3): durable NEW discoveries about this home worth remembering for future analyses — recurring patterns, quirks, how something behaves (e.g. "The dryer draws about 3 kWh per cycle"). One plain factual sentence each, no advice, nothing broken (that is a finding, below). It must be genuinely new: never restate a KNOWN FACT from the prompt, and never restate the current snapshot ("3 lights are on" is a state, not a discovery). Omit when nothing new was learned.
-"findings" (optional, max 3): things that are BROKEN and have an owner — a dead battery, a sensor that stopped reporting, a device that is unavailable, an automation that can never fire, a setting that contradicts itself. This is a work list the homeowner acts on, not an observation. The bar:
-- Something is actually WRONG. A high reading is not a finding; a sensor that has read exactly the same value for six days is.
-- It is specific and checkable: name the entity, the number, and when it started. "Some batteries are low" is not a finding.
-- "fix" says what would resolve it, concretely enough to act on ("Replace the CR2032 in the Back Door sensor", "Remove the duplicate 7 AM trigger from automation.morning_lights").
-- "fixable" is true ONLY when the fix is a change to Home Assistant that software could make — editing a config or automation, renaming an entity, calling a service. Anything needing hands in the physical world (batteries, unplugging, re-pairing) is false.
-- "severity": critical = safety or data loss; serious = something is not working; warning = degraded or will break soon; info = worth tidying.
-Do not pad. Most runs find nothing wrong, and an empty list is the honest, expected answer. Never repeat a finding the prompt already lists as reported or dismissed.
-
-"live" (optional, max 12): entity_ids whose CURRENT state the visualization should keep up to date. The card is generated once and then sits on a dashboard, so every number in it is frozen at the moment you ran — which is right for "last week's energy" and wrong for "what is on right now". List an entity here ONLY when watching it change is part of the story: a door that is open, a machine that is running, a temperature being held. Omit the field entirely when the card is about a period that has already ended, which is most cards.
-
-HOW TO USE IT IN THE HTML: brAIn injects a `window.brainLive(callback)` helper into the page. Register once and you are handed `{entity_id: {state, attributes, unit, name}}` immediately and again on every refresh:
-  <script>
-    if (window.brainLive) window.brainLive(function (s) {
-      var d = s["binary_sensor.front_door"];
-      if (d) document.getElementById("door").textContent = d.state === "on" ? "Open" : "Closed";
-    });
-  </script>
-Rules: the page must render correctly with NO live data at all (the callback may never fire — an older panel, a lost connection, an entity that has since gone), so draw the values from the snapshot first and let the callback update them. Only entities you listed in "live" are sent. Never poll, never fetch — there is no network from inside the frame and the callback is the whole channel.
+highlights: 3-6, each one specific, checkable data point with its unit, the entity/room/person it belongs to, and a time when relevant. "delta" compares against the period; "status" only when something genuinely deserves attention. Never pad with filler ("Overall status", "Things look normal") — fewer sharp highlights beat more dull ones. Escape the HTML correctly as a JSON string.
+tags: what the card is actually ABOUT, not the category it was asked for — a lighting card that found a battery problem carries "batteries" too. Reuse plain common words.
+hypotheses: usually ZERO, never more than the prompt's stated budget. Not an open question — something you actually BELIEVE, phrased so the homeowner can answer yes or no in one tap ("The garage fridge is meant to run 24/7 — right?"). Only when you believe it, the data cannot settle it, and knowing would change how you read this home; never one already answered in the memory document. A confirmed guess becomes a remembered fact; a rejected one is a dead end never revisited.
+learned: durable NEW discoveries about this home (a pattern, a quirk, how something behaves — "The dryer draws about 3 kWh per cycle"), one plain factual sentence each, no advice, nothing broken. Never a KNOWN FACT restated, never the current snapshot ("3 lights are on" is a state).
+findings: things that are BROKEN and have an owner — a dead battery, a sensor that stopped reporting, an unavailable device, an automation that can never fire, a setting that contradicts itself. A work list, not observations. Something is actually WRONG (a high reading is not a finding; a value unchanged for six days is); it names the entity, the number and when it started; "fix" is concrete enough to act on; "fixable" is true ONLY when software could make the change (editing a config, renaming, calling a service — never batteries, unplugging, re-pairing). severity: critical = safety or data loss; serious = not working; warning = degraded or will break soon; info = worth tidying. Most runs find nothing wrong and an empty list is the honest answer. Never repeat a finding the prompt lists as reported or dismissed.
+live: max 12 entity_ids whose CURRENT state the visualization should keep up to date, ONLY when watching it change is part of the story (a door that is open, a machine running, a temperature being held). brAIn injects `window.brainLive(callback)` into the page: register once and you are handed {entity_id: {state, attributes, unit, name}} immediately and on every refresh — but the page must render correctly with NO live data at all, so draw the snapshot values first and let the callback update them. Never poll or fetch. Omit the field for a period that has ended, which is most cards.
 
 THE HTML DOCUMENT:
-- ONE focused visual that carries the story — a single chart, timeline, or state map. Not a dashboard: no stat-tile rows duplicating the highlights, no second or third chart unless the story truly needs a side-by-side pair, no prose paragraphs inside the HTML.
-- Fully self-contained: inline CSS and JS only. NO external resources (no CDNs, fonts, images, fetch). It renders inside a sandboxed iframe with scripts enabled.
-- Responsive: fill 100% width, size height to content (compact — roughly 220-420px). No horizontal scrolling. body{margin:0}.
-- Use system-ui sans everywhere. Use font-variant-numeric: tabular-nums only for aligned columns/ticks.
-- Support BOTH light and dark mode via @media (prefers-color-scheme: dark), using the exact palette below. Default (light) first.
-- Animate tastefully: draw-in/fade/count-up on load (≤800ms, ease-out), subtle idle motion only where meaningful (e.g. a gently pulsing "active" dot). Wrap all animation in @media (prefers-reduced-motion: no-preference).
-- Interactive by default: hover tooltips on every chart mark (crosshair+tooltip for line/area, per-mark for bars/dots/cells), hit targets larger than the mark. Clickable legend toggles are welcome. Everything must also read fine without hovering.
-- Build charts with inline SVG (or CSS grid for state maps). No canvas libraries.
+- ONE focused visual that carries the story — a single chart, timeline or state map. No stat-tile rows duplicating the highlights, no second chart unless the story needs a pair, no prose inside the HTML.
+- Self-contained: inline CSS and JS only, no external resources. It renders in a sandboxed iframe with scripts enabled. Fill 100% width, height to content (~220-420px), no horizontal scrolling. Inline SVG (or CSS grid for state maps); no canvas libraries.
+- Interactive: hover tooltips on every mark, hit targets larger than the mark; everything must also read fine without hovering. Tasteful draw-in on load (≤800ms) inside @media (prefers-reduced-motion: no-preference).
 
-DESIGN SYSTEM (follow exactly):
-- Surfaces: light #fcfcfb, dark #1a1a19. Text: primary #0b0b0b/#ffffff, secondary #52514e/#c3c2b7, muted #898781. Gridlines (hairline) #e1e0d9/#2c2c2a. Axis/baseline #c3c2b7/#383835.
-- Categorical series colors, ALWAYS assigned in this fixed order (light|dark): 1 blue #2a78d6|#3987e5, 2 green #008300|#008300, 3 magenta #e87ba4|#d55181, 4 yellow #eda100|#c98500, 5 aqua #1baf7a|#199e70, 6 orange #eb6834|#d95926, 7 violet #4a3aa7|#9085e9, 8 red #e34948|#e66767. More than ~6 series: fold the rest into a gray "Other".
-- Sequential (magnitude): ONE hue, blue light→dark (#cde2fb → #0d366b). Diverging (above/below): blue↔red with a neutral gray midpoint (#f0efec/#383835). NEVER rainbow.
-- Status colors (reserved, never used as series): good #0ca30c, warning #fab219, serious #ec835a, critical #d03b3b — always paired with an icon or label, never color alone.
-- Marks: 2px lines; bars with 4px rounded top corners only (flat at the baseline); ≥8px hover markers; 2px surface-colored gap between stacked segments and adjacent bars; markers overlapping get a 2px surface ring.
-- ONE y-axis per chart, always. Two measures of different scale → two small charts side by side, never a dual axis.
-- Legend whenever ≥2 series (plus direct labels when ≤4); a single series needs no legend — the title names it. Label selectively (ends, peaks), never every point. Text is always ink-colored, never series-colored.
-- Y-axis starts at zero for bars. Recessive grid, no chart junk, no drop shadows on marks.
+DESIGN SYSTEM: brAIn prepends a stylesheet to your document, so use its variables and never hard-code a colour — both light and dark mode (prefers-color-scheme) then come for free. Surfaces and text: var(--bg), var(--ink), var(--ink2), var(--muted); gridlines var(--grid), axis var(--axis). Series colours in this fixed order: var(--c1) (blue, #2a78d6 in light) … var(--c8); past six series fold the rest into var(--other). Sequential: one hue from var(--seq-lo) to var(--seq-hi); diverging: --c1 ↔ --c8 through var(--div-mid); never rainbow. Status: var(--good), var(--warning), var(--serious), var(--critical) — reserved, never used as series, always paired with a label. Dark surface is #1a1a19. Marks: 2px lines; bars flat at the baseline with 4px rounded tops; ≥8px hover markers; a 2px surface gap between stacked segments. ONE y-axis per chart (two scales → two small charts). Legend when ≥2 series, direct labels when ≤4, label selectively; text is always ink-coloured. Bars start at zero. No chart junk, no drop shadows. Use class "tabular" for aligned numbers.
 
 ANALYSIS RULES:
-- RUTHLESSLY CONCISE OUTPUT. Every sentence must carry a number, a name, or a time; delete any that doesn't. No hedging ("it appears", "generally"), no methodology talk, no restating what a highlight already says. Depth goes into WHICH data points you surface, never into word count.
-- Be specific to this home: use real entity names (their friendly names), real areas, real numbers and times. Convert entity_ids to friendly names in all user-facing text.
-- Find the STORY in the data — a trend, an outlier, a pattern, a risk — don't just restate states. Then compress it to its data points.
-- REASON LIKE A DETECTIVE, not a meter reader. Cross-reference related entities to reach conclusions no single sensor states outright, and cite the evidence chain. Presence is the canonical example: person.state says "not_home", but the phone's WiFi SSID names the network they're on, the geocoded-address sensor says where, detected activity says whether they're driving or still, and battery/charging state hints at context — combine them ("Ben's phone is on 'OfficeNet' near 5th & Main, stationary, so he's at work") instead of parroting "away". Apply the same rigor everywhere: tie HVAC runtime to room temps and outdoor weather, energy spikes to which device turned on at that minute, lights left on to whether the room saw motion.
-- Use the "device_context" section when present: entities that live on the SAME physical device as a presence tracker (d = device name, usually someone's phone). These are your context clues — SSID, geocoded address, activity, battery — group them per device/person.
-- BUILD ON what you already know. The prompt may include KNOWN FACTS and ANSWERED QUESTIONS — treat them as established truth: use them to interpret the data, don't rediscover or contradict them without new evidence, and never re-ask what's answered.
-- GO DEEPER each run, don't repeat. When the prompt shows your previous analysis of this card, lead with what CHANGED since then and push one level deeper on what didn't — a repeat reading of the same headline is a failed run.
-- If the data for the requested angle is thin, say so honestly in the summary and visualize what IS there.
-- Times in the data are ISO timestamps in the home's local timezone unless suffixed Z. Present times in a friendly way (e.g. "6:42 PM").
-- Never invent data. Every number shown must come from the snapshot."""
+- RUTHLESSLY CONCISE. Every sentence carries a number, a name or a time; delete any that doesn't. No hedging, no methodology, no restating a highlight. Depth goes into WHICH data points you surface, never into word count.
+- Be specific to this home: real friendly names, real areas, real numbers and times. Convert entity_ids to friendly names in all user-facing text.
+- Find the STORY — a trend, an outlier, a pattern, a risk — then compress it to its data points.
+- REASON LIKE A DETECTIVE, not a meter reader. Cross-reference related entities to reach conclusions no single sensor states outright, and cite the chain: a phone on "OfficeNet" near 5th & Main and stationary means at work, not "away"; tie HVAC runtime to room temps and weather, an energy spike to the device that turned on at that minute, a light left on to whether the room saw motion. Use the "device_context" section (entities on the same physical device as a presence tracker) as those clues.
+- BUILD ON what you know: KNOWN FACTS and ANSWERED QUESTIONS in the prompt are established truth — use them, never rediscover or contradict them without new evidence, never re-ask.
+- GO DEEPER each run: when the prompt shows your previous analysis, lead with what CHANGED and push one level deeper on what didn't — a repeat of the same headline is a failed run.
+- If the data for the requested angle is thin, say so in the summary and visualize what IS there.
+- Times in the data are ISO timestamps in the home's local timezone unless suffixed Z; present them in a friendly way ("6:42 PM").
+- Never invent data. Every number shown must come from the data you were given or fetched."""
 
 
 SYSTEM_PROMPT = """You are brAIn, the AI analyst inside a Home Assistant add-on. You receive a JSON snapshot of the user's smart home and produce ONE insight card: a handful of sharp, specific data points plus one compact self-contained visualization.
