@@ -170,6 +170,11 @@ ADD_TODO_SCHEMA = vol.Schema(
     }
 )
 
+# A checks pass takes no arguments: it looks at the whole house, and a
+# field naming one check would be a second answer to "what is a pass" that
+# `run_checks` does not have.
+CHECK_SCHEMA = vol.Schema({})
+
 
 def entry_type(entry: ConfigEntry) -> str:
     """Entries created before 3.0 have no type and are conversation agents."""
@@ -188,6 +193,10 @@ def _get_platforms(entry: ConfigEntry) -> list[Platform]:
         platforms.append(Platform.SENSOR)
         # The system health binary sensor rides with the sensors-owner entry
         platforms.append(Platform.BINARY_SENSOR)
+        # ...and so does the Run-checks button, which sits on the same
+        # brAIn System device. Until now BUTTON was an insight job's
+        # platform only, so the main entry never set it up.
+        platforms.append(Platform.BUTTON)
         # The work list rides with them too — it is the same findings
         # mirror the open-findings sensor counts, as items. Looked up
         # rather than named: `todo` arrived in 2023.11 and this
@@ -299,6 +308,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             unsub_learning()
             unsub_findings()
             unsub_actions()
+            # The Repairs entries are this watcher's, so they leave with
+            # it: a reload puts them back on the first poll, and removing
+            # the integration should not leave brAIn's rows on somebody's
+            # Repairs page with nothing behind them.
+            findings_watcher.clear_issues()
             hass.data[DOMAIN].pop("_learning_watcher", None)
 
         entry.async_on_unload(_stop_learning)
@@ -356,6 +370,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # The work list rides with the health sensor and claims its own
         # pair for the same reason: a flag left set over a reload is an
         # entity that never comes back until Home Assistant restarts.
+        # The Run-checks button claims its own pair for the same reason:
+        # a flag left set over a reload is an entity that never comes
+        # back until Home Assistant restarts.
+        if hass.data[DOMAIN].get("_checks_button_entry") == entry.entry_id:
+            hass.data[DOMAIN].pop("_checks_button_entry", None)
+            hass.data[DOMAIN].pop("_checks_button_added", None)
         if hass.data[DOMAIN].get("_todo_entry") == entry.entry_id:
             hass.data[DOMAIN].pop("_todo_entry", None)
             hass.data[DOMAIN].pop("_todo_added", None)
@@ -387,6 +407,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "add_memory",
                 "answer_question",
                 "study",
+                "check",
                 *POWER_TOOL_SERVICES,
             ):
                 if hass.services.has_service(DOMAIN, service):
@@ -930,6 +951,26 @@ def _register_services(hass: HomeAssistant) -> None:
                     via="service"))
         _LOGGER.info("Queued a to-do: %s", text)
 
+    async def handle_check(call: ServiceCall):
+        """Ask the add-on to run its house checks now.
+
+        Fire-and-forget, for `handle_study`'s reason with a shorter clock:
+        a pass collects a snapshot of the whole house, runs every check
+        against it and triages what it filed, which is minutes rather than
+        the seconds a service call should block for — and what it finds
+        arrives on the Findings tab, in the mirror, and through the
+        ``brain_finding`` event, not in this call's response.
+
+        It crosses the gap as a request file, exactly as an ending given in
+        the To-do app does: the panel owns the checks and Home Assistant
+        cannot reach port 8099.
+        """
+        from .requests import write_checks_request  # noqa: PLC0415 — that
+        # module imports homeassistant.core and nothing else on purpose
+
+        await hass.async_add_executor_job(write_checks_request, hass, "service")
+        _LOGGER.info("Asked brAIn to run its house checks")
+
     async def handle_answer_question(call: ServiceCall):
         memory_dir = hass.config.path(SHARED_DIR, MEMORY_DIR)
         await hass.async_add_executor_job(
@@ -1008,6 +1049,13 @@ def _register_services(hass: HomeAssistant) -> None:
         "add_todo",
         handle_add_todo,
         schema=ADD_TODO_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "check",
+        handle_check,
+        schema=CHECK_SCHEMA,
     )
 
     # BRUH Power Tools: registry-management admin services (power_tools.py)

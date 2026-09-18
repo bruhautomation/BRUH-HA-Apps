@@ -55,7 +55,7 @@ def house(**over) -> dict:
         "available": {k: True for k in (
             "states", "registry", "services", "automations", "traces",
             "stats", "battery_stats", "dashboards", "supervisor",
-            "recorder", "zha_devices", "config_entries", "actions",
+            "updates", "recorder", "zha_devices", "config_entries", "actions",
                           "baselines", "closures", "appliances", "thermal")},
         "errors": {},
         "blueprints_dir": "",
@@ -142,6 +142,11 @@ def house(**over) -> dict:
             "host": {"disk_free": 40.0, "disk_total": 64.0, "disk_used": 24.0},
             "core": {"version": "2026.8.1"},
         },
+        # The Supervisor answered and has nothing waiting. An EMPTY list
+        # is the healthy house `sys.update_pending` must be silent about;
+        # the key being unavailable is a different fixture and a
+        # different claim.
+        "updates": [],
         "recorder": {"db_bytes": 220 * 1024 * 1024, "purge_keep_days": 10,
                      "db_path": "/config/home-assistant_v2.db"},
         "zha_devices": [{"name": "Back Door sensor", "ieee": "00:11",
@@ -1104,6 +1109,85 @@ class TestSystemChecks(unittest.TestCase):
         self.assertEqual(found[0]["severity"], "warning")
         self.assertIn("cannot be written", found[0]["detail"])
 
+    def test_nothing_pending_is_silent_and_a_pending_update_is_one_row(self):
+        snap = house()
+        self.assertEqual(system.update_pending(snap, NOW), [])
+        snap["updates"] = [
+            {"update_type": "core", "name": "Home Assistant Core",
+             "version": "2026.8.1", "version_latest": "2026.9.2",
+             "panel_path": "/update-available/core"},
+            {"update_type": "addon", "name": "Mosquitto broker",
+             "version": "6.5.0", "version_latest": "6.5.1"},
+            {"update_type": "supervisor", "name": "Home Assistant Supervisor",
+             "version": "2026.08.3", "version_latest": "2026.09.1"},
+        ]
+        found = system.update_pending(snap, NOW)
+        # One row, however many updates: it is one visit to one screen.
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["severity"], "info")
+        self.assertIn("Settings > System > Updates", found[0]["fix"])
+        detail = found[0]["detail"]
+        # Every version is in the detail, and Core leads.
+        self.assertIn("Core 2026.9.2", detail)
+        self.assertIn("Supervisor 2026.09.1", detail)
+        self.assertIn("Mosquitto broker 6.5.1", detail)
+        self.assertLess(detail.index("Core"), detail.index("Supervisor"))
+        self.assertLess(detail.index("Supervisor"), detail.index("Mosquitto"))
+
+    def test_the_text_is_stable_while_the_count_moves(self):
+        """The store dedupes on the text, so the number that changes every
+        week lives in the detail or every pass files a new finding."""
+        one, two = house(), house()
+        one["updates"] = [{"update_type": "core", "version_latest": "2026.9.2"}]
+        two["updates"] = [
+            {"update_type": "core", "version_latest": "2026.9.2"},
+            {"update_type": "os", "version_latest": "17.0"}]
+        a = system.update_pending(one, NOW)[0]
+        b = system.update_pending(two, NOW)[0]
+        self.assertEqual(a["text"], b["text"])
+        self.assertNotEqual(a["detail"], b["detail"])
+        self.assertIn("Operating system 17.0", b["detail"])
+
+    def test_a_dozen_add_ons_are_counted_rather_than_listed(self):
+        snap = house()
+        snap["updates"] = [
+            {"update_type": "addon", "name": f"Add-on {i:02d}",
+             "version_latest": "1.0"} for i in range(12)]
+        detail = system.update_pending(snap, NOW)[0]["detail"]
+        self.assertIn("12 add-ons", detail)
+        self.assertIn("8 more", detail)
+        self.assertNotIn("Add-on 11", detail)
+
+    def test_a_supervisor_that_could_not_be_asked_reports_nothing(self):
+        """"I could not look" and "you are up to date" are different
+        claims, and only the second may clear a row."""
+        snap = house()
+        snap["updates"] = []
+        snap["available"]["updates"] = False
+        result = checks.run_all(snap, NOW)
+        self.assertIn("sys.update_pending", result["skipped"])
+        self.assertNotIn("sys.update_pending", result["ran"])
+        self.assertIn("updates", result["skipped"]["sys.update_pending"])
+
+    def test_it_files_to_the_shadow_store_and_not_to_the_findings_tab(self):
+        """On trial: it runs where nobody can see it until its numbers
+        say it should move."""
+        self.assertIn("sys.update_pending", checks.SHADOW)
+        snap = house()
+        snap["updates"] = [{"update_type": "core", "name": "Core",
+                            "version_latest": "2026.9.2"}]
+        result = checks.run_all(snap, NOW)
+        self.assertEqual(
+            [f["text"] for f in result["shadow"]],
+            [system.UPDATE_PENDING_TEXT])
+        self.assertEqual(result["shadow"][0]["source"],
+                         "check:sys.update_pending")
+        self.assertEqual(
+            [f for f in result["findings"]
+             if f["source"] == "check:sys.update_pending"], [])
+        # It still ran, and a check that ran may still clear its own rows.
+        self.assertIn("sys.update_pending", result["ran"])
+
     def test_the_recorder_check_survives_a_supervisor_outage(self):
         """It needs the recorder key and nothing else; the disk is a bonus."""
         snap = house(supervisor={})
@@ -1362,6 +1446,46 @@ class TestSnapshotLoaders(unittest.TestCase):
         self.assertIn("sys.backup_stale", result["skipped"])
         self.assertNotIn("sys.backup_stale", result["ran"])
         self.assertEqual(result["findings"], [])
+
+    def test_available_updates_is_unwrapped_and_an_empty_list_is_an_answer(self):
+        """The list rides in the same gather as the other four, and an
+        empty one is "nothing pending" — a shape this cannot read is not."""
+        import asyncio
+
+        answers = {
+            "/backups": {"backups": []},
+            "/addons": {"addons": []},
+            "/host/info": {"disk_free": 10.0, "disk_total": 64.0},
+            "/core/info": {"version": "2026.8.1"},
+            "/available_updates": {"available_updates": [
+                {"update_type": "core", "name": "Home Assistant Core",
+                 "version_latest": "2026.9.2"}]},
+        }
+        asked = []
+
+        async def fake_get(session, path, timeout=20):
+            asked.append(path)
+            return answers[path]
+
+        old_get = snapshot._supervisor_get
+        snapshot._supervisor_get = fake_get
+        try:
+            sup = asyncio.run(snapshot._supervisor(None))
+            self.assertIn("/available_updates", asked)
+            self.assertEqual(len(sup["updates"]), 1)
+            self.assertNotIn("error", sup)
+            # Nothing waiting is a list, not a missing answer.
+            answers["/available_updates"] = {"available_updates": []}
+            self.assertEqual(asyncio.run(snapshot._supervisor(None))["updates"],
+                             [])
+            # A shape it cannot read leaves the key None, which is what
+            # makes `available["updates"]` False rather than "up to date".
+            answers["/available_updates"] = {"nothing": "like it"}
+            sup = asyncio.run(snapshot._supervisor(None))
+            self.assertIsNone(sup["updates"])
+            self.assertIn("/available_updates", sup["error"])
+        finally:
+            snapshot._supervisor_get = old_get
 
     def test_statistics_candidates_split_batteries_from_the_rest(self):
         numeric, batteries = snapshot._stat_candidates(house()["states"])

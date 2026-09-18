@@ -34,7 +34,16 @@ DELETE /api/card/{id}        — delete ANY card (shipped / user / ad-hoc): the
 PUT  /api/card/{id}/tags     — replace a card's visible tags {tags: [...]}
 GET  /api/findings           — the decision list: what brAIn thinks is broken,
                                plus the guesses it wants confirmed
-POST /api/finding/{ts}/fix   — go fix it (the one tool-enabled Claude run)
+POST /api/finding/{ts}/fix   — press Fix it: a READ-ONLY run works out what
+                               it would change, and the steps come back on the
+                               card. It changes nothing (see fixer.PLAN_SYSTEM)
+POST /api/finding/{ts}/apply — yes, do exactly that: the one tool-enabled
+                               Claude run, carrying the plan that was shown
+POST /api/finding/{ts}/cancel — no: back to open, the plan kept on the row so
+                               it can be read again without paying for it
+POST /api/finding/{ts}/unfix — put back what the fix changed: every file it
+                               journalled, reloaded; the service calls it made
+                               are LISTED and never reversed (see unfix.py)
 POST /api/finding/{ts}/wrong  — you've got this wrong / not a problem here,
                                 optionally {note}: WHY, in your words, which
                                 is handed to the analyst and the consolidator
@@ -176,6 +185,7 @@ import todo_store
 import triage
 import trials
 import undo_store
+import unfix
 import usage_store
 import user_categories
 import weekly
@@ -336,6 +346,15 @@ CONSOLIDATE_BUSY_RC = 75
 FIX_MAX_TURNS = int(os.environ.get("BRAIN_FIX_MAX_TURNS", str(fixer.DEFAULT_MAX_TURNS)))
 FIX_TIMEOUT_S = int(os.environ.get("BRAIN_FIX_TIMEOUT", "900"))
 FIX_JOB_PREFIX = "fix-"
+
+# The read-only look that now happens first. Cheaper than the fix in both
+# budgets because it reads the house and writes a paragraph, where the fix
+# has to make the change and then prove it took — and a person is waiting
+# in front of this one, which the fix cannot say.
+PLAN_MAX_TURNS = int(os.environ.get("BRAIN_PLAN_MAX_TURNS",
+                                    str(fixer.DEFAULT_PLAN_MAX_TURNS)))
+PLAN_TIMEOUT_S = int(os.environ.get("BRAIN_PLAN_TIMEOUT", "300"))
+PLAN_JOB_PREFIX = "plan-"
 
 # ---------------------------------------------------------------------------
 # Effective options
@@ -676,7 +695,8 @@ AUTH_CHECK: dict = {"state": "unchecked", "error": "", "checked_at": 0,
 AUTH_RECHECK_S = int(os.environ.get("BRAIN_AUTH_RECHECK_S", 6 * 3600))
 
 
-ACTIVE_STATES = ("queued", "collecting", "generating", "parsing", "fixing")
+ACTIVE_STATES = ("queued", "collecting", "generating", "parsing", "planning",
+                 "fixing")
 
 
 def _job_active(job_id: str) -> bool:
@@ -987,7 +1007,7 @@ def _findings_notify_target() -> tuple[str, str]:
                    or os.environ.get("BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY",
                                      "")).strip().lower()
     if severity not in findings_store.SEVERITIES:
-        severity = "serious"
+        severity = notify_router.DEFAULT_MIN_SEVERITY
     return service, severity
 
 
@@ -1017,7 +1037,8 @@ def _quiet_hours() -> tuple[int | None, int | None]:
         _hours("notify_quiet_end", "BRAIN_NOTIFY_QUIET_END")
 
 
-async def _send_notification(rows: list[dict], held: bool = False) -> bool:
+async def _send_notification(rows: list[dict], held: bool = False,
+                             message: tuple[str, str] | None = None) -> bool:
     """Deliver one message. A failure is a log line, never an exception.
 
     The finding is already safe on the list before this is called, so a
@@ -1026,7 +1047,10 @@ async def _send_notification(rows: list[dict], held: bool = False) -> bool:
     service, _sev = _findings_notify_target()
     if not service or not rows:
         return False
-    title, body = notify_router.compose(rows, held=held)
+    # A reminder composes its own sentence (which repeat, since when) and
+    # otherwise rides this path unchanged: the buttons, the panel link and
+    # the failure reporting are the same three questions either way.
+    title, body = message or notify_router.compose(rows, held=held)
     # Buttons, but only where they can be answered and only when the
     # message is about one finding — see `notify_router.actions_for`.
     buttons = notify_router.actions_for(rows, service)
@@ -1098,6 +1122,11 @@ def _notify_diagnostics() -> dict:
             time.time(), start, end, _tz),
         "held": len(queued),
         "held_since": oldest,
+        # And what the ladder is holding. A queue nobody can see is a
+        # queue that silently swallows, and this one can fail in two
+        # directions — a house reminded about nothing, or not reminded
+        # about a leak — so both ends are on the payload.
+        **notify_router.escalation_state(),
         # What happened to the last message that went out. A delivery that
         # failed already files an incident, which is the right producer —
         # but a notifier that cannot deliver is the answer to "what is
@@ -1558,6 +1587,14 @@ def _weekly_diagnostics() -> dict:
 REQUESTS_POLL_S = 15
 REQUESTS_FIRST_DELAY_S = 20
 REQUESTS_STATE: dict = {"applied": 0, "missed": 0, "last": 0.0}
+# A checks pass asked for from outside the panel. `starting` is flipped
+# synchronously for `start_auth_check`'s reason — `create_task` only
+# schedules, so two requests in one drain would both read a guard their
+# own task has not set yet — and it is a SECOND flag rather than
+# `CHECKS_STATE["running"]` because `run_checks` owns that one and is also
+# called by the loop, and one function setting another's guard is how the
+# two callers stop agreeing about what is in flight.
+CHECKS_REQUEST_STATE: dict = {"starting": False, "asked": 0, "last": 0.0}
 
 
 async def _apply_finding_requests() -> list[dict]:
@@ -1567,10 +1604,19 @@ async def _apply_finding_requests() -> list[dict]:
     request naming a finding that is gone is `ok: False`, which is an
     ordinary race — somebody's phone was a few seconds out of date — and
     never a reason to retry or to put the row back.
+
+    A `checks` request is the one kind here that is not an ending, so it
+    is collected rather than applied in the loop and the pass is started
+    **after** every answer in the drain has landed: a pass that ran first
+    would re-file what the answers in the same burst had just settled.
     """
     requests = await asyncio.to_thread(finding_requests.collect)
     out: list[dict] = []
+    asked: list[dict] = []
     for req in requests:
+        if req.get("kind") == finding_requests.CHECKS_KIND:
+            asked.append(req)
+            continue
         if req.get("kind") == "todo":
             out.append(await _apply_todo_request(req))
             continue
@@ -1601,7 +1647,48 @@ async def _apply_finding_requests() -> list[dict]:
                  result["via"] or "elsewhere",
                  "" if result["ok"] else f" — {result['why']}")
         out.append(result)
+    if asked:
+        out.append(_start_requested_checks(asked))
     return out
+
+
+def _start_requested_checks(asked: list[dict]) -> dict:
+    """Start one pass for however many asked for it in this drain.
+
+    **Coalescing is load-bearing rather than tidy.** The pass is started
+    and not awaited — a run reads the whole house and is minutes of work,
+    where this loop has to be back in fifteen seconds for the next answer
+    somebody gives from their phone, which is `h_baselines_run`'s clock —
+    and `create_task` only schedules, so two tasks made in one tick would
+    both pass `run_checks`' own guard before either had set it.
+
+    A pass already in flight means the request is **consumed and logged**,
+    never queued: a second pass over the same house a minute later finds
+    the same things, and the one running is about to answer the question
+    that was asked.
+    """
+    via = ", ".join(sorted({r.get("via") or "elsewhere" for r in asked}))
+    result = {"kind": "checks", "asked": len(asked), "via": via,
+              "ok": False, "why": "a checks pass is already running"}
+    CHECKS_REQUEST_STATE["asked"] += len(asked)
+    CHECKS_REQUEST_STATE["last"] = time.time()
+    if CHECKS_STATE["running"] or CHECKS_REQUEST_STATE["starting"]:
+        log.info("checks asked for by %s — a pass is already running", via)
+        REQUESTS_STATE["missed"] += 1
+        return result
+    CHECKS_REQUEST_STATE["starting"] = True
+
+    async def run_it() -> None:
+        try:
+            await run_checks("service")
+        finally:
+            CHECKS_REQUEST_STATE["starting"] = False
+
+    asyncio.create_task(run_it())
+    REQUESTS_STATE["applied"] += 1
+    REQUESTS_STATE["last"] = time.time()
+    log.info("running the house checks — asked for by %s", via)
+    return {**result, "ok": True, "why": ""}
 
 
 async def _apply_todo_request(req: dict) -> dict:
@@ -1798,6 +1885,11 @@ def _requests_diagnostics() -> dict:
         "applied": REQUESTS_STATE["applied"],
         "missed": REQUESTS_STATE["missed"],
         "last": int(REQUESTS_STATE["last"]),
+        # `brain.check` and the Run-checks button land here too, and a
+        # pass that was asked for and never ran leaves the same silence
+        # as one nobody asked for.
+        "checks_asked": CHECKS_REQUEST_STATE["asked"],
+        "checks_asked_last": int(CHECKS_REQUEST_STATE["last"]),
     }
 
 
@@ -2031,34 +2123,91 @@ def _healing_brief_lines() -> list[str]:
         return []
 
 
+# A reminder that is due in ten minutes must not wait out a nine-hour
+# night, and a loop woken every thirty seconds to find nothing climbing is
+# a poll. The floor is what stops a stamp in the past spinning the loop.
+ESCALATION_MIN_WAIT_S = 30
+
+
+async def _escalation_tick() -> int:
+    """Send the reminders that have come due, and forget the rows that ended.
+
+    The live store is read on **every** tick and the ledger's own copy
+    never is: fixed, dismissed, snoozed, moved to the to-do list and
+    cleared by the check that filed it are five endings and all of them
+    mean stop, and only the store knows which have happened. A snoozed
+    row is deliberately in that set — "remind me later" is somebody
+    answering, and going on reminding them is the notifier arguing.
+
+    **A store that could not be read holds the reminder rather than
+    sending it**, which is the opposite of what the hold queue does with
+    the same uncertainty and is deliberate: a held row is announced once
+    and never again, so a wrong send there costs one message, where a
+    ladder that cannot tell whether a problem is over would go on ringing
+    three times about one somebody fixed an hour ago. A reminder deferred
+    costs a pass, and the pass is minutes away.
+    """
+    try:
+        now = time.time()
+        live = {int(f.get("ts") or 0) for f in findings_store.list_all("open")
+                if not findings_store.is_snoozed(f, now)}
+    except Exception as exc:  # noqa: BLE001 — see the docstring: not knowing
+        # whether a problem is over is not a licence to ask again.
+        log.info("could not read the findings store before a reminder: %s", exc)
+        return 0
+    dropped = notify_router.prune_escalations(live)
+    if dropped:
+        log.info("stopped escalating %d finding(s) that were answered",
+                 len(dropped))
+    due = notify_router.due_escalations(now)
+    if not due:
+        return 0
+    tz, _name = baselines.house_timezone()
+    sent = 0
+    for row in due:
+        message = notify_router.compose_escalation(row, tz)
+        await _send_notification([row], message=message)
+        notify_router.record_reminder(int(row.get("ts") or 0), time.time())
+        sent += 1
+    return sent
+
+
 async def _notify_flush_loop():
     """Wake at the end of each quiet window and send what it held.
 
     The wait is recomputed every pass rather than slept once: the option
     can be edited from the Configuration tab without a restart, and a
     loop that had already committed to a 9-hour sleep would honour the
-    old bedtime until tomorrow.
+    old bedtime until tomorrow. It is also where the escalation ladder
+    ticks — one loop, because "is anything waiting to be said" has one
+    answer and a second loop would be a second clock to keep true.
     """
     await asyncio.sleep(NOTIFY_FLUSH_FIRST_DELAY_S)
     while True:
         try:
+            await _escalation_tick()
             start, end = _quiet_hours()
             now = time.time()
+            wait = float(NOTIFY_FLUSH_POLL_S)
             if start is None or end is None:
                 # No quiet hours: anything left in the queue is from
                 # before somebody turned them off, and has waited enough.
                 if notify_router.load_queue():
                     await _flush_held_findings()
-                await asyncio.sleep(NOTIFY_FLUSH_POLL_S)
-                continue
-            tz, _name = baselines.house_timezone()
-            if not notify_router.in_quiet_hours(now, start, end, tz):
-                if notify_router.load_queue():
-                    await _flush_held_findings()
-                await asyncio.sleep(NOTIFY_FLUSH_POLL_S)
-                continue
-            wait = notify_router.quiet_ends_at(now, end, tz) - now
-            await asyncio.sleep(max(60.0, min(wait, NOTIFY_FLUSH_POLL_S)))
+            else:
+                tz, _name = baselines.house_timezone()
+                if not notify_router.in_quiet_hours(now, start, end, tz):
+                    if notify_router.load_queue():
+                        await _flush_held_findings()
+                else:
+                    wait = max(60.0, min(
+                        notify_router.quiet_ends_at(now, end, tz) - now,
+                        float(NOTIFY_FLUSH_POLL_S)))
+            due_at = notify_router.next_escalation_at()
+            if due_at:
+                wait = max(ESCALATION_MIN_WAIT_S,
+                           min(wait, due_at - time.time()))
+            await asyncio.sleep(wait)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — the loop outlives a bad pass
@@ -2077,12 +2226,24 @@ async def _announce_findings(created: list[dict]) -> None:
     phone twice, and there is nothing to announce at startup because a
     replayed store creates nothing.
 
-    Inside quiet hours the split is by `notify_router.urgency_of`, which
-    is a different axis from severity: a `critical` battery forecast is
-    three weeks away and a `warning` about a boiler that has stopped
-    answering is now. The severity floor is applied FIRST, so a row
-    nobody wanted notifying about is not held either — otherwise it would
-    simply arrive in the morning digest instead.
+    Three tiers, decided per row by `notify_router.tier_of`. **Escalate**
+    is `critical` severity and a `now` producer — a leak, a freeze, a hub
+    that has stopped answering — and it goes out immediately whatever the
+    hour, and then asks again on a ladder until somebody answers it.
+    **Notify** is everything else above the floor: once, held through the
+    night unless it is urgent, which is exactly what every release before
+    this one did with the whole set. **Quiet** is below the floor, and it
+    is not lost — the row is on the Findings tab, in `todo.brain` and in
+    Home Assistant's own Repairs, which are places somebody looks rather
+    than places that interrupt.
+
+    Inside quiet hours the notify tier splits by
+    `notify_router.urgency_of`, which is a different axis from severity: a
+    `critical` battery forecast is three weeks away and a `warning` about
+    a boiler that has stopped answering is now. The severity floor is
+    applied FIRST, so a row nobody wanted notifying about is not held
+    either — otherwise it would simply arrive in the morning digest
+    instead.
 
     A failed delivery is a log line, never an error: the finding is already
     safe on the list, and the notification is the courtesy copy.
@@ -2090,26 +2251,39 @@ async def _announce_findings(created: list[dict]) -> None:
     service, min_severity = _findings_notify_target()
     if not service or not created:
         return
-    worthy = notify_router.worth_sending(created, min_severity)
-    if not worthy:
+    tiers = notify_router.classify(created, min_severity)
+    escalating, once = tiers["escalate"], tiers["notify"]
+    if not escalating and not once:
         return
 
+    now = time.time()
+    if escalating:
+        # Quiet hours do not hold these and are not meant to: the window
+        # protects a bedroom from a battery three weeks from dying, and
+        # a freeze warning at 3am is when it is wanted.
+        await _send_notification(escalating)
+        started = notify_router.begin_escalation(escalating, now)
+        log.info("escalating %d of %d critical finding(s)",
+                 started, len(escalating))
+
+    if not once:
+        return
     start, end = _quiet_hours()
     tz, _name = baselines.house_timezone()
-    if not notify_router.in_quiet_hours(time.time(), start, end, tz):
-        await _send_notification(worthy)
+    if not notify_router.in_quiet_hours(now, start, end, tz):
+        await _send_notification(once)
         return
 
     # Inside the quiet window only the urgent get through, and the rest
     # are HELD rather than dropped: they are on the Findings tab either
     # way, and a notifier that silently decides some problems were not
     # worth mentioning is one nobody can reason about.
-    urgent = [f for f in worthy if notify_router.urgency_of(f) == "now"]
-    later = [f for f in worthy if notify_router.urgency_of(f) != "now"]
+    urgent = [f for f in once if notify_router.urgency_of(f) == "now"]
+    later = [f for f in once if notify_router.urgency_of(f) != "now"]
     if urgent:
         await _send_notification(urgent)
     if later:
-        depth = notify_router.hold(later, time.time())
+        depth = notify_router.hold(later, now)
         log.info("held %d finding(s) until quiet hours end (%d waiting)",
                  len(later), depth)
 
@@ -2454,15 +2628,108 @@ async def _generate(insight_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Fix worker — the one path that lets Claude change the house
+# Fix workers — the plan, and the one path that lets Claude change the house
 # ---------------------------------------------------------------------------
 
+async def _run_plan(job_id: str) -> None:
+    """Work out what fixing one finding WOULD change, and change nothing.
+
+    This is what pressing Fix it now buys, and the split is the whole
+    point: a tool-enabled run at somebody's house used to start on the
+    press, with nothing on screen first about which entity, which file or
+    which automation was about to move. So the press buys a sentence, and
+    the change waits for a second one.
+
+    It is `run_analyst` and never `run_agent` — read-only by construction
+    rather than by instruction, because a prompt that says "change
+    nothing" is a promise a model keeps and a tool list is a promise the
+    CLI keeps. It claims the `fix` run source like the run it precedes,
+    since the Chats rail reads them as one face, and it rides the
+    generation queue for the fix's own reason: one Claude invocation in
+    flight across the add-on is what keeps a subscription's rate limit
+    intact.
+
+    Every ending leaves the row somewhere a person can act: a plan that
+    parsed lands on the card as `planned`, and a run that failed puts the
+    row back to `open` with the reason, because a finding wedged in
+    `planning` is one no button is offered on.
+    """
+    job = JOBS.get(job_id, {})
+    ts = int(job.get("finding_ts") or 0)
+    finding = findings_store.get(ts)
+    if finding is None:
+        _set_job(job_id, state="error", error="that finding is gone")
+        return
+    try:
+        # the route already claimed it on disk — this is the in-memory half
+        _set_job(job_id, state="planning", error="")
+        memory = await asyncio.to_thread(_read_shared_memory)
+        prompt = fixer.build_plan_prompt(
+            finding, memory=memory,
+            protected=automation_writer.protected_patterns())
+        result = await asyncio.to_thread(
+            engine.run_analyst, prompt, fixer.PLAN_SYSTEM, eff_model(),
+            PLAN_TIMEOUT_S, PLAN_MAX_TURNS, "fix")
+        _record_usage(result, job_id)
+        if not result["ok"]:
+            raise RuntimeError(result["error"] or "the plan run failed")
+
+        plan = fixer.parse_plan(result["text"])
+        row = await asyncio.to_thread(findings_store.set_plan, ts, plan)
+        if row is None:
+            # The finding was settled, or somebody pressed Cancel, while
+            # the run was out. `record_triage`'s rule: a verdict arriving
+            # late about a row that has moved on must not drag it back.
+            _set_job(job_id, state="done", error="")
+            log.info("plan for finding %s arrived after the row moved on", ts)
+            return
+        _set_job(job_id, state="done", error="")
+        log.info("finding %s planned: %s", ts,
+                 f"{len(plan['steps'])} step(s)" if plan["can_fix"]
+                 else "brAIn would not make this change itself")
+    except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
+        # No journal line here: `engine._run_cli` already records every `-p`
+        # run whatever happened to it, and a second one would count this
+        # failure twice — `_run_fix`'s arrangement, for its reason.
+        log.warning("planning finding %s failed: %s", ts, exc)
+        await asyncio.to_thread(
+            findings_store.set_status, ts, "open",
+            f"brAIn could not work out what to change: {str(exc)[:400]}")
+        _set_job(job_id, state="error", error=str(exc)[:500])
+
+
+def _close_fix_window(ts: int, started: float, ended: float) -> None:
+    """Stamp the end of a fix run and what it changed, in one write.
+
+    Blocking on purpose — it reads two files — so it is called through a
+    thread like every other store write on this path. It never raises: a
+    count that could not be taken is a card that says nothing about what
+    the run touched, where a raise here would report a fix that worked as
+    one that failed.
+    """
+    try:
+        files = len(unfix.journal_entries(started, ended))
+        calls = len(unfix.service_calls(started, ended))
+    except Exception as exc:  # noqa: BLE001 — accounting, not the fix
+        log.debug("could not count what the fix changed: %s", exc)
+        files = calls = None
+    findings_store.set_fix_window(ts, None, ended, files=files, calls=calls)
+
+
 async def _run_fix(job_id: str) -> None:
-    """Fix one finding, agentically, because somebody pressed Fix on it.
+    """Fix one finding, agentically, because somebody pressed Apply on a plan.
 
     Shares the generation queue on purpose: one Claude invocation at a time
     across the whole add-on is what keeps a subscription's rate limit
     intact, and a fix run is far too expensive to let race a card refresh.
+
+    The run is told to carry out the steps a person read rather than to
+    work out its own — and the window it ran in is stamped on the row
+    either side of it, because the edit journal and the action ledger are
+    both append-only files in epoch seconds, so "what did this fix change"
+    is answerable only as "what they recorded between these two instants"
+    (`unfix.py`). The start goes to disk BEFORE the run, so a panel that
+    dies mid-fix still leaves a window somebody can ask about.
     """
     job = JOBS.get(job_id, {})
     ts = int(job.get("finding_ts") or 0)
@@ -2482,10 +2749,18 @@ async def _run_fix(job_id: str) -> None:
         # answer to "is this entity protected".
         prompt = fixer.build_prompt(
             finding, memory=memory,
-            protected=automation_writer.protected_patterns())
+            protected=automation_writer.protected_patterns(),
+            plan=finding.get("plan") or {})
+        started = time.time()
+        await asyncio.to_thread(findings_store.set_fix_window, ts,
+                                started, None)
         result = await asyncio.to_thread(
             engine.run_agent, prompt, fixer.FIX_SYSTEM, eff_model(),
             FIX_TIMEOUT_S, FIX_MAX_TURNS, "fix")
+        # Counted here and stored, rather than on every fetch of the tab:
+        # see `findings_store.set_fix_window`. This is also the last moment
+        # at which the count is certainly about this run and nothing else.
+        await asyncio.to_thread(_close_fix_window, ts, started, time.time())
         _record_usage(result, job_id)
         if not result["ok"]:
             raise RuntimeError(result["error"] or "the fix run failed")
@@ -2521,6 +2796,12 @@ async def _run_fix(job_id: str) -> None:
         log.info("finding %s → %s", ts, status)
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
         log.warning("fix for finding %s failed: %s", ts, exc)
+        # Close the window on the way out too. A run that timed out may
+        # have edited a file before it died, and a window with no end is
+        # a question nothing can answer afterwards — the row will say
+        # `failed` rather than offering the Undo, but what the run touched
+        # is still bounded on disk for `brain undo` and for a report.
+        findings_store.set_fix_window(ts, None, time.time())
         findings_store.set_status(
             ts, "failed",
             result=f"The fix run did not complete: {str(exc)[:400]}")
@@ -2639,6 +2920,8 @@ async def _worker() -> None:
             kind = JOBS.get(job_id, {}).get("kind")
             if kind == "fix":
                 await _run_fix(job_id)
+            elif kind == "plan":
+                await _run_plan(job_id)
             elif kind == "milestone":
                 await _run_milestone(job_id)
             elif kind == "doctor":
@@ -8362,16 +8645,54 @@ async def h_finding_discuss(request: web.Request) -> web.Response:
 
 
 async def h_finding_fix(request: web.Request) -> web.Response:
-    """"Yes, go fix this." Queues the one tool-enabled run in the panel."""
+    """"Show me what you'd change." Queues the READ-ONLY plan run.
+
+    This route used to send the tool-enabled run at the house on the
+    press. It is kept at the same path rather than renamed because a panel
+    served before this update is still open in somebody's browser, and its
+    Fix button must not 404 — what changed is what the press *buys*, and
+    an old panel pressing it gets the plan step exactly as a new one does,
+    which is the safer of the two answers to give a browser we cannot see.
+    """
     finding = _finding_or_404(request)
     if not engine.get_auth():
         raise web.HTTPBadRequest(text="connect your Claude account first")
-    job_id = f"{FIX_JOB_PREFIX}{finding['ts']}"
-    # The in-memory job is the authority on "a fix is running" — it is what
+    job_id = f"{PLAN_JOB_PREFIX}{finding['ts']}"
+    # The in-memory job is the authority on "a run is going" — it is what
     # actually knows. The stored status is the copy the browser renders, and
     # any left behind by a dead process is reconciled at startup.
-    if finding["status"] == "fixing" or not _enqueue(
-            job_id, kind="fix", finding_ts=finding["ts"]):
+    if finding["status"] in ("planning", "fixing") or not _enqueue(
+            job_id, kind="plan", finding_ts=finding["ts"]):
+        raise web.HTTPConflict(text="already being looked at")
+
+    def claim() -> dict:
+        findings_store.set_status(finding["ts"], "planning", result="")
+        return _findings_payload()
+
+    return web.json_response(await asyncio.to_thread(claim))
+
+
+async def h_finding_apply(request: web.Request) -> web.Response:
+    """"Yes, do exactly that." Queues the one tool-enabled run in the panel.
+
+    The consent is this press and nothing else, so it is refused without
+    a plan on the row and refused for a plan that said software should not
+    make this change — the card offers no Apply in either case, and a
+    route that trusted the card would be a rule held in one place out of
+    two. The plan itself is read off the row inside `_run_fix`, never
+    taken from the request: what the run carries out has to be what was on
+    the screen that was pressed.
+    """
+    finding = _finding_or_404(request)
+    if not engine.get_auth():
+        raise web.HTTPBadRequest(text="connect your Claude account first")
+    plan = finding.get("plan") or {}
+    if finding["status"] != "planned" or not plan.get("can_fix"):
+        raise web.HTTPConflict(
+            text="there is no plan on this finding to apply — press Fix it "
+                 "first, and read what it says it would change")
+    job_id = f"{FIX_JOB_PREFIX}{finding['ts']}"
+    if not _enqueue(job_id, kind="fix", finding_ts=finding["ts"]):
         raise web.HTTPConflict(text="already being fixed")
 
     def claim() -> dict:
@@ -8379,6 +8700,104 @@ async def h_finding_fix(request: web.Request) -> web.Response:
         return _findings_payload()
 
     return web.json_response(await asyncio.to_thread(claim))
+
+
+async def h_finding_cancel(request: web.Request) -> web.Response:
+    """"No, don't." The row goes back to open and KEEPS its plan.
+
+    Keeping it is the whole of the decision: the plan cost a Claude run,
+    and somebody who wants to read it again — or think about it and come
+    back — should not pay for it twice. Nothing else changes: the finding
+    is open, exactly as it was before the press, so every other ending is
+    on the card again.
+    """
+    finding = _finding_or_404(request)
+    if finding["status"] != "planned":
+        raise web.HTTPConflict(text="there is no plan waiting on this one")
+
+    def drop() -> dict:
+        findings_store.set_status(finding["ts"], "open", result="")
+        return _findings_payload()
+
+    return web.json_response(await asyncio.to_thread(drop))
+
+
+async def h_finding_unfix(request: web.Request) -> web.Response:
+    """Put back what the fix changed, and say what it could not.
+
+    Deliberately NOT the toast's `undo_store` token: that ring is five
+    minutes long and in memory, which is right for "I misclicked" on a row
+    and wrong for bytes in `/config` and an automation Core has reloaded.
+    This is a button on the card for as long as the row says `fixed`,
+    because the thing it reverses is durable — see `unfix.py` for why the
+    files come back and the service calls only get listed.
+
+    Four steps in this order, which are four different claims: the files
+    are restored, the domains they belong to are reloaded, the row goes
+    back to `open` carrying what happened, and the calls are reported. A
+    reload that Core refuses does not fail the undo — the bytes are
+    already back, and a failure there is a sentence on the card rather
+    than a reason to leave the file reverted while the row says otherwise.
+    """
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    finding = _finding_or_404(request)
+    if finding["status"] != "fixed":
+        raise web.HTTPConflict(
+            text="there is nothing to undo: brAIn has not changed anything "
+                 "for this finding")
+    started = float(finding.get("fix_started") or 0)
+    ended = float(finding.get("fix_ended") or 0)
+    if started <= 0 or ended <= 0:
+        # A fix from before the window was recorded — an add-on updated
+        # while a fixed row sat on the tab. "I could not tell what this
+        # changed" and "it changed nothing" are different claims, and
+        # answering with the second would put the row back to open while
+        # the change stands. The card hides the button for the same
+        # reason; this is the half that cannot be hidden from.
+        raise web.HTTPConflict(
+            text="brAIn did not record what this fix changed — it ran "
+                 "before the panel kept that window. `brain undo` in the "
+                 "terminal lists every file Claude has edited.")
+
+    entries = await asyncio.to_thread(unfix.journal_entries, started, ended)
+    calls = await asyncio.to_thread(unfix.service_calls, started, ended)
+    outcome = await asyncio.to_thread(unfix.revert_edits, entries)
+
+    reload_failures = []
+    for domain, service in outcome["reloads"]:
+        try:
+            await ha_data.call_core_service(domain, service)
+        except Exception as exc:  # noqa: BLE001 — the bytes are already back
+            reload_failures.append(
+                f"{domain} would not reload, so Home Assistant is still "
+                f"running what the fix wrote until it does: {exc}")
+            log.warning("could not reload %s after an undo: %s", domain, exc)
+
+    text = "\n\n".join([unfix.summary(outcome, calls)] + reload_failures)
+
+    def restore() -> dict:
+        findings_store.set_status(finding["ts"], "open", result=text,
+                                  changed=[])
+        return _findings_payload()
+
+    payload = await asyncio.to_thread(restore)
+    # The fix queued "brAIn fixed this on …" when it finished, and that is
+    # no longer true. A correction is the one thing that is right whether
+    # or not the consolidator has got to it yet: still in the queue, the
+    # two lines are reconciled in the same pass; already in the document,
+    # this is the only honest way to say otherwise — which is the door the
+    # memory inbox exists to be. Nothing is written when the fix recorded
+    # no change, because there is no claim to correct.
+    if finding.get("changed"):
+        await _submit_memory(
+            f"brAIn undid its own fix on {time.strftime('%Y-%m-%d')}: "
+            f"{finding['text']} — the change was put back, so the house is "
+            "as it was before it.", source="fix")
+    log.info("finding %s undone: %d file(s) back, %d service call(s) listed",
+             finding["ts"],
+             len(outcome["restored"]) + len(outcome["removed"]), len(calls))
+    return web.json_response(payload)
 
 
 async def h_finding_delete(request: web.Request) -> web.Response:
@@ -10138,6 +10557,12 @@ def make_app() -> web.Application:
     app.router.add_get("/api/activity/entity/{entity_id}", h_activity_entity)
     app.router.add_post("/api/activity/summary", h_activity_summary)
     app.router.add_post("/api/finding/{ts}/fix", h_finding_fix)
+    # The three halves of the plan-first fix. Before the {verb} catch-all
+    # for snooze's reason: none of them is an ending, so none may fall
+    # into the table of them.
+    app.router.add_post("/api/finding/{ts}/apply", h_finding_apply)
+    app.router.add_post("/api/finding/{ts}/cancel", h_finding_cancel)
+    app.router.add_post("/api/finding/{ts}/unfix", h_finding_unfix)
     app.router.add_post("/api/finding/{ts}/snooze", h_finding_snooze)
     app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)
     # Not an ending either: the chat's sentence onto the card. Before the

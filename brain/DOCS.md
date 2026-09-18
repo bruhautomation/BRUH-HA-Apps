@@ -117,9 +117,33 @@ automation whose trigger can never fire.
 brAIn files findings on its own, from scheduled analysis and from study sessions.
 Each one gets a severity, a plain-English explanation, and what to do about it:
 
-- **Fix it** — brAIn makes the change and reports back what it did. This is the *only*
-  place the add-on lets Claude act on your house on its own initiative, it is bounded
-  to one finding, and it only ever happens because you pressed the button.
+- **Fix it** — brAIn goes and looks, and tells you what it *would* change before it
+  changes anything. That look is read-only by construction: it reads the entity, its
+  history and the automation that is wrong, and comes back with the steps it would
+  take — which file, which entity, what it becomes — one sentence on what could go
+  wrong in *this* house, and whether software should be making this change at all.
+  The card then offers two presses.
+  - **Apply** is the only place the add-on lets Claude act on your house on its own
+    initiative. It is bounded to one finding, and the run is told to carry out exactly
+    the steps you read: if the house has moved on, or a step turns out to be wrong or
+    unsafe, it stops and says so rather than substituting a change you did not agree
+    to. Anything else it notices becomes a finding of its own.
+  - **Cancel** leaves the finding exactly as open as it was, and keeps the plan on the
+    card — reading it again later costs nothing.
+  - A plan that needs your hands (a flat battery, a hub to re-pair) or that brAIn will
+    not make itself says so and offers no Apply.
+- **Undo the fix** — after brAIn has changed something, the card carries an undo for as
+  long as the finding sits there waiting to be read. It puts back every file the run
+  edited under `/config` and reloads Home Assistant, out of the same journal
+  `brain undo` reads in the terminal. The service calls the fix made are **listed, not
+  reversed**: a call records what was asked for and never what the entity was doing
+  before it, so putting one back would be a guess. The card says which is which before
+  you press — *brAIn changed 2 files and made 3 service calls. Undo puts the files
+  back; the service calls are listed, not reversed.* A fix that ran before brAIn
+  recorded that window says so rather than claiming there was nothing to put back, and
+  points you at `brain undo`, which lists every file Claude has ever edited. This is
+  not the five-minute Undo in the toast: what it reverses is durable, so the button is
+  too.
 - **Discuss** — hands it to the chat with everything brAIn knows about it and asks
   whether it really is a problem *here*. The discussion changes nothing; the decisions
   ride along above the composer, so agreeing to the fix at the end of it is one press.
@@ -256,10 +280,23 @@ ordinary findings under a "check" label, with no Claude run at all.
   entities behind them.
 - **The machine underneath**: nothing backed up, or nothing in a week; an
   add-on in an error state, or set to start on boot and stopped; a disk
-  nearly full; a recorder database that has outgrown its headroom.
+  nearly full; a recorder database that has outgrown its headroom; and **an
+  update waiting to be installed** — Core, the operating system, the
+  Supervisor and every add-on in one row, because installing them is one
+  visit to one screen. It is quiet when nothing is pending, and it says
+  nothing at all when the Supervisor would not answer: "you are up to date"
+  is a claim brAIn only makes about a list it actually read.
 - **Dashboards** showing entities that no longer exist.
 - **Forecasts**: a battery running down, from the slope of its last sixty
   days, three weeks before it is flat.
+
+A new check runs **where nobody can see it first**. Its rows go to a separate
+store for a fortnight and reach no tab, no badge, no notification and no to-do
+list, so what can be measured is whether anything else in the house agreed with
+it before it is ever put in front of you. `sys.update_pending` is on trial now:
+the rule cannot be wrong about your house — the Supervisor either lists an
+update or it does not — so what is being measured is whether an update belongs
+on a list of decisions at all.
 
 - **A reading well outside what your house normally does at this hour** —
   see below.
@@ -366,13 +403,30 @@ Findings reach you outside the panel too. The integration exposes an
 attributes) and fires a **`brain_finding` event** for each new one, so an
 automation can react the moment brAIn files something. And if you set
 `findings_notify_service` in the add-on configuration to one of your
-`notify.*` services, new findings at or above `findings_notify_min_severity`
-(default `serious`) are pushed straight to it — a dead battery rings your
-phone; a naming nitpick waits on the tab. On the companion app a message
-about one finding carries buttons to answer it, and tapping the message opens
-brAIn's own panel rather than Home Assistant's front page. The whole tab is
-also scriptable as `brain findings` (list / fix / done / wrong / ack / snooze)
-from the terminal.
+`notify.*` services, findings reach it in one of three ways.
+
+A finding that is **`critical` and urgent** — a leak, a freeze, a hub that has
+stopped answering — is pushed straight away, quiet hours or not, and then
+**asked again**: an hour later, four hours later and twelve hours later, three
+reminders and then it stops. Each one says which repeat it is and how long the
+problem has been open, and the last one says brAIn will not ask again. Any
+answer ends them — "I've fixed it", "Wrong", "Later", "＋ To-do", or the check
+simply stopping reporting it — and so does a restart, which picks the ladder up
+where it left off rather than starting it over.
+
+A finding at or above `findings_notify_min_severity` (default `critical`) that
+is *not* in that class is pushed **once**, held through quiet hours unless its
+check says it cannot wait.
+
+Everything below the floor is **quiet**: no message, and nothing lost — it is
+on the Findings tab, in the `todo.brain` list and in Home Assistant's Repairs.
+
+On the companion app a message about one finding carries buttons to answer it,
+and tapping the message opens brAIn's own panel rather than Home Assistant's
+front page. ⚙ → Diagnostics says what is currently being escalated and when the
+next reminder is due. The whole tab is also scriptable as `brain findings`
+(list / fix / apply / cancel / undo / done / wrong / ack / snooze) from the
+terminal.
 
 Between `notify_quiet_start` and `notify_quiet_end` (22 to 7 by default, in
 your home's own timezone) only the **urgent** ones get through: a device that
@@ -385,6 +439,24 @@ row, not of the row's wording. Anything you fixed or dismissed overnight is
 dropped from the queue rather than announced: being told at seven about a
 problem that went away at four is how these messages stop meaning anything.
 Set both to the same value (or leave both empty) to notify at any hour.
+
+### Findings in Home Assistant's Repairs
+
+Every finding that is a decision waiting on you also appears under
+**Settings → System → Repairs**, so you do not have to open the panel to
+answer one. The entry carries the finding's own text, what brAIn measured,
+what you'd need to do and which check or category raised it, and opening
+it offers the same three endings the Findings tab does — *I've fixed it*,
+*Not a problem here* (with an optional reason, which brAIn records as a
+correction), and *Remind me tomorrow*. Answering here is answering on the
+tab: it is the same ending, written the same way, so brAIn learns the same
+thing either way.
+
+What does **not** appear there: findings marked `info` (there is nothing to
+do about them), a finding brAIn is already running a fix for, and one it
+has already fixed and is waiting for you to read — that one's only honest
+answer is "Got it", which belongs on the tab. At most 25 are shown at once,
+oldest first, so a busy week cannot fill the page.
 
 ### It explains your house to you
 
@@ -605,15 +677,23 @@ simply because you prefer it.
 - Automations can hand brAIn work: `brain.run_task` gives it a job and lets it use
   tools, `brain.send_prompt` asks it a question, `brain.run_insight` regenerates a
   card, `brain.study` sends it off to research something, `brain.add_memory` teaches
-  it a fact, and `brain.intent` turns one sentence into an automation that runs
-  once and switches itself off — which is how a voice command reaches it. Wire
-  them to any trigger you like.
+  it a fact, `brain.intent` turns one sentence into an automation that runs
+  once and switches itself off — which is how a voice command reaches it — and
+  `brain.check` runs the house checks now instead of waiting for the next
+  scheduled pass (`checks_interval_hours`). It returns immediately: a pass
+  collects a snapshot of the whole house, runs every check against it and
+  triages what it filed, which takes a minute or two, and what it finds
+  arrives on the Findings tab. Calling it twice in quick succession runs one
+  pass, and calling it while a pass is already running is noted in the log
+  rather than queued. `button.brain_run_checks` on the *brAIn System* device
+  is the same press with nothing to type. Wire them to any trigger you like.
 - Insight jobs render to `sensor.<name>_insight` with the markdown and ready-to-paste
   card YAML as attributes, so a report can drive a template, a notification, or a
   dashboard.
-- Findings surface as `sensor.brain_findings_open_findings` and a `brain_finding`
-  event per new one — and `findings_notify_service` pushes them to a phone with no
-  automation at all.
+- Findings surface as `sensor.brain_findings_open_findings`, a `brain_finding`
+  event per new one, and an entry on Home Assistant's own **Repairs** page for
+  each one waiting on you — and `findings_notify_service` pushes the critical
+  ones to a phone with no automation at all.
 - The same findings are the `todo.brain_system_brain` list in Home Assistant's own
   **To-do** panel and mobile app: one list, two views. Ticking one off is "I've fixed
   it" and deleting one is "not a problem here" — the Findings tab's own two endings,
@@ -1680,7 +1760,7 @@ One ingress panel, seven tabs.
 | Tab | What's there |
 | --- | --- |
 | **Insights** | Your cards, and the ask bar that makes new ones. A question becomes a card; a line starting "learn about…" starts a study session instead. A **Today** strip across the top says when the checks last ran, when the measurements were last rebuilt, when memory was last filed, and how many problems have been written up since yesterday. |
-| **Findings** | What brAIn thinks is broken. Seven controls on each one — **Fix it**, **Discuss**, **Check again**, **I fixed it**, **Remind me later**, **Dismiss**, **Wrong**. A count on the tab means something is waiting on you. |
+| **Findings** | What brAIn thinks is broken. Seven controls on each one — **Fix it** (which shows its plan first, then **Apply** or **Cancel**, and **Undo** afterwards), **Discuss**, **Check again**, **I fixed it**, **Remind me later**, **Dismiss**, **Wrong**. A count on the tab means something is waiting on you. |
 | **Proposals** | Changes brAIn would like to make: a habit worth automating, a condition an automation you keep undoing is missing, an emergency playbook, four scenes for a room. Nothing here has happened yet. |
 | **Activity** | What changed in your house and what caused it — a person, an automation, a script, voice, brAIn itself — plus the overrides that are evidence rather than history. Fetched fresh every visit and never cached. |
 | **Terminal** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with the button on the tab, or in ⚙ Settings. Press ⤢ to give either the whole screen. |
@@ -1692,6 +1772,33 @@ everything that only a scheduled Claude run ever fills: the scheduler stops, and
 the **Insights** and **Proposals** tabs go from the strip. **Findings stays**,
 because the house checks cost nothing to run and still file there. The panel
 itself always runs, because it is the ingress target.
+
+### ⚙ Settings
+
+Five sections, and you only open the ones you need.
+
+* **Claude account** *(open)* — who brAIn is signed in as, which of the three
+  credential stores holds it, when it was last verified, and the buttons to
+  sign in again, re-check now or sign out. The box below it shares that login
+  with the other BRUH add-ons, and says what that costs: the file it writes is
+  under `/config`, which rides into Home Assistant backups.
+* **Insights** *(open)* — the switch that pauses all automatic generation, your
+  Claude subscription, the share of each 5-hour session Insights may spend,
+  the meter showing where that session is now, and whether a card fetches what
+  it needs or is handed the whole home.
+* **Terminal & chat** — which face the Terminal tab shows (chat or the full
+  terminal), and how many conversations keep a live Claude Code process.
+* **Generation defaults** — refresh interval, when a card actually refreshes,
+  days of history, timeout, model, and how many past runs are kept. These are
+  the add-on's own Configuration options; editing them here or on the
+  Configuration tab is the same setting either way.
+* **Advanced** — Diagnostics, problem reports, corpus capture, the deep check
+  and the rehearsal. Nothing here is fetched until you open it, because four of
+  those readings cost a request and two of them start a poll.
+
+A section remembers whether you left it open. Where a control's full
+explanation did not fit in a sentence, the rest is on the **?** beside it —
+press it (or tab to it); it is a thumb-sized target on a phone.
 
 ### What's on a card
 
@@ -2256,7 +2363,7 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 | `memory_max_kb` | 1–64 | `32` | Size cap for the memory document. A pass that cannot fit under it files nothing, so this is the setting to raise when the log says the document is full. |
 | `study_timeout_minutes` | 2–120 | `30` | Wall-clock limit for a study session. |
 | `findings_notify_service` | string | *(empty)* | A `notify.*` service (with or without the prefix) that gets a push when brAIn files a new finding. Empty means no notifications — the Findings tab, the sensor and the `brain_finding` event work either way. |
-| `findings_notify_min_severity` | `info` \| `warning` \| `serious` \| `critical` | `serious` | Only findings at or above this severity are pushed. The default means dying batteries and silent sensors ring your phone while naming nitpicks wait on the tab. |
+| `findings_notify_min_severity` | `info` \| `warning` \| `serious` \| `critical` | `critical` | Only findings at or above this severity are pushed. The default keeps your phone for what cannot wait — a leak, a freeze, a hub that has stopped answering, which are also the only ones brAIn reminds you about a second time. Everything else waits on the Findings tab, in your to-do list and in Repairs. Set it to `serious` for the old behaviour, where a dying battery is pushed once as well. |
 | `notify_quiet_start` | string | `22` | The hour (0–23, your home's timezone) from which only urgent findings ring your phone. Everything else is held and delivered as one message when the quiet ends. |
 | `notify_quiet_end` | string | `7` | The hour held findings are delivered. A window that crosses midnight (22 to 7) is the normal case. Set both the same, or both empty, for no quiet hours. |
 | `morning_brief` | bool | `false` | One short message a day, at the hour your home actually starts moving, and only when there is something to say. Each one sent costs a Claude turn; a quiet morning costs nothing. Needs `findings_notify_service` set. |

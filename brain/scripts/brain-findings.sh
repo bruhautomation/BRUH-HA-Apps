@@ -11,8 +11,12 @@
 #
 # Usage:
 #   brain findings [list]              What brAIn thinks is broken
-#   brain findings fix <id>            Send Claude to fix one (the only
-#                                      path that changes the house)
+#   brain findings fix <id>            Ask what fixing one would change —
+#                                      a read-only look that changes nothing
+#   brain findings apply <id>          Yes, do exactly that (the only path
+#                                      that changes the house)
+#   brain findings cancel <id>         No; the plan stays on the card
+#   brain findings undo <id>           Put back what a fix changed
 #   brain findings done <id> [note]    "I've fixed it myself"
 #   brain findings wrong <id> [note]   "That is not a problem here"
 #   brain findings ack <id>            "Got it" — after an automated fix
@@ -35,7 +39,13 @@ brain findings — what brAIn thinks is broken in your home
 
 Usage:
   brain findings                   List open findings (and guesses waiting)
-  brain findings fix <id>          Let Claude fix one — it will change the house
+  brain findings fix <id>          Ask what fixing one WOULD change; nothing
+                                   is changed until you apply it
+  brain findings apply <id>        Make the change it planned — this one does
+                                   change the house
+  brain findings cancel <id>       Don't; the plan stays, so you can read it
+  brain findings undo <id>         Put back the files a fix changed (service
+                                   calls it made are listed, not reversed)
   brain findings done <id> [note]  Mark one fixed by you; the note teaches
   brain findings wrong <id> [note] Not a problem here; the note teaches more
   brain findings ack <id>          Acknowledge an automated fix you've read
@@ -67,15 +77,19 @@ guesses = payload.get("hypotheses") or []
 
 SEV = {"critical": "\033[0;31m", "serious": "\033[0;31m",
        "warning": "\033[1;33m", "info": "\033[2m"}
-STATUS = {"fixing": "Claude is fixing it now",
-          "fixed": "fixed by brAIn — run `brain findings ack <id>` once read",
+STATUS = {"planning": "working out what it would change (nothing yet)",
+          "planned": "a plan is waiting on you — see the steps below",
+          "fixing": "Claude is fixing it now",
+          "fixed": "fixed by brAIn — run `brain findings ack <id>` once read, "
+                   "or `brain findings undo <id>` to put it back",
           "failed": "a fix was tried and failed",
           "needs_you": "needs your hands"}
 DIM, CYAN, NC = "\033[2m", "\033[0;36m", "\033[0m"
 
 now = time.time()
 live = [f for f in findings if f.get("status") in
-        ("open", "fixing", "fixed", "failed", "needs_you")]
+        ("open", "planning", "planned", "fixing", "fixed", "failed",
+         "needs_you")]
 if not live and not guesses:
     print(f"{DIM}Nothing waiting on you — the list is empty.{NC}")
     raise SystemExit
@@ -94,6 +108,26 @@ for f in live:
         print(f"      {DIM}→ {STATUS[f['status']]}{NC}")
     if f.get("status") == "open" and f.get("fix"):
         print(f"      {DIM}suggested: {f['fix']}{NC}")
+    # The steps ARE the decision, so `apply` from here is not a press in
+    # the dark: what the panel puts on the card is printed here too.
+    plan = f.get("plan") or {}
+    if f.get("status") == "planned":
+        if plan.get("summary"):
+            print(f"      {DIM}{plan['summary']}{NC}")
+        for i, step in enumerate(plan.get("steps") or [], 1):
+            print(f"      {DIM}{i}. {step}{NC}")
+        if plan.get("risk"):
+            print(f"      {DIM}what could go wrong: {plan['risk']}{NC}")
+        if plan.get("can_fix"):
+            print(f"      {DIM}-> `brain findings apply {f['ts']}` or "
+                  f"`brain findings cancel {f['ts']}`{NC}")
+        else:
+            print(f"      {DIM}-> brAIn will not make this change itself: "
+                  f"`brain findings cancel {f['ts']}`{NC}")
+    if f.get("status") == "fixed" and (f.get("fix_files") or f.get("fix_calls")):
+        print(f"      {DIM}it changed {f.get('fix_files', 0)} file(s) and made "
+              f"{f.get('fix_calls', 0)} service call(s); undo puts the files "
+              f"back, not the calls{NC}")
 
 if guesses:
     print(f"\n{DIM}Guesses waiting on a yes/no (answer in the panel's "
@@ -136,7 +170,22 @@ case "$action" in
     fix)
         require_id "${1:-}"
         act "/api/finding/$1/fix" '{}' \
-            "Queued. Claude will try to fix it — watch the Findings tab, or run \`brain findings\` again." ;;
+            "Queued. Claude is working out what it would change — nothing is being changed. Run \`brain findings\` again to read the plan." ;;
+    apply)
+        require_id "${1:-}"
+        act "/api/finding/$1/apply" '{}' \
+            "Queued. Claude is making that change — watch the Findings tab, or run \`brain findings\` again." ;;
+    cancel)
+        require_id "${1:-}"
+        act "/api/finding/$1/cancel" '{}' \
+            "Left alone. The plan is still on the finding, so reading it again costs nothing." ;;
+    undo)
+        # `undo` here, `unfix` on the wire: the word a person types is the
+        # one they already use for taking something back, and the route is
+        # named for what it undoes so it cannot be read as the toast's.
+        require_id "${1:-}"
+        act "/api/finding/$1/unfix" '{}' \
+            "Put back — run \`brain findings\` to read what came back and what did not." ;;
     done)
         require_id "${1:-}"
         note=$(printf '%s' "${2:-}" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')

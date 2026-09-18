@@ -8,8 +8,8 @@ finished setting itself up. Every one of them is quiet right up until it
 is not recoverable.
 
 They read the Supervisor's own answers (``/backups``, ``/addons``,
-``/host/info``), one ``stat`` of the recorder database, and Core's own
-list of config entries. A source that did not answer leaves its key
+``/host/info``, ``/available_updates``), one ``stat`` of the recorder
+database, and Core's own list of config entries. A source that did not answer leaves its key
 unavailable, so the checks that need it do not run, and so cannot clear a
 row they could not look at.
 
@@ -50,6 +50,18 @@ ADDON_STOPPED_TEXT = "An add-on set to start on boot is not running"
 # restore or a downgrade), and a reload cannot touch it.
 ENTRY_FAILED_STATES = ("setup_error", "setup_retry")
 ENTRY_FAILED_TEXT = "An integration did not finish setting up"
+
+# What the Supervisor calls each thing it can update, said the way a
+# person would. An add-on brings its own name; these three do not have
+# one worth printing ("Home Assistant Core" beside "Home Assistant
+# Operating System" is two long strings that differ by one word).
+UPDATE_LABELS = {"core": "Core", "os": "Operating system",
+                 "supervisor": "Supervisor"}
+# Add-ons named in the detail before the rest are counted. A house that
+# has been away for a month has a dozen, and a list of a dozen is a
+# sentence nobody reads to the end.
+UPDATE_ADDONS_NAMED = 4
+UPDATE_PENDING_TEXT = "Updates are waiting to be installed"
 
 
 def _sup(snap: dict) -> dict:
@@ -283,6 +295,62 @@ def entry_failed(snap: dict, now: float) -> list[dict]:
     }]
 
 
+# ---------------------------------------------------------------------------
+# sys.update_pending — something is waiting to be installed
+# ---------------------------------------------------------------------------
+
+def _update_name(row: dict) -> str:
+    kind = str(row.get("update_type") or "")
+    name = str(row.get("name") or "").strip()
+    label = UPDATE_LABELS.get(kind) or name or "Something"
+    version = str(row.get("version_latest") or "").strip()
+    return f"{label} {version}".strip()
+
+
+def update_pending(snap: dict, now: float) -> list[dict]:
+    """The thing most people check by hand, and nothing here reported it.
+
+    ONE row however many updates there are: installing them is a single
+    visit to one screen, and a row per add-on would be six cards to
+    dismiss one at a time about one afternoon's work. The text is the same
+    sentence every pass — what moved lives in `detail`, which the store
+    refreshes in place, because the number pending changes every week and
+    a number in the text would file a fresh finding each time it did.
+
+    It says nothing at all when nothing is pending, and it does not run at
+    all when the Supervisor would not answer: "you are up to date" is a
+    claim this may only make about a list it actually read.
+    """
+    rows = [r for r in (snap.get("updates") or []) if isinstance(r, dict)]
+    if not rows:
+        return []
+    # Core, the OS and the Supervisor first and in that order, then the
+    # add-ons by name: a stable order is what makes two passes over the
+    # same house write the same sentence.
+    order = {"core": 0, "os": 1, "supervisor": 2}
+    lead = sorted((r for r in rows if str(r.get("update_type")) in order),
+                  key=lambda r: order[str(r.get("update_type"))])
+    addons = sorted((r for r in rows
+                     if str(r.get("update_type")) not in order),
+                    key=lambda r: str(r.get("name") or ""))
+    parts = [_update_name(r) for r in lead]
+    if addons:
+        named = join_names([_update_name(r) for r in addons],
+                           limit=UPDATE_ADDONS_NAMED)
+        parts.append(f"{len(addons)} add-on{'s' if len(addons) > 1 else ''}: "
+                     + named)
+    return [{
+        "text": UPDATE_PENDING_TEXT,
+        "detail": f"{len(rows)} waiting — " + "; ".join(parts) + ".",
+        "fix": "Settings > System > Updates. Take the backup it offers on "
+               "the way past — a Core update is the hardest thing in a "
+               "house to undo without one.",
+        "severity": "info",
+        "fixable": False,
+        "entity_id": "",
+    }]
+
+
 CHECKS = [
     {"id": "sys.backup_stale", "title": "Backups missing or stale",
      "needs": ("supervisor",), "run": backup_stale},
@@ -294,4 +362,6 @@ CHECKS = [
      "needs": ("recorder",), "run": recorder_size},
     {"id": "sys.entry_failed", "title": "Integrations that did not load",
      "needs": ("config_entries",), "run": entry_failed},
+    {"id": "sys.update_pending", "title": "Updates waiting to be installed",
+     "needs": ("updates",), "run": update_pending},
 ]

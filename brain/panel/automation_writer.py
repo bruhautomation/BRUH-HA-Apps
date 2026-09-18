@@ -521,12 +521,39 @@ def apply(row: dict, *, config_dir: str | None = None,
     }
 
 
+def in_config_tree(path: Path, config_dir: str | None = None) -> bool:
+    """Is this a file inside the install's config folder, at any depth?
+
+    `revert` used to ask whether the file sat *directly* in `/config`,
+    which is true of the only two files this module writes and false of
+    plenty of files a Claude run edits — `packages/heating.yaml`,
+    `esphome/porch.yaml` — that `unfix` has to be able to put back out of
+    the same journal, through this same reverter rather than a second one.
+    "In this install's config folder" is the claim either way; the narrow
+    reading was simply wrong about what it means.
+
+    It is answered on **real** paths, because `/config/../etc/passwd` is
+    lexically under `/config` and is not in it — the journal stores the
+    path as the hook was handed it, unresolved, so a `..` can be in there.
+    The root itself is not a file and so is not "in" the tree.
+    """
+    root = os.path.realpath(str(config_dir or CONFIG_DIR))
+    target = os.path.realpath(str(path))
+    return target.startswith(root.rstrip(os.sep) + os.sep)
+
+
 def revert(snapshot_entry: dict, *, config_dir: str | None = None) -> dict:
-    """Put `automations.yaml` back to the bytes the snapshot holds.
+    """Put a journalled file back to the bytes its snapshot holds.
 
     The undo half, and the failure half: the accept path calls this when
     the reload or the verification does not come back, so it has to work
     on a file that was written seconds ago and on one nobody touched.
+
+    It is `automations.yaml` and `scenes.yaml` for this module's own
+    callers and anything under `/config` for `unfix`, which puts back what
+    a Fix it run edited — one reverter for one journal, because `brain
+    undo` reads the same lines and two answers to "put this file back" is
+    the drift a second implementation always produces.
     """
     recorded = str(snapshot_entry.get("path") or "")
     if not recorded:
@@ -537,7 +564,7 @@ def revert(snapshot_entry: dict, *, config_dir: str | None = None) -> dict:
     # is somewhere else is a caller talking about a different file, and
     # restoring over it would be this module writing outside the tree it
     # was pointed at.
-    if target.parent != Path(config_dir or CONFIG_DIR):
+    if not in_config_tree(target, config_dir):
         return _fail(f"{recorded} is not in this install's config folder")
 
     if not snapshot_entry.get("existed"):
@@ -551,9 +578,12 @@ def revert(snapshot_entry: dict, *, config_dir: str | None = None) -> dict:
     source = SNAP_DIR / str(snapshot_entry.get("snapshot") or "")
     text = _read_text(source)
     if text is None:
-        return _fail("the snapshot of automations.yaml is gone, so brAIn "
-                     "cannot put the file back — the automation it added is "
-                     "the last block in it")
+        # Named rather than assumed: this reverter answers for any file
+        # under /config now, and a sentence about automations.yaml under an
+        # undo of a package file is a message about the wrong file.
+        return _fail(f"the snapshot of {target.name} is gone, so brAIn "
+                     "cannot put the file back — whatever was written to it "
+                     "is still there")
     try:
         atomic_write.write_text(target, text)
     except OSError as exc:
@@ -932,6 +962,7 @@ __all__ = ["AUTOMATIONS_FILE", "CONFIGURATION_FILE", "ID_PREFIX", "INCLUDE_RE",
            "entry_ids",
            "SCENES_FILE", "SCENE_INCLUDE_RE", "TARGETS",
            "INDEX", "JOURNAL_DIR", "SNAP_DIR", "TOOL", "apply", "apply_edit", "entry_for",
+           "in_config_tree",
            "is_protected", "locate", "protected_patterns", "remove",
            "remove_entry",
            "replace_entry", "revert", "slugify", "snapshot"]

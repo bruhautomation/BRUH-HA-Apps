@@ -154,10 +154,12 @@ class TestTheShadowSet(unittest.TestCase):
         for check_id in checks.SHADOW:
             self.assertIn(check_id, checks.CHECK_IDS, check_id)
 
-    def test_it_ships_empty(self):
-        """Every check shipped so far has earned its place, and a set with
-        something in it "for now" is how a trial becomes permanent."""
-        self.assertEqual(set(checks.SHADOW), set())
+    def test_it_names_exactly_what_is_on_trial(self):
+        """Pinned rather than counted: a set with something in it "for
+        now" is how a trial becomes permanent, and an id that arrives here
+        without somebody deciding to put it here is a check that reaches
+        nobody and reads exactly like one that found nothing."""
+        self.assertEqual(set(checks.SHADOW), {"sys.update_pending"})
 
     def test_run_all_splits_by_it(self):
         """Driven with a real id moved into the set, because the claim is

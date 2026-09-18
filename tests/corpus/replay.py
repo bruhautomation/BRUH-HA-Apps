@@ -190,14 +190,29 @@ def _bucket(rows: list[dict], key: str) -> dict:
     return {name: scorer.summarise(group) for name, group in out.items()}
 
 
+def entry_skipped(row: dict) -> str:
+    """Why this ENTRY was not replayed at all, and nothing else.
+
+    `score_checks` passes `run_all`'s per-CHECK skip map through under the
+    same word, and the two are different claims: an entry that could not
+    run one rule was still replayed and still scores, where an entry this
+    refused to grade has no numbers at all. The entry-level answer is a
+    sentence and the per-check one is a map, which is the distinction —
+    reading a checks entry's map as a refusal is how a frozen house that
+    predates one snapshot key comes out as 0/0 with nothing graded.
+    """
+    why = row.get("skipped")
+    return why if isinstance(why, str) else ""
+
+
 def render(report: dict) -> str:
     lines = []
     lines.append(f"corpus replay — {report['entries']} entr"
                  f"{'y' if report['entries'] == 1 else 'ies'}, "
                  f"{report['tokens']} tokens spent")
     for row in report["results"]:
-        if row.get("skipped"):
-            lines.append(f"  – {row['id']}: skipped — {row['skipped']}")
+        if entry_skipped(row):
+            lines.append(f"  – {row['id']}: skipped — {entry_skipped(row)}")
             continue
         if row.get("error"):
             lines.append(f"  ✗ {row['id']}: {row['error']}")
@@ -206,6 +221,10 @@ def render(report: dict) -> str:
             else "✗"
         line = (f"  {mark} {row['id']}: {row['found']}/{row['planted']} found"
                 f", {row['extra']} not labelled")
+        if isinstance(row.get("skipped"), dict) and row["skipped"]:
+            # A check that could not look did not find nothing, and a
+            # score printed without saying so reads as a quiet house.
+            line += f", {len(row['skipped'])} could not look"
         if row.get("repeated_corrections"):
             # The specific mistake the corpus exists to catch: a report the
             # homeowner already said was wrong, made again.
@@ -267,7 +286,8 @@ def run(entries: list[dict], *, model: str = "", max_entries: int = 0,
         spent += int(row.get("tokens") or 0)
         results.append(row)
         done += 1
-    scored = [r for r in results if not r.get("skipped") and not r.get("error")]
+    scored = [r for r in results
+              if not entry_skipped(r) and not r.get("error")]
     return {
         "generated_at": int(time.time()),
         "entries": len(results),

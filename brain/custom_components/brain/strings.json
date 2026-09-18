@@ -1174,6 +1174,10 @@
           "description": "What should happen, and when — for example \"Turn the porch light off when the guests leave\"."
         }
       }
+    },
+    "check": {
+      "name": "Run house checks",
+      "description": "Ask brAIn to run its house checks now rather than waiting for the next scheduled pass. Returns immediately — a pass takes a minute or two, and what it finds arrives on the Findings tab."
     }
   },
   "issues": {
@@ -1202,6 +1206,32 @@
     "health_degraded": {
       "title": "brAIn hit a problem",
       "description": "{reason} A report is ready under ⚙ → Problems in the brAIn panel."
+    },
+    "finding": {
+      "title": "brAIn: {text}",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "brAIn found a problem",
+            "description": "**{text}**\n\n{detail}\n\n**What you'd need to do:** {fix}\n\nReported by {source_title}. Answering here is the same as answering on the brAIn panel's Findings tab — brAIn records what you say and stops raising it.",
+            "menu_options": {
+              "fixed": "I've fixed it",
+              "wrong": "Not a problem here",
+              "snooze": "Remind me tomorrow"
+            }
+          },
+          "wrong": {
+            "title": "Not a problem here",
+            "description": "**{text}**\n\nIf you say why, brAIn records it as a correction and stops making the same mistake in new words. Leaving it blank is fine.",
+            "data": {
+              "note": "Why is this not a problem? (optional)"
+            }
+          }
+        },
+        "abort": {
+          "cannot_write": "brAIn could not record your answer — the shared folder under /config/.brain could not be written to. The problem is still on the list; try again, or answer it on the brAIn panel's Findings tab."
+        }
+      }
     }
   }
 }

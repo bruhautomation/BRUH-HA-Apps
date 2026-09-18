@@ -16,12 +16,29 @@ version: change the minimum, never delete what you did not create, never
 touch credentials, and if the fix turns out to need hands rather than
 software, say so and stop instead of improvising something adjacent.
 
+**There are two prompts here, because a press is now two presses.** Fix it
+buys `PLAN_SYSTEM`: a READ-ONLY run (`engine.run_analyst`) that answers
+with the steps it *would* take, and the change waits for somebody to read
+them and press Apply. That is the difference between a button that starts
+a tool-enabled run at a house and one that starts a sentence about it —
+and it is enforced by which function the server calls rather than by
+either prompt, because a tool list is a promise the CLI keeps. The two
+runs are handed the same evidence (`_evidence`) and differ only in their
+ending; `plan_block` is what carries the approved steps into the fix, so
+the run that changes the house is asked to do the thing a person read
+rather than to work out its own.
+
 Stdlib plus engine (itself stdlib-only), so the test suite can import
 it without the add-on runtime.
 """
 from __future__ import annotations
 
 import engine
+
+# The plan run's guard. Far smaller than the fix's: this reads the entity, the
+# automation and the history and writes a paragraph, where a fix has to make
+# the change and then check it took.
+DEFAULT_PLAN_MAX_TURNS = 24
 
 # The runaway guard on one fix — not a budget. Large on purpose: a truncated
 # agentic run leaves the house half-changed, which is far worse than a slow
@@ -96,9 +113,150 @@ def protected_block(patterns) -> str:
         "\"ok\": false and say which entity and why.")
 
 
-def build_prompt(finding: dict, memory: str = "", context: str = "",
-                 protected=None) -> str:
-    """The user prompt for one fix run."""
+PLAN_SYSTEM = """You are brAIn, the AI that looks after one specific Home Assistant home. The homeowner has looked at a problem you reported and pressed "Fix it". You are NOT fixing it yet. You are working out what fixing it would mean, so they can read it and decide.
+
+You have READ-ONLY Home Assistant tools. You cannot change anything on this run even if you try — no service calls, no file edits — and that is the point: this is the step that happens before consent.
+
+HOW TO WORK
+1. CONFIRM FIRST. Read the entity's current state, its history, the automation, whatever the finding points at. Homes change between the report and the press. If it has already resolved itself, say so: "can_fix" false, and why, in "summary".
+2. FIND THE ACTUAL CAUSE, not the symptom. An automation that never fires because its trigger entity was renamed is fixed by correcting the trigger, not by deleting the automation.
+3. WRITE THE STEPS SOMEBODY IS CONSENTING TO. One line per concrete change: which entity, file or automation, and what it becomes. "Edit /config/automations.yaml: change the trigger of 'Morning lights' from sensor.hall_motion_old to sensor.hall_motion" is a step. "Fix the automation" is not — it is the thing they already asked for, and nobody can say yes or no to it.
+4. SAY WHAT COULD GO WRONG, in one sentence, about THIS change in THIS house. "The automation will not fire between the edit and the reload" is a risk; "changes may have side effects" is noise.
+
+WHEN THE ANSWER IS NO
+- If the real fix needs a human in the physical world — replacing a battery, re-pairing a device, power-cycling a hub — set "needs_you": true and say exactly what they have to do. Do not invent a software substitute.
+- If the fix would need to act on a PROTECTED ENTITY (the homeowner's list is in the prompt below), set "can_fix": false and name the entity.
+- If you cannot work out what is wrong, or this is a change you would not be confident making, set "can_fix": false and say so plainly. A refused plan is a good outcome; a confident wrong one costs trust, because this one is read as permission.
+
+OUTPUT
+Reply with ONE JSON object and nothing else — no markdown fences, no prose around it:
+{
+  "can_fix": true,
+  "needs_you": false,
+  "steps": ["one line per concrete change: which entity/file/automation, what it becomes"],
+  "risk": "one sentence: what could go wrong",
+  "summary": "One or two plain sentences: what is actually wrong, and what you would do about it."
+}
+Set "can_fix": false when software should not or cannot make this change — with an empty "steps", because a list of changes under a refusal reads as a plan somebody can approve."""
+
+
+def build_plan_prompt(finding: dict, memory: str = "", context: str = "",
+                      protected=None) -> str:
+    """The user prompt for the read-only run that happens BEFORE any change.
+
+    Deliberately the same evidence `build_prompt` hands the fix — the
+    finding, what the rule (or a look, or a conversation) said to do, the
+    house's memory, the protected list — because the plan is the fix's
+    first few minutes done where a person can read the answer. What
+    differs is only the ending: this one asks for the steps, and says out
+    loud that nothing is being changed yet.
+    """
+    parts = _evidence(finding)
+    block = protected_block(protected)
+    if block:
+        parts.append("\n" + block)
+    if memory.strip():
+        parts.append(
+            "\nWHAT YOU ALREADY KNOW ABOUT THIS HOME — read it before you "
+            "decide what to do, it is where the homeowner's preferences and "
+            "this house's quirks live:\n" + memory.strip())
+    if context.strip():
+        parts.append("\n" + context.strip())
+    parts.append(
+        "\nGo and look now. Confirm it is still real, work out the cause, and "
+        "reply with the JSON object per the contract — the steps are what the "
+        "homeowner will read and press Apply on, so write them as the changes "
+        "they are. Change NOTHING on this run. JSON only, no commentary."
+    )
+    return "\n".join(parts)
+
+
+def parse_plan(text: str) -> dict:
+    """Read the plan run's reply. Never raises, for `parse_result`'s reason.
+
+    The failure here is cheaper than the fix's — nothing has been touched
+    — but it has to fail in the direction that matters: an unreadable
+    reply comes back as `can_fix: false` carrying the tail, so the card
+    offers no Apply. **A plan this could not read must never be read as
+    permission to change somebody's house**, which is also why an empty
+    step list cannot be `can_fix`: Apply would send a tool-enabled run at
+    a home carrying nothing it was told to do.
+    """
+    raw = (text or "").strip()
+    obj = engine.extract_json(raw)
+    if not isinstance(obj, dict):
+        return {
+            "can_fix": False,
+            "needs_you": False,
+            "steps": [],
+            "risk": "",
+            "summary": "brAIn looked at this, but its plan came back "
+                       "unreadable, so there is nothing to approve. Try "
+                       "again, or discuss it in the chat."
+                       + (f" It ended with: …{raw[-300:]}" if raw else ""),
+        }
+
+    needs_you = bool(obj.get("needs_you"))
+    steps = []
+    if isinstance(obj.get("steps"), list):
+        for item in obj["steps"]:
+            if isinstance(item, str) and item.strip():
+                steps.append(item.strip()[:200])
+    # Read the same way `parse_result` reads its pair: a change that needs
+    # hands is not one software is going to make.
+    can_fix = bool(obj.get("can_fix")) and not needs_you and bool(steps)
+    return {
+        "can_fix": can_fix,
+        "needs_you": needs_you,
+        # A refusal's steps are dropped rather than rendered: a list of
+        # changes under "brAIn cannot do this" reads as a plan somebody
+        # can approve, which is the one misreading this step exists to
+        # prevent.
+        "steps": steps if can_fix else [],
+        "risk": str(obj.get("risk") or "").strip()[:300],
+        "summary": str(obj.get("summary") or "").strip()[:600],
+    }
+
+
+def plan_block(plan: dict) -> str:
+    """The approved plan, handed to the run that carries it out.
+
+    This is the whole difference between the fix as it was and the fix as
+    it is: the run is no longer asked to work out what to do, it is asked
+    to do the thing a person read and said yes to. Anything else it now
+    thinks would be better is a finding, not an edit — the rule
+    ``also_found`` has always carried, with something specific to hold it
+    against. An empty plan produces no block rather than an empty heading,
+    `protected_block`'s reason.
+    """
+    steps = [str(s).strip() for s in (plan or {}).get("steps") or []
+             if str(s).strip()]
+    if not steps:
+        return ""
+    lines = ["THE PLAN THE HOMEOWNER APPROVED — do exactly these steps and "
+             "nothing else:"]
+    lines += [f"{i}. {step}" for i, step in enumerate(steps, 1)]
+    if (plan or {}).get("risk"):
+        lines.append(f"What you said could go wrong: {plan['risk']}")
+    lines.append(
+        "They pressed Apply on those steps and on nothing else. If you get "
+        "there and the house has moved on, or a step turns out to be wrong or "
+        "unsafe, STOP and say so — return \"ok\": false with what you found. "
+        "Do not substitute a different change: they did not agree to one, and "
+        "a fix nobody approved is worse than a fix that did not happen. "
+        "Anything else you notice goes in \"also_found\".")
+    return "\n".join(lines)
+
+
+def _evidence(finding: dict) -> list[str]:
+    """What is known about the problem, in the words both runs are given.
+
+    The plan run and the fix run are handed the same evidence on purpose —
+    they are two halves of one press — so it is assembled once. A second
+    copy would be a second answer to "what did brAIn know when it
+    decided", and the plan a person approved would stop describing the run
+    that carries it out.
+    """
     parts = ["THE PROBLEM TO FIX:", f"- What is wrong: {finding.get('text', '')}"]
     if finding.get("detail"):
         parts.append(f"- Evidence when it was reported: {finding['detail']}")
@@ -118,6 +276,24 @@ def build_prompt(finding: dict, memory: str = "", context: str = "",
             "yourself: if software really can fix it, fix it; if not, return "
             "\"needs_you\": true with precise instructions."
         )
+    return parts
+
+
+def build_prompt(finding: dict, memory: str = "", context: str = "",
+                 protected=None, plan: dict | None = None) -> str:
+    """The user prompt for one fix run.
+
+    ``plan`` is what the homeowner actually pressed Apply on, and it is
+    what the run is told to carry out rather than to work out. It stays
+    optional in the signature for the one caller that may have none to
+    hand — a row whose stored plan could not be read back — where the run
+    is the fix it always was.
+    """
+    parts = _evidence(finding)
+
+    approved = plan_block(plan or {})
+    if approved:
+        parts.append("\n" + approved)
 
     block = protected_block(protected)
     if block:
