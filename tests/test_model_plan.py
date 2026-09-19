@@ -14,9 +14,8 @@ import json
 import os
 import sys
 import tempfile
-import unittest
+from unittest import TestCase, main, mock
 from pathlib import Path
-from unittest import mock
 
 PANEL = Path(__file__).resolve().parent.parent / "brain" / "panel"
 sys.path.insert(0, str(PANEL))
@@ -27,7 +26,7 @@ import model_plan  # noqa: E402
 import settings_store  # noqa: E402
 
 
-class TestTheTable(unittest.TestCase):
+class TestTheTable(TestCase):
     def test_every_job_names_a_known_tier_and_effort(self):
         for job, (tier, effort, _down, _up) in model_plan.JOBS.items():
             self.assertIn(tier, model_plan.TIERS, job)
@@ -81,7 +80,7 @@ class TestTheTable(unittest.TestCase):
         self.assertEqual(pinned["BRAIN_THINKING"], "normal")
 
 
-class TestTheShellHalfReadsTheSameTable(unittest.TestCase):
+class TestTheShellHalfReadsTheSameTable(TestCase):
     """The consolidator, study and both listeners run as separate
     processes and cannot import the plan, so run.sh prints it into
     /data/.brain_env off `model_plan.py` itself — one table, two readers.
@@ -137,7 +136,7 @@ class TestTheShellHalfReadsTheSameTable(unittest.TestCase):
             self.assertIn(var, model_plan.env_exports(), var)
 
 
-class TestEveryPanelJobIsInTheTable(unittest.TestCase):
+class TestEveryPanelJobIsInTheTable(TestCase):
     """A job the table does not know runs at the fallback tier, which is
     safe and is also silent: this reads every `job="…"` the panel passes
     and asserts each is planned on purpose."""
@@ -155,7 +154,7 @@ class TestEveryPanelJobIsInTheTable(unittest.TestCase):
                          "jobs passed by the panel but missing from the plan")
 
 
-class TestTheSetting(unittest.TestCase):
+class TestTheSetting(TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -208,11 +207,11 @@ print(json.dumps(env))
     fd, path = tempfile.mkstemp(prefix="fake-claude-", suffix=".py")
     with os.fdopen(fd, "w") as fh:
         fh.write(script)
-    os.chmod(path, 0o755)
+    os.chmod(path, 0o700)
     return path
 
 
-class TestTheEngineCarriesTheJob(unittest.TestCase):
+class TestTheEngineCarriesTheJob(TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -282,7 +281,7 @@ class TestTheEngineCarriesTheJob(unittest.TestCase):
         self.assertNotIn("--json-schema", self._argvs()[1])
 
 
-class TestTheCardStylesheet(unittest.TestCase):
+class TestTheCardStylesheet(TestCase):
     def test_the_palette_left_the_prompt_for_the_stylesheet(self):
         """The design system used to be ~1.5 KB of hex values re-sent
         per run; it is CSS now and the prompt names the variables."""
@@ -296,7 +295,7 @@ class TestTheCardStylesheet(unittest.TestCase):
     def test_inject_styles_is_placed_in_head_and_is_idempotent(self):
         html = "<!DOCTYPE html><html><head><title>t</title></head><body></body></html>"
         out = categories.inject_styles(html)
-        self.assertTrue(out.index("card-styles") < out.index("<title>"))
+        self.assertLess(out.index("card-styles"), out.index("<title>"))
         self.assertEqual(categories.inject_styles(out), out)
         self.assertTrue(categories.inject_styles("<p>bare</p>").startswith("<style"))
         self.assertEqual(categories.inject_styles(""), "")
@@ -309,4 +308,4 @@ class TestTheCardStylesheet(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    main()
