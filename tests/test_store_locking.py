@@ -132,6 +132,9 @@ class TestLockedHelper(unittest.TestCase):
         # world-readable, or anyone on the box could stall a store's writers.
         self.assertTrue(mode & 0o040, oct(mode))
         self.assertFalse(mode & 0o007, oct(mode))
+        # And never writable by the group: the lock is only ever opened
+        # read-only, so a write bit would be a permission nothing uses.
+        self.assertFalse(mode & 0o020, oct(mode))
 
     def test_it_really_excludes_another_process(self):
         lock_held = threading.Event()
