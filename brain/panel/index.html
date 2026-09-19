@@ -40,9 +40,13 @@
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 19V11M9.5 19V5M15 19v-6M20.5 19v-9"/></svg>
       <span>Insights</span>
     </button>
-    <button class="viewtab" data-view="findings" role="tab" data-tip="Findings">
+    <!-- The feed. `data-view` stays "findings" and so does `#viewFindings`,
+         because every handler, every deep link and every measure under it
+         binds to those ids — what changed is what the tab HOLDS, which is
+         one list of cases over the four stores rather than one of them. -->
+    <button class="viewtab" data-view="findings" role="tab" data-tip="Home">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3.5 21 19H3zM12 10v4M12 16.6v.1"/></svg>
-      <span>Findings</span>
+      <span>Home</span>
       <span id="findBadge" class="badge hidden"></span>
     </button>
     <button class="viewtab" data-view="todo" role="tab" data-tip="To-do">
@@ -386,10 +390,11 @@
     <div class="findhead">
       <div>
         <h2>What's waiting on you</h2>
-        <p class="sub">Problems brAIn found while analysing your home — a dead battery,
-          a sensor that stopped reporting, an automation that can never fire — and
-          guesses it wants confirmed. Send it to fix something, or tell it what it's
-          got wrong and why; the reason is what it learns from.</p>
+        <p class="sub">Everything brAIn wants a decision about, in one list: problems
+          it found, changes it thinks would suit this house, guesses it wants
+          confirmed, and work you have already accepted. Three answers on every
+          card — do it, not now, or tell it what it's got wrong and why. The
+          reason is the half it learns from.</p>
       </div>
       <!-- The house checks read Home Assistant directly and never call
            Claude, so the button is cheap to press and says so. It sits
@@ -408,6 +413,10 @@
          the press that turns it back on. Hidden while nothing is muted. -->
     <div id="findMuted" class="findscore findmuted" hidden></div>
     <div id="findList" class="findlist"></div>
+    <!-- What the Resident did today, under the list it produced. Three
+         numbers and the state of the subscription, because a quiet feed and
+         a loop that has stopped look identical from here otherwise. -->
+    <p id="findFoot" class="findfoot" hidden></p>
   </section>
 </div>
 

@@ -3166,6 +3166,67 @@ body.term-classic #termMode .ico-out { display: block; }
 }
 .finding.hypo .findsev { color: var(--accent); }
 
+/* ------------------------------------------------------------------ cases
+   One card per case over the four stores. The left edge is still SEVERITY,
+   because that is what sorts the feed and what the notifier keys on; what
+   the pill carries is the KIND, which is the different thing a person does
+   about it. Both are words as well as colours — the pill is read at 11px,
+   and status by colour alone is what the design system forbids. */
+.casekind {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  letter-spacing: 0.5px;
+}
+.casekind.ck-problem { color: var(--serious); }
+.casekind.ck-opportunity { color: var(--accent); }
+.casekind.ck-question { color: var(--accent); }
+.casekind.ck-change { color: var(--good); }
+/* How sure, and how much it matters — in words. Quieter than the pill
+   because it qualifies the claim rather than naming what it is. */
+.casecert { color: var(--ink-3); font-weight: 600; opacity: 0.8;
+  text-transform: none; letter-spacing: 0.2px; }
+
+/* What was actually READ, and what Do it would do. Both are lists rather
+   than paragraphs: they are the halves that make a claim checkable and a
+   press predictable, and a reader scans them rather than reading them. */
+.caseev, .caseacts {
+  margin-top: 11px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.caseevlist, .caseactlist { margin: 6px 0 0; padding: 0; list-style: none;
+  display: grid; gap: 5px; }
+.caseevlist li, .caseactlist li {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline;
+  min-width: 0;
+}
+.caseevent { font-size: 12px; color: var(--ink-2); word-break: break-word; }
+.caseevval { color: var(--ink-1); }
+.caseevwhen, .caseactdetail { color: var(--ink-3); font-size: 12px; }
+.caseactlabel { color: var(--ink-1); }
+/* What consent an action needs, said in words beside it: a list of things
+   that could happen to a house, where "asks you first" and "no consent
+   needed" are the whole difference, is not a list to distinguish by tint. */
+.caseactconsent {
+  flex: none;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px;
+  text-transform: uppercase; color: var(--ink-3);
+}
+/* The Resident's line, under the list it produced. */
+.findfoot {
+  margin: 16px 2px 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+  max-width: 70ch;
+}
+
 /* The reason box, in place of the card's buttons. It sits inside the card
    it is about — you are correcting something, and the thing being corrected
    has to stay readable while you type about it. */
@@ -4291,3 +4352,20 @@ body.term-classic #termMode .ico-out { display: block; }
   font-size: 16px; line-height: 1.4; white-space: pre-wrap;
 }
 @media (min-width: 640px) { #editPromptText { font-size: 13px; } }
+
+/* The feed's own controls, on touch. The panel's floor is scoped per
+   control on purpose — `.findactions .btn` is deliberately not raised for
+   the Findings tab's older rows, which that file says in as many words is a
+   separate and real problem — so this raises the ones the Home feed adds
+   and nothing else. Three endings and a ⋯ is what somebody presses on a
+   phone every day, and a 32px target under a thumb is the one failure a
+   measure can see and reading cannot.
+
+   Last in the file, after the 16px text floor at the top: that block is
+   split on and read FIRST by `test_no_form_control_can_trigger_the_ios_zoom_trap`,
+   and a coarse block above it moves that test onto rules that were never
+   about zooming. */
+@media (pointer: coarse) {
+  .finding.case .findactions .btn { min-height: 44px; }
+  .finding.case .findactions .btn.icon { min-width: 44px; }
+}

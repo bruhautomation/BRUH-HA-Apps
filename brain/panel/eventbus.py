@@ -168,6 +168,13 @@ class EventBus:
     holds a fact about. A callable rather than a set, because the answer
     changes while this runs and a listener holding a snapshot from boot
     would be deaf to every fact filed since.
+
+    ``rhythm_payload`` takes a callable for the same reason, and a dict
+    still works. What it decides is which hours count as this house's
+    night, and `rhythm.py` needs a fortnight of days before it has an
+    answer at all — so a listener that froze the boot snapshot would use
+    the fallback 23–6 for ever on exactly the install that has just
+    measured its own.
     """
 
     def __init__(self, on_signal, *, on_event=None, known_ids=None,
@@ -194,6 +201,11 @@ class EventBus:
         # a ceiling that is stated per second.
         self._second = -1.0
         self._in_second = 0
+        # The measured night, resolved on the context timer when it is a
+        # callable. Seeded from the argument so a caller that handed in a
+        # dict is answered without a call.
+        self._rhythm_cache = None if callable(rhythm_payload) else rhythm_payload
+        self._rhythm_at = 0.0
 
         self._connected = False
         self._connected_since = 0.0
@@ -293,6 +305,26 @@ class EventBus:
         self._ctx = signals.RegistryContext(patterns, known, built_at=now)
         self._ctx_at = now
         return self._ctx
+
+    def _rhythm_now(self) -> dict | None:
+        """This house's measured night, re-read on the context interval.
+
+        A failure leaves what it had: `signals.night_window` falls back to
+        a fixed 23–6 and says which answer it is giving, and reading "I
+        could not look" as "this house has no rhythm" would file somebody's
+        evening as their morning.
+        """
+        if not callable(self._rhythm):
+            return self._rhythm
+        now = self._clock()
+        if self._rhythm_at and now - self._rhythm_at < CTX_REFRESH_S:
+            return self._rhythm_cache
+        try:
+            self._rhythm_cache = self._rhythm() or None
+        except Exception as exc:  # noqa: BLE001 — a consumer's bug is not ours
+            log.debug("event bus kept the last measured night: %s", exc)
+        self._rhythm_at = now
+        return self._rhythm_cache
 
     # -- the ceiling -------------------------------------------------------
 
@@ -457,7 +489,7 @@ class EventBus:
         if event_type == "state_changed":
             return signals.from_state_change(
                 payload, self._refresh_context(now), now,
-                rhythm_payload=self._rhythm, tz=self._tz)
+                rhythm_payload=self._rhythm_now(), tz=self._tz)
         if event_type == "mobile_app_notification_action":
             return signals.from_reply({**payload, "via": "notification"}, now)
         return None
