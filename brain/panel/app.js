@@ -530,10 +530,12 @@ function renderAuth() {
   // by a Claude run the scheduler would have queued; Findings stays, since
   // the house checks cost nothing and still file there.
   const insightsOn = s.insights_enabled !== false;
-  document.querySelectorAll('.viewtab[data-view="insights"], .viewtab[data-view="proposals"]')
-    .forEach((b) => b.classList.toggle("hidden", !insightsOn));
+  document.querySelectorAll('.subtab[data-view="insights"], .subtab[data-view="proposals"]')
+    .forEach((b) => b.classList.toggle("gone", !insightsOn));
   if (!insightsOn && (currentView === "insights" || currentView === "proposals")) {
     switchView("findings");
+  } else {
+    syncTabs(currentView);
   }
   renderUsageChip();
   renderPausedChip();
@@ -7785,7 +7787,14 @@ function propCard(row, withHint) {
     const block = propSceneBlock(row);
     if (block) card.appendChild(block);
   }
-  const replay = (playbook || scene) ? "" : propReplayLine(row);
+  // A standing rule asked for in a sentence carries its own case: the
+  // month's firings graded against what the person did over the
+  // fortnight, composed server-side by `authoring.case_line` so the tool
+  // and the card say the same thing. It replaces the bare replay line,
+  // which is one of its two numbers.
+  const spoken = row.spoken && typeof row.spoken === "object" ? row.spoken : null;
+  const replay = (playbook || scene) ? ""
+    : (spoken && spoken.case ? spoken.case : propReplayLine(row));
   if (replay) card.appendChild(el("p", "propreplay", replay));
   if (row.status === "trialling") {
     card.appendChild(el("p", "proptrial", propTrialLine(row)));
@@ -8440,6 +8449,42 @@ $("#actNext").addEventListener("click", () => {
 // keeps working untouched.
 let currentView = "insights";
 
+// Which of the four tabs a pane lives under. Four tabs, not eight: a tab
+// is a group and the panes in it are the sub-strip under the bar. Read
+// off the markup rather than written down twice — `data-group` on each
+// sub-tab is the one place the grouping is spelled.
+function groupOf(name) {
+  const sub = document.querySelector(`.subtab[data-view="${name}"]`);
+  return sub ? sub.dataset.group : "home";
+}
+// The pane each group was last on, so pressing Ask after House brings the
+// chat back rather than the group's opening pane; pressing the group you
+// are already in goes to that opening pane, which is how you get back to
+// the feed from a card.
+const groupLast = {};
+
+function syncTabs(name) {
+  const group = groupOf(name);
+  groupLast[group] = name;
+  document.querySelectorAll(".viewtab").forEach((b) => {
+    const on = b.dataset.group === group;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  let shown = 0;
+  document.querySelectorAll(".subtab").forEach((b) => {
+    const mine = b.dataset.group === group && !b.classList.contains("gone");
+    b.hidden = !mine;
+    if (mine) shown++;
+    b.classList.toggle("active", b.dataset.view === name);
+    b.setAttribute("aria-selected", b.dataset.view === name ? "true" : "false");
+  });
+  // A strip with one button is a label, not navigation.
+  const strip = $("#subtabs");
+  strip.hidden = shown < 2;
+  document.body.classList.toggle("has-subtabs", shown >= 2);
+}
+
 function switchView(name) {
   if (name === currentView) return;
   if (currentView === "memory" && memState.editing && memState.dirty &&
@@ -8450,8 +8495,7 @@ function switchView(name) {
   // The terminal takes the viewport, so the page behind it stops scrolling
   // — two scrollers stacked is why a swipe sometimes moved the wrong one.
   document.body.classList.toggle("term-open", name === "terminal");
-  document.querySelectorAll(".viewtab").forEach((b) =>
-    b.classList.toggle("active", b.dataset.view === name));
+  syncTabs(name);
   document.querySelectorAll(".view").forEach((v) =>
     v.classList.toggle("active", v.id === "view" + name[0].toUpperCase() + name.slice(1)));
 
@@ -8500,7 +8544,14 @@ function switchView(name) {
 }
 
 document.querySelectorAll(".viewtab").forEach((b) =>
+  b.addEventListener("click", () => {
+    const group = b.dataset.group;
+    const again = groupOf(currentView) === group;
+    switchView(again ? b.dataset.view : (groupLast[group] || b.dataset.view));
+  }));
+document.querySelectorAll(".subtab").forEach((b) =>
   b.addEventListener("click", () => switchView(b.dataset.view)));
+syncTabs(currentView);
 
 // Add one by hand. Nothing here is required beyond the sentence: a to-do
 // list that made you pick a severity before it would take a note is a form,

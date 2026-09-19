@@ -2661,10 +2661,13 @@ class TestKnowledgeTab(unittest.TestCase):
         moved. `data-view` did not: every id and handler under it is the
         memory pane's, and renaming that would be a rename of the wiring to
         match a label."""
-        self.assertIn("<span>Knowledge</span>", self.html)
+        # The pane is a sub-tab under House now, labelled by its visible text
+        # rather than a tooltip; its `data-view` is still the memory pane's.
+        self.assertRegex(self.html,
+                         r'<button class="subtab" data-view="memory"[^>]*>Knowledge</button>')
         self.assertIn('data-view="memory"', self.html)
-        self.assertIn('data-tip="Knowledge"', self.html)
         self.assertNotIn("<span>Memory</span>", self.html)
+        self.assertNotIn(">Memory</button>", self.html)
 
     def test_the_panel_and_the_server_name_the_same_seven_stores(self):
         """A store the panel does not name is a measurement nobody can ask

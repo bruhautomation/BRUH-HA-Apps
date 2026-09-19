@@ -318,12 +318,30 @@ PYTOOLS
 # result file exactly as a finished run does — a task dropped in silence is
 # a service call that times out with nothing to read.
 write_task_result() {
-    local task_id="$1" text="$2"
+    local task_id="$1" text="$2" data="${3:-}"
     local result_file="$RESULTS_DIR/${task_id}.json"
     local tmp_file="${result_file}.tmp"
-    jq -n --arg id "$task_id" --arg result "$text" --arg status "completed" \
-        '{"id": $id, "result": $result, "status": $status}' > "$tmp_file"
+    # `data` is the object the CLI validated against the task's schema,
+    # as compact JSON, or empty. Written beside the text and never instead
+    # of it: the bridge reads `.result` as it always has, and `.data` is
+    # what `brain.ask` hands back as structured output.
+    if [ -n "$data" ]; then
+        jq -n --arg id "$task_id" --arg result "$text" --arg status "completed" \
+            --argjson data "$data" \
+            '{"id": $id, "result": $result, "status": $status, "data": $data}' > "$tmp_file"
+    else
+        jq -n --arg id "$task_id" --arg result "$text" --arg status "completed" \
+            '{"id": $id, "result": $result, "status": $status}' > "$tmp_file"
+    fi
     mv "$tmp_file" "$result_file"
+}
+
+# The validated object out of a `--json-schema` run's envelope, compact,
+# or nothing: a reply that did not validate carries none, and so does a
+# CLI too old for the flag. Read off the same envelope the text is.
+extract_claude_data() {
+    local out_file="$1"
+    jq -c 'if (type == "object" and (.structured_output | type) == "object") then .structured_output else empty end' "$out_file" 2>/dev/null || true
 }
 
 # Process an automation task file
@@ -336,7 +354,7 @@ process_task() {
     mv "$task_file" "$work_file" 2>/dev/null || return 0
 
     local task_id prompt notify notify_entity task_ts task_timeout task_model
-    local task_tools
+    local task_tools task_schema
 
     task_id=$(jq -r '.id // empty' "$work_file" 2>/dev/null)
     prompt=$(jq -r '.prompt // empty' "$work_file" 2>/dev/null)
@@ -346,6 +364,10 @@ process_task() {
     task_timeout=$(jq -r '.timeout // empty' "$work_file" 2>/dev/null)
     task_model=$(jq -r '.model // empty' "$work_file" 2>/dev/null)
     task_tools=$(jq -r '.tools // empty' "$work_file" 2>/dev/null)
+    # A JSON Schema the answer must fit (`brain.ask`). Compact so it rides
+    # one argv entry; empty when the task carries none, and then no flag
+    # is passed — a flag the CLI may not know is only ever asked for.
+    task_schema=$(jq -c 'if (.schema | type) == "object" then .schema else empty end' "$work_file" 2>/dev/null)
 
     # A task that names no model takes the plan's tier for a task
     # (`BRAIN_MODEL_TASK`, off panel/model_plan.py via /data/.brain_env);
@@ -394,7 +416,10 @@ process_task() {
     # Resolved before anything is spent on the task, and a refusal is an
     # answer rather than a silence: the bridge is already polling for a
     # result file and would otherwise wait out its whole window.
-    local tool_flags=() tool_flags_out
+    local tool_flags=() tool_flags_out schema_flags=()
+    if [ -n "$task_schema" ]; then
+        schema_flags=(--json-schema "$task_schema")
+    fi
     if ! tool_flags_out=$(task_tool_flags "$task_tools"); then
         bashio::log.error "Task [$task_id] asked for tools='${task_tools}' and it could not be honoured"
         write_task_result "$task_id" "brAIn refused this task: tools='${task_tools}' is not one of full, house or read_only, or the analyst's tool lists could not be read from the panel. A task that cannot be scoped is not run with the full grant."
@@ -450,7 +475,7 @@ process_task() {
     # instead of scraping verbose stdout (which now carries MCP/diagnostic
     # lines). See extract_claude_result().
     # shellcheck disable=SC2086
-    (cd /config && printf '%s' "$prompt" | timeout "$claude_limit" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" > "$output_file" 2>"$stderr_file") || true
+    (cd /config && printf '%s' "$prompt" | timeout "$claude_limit" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || true
 
     # A task that ended on the turn cap is landed, not failed: resumed on
     # the session the envelope names, with two turns and a prompt to answer
@@ -466,7 +491,7 @@ process_task() {
         # envelope (and the session id it names) with it.
         # shellcheck disable=SC2086
         if (cd /config && brain_land "$land_sid" "$land_left" "$stderr_file" -- \
-            ${CLAUDE_BIN} -p --output-format json ${model_flag} "${tool_flags[@]}" > "${output_file}.land"); then
+            ${CLAUDE_BIN} -p --output-format json ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "${output_file}.land"); then
             mv -f "${output_file}.land" "$output_file"
         else
             rm -f "${output_file}.land"
@@ -477,8 +502,9 @@ process_task() {
     end_time=$(date +%s)
     duration=$((end_time - start_time))
 
-    local result stderr_output
+    local result stderr_output task_data
     result=$(extract_claude_result "$output_file")
+    task_data=$(extract_claude_data "$output_file")
     claim_task_session "$output_file"
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
     rm -f "$output_file" "$stderr_file"
@@ -495,12 +521,13 @@ process_task() {
             stderr_file=$(mktemp)
 
             # shellcheck disable=SC2086
-            (cd /config && printf '%s' "$prompt" | timeout "$remaining" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" > "$output_file" 2>"$stderr_file") || true
+            (cd /config && printf '%s' "$prompt" | timeout "$remaining" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || true
 
             end_time=$(date +%s)
             duration=$((end_time - start_time))
 
             result=$(extract_claude_result "$output_file")
+            task_data=$(extract_claude_data "$output_file")
             claim_task_session "$output_file"
             stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
             rm -f "$output_file" "$stderr_file"
@@ -562,7 +589,7 @@ process_task() {
     fi
 
     # Write result file (atomic via tmp + rename)
-    write_task_result "$task_id" "$result"
+    write_task_result "$task_id" "$result" "${task_data:-}"
 
     bashio::log.info "Task completed [$task_id]"
 

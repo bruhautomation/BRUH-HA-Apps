@@ -35,64 +35,34 @@
     <path class="wm-ink" d="M362,198 L377,198 L486,333 L471,333 Z"/>
   </svg>
 
+  <!-- Four tabs, not eight. Every pane the panel used to give a tab of its
+       own still exists under its own id and `data-view` — Insights, To-do,
+       Proposals, Activity, Knowledge, Docs — so every handler, measure and
+       deep link under them binds exactly as it did. What changed is the
+       strip: a tab is now a GROUP, and the panes in it are the sub-strip
+       under the bar (`#subtabs`), shown only when a group holds more than
+       one. Home is what is waiting on you and the cards; Ask is the chat
+       and the terminal; House is what brAIn knows and what happened; Help
+       is the docs. Each primary tab's `data-view` is the pane the group
+       opens on, and a second press on the group you are already in goes
+       back to it. -->
   <nav class="viewtabs" role="tablist">
-    <button class="viewtab active" data-view="insights" role="tab" data-tip="Insights">
-      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 19V11M9.5 19V5M15 19v-6M20.5 19v-9"/></svg>
-      <span>Insights</span>
-    </button>
-    <!-- The feed. `data-view` stays "findings" and so does `#viewFindings`,
-         because every handler, every deep link and every measure under it
-         binds to those ids — what changed is what the tab HOLDS, which is
-         one list of cases over the four stores rather than one of them. -->
-    <button class="viewtab" data-view="findings" role="tab" data-tip="Home">
-      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3.5 21 19H3zM12 10v4M12 16.6v.1"/></svg>
+    <button class="viewtab active" data-view="findings" data-group="home" role="tab" data-tip="Home">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5M5.5 9.8V20h13V9.8M10 20v-6h4v6"/></svg>
       <span>Home</span>
       <span id="findBadge" class="badge hidden"></span>
     </button>
-    <button class="viewtab" data-view="todo" role="tab" data-tip="To-do">
-      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg>
-      <span>To-do</span>
-      <!-- A badge, and it counts a different thing from Findings': that one
-           counts decisions waiting on you, this one counts work you have
-           already agreed to. Moving a card across moves the count with it,
-           which is the whole point of the move. -->
-      <span id="todoBadge" class="badge hidden"></span>
+    <button class="viewtab" data-view="terminal" data-group="ask" role="tab" data-tip="Ask">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-5 4v-4H5.5A1.5 1.5 0 0 1 4 14.5zM8 8.5h8M8 12h5"/></svg>
+      <span>Ask</span>
     </button>
-    <button class="viewtab" data-view="proposals" role="tab" data-tip="Proposals">
-      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v4M12 21v-2M5.6 5.6l2.8 2.8M18.4 5.6l-2.8 2.8M9 17h6a4 4 0 0 0-1.2-6.4 3.6 3.6 0 0 0-3.6 0A4 4 0 0 0 9 17z"/></svg>
-      <span>Proposals</span>
-      <!-- A badge, unlike Activity's: these ARE waiting on somebody. It
-           counts proposed + trialling, which is what "how much is waiting
-           on me" means on this list. -->
-      <span id="propBadge" class="badge hidden"></span>
-    </button>
-    <button class="viewtab" data-view="activity" role="tab" data-tip="Activity">
-      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 12h4l2.5-7 5 14L17 12h4"/></svg>
-      <!-- No badge either. This is a record, not a queue: nothing on it is
-           waiting on anybody, and what IS waiting is on Findings. -->
-      <span>Activity</span>
-    </button>
-    <button class="viewtab" data-view="terminal" role="tab" data-tip="Terminal">
-      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="m5 8 4 4-4 4M13 16h6"/></svg>
-      <span>Terminal</span>
-    </button>
-    <!-- "Knowledge", not "Memory": the document is one of four things on this
-         tab now. What brAIn has measured about the house on its own — when it
-         wakes, what is normal, how rooms hold heat — used to be visible only
-         in ⚙ Diagnostics or not at all, which is how a measurement that had
-         quietly stopped looked exactly like one that had nothing to say.
-         `data-view` stays "memory" because every id and handler under it
-         does. -->
-    <button class="viewtab" data-view="memory" role="tab" data-tip="Knowledge">
+    <button class="viewtab" data-view="memory" data-group="house" role="tab" data-tip="House">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5.5a3 3 0 0 0-5.7-1.3A2.8 2.8 0 0 0 4 9.4a3 3 0 0 0 .4 4.8A2.9 2.9 0 0 0 7 19a3 3 0 0 0 5-1.2zM12 5.5a3 3 0 0 1 5.7-1.3A2.8 2.8 0 0 1 20 9.4a3 3 0 0 1-.4 4.8A2.9 2.9 0 0 1 17 19a3 3 0 0 1-5-1.2z"/></svg>
-      <!-- No badge. This tab holds a queue that files itself and things you
-           read; nothing on it is waiting on a person. The one badge in
-           the strip is Findings', which counts exactly that. -->
-      <span>Knowledge</span>
+      <span>House</span>
     </button>
-    <button class="viewtab" data-view="docs" role="tab" data-tip="Docs">
+    <button class="viewtab" data-view="docs" data-group="help" role="tab" data-tip="Help">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5zM20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z"/></svg>
-      <span>Docs</span>
+      <span>Help</span>
     </button>
   </nav>
 
@@ -126,6 +96,25 @@
     <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 8.9 19a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 6.9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
   </button>
 </header>
+
+<!-- The panes inside the tab you are on. Hidden while the group holds one
+     pane (Ask, Help), because a strip with one button is a label. The
+     badges that used to sit on the To-do and Proposals tabs sit on their
+     sub-tabs and count what they always counted: Home's is decisions
+     waiting on you, To-do's is work you agreed to, Proposals' is changes
+     waiting on a yes. `data-view` stays the pane's own name, so every
+     handler under `switchView` and every measure that clicks one still
+     finds it. -->
+<nav id="subtabs" class="subtabs" role="tablist" aria-label="Sections" hidden>
+  <button class="subtab" data-view="findings" data-group="home" role="tab">Home</button>
+  <button class="subtab" data-view="insights" data-group="home" role="tab">Insights</button>
+  <button class="subtab" data-view="todo" data-group="home" role="tab">To-do <span id="todoBadge" class="badge hidden"></span></button>
+  <button class="subtab" data-view="proposals" data-group="home" role="tab">Proposals <span id="propBadge" class="badge hidden"></span></button>
+  <button class="subtab" data-view="terminal" data-group="ask" role="tab">Chat</button>
+  <button class="subtab" data-view="memory" data-group="house" role="tab">Knowledge</button>
+  <button class="subtab" data-view="activity" data-group="house" role="tab">Activity</button>
+  <button class="subtab" data-view="docs" data-group="help" role="tab">Docs</button>
+</nav>
 
 <!-- What a chip has to say when there is more to it than the chip's own
      words. Opened by pressing the chip, not by hovering it: a phone has no

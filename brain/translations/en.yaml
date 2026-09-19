@@ -67,6 +67,13 @@ configuration:
       "Home Assistant only" limits voice to entities, services and the
       registry. "Full" also gives it the shell and your files — more
       capable, and a much larger blast radius for a misheard sentence.
+  assist_exposure:
+    name: What voice can see
+    description: >-
+      "Exposed" honours Home Assistant's own list — Settings → Voice
+      assistants → Expose — so an entity you have not exposed is invisible
+      to voice and cannot be acted on by it. "All" gives voice the whole
+      house, which is what every release before 2.3 did.
   study_timeout_minutes:
     name: Study session timeout
     description: How long a study session may run before it is stopped.

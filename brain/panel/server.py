@@ -163,6 +163,7 @@ import health
 import house
 import habit_lookup
 import hypotheses
+import authoring
 import intents
 import journal
 import knowledge_store
@@ -1901,6 +1902,13 @@ async def _apply_finding_requests() -> list[dict]:
             until = int(time.time() + req["hours"] * 3600)
             row = await asyncio.to_thread(findings_store.snooze, ts, until)
             result["ok"] = bool(row)
+        elif action == "reply":
+            finding = await asyncio.to_thread(findings_store.get, ts)
+            if finding:
+                ok, why = await _reply_to_finding(finding, req.get("note", ""))
+                result["ok"] = ok
+                if not ok:
+                    result["why"] = why
         else:
             finding = await asyncio.to_thread(findings_store.get, ts)
             spec = FINDING_VERBS.get(finding_requests.verb_for(action))
@@ -2025,13 +2033,6 @@ async def _one_intent(req: dict, now: float) -> dict | None:
     do this, and here is why"* is one.
     """
     sentence = req["sentence"]
-    if await asyncio.to_thread(intents.armed_count) >= intents.MAX_ARMED:
-        return await asyncio.to_thread(intents.note, {
-            "sentence": sentence,
-            "refused": (f"you already have {intents.MAX_ARMED} one-offs "
-                        "waiting to happen. Remove one and ask again — a "
-                        "list of things about to happen is only useful "
-                        "while it is short.")}, now)
     try:
         import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
 
@@ -2040,12 +2041,20 @@ async def _one_intent(req: dict, now: float) -> dict | None:
         # is a smaller prompt, never a refused sentence.
         log.info("could not orient the intent run: %s", exc)
         orientation = {}
+    # One run answers both kinds of sentence. The model decides `once`
+    # and the caller routes on it: a one-off is armed through `intents`
+    # exactly as before, a standing rule is offered through `authoring`
+    # — simulated over the month and graded against the person ledger
+    # before it is a card. `authoring.SYSTEM` is the prompt because it
+    # is the one that asks the question; the one-off's own prompt
+    # presumed the answer.
     started = time.time()
     try:
         result = await asyncio.to_thread(
-            engine.run_analyst, intents.prompt(sentence, orientation),
-            intents.SYSTEM, eff_model(), intents.TIMEOUT_S,
-            intents.MAX_TURNS, "intent", job="intent", schema=intents.SCHEMA)
+            engine.run_analyst, authoring.prompt(sentence, orientation),
+            authoring.SYSTEM, eff_model(), intents.TIMEOUT_S,
+            intents.MAX_TURNS, "intent", job="automation",
+            schema=authoring.SCHEMA)
     except Exception as exc:  # noqa: BLE001
         result = {"ok": False, "error": str(exc)}
     journal.record("intent", "ok" if result.get("ok") else "error",
@@ -2063,9 +2072,20 @@ async def _one_intent(req: dict, now: float) -> dict | None:
                               or "it did not answer with a config")[:200])},
             now)
 
+    standing = answer.get("once") is False and not answer.get("error")
+    if not standing and \
+            await asyncio.to_thread(intents.armed_count) >= intents.MAX_ARMED:
+        return await asyncio.to_thread(intents.note, {
+            "sentence": sentence,
+            "refused": (f"you already have {intents.MAX_ARMED} one-offs "
+                        "waiting to happen. Remove one and ask again — a "
+                        "list of things about to happen is only useful "
+                        "while it is short.")}, now)
+
     protected = automation_writer.protected_patterns()
+    builder = authoring.build if standing else intents.build
     obj = await asyncio.to_thread(
-        intents.build, sentence, answer, int(now * 1000), protected)
+        builder, sentence, answer, int(now * 1000), protected)
     if obj.get("refused"):
         return await asyncio.to_thread(intents.note, obj, now)
 
@@ -2076,21 +2096,47 @@ async def _one_intent(req: dict, now: float) -> dict | None:
         async with aiohttp.ClientSession() as session:
             obj["replay"] = await _replay_config(
                 session, obj["config"], now - REPLAY_DAYS * 86400, now, tz)
+            if standing:
+                obj["spoken"]["against_you"] = await _grade_against_you(
+                    session, obj["config"], now, tz)
     except Exception as exc:  # noqa: BLE001 — the replay is the card's
         # sanity check on a trigger that has never fired, not a gate: a
         # recorder that will not answer costs the number, never the
         # sentence somebody typed.
         obj["replay"] = {"refused": True,
                          "error": f"brAIn could not replay it: {exc}"}
+    if standing:
+        obj["spoken"]["case"] = authoring.case_line(
+            obj.get("replay"), obj["spoken"].get("against_you"), REPLAY_DAYS)
     row = await asyncio.to_thread(proposals.add, obj)
     if row is None:
         return await asyncio.to_thread(intents.note, {
             **obj, "refused": ("the Proposals tab is full, or brAIn has "
                                "already offered this exact automation. "
                                "Answer what is on it and ask again.")}, now)
-    log.info("one-off intent proposed from %s: %s",
+    log.info("%s proposed from %s: %s",
+             "standing automation" if standing else "one-off intent",
              log_safe(req.get("via") or "the panel"), log_safe(obj["title"]))
     return row
+
+
+async def _grade_against_you(session, config: dict, now: float, tz) -> dict:
+    """The fortnight's firings graded against the person ledger.
+
+    `h_simulate`'s second half, lifted so the card and the tool cannot
+    disagree about what "you did the same" means: a replay over
+    `authoring.GRADE_DAYS`, the history the trigger watches, and
+    `trials.evaluate` over `routines.load()`'s rows. A grade that cannot
+    be made is carried as a refusal, never as zeros — `trials._refused`'s
+    own shape, which `authoring.case_line` reads.
+    """
+    start = now - authoring.GRADE_DAYS * 86400
+    watched = sorted(shadow.entities_watched(config))
+    history = await shadow.fetch_history(session, watched, start, now) \
+        if watched else {}
+    rows = (await asyncio.to_thread(routines.load)).get("rows") or []
+    return await asyncio.to_thread(
+        trials.evaluate, config, history, rows, start, now, tz, now)
 
 
 async def _apply_intent_requests() -> int:
@@ -4019,7 +4065,7 @@ LEARN_RE = re.compile(
 INTENT_RE = re.compile(
     r"^(?:please )?(?:when(?:ever)?|once|as soon as|"
     r"the next time|next time|tell me when|let me know when|"
-    r"remind me when)\b",
+    r"remind me when|every time|each time|any time|always|from now on)\b",
     re.IGNORECASE)
 
 # ...and the half of that opener which is a QUESTION. "when did the boiler
@@ -10337,6 +10383,66 @@ worked out what I should actually DO about it — which hub to power-cycle,
 which automation to open, which setting to change — offer that as an
 `advice` option too: pressing it puts your sentence on the card as what to
 do, and leaves the finding open."""
+
+
+REPLY_SYSTEM = """You are brAIn, answering a message somebody typed into a
+notification on their phone about a problem you raised in their home. Use
+the read-only tools to check the current state and the history before you
+answer. Answer in plain text, under 80 words, no markdown and no greeting:
+this is read on a lock screen. If they told you something about their
+house rather than asking, say what you take from it in one sentence.
+Change nothing."""
+
+REPLY_TIMEOUT_S = 180
+REPLY_MAX_TURNS = 24
+REPLY_MAX_CHARS = 600
+
+
+async def _reply_to_finding(finding: dict, text: str) -> tuple[bool, str]:
+    """Answer a reply typed into a notification, as the next notification.
+
+    The Reply button is the case's conversation reached from a lock
+    screen: what was typed goes to the Resident with the finding it was
+    typed under, the Resident looks (reading tools only — a reply must
+    not be able to change the house) and its answer is pushed back to the
+    same service with the same buttons, so the exchange can go on. Nothing
+    here settles anything: the three verbs are still the only endings,
+    and they are on the message the answer arrives in.
+
+    Returns `(ok, why)`. An empty reply is not a turn; a run that failed
+    still answers, in one sentence, because a reply that vanished into
+    silence is worse than one that says brAIn could not look.
+    """
+    said = str(text or "").strip()
+    if not said:
+        return False, "the reply was empty"
+    prompt = (DISCUSS_PROMPT.split("\nThen end your answer", 1)[0].format(
+        text=finding["text"],
+        detail=f"\n{finding['detail']}\n" if finding.get("detail") else "\n",
+        fix=f"\nWhat you suggested: {finding['fix']}\n" if finding.get("fix") else "",
+        entity=f"\nEntity: {finding['entity_id']}\n" if finding.get("entity_id") else "",
+        severity=finding.get("severity") or "warning")
+        + f"\n\nThey replied from their phone: \u201c{said[:500]}\u201d\n"
+        "Answer that.")
+    started = time.time()
+    try:
+        result = await asyncio.to_thread(
+            engine.run_analyst, prompt, REPLY_SYSTEM, eff_model(),
+            REPLY_TIMEOUT_S, REPLY_MAX_TURNS, "resident", job="investigate")
+    except Exception as exc:  # noqa: BLE001
+        result = {"ok": False, "error": str(exc), "text": ""}
+    journal.record("reply", "ok" if result.get("ok") else "error",
+                   ok=bool(result.get("ok")),
+                   error="" if result.get("ok") else str(result.get("error")),
+                   duration_s=time.time() - started,
+                   extra={"ts": finding.get("ts")})
+    answer = " ".join(str(result.get("text") or "").split())[:REPLY_MAX_CHARS]
+    if not result.get("ok") or not answer:
+        answer = ("brAIn could not look into that just now — open the panel "
+                  "to carry on the conversation there.")
+    title = f"brAIn: {str(finding.get('text') or 'your reply')[:60]}"
+    sent = await _send_notification([finding], message=(title, answer))
+    return sent, "" if sent else "the answer could not be delivered"
 
 
 async def h_finding_discuss(request: web.Request) -> web.Response:

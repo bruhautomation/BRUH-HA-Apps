@@ -33,6 +33,7 @@ import secrets
 import shlex
 import socket
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -165,6 +166,16 @@ POOL_STATUS_FILE = os.path.join(CACHE_DIR, "pool_status.json")
 # settings file so voice can control the house but not run Bash/edit files.
 TOOL_ACCESS = os.environ.get("BRAIN_ASSIST_TOOL_ACCESS", "mcp_only")
 ASSIST_SETTINGS_FILE = os.path.join(SHARED_DIR, "assist_settings.json")
+
+# What voice may see: `exposed` (the default) is what Home Assistant exposes
+# to Assist under Settings → Voice assistants, applied to the area map here
+# and to every read and act in the MCP server through `BRAIN_EXPOSED_ONLY`;
+# `all` is the whole house, which is what every release before 2.3 gave
+# voice whatever the person had un-exposed. The rule is one module,
+# `scripts/brain_exposed.py`, read by the map filter and the gate alike.
+EXPOSURE = os.environ.get("BRAIN_ASSIST_EXPOSURE", "exposed")
+EXPOSED_ONLY = EXPOSURE != "all"
+EXPOSED_CACHE_FILE = os.path.join(CACHE_DIR, "exposed_entities.json")
 
 # --include-partial-messages gives token-level deltas for streaming TTS.
 # Disabled automatically if the installed CLI predates the flag.
@@ -395,12 +406,46 @@ def refresh_area_map() -> bool:
             f"{AREA_MAP_MAX_BYTES} (some areas omitted)"
         ])
         rendered = _truncate_at_line(rendered, AREA_MAP_MAX_BYTES)
+    rendered = apply_exposure(rendered)
     os.makedirs(CACHE_DIR, exist_ok=True)
     tmp = AREA_MAP_FILE + ".tmp"
     with open(tmp, "w") as fh:
         fh.write(rendered)
     os.replace(tmp, AREA_MAP_FILE)
     return True
+
+
+def _exposure_module():
+    """`scripts/brain_exposed.py`, a sibling directory in the image and the repo."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, "..", "scripts")
+    if path not in sys.path:
+        sys.path.insert(0, path)
+    import brain_exposed  # noqa: PLC0415
+    return brain_exposed
+
+
+def apply_exposure(rendered: str) -> str:
+    """The map with every unexposed entity taken out, when the channel is gated.
+
+    A snapshot that could not be read EMPTIES the map and says so in the
+    log — fail closed, `brain_exposed`'s rule: a map of things the gate
+    will then refuse sends the model to try them, where an empty one sends
+    it to say it cannot see them, and `assist_exposure: all` is the switch.
+    """
+    if not EXPOSED_ONLY:
+        return rendered
+    try:
+        mod = _exposure_module()
+        snap = mod.load_or_refresh(mod._default_ws(), EXPOSED_CACHE_FILE)
+    except Exception as exc:  # noqa: BLE001 — unreadable is the None branch below
+        debug_log([f"[{{ts}}] EXPOSURE could not be read: {exc}"])
+        snap = None
+    if snap is None:
+        debug_log(["[{ts}] AREA-MAP emptied: Home Assistant's exposure settings "
+                   "could not be read (assist_exposure: all lifts the gate)"])
+        return ""
+    return mod.filter_map(rendered, snap)
 
 
 def _truncate_at_line(text: str, cap: int) -> str:
@@ -757,6 +802,7 @@ class Worker:
         # via claude's environment). Per-worker, so it is per-agent.
         env = dict(os.environ)
         env["BRAIN_DENIED_SERVICES"] = denied_csv
+        env["BRAIN_EXPOSED_ONLY"] = "1" if EXPOSED_ONLY else "0"
         self.proc = subprocess.Popen(
             cmd,
             cwd=WORK_DIR,
@@ -1139,6 +1185,7 @@ class Pool:
             cmd += ["--model", model]
         env = dict(os.environ)
         env["BRAIN_DENIED_SERVICES"] = denied_csv
+        env["BRAIN_EXPOSED_ONLY"] = "1" if EXPOSED_ONLY else "0"
         # The stream path claims its session off the CLI's own events; this
         # path spawns fresh and has no events to read, so it claims a minted
         # id up front like the bash listener does — unclaimed, every

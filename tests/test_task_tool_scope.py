@@ -268,7 +268,7 @@ class TestTheBridgeWritesIt(unittest.TestCase):
             "task_id": "abc", "prompt": "p", "notify": False,
             "time": __import__("time"),
             "timeout": 300, "notify_entity": None,
-            "model": None, "tools": None,
+            "model": None, "tools": None, "schema": None,
         }
         scope.update(kw)
         exec(compile(snippet.replace("\n        ", "\n"), "<bridge>", "exec"),
@@ -282,6 +282,78 @@ class TestTheBridgeWritesIt(unittest.TestCase):
     def test_a_narrower_scope_rides_in_the_file(self):
         self.assertEqual(self._task(tools="read_only")["tools"], "read_only")
         self.assertEqual(self._task(tools="house")["tools"], "house")
+
+    def test_a_schema_rides_in_the_file_and_nothing_else_does(self):
+        """`brain.ask`'s shape: an object goes on the task, anything that
+        is not one is left off — the listener reads a missing key as a run
+        with no `--json-schema`, which is what every task before it was."""
+        shape = {"type": "object", "properties": {"rooms": {"type": "array"}}}
+        self.assertEqual(self._task(schema=shape)["schema"], shape)
+        self.assertNotIn("schema", self._task(schema=None))
+        self.assertNotIn("schema", self._task(schema={}))
+        self.assertNotIn("schema", self._task(schema="not a dict"))
+
+
+class TestTheListenerAsksForTheShape(unittest.TestCase):
+    """The schema reaches the CLI as `--json-schema`, and the validated
+    object reaches the result file as `data` beside the text — driven out
+    of the real listener's own functions, because the flag and the field
+    are the wire between two processes that cannot import each other."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _run(self, script: str, env: dict | None = None):
+        return subprocess.run(["bash", "-c", script], capture_output=True,
+                              text=True, check=False,
+                              env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                                   **(env or {})})
+
+    def test_the_result_file_carries_the_validated_object(self):
+        envelope = Path(self.tmp) / "out.json"
+        envelope.write_text(json.dumps({
+            "result": "Two rooms are cold.",
+            "structured_output": {"rooms": ["Hall", "Study"]},
+            "session_id": "abc"}), encoding="utf-8")
+        script = (lift("write_task_result") + "\n" + lift("extract_claude_result")
+                  + "\n" + lift("extract_claude_data")
+                  + f'\nRESULTS_DIR="{self.tmp}"\n'
+                  + f'text=$(extract_claude_result "{envelope}")\n'
+                  + f'data=$(extract_claude_data "{envelope}")\n'
+                  + 'write_task_result t1 "$text" "$data"\n')
+        out = self._run(script)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        written = json.loads((Path(self.tmp) / "t1.json").read_text())
+        self.assertEqual(written["result"], "Two rooms are cold.")
+        self.assertEqual(written["data"], {"rooms": ["Hall", "Study"]})
+        self.assertEqual(written["status"], "completed")
+
+    def test_a_run_with_no_object_writes_the_file_it_always_did(self):
+        envelope = Path(self.tmp) / "out.json"
+        envelope.write_text(json.dumps({"result": "plain text"}), encoding="utf-8")
+        script = (lift("write_task_result") + "\n" + lift("extract_claude_result")
+                  + "\n" + lift("extract_claude_data")
+                  + f'\nRESULTS_DIR="{self.tmp}"\n'
+                  + f'text=$(extract_claude_result "{envelope}")\n'
+                  + f'data=$(extract_claude_data "{envelope}")\n'
+                  + 'write_task_result t2 "$text" "$data"\n')
+        out = self._run(script)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        written = json.loads((Path(self.tmp) / "t2.json").read_text())
+        self.assertEqual(set(written), {"id", "result", "status"})
+
+    def test_the_schema_flag_is_only_passed_when_a_task_carries_one(self):
+        src = LISTENER.read_text(encoding="utf-8")
+        self.assertIn('schema_flags=(--json-schema "$task_schema")', src)
+        self.assertIn('if [ -n "$task_schema" ]; then', src)
+        # Every claude invocation the listener makes carries the array,
+        # which is empty for a task with no schema.
+        runs = [line for line in src.splitlines()
+                if "${CLAUDE_BIN} -p --output-format json" in line]
+        self.assertGreaterEqual(len(runs), 3)
+        for line in runs:
+            self.assertIn('"${schema_flags[@]}"', line)
 
 
 if __name__ == "__main__":

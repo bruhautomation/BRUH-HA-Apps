@@ -1674,6 +1674,65 @@ body.modal-open {
   text-align: center;
 }
 
+/* The sub-strip: the panes inside the tab you are on. It sits under the
+   bar and sticks with it, in normal flow, so nothing else has to know it
+   is there — the terminal and the docs nav are single-pane groups and
+   never see it (`--bar-h` is untouched). 44px targets, the tab's own
+   floor: this is navigation, and it is pressed on a phone. `[hidden]` is
+   restated at class specificity because a bare `display: flex` on the
+   class would beat the UA rule and leave an empty strip across the page
+   — BRUH Print's toast bug, in a new file. */
+.subtabs {
+  position: sticky;
+  top: var(--bar-h);
+  z-index: 29;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  overflow-x: auto;
+  background: color-mix(in srgb, var(--plane) 88%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--hairline);
+}
+.subtabs[hidden] { display: none; }
+.subtab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  font: inherit;
+  font-weight: 500;
+  font-size: 0.86rem;
+  height: 44px;
+  min-width: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+.subtab:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.subtab.active { color: var(--accent-2); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.subtab[hidden], .subtab.gone { display: none; }
+.subtab .badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
 /* Icon-only actions — labels were noise beside five tabs. */
 .btn.icon {
   display: inline-flex;
@@ -2807,8 +2866,8 @@ body.term-classic #termMode .ico-out { display: block; }
    controls to fit either. What changes with width is the layout, and there
    are two layouts:
 
-     >=1430   one row, tabs labelled             needs 1425px (failed login)
-     390-1429 two rows, tabs on their own strip   fits from 390px
+     >=920    one row, tabs labelled             needs 915px (failed login)
+     390-919  two rows, tabs on their own strip   fits from 390px
      <390     the same, without the wordmark      fits from 320px
 
    There used to be a third band — 960 to 1239, one row with the tab labels
@@ -2823,16 +2882,18 @@ body.term-classic #termMode .ico-out { display: block; }
    Measured by tests/manual/measure-topbar.mjs across the three states the
    bar can be in (running, paused, a failed login) — none is a superset of
    the others, and the two trouble states are the ones that put a second
-   chip in the row. Below 1430 they simply take a third line rather than
+   chip in the row. Below 920 they simply take a third line rather than
    costing anyone their tab labels.
 
-   The number moved from 1240 when the Proposals tab arrived and from 1340
-   when the To-do tab did: a tab is ~90px of row, and each time the one-row
-   shape stopped fitting the two trouble states at the old number. Both are
-   taken from what the measure reports — 1302/1328 for the seventh tab,
-   1413 paused and 1425 on a failed login for the eighth — and not guessed,
-   which is the whole reason that script exists. Adding a ninth will move it
-   again, and the measure is what says where to. */
+   The number moved from 1240 when the Proposals tab arrived, to 1340 when
+   the To-do tab did, and to 1430 for the eighth: a tab is ~90px of row, and
+   each time the one-row shape stopped fitting the two trouble states at the
+   old number. It came DOWN to 920 when the eight became four groups (Home,
+   Ask, House, Help) with the panes on a strip of their own under the bar —
+   measured at 903 paused and 915 on a failed login, and taken from what the
+   measure reports rather than guessed, which is the whole reason that script
+   exists. Adding a fifth tab will move it again, and the measure is what
+   says where to. */
 
 /* Nothing in the bar may shrink; only the spacer flexes. A shrinking chip
    compresses its own nowrap text and reads as a rendering glitch rather than
@@ -2841,7 +2902,7 @@ body.term-classic #termMode .ico-out { display: block; }
 .topbar > * { flex: none; }
 .topbar .spacer { flex: 1; min-width: 0; }
 
-@media (max-width: 1429px) {
+@media (max-width: 919px) {
   /* The two-row bar. One row cannot hold five thumb-sized targets and a
      labelled status pill at 320px — and dropping the labels to make it fit
      is what made the bar unreadable on the only device where hovering isn't
@@ -2949,7 +3010,7 @@ body.term-classic #termMode .ico-out { display: block; }
    it there is no such pressure, so the tab is typeset like the rest of the
    panel instead of like a phone's tab bar. The shape does not change; only
    the type does. */
-@media (min-width: 600px) and (max-width: 1429px) {
+@media (min-width: 600px) and (max-width: 919px) {
   :root { --bar-h: 109px; }
   .viewtab { height: 56px; font-size: 0.8rem; gap: 4px; }
   .viewtab .ico { width: 22px; height: 22px; }

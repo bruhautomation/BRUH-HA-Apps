@@ -51,6 +51,15 @@ EVENT_INSIGHT_COMPLETE = "brain_insight_complete"
 # the findings list to FINDINGS_STATE_FILENAME on the shared volume; the
 # integration diffs it and fires one event per new row.
 EVENT_FINDING = "brain_finding"
+# 2.3's catalogue. A case is the one thing brAIn files, so an automation
+# listens for one vocabulary whatever produced it: `brain_case` when one
+# opens, `brain_case_ended` when it leaves the feed (answered, cleared or
+# fixed), `brain_change` when brAIn itself changed the house. `brain_finding`
+# stays, because automations written against it must keep working; it is
+# the same moment as `brain_case` for a finding.
+EVENT_CASE = "brain_case"
+EVENT_CASE_ENDED = "brain_case_ended"
+EVENT_CHANGE = "brain_change"
 # Dispatcher signal (entry_id appended) for pushing results to the sensor
 SIGNAL_INSIGHT_UPDATE = "brain_insight_update_{}"
 

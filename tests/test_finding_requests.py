@@ -87,6 +87,17 @@ class TestWhatCountsAsARequest(RequestCase):
             self.assertIsNotNone(got, action)
             self.assertEqual(got["action"], action)
 
+    def test_a_reply_is_a_request_and_not_an_ending(self):
+        # A reply typed into a notification is a turn in the case's
+        # conversation: it is accepted as a request, and it maps to no
+        # verb on the tab, because nothing about it settles the row.
+        got = finding_requests.parse({"ts": 12, "action": "reply",
+                                      "note": "why does this matter?"})
+        self.assertIsNotNone(got)
+        self.assertEqual(got["action"], "reply")
+        self.assertEqual(got["note"], "why does this matter?")
+        self.assertEqual(finding_requests.verb_for("reply"), "")
+
     def test_nothing_that_starts_work_is_an_answer(self):
         # A fix run, a regeneration, a delete: those are work rather than
         # an answer, and they belong behind the panel where the thing
@@ -202,13 +213,21 @@ class TestTheButtonsOnAMessage(unittest.TestCase):
         self.assertEqual(
             notify_router.actions_for([], "notify.mobile_app_pixel"), [])
 
-    def test_one_finding_gets_the_tab_s_own_three(self):
+    def test_one_finding_gets_the_tab_s_own_three_and_a_reply(self):
         got = notify_router.actions_for([{"ts": 1720, "text": "a"}],
                                         "notify.mobile_app_pixel")
         self.assertEqual([a["action"] for a in got],
                          ["brain.fixed.1720", "brain.wrong.1720",
-                          "brain.snooze.1720"])
+                          "brain.snooze.1720", "brain.reply.1720"])
         self.assertTrue(all(a["title"] for a in got))
+        # Reply is the one button that takes text: the companion app
+        # opens a box for `textInput` and sends what was typed as
+        # `reply_text`. The three endings carry no behaviour, because a
+        # box on "I've fixed it" is a chore in front of a one-press answer.
+        by_verb = {a["action"].split(".")[1]: a for a in got}
+        self.assertEqual(by_verb["reply"].get("behavior"), "textInput")
+        for verb in ("fixed", "wrong", "snooze"):
+            self.assertNotIn("behavior", by_verb[verb], verb)
 
     def test_a_row_with_no_id_gets_no_buttons(self):
         for row in ({"text": "a"}, {"ts": None, "text": "a"},
@@ -222,6 +241,8 @@ class TestTheButtonsOnAMessage(unittest.TestCase):
         # notification in the house, brAIn's and everybody else's.
         self.assertEqual(notify_router.parse_action("brain.fixed.1720"),
                          ("fixed", 1720))
+        self.assertEqual(notify_router.parse_action("brain.reply.1720"),
+                         ("reply", 1720))
         for junk in ("", None, "brain", "brain.fixed", "brain.fixed.x",
                      "brain.explode.1720", "other.fixed.1720",
                      "brain.fixed.1720.extra", "BRAIN.fixed.1720"):
@@ -306,6 +327,85 @@ class TestBothFrontDoorsSettleTheSame(RequestCase):
         # rather than as a fact about a problem being over.
         self.assertIn("that cupboard is never opened", facts[0]["fact"])
         self.assertEqual(facts[0]["source"], "correction")
+
+    def _stub_reply_run(self, answer="Still off since Tuesday; its hub rebooted at 03:10.",
+                        ok=True):
+        prompts: list[str] = []
+        sent: list[tuple] = []
+
+        def run_analyst(prompt, system, model, timeout, max_turns, source, **kw):
+            prompts.append(prompt)
+            return {"ok": ok, "text": answer, "error": "" if ok else "boom"}
+
+        async def send(rows, message=None, **kw):
+            sent.append((rows, message))
+            return True
+
+        self._old_run = self.server.engine.run_analyst
+        self._old_send = self.server._send_notification
+        self.server.engine.run_analyst = run_analyst
+        self.server._send_notification = send
+        self.addCleanup(setattr, self.server.engine, "run_analyst", self._old_run)
+        self.addCleanup(setattr, self.server, "_send_notification", self._old_send)
+        return prompts, sent
+
+    def test_a_reply_is_answered_by_push_and_settles_nothing(self):
+        # The Reply button is the case's conversation reached from a lock
+        # screen: what was typed goes to the Resident under the finding
+        # it was typed about, the answer comes back as the next
+        # notification about the same row, and the row is exactly where
+        # it was — the three verbs are still the only endings.
+        prompts, sent = self._stub_reply_run()
+        entry = self.a_finding()
+        self.drop("001.json", {"ts": entry["ts"], "action": "reply",
+                               "note": "why does this matter?",
+                               "via": "notification"})
+        got = asyncio.run(self.server._apply_finding_requests())
+
+        self.assertEqual(len(got), 1)
+        self.assertTrue(got[0]["ok"], got[0])
+        self.assertEqual(got[0]["via"], "notification")
+        # The run was handed the finding AND the words, as a reply.
+        self.assertEqual(len(prompts), 1)
+        self.assertIn(entry["text"], prompts[0])
+        self.assertIn("They replied from their phone", prompts[0])
+        self.assertIn("why does this matter?", prompts[0])
+        # The answer went back to the same row, so it carries the same
+        # buttons, and the body is what the run said.
+        self.assertEqual(len(sent), 1)
+        rows, message = sent[0]
+        self.assertEqual([r["ts"] for r in rows], [entry["ts"]])
+        self.assertIn("Still off since Tuesday", message[1])
+        # Nothing settled: the row is on the list, the ledger is empty,
+        # and no memory line was written about a question.
+        self.assertEqual([r["ts"] for r in findings_store.list_all()],
+                         [entry["ts"]])
+        self.assertEqual(findings_store.settled_listing(), [])
+        self.assertEqual(self.facts(), [])
+
+    def test_a_failed_run_still_answers_rather_than_going_quiet(self):
+        # A reply that vanished into silence is worse than one that says
+        # brAIn could not look; the row stays and the person is told.
+        _prompts, sent = self._stub_reply_run(answer="", ok=False)
+        entry = self.a_finding()
+        self.drop("001.json", {"ts": entry["ts"], "action": "reply",
+                               "note": "is it still off?"})
+        got = asyncio.run(self.server._apply_finding_requests())
+        self.assertTrue(got[0]["ok"])
+        self.assertEqual(len(sent), 1)
+        self.assertIn("could not look", sent[0][1][1])
+        self.assertEqual(len(findings_store.list_all()), 1)
+
+    def test_an_empty_reply_is_not_a_turn(self):
+        prompts, sent = self._stub_reply_run()
+        entry = self.a_finding()
+        self.drop("001.json", {"ts": entry["ts"], "action": "reply",
+                               "note": "   "})
+        got = asyncio.run(self.server._apply_finding_requests())
+        self.assertFalse(got[0]["ok"])
+        self.assertIn("empty", got[0]["why"])
+        self.assertEqual(prompts, [])
+        self.assertEqual(sent, [])
 
     def test_the_two_doors_produce_the_same_ledger_entry(self):
         # Driven rather than described: the same text, ended each way, has

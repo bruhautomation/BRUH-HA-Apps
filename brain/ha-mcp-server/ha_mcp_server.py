@@ -317,6 +317,102 @@ def _protected_target(payload, empty_is_all=False):
     return None
 
 
+# What Home Assistant exposes to Assist, applied to the voice channel.
+# `BRAIN_EXPOSED_ONLY=1` is set by the worker pool and the classic listener
+# on every voice process when `assist_exposure` is `exposed` (the default),
+# and by nothing else: the terminal, the chat, the fixer and the automation
+# listener see the whole house, exactly as before. Where DENIED_SERVICES
+# restricts a channel by SERVICE and PROTECTED_ENTITIES restricts every
+# channel by ENTITY, this restricts one channel by what the person has
+# exposed in Settings → Voice assistants — which is the switch Home
+# Assistant already has for exactly this question, and the one an
+# integration that registers itself as a voice assistant is expected to
+# honour. The rule itself lives in `scripts/brain_exposed.py`, the one
+# module the pool, the listener and this server all read, so the map
+# voice is shown and the gate voice meets cannot disagree.
+EXPOSED_ONLY = os.environ.get("BRAIN_EXPOSED_ONLY", "") == "1"
+EXPOSURE_TTL_S = 60.0
+_EXPOSURE = {"at": 0.0, "snap": None}
+
+
+def _exposure():
+    """The exposure snapshot, or None when it could not be read.
+
+    Cached in-process for `EXPOSURE_TTL_S` and on disk by the module for
+    the same window, so a voice turn making six tool calls reads Core
+    once. None means fail closed: every caller refuses on it.
+    """
+    now = time.time()
+    if _EXPOSURE["snap"] is not None and now - _EXPOSURE["at"] < EXPOSURE_TTL_S:
+        return _EXPOSURE["snap"]
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                        "..", "scripts"))
+        import brain_exposed  # noqa: PLC0415 — sibling directory, see the module
+        snap = brain_exposed.load_or_refresh(_ws_command)
+    except Exception:  # noqa: BLE001 — unreadable is "fail closed", below
+        snap = None
+    if snap is not None:
+        _EXPOSURE.update(at=now, snap=snap)
+    return snap
+
+
+def _entity_exposed(entity_id):
+    """Whether the voice channel may see this entity; True off the channel."""
+    if not EXPOSED_ONLY:
+        return True
+    snap = _exposure()
+    if snap is None:
+        return False
+    import brain_exposed  # noqa: PLC0415 — on sys.path once _exposure ran
+    return brain_exposed.is_exposed(entity_id, snap)
+
+
+UNEXPOSED_READ = (
+    "{eid} is not exposed to voice assistants in Home Assistant, so this "
+    "assistant cannot see it. Tell the user it can be exposed under "
+    "Settings → Voice assistants; do not retry."
+)
+
+
+def _exposure_refusal(payload):
+    """Why a service call's targets reach something voice cannot see, or None.
+
+    Only entity targets can be checked against the exposure list; an area,
+    device, label or floor target is refused while the channel is gated,
+    because expanding one needs registries this check does not hold and a
+    hidden entity reached through its room is the bypass. The area map
+    voice is shown lists the exposed ids per area, so the model can name
+    them — which is what the sentence asks for.
+    """
+    if not EXPOSED_ONLY:
+        return None
+    payload = payload if isinstance(payload, dict) else {}
+    target = payload.get("target")
+    scopes = [payload] + ([target] if isinstance(target, dict) else [])
+    entity_ids = []
+    for scope in scopes:
+        raw = scope.get("entity_id")
+        if isinstance(raw, str):
+            entity_ids.extend(x.strip() for x in raw.split(",") if x.strip())
+        elif isinstance(raw, list):
+            entity_ids.extend(str(x) for x in raw)
+        for key in ("area_id", "device_id", "label_id", "floor_id"):
+            if scope.get(key):
+                return ("it targets an area, device, label or floor, and voice "
+                        "may only act on the entities Home Assistant exposes "
+                        "to it — name the entity ids instead")
+    if _exposure() is None:
+        return ("Home Assistant's exposure settings could not be read, and "
+                "voice may only act on what is exposed to it")
+    for eid in entity_ids:
+        if eid.lower() == "all":
+            return "it addresses all entities, including ones not exposed to voice"
+        if not _entity_exposed(eid):
+            return f"{eid} is not exposed to voice assistants in Home Assistant"
+    return None
+
+
 def ha_api_request(endpoint, method="GET", data=None, accept=None):
     """Make a request to the Home Assistant API."""
     if endpoint.startswith("/api/"):
@@ -402,6 +498,8 @@ def _ws_command(payload, timeout=15):
 
 def get_entity_state(entity_id):
     """Get the current state of a specific entity."""
+    if not _entity_exposed(entity_id):
+        return {"error": UNEXPOSED_READ.format(eid=entity_id)}
     result = ha_api_request(f"/api/states/{entity_id}")
     if "error" not in result:
         return {
@@ -425,6 +523,12 @@ def get_all_states(domain=None, name_filter=None):
     if isinstance(result, list):
         if domain:
             result = [e for e in result if e.get("entity_id", "").startswith(f"{domain}.")]
+        if EXPOSED_ONLY:
+            # A gated channel is shown the exposed rows and nothing else; a
+            # snapshot that could not be read shows nothing, which sends the
+            # model to say it cannot see rather than to act on a row it
+            # would then be refused.
+            result = [e for e in result if _entity_exposed(e.get("entity_id"))]
         entities = [
             {
                 "entity_id": e.get("entity_id"),
@@ -487,6 +591,13 @@ def call_service(domain, service, data=None, return_response=False):
             "homeowner has put it on brAIn's protected list, and nothing "
             "brAIn does may act on it. Tell the user; do not retry or "
             "look for another route."
+        )}
+    unexposed = _exposure_refusal(data)
+    if unexposed:
+        return {"error": (
+            f"{domain}.{service} is refused because {unexposed}. Tell the "
+            "user it can be exposed under Settings → Voice assistants; do "
+            "not retry or look for another route."
         )}
     payload = data or {}
     record_action(domain, service, payload)
@@ -1635,6 +1746,8 @@ def get_logbook(hours=1, entity_id=None):
 def get_history(entity_id, hours=24):
     """Get recent state history for one entity (recorder, detailed)."""
     from datetime import datetime, timedelta, timezone
+    if not _entity_exposed(entity_id):
+        return {"error": UNEXPOSED_READ.format(eid=entity_id)}
     try:
         hours = max(1, min(int(hours), 168))
     except (TypeError, ValueError):
@@ -1689,6 +1802,8 @@ def get_statistics(entity_id, period="hour", days=7):
     questions like 'how cold did it get last week' that get_history can't.
     """
     from datetime import datetime, timedelta, timezone
+    if not _entity_exposed(entity_id):
+        return {"error": UNEXPOSED_READ.format(eid=entity_id)}
     if period not in ("5minute", "hour", "day", "week", "month"):
         period = "hour"
     try:

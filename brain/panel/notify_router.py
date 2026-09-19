@@ -679,7 +679,14 @@ def compose_accepted(title: str, entity_id: str) -> tuple[str, str]:
 # because it travels in a payload with a length limit nobody documents.
 ACTION_PREFIX = "brain"
 ACTION_LABELS = (("fixed", "I've fixed it"), ("wrong", "Not a problem"),
-                 ("snooze", "Later"))
+                 ("snooze", "Later"), ("reply", "Reply"))
+# The one button that opens a text box rather than pressing a verb: the
+# companion app renders `behavior: textInput` as a reply field on both
+# platforms and fires the same event with `reply_text` filled in. What is
+# typed continues the case's conversation — the Resident answers it with
+# a look at the house, and the answer arrives as the next notification,
+# carrying the same buttons, so "why?" works from a lock screen.
+ACTION_BEHAVIOUR = {"reply": "textInput"}
 
 
 def can_answer(service: str) -> bool:
@@ -714,8 +721,13 @@ def actions_for(rows: list[dict], service: str) -> list[dict]:
     ts = rows[0].get("ts")
     if isinstance(ts, bool) or not isinstance(ts, (int, float)):
         return []
-    return [{"action": f"{ACTION_PREFIX}.{verb}.{int(ts)}", "title": title}
-            for verb, title in ACTION_LABELS]
+    out = []
+    for verb, title in ACTION_LABELS:
+        button = {"action": f"{ACTION_PREFIX}.{verb}.{int(ts)}", "title": title}
+        if verb in ACTION_BEHAVIOUR:
+            button["behavior"] = ACTION_BEHAVIOUR[verb]
+        out.append(button)
+    return out
 
 
 def open_link(service: str, path: str | None) -> dict:

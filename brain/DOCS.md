@@ -667,6 +667,16 @@ Assistants and talk to it from any Assist pipeline, satellite or the app.
 - **Its reach is yours to set.** By default voice can only touch Home Assistant —
   states, services, the registries. One setting widens it to the full toolset, shell
   and file edits included.
+- **It sees what you expose.** Home Assistant's own switch — Settings → Voice
+  assistants → **Expose** — decides what voice can see and act on, exactly as it
+  does for Assist: an entity you have not exposed is not on the map voice is given,
+  cannot be read by it, and cannot be acted on by it, and the refusal says where
+  the switch is. That is Home Assistant's default list (lights, switches, covers,
+  climate and the rest; never a lock unless you expose one), so a house that has
+  never touched the switch gets the same answer Assist gives. `assist_exposure: all`
+  gives voice the whole house, which is what every release before 2.3 did. When
+  the exposure list cannot be read, voice sees nothing rather than everything, and
+  the log says so.
 
 ### It has a full terminal — in two shapes
 
@@ -848,6 +858,43 @@ the task runs, rather than kept as a second copy — so a tool that can act on
 your house can never quietly appear in `read_only`. If they cannot be read,
 the task is **refused** and says so, rather than falling back to the full
 grant.
+
+#### An answer with a shape: `brain.ask`
+
+`brain.run_task` answers in prose, which is right for a person and wrong for
+the automation that has to branch on it. `brain.ask` takes a `question` and
+an optional JSON `schema`, and returns the answer **as data** the CLI
+validated against that schema before it was sent, beside the text — so a
+template reads a field rather than parsing a sentence. It is read-only by
+default (`tools: read_only`); pass `tools: house` to let it act.
+
+```yaml
+action: brain.ask
+data:
+  question: Is anything in the house drawing more than usual right now?
+  schema:
+    type: object
+    properties:
+      unusual: {type: boolean}
+      entity_id: {type: string}
+      why: {type: string}
+    required: [unusual, why]
+response_variable: answer
+# answer.data.unusual is a boolean; answer.response is the sentence.
+```
+
+#### The events, in one place
+
+Every event brAIn fires carries the thing it is about, so an automation can
+act on it without a second lookup:
+
+| Event | When | Carries |
+| --- | --- | --- |
+| `brain_case` | A case opens on the Home feed — a problem, a suggestion, a question or a chore waiting on you. | `case_id` (`f:<ts>`), `kind`, `claim`, `severity`, `status`, `entity_id`, `fixable`, `source` |
+| `brain_case_ended` | That case leaves the feed, whichever ending it got. | `case_id`, `kind`, `claim` |
+| `brain_change` | brAIn changed something in the house (a fix landed). | `case_id`, `claim`, `entity_id` |
+| `brain_finding` | The same moment as `brain_case`, in the shape earlier releases fired — kept so nothing written against it breaks. | `ts`, `text`, `severity`, `entity_id`, `fixable` |
+| `brain_learned` | A fact was filed into memory. | `fact`, `source` |
 
 - Insight jobs render to `sensor.<name>_insight` with the markdown and ready-to-paste
   card YAML as attributes, so a report can drive a template, a notification, or a
@@ -1468,6 +1515,32 @@ to answer — so ⚙ → Diagnostics names which automations were skipped and wh
   could not tell" is not "there is nothing there".
 - **It acts on a protected entity.**
 
+### A rule, in a sentence
+
+*"Whenever the front door opens after dark, turn the hall light on."*
+*"Always turn the heating down when nobody is home."* Until 2.3 the one
+answer brAIn had for a sentence like that was a refusal card telling you to
+ask some other way; now it is the other way. Type it into the ask bar or say
+it to voice (`brain.intent` takes the same sentence), and Claude reads your
+house — searching only; it cannot act — and drafts the automation. Before you
+see it, brAIn **simulates** it twice over the recorder's own history: a replay
+of the last month says how often the trigger would have fired, and the last
+fortnight of those firings is graded against what you did yourself, so the
+card can say *"Over the last 30 days it would have fired 9 times: 5 in the
+last 14 days, you had already done the same on 4, you did the opposite on 1."*
+That sentence is the case for the rule, and it is what makes this a
+suggestion rather than a change: nothing is written until you press **Do it**,
+and **Try it for a week** is the ordinary shadow trial every proposal has.
+
+The card carries your sentence and what brAIn understood beside it, because
+when a rule is wrong the useful fact is which half was misread. brAIn refuses
+a sentence it cannot do properly, on the card and not in a log: a trigger the
+recorder cannot replay (a `webhook`, a `device` trigger — without a replay
+there is no check at all on a rule that has never run), a sentence that named
+nothing it could act on, and a protected entity. Whether a sentence is a
+standing rule or a one-off is the model's call, and it says which it decided
+on the card.
+
 ### Something that happens once
 
 *"Turn the porch light off when the guests leave."* *"Tell me when the tumble
@@ -1498,9 +1571,10 @@ brAIn will not arm a sentence it cannot do properly, and it says so on a card
 rather than in a log:
 
 - **It sounds like a standing rule.** *"Turn the porch light on at sunset"* is
-  something that should keep happening, and it is a good thing to want — ask
-  for it as an ordinary change and it gets a replay, a trial week and a report.
-  The card shows what brAIn understood, so you can see which half it misread.
+  something that should keep happening, and it is a good thing to want — it
+  goes down the path above instead, with a replay, a graded fortnight and a
+  trial week. The card shows what brAIn understood, so you can see which half
+  it misread.
 - **The trigger cannot be replayed** (a `webhook`, a `device` trigger). Without
   a replay there is no check at all on a trigger that has never fired.
 - **The sentence named nothing brAIn could find**, or nothing it could act on.
@@ -1582,6 +1656,17 @@ Every other notifier means something different by the payload the buttons ride
 in, or nothing at all, and a guess there is how a working notification stops
 arriving; and a digest about three problems could not say which one a button
 answered. In both cases the message is the one you were already getting.
+
+A fourth button, **Reply**, opens a text box on the phone — the companion
+app's own reply field — and what you type goes to the Resident with the
+finding it was typed under. It looks (reading tools only; a reply cannot
+change the house) and its answer arrives as the next notification about the
+same finding, with the same buttons, so *"why does this matter?"* and *"it
+was like that last winter too"* work from a lock screen and the exchange can
+go on. Nothing about a reply settles anything: the three endings are still
+the only endings, and they are on the message the answer arrives in. A reply
+brAIn could not look into still gets an answer saying so, because a reply
+that vanished into silence is worse than one that says it could not look.
 
 Either way the answer reaches the add-on through a small file on
 `/config/.brain/`, not over the network — brAIn's panel port is deliberately
@@ -1924,21 +2009,24 @@ being rebuilt says *stale*, and that one is worth going and fixing.
 
 ## The panel
 
-One ingress panel, seven tabs.
+One ingress panel, four tabs. Each tab is a group; the panes inside it are a
+strip under the bar, shown only where a tab holds more than one.
 
 | Tab | What's there |
 | --- | --- |
-| **Insights** | Your cards, and the ask bar that makes new ones. A question becomes a card; a line starting "learn about…" starts a study session instead. A **Today** strip across the top says when the checks last ran, when the measurements were last rebuilt, when memory was last filed, and how many problems have been written up since yesterday. |
-| **Home** | Everything waiting on a decision, as one feed of cases: problems, suggestions, guesses and the work you have accepted. Three endings on each card — **Do it**, **Not now**, **Wrong, because…** — with Fix it, Discuss, Check again, Elevate, Advice, Stop raising these and the rest behind the **⋯**. A count on the tab means something is waiting on you, and the line under the list says what the Resident did today. |
-| **Proposals** | Changes brAIn would like to make: a habit worth automating, a condition an automation you keep undoing is missing, an emergency playbook, four scenes for a room. Nothing here has happened yet. |
-| **Activity** | What changed in your house and what caused it — a person, an automation, a script, voice, brAIn itself — plus the overrides that are evidence rather than history. Fetched fresh every visit and never cached. |
-| **Terminal** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with the button on the tab, or in ⚙ Settings. Press ⤢ to give either the whole screen. |
-| **Knowledge** | What brAIn knows: this morning's brief, the seven measurements and how far along each is, the memory document, and the queue waiting to be filed into it. |
-| **Docs** | This guide, in the panel. |
+| **Home** | What is waiting on you and what brAIn has made. **Home** is one feed of cases — problems, suggestions, guesses and the work you have accepted — with three endings on each card (**Do it**, **Not now**, **Wrong, because…**) and Fix it, Discuss, Check again, Elevate, Advice, Stop raising these and the rest behind the **⋯**; a count on the tab means something is waiting on you, and the line under the list says what the Resident did today. **Insights** is your cards and the ask bar that makes new ones (a question becomes a card; a line starting "learn about…" starts a study session; a rule in a sentence becomes a proposal), with a **Today** strip saying when the checks last ran, when the measurements were rebuilt, when memory was filed and how many problems have been written up since yesterday. **To-do** is the work you agreed to, and **Proposals** the changes brAIn would like to make — a habit worth automating, a condition an automation you keep undoing is missing, an emergency playbook, four scenes for a room, a rule you asked for in a sentence. |
+| **Ask** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with the button on the tab, or in ⚙ Settings. Press ⤢ to give either the whole screen. |
+| **House** | What brAIn knows and what happened. **Knowledge** is this morning's brief, the seven measurements and how far along each is, the facts with their provenance, the memory document and the queue waiting to be filed into it. **Activity** is what changed in your house and what caused it — a person, an automation, a script, voice, brAIn itself — plus the overrides that are evidence rather than history, fetched fresh every visit and never cached. |
+| **Help** | This guide, in the panel. ⚙ Settings stays in the bar. |
 
-`enable_terminal` switches the Terminal tab off. `enable_insights` switches off
+Every pane keeps the name it always had, so the rest of this guide says
+*the Activity tab* or *the Proposals tab* and means the pane under House or
+Home. Pressing a tab opens the pane you last had open in it; pressing it
+again opens the group's first pane.
+
+`enable_terminal` switches the Ask tab off. `enable_insights` switches off
 everything that only a scheduled Claude run ever fills: the scheduler stops, and
-the **Insights** and **Proposals** tabs go from the strip. **Home stays**,
+the **Insights** and **Proposals** panes go from Home's strip. **Home stays**,
 because the house checks cost nothing to run and still file there. The panel
 itself always runs, because it is the ingress target.
 
@@ -2559,6 +2647,7 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 | `enable_automation_integration` | bool | `true` | Watch for task requests from automations. |
 | `assist_fast_mode` | bool | `true` | Serve voice from a pool of pre-warmed persistent workers instead of spawning a CLI per request. |
 | `assist_tool_access` | `mcp_only` \| `full` | `mcp_only` | Whether voice can only touch HA, or also run Bash and edit files. |
+| `assist_exposure` | `exposed` \| `all` | `exposed` | Whether voice sees only what Home Assistant exposes to Assist (Settings → Voice assistants → Expose), or the whole house. |
 
 ### Memory and learning
 

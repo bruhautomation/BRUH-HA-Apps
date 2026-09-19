@@ -34,6 +34,7 @@
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openView } from './tabs.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
@@ -176,7 +177,7 @@ for (const width of WIDTHS) {
   page.on('pageerror', (error) => note(`${width}px`, `page error: ${error.message}`));
   await page.addInitScript(STUB);
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
-  await page.click('.viewtab[data-view="activity"]');
+  await openView(page, 'activity');
   await page.waitForSelector('.actrow');
 
   const m = await page.evaluate(() => {
@@ -362,7 +363,7 @@ for (const width of WIDTHS) {
   page.on('pageerror', (error) => note('summary', `page error: ${error.message}`));
   await page.addInitScript(STUB);
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
-  await page.click('.viewtab[data-view="activity"]');
+  await openView(page, 'activity');
   await page.waitForSelector('.actask button');
   await page.click('.actask button');
   let ok = true;
@@ -396,7 +397,7 @@ for (const width of WIDTHS) {
   await page.addInitScript(STUB);
   await page.addInitScript('window.__empty = true;');
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
-  await page.click('.viewtab[data-view="activity"]');
+  await openView(page, 'activity');
   await page.waitForSelector('.actempty');
   const out = await page.evaluate(() => ({
     text: document.querySelector('.actempty')?.textContent || '',

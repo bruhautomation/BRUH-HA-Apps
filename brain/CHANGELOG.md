@@ -2,6 +2,54 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.3.0
+
+**Talk, and four tabs: a rule in a sentence that is simulated before it is
+offered, a Reply button that continues the case from a lock screen, an
+answer with a shape for automations, one event catalogue, voice that sees
+what you expose, and a panel with four tabs instead of eight.** Phases 3 and
+4 of the AI-first plan.
+
+- **A rule in a sentence** (`panel/authoring.py`). *"Whenever the front door
+  opens after dark, turn the hall light on"* used to get a refusal card; it
+  is drafted now (reading tools only), **simulated** over the last month and
+  graded against what you did yourself over the last fortnight, and offered
+  on Proposals with the case in one sentence — *would have fired 9 times, 5
+  in the last 14 days, you had already done the same on 4, you did the
+  opposite on 1*. **Do it** writes it through the same write-reload-verify
+  path every proposal takes and **Try it for a week** is the ordinary trial.
+  Whether a sentence is a standing rule or a one-off is the model's call
+  and one run answers it; a one-off still arms and switches itself off.
+- **Reply** on a finding's notification (`notify_router.ACTION_BEHAVIOUR`,
+  `server._reply_to_finding`). The companion app opens its own text box,
+  what you type reaches the Resident with the finding it was typed under,
+  it looks (reading tools only) and answers as the next notification about
+  the same finding, with the same buttons. Nothing about a reply settles
+  anything, and a reply brAIn could not look into still gets an answer
+  saying so.
+- **`brain.ask`**: a `question`, an optional JSON `schema`, and the answer
+  as **data** the CLI validated against that schema, beside the text.
+  Read-only by default; `tools: house` lets it act. `brain.run_task` also
+  returns `data` when a schema is given.
+- **One event catalogue**: `brain_case` when a case opens, `brain_case_ended`
+  when it leaves the feed, `brain_change` when brAIn changed something in
+  the house — each carrying the case — beside the `brain_finding` and
+  `brain_learned` events earlier releases fired.
+- **Voice sees what you expose** (`assist_exposure`, default `exposed`;
+  `scripts/brain_exposed.py`). Home Assistant's own Settings → Voice
+  assistants → Expose switch now decides what voice is shown and may read or
+  act on, applying Core's own default list for anything nothing has settled —
+  a lock is never exposed unless you expose it. The area map voice is given,
+  every read and every act in the MCP server all read one module, so they
+  cannot disagree; an exposure that cannot be read empties the map and
+  refuses acting rather than guessing, and `assist_exposure: all` is the
+  whole house, which is what every release before this one gave voice.
+- **Four tabs** — Home (the feed, Insights, To-do, Proposals), Ask (the chat
+  and the terminal), House (Knowledge, Activity), Help (the docs) — with the
+  panes inside a tab on a strip under the bar. Every pane keeps its name and
+  its ids, so nothing bound to one moved; the one-row bar now fits down to
+  1100px, measured rather than guessed.
+
 ## 2.2.0
 
 **Tools and Memory v2: what brAIn has measured becomes tools every run can

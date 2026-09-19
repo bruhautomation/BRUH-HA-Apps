@@ -187,7 +187,12 @@ class TestTheThreeEndings(FlowCase):
         got = asyncio.run(self.flow().async_step_init())
         self.assertEqual(got["type"], "menu")
         self.assertEqual(got["menu_options"], list(repairs.FLOW_ACTIONS))
-        self.assertEqual(set(got["menu_options"]), set(finding_requests.ACTIONS))
+        # Every action a request can carry except Reply, which is a turn
+        # in the conversation rather than an ending and needs a text box
+        # a Repairs menu has no room for: a reply is a phone's button.
+        self.assertEqual(set(got["menu_options"]),
+                         set(finding_requests.ACTIONS) - {"reply"})
+        self.assertNotIn("reply", repairs.FLOW_ACTIONS)
 
     def test_ive_fixed_it_writes_the_tabs_own_ending(self):
         got = asyncio.run(self.flow(ts=1720).async_step_fixed())
