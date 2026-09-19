@@ -2,6 +2,63 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.1.0
+
+**The Resident: brAIn watches the house's own event bus, takes a cheap first
+look at everything before you are shown any of it, investigates what
+deserves it, and files what it finds as one kind of thing — a case — with
+three endings.** Phase 1 of the AI-first plan.
+
+- **Signals, not rules deciding** (`panel/signals.py`). Every house-check
+  row, baseline deviation, thermal or appliance event, a state change on an
+  entity that matters, a trace error, an override, a person arriving or
+  leaving, a reply to a notification and the morning window becomes a
+  signal with a salience that orders and never decides. A checks pass hands
+  its rows over instead of awaiting triage, and sub-threshold baseline
+  deviations — three spreads out, where the check itself needs six — ride
+  with them, computed from what the pass already fetched.
+- **The event bus** (`panel/eventbus.py`). A WebSocket subscription to
+  Home Assistant's `state_changed`, `automation_triggered` and
+  `call_service`, with a reconnect ladder and a per-second ceiling that
+  counts what it dropped rather than hiding it. The quiet hours it reads
+  and the entity ids it knows are refreshed on a timer, so a house that
+  measures its own bedtime a fortnight in is not held to the fallback.
+- **The first look** (`panel/resident.py`, `server._resident_loop`). Haiku,
+  every ten minutes and within a minute on a hot signal, answers
+  `ignore | watch | investigate | act` for a batch — a protected entity, a
+  safety device or a hot signal can never be ignored, whatever the model
+  says — and Sonnet investigates only what it named, at most two per look,
+  with reading tools, writing a case with a claim, evidence and actions that
+  each say what consent they need. `act` on a hot safety signal files a
+  critical case and notifies; **nothing on this path calls a service**. The
+  three gates every scheduled run answers to — a credential, `auto_enabled`,
+  the usage budget — hold the batch rather than spending it, and a batch
+  nothing has looked at within `triage.STALE_S` surfaces saying so.
+- **Cases** (`panel/cases.py`, `GET /api/cases`, `POST /api/case/{id}/{verb}`).
+  Findings, hypotheses, proposals and chores are one list with one
+  vocabulary — problem, opportunity, question, chore, change — and three
+  endings: **Do it**, **Not now** (the Resident chooses when it comes back
+  and says so), **Wrong, because…**. The rare verbs live behind ⋯. Each
+  ending fires exactly one of the endings that already existed, so a case
+  answered on the feed teaches brAIn what the same press on the old card
+  did. Every store, mirror, Repairs issue and `todo.brain` row is unchanged
+  underneath.
+- **The Home feed.** The Findings tab is called Home and renders cases: the
+  kind, the severity, the confidence and stakes in words, the claim, the
+  evidence, what *Do it* would do and the consent each step needs, and the
+  three endings inline. Anything live that no case covers is still shown
+  beneath, because a case list that could not be read must not render a
+  house with problems as a house with none. The foot says what the day
+  cost: looked, investigated, changed, watching. The badge counts open
+  cases, one derivation for the tab and `/api/status`.
+- **A budget ledger** per tier per day: the first look never stops on it
+  (only on the usage tracker), investigations queue past their allowance,
+  and nothing on the top tiers runs unattended past its. Both halves ride in
+  `/api/diagnostics` under `resident` and `eventbus`.
+- Triage is retired into the first look — a filed row the look ignores is
+  held with its reason and still carries *Raise it anyway* — and its
+  per-day cap now counts first looks.
+
 ## 2.0.0
 
 **brAIn 2.0 begins here: every Claude run is planned by job rather than by
