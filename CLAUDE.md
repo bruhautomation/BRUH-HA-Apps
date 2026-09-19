@@ -328,7 +328,8 @@ BRUH-HA-Apps/
 │   │                        #   forecasts, baseline, thermal
 │   │   ├── journal.py           # One line per Claude run / checks pass, with a fixed outcome vocabulary
 │   │   ├── chat_session.py      # Live `claude` stream-json sessions, as events; the registry
-│   │   ├── engine.py            # How Claude is invoked (argv, env, credential)
+│   │   ├── engine.py            # How Claude is invoked (argv, env, credential, job → model/effort/schema)
+│   │   ├── model_plan.py        # Which model does which job: Haiku looks, Sonnet thinks, Opus acts, Fable is a press
 │   │   ├── app.js / style.css / index.html / docs.js  # The whole UI
 │   │   ├── run_sources.py       # Which face started a conversation (session-id ledger)
 │   │   ├── chat_session.py      # …and the endings a discussion can offer as buttons
@@ -346,6 +347,7 @@ BRUH-HA-Apps/
 │   │   ├── brain-edit-snapshot.py    # PreToolUse hook: snapshot before Claude edits
 │   │   ├── brain-memory-consolidate.sh / brain-study-watcher.sh  # background passes
 │   │   ├── brain-run-source.sh  # Sourced, not run: claim a session id for a face
+│   │   ├── brain-memory-lock.sh # Sourced, not run: the one flock the hypothesis queue's writers share
 │   │   ├── ha-addon.sh / ha-entity.sh / ha-service.sh / ha-notify.sh / ha-share.sh  # HA helper CLIs
 │   │   ├── ha-yaml-check.sh     # YAML validation CLI
 │   │   ├── brain-learn.sh       # Study session: facts → memory inbox, problems → findings inbox
