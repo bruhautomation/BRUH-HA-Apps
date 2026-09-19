@@ -477,8 +477,13 @@ class TestTheOptionalClaudeRun(unittest.IsolatedAsyncioTestCase):
                                            "light comes on at full and the "
                                            "heating stops."}
 
-        def run_claude(prompt, system, model, timeout, turns, source):
+        self.jobs: list[str] = []
+
+        def run_claude(prompt, system, model, timeout, turns, source, **kw):
+            # The engine plans a run off `job=`; a stub that refused the
+            # kwarg would read as the optional run failing, silently.
             self.runs.append(prompt)
+            self.jobs.append(kw.get("job", ""))
             return self.result
 
         self._old = (self.server.engine.run_claude,
@@ -511,6 +516,8 @@ class TestTheOptionalClaudeRun(unittest.IsolatedAsyncioTestCase):
         offered = await self.server._offer_playbooks(house(), NOW)
         self.assertEqual(offered, 3)
         self.assertEqual(len(self.runs), 3)
+        # A paragraph is a naming-tier job, never a reasoning one.
+        self.assertEqual(set(self.jobs), {"playbook_text"})
         smoke = by_class(self.added)["smoke"]
         self.assertIn("every light comes on at full", smoke["why"])
 

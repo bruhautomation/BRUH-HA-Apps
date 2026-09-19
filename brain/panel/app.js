@@ -2339,6 +2339,7 @@ function renderSettingsForm(data) {
   $("#setChatSessions").value = String(data.settings.chat_max_sessions || 3);
   $("#setGatherMode").value = data.settings.gather_mode || "search";
   $("#setRefreshMode").value = data.settings.refresh_mode || "changed";
+  $("#setThinking").value = data.settings.thinking || "normal";
   $("#setPlan").value = data.settings.plan || "pro";
   $("#setBudget").value = data.settings.budget_percent;
   $("#setBudgetVal").textContent = data.settings.budget_percent + "%";
@@ -3615,6 +3616,8 @@ $("#setModel").addEventListener("change", () => {
 });
 $("#setModelCustom").addEventListener("change", () =>
   saveSettings({ model: $("#setModelCustom").value.trim() }));
+$("#setThinking").addEventListener("change", () =>
+  saveSettings({ thinking: $("#setThinking").value }));
 $("#setClose").addEventListener("click", () => closeBox("#setModal"));
 $("#setModal").addEventListener("click", (ev) => {
   if (ev.target === $("#setModal")) closeBox("#setModal");

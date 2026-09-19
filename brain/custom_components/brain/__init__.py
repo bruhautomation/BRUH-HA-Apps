@@ -111,12 +111,27 @@ SEND_PROMPT_SCHEMA = vol.Schema(
     }
 )
 
+# How much of the project grant one task may reach. A task runs in /config
+# with `/config/.claude/settings.local.json` behind it, which holds Bash,
+# Write, Edit, WebFetch, WebSearch and every MCP tool — and until this
+# field existed, every `brain.run_task` call got all of it whatever it was
+# asked to do, with no way for the automation that asked to say otherwise.
+#
+# `full` is the DEFAULT and must stay one: BRight's director drives the
+# same tasks folder and depends on that grant, so narrowing the default
+# would break a working add-on next door. The two narrower values are
+# opt-in, and the listener derives both from the panel's own analyst lists
+# rather than from a copy kept here.
+TASK_TOOLS = ("full", "house", "read_only")
+DEFAULT_TASK_TOOLS = "full"
+
 RUN_TASK_SCHEMA = vol.Schema(
     {
         vol.Required("prompt"): str,
         vol.Optional("notify", default=False): bool,
         vol.Optional("notify_entity"): str,
         vol.Optional("timeout"): vol.All(int, vol.Range(min=10, max=600)),
+        vol.Optional("tools", default=DEFAULT_TASK_TOOLS): vol.In(TASK_TOOLS),
     }
 )
 
@@ -852,6 +867,7 @@ def _register_services(hass: HomeAssistant) -> None:
         notify = call.data.get("notify", False)
         notify_entity = call.data.get("notify_entity")
         timeout = call.data.get("timeout")
+        tools = call.data.get("tools", DEFAULT_TASK_TOOLS)
 
         try:
             result = await bridge.async_send_task(
@@ -859,6 +875,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 notify=notify,
                 notify_entity=notify_entity,
                 timeout=timeout,
+                tools=tools,
             )
         except TimeoutError:
             result = "Claude task did not complete in time."

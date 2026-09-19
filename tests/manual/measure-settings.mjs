@@ -62,7 +62,7 @@ const IDS = [
   'diagRefresh', 'probBody', 'probCopyAll', 'probCopySel', 'probWrite',
   'rehearseBody', 'rehearseLast', 'rehearseRun', 'rehearseSweep', 'setBudget',
   'setBudgetVal', 'setCapture', 'setChatSessions', 'setClose', 'setEnabled',
-  'setGatherMode', 'setHistoryDays', 'setKeepDays', 'setKeepRuns', 'setModel',
+  'setGatherMode', 'setHistoryDays', 'setKeepDays', 'setKeepRuns', 'setModel', 'setThinking',
   'setModelCustom', 'setPlan', 'setRefresh', 'setRefreshMode', 'setSyncNote',
   'setTerminalUi', 'setTimeout', 'usageFill', 'usageMark', 'usageText',
 ];

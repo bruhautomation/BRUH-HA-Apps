@@ -687,6 +687,38 @@ simply because you prefer it.
   pass, and calling it while a pass is already running is noted in the log
   rather than queued. `button.brain_run_checks` on the *brAIn System* device
   is the same press with nothing to type. Wire them to any trigger you like.
+#### How much a task is allowed to touch
+
+`brain.run_task` runs Claude in `/config` with the project's own permissions
+behind it — the shell, file edits, web access and every Home Assistant tool —
+because a task is usually asked to *change* something. That is right for "fix
+the heating schedule" and far more than "tell me which lights were on at 3am"
+needs, and there used to be no way for the automation asking to say so.
+
+The `tools` field is that way, and it has three values:
+
+| `tools` | What the task can reach |
+| --- | --- |
+| `full` *(default)* | Everything, exactly as before: the shell, file edits, web access, and every Home Assistant tool. |
+| `house` | Every Home Assistant tool — it can read your house and act on it — with no shell, no file edits and no web access. |
+| `read_only` | The same list brAIn's own scheduled analysis runs with: it can look at anything and change nothing. |
+
+`full` is the default on purpose, so nothing you have already written
+changes. Narrow it per call:
+
+```yaml
+action: brain.run_task
+data:
+  prompt: Which lights were on after midnight, and what turned them on?
+  tools: read_only
+```
+
+The two narrower lists are read out of brAIn's own analyst configuration when
+the task runs, rather than kept as a second copy — so a tool that can act on
+your house can never quietly appear in `read_only`. If they cannot be read,
+the task is **refused** and says so, rather than falling back to the full
+grant.
+
 - Insight jobs render to `sensor.<name>_insight` with the markdown and ready-to-paste
   card YAML as attributes, so a report can drive a template, a notification, or a
   dashboard.
@@ -1800,6 +1832,29 @@ A section remembers whether you left it open. Where a control's full
 explanation did not fit in a sentence, the rest is on the **?** beside it —
 press it (or tab to it); it is a thumb-sized target on a phone.
 
+### Which model does which job
+
+brAIn 2.0 plans every Claude run by **job** rather than by one global model:
+
+| Tier | Jobs | Why |
+|---|---|---|
+| **Haiku** | triage, scene naming, playbook text, milestones, the memory consolidator, the morning brief, auth check | A yes/no, a name or a sentence over material something else already gathered |
+| **Sonnet** | insight cards, fix plans, the weekly report, study, intents, curiosity, episode summaries, onboarding | Reading a house with tools and writing about it |
+| **Opus** | applying a fix | The one run that changes the house, at the highest effort |
+| **Fable** | a deep review you press for | Never from a timer — a scheduler cannot name it |
+
+The **thinking** dial (⚙ → Insights, or `thinking` in `/api/settings`) is
+`light` / `normal` / `generous`. *Light* steps down only the jobs where a
+wrong answer is cheap (a card, a question) and never the apply run;
+*generous* steps up only the reasoning jobs, never a naming call. A typed
+`model` on the Configuration tab still overrides every job, exactly as it
+did before 2.0.
+
+Under the hood each run carries `--model` and `--effort`, and structured
+jobs carry `--json-schema`. A CLI that does not know a flag has it dropped
+and the run retried without it; the journal row records `dropped_flags`, so
+an install whose CLI is behind is visible in ⚙ → Diagnostics.
+
 ### What's on a card
 
 One control sits on the card and the rest are behind **⋯**, because on a phone six
@@ -2370,6 +2425,17 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 | `morning_brief_hour` | string | `7` | When to send it until brAIn has measured your home's own hour (10 weekdays, so about two weeks), or if your days are too irregular for there to be one. |
 | `weekly_report` | bool | `false` | One message a week: what the house used against the week before, what was found and answered, what brAIn learned, and the one thing worth doing. Needs `findings_notify_service` set — point it at `notify.notify` and it reaches everybody. |
 | `weekly_report_day` | list | `sunday` | Which day it goes out. The hour is `morning_brief_hour`, or your home's own measured hour once brAIn knows it. |
+
+> **What the terminal is told about your memory.** `auto_generate_context`
+> writes `/config/CLAUDE.md` at startup, and the learned-memory document is
+> excerpted into it — that is how the terminal and the chat know your house
+> without asking. The excerpt is cut **between lines**, never mid-fact, and
+> every `## ` section keeps at least its heading and its first line before any
+> section gets a second one, so a long Preferences section can no longer push
+> Device notes out of the file entirely. It takes 16 KB by default;
+> `BRAIN_CONTEXT_MEMORY_BYTES` (an environment variable, not an option — set
+> it in the add-on's own environment) raises or lowers that. An insight card
+> is handed the whole document instead, up to `memory_max_kb`.
 
 > **There are no turn-limit options any more.** `assist_max_turns`,
 > `automation_max_turns` and `study_max_turns` were retired in 1.48.0. A turn
