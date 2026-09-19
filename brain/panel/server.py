@@ -161,7 +161,7 @@ import fixer
 import healing
 import health
 import house
-import habits
+import habit_lookup
 import hypotheses
 import authoring
 import intents
@@ -11355,7 +11355,7 @@ async def h_habits(request: web.Request) -> web.Response:
     def read() -> dict:
         tz, _name = baselines.house_timezone()
         ledger = routines.load()
-        return habits.habit_of(
+        return habit_lookup.habit_of(
             entity_id, routine_rows=ledger.get("rows") or [],
             override_rows=override_ledger.load(),
             manual_rows=(manual_ledger.load().get("rows") or []),
