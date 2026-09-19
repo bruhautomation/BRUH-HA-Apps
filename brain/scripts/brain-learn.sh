@@ -51,17 +51,36 @@ FINDINGS_INBOX="${BRAIN_FINDINGS_INBOX:-/config/.brain/findings/inbox}"
 REPORTS_DIR="$MEMORY_DIR/reports"
 MEMORY_FILE="$MEMORY_DIR/memory.md"
 
-# No turn cap. Depth is the deliverable of a study session — it reads the
-# registry, then history for a dozen entities, then long-term statistics,
-# and can spend a lot of turns before it has anything worth saying — so
-# the guard is the wall clock (BRAIN_LEARN_TIMEOUT) and the account's own
-# usage budget, never a turn count. This is not an add-on option.
-# BRAIN_LEARN_MAX_TURNS is an override for somebody who sets one by hand,
-# and a session that trips it is LANDED (brain-landing.sh) rather than
-# thrown away: resumed with two turns and told to file what it has.
-MAX_TURNS="${BRAIN_LEARN_MAX_TURNS:-0}"
+# A turn cap is a runaway GUARD and never a budget, and this script shipped
+# without one: a study session ran uncapped, on the global model, for up to
+# half an hour. Depth really is the deliverable here — it reads the
+# registry, then history for a dozen entities, then long-term statistics —
+# so the cap has to be far past anything a real session needs, which is
+# what makes it invisible to the sessions it is not for. What it catches is
+# the one it IS for: a run looping on a tool that keeps failing, spending
+# the account's whole window on nothing, with only the wall clock between
+# it and 1800 seconds of that.
+#
+# It is not an add-on option, for the reason the three that were options
+# are gone: the only two settings for a number like this are wrong. What
+# bounds a run's cost in a way people have an intuition about is the wall
+# clock, and that is what the Configuration tab still asks for.
+#
+# 0 means uncapped and is deliberately still reachable — the watcher passes
+# a request's own cap through this name, and somebody who knows they want
+# an unbounded session can say so. A session that trips the cap is LANDED
+# (brain-landing.sh) rather than thrown away: resumed with two turns and
+# told to file what it has, so the cap costs a partial result and never the
+# whole run.
+STUDY_MAX_TURNS="${BRAIN_LEARN_MAX_TURNS:-60}"
 TIMEOUT="${BRAIN_LEARN_TIMEOUT:-1800}"
-MODEL="${BRAIN_LEARN_MODEL:-${BRAIN_MODEL:-}}"
+# The model plan exports a per-job name beside the per-tier ones; this reads
+# it, and falls back through the name this script has always taken to the
+# global one. Three names, one order, and the most specific wins — a study
+# session is the longest-running unattended Claude call the add-on makes,
+# so which model it runs on is exactly the thing worth being able to set
+# without moving every other run with it.
+MODEL="${BRAIN_MODEL_STUDY:-${BRAIN_LEARN_MODEL:-${BRAIN_MODEL:-}}}"
 MEMORY_BUDGET=4000
 # The hypothesis queue is deliberately tiny: a long list of open questions
 # is what made the old design unusable.
@@ -282,8 +301,8 @@ PROMPT
 )
 
 turn_args=()
-if [ "${MAX_TURNS:-0}" -gt 0 ] 2>/dev/null; then
-    turn_args=(--max-turns "$MAX_TURNS")
+if [ "${STUDY_MAX_TURNS:-0}" -gt 0 ] 2>/dev/null; then
+    turn_args=(--max-turns "$STUDY_MAX_TURNS")
 fi
 
 claude_cmd=$(resolve_claude)
@@ -318,6 +337,19 @@ fi
 if lib=$(brain_lib brain-landing.sh); then
     # shellcheck disable=SC1091
     . "$lib"
+fi
+# The hypothesis queue has three writers in three processes and this is one
+# of them; the lock is what stops an append landing inside the window
+# between the panel's read and its rename, where it is silently lost. Not
+# finding the library is not a reason to refuse a study session, so the
+# fallback runs the same block unlocked — which is what this did before the
+# library existed.
+if lib=$(brain_lib brain-memory-lock.sh); then
+    # shellcheck disable=SC1091
+    . "$lib"
+fi
+if ! command -v brain_with_store_lock > /dev/null 2>&1; then
+    brain_with_store_lock() { shift; "$@"; }
 fi
 
 # stderr is kept, not swallowed: a study session can fail for more than
@@ -386,7 +418,7 @@ if [ "$rc" -ne 0 ] && [ "${#session_args[@]}" -gt 0 ] \
     rc=0
     output=$(run_study) || rc=$?
 fi
-# A session that ended on a turn cap (BRAIN_LEARN_MAX_TURNS, or the CLI's
+# A session that ended on a turn cap (STUDY_MAX_TURNS, or the CLI's
 # own ceiling) is landed rather than reported: resumed on its session with
 # two turns and told to emit the JSON with what it has, inside whatever is
 # left of the wall clock the session was given. A landing that fails leaves
@@ -471,12 +503,21 @@ if [ "${#findings[@]}" -gt 0 ]; then
     done
 fi
 
-queued=0
-if [ "${#hypotheses[@]}" -gt 0 ] && [ "$remaining" -gt 0 ]; then
-    mkdir -p "$MEMORY_DIR"
+# The read (what is already pending, and how much room is left) and the
+# append are one decision over one view of the file, so they are inside the
+# lock together. The cap is re-read here rather than reused from the count
+# taken before the Claude call: that number is minutes old by now, and the
+# panel or another session may have filled the queue while this one was
+# thinking — which is exactly how a queue whose whole design is that it
+# holds three comes to hold five.
+file_hypotheses() {
+    local room open_now h
+    open_now=$(open_hypothesis_count)
+    room=$((MAX_OPEN_HYPOTHESES - open_now))
+    [ "$room" -lt 0 ] && room=0
     for h in "${hypotheses[@]}"; do
         [ -n "${h//[[:space:]]/}" ] || continue
-        [ "$queued" -lt "$remaining" ] || break
+        [ "$queued" -lt "$room" ] || break
         # Don't re-ask something already pending or already settled.
         if [ -s "$HYPOTHESES_FILE" ] && \
            jq -e --arg t "$h" 'select(.text == $t)' "$HYPOTHESES_FILE" > /dev/null 2>&1; then
@@ -487,6 +528,12 @@ if [ "${#hypotheses[@]}" -gt 0 ] && [ "$remaining" -gt 0 ]; then
             >> "$HYPOTHESES_FILE"
         queued=$((queued + 1))
     done
+}
+
+queued=0
+if [ "${#hypotheses[@]}" -gt 0 ] && [ "$remaining" -gt 0 ]; then
+    mkdir -p "$MEMORY_DIR"
+    brain_with_store_lock "$HYPOTHESES_FILE" file_hypotheses
 fi
 
 if [ -n "$topic_id" ]; then

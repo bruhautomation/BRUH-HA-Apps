@@ -2,6 +2,76 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.0.0
+
+**brAIn 2.0 begins here: every Claude run is planned by job rather than by
+one global model, the analyst answers in a schema instead of prose, the card
+design system is a stylesheet instead of a kilobyte of hex per run, and a
+set of quiet bugs — a memory queue that lost guesses, a memory excerpt cut
+mid-character, a prompt budget sized for the wrong cap — are gone.** This is
+Phase 0 of the AI-first plan in `docs/design/brain-ai-first.md`; the
+resident attention loop, the measurement tools, standing automations by
+sentence and the four-tab panel follow as their own releases.
+
+- **Haiku looks, Sonnet thinks, Opus acts, Fable is a press**
+  (`panel/model_plan.py`). Every scheduled and pressed run used to call one
+  `model` option, so triage — a yes/no over a hundred rows a day — cost what
+  a repair cost, and a repair ran on whatever was cheap enough for triage.
+  Each job is planned now: triage, naming, the memory consolidator and the
+  brief on Haiku; cards, plans, the weekly report, study, voice and tasks on
+  Sonnet; the fix that changes a house on Opus at its highest effort. **A
+  typed `model` still overrides every job**, exactly as before, so nobody's
+  configuration changes meaning. The top tier is reachable only from a
+  press and never from a timer: a scheduler cannot name it. The shell half
+  — the consolidator, study, both listeners — reads the same table through
+  `/data/.brain_env`, printed by `model_plan.py` itself at boot rather than
+  copied.
+- **A thinking dial** (`thinking`: light / normal / generous, ⚙ → Insights).
+  *Light* steps down only the jobs where being wrong is cheap — a card, a
+  question — and never the run that applies a change; *generous* steps up
+  only the reasoning jobs, never a naming call. It rides `--effort` where
+  the installed CLI takes it, and where it does not the flag is dropped and
+  the run retried: the request is optional, the run is not.
+- **Structured answers** (`--json-schema`). Triage verdicts, fix plans, fix
+  results, intent configs, curiosity answers and the card contract each
+  carry a schema, so a reply that does not fit is refused by the CLI rather
+  than parsed out of prose by a pattern that was right most of the time. A
+  CLI too old for the flag falls back to the text it always returned, and
+  the journal row says which flags were dropped.
+- **The card palette is CSS, not prompt** (`categories.CARD_STYLES` /
+  `inject_styles`). About 1.5 KB of hex was re-sent on every card run and
+  copied into every card's HTML; the stylesheet is injected into the saved
+  card once and the contract names `var(--c1)` and its neighbours.
+- **Triage is capped per day** (`triage.MAX_PER_DAY`), so a house that
+  files two hundred rows in an afternoon spends a bounded number of runs.
+- **The hypothesis queue stopped losing guesses.** The panel, a study
+  session, the consolidator and `brain memory` each rewrote
+  `hypotheses.jsonl` with nothing between the read and the rename, so a
+  guess appended in that window was gone — not corrupted, gone, with
+  nothing raising. All four take one flock now (a sidecar `<store>.lock`,
+  because a replace swaps the inode out from under a lock on the store
+  itself), and the knowledge and feedback ledgers take the same lock around
+  every read-modify-write. A lock that cannot be taken never refuses the
+  work. The card prompt renders dismissed questions and dead ends as one
+  deduped list, keyed on the claim, with the homeowner's reason winning.
+- **A study session carries a runaway cap** (60 turns; `0` still means
+  none) and reads its model below the env source, so the option reaches it.
+- **The memory excerpt in `/config/CLAUDE.md` cuts between lines.** It was
+  `head -c 4096`: mid-fact, mid-character on any accented name, and never
+  reaching the Device notes a run most needs. It keeps every section's
+  heading and first line before any section gets a second, says when it
+  trimmed, and defaults to 16 KB (`BRAIN_CONTEXT_MEMORY_BYTES`).
+- **The insight prompt's memory budget follows `memory_max_kb`.** It was
+  sized for the default and not the schema's ceiling, so a house that
+  raised the cap — which is what the consolidator's own "the document is
+  full" message tells it to do — had every insight prompt cut mid-fact by
+  the one budget that exists to prevent that.
+- **`brain.run_task` takes `tools: full | house | read_only`.** The scope is
+  derived from the analyst's own lists at run time, reaches every Claude
+  invocation the listener makes (the run, the landing and the retry), and a
+  scope that cannot be read refuses the run and says so rather than
+  widening it.
+
 ## 1.61.0
 
 **Fix it says what it would change before it changes it and can put it back, a

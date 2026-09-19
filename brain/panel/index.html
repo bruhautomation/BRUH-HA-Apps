@@ -1156,6 +1156,16 @@
                 than this add-on.</p>
             </div>
             <div>
+              <label for="setThinking">How hard brAIn thinks</label>
+              <select id="setThinking" class="selin">
+                <option value="light">Light — cheaper models wherever being wrong is cheap</option>
+                <option value="normal">Normal — Haiku looks, Sonnet thinks, Opus acts</option>
+                <option value="generous">Generous — a stronger model on cards and investigations</option>
+              </select>
+              <p class="hint tight">Every run is tiered by its job; this shifts the tiers.
+                A model chosen above overrides the tiers for every run.</p>
+            </div>
+            <div>
               <label for="setKeepRuns">Past runs kept per card</label>
               <input id="setKeepRuns" type="number" min="0" max="200" step="1">
             </div>

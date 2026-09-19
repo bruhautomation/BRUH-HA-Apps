@@ -470,6 +470,23 @@ def _clean(value, limit: int) -> str:
     return text[:limit]
 
 
+# The answer as the CLI validates it (`--json-schema`); `parse` still
+# checks every field, because a schema says the shape is right and not
+# that an "explained" came with the fact that makes it one.
+SCHEMA = {
+    "type": "object",
+    "properties": {
+        "confidence": {"type": "string", "enum": ["explained", "guess", "unknown"]},
+        "because": {"type": "string"},
+        "fact": {"type": "string"},
+        "ask": {"type": "string"},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["confidence", "because"],
+    "additionalProperties": False,
+}
+
+
 def parse(reply: dict | None) -> dict | None:
     """The reply as a typed answer, or `None` if it is not one.
 
@@ -622,6 +639,7 @@ def counts(payload: dict | None = None, path: str | None = None) -> dict:
 
 
 __all__ = [
+    "SCHEMA",
     "CONFIDENCES", "MAX_ASKED", "MAX_PER_DAY", "MAX_PER_PASS",
     "MAX_PER_WEEK", "MAX_TURNS", "RETRYABLE", "RETRY_EVENTS", "STATUSES",
     "STORE", "SYSTEM", "TIMEOUT_S", "budget_reason", "counts", "describe",
