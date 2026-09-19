@@ -37,6 +37,7 @@ import textwrap
 import threading
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -122,19 +123,39 @@ class TestLockedHelper(unittest.TestCase):
         self.assertNotEqual(lock, self.store)
         self.assertEqual(json.loads(self.store.read_text()), {"a": 1})
 
-    def test_the_lock_file_is_readable_by_the_other_user(self):
+    def test_the_lock_file_is_owner_only_and_root_hands_it_over(self):
         """Root and the `claude` user each have to be able to take a lock
-        the other created; a 0600 sidecar is one only its creator can."""
+        the other created. Not by a group bit — anyone on the box could
+        then stall a store's writers, and a scanner reads it as exactly
+        that — but by ownership: root opens anything, so a lock the
+        `claude` user owns is one both halves can take."""
         with atomic_write.locked(self.store):
             pass
         mode = atomic_write.lock_path(self.store).stat().st_mode & 0o777
-        # Group-readable, so the other user can take it — and never
-        # world-readable, or anyone on the box could stall a store's writers.
-        self.assertTrue(mode & 0o040, oct(mode))
-        self.assertFalse(mode & 0o007, oct(mode))
-        # And never writable by the group: the lock is only ever opened
-        # read-only, so a write bit would be a permission nothing uses.
-        self.assertFalse(mode & 0o020, oct(mode))
+        self.assertEqual(mode & 0o077, 0, oct(mode))
+        # The owner is the store's own user where that is not root, else
+        # the `claude` user; and only root hands it over.
+        with mock.patch.object(atomic_write, "_preserved",
+                               return_value=(0o644, 1234, 5678)):
+            self.assertEqual(atomic_write._lock_owner(self.store), (1234, 5678))
+        given: list[tuple] = []
+        with mock.patch.object(atomic_write, "_preserved",
+                               return_value=(0o644, 1234, 5678)), \
+                mock.patch.object(atomic_write.os, "getuid", return_value=0), \
+                mock.patch.object(atomic_write.os, "fchown",
+                                  side_effect=lambda *a: given.append(a)):
+            other = self.store.with_name("other.jsonl")
+            with atomic_write.locked(other):
+                pass
+        self.assertEqual([g[1:] for g in given], [(1234, 5678)])
+        # Not root: nothing to hand over, and nothing raised.
+        given.clear()
+        with mock.patch.object(atomic_write.os, "getuid", return_value=1000), \
+                mock.patch.object(atomic_write.os, "fchown",
+                                  side_effect=lambda *a: given.append(a)):
+            with atomic_write.locked(self.store.with_name("third.jsonl")):
+                pass
+        self.assertEqual(given, [])
 
     def test_it_really_excludes_another_process(self):
         lock_held = threading.Event()
