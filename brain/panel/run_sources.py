@@ -84,6 +84,15 @@ SOURCES: dict[str, dict[str, str]] = {
     "triage": {"label": "Triage",
                "blurb": "checking whether a finding is worth showing",
                "store": "engine"},
+    # The attention loop: a first look over a batch of signals, and the
+    # investigation a verdict buys. A probe like `triage`, which is what it
+    # replaced — and the one here somebody is most likely to open on
+    # purpose, because a case on the Home feed links straight to the run
+    # that made the claim, and "I can read what it looked at" is what makes
+    # a claim arguable rather than an assertion.
+    "resident": {"label": "Resident",
+                 "blurb": "watching the house, and looking into what it saw",
+                 "store": "engine"},
     # `tests/corpus/replay.py` — the same argument as `doctor`, one step
     # further from a person: a replay re-runs somebody else's captured
     # prompt to score this release's version of it, so every turn is a

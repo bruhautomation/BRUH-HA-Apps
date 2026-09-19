@@ -439,6 +439,19 @@ export CLAUDE_MCP_SERVERS_OVERRIDE="/config/.mcp.json"
 export DISABLE_AUTOUPDATER=1
 ENVEOF
 
+    # Which model does which job: the panel plans every run off
+    # panel/model_plan.py, and the shell half (the consolidator, study,
+    # both listeners) reads the SAME table through these exports rather
+    # than a copy of it. A typed `model` option overrides every tier,
+    # which is what it did before 2.0. A plan that cannot be printed
+    # leaves the readers on their own fallbacks — a boot must not stop
+    # over a model name.
+    local model_override
+    model_override=$(bashio::config 'model' '')
+    if ! python3 /opt/panel/model_plan.py "$model_override" >> "$env_file" 2>/dev/null; then
+        bashio::log.warning "Could not write the model plan to $env_file; the shell half runs on its fallbacks"
+    fi
+
     # Append enabled directory env vars to the env file
     [ -n "${SHARE_DIR:-}" ] && echo "export SHARE_DIR=\"${SHARE_DIR}\"" >> "$env_file"
     [ -n "${MEDIA_DIR:-}" ] && echo "export MEDIA_DIR=\"${MEDIA_DIR}\"" >> "$env_file"
@@ -1299,6 +1312,17 @@ setup_claude_settings() {
           {
             "type": "command",
             "command": "python3 /opt/scripts/brain-edit-snapshot.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/scripts/brain-memory-extract.py",
+            "timeout": 10
           }
         ]
       }

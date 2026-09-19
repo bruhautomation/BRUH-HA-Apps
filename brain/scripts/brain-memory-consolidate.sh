@@ -40,6 +40,22 @@ if [ -r /data/.brain_env ]; then
     source /data/.brain_env
 fi
 
+# The hypothesis queue's cross-process lock. Sourced here, beside the paths
+# it guards, and with a fallback that runs unlocked rather than refusing —
+# a pass that will not consolidate is a much worse failure than the race.
+# The path is a variable so the tests can drive this against a checkout.
+BRAIN_STORE_LOCK_LIB="${BRAIN_STORE_LOCK_LIB:-/opt/scripts/brain-memory-lock.sh}"
+if [ -r "$BRAIN_STORE_LOCK_LIB" ]; then
+    # shellcheck disable=SC1090
+    . "$BRAIN_STORE_LOCK_LIB"
+elif [ -r "$(dirname "${BASH_SOURCE[0]}")/brain-memory-lock.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$(dirname "${BASH_SOURCE[0]}")/brain-memory-lock.sh"
+fi
+if ! command -v brain_with_store_lock > /dev/null 2>&1; then
+    brain_with_store_lock() { shift; "$@"; }
+fi
+
 MEMORY_DIR="${BRAIN_MEMORY_DIR:-/config/.brain/memory}"
 MEMORY_FILE="$MEMORY_DIR/memory.md"
 VOICE_FILE="$MEMORY_DIR/voice.md"
@@ -57,7 +73,10 @@ VOICE_MAX_BYTES=2048
 # Two: the first attempt is the merge, the second is the merge with the
 # measured overshoot fed back. A third would be the same prompt again.
 MAX_SIZE_ATTEMPTS="${BRAIN_MEMORY_SIZE_ATTEMPTS:-2}"
-CLAUDE_MODEL="${BRAIN_MEMORY_MODEL:-haiku}"
+# The pass's tier out of the model plan (`BRAIN_MODEL_MEMORY`, written by
+# run.sh off panel/model_plan.py); BRAIN_MEMORY_MODEL is the older
+# per-script override and still wins where somebody set it.
+CLAUDE_MODEL="${BRAIN_MEMORY_MODEL:-${BRAIN_MODEL_MEMORY:-haiku}}"
 # A pass rewrites the WHOLE document plus the voice distillate — up to
 # 10 KB of output in one turn, not a one-line answer. At 120s that was a
 # coin flip on a full document, and every loss looked identical to a
@@ -144,8 +163,16 @@ sweep_share_inbox() {
 
 # A guess nobody answers is noise. Expired ones stop being offered but
 # stay on record, so the same guess is never floated a second time.
-retire_stale_hypotheses() {
-    [ -s "$HYPOTHESES_FILE" ] || return 0
+#
+# This rewrites the WHOLE file, which makes it the third writer of a queue
+# the panel and `brain-learn.sh` also write — and the rewrite reads the
+# file, transforms every line and renames the result over the top, so a
+# guess a study session appended between the read and the `mv` is silently
+# dropped. The consolidation lock does not help: it says only one
+# consolidation runs at a time, and the writer this loses to is not a
+# consolidation. So the queue's own lock is taken, and it is the same lock
+# `atomic_write.locked` takes on the panel side.
+_retire_stale_hypotheses() {
     local now cutoff
     now=$(date +%s)
     cutoff=$((now - HYPOTHESIS_TTL_DAYS * 86400))
@@ -157,6 +184,12 @@ retire_stale_hypotheses() {
     else
         rm -f "${HYPOTHESES_FILE}.tmp"
     fi
+    return 0
+}
+
+retire_stale_hypotheses() {
+    [ -s "$HYPOTHESES_FILE" ] || return 0
+    brain_with_store_lock "$HYPOTHESES_FILE" _retire_stale_hypotheses
     return 0
 }
 

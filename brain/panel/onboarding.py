@@ -78,7 +78,7 @@ STUDY_MAX_TURNS = 20
 
 RECOMMEND_SYSTEM = """You choose which recurring insight cards a specific home should have.
 
-You are given what has been learned about this home and a snapshot of its data. Propose cards that are worth generating FOR THIS HOME — grounded in what is actually there, naming its real rooms, devices and patterns.
+You are given what has been learned about this home and a MAP of its data — how many entities of each domain exist, which areas they are in, and a few anchor entities. You also have Home Assistant tools, and they are READ-ONLY: search by domain and by name for what you need, read the entities that matter and their history, and change nothing. Propose cards that are worth generating FOR THIS HOME — grounded in what is actually there, naming its real rooms, devices and patterns.
 
 A good proposal could not have been written for a different house. "Energy" is not a proposal; "Heat pump vs. the rest — it is 60% of your usage" is. If the evidence for a card is not in what you were given, do not propose it.
 
@@ -96,7 +96,7 @@ Reply with ONE JSON object and nothing else:
 
 Propose at most 8, and fewer is better — four sharp cards beat eight vague ones.
 
-If what you were given is too thin to justify ANY card — barely any entities, no history, nothing learned — set "sparse": true, return an empty recommendations list, and say plainly in "missing" what is absent. Do not pad with generic cards; a card about a home you know nothing about wastes tokens on every run and teaches the homeowner to ignore the dashboard."""
+If what this home HAS is too thin to justify ANY card — barely any entities, no history, nothing learned — set "sparse": true, return an empty recommendations list, and say plainly in "missing" what is absent. Do not pad with generic cards; a card about a home you know nothing about wastes tokens on every run and teaches the homeowner to ignore the dashboard."""
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +345,13 @@ def shipped_choices() -> list[dict]:
             for c in shipped_categories.CATEGORIES]
 
 
-def build_prompt(memory: str, bundle: dict) -> str:
+def _shared_blocks(memory: str) -> list[str]:
+    """Everything the two recommend prompts say before the data.
+
+    Shared rather than written twice for `_CARD_CONTRACT`'s reason: a second
+    copy of what this home has learned, which cards ship, and what the
+    homeowner has already rejected is a second copy that drifts.
+    """
     parts = ["WHAT HAS BEEN LEARNED ABOUT THIS HOME:", memory.strip() or "(nothing yet)"]
     parts.append("\nGENERAL CARDS THAT SHIP WITH THE ADD-ON — pick the few "
                  "that fit this home, by id:")
@@ -354,6 +360,49 @@ def build_prompt(memory: str, bundle: dict) -> str:
     if hypotheses.list_all("rejected"):
         parts.append("\nLINES OF INQUIRY THE HOMEOWNER REJECTED — do not build a card on these:")
         parts += [f"- {t}" for t in hypotheses.dead_ends()]
+    return parts
+
+
+def build_orientation_prompt(memory: str, orientation: dict) -> str:
+    """The searching path's version: the map of the home, not the home.
+
+    The recommend pass proposes which cards a house should have, which is
+    the broadest question the add-on ever asks — and it was the one place
+    still posting the whole slimmed house in a single tool-free turn, long
+    after every other analytical run had moved to a map plus read-only
+    tools because searching measured cheaper AND better. A snapshot is
+    capped, so on a large home the pass proposed cards for whichever
+    entities fitted under the cap; a run that can look reads what it needs
+    to make the case, including history, which is the evidence this system
+    prompt asks each proposal to cite.
+
+    Same map and the same field shorthand `categories.build_orientation_prompt`
+    describes, because it is the same collector behind both.
+    """
+    parts = _shared_blocks(memory)
+    parts.append(
+        "\nMAP OF THIS HOME (JSON). NOT the data — the shape of it. Sections: "
+        "meta (now, timezone, location name), entity_count (how many entities "
+        "exist in total), unavailable_count, domains (domain -> how many "
+        "entities of it exist), areas (area name -> how many entities are in "
+        "it), anchors (a few people/climate/weather/alarm entities named in "
+        "full — e=entity_id, s=state, n=friendly name when it is not just the "
+        "id prettified, a=area, u=unit, dc=device_class, lc=MINUTES since it "
+        "last changed, x=extra attributes), context (optional notes about "
+        "this home).")
+    parts.append(json.dumps(orientation, ensure_ascii=False, separators=(",", ":")))
+    parts.append(
+        "\nUse your read-only Home Assistant tools to look at what a proposal "
+        "would have to be grounded in — search by domain and by name, then go "
+        "deep on the few entities that would carry a card, including their "
+        "history. Then produce the single JSON object per the contract. JSON "
+        "only.")
+    return "\n".join(parts)
+
+
+def build_prompt(memory: str, bundle: dict) -> str:
+    """The snapshot version, kept as the floor under the searching one."""
+    parts = _shared_blocks(memory)
     parts.append(
         "\nHOME DATA SNAPSHOT (JSON): areas, entities (e=entity_id, s=state, "
         "n=friendly name, a=area, u=unit, dc=device_class), and recent history "
