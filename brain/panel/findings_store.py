@@ -110,13 +110,62 @@ MAX_FIX = 600
 # Who may have written a row's `fix` — see `_shape`. The rule's own
 # sentence is the empty string, which is what every row filed before this
 # existed reads as.
-FIX_AUTHORS = ("triage", "chat")
+FIX_AUTHORS = ("triage", "chat", "resident")
 MAX_RESULT = 1500
 MAX_CHANGED = 8
 # A correction is a sentence, not an essay. Long enough for "that sensor
 # always reads on because it watches the fridge compressor", short enough
 # that twenty of them still fit in a prompt beside everything else.
 MAX_NOTE = 400
+
+# ---------------------------------------------------------------------------
+# What a Resident-written row carries, and what every other row does not
+# ---------------------------------------------------------------------------
+#
+# A finding has always been one shape: a sentence, a severity, and the rule
+# that said it. A **case** written by the Resident is that row with the
+# run's own reasoning on it — what it is claiming, how sure it is, what it
+# actually read, and what it proposes doing about it. Those facts exist
+# only inside the investigation that produced them, and the row is the one
+# thing that outlives the run, so the row is where they go.
+#
+# Every field below is OPTIONAL and ABSENT by default, which is the whole
+# of the compatibility argument: `_shape` adds a key only for a row that
+# carries something, so a house check's finding is byte-for-byte the dict
+# it has always been — in the store, in the shared-volume mirror, in
+# `/api/findings`, in a `todo.brain` item and in every test that pins one.
+#
+# The kinds live here rather than in `cases.py` because the word is written
+# on disk and this is the module that decides what may be: a second copy in
+# the reader would be a vocabulary the store refuses and the feed renders.
+CASE_KINDS = ("problem", "opportunity", "question", "chore", "change")
+STAKES = ("low", "medium", "high")
+# One sentence, and deliberately not a second title: `text` is what the
+# store dedupes on and what a check reports, where this is what the run
+# asserts. A card shows the claim; the ledger keys on the text.
+MAX_CLAIM = 240
+# What the run READ — the difference between an investigation and an
+# opinion, and the thing a person checks a claim against. Capped because a
+# card renders every row of it.
+MAX_EVIDENCE = 8
+MAX_EVIDENCE_ENTITY = 255
+MAX_EVIDENCE_VALUE = 120
+MAX_EVIDENCE_WHEN = 40
+# What it proposes doing. Four, because a case offering five things to
+# choose between is not a decision anybody makes on a phone.
+MAX_ACTIONS = 4
+MAX_ACTION_LABEL = 90
+MAX_ACTION_DETAIL = 400
+# The consent shapes, from the design page. `consent` is a separate flag
+# rather than something a shape implies, because "send a notification" and
+# "edit somebody's automations.yaml" are both real actions and only one of
+# them needs asking — and which is which is a claim the producer makes,
+# not a lookup this module could perform.
+ACTION_SHAPES = ("notify", "edit_file", "call_service", "write_automation")
+# What an ending ought to teach, in the run's own words. A sentence handed
+# to whoever writes the memory line, never a line written here: `memory.md`
+# has one writer and this store is not it.
+MAX_MEMORY_HINT = 300
 
 # What an ending can say. `fixed` and `ignored` are the two the tab has
 # always had; `accepted` is the third and it is a different claim from
@@ -258,10 +307,15 @@ def _publish_state(items: list[dict]) -> None:
                 # whether to get up. Fifty rows of 600 characters each
                 # would be 60 KB of mirror for two paragraphs nobody
                 # scrolls to the end of.
+                #
+                # `kind` and `claim` are appended LAST and only for a row
+                # that carries them, so a mirror of ordinary findings is
+                # byte-for-byte the file the integration has always read.
                 {**{k: s[k] for k in ("ts", "text", "severity", "status",
                                       "entity_id", "fixable", "source_title")},
                  "detail": s["detail"][:STATE_MAX_PROSE],
-                 "fix": s["fix"][:STATE_MAX_PROSE]}
+                 "fix": s["fix"][:STATE_MAX_PROSE],
+                 **{k: s[k] for k in ("kind", "claim") if s.get(k)}}
                 for s in live[:STATE_MAX_ROWS]
             ],
         })
@@ -374,6 +428,107 @@ def _clean_triage(value) -> dict:
     }
 
 
+def _clean_evidence(value) -> list[dict]:
+    """`[{entity, value, when}, ...]` — what a run says it read.
+
+    A row naming no entity is DROPPED rather than kept with an empty one.
+    The whole claim this field makes is *which* entity was read, so a row
+    that names none is an assertion wearing evidence's clothes, and one of
+    those under a heading saying "what I looked at" is worse than a short
+    list.
+    """
+    if not isinstance(value, list):
+        return []
+    out: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        entity = str(item.get("entity") or "").strip()[:MAX_EVIDENCE_ENTITY]
+        if not entity:
+            continue
+        out.append({
+            "entity": entity,
+            "value": str(item.get("value") or "").strip()[:MAX_EVIDENCE_VALUE],
+            "when": str(item.get("when") or "").strip()[:MAX_EVIDENCE_WHEN],
+        })
+        if len(out) >= MAX_EVIDENCE:
+            break
+    return out
+
+
+def _clean_actions(value) -> list[dict]:
+    """`[{label, shape, consent, detail}, ...]` — what a run proposes doing.
+
+    A shape this does not recognise is dropped, never coerced to the
+    nearest one it does: every entry here is something that would happen
+    to somebody's house, and reading an unknown word as the closest known
+    one is how a `notify` becomes a file edit. `consent` defaults TRUE for
+    `_clean_plan`'s reason one field over — an action this could not read
+    properly must never be read as permission already given.
+    """
+    if not isinstance(value, list):
+        return []
+    out: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        shape = str(item.get("shape") or "").strip().lower()
+        label = str(item.get("label") or "").strip()[:MAX_ACTION_LABEL]
+        if shape not in ACTION_SHAPES or not label:
+            continue
+        out.append({
+            "label": label,
+            "shape": shape,
+            "consent": item.get("consent", True) is not False,
+            "detail": str(item.get("detail") or "").strip()[:MAX_ACTION_DETAIL],
+        })
+        if len(out) >= MAX_ACTIONS:
+            break
+    return out
+
+
+def _case_fields(entry: dict) -> dict:
+    """The Resident's half of a row — only the keys it actually carries.
+
+    Absent rather than empty, so a row a check filed is the dict it has
+    always been and nothing downstream has to learn a new key in order to
+    go on rendering it. That is also why this is a separate function
+    rather than six more lines in `_shape`: `coerce` needs exactly the
+    same answer, and two copies of "what may a case say" is the drift a
+    second copy always produces.
+    """
+    out: dict = {}
+    kind = entry.get("kind")
+    if kind in CASE_KINDS:
+        out["kind"] = kind
+    claim = str(entry.get("claim") or "").strip()[:MAX_CLAIM]
+    if claim:
+        out["claim"] = claim
+    confidence = entry.get("confidence")
+    # `isinstance(True, int)` is True, and a bool here would render as a
+    # confidence of 1.0 — which is the one number this field must not be
+    # able to invent.
+    if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+        out["confidence"] = round(min(1.0, max(0.0, float(confidence))), 3)
+    if entry.get("stakes") in STAKES:
+        out["stakes"] = entry["stakes"]
+    evidence = _clean_evidence(entry.get("evidence"))
+    if evidence:
+        out["evidence"] = evidence
+    actions = _clean_actions(entry.get("actions"))
+    if actions:
+        out["actions"] = actions
+    hint = str(entry.get("memory_hint") or "").strip()[:MAX_MEMORY_HINT]
+    if hint:
+        out["memory_hint"] = hint
+    investigation = entry.get("investigation")
+    if isinstance(investigation, dict):
+        run_id = str(investigation.get("run_id") or "").strip()[:64]
+        if run_id:
+            out["investigation"] = {"run_id": run_id}
+    return out
+
+
 def _shape(entry: dict) -> dict:
     """One stored finding, normalized for the API."""
     status = entry.get("status")
@@ -382,7 +537,7 @@ def _shape(entry: dict) -> dict:
     severity = entry.get("severity")
     if severity not in SEVERITIES:
         severity = "warning"
-    return {
+    out = {
         "ts": int(entry.get("ts") or 0),
         "text": str(entry.get("text") or "")[:MAX_TEXT],
         "detail": str(entry.get("detail") or "")[:MAX_DETAIL],
@@ -446,6 +601,12 @@ def _shape(entry: dict) -> dict:
         # row nobody has looked at, which is the one claim this is for.
         "checked_at": int(entry.get("checked_at") or 0),
     }
+    # And the Resident's half, when there is one. Appended rather than
+    # declared above so a row that carries none is the dict every existing
+    # reader, mirror and test already knows, key for key and order for
+    # order — see the block by CASE_KINDS.
+    out.update(_case_fields(entry))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -647,7 +808,7 @@ def coerce(obj: dict) -> dict | None:
     if not normalize(text):
         return None
     severity = str(obj.get("severity") or "").strip().lower()
-    return {
+    entry = {
         "text": text,
         "detail": detail[:MAX_DETAIL],
         "fix": str(obj.get("fix") or "").strip()[:MAX_FIX],
@@ -669,6 +830,22 @@ def coerce(obj: dict) -> dict | None:
         "changed": [],
         "settled_at": 0,
     }
+    # Whose sentence the `fix` is. A rule's own is the empty string, which
+    # is what every row filed before `FIX_AUTHORS` existed reads as; a
+    # producer that wrote its own says so, and an author this store cannot
+    # name falls back to the rule's rather than being believed.
+    if obj.get("fix_by") in FIX_AUTHORS:
+        entry["fix_by"] = obj["fix_by"]
+    # What looked at it, when the producer IS the thing that looked. Only
+    # `add_case` files one — every other producer's rows go through
+    # `triage.gate`, which files them as `triaging` for the drain to judge
+    # and `record_triage` then overwrites this block whole, so a line in
+    # the inbox cannot use it to claim a verdict nothing earned.
+    looked = _clean_triage(obj.get("triage"))
+    if looked:
+        entry["triage"] = looked
+    entry.update(_case_fields(obj))
+    return entry
 
 
 def _prune(items: list[dict]) -> list[dict]:
@@ -731,6 +908,73 @@ def add(text: str, **fields) -> tuple[dict | None, bool]:
             return _shape(existing), False
     created = add_many([{"text": text, **fields}])
     return (created[0], True) if created else (None, False)
+
+
+# Who the Resident files as. It is a producer like any other — which is
+# the point, because `scorecard()` adds endings up per producer and the
+# number the design page always wanted is the Resident's own precision.
+# The title is what the tab and the scorecard show instead of the id.
+RESIDENT_SOURCE = "resident"
+RESIDENT_TITLE = "The Resident"
+
+
+@_mutates
+def add_case(row: dict, *, run_id: str = "", when: float | None = None) -> dict | None:
+    """File a case an investigation wrote. Returns the row, or None.
+
+    Every other producer files through `triage.gate`, which marks its rows
+    `triaging` so the drain can go and look before anybody is shown one.
+    This one does not, and the reason is not an exemption: **a case IS the
+    look**. The row is written by a run that read the entity's history, the
+    area and what the house has already been told, and asking a second run
+    to grade it would be paying full price to have a model mark homework
+    it has just finished — which is the argument `triage.py`'s fourth rule
+    rejects for producers that were doing something *else* and mentioned a
+    problem on the way past. Nothing was doing something else here.
+
+    So what keeps the gate's promise — that nothing reaches a person
+    unjudged — is written ON the row rather than asserted in prose: the
+    verdict, the sentence that earned it and the run that said it go into
+    the same `triage` block `record_triage` writes, and the card renders
+    them exactly as it renders a drained one. A row with no ``claim`` is
+    **refused**, because the claim is the judgement: without it this would
+    be a door a producer that had not looked could file straight through,
+    which is the one thing the gate exists to prevent.
+
+    ``run_id`` is provenance and is not required. A CLI that refused the
+    session id leaves a case with no conversation to open, which costs a
+    link; refusing the case over it would throw away an investigation that
+    happened, and a guard whose cost is the whole feature is the wrong
+    guard — see `engine`'s own fallback for the same flag.
+
+    Deduping, the settled ledger, the unique id, the prune and the mirror
+    are `add_many`'s, because they are the store's rules and not this
+    door's. A case whose text somebody has already answered is therefore
+    dropped silently, in any status, exactly as a check's re-report is.
+    """
+    if not isinstance(row, dict):
+        return None
+    claim = str(row.get("claim") or "").strip()[:MAX_CLAIM]
+    if not claim:
+        return None
+    stamp = int(when if when is not None else time.time())
+    created = add_many([{
+        **row,
+        "source": str(row.get("source") or RESIDENT_SOURCE)[:64],
+        "source_title": str(row.get("source_title") or RESIDENT_TITLE)[:120],
+        "run_id": str(row.get("run_id") or run_id or "")[:64],
+        # A case is on the list the moment it is written. `held` is
+        # triage's word for "looked at and not worth showing", and a
+        # Resident run that judged a signal not worth showing wrote no
+        # case at all — so there is no second status to reach from here.
+        "status": "open",
+        "triage": {"verdict": "elevated", "reason": claim,
+                   "run_id": str(row.get("run_id") or run_id or ""),
+                   "at": stamp,
+                   "wrote_fix": bool(str(row.get("fix") or "").strip())},
+        "claim": claim,
+    }])
+    return created[0] if created else None
 
 
 @_mutates
