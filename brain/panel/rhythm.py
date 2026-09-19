@@ -294,7 +294,8 @@ def settle_minute(payload: dict, when: dt.datetime) -> float | None:
 
 __all__ = [
     "KEEP_DAYS", "MAX_SPREAD_MIN", "MINUTES_PER_DAY", "MIN_DAYS",
-    "PROGRESS_UNIT_S", "STORE", "WEEKDAY", "WEEKEND", "circular_median",
+    "PROGRESS_UNIT_S", "STORE", "WEEKDAY", "WEEKEND", "circular_distance",
+    "circular_median",
     "circular_spread", "clock", "load", "profile", "progress", "record",
     "save", "settle_minute", "wake_minute",
 ]
