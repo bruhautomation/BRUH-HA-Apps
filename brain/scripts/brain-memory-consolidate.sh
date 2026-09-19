@@ -73,7 +73,10 @@ VOICE_MAX_BYTES=2048
 # Two: the first attempt is the merge, the second is the merge with the
 # measured overshoot fed back. A third would be the same prompt again.
 MAX_SIZE_ATTEMPTS="${BRAIN_MEMORY_SIZE_ATTEMPTS:-2}"
-CLAUDE_MODEL="${BRAIN_MEMORY_MODEL:-haiku}"
+# The pass's tier out of the model plan (`BRAIN_MODEL_MEMORY`, written by
+# run.sh off panel/model_plan.py); BRAIN_MEMORY_MODEL is the older
+# per-script override and still wins where somebody set it.
+CLAUDE_MODEL="${BRAIN_MEMORY_MODEL:-${BRAIN_MODEL_MEMORY:-haiku}}"
 # A pass rewrites the WHOLE document plus the voice distillate — up to
 # 10 KB of output in one turn, not a one-line answer. At 120s that was a
 # coin flip on a full document, and every loss looked identical to a

@@ -143,3 +143,42 @@ def describe(job: str, thinking: str = DEFAULT_THINKING, override: str = "") -> 
 
 __all__ = ["DEFAULT_THINKING", "EFFORTS", "JOBS", "PRESS_ONLY", "THINKING",
            "TIERS", "describe", "env_exports", "resolve"]
+
+
+def _settings_thinking() -> str:
+    """The dial as saved by the panel, read without importing the panel.
+
+    run.sh runs this at boot as root before the panel is up, and the
+    panel's settings module drags in more than a boot script wants; the
+    file is one JSON object and the key is one string.
+    """
+    import json
+    import os
+    path = os.environ.get("BRAIN_SETTINGS_FILE", "/data/settings.json")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return DEFAULT_THINKING
+    value = data.get("thinking") if isinstance(data, dict) else None
+    return value if value in THINKING else DEFAULT_THINKING
+
+
+def main(argv: list[str]) -> int:
+    """Print the tier answers as `export` lines for /data/.brain_env.
+
+    `python3 model_plan.py [override]` — the override is the `model`
+    option, and an empty one means the tiers stand. The output is what
+    run.sh appends to the env file, so the shell half reads the same
+    table the panel does rather than a copy of it.
+    """
+    override = argv[1] if len(argv) > 1 else ""
+    for key, value in env_exports(override, _settings_thinking()).items():
+        safe = value.replace("\\", "").replace('"', "").replace("$", "").replace("`", "")
+        print(f'export {key}="{safe}"')
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover — driven by the tests below
+    import sys
+    raise SystemExit(main(sys.argv))

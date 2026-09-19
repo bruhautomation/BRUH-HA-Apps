@@ -347,8 +347,14 @@ process_task() {
     task_model=$(jq -r '.model // empty' "$work_file" 2>/dev/null)
     task_tools=$(jq -r '.tools // empty' "$work_file" 2>/dev/null)
 
+    # A task that names no model takes the plan's tier for a task
+    # (`BRAIN_MODEL_TASK`, off panel/model_plan.py via /data/.brain_env);
+    # "default" is the request saying the same thing in a word.
+    if [ -z "$task_model" ] || [ "$task_model" = "default" ]; then
+        task_model="${BRAIN_MODEL_TASK:-}"
+    fi
     local model_flag=""
-    if [ -n "$task_model" ] && [ "$task_model" != "default" ]; then
+    if [ -n "$task_model" ]; then
         model_flag="--model $task_model"
     fi
 

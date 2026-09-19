@@ -81,6 +81,62 @@ class TestTheTable(unittest.TestCase):
         self.assertEqual(pinned["BRAIN_THINKING"], "normal")
 
 
+class TestTheShellHalfReadsTheSameTable(unittest.TestCase):
+    """The consolidator, study and both listeners run as separate
+    processes and cannot import the plan, so run.sh prints it into
+    /data/.brain_env off `model_plan.py` itself — one table, two readers.
+    """
+
+    ADDON = PANEL.parent
+
+    def test_the_cli_prints_the_exports_and_reads_the_dial_off_disk(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = os.path.join(tmp, "settings.json")
+            Path(settings).write_text(json.dumps({"thinking": "light"}))
+            env = dict(os.environ, BRAIN_SETTINGS_FILE=settings)
+            out = subprocess.run([sys.executable, str(PANEL / "model_plan.py")],
+                                 env=env, capture_output=True, text=True,
+                                 check=True).stdout
+            lines = dict(line[len("export "):].split("=", 1)
+                         for line in out.splitlines())
+            self.assertEqual(lines["BRAIN_THINKING"], '"light"')
+            # Light steps the card tier down, and the shell sees the same.
+            self.assertEqual(lines["BRAIN_MODEL_SONNET"], '"haiku"')
+            self.assertEqual(lines["BRAIN_MODEL_OPUS"], '"opus"')
+            # A typed override wins for every export, as it does in the panel.
+            out = subprocess.run([sys.executable, str(PANEL / "model_plan.py"),
+                                  "claude-opus-5"], env=env,
+                                 capture_output=True, text=True, check=True).stdout
+            for line in out.splitlines():
+                if line.startswith("export BRAIN_MODEL_"):
+                    self.assertTrue(line.endswith('="claude-opus-5"'), line)
+            # An unreadable settings file is the default dial, never a crash.
+            env["BRAIN_SETTINGS_FILE"] = os.path.join(tmp, "missing.json")
+            out = subprocess.run([sys.executable, str(PANEL / "model_plan.py")],
+                                 env=env, capture_output=True, text=True,
+                                 check=True).stdout
+            self.assertIn('export BRAIN_THINKING="normal"', out)
+
+    def test_run_sh_writes_the_plan_into_the_env_file(self):
+        run_sh = (self.ADDON / "run.sh").read_text()
+        self.assertIn("python3 /opt/panel/model_plan.py", run_sh)
+        # After the heredoc that creates the file, never before it.
+        self.assertLess(run_sh.index("ENVEOF\n"), run_sh.index("model_plan.py"))
+
+    def test_each_shell_reader_takes_its_own_tier(self):
+        """Naming an env var in a script is the one claim a grep can make."""
+        readers = {
+            "scripts/brain-memory-consolidate.sh": "BRAIN_MODEL_MEMORY",
+            "scripts/brain-learn.sh": "BRAIN_MODEL_STUDY",
+            "integrations/automation-listener.sh": "BRAIN_MODEL_TASK",
+            "integrations/assist-listener.sh": "BRAIN_MODEL_VOICE",
+        }
+        for rel, var in readers.items():
+            self.assertIn(var, (self.ADDON / rel).read_text(), rel)
+            self.assertIn(var, model_plan.env_exports(), var)
+
+
 class TestEveryPanelJobIsInTheTable(unittest.TestCase):
     """A job the table does not know runs at the fallback tier, which is
     safe and is also silent: this reads every `job="…"` the panel passes

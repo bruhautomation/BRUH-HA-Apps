@@ -1832,6 +1832,29 @@ A section remembers whether you left it open. Where a control's full
 explanation did not fit in a sentence, the rest is on the **?** beside it —
 press it (or tab to it); it is a thumb-sized target on a phone.
 
+### Which model does which job
+
+brAIn 2.0 plans every Claude run by **job** rather than by one global model:
+
+| Tier | Jobs | Why |
+|---|---|---|
+| **Haiku** | triage, scene naming, playbook text, milestones, the memory consolidator, the morning brief, auth check | A yes/no, a name or a sentence over material something else already gathered |
+| **Sonnet** | insight cards, fix plans, the weekly report, study, intents, curiosity, episode summaries, onboarding | Reading a house with tools and writing about it |
+| **Opus** | applying a fix | The one run that changes the house, at the highest effort |
+| **Fable** | a deep review you press for | Never from a timer — a scheduler cannot name it |
+
+The **thinking** dial (⚙ → Insights, or `thinking` in `/api/settings`) is
+`light` / `normal` / `generous`. *Light* steps down only the jobs where a
+wrong answer is cheap (a card, a question) and never the apply run;
+*generous* steps up only the reasoning jobs, never a naming call. A typed
+`model` on the Configuration tab still overrides every job, exactly as it
+did before 2.0.
+
+Under the hood each run carries `--model` and `--effort`, and structured
+jobs carry `--json-schema`. A CLI that does not know a flag has it dropped
+and the run retried without it; the journal row records `dropped_flags`, so
+an install whose CLI is behind is visible in ⚙ → Diagnostics.
+
 ### What's on a card
 
 One control sits on the card and the rest are behind **⋯**, because on a phone six
