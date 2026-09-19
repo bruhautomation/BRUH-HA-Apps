@@ -636,7 +636,7 @@ def test_two_in_a_row_disable_it_and_the_cooldown_brings_it_back(tmp_path, monke
     # A clock, not a verdict: the next spawn after the cooldown carries the
     # flag again, and a CLI that still cannot take it earns its two deaths
     # back in a few seconds.
-    mod._partial_disabled_until = time.time() - 1
+    mod._PARTIAL["disabled_until"] = time.time() - 1
     assert mod.partial_messages_ok()
 
 
@@ -674,7 +674,7 @@ def test_the_decision_reaches_the_argv_of_the_next_worker(tmp_path, monkeypatch)
         assert pool.workers["noflag"].partial is False
 
         # …and back, once the cooldown lapses.
-        mod._partial_disabled_until = time.time() - 1
+        mod._PARTIAL["disabled_until"] = time.time() - 1
         drop_spare(pool)
         pool.handle(make_request("and again", conv="backagain"))
         assert "--include-partial-messages" in argv_log(tmp_path)[-1]
@@ -707,12 +707,12 @@ def test_the_count_is_kept_by_the_real_request_path(tmp_path, monkeypatch):
         pool.handle(make_request("first", conv="c1", timeout=40))
         assert mod.partial_messages_ok(), \
             "one crashed worker switched token streaming off for good"
-        assert mod._partial_early_deaths == 1
+        assert mod._PARTIAL["deaths"] == 1
         drop_spare(pool)
         pool.handle(make_request("second", conv="c2", timeout=40))
         assert not mod.partial_messages_ok()
         # Both requests were still answered — the flag is about the deltas,
         # never about whether voice replies.
-        assert mod._partial_early_deaths == 0
+        assert mod._PARTIAL["deaths"] == 0
     finally:
         shutdown(pool)

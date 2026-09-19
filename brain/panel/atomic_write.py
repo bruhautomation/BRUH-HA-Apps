@@ -251,20 +251,69 @@ def _open_lock(lock: Path) -> int | None:
         return None
     for create in (False, True):
         try:
-            fd = os.open(lock, os.O_RDONLY | (os.O_CREAT if create else 0), 0o644)
+            fd = os.open(lock, os.O_RDONLY | (os.O_CREAT if create else 0),
+                         LOCK_MODE)
         except FileNotFoundError:
             continue        # first caller: round again, this time with O_CREAT
         except OSError:
             return None
         if create:
-            # The umask could have made it 0600, which is a lock only its
-            # creator can take — and the two halves run as different users.
-            try:
-                os.fchmod(fd, 0o644)
-            except OSError:
-                pass        # somebody else created it; theirs is already right
+            _share_lock(fd, lock)
         return fd
     return None
+
+
+# The lock is shared between root (the panel) and the `claude` user (a
+# study session, the consolidator) and nobody else — so it is
+# group-readable and never world-readable: the group is what carries it
+# across the two users, and a mode that let anyone on the box take a
+# panel store's lock would be a way to stall its writers from a shell.
+LOCK_MODE = 0o660
+
+
+def _lock_group(store: Path) -> int:
+    """The gid the other half of this lock runs as, or -1 for none.
+
+    The store's own group where the store is not root's (the file was
+    made by the user who will contend for it); otherwise the `claude`
+    user's group, which is who the panel shares every store with. A
+    box with no such user is a dev checkout, where one user takes every
+    lock and no group is owed.
+    """
+    _mode, uid, gid = _preserved(store)
+    if uid > 0:
+        return gid
+    try:
+        import pwd
+        return pwd.getpwnam(LOCK_PEER_USER).pw_gid
+    except (KeyError, ImportError, OSError):
+        return -1
+
+
+# The user the panel shares its stores with; run.sh creates it as UID 1000.
+LOCK_PEER_USER = "claude"
+
+
+def _share_lock(fd: int, lock: Path) -> None:
+    """Make a lock this process just created takable by the other user.
+
+    The umask could have made it 0600, which is a lock only its creator
+    can take — and the two halves run as different users. Root can hand
+    the group over; the `claude` user cannot, and does not need to, since
+    root opens anything.
+    """
+    try:
+        os.fchmod(fd, LOCK_MODE)
+    except OSError:
+        return              # somebody else created it; theirs is already right
+    gid = _lock_group(lock.with_name(lock.name[:-len(LOCK_SUFFIX)])
+                      if lock.name.endswith(LOCK_SUFFIX) else lock)
+    if gid < 0 or os.getuid() != 0:
+        return
+    try:
+        os.fchown(fd, -1, gid)
+    except OSError:
+        pass                # the group carries nothing on this box
 
 
 def _take(fd: int, shared: bool, timeout: float) -> bool:

@@ -113,6 +113,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -9526,16 +9527,23 @@ def _consolidator_shared_fd() -> int | None:
     return fd
 
 
-def _release_shared_fd(fd: int | None) -> None:
-    if fd is None:
-        return
+@contextlib.contextmanager
+def _consolidator_held_shared():
+    """`_consolidator_shared_fd` as a `with`: the fd is closed on every
+    exit from the block, in the one function that opened it, which is
+    the shape a static reader can follow. Yields whether it is held."""
+    fd = _consolidator_shared_fd()
     try:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-    except OSError:
-        # Closing the fd drops the lock anyway — this is the tidy half, and
-        # a caller can do nothing with the news that it failed.
-        pass
-    os.close(fd)
+        yield fd is not None
+    finally:
+        if fd is not None:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                # Closing drops the lock anyway — this is the tidy half,
+                # and a caller can do nothing with the news it failed.
+                pass
+            os.close(fd)
 
 
 def _drop_from_inbox(item_id: str) -> bool:
@@ -9562,8 +9570,7 @@ def _drop_from_inbox(item_id: str) -> bool:
     queue, which is the old behaviour and is not a data loss — the pass that
     moved the file has already filed the fact.
     """
-    fd = _consolidator_shared_fd()
-    try:
+    with _consolidator_held_shared():
         kept: dict[Path, list[dict]] = {}
         dropped: set[Path] = set()
         for path, obj in _inbox_lines():
@@ -9601,8 +9608,6 @@ def _drop_from_inbox(item_id: str) -> bool:
         # on: it is not in the queue any more, whether this rewrote the file
         # or a pass took the whole thing while we were reading it.
         return True
-    finally:
-        _release_shared_fd(fd)
 
 
 def _memory_state() -> dict:

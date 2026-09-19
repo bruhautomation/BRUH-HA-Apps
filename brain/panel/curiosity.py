@@ -639,6 +639,7 @@ def counts(payload: dict | None = None, path: str | None = None) -> dict:
 
 
 __all__ = [
+    "SCHEMA",
     "CONFIDENCES", "MAX_ASKED", "MAX_PER_DAY", "MAX_PER_PASS",
     "MAX_PER_WEEK", "MAX_TURNS", "RETRYABLE", "RETRY_EVENTS", "STATUSES",
     "STORE", "SYSTEM", "TIMEOUT_S", "budget_reason", "counts", "describe",

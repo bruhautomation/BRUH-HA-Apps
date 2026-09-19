@@ -95,7 +95,9 @@ brain_with_store_lock() {  # brain_with_store_lock <store> <command...>
     fi
     # Append-create rather than truncate: whichever half gets here first
     # makes the file, and the other may only be able to read it.
-    [ -e "$lock" ] || { : >> "$lock"; } 2>/dev/null
+    # Group-shared and never world-readable — atomic_write.LOCK_MODE's
+    # rule, so the two halves make the same file whichever gets there first.
+    [ -e "$lock" ] || { : >> "$lock" && chmod 660 "$lock"; } 2>/dev/null
     # The braces are load-bearing: `exec 7< f 2>/dev/null` with no command
     # applies BOTH redirections to this shell for good, and the second one
     # sent every later line the caller wrote to stderr — the consolidator's

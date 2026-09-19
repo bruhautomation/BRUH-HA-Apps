@@ -192,8 +192,10 @@ PARTIAL_RETRY_AFTER_S = float(os.environ.get("BRAIN_PARTIAL_RETRY_AFTER_S",
 # Consecutive early deaths of workers spawned WITH the flag, and the instant
 # the current disable lapses. Module state rather than pool state because
 # `Worker.__init__` builds the argv and does not have the pool.
-_partial_early_deaths = 0
-_partial_disabled_until = 0.0
+# One dict rather than two globals rebound under `global`: CHECKS_STATE's
+# idiom, because a static reader takes a rebind it cannot see read as an
+# unused variable, and two idioms for one kind of state is the drift.
+_PARTIAL = {"deaths": 0, "disabled_until": 0.0}
 _partial_lock = threading.Lock()
 
 
@@ -202,21 +204,20 @@ def partial_messages_ok() -> bool:
     if not PARTIAL_MESSAGES_OK:
         return False              # switched off by hand, no clock on it
     with _partial_lock:
-        return time.time() >= _partial_disabled_until
+        return time.time() >= _PARTIAL["disabled_until"]
 
 
 def note_partial_early_death() -> bool:
     """A worker spawned with the flag died at once. Returns: now disabled?"""
-    global _partial_early_deaths, _partial_disabled_until
     with _partial_lock:
-        _partial_early_deaths += 1
-        if _partial_early_deaths < PARTIAL_DISABLE_AFTER:
-            log(f"worker died at spawn ({_partial_early_deaths} of "
+        _PARTIAL["deaths"] += 1
+        if _PARTIAL["deaths"] < PARTIAL_DISABLE_AFTER:
+            log(f"worker died at spawn ({_PARTIAL['deaths']} of "
                 f"{PARTIAL_DISABLE_AFTER}) — keeping "
                 "--include-partial-messages for now")
             return False
-        _partial_early_deaths = 0
-        _partial_disabled_until = time.time() + PARTIAL_RETRY_AFTER_S
+        _PARTIAL["deaths"] = 0
+        _PARTIAL["disabled_until"] = time.time() + PARTIAL_RETRY_AFTER_S
         log(f"{PARTIAL_DISABLE_AFTER} workers died at spawn — dropping "
             f"--include-partial-messages for {int(PARTIAL_RETRY_AFTER_S)}s")
         return True
@@ -224,9 +225,8 @@ def note_partial_early_death() -> bool:
 
 def note_partial_ok() -> None:
     """A worker spawned with the flag answered: the run of deaths is over."""
-    global _partial_early_deaths
     with _partial_lock:
-        _partial_early_deaths = 0
+        _PARTIAL["deaths"] = 0
 
 
 # Last-used agent profile (custom prompt + model), persisted so the spare

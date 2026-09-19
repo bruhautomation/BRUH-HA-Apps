@@ -668,6 +668,7 @@ def fired_from_state(row: dict, state: dict | None) -> float:
 
 
 __all__ = [
+    "SCHEMA",
     "ID_PREFIX", "INTENT_TTL_DAYS", "MAX_ARMED", "MAX_PER_PASS",
     "MAX_QUEUED", "MAX_REFUSED", "MAX_ROWS", "MAX_SENTENCE",
     "REQUEST_DIR", "STATUSES",

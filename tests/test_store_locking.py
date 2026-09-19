@@ -128,7 +128,10 @@ class TestLockedHelper(unittest.TestCase):
         with atomic_write.locked(self.store):
             pass
         mode = atomic_write.lock_path(self.store).stat().st_mode & 0o777
-        self.assertTrue(mode & 0o044, oct(mode))
+        # Group-readable, so the other user can take it — and never
+        # world-readable, or anyone on the box could stall a store's writers.
+        self.assertTrue(mode & 0o040, oct(mode))
+        self.assertFalse(mode & 0o007, oct(mode))
 
     def test_it_really_excludes_another_process(self):
         lock_held = threading.Event()
@@ -171,13 +174,15 @@ class TestLockedHelper(unittest.TestCase):
         lock.touch()
         import fcntl
         fd = os.open(lock, os.O_RDONLY)
-        self.addCleanup(os.close, fd)
-        fcntl.flock(fd, fcntl.LOCK_EX)
-
-        # Held by this process's own fd, so a SECOND open in the same
-        # process still contends (flock keys on the description, not the pid).
-        with atomic_write.locked(self.store, timeout=0.05) as held:
-            self.assertFalse(held)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            # Held by this process's own fd, so a SECOND open in the same
+            # process still contends (flock keys on the description, not
+            # the pid).
+            with atomic_write.locked(self.store, timeout=0.05) as held:
+                self.assertFalse(held)
+        finally:
+            os.close(fd)
             atomic_write.write_json(self.store, {"wrote": "anyway"})
         self.assertEqual(json.loads(self.store.read_text()), {"wrote": "anyway"})
 
