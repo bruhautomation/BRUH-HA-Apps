@@ -44,7 +44,9 @@ from .const import (ACTION_PREFIX, FINDING_REQUESTS_DIRNAME,
 
 _LOGGER = logging.getLogger(__name__)
 
-ACTIONS = ("fixed", "wrong", "snooze")
+# `reply` is the fourth and is not an ending: it is what was typed into
+# the notification's reply box, on its way to the case's conversation.
+ACTIONS = ("fixed", "wrong", "snooze", "reply")
 
 # What can be asked of the to-do list from out here. They are the tab's
 # own presses and nothing new: tick one off, take it off the list, put a

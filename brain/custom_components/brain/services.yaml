@@ -117,6 +117,55 @@ study:
         is studied as a one-off.
       required: false
 
+ask:
+  name: Ask a question
+  description: >-
+    Ask brAIn something about the house and get the answer back as service response
+    data — as text, and as a JSON object when you hand it the shape you want. The run
+    has Home Assistant's read-only tools (states, history, statistics, registries, the
+    measurements) unless you ask for more, so an automation can ask "which rooms are
+    below 18 °C right now?" and branch on the list rather than on a sentence.
+  fields:
+    question:
+      name: Question
+      required: true
+      example: Which rooms are below 18 °C right now, and how far below?
+      selector:
+        text:
+          multiline: true
+    schema:
+      name: Answer shape
+      description: >-
+        A JSON Schema the answer must fit, as an object or as a JSON string. The
+        validated object comes back as `data`; without one you get text only.
+      required: false
+      example: '{"type": "object", "properties": {"rooms": {"type": "array", "items": {"type": "string"}}}, "required": ["rooms"]}'
+      selector:
+        object:
+    tools:
+      name: Tools
+      description: >-
+        What the run may touch. `read_only` (the default) is Home Assistant's read-only
+        tools; `house` adds every Home Assistant tool including control; `full` adds
+        the shell and file editing.
+      required: false
+      default: read_only
+      selector:
+        select:
+          options:
+            - read_only
+            - house
+            - full
+    timeout:
+      name: Timeout
+      description: Seconds to wait for the answer (10–600).
+      required: false
+      selector:
+        number:
+          min: 10
+          max: 600
+          unit_of_measurement: s
+
 intent:
   name: Do this once
   description: >-

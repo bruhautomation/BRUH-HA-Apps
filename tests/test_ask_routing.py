@@ -102,6 +102,11 @@ class TestIntentRouting(ServerCase):
         "once the washing finishes, remind me",
         "as soon as the freezer warms up, notify me",
         "next time the bin sensor trips, send a notification",
+        # 2.3: a standing rule opens the same door and is routed by the
+        # model's own `once` answer, not by the opener.
+        "every time the front door opens after dark, turn the hall light on",
+        "always turn the heating down when nobody is home",
+        "from now on, turn the porch light off at midnight",
     ]
 
     async def test_a_question_opening_with_when_becomes_a_card(self):

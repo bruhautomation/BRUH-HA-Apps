@@ -11,6 +11,7 @@
 // chrome rather than as content.
 import { chromium } from 'playwright';
 import path from 'node:path';
+import { openView } from './tabs.mjs';
 
 const OUT = process.env.SHOT_DIR || 'shots';
 const BASE = 'http://127.0.0.1:8099/';
@@ -42,7 +43,7 @@ for (const theme of ['light', 'dark']) {
     await page.goto(BASE, { waitUntil: 'networkidle' });
     await page.waitForTimeout(900);
     if (view !== 'insights') {
-      await page.click(`.viewtab[data-view="${view}"]`);
+      await openView(page, view);
       await page.waitForTimeout(600);
     }
     // Park the pointer off-canvas: a tab still under the cursor keeps its

@@ -173,6 +173,36 @@ STUDY_SCHEMA = vol.Schema(
     }
 )
 
+# `brain.ask`: a question with an optional JSON Schema, answered with the
+# validated object as `data` beside the text. Read-only tools by default —
+# an automation asking a question is not asking for its files to be
+# edited — and `full` has to be typed. The schema may arrive as an object
+# (a YAML automation writes one naturally) or as a JSON string (a
+# template or a script that built it), and either becomes the same dict.
+
+
+def _schema_value(value):
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError as exc:
+            raise vol.Invalid(f"schema is not valid JSON: {exc}") from exc
+        if isinstance(parsed, dict):
+            return parsed
+    raise vol.Invalid("schema must be a JSON Schema object")
+
+
+ASK_SCHEMA = vol.Schema(
+    {
+        vol.Required("question"): vol.All(str, vol.Length(min=1, max=4000)),
+        vol.Optional("schema"): _schema_value,
+        vol.Optional("timeout"): vol.All(int, vol.Range(min=10, max=600)),
+        vol.Optional("tools", default="read_only"): vol.In(TASK_TOOLS),
+    }
+)
+
 INTENT_SCHEMA = vol.Schema(
     {
         vol.Required("sentence"): vol.All(str, vol.Length(min=1, max=300)),
@@ -260,9 +290,9 @@ def _make_action_handler(hass: HomeAssistant):
             # this fires for every button in the house.
             return
         action, ts = parsed
-        # A text-input action carries what was typed here. brAIn's three
-        # do not offer one, so this is empty today — reading it costs
-        # nothing and is what a "why?" button would need.
+        # A text-input action carries what was typed here: the Reply
+        # button's box (2.3). For the three verbs it is empty and is
+        # carried as the note, exactly as a reason typed on the tab is.
         reply = str((event.data or {}).get("reply_text") or "")[:500]
         await hass.async_add_executor_job(
             write_finding_request, hass, ts, action, reply, "notification",
@@ -423,6 +453,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "answer_question",
                 "study",
                 "check",
+                "ask",
+                "intent",
+                "add_todo",
                 *POWER_TOOL_SERVICES,
             ):
                 if hass.services.has_service(DOMAIN, service):
@@ -870,7 +903,7 @@ def _register_services(hass: HomeAssistant) -> None:
         tools = call.data.get("tools", DEFAULT_TASK_TOOLS)
 
         try:
-            result = await bridge.async_send_task(
+            answer = await bridge.async_send_task_full(
                 prompt=prompt,
                 notify=notify,
                 notify_entity=notify_entity,
@@ -878,9 +911,25 @@ def _register_services(hass: HomeAssistant) -> None:
                 tools=tools,
             )
         except TimeoutError:
-            result = "Claude task did not complete in time."
+            answer = {"text": "Claude task did not complete in time.",
+                      "data": None}
 
-        return {"response": result}
+        return {"response": answer["text"], "data": answer.get("data")}
+
+    async def handle_ask(call: ServiceCall):
+        """A question, and optionally the shape the answer must take."""
+        bridge = _get_bridge(hass)
+        schema = call.data.get("schema")
+        try:
+            answer = await bridge.async_send_task_full(
+                prompt=call.data["question"],
+                timeout=call.data.get("timeout"),
+                tools=call.data.get("tools", "read_only"),
+                schema=schema if isinstance(schema, dict) else None,
+            )
+        except TimeoutError:
+            answer = {"text": "Claude did not answer in time.", "data": None}
+        return {"response": answer["text"], "data": answer.get("data")}
 
     async def handle_run_insight(call: ServiceCall):
         name = (call.data.get("name") or "").strip().lower()
@@ -1052,6 +1101,14 @@ def _register_services(hass: HomeAssistant) -> None:
         "study",
         handle_study,
         schema=STUDY_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "ask",
+        handle_ask,
+        schema=ASK_SCHEMA,
+        **extra_kwargs,
     )
 
     hass.services.async_register(

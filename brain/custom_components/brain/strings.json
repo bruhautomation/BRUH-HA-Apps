@@ -1195,6 +1195,28 @@
         }
       }
     },
+    "ask": {
+      "name": "Ask a question",
+      "description": "Ask brAIn something about the house and get the answer back as service response data — as text, and as a JSON object when you hand it the shape you want. Read-only tools by default.",
+      "fields": {
+        "question": {
+          "name": "Question",
+          "description": "What to ask — for example \"Which rooms are below 18 °C right now?\"."
+        },
+        "schema": {
+          "name": "Answer shape",
+          "description": "A JSON Schema the answer must fit, as an object or a JSON string. The validated object comes back as `data`."
+        },
+        "tools": {
+          "name": "Tools",
+          "description": "`read_only` (default), `house` (every Home Assistant tool, including control) or `full` (the shell and file editing too)."
+        },
+        "timeout": {
+          "name": "Timeout",
+          "description": "Seconds to wait for the answer (10–600)."
+        }
+      }
+    },
     "intent": {
       "name": "Do this once",
       "description": "Say one thing you want to happen next time. brAIn works out the automation and offers it on the Proposals tab; it runs once and disarms itself.",

@@ -193,8 +193,11 @@ class TestFindingsWatcher(WatcherCase):
             {"ts": 1, "text": "Old", "severity": "warning"},
         ])
         self._poll(watcher)
-        self.assertEqual(len(self.hass.bus.fired), 1)
-        event, data = self.hass.bus.fired[0]
+        # One moment, two names: `brain_finding` for every automation
+        # written against it, `brain_case` for the catalogue.
+        self.assertEqual([e for e, _d in self.hass.bus.fired],
+                         ["brain_case", "brain_finding"])
+        event, data = self.hass.bus.fired[1]
         self.assertEqual(event, "brain_finding")
         self.assertEqual(data["finding"], "Hall battery dead")
         self.assertEqual(data["severity"], "critical")
@@ -202,21 +205,80 @@ class TestFindingsWatcher(WatcherCase):
         self.assertFalse(data["fixable"])
         # the logbook line reads as a sentence
         self.assertIn("Hall battery dead", data["message"])
+        _event, case = self.hass.bus.fired[0]
+        self.assertEqual(case["case_id"], "f:2")
+        self.assertEqual(case["kind"], "problem")
+        self.assertEqual(case["claim"], "Hall battery dead")
+        self.assertEqual(case["status"], "open")
+        self.assertIn("Hall battery dead", case["message"])
 
         # same content again: nothing new, nothing fired
         self._poll(watcher)
+        self.assertEqual(len(self.hass.bus.fired), 2)
+
+    def test_a_case_leaving_the_feed_fires_case_ended_and_nothing_else(self):
+        self._write([{"ts": 1, "text": "Old", "severity": "warning",
+                      "kind": "problem", "claim": "The hall sensor is dead"}])
+        watcher = findings.FindingsWatcher(self.hass)
+        watcher.prime()
+        self._poll(watcher)            # the first poll takes the roster
+        self._write([])
+        self._poll(watcher)
+        self.assertEqual([e for e, _d in self.hass.bus.fired],
+                         ["brain_case_ended"])
+        _event, data = self.hass.bus.fired[0]
+        self.assertEqual(data["case_id"], "f:1")
+        self.assertEqual(data["claim"], "The hall sensor is dead")
+        self.assertIn("closed", data["message"])
+        # ...and never `brain_finding`, which is for a case OPENING.
+        self.assertNotIn("brain_finding", [e for e, _d in self.hass.bus.fired])
+
+    def test_a_row_that_becomes_fixed_fires_change(self):
+        self._write([{"ts": 1, "text": "Porch light stuck on",
+                      "severity": "warning", "status": "open"}])
+        watcher = findings.FindingsWatcher(self.hass)
+        watcher.prime()
+        self._poll(watcher)
+        self._write([{"ts": 1, "text": "Porch light stuck on",
+                      "severity": "warning", "status": "fixed"}])
+        self._poll(watcher)
+        self.assertEqual([e for e, _d in self.hass.bus.fired], ["brain_change"])
+        _event, data = self.hass.bus.fired[0]
+        self.assertEqual(data["status"], "fixed")
+        self.assertIn("changed the house", data["message"])
+        # A second poll over the same fixed row is not a second change.
+        self._poll(watcher)
         self.assertEqual(len(self.hass.bus.fired), 1)
 
-    def test_a_settled_finding_leaves_the_watermark_quietly(self):
-        """Ids leave the mirror when settled; the watcher forgets them
-        without firing anything — the add-on's settled ledger is what stops
-        the same problem re-entering the list under the same text."""
+    def test_a_restart_does_not_replay_endings_either(self):
+        """The roster is taken on the first poll after a prime, so a row
+        that left while Home Assistant was down is not announced as
+        having closed now."""
         self._write([{"ts": 1, "text": "Old", "severity": "warning"}])
         watcher = findings.FindingsWatcher(self.hass)
         watcher.prime()
         self._write([])
         self._poll(watcher)
         self.assertEqual(self.hass.bus.fired, [])
+
+    def test_a_settled_finding_leaves_the_watermark_quietly(self):
+        """Ids leave the mirror when settled; the watcher forgets them
+        without firing `brain_finding` — the add-on's settled ledger is
+        what stops the same problem re-entering the list under the same
+        text. What it does fire is `brain_case_ended`, once."""
+        self._write([{"ts": 1, "text": "Old", "severity": "warning"}])
+        watcher = findings.FindingsWatcher(self.hass)
+        watcher.prime()
+        self._poll(watcher)
+        self._write([])
+        self._poll(watcher)
+        self.assertEqual([e for e, _d in self.hass.bus.fired],
+                         ["brain_case_ended"])
+        self._write([{"ts": 1, "text": "Old", "severity": "warning"}])
+        self._poll(watcher)
+        # Back again under the same id is a case opening, not a replay.
+        self.assertEqual([e for e, _d in self.hass.bus.fired][1:],
+                         ["brain_case", "brain_finding"])
 
     def test_unreadable_state_changes_nothing(self):
         self._write([{"ts": 1, "text": "Old", "severity": "warning"}])
@@ -472,7 +534,8 @@ class TestFindingsBecomeRepairs(MirrorCase):
             self._poll(watcher)
         finally:
             REGISTRY.async_create_issue = original
-        self.assertEqual([d["finding"] for _e, d in self.hass.bus.fired],
+        self.assertEqual([d["finding"] for e, d in self.hass.bus.fired
+                          if e == "brain_finding"],
                          [boom["text"]])
 
     def test_unloading_takes_the_issues_with_it(self):

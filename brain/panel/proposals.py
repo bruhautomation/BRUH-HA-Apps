@@ -255,6 +255,11 @@ def add(obj: dict) -> dict | None:
         # same reason a playbook's list does, and `key_for` hashes the
         # config and never this.
         "intent": obj.get("intent"),
+        # A standing rule asked for in a sentence carries the sentence,
+        # the restatement and the grade against the person ledger, for
+        # the reason a one-off carries `intent`: `key_for` hashes the
+        # config and never this.
+        "spoken": obj.get("spoken"),
         "status": "proposed",
         "note": "",
     }
@@ -423,6 +428,11 @@ def memory_line(row: dict, status: str) -> str:
     """
     title = row.get("title") or "a proposal"
     if status == "accepted":
+        if row.get("spoken"):
+            # Their own sentence, not brAIn's suggestion: the record has
+            # to say who asked, or memory learns that brAIn proposed a
+            # rule the homeowner wrote.
+            return f"Asked brAIn for an automation and accepted it: {title}"
         return f"Accepted brAIn's suggestion: {title}"
     note = (row.get("note") or "").strip()
     if not note:

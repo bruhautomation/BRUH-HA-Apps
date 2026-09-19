@@ -333,6 +333,12 @@ MEMORYMD
     # work paid for and thrown away — so each face carries a large
     # runaway guard of its own now and no option feeds it.
     export BRAIN_ASSIST_TOOL_ACCESS="$assist_tool_access"
+    # What voice may see: Home Assistant's own exposure list (the default)
+    # or the whole house. Exported for the pool and written to the env
+    # file for the classic listener, exactly as assist_tool_access is.
+    local assist_exposure
+    assist_exposure=$(bashio::config 'assist_exposure' 'exposed')
+    export BRAIN_ASSIST_EXPOSURE="$assist_exposure"
 
     # Memory / learning options — exported here too (not just written to the
     # env file) so the worker pool and listeners launched by this script
@@ -424,6 +430,7 @@ export HA_TOKEN="${SUPERVISOR_TOKEN}"
 export HA_BASE_URL="http://supervisor/core/api"
 export SUPERVISOR_API_URL="http://supervisor"
 export BRAIN_ASSIST_TOOL_ACCESS="${assist_tool_access}"
+export BRAIN_ASSIST_EXPOSURE="${assist_exposure}"
 export BRAIN_ASSIST_LEARNING="${assist_learning}"
 export BRAIN_MEMORY_INJECTION="${memory_injection}"
 export BRAIN_MEMORY_MAX_KB="${memory_max_kb}"

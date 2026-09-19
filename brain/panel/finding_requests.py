@@ -57,13 +57,16 @@ REQUEST_DIR = Path(os.environ.get(
 # house", and "not now". Anything else — a fix run, a regeneration — is
 # work rather than an answer, and belongs behind the panel where the
 # thing it starts can be watched.
-ACTIONS = ("fixed", "wrong", "snooze")
+ACTIONS = ("fixed", "wrong", "snooze", "reply")
 
 # ...and the tab's own verb for each, so the two front doors settle a
 # finding through exactly the same code. "fixed" is the tab's "done" —
 # a person saying they handled it — and the wording differs only because
 # a button says "I've fixed it" while an action id has to be one word.
 VERBS = {"fixed": "done", "wrong": "wrong"}
+# `reply` and `snooze` are deliberately absent: neither ends a finding.
+# A reply is a turn in the case's conversation and is answered, not
+# applied.
 
 # A request is a few hundred bytes. Anything larger is not one.
 MAX_BYTES = 16 * 1024

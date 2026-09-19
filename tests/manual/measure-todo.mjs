@@ -29,6 +29,7 @@
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openView } from './tabs.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
@@ -156,7 +157,7 @@ for (const { width, touch } of CASES) {
   page.on('pageerror', (error) => note(`${width}px`, `page error: ${error.message}`));
   await page.addInitScript(STUB);
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
-  await page.click('.viewtab[data-view="todo"]');
+  await openView(page, 'todo');
   await page.waitForSelector('#todoList .finding');
 
   const open = await read(page);

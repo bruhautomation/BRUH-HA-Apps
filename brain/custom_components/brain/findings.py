@@ -34,7 +34,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 
 from .const import (DOMAIN, EVENT_FINDING, FINDINGS_STATE_FILENAME,
-                    SHARED_DIR, TODO_STATE_FILENAME)
+                    SHARED_DIR, TODO_STATE_FILENAME,
+    EVENT_CASE, EVENT_CASE_ENDED, EVENT_CHANGE,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -192,6 +194,31 @@ def _placeholders(row: dict) -> tuple:
     )
 
 
+
+def _case_payload(finding: dict) -> dict:
+    """The case vocabulary, off a mirror row. One shape for all three events.
+
+    `case_id` is the Home feed's own (`f:<ts>`), so a listener can hand it
+    straight back to `brain.case` presses and to the panel's deep link;
+    `kind` and `claim` are what the Resident wrote where it was the
+    producer, and the finding's own text otherwise.
+    """
+    ts = int(finding.get("ts") or 0)
+    return {
+        "case_id": f"f:{ts}",
+        "ts": ts,
+        "kind": str(finding.get("kind") or "problem"),
+        "claim": str(finding.get("claim") or finding.get("text") or ""),
+        "finding": str(finding.get("text") or ""),
+        "severity": str(finding.get("severity") or "warning"),
+        "status": str(finding.get("status") or "open"),
+        "entity_id": str(finding.get("entity_id") or ""),
+        "fixable": bool(finding.get("fixable", True)),
+        "source": str(finding.get("source_title") or ""),
+        "name": "brAIn",
+    }
+
+
 class FindingsWatcher:
     """Fires a ``brain_finding`` event for each newly-reported finding, and
     keeps a Repairs issue for each one that is waiting on a person.
@@ -216,6 +243,7 @@ class FindingsWatcher:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
         self._seen: set[int] | None = None
+        self._last: dict | None = None
         # ts -> the (severity, placeholders) last raised for it; see
         # `_placeholders` for why the comparison is worth keeping.
         self._issues: dict[int, tuple] = {}
@@ -254,8 +282,32 @@ class FindingsWatcher:
         # here keeps the watermark from growing forever, and cannot re-fire
         # a settled finding because the add-on's settled ledger stops the
         # same problem ever re-entering the list.
+        before = self._last if isinstance(self._last, dict) else {}
+        gone = [before[ts] for ts in sorted(before) if ts not in current]
+        # A row whose status moved to `fixed` is brAIn having changed the
+        # house — the one moment an automation may want to react to with
+        # something other than a notification. A row that ARRIVES fixed
+        # counts too: a fix can land between two polls.
+        changed = [current[ts] for ts in sorted(current)
+                   if str(current[ts].get("status") or "") == "fixed"
+                   and str((before.get(ts) or {}).get("status") or "") != "fixed"]
         self._seen = set(current)
+        self._last = dict(current)
+        for finding in gone:
+            self.hass.bus.async_fire(EVENT_CASE_ENDED, {
+                **_case_payload(finding),
+                "message": f"closed: {finding.get('text')}",
+            })
+        for finding in changed:
+            self.hass.bus.async_fire(EVENT_CHANGE, {
+                **_case_payload(finding),
+                "message": f"changed the house: {finding.get('text')}",
+            })
         for finding in fresh:
+            self.hass.bus.async_fire(EVENT_CASE, {
+                **_case_payload(finding),
+                "message": f"opened a case: {finding.get('text')}",
+            })
             self.hass.bus.async_fire(EVENT_FINDING, {
                 "ts": int(finding.get("ts") or 0),
                 "finding": str(finding.get("text") or ""),
