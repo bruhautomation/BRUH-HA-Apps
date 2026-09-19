@@ -27,6 +27,104 @@ api_get() {
         "$url" 2>/dev/null
 }
 
+# The learned-memory excerpt spliced into /config/CLAUDE.md.
+#
+# This used to be `head -c 4096`, which is a raw BYTE cut: it lands
+# mid-fact, it can land mid-UTF-8-character (leaving a byte sequence no
+# reader can decode), and on a sectioned document it never reaches the
+# last section — `## Device notes` was invisible to the terminal, which is
+# the most knowledgeable reader brAIn has. `categories.memory_excerpt`
+# cuts on a line boundary for exactly this reason and has since it was
+# written; this is the shell half of the same rule.
+#
+# Two properties, and the second is why this is not simply `head -n`:
+#
+#   * the cut is always between lines, so a fact is whole or absent and a
+#     multibyte character can never be split — a newline cannot occur
+#     inside a UTF-8 sequence, so a line boundary is byte-safe by
+#     construction;
+#   * every `## ` section keeps at least its heading and its first line
+#     before any section gets a second one, because a short excerpt from
+#     every section beats a long one from the first, which is the failure
+#     above.
+#
+# The budget is in BYTES: `BRAIN_CONTEXT_MEMORY_BYTES`, default 16 KB. An
+# insight card is handed up to 34 KB of memory (`ha_data.MEMORY_CHARS`);
+# this file is read at the top of every terminal and chat session, so it
+# takes a smaller share by default and the variable is the way up.
+memory_excerpt() {
+    local file="$1"
+    local budget="${2:-${BRAIN_CONTEXT_MEMORY_BYTES:-16384}}"
+
+    [ -s "$file" ] || return 0
+    case "$budget" in
+        ''|*[!0-9]*) budget=16384 ;;
+    esac
+
+    # LC_ALL=C so awk's length() counts bytes, which is what the budget is
+    # in: under a UTF-8 locale it counts characters instead, and a document
+    # full of accented names would quietly overshoot.
+    LC_ALL=C awk -v budget="$budget" '
+        {
+            line[NR] = $0
+            len[NR] = length($0) + 1
+            total += len[NR]
+            if (substr($0, 1, 3) == "## ") head[NR] = 1
+        }
+        END {
+            if (NR == 0) exit
+            if (total <= budget) {
+                for (i = 1; i <= NR; i++) print line[i]
+                exit
+            }
+            note = "_(memory excerpt trimmed to fit — `brain memory list` shows the whole document)_"
+            room = budget - (length(note) + 1)
+            if (room < 0) room = 0
+
+            # The floor: every heading, plus the first non-blank line under
+            # it, reserved before anything else is spent.
+            for (i = 1; i <= NR; i++) {
+                if (!head[i]) continue
+                keep[i] = 1
+                floor_bytes += len[i]
+                for (j = i + 1; j <= NR; j++) {
+                    if (head[j]) break
+                    if (line[j] ~ /^[ \t]*$/) continue
+                    keep[j] = 1
+                    floor_bytes += len[j]
+                    break
+                }
+            }
+
+            if (floor_bytes > room) {
+                # Not even one line per section fits. Fall back to whole
+                # lines from the top — still never a cut mid-line.
+                used = 0
+                for (i = 1; i <= NR; i++) {
+                    if (used + len[i] > room) break
+                    print line[i]
+                    used += len[i]
+                }
+                print note
+                exit
+            }
+
+            # Spend what is left in document order, with every section floor
+            # already held back, so a long first section cannot eat the last
+            # heading in the document.
+            used = floor_bytes
+            for (i = 1; i <= NR; i++) {
+                if (keep[i]) continue
+                if (used + len[i] > room) break
+                keep[i] = 1
+                used += len[i]
+            }
+            for (i = 1; i <= NR; i++) if (keep[i]) print line[i]
+            print note
+        }
+    ' "$file"
+}
+
 generate_context() {
     bashio::log.info "Generating Home Assistant context for Claude Code..."
 
@@ -193,7 +291,7 @@ PYEOF
 > (facts from voice conversations, services, and other BRUH add-ons).
 > View with \`brain memory list\`, edit with \`brain memory edit\`.
 
-$(head -c 4096 "$memory_file")
+$(memory_excerpt "$memory_file")
 "
     fi
 

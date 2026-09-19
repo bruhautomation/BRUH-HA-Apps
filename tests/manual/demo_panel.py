@@ -44,6 +44,17 @@ env = {
     "BRAIN_MEMORY_INBOX": str(DEMO / "memory" / "inbox"),
     "BRAIN_MEMORY_MARKER": str(DEMO / "memory" / ".last_consolidated"),
     "BRAIN_HYPOTHESES_FILE": str(DEMO / "memory" / "hypotheses.jsonl"),
+    # The other three stores the Home feed derives a case from, plus the
+    # two files the Resident keeps. Without these they default under /data,
+    # which a demo cannot write — and a feed with only findings on it is a
+    # screenshot of a panel this release does not ship.
+    "BRAIN_TODO_FILE": str(DEMO / "todo.json"),
+    "BRAIN_PROPOSALS_FILE": str(DEMO / "proposals.json"),
+    "BRAIN_PROPOSALS_SETTLED": str(DEMO / "proposals-settled.json"),
+    "BRAIN_PROPOSALS_SHARED": str(DEMO / "shared" / "proposals.json"),
+    "BRAIN_CASES_SNOOZE_FILE": str(DEMO / "cases-snooze.json"),
+    "BRAIN_RESIDENT_LEDGER_FILE": str(DEMO / "resident-ledger.json"),
+    "BRAIN_RESIDENT_WATCH_FILE": str(DEMO / "resident-watch.json"),
     "BRAIN_ONBOARDING_STATE": str(DEMO / "onboarding.json"),
     "BRAIN_STUDY_REQUESTS": str(DEMO / "study_requests"),
     "BRAIN_PROMPTS_FILE": str(DEMO / "prompts.json"),
@@ -71,6 +82,9 @@ import settings_store    # noqa: E402
 import findings_store    # noqa: E402
 import knowledge_store   # noqa: E402
 import hypotheses        # noqa: E402
+import proposals         # noqa: E402
+import resident          # noqa: E402
+import todo_store        # noqa: E402
 import usage_store       # noqa: E402
 
 # Nothing here may reach a real Claude CLI.
@@ -145,6 +159,26 @@ findings_store.add_many(demo.FINDINGS)
 
 for text, topic in demo.HYPOTHESES:
     hypotheses.propose(text, topic=topic)
+
+for item in demo.TODOS:
+    todo_store.add(item["text"], **{k: v for k, v in item.items() if k != "text"})
+
+for row in demo.PROPOSALS:
+    proposals.add(row)
+
+# A day of attention, so the line under the Home feed reads as a house that
+# is being watched rather than as a loop that has never run. The numbers are
+# a believable weekday: the cheap tier looks every ten minutes and most of
+# what it sees is worth nothing, three signals were worth going and looking
+# at, and nothing was changed — which is what the third number is FOR.
+_ledger = resident.Ledger()
+for _ in range(96):
+    _ledger.record(resident.JOB_FIRST_LOOK, 2_800)
+for _ in range(3):
+    _ledger.record(resident.JOB_INVESTIGATE, 21_000)
+resident.watch({"subject": "sensor.loft_temperature", "kind": "baseline",
+                "repeats": 1},
+               "one reading three spreads out is not a fault yet")
 
 # The ledger and the inbox describe the same three discoveries, because that
 # is what an unconsolidated pass actually leaves behind.

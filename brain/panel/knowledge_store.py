@@ -16,8 +16,10 @@ itself: which discoveries it has already announced, and which questions
 it has already put to the homeowner.
 
 ``prompt_block()`` therefore renders almost none of it — only the
-rejected questions, because "that was the wrong track" is something the
-model cannot work out for itself.
+rejected lines of inquiry, because "that was the wrong track" is something
+the model cannot work out for itself. Those are read from BOTH this store
+and the hypothesis queue, since a rejection lands in one, the other, or
+both depending on which surface it was given on; see its docstring.
 
 File shape:
   {"facts": [{"ts": 1752…, "text": "...", "source": "insights",
@@ -39,6 +41,7 @@ import time
 import unicodedata
 
 import atomic_write
+import hypotheses
 
 KNOWLEDGE_FILE = os.environ.get("BRAIN_KNOWLEDGE_FILE", "/data/knowledge.json")
 
@@ -86,6 +89,20 @@ def _write(data: dict) -> None:
     atomic_write.write_json(KNOWLEDGE_FILE, data)
 
 
+def _locked():
+    """This store's lock, read off the module attribute at call time.
+
+    Every mutation below is a read-modify-write of one JSON file, and they
+    run on the panel's thread pool: ``asyncio.to_thread`` means two requests
+    really are in two threads, and two `add_fact` calls that overlap both
+    load the same list and both write their own copy of it back — the
+    second one lands and the first one's fact is simply not in the file.
+    An in-process lock would not be enough even so: the consolidator and
+    the study watcher are separate processes reading the same path.
+    """
+    return atomic_write.locked(KNOWLEDGE_FILE)
+
+
 def _unique_ts(used: set[int]) -> int:
     ts = int(time.time())
     while ts in used:
@@ -125,19 +142,20 @@ def add_fact(text: str, source: str = "insights", category: str = "") -> tuple[d
     key = normalize(text)
     if not key:
         return None, False
-    data = _load()
-    for f in data["facts"]:
-        if normalize(f.get("text", "")) == key:
-            return f, False
-    entry = {
-        "ts": _unique_ts({int(f.get("ts") or 0) for f in data["facts"]}),
-        "text": text,
-        "source": str(source or "insights")[:32],
-        "category": str(category or "")[:64],
-    }
-    data["facts"].append(entry)
-    data["facts"] = data["facts"][-MAX_FACTS:]
-    _write(data)
+    with _locked():
+        data = _load()
+        for f in data["facts"]:
+            if normalize(f.get("text", "")) == key:
+                return f, False
+        entry = {
+            "ts": _unique_ts({int(f.get("ts") or 0) for f in data["facts"]}),
+            "text": text,
+            "source": str(source or "insights")[:32],
+            "category": str(category or "")[:64],
+        }
+        data["facts"].append(entry)
+        data["facts"] = data["facts"][-MAX_FACTS:]
+        _write(data)
     return entry, True
 
 
@@ -196,27 +214,28 @@ def record_question(text: str, category: str = "") -> dict | None:
     key = normalize(text)
     if not key:
         return None
-    data = _load()
     now = int(time.time())
-    for q in data["questions"]:
-        if normalize(q.get("text", "")) == key:
-            q["asked_count"] = int(q.get("asked_count") or 1) + 1
-            q["last_asked"] = now
-            _write(data)
-            return q
-    entry = {
-        "ts": _unique_ts({int(q.get("ts") or 0) for q in data["questions"]}),
-        "text": text,
-        "category": str(category or "")[:64],
-        "status": "open",
-        "answer": "",
-        "answered_at": 0,
-        "asked_count": 1,
-        "last_asked": now,
-    }
-    data["questions"].append(entry)
-    data["questions"] = data["questions"][-MAX_QUESTIONS:]
-    _write(data)
+    with _locked():
+        data = _load()
+        for q in data["questions"]:
+            if normalize(q.get("text", "")) == key:
+                q["asked_count"] = int(q.get("asked_count") or 1) + 1
+                q["last_asked"] = now
+                _write(data)
+                return q
+        entry = {
+            "ts": _unique_ts({int(q.get("ts") or 0) for q in data["questions"]}),
+            "text": text,
+            "category": str(category or "")[:64],
+            "status": "open",
+            "answer": "",
+            "answered_at": 0,
+            "asked_count": 1,
+            "last_asked": now,
+        }
+        data["questions"].append(entry)
+        data["questions"] = data["questions"][-MAX_QUESTIONS:]
+        _write(data)
     return entry
 
 
@@ -230,50 +249,53 @@ def answer_question(text: str, answer: str) -> dict | None:
     key = normalize(text)
     if not key:
         return None
-    data = _load()
     now = int(time.time())
-    for q in data["questions"]:
-        if normalize(q.get("text", "")) == key:
-            q["status"] = "answered"
-            q["answer"] = answer
-            q["answered_at"] = now
-            _write(data)
-            return q
-    entry = {
-        "ts": _unique_ts({int(q.get("ts") or 0) for q in data["questions"]}),
-        "text": str(text).strip()[:MAX_TEXT_CHARS],
-        "category": "",
-        "status": "answered",
-        "answer": answer,
-        "answered_at": now,
-        "asked_count": 1,
-        "last_asked": now,
-    }
-    data["questions"].append(entry)
-    data["questions"] = data["questions"][-MAX_QUESTIONS:]
-    _write(data)
+    with _locked():
+        data = _load()
+        for q in data["questions"]:
+            if normalize(q.get("text", "")) == key:
+                q["status"] = "answered"
+                q["answer"] = answer
+                q["answered_at"] = now
+                _write(data)
+                return q
+        entry = {
+            "ts": _unique_ts({int(q.get("ts") or 0) for q in data["questions"]}),
+            "text": str(text).strip()[:MAX_TEXT_CHARS],
+            "category": "",
+            "status": "answered",
+            "answer": answer,
+            "answered_at": now,
+            "asked_count": 1,
+            "last_asked": now,
+        }
+        data["questions"].append(entry)
+        data["questions"] = data["questions"][-MAX_QUESTIONS:]
+        _write(data)
     return entry
 
 
 def dismiss_question(ts: int) -> bool:
     """Retire a question without answering — it will never be re-asked."""
-    data = _load()
-    for q in data["questions"]:
-        if int(q.get("ts") or 0) == ts:
-            q["status"] = "dismissed"
-            _write(data)
-            return True
+    with _locked():
+        data = _load()
+        for q in data["questions"]:
+            if int(q.get("ts") or 0) == ts:
+                q["status"] = "dismissed"
+                _write(data)
+                return True
     return False
 
 
 def remove_question(ts: int) -> bool:
     """Forget a question entirely (it becomes askable again)."""
-    data = _load()
-    kept = [q for q in data["questions"] if int(q.get("ts") or 0) != ts]
-    if len(kept) == len(data["questions"]):
-        return False
-    data["questions"] = kept
-    _write(data)
+    with _locked():
+        data = _load()
+        kept = [q for q in data["questions"] if int(q.get("ts") or 0) != ts]
+        if len(kept) == len(data["questions"]):
+            return False
+        data["questions"] = kept
+        _write(data)
     return True
 
 
@@ -295,13 +317,58 @@ def prompt_block() -> str:
     track here" is information the model cannot derive on its own. It is
     capped hard — an unbounded dead-ends section is exactly the runaway
     this redesign removed.
+
+    **And that list is the union of two stores, because a rejection is
+    written in two places and only one route wrote both.** Turning a guess
+    down is bookkept as a dismissed `question` here *and* as a rejected
+    entry in `hypotheses.jsonl`, and only the panel's own route writes the
+    pair: `brain memory reject` on the CLI and `brain-learn.sh`'s fallback
+    path write the hypothesis queue and nothing else. So a correction given
+    while the panel was down — which is exactly when somebody reaches for
+    the CLI — reached the queue, reached the consolidator, and never
+    reached a single card prompt, for ever. The fix is one derivation
+    rather than a second writer: there is one reader, it reads both, and it
+    therefore cannot miss either. Deduped on the CLAIM (a hypothesis line
+    carries the homeowner's reason after ``DEAD_END_SEP``, which is the
+    same rejection said at more length, not a second one).
     """
-    dismissed = list_questions("dismissed")[-PROMPT_DEAD_ENDS:]
-    if not dismissed:
+    lines: list[str] = [q["text"] for q in
+                        reversed(list_questions("dismissed")[-PROMPT_DEAD_ENDS:])]
+    try:
+        # Newest last there, newest first here, so the two halves interleave
+        # in one order rather than one of them reading backwards.
+        lines += list(reversed(hypotheses.dead_ends(PROMPT_DEAD_ENDS)))
+    except OSError:
+        # An unreadable queue is a thinner prompt, never a card that failed
+        # to generate: this is the half that has another half.
+        pass
+
+    at: dict[str, int] = {}
+    kept: list[str] = []
+    for line in lines:
+        key = normalize(line.split(hypotheses.DEAD_END_SEP, 1)[0])
+        if not key:
+            continue
+        if key in at:
+            # The same claim from both stores. The hypothesis half may carry
+            # the homeowner's own reason, and the reason is the part that
+            # generalises — "no" retires one claim, the sentence explaining
+            # it rules out everything built on the same mistake — so the
+            # line that has one replaces the line that does not.
+            if (hypotheses.DEAD_END_SEP in line
+                    and hypotheses.DEAD_END_SEP not in kept[at[key]]):
+                kept[at[key]] = line
+            continue
+        at[key] = len(kept)
+        kept.append(line)
+        if len(kept) >= PROMPT_DEAD_ENDS:
+            break
+    if not kept:
         return ""
+
     parts = ["LINES OF INQUIRY THE HOMEOWNER REJECTED — you were on the wrong "
              "track. Don't revisit these or build analysis around them:"]
-    parts += [f"- {q['text']}" for q in reversed(dismissed)]
+    parts += [f"- {line}" for line in kept]
     block = "\n".join(parts)
     if len(block) > PROMPT_MAX_CHARS:
         block = block[:PROMPT_MAX_CHARS].rsplit("\n", 1)[0]

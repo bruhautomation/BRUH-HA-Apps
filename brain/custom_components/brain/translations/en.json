@@ -155,6 +155,36 @@
         }
       }
     },
+    "run_task": {
+      "name": "Run task",
+      "description": "Run a Claude task with optional completion notification.",
+      "fields": {
+        "prompt": {
+          "name": "Prompt",
+          "description": "The task prompt for Claude."
+        },
+        "model": {
+          "name": "Model",
+          "description": "Claude model override (default, sonnet, opus, haiku)."
+        },
+        "notify": {
+          "name": "Notify on completion",
+          "description": "Send a persistent notification when the task completes."
+        },
+        "notify_entity": {
+          "name": "Notification entity",
+          "description": "The notify entity to use (e.g. notify.mobile_app_phone)."
+        },
+        "timeout": {
+          "name": "Timeout",
+          "description": "Maximum seconds to wait for the task to complete (default 120)."
+        },
+        "tools": {
+          "name": "Tools",
+          "description": "What this task is allowed to touch. full (default) keeps today's behaviour: the shell, file edits, web access and every Home Assistant tool. house drops the shell, file edits and the web and leaves every Home Assistant tool. read_only is the same list the scheduled analyst runs with \u2014 it can look at anything and change nothing."
+        }
+      }
+    },
     "create_area": {
       "name": "Create area",
       "description": "Create a new area. Returns the new area_id as response data.",

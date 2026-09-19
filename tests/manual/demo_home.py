@@ -262,6 +262,42 @@ HYPOTHESES = [
      + "offline in July is not urgent - right?", "device reliability"),
 ]
 
+# Work this house has already agreed to. A chore is the fourth kind of case
+# and it outlives the card that raised it, so the demo carries one of each
+# origin: a moved finding, which is holding a suppression open on brAIn's
+# side, and one somebody typed in, which is not.
+TODOS = [
+    {"text": "Replace the CR2032 in the garage door sensor",
+     "detail": "Forecast to reach 0% around 3 October",
+     "fix": "CR2032 — the pack is in the utility drawer",
+     "entity_id": "sensor.garage_door_battery", "severity": "warning",
+     "origin": "finding", "source": "check:forecast.decline",
+     "source_title": "Battery forecast",
+     "finding_key": "garage door sensor battery"},
+    {"text": "Move the loft sensor off the joist", "detail": "",
+     "fix": "", "entity_id": "", "severity": "info", "origin": "hand",
+     "source": "", "source_title": "", "finding_key": ""},
+]
+
+# What could be better, which is the one list in the panel that is not
+# about something being wrong. Each is a change with the evidence behind it,
+# and each rides the Home feed as a `Could be better` case as well as
+# keeping its own tab.
+PROPOSALS = [
+    {"kind": "routine", "source": "routines",
+     "title": "Turn the porch light off at 23:10 on weekdays",
+     "why": "You have done it by hand on nine of the last twelve weekdays, "
+            "between 23:02 and 23:18.",
+     "config": {"trigger": [{"platform": "time", "at": "23:10:00"}],
+                "action": [{"action": "light.turn_off",
+                            "target": {"entity_id": "light.porch"}}]}},
+    {"kind": "condition", "source": "conditions",
+     "title": "Stop the away-lighting rule running on weekday mornings",
+     "why": "You have put those lights back on eleven weekday mornings "
+            "between 07:10 and 08:40, and never at a weekend.",
+     "config": {"id": "away_lighting", "trigger": [{"platform": "state"}]}},
+]
+
 
 # ------------------------------------------------------- chat transcript
 def chat_events():

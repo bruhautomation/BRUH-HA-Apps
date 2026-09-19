@@ -521,6 +521,35 @@ class TestSilenceSurfaces(PassCase):
         finally:
             usage_store.budget_state = old
 
+    def test_a_day_that_has_spent_its_runs_waits_rather_than_surfacing(self):
+        """`MAX_PER_DAY` is `MAX_BATCH` one clock up: past it the queue
+        waits for tomorrow, spends nothing, and shows nothing unjudged —
+        `STALE_S` is what shows a queue that stopped draining."""
+        created = self.file(2)
+        self.server.TRIAGE_STATE["day"] = time.strftime("%Y-%m-%d")
+        self.server.TRIAGE_STATE["runs"] = triage.MAX_PER_DAY
+        self.reply([{"id": 1, "verdict": "held", "reason": "x"},
+                    {"id": 2, "verdict": "held", "reason": "x"}])
+        surfaced = self.run_pass()
+        self.assertEqual(surfaced, [])
+        self.assertEqual(self.prompts, [], "a capped day spent a run")
+        self.assertEqual(set(self.statuses()), {"triaging"})
+        self.assertEqual(len(findings_store.awaiting_triage()), len(created))
+        # A new local day resets the count and the drain runs again.
+        self.server.TRIAGE_STATE["day"] = "1970-01-01"
+        self.run_pass()
+        self.assertEqual(len(self.prompts), 1)
+        self.assertEqual(self.server.TRIAGE_STATE["runs"], 1)
+
+    def test_every_run_counts_against_the_day(self):
+        self.server.TRIAGE_STATE["day"] = ""
+        self.file(1)
+        self.reply([{"id": 1, "verdict": "elevated", "reason": "x"}])
+        self.run_pass()
+        self.assertEqual(self.server.TRIAGE_STATE["runs"], 1)
+        self.assertEqual(self.server.TRIAGE_STATE["day"],
+                         time.strftime("%Y-%m-%d"))
+
     def test_the_run_failed(self):
         self.replies.append({"ok": False, "error": "timeout", "meta": {}})
         self.assert_all_shown(self.file(2), triage.RUN_FAILED)

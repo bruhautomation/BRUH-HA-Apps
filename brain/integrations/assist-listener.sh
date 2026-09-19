@@ -612,8 +612,13 @@ USER: ${stamped_text}"
     fi
 
     # Build model flag (each conversation agent can specify its own model)
+    # A conversation agent that names no model takes the plan's tier for
+    # voice (`BRAIN_MODEL_VOICE`, off panel/model_plan.py via /data/.brain_env).
+    if [ -z "$model" ] || [ "$model" = "default" ]; then
+        model="${BRAIN_MODEL_VOICE:-}"
+    fi
     local model_flag=""
-    if [ -n "$model" ] && [ "$model" != "default" ]; then
+    if [ -n "$model" ]; then
         model_flag="--model $model"
     fi
 

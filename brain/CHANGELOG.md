@@ -2,6 +2,133 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.1.0
+
+**The Resident: brAIn watches the house's own event bus, takes a cheap first
+look at everything before you are shown any of it, investigates what
+deserves it, and files what it finds as one kind of thing — a case — with
+three endings.** Phase 1 of the AI-first plan.
+
+- **Signals, not rules deciding** (`panel/signals.py`). Every house-check
+  row, baseline deviation, thermal or appliance event, a state change on an
+  entity that matters, a trace error, an override, a person arriving or
+  leaving, a reply to a notification and the morning window becomes a
+  signal with a salience that orders and never decides. A checks pass hands
+  its rows over instead of awaiting triage, and sub-threshold baseline
+  deviations — three spreads out, where the check itself needs six — ride
+  with them, computed from what the pass already fetched.
+- **The event bus** (`panel/eventbus.py`). A WebSocket subscription to
+  Home Assistant's `state_changed`, `automation_triggered` and
+  `call_service`, with a reconnect ladder and a per-second ceiling that
+  counts what it dropped rather than hiding it. The quiet hours it reads
+  and the entity ids it knows are refreshed on a timer, so a house that
+  measures its own bedtime a fortnight in is not held to the fallback.
+- **The first look** (`panel/resident.py`, `server._resident_loop`). Haiku,
+  every ten minutes and within a minute on a hot signal, answers
+  `ignore | watch | investigate | act` for a batch — a protected entity, a
+  safety device or a hot signal can never be ignored, whatever the model
+  says — and Sonnet investigates only what it named, at most two per look,
+  with reading tools, writing a case with a claim, evidence and actions that
+  each say what consent they need. `act` on a hot safety signal files a
+  critical case and notifies; **nothing on this path calls a service**. The
+  three gates every scheduled run answers to — a credential, `auto_enabled`,
+  the usage budget — hold the batch rather than spending it, and a batch
+  nothing has looked at within `triage.STALE_S` surfaces saying so.
+- **Cases** (`panel/cases.py`, `GET /api/cases`, `POST /api/case/{id}/{verb}`).
+  Findings, hypotheses, proposals and chores are one list with one
+  vocabulary — problem, opportunity, question, chore, change — and three
+  endings: **Do it**, **Not now** (the Resident chooses when it comes back
+  and says so), **Wrong, because…**. The rare verbs live behind ⋯. Each
+  ending fires exactly one of the endings that already existed, so a case
+  answered on the feed teaches brAIn what the same press on the old card
+  did. Every store, mirror, Repairs issue and `todo.brain` row is unchanged
+  underneath.
+- **The Home feed.** The Findings tab is called Home and renders cases: the
+  kind, the severity, the confidence and stakes in words, the claim, the
+  evidence, what *Do it* would do and the consent each step needs, and the
+  three endings inline. Anything live that no case covers is still shown
+  beneath, because a case list that could not be read must not render a
+  house with problems as a house with none. The foot says what the day
+  cost: looked, investigated, changed, watching. The badge counts open
+  cases, one derivation for the tab and `/api/status`.
+- **A budget ledger** per tier per day: the first look never stops on it
+  (only on the usage tracker), investigations queue past their allowance,
+  and nothing on the top tiers runs unattended past its. Both halves ride in
+  `/api/diagnostics` under `resident` and `eventbus`.
+- Triage is retired into the first look — a filed row the look ignores is
+  held with its reason and still carries *Raise it anyway* — and its
+  per-day cap now counts first looks.
+
+## 2.0.0
+
+**brAIn 2.0 begins here: every Claude run is planned by job rather than by
+one global model, the analyst answers in a schema instead of prose, the card
+design system is a stylesheet instead of a kilobyte of hex per run, and a
+set of quiet bugs — a memory queue that lost guesses, a memory excerpt cut
+mid-character, a prompt budget sized for the wrong cap — are gone.** This is
+Phase 0 of the AI-first plan in `docs/design/brain-ai-first.md`; the
+resident attention loop, the measurement tools, standing automations by
+sentence and the four-tab panel follow as their own releases.
+
+- **Haiku looks, Sonnet thinks, Opus acts, Fable is a press**
+  (`panel/model_plan.py`). Every scheduled and pressed run used to call one
+  `model` option, so triage — a yes/no over a hundred rows a day — cost what
+  a repair cost, and a repair ran on whatever was cheap enough for triage.
+  Each job is planned now: triage, naming, the memory consolidator and the
+  brief on Haiku; cards, plans, the weekly report, study, voice and tasks on
+  Sonnet; the fix that changes a house on Opus at its highest effort. **A
+  typed `model` still overrides every job**, exactly as before, so nobody's
+  configuration changes meaning. The top tier is reachable only from a
+  press and never from a timer: a scheduler cannot name it. The shell half
+  — the consolidator, study, both listeners — reads the same table through
+  `/data/.brain_env`, printed by `model_plan.py` itself at boot rather than
+  copied.
+- **A thinking dial** (`thinking`: light / normal / generous, ⚙ → Insights).
+  *Light* steps down only the jobs where being wrong is cheap — a card, a
+  question — and never the run that applies a change; *generous* steps up
+  only the reasoning jobs, never a naming call. It rides `--effort` where
+  the installed CLI takes it, and where it does not the flag is dropped and
+  the run retried: the request is optional, the run is not.
+- **Structured answers** (`--json-schema`). Triage verdicts, fix plans, fix
+  results, intent configs, curiosity answers and the card contract each
+  carry a schema, so a reply that does not fit is refused by the CLI rather
+  than parsed out of prose by a pattern that was right most of the time. A
+  CLI too old for the flag falls back to the text it always returned, and
+  the journal row says which flags were dropped.
+- **The card palette is CSS, not prompt** (`categories.CARD_STYLES` /
+  `inject_styles`). About 1.5 KB of hex was re-sent on every card run and
+  copied into every card's HTML; the stylesheet is injected into the saved
+  card once and the contract names `var(--c1)` and its neighbours.
+- **Triage is capped per day** (`triage.MAX_PER_DAY`), so a house that
+  files two hundred rows in an afternoon spends a bounded number of runs.
+- **The hypothesis queue stopped losing guesses.** The panel, a study
+  session, the consolidator and `brain memory` each rewrote
+  `hypotheses.jsonl` with nothing between the read and the rename, so a
+  guess appended in that window was gone — not corrupted, gone, with
+  nothing raising. All four take one flock now (a sidecar `<store>.lock`,
+  because a replace swaps the inode out from under a lock on the store
+  itself), and the knowledge and feedback ledgers take the same lock around
+  every read-modify-write. A lock that cannot be taken never refuses the
+  work. The card prompt renders dismissed questions and dead ends as one
+  deduped list, keyed on the claim, with the homeowner's reason winning.
+- **A study session carries a runaway cap** (60 turns; `0` still means
+  none) and reads its model below the env source, so the option reaches it.
+- **The memory excerpt in `/config/CLAUDE.md` cuts between lines.** It was
+  `head -c 4096`: mid-fact, mid-character on any accented name, and never
+  reaching the Device notes a run most needs. It keeps every section's
+  heading and first line before any section gets a second, says when it
+  trimmed, and defaults to 16 KB (`BRAIN_CONTEXT_MEMORY_BYTES`).
+- **The insight prompt's memory budget follows `memory_max_kb`.** It was
+  sized for the default and not the schema's ceiling, so a house that
+  raised the cap — which is what the consolidator's own "the document is
+  full" message tells it to do — had every insight prompt cut mid-fact by
+  the one budget that exists to prevent that.
+- **`brain.run_task` takes `tools: full | house | read_only`.** The scope is
+  derived from the analyst's own lists at run time, reaches every Claude
+  invocation the listener makes (the run, the landing and the retry), and a
+  scope that cannot be read refuses the run and says so rather than
+  widening it.
+
 ## 1.61.0
 
 **Fix it says what it would change before it changes it and can put it back, a

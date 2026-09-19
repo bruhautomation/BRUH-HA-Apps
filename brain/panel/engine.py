@@ -45,7 +45,9 @@ import time
 import uuid
 
 import journal
+import model_plan
 import run_sources
+import settings_store
 import usage_store
 
 log = logging.getLogger("brain.auth")
@@ -627,6 +629,10 @@ def run_claude(
     timeout: int = 480,
     max_turns: int = 4,
     source: str = "",
+    *,
+    job: str = "",
+    effort: str = "",
+    schema: dict | None = None,
 ) -> dict:
     """Run `claude -p` headlessly. Returns {'ok', 'text', 'error', 'meta'}.
 
@@ -635,11 +641,14 @@ def run_claude(
     calls that non-interactive mode denies, burning through --max-turns and
     dying with "max number of turns" instead of producing the insight. The
     max_turns margin covers any residual multi-turn behavior.
+
+    `job`, `effort` and `schema` are the 2.0 additions shared by all three
+    runners — see `_run_cli`.
     """
     return _run_cli(
         prompt, ["--disallowedTools", "*", "--system-prompt", system_prompt],
         model, timeout, max_turns, f"Claude timed out after {timeout}s",
-        source)
+        source, job=job, effort=effort, schema=schema)
 
 
 # The analyst's tools: reading the home, and nothing else.
@@ -751,6 +760,10 @@ def run_analyst(
     timeout: int = 480,
     max_turns: int = 40,
     source: str = "",
+    *,
+    job: str = "",
+    effort: str = "",
+    schema: dict | None = None,
 ) -> dict:
     """Run `claude -p` with READ-ONLY Home Assistant tools. Same envelope.
 
@@ -778,7 +791,8 @@ def run_analyst(
          "--disallowedTools", ",".join(ANALYST_DENIED)]
         + project_flags(settings=False, files=False),
         model, timeout, max_turns,
-        f"the analysis passed its {timeout}s limit and was stopped", source)
+        f"the analysis passed its {timeout}s limit and was stopped", source,
+        job=job, effort=effort, schema=schema)
 
 
 def run_agent(
@@ -788,6 +802,10 @@ def run_agent(
     timeout: int = 900,
     max_turns: int = 60,
     source: str = "",
+    *,
+    job: str = "",
+    effort: str = "",
+    schema: dict | None = None,
 ) -> dict:
     """Run `claude -p` WITH its tools. Same envelope as ``run_claude``.
 
@@ -807,7 +825,8 @@ def run_agent(
         prompt, ["--append-system-prompt", system_prompt]
         + project_flags(settings=True, files=True),
         model, timeout, max_turns,
-        f"the fix run passed its {timeout}s limit and was stopped", source)
+        f"the fix run passed its {timeout}s limit and was stopped", source,
+        job=job, effort=effort, schema=schema)
 
 
 # A turn cap is a runaway guard, never a budget — and a guard that trips
@@ -835,9 +854,59 @@ def hit_turn_cap(result: dict) -> bool:
             and journal.classify(result) == "max_turns")
 
 
+# The flags the 2.0 runners add that an older CLI may not know. Each is
+# optional in the same sense `--session-id` is: the CLI names an unknown
+# flag on stderr and dies unspoken, and the run is retried without it.
+# What is NOT optional is the run — a job planned for `--effort low` on
+# a CLI that predates effort still runs, at the CLI's default depth.
+_OPTIONAL_FLAG_WORDS = ("effort", "json-schema", "session-id")
+
+
+def _rejected_flag(result: dict) -> str | None:
+    """Which optional flag a failed run's stderr names, if any."""
+    if result.get("ok"):
+        return None
+    err = str(result.get("error") or "")
+    for word in _OPTIONAL_FLAG_WORDS:
+        if word in err:
+            return word
+    return None
+
+
+def _without(argv: list[str], flag: str) -> list[str]:
+    """`argv` with `--<flag>` and its value removed."""
+    out: list[str] = []
+    skip = False
+    for item in argv:
+        if skip:
+            skip = False
+            continue
+        if item == f"--{flag}":
+            skip = True
+            continue
+        out.append(item)
+    return out
+
+
 def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
-             max_turns: int, timeout_message: str, source: str = "") -> dict:
+             max_turns: int, timeout_message: str, source: str = "",
+             *, job: str = "", effort: str = "",
+             schema: dict | None = None) -> dict:
     """Invoke `claude -p` and parse its envelope.
+
+    Three 2.0 additions ride on every runner and are resolved here, once:
+
+    * `job` names what the run is for ("card", "triage", "fix_apply").
+      When the caller passed no `model`, the model and the effort come
+      from `model_plan.resolve(job, …)` — the tiering the design page
+      calls "Haiku looks, Sonnet thinks, Opus acts". An explicit `model`
+      still wins, because a caller that named one meant it.
+    * `effort` becomes `--effort`, a depth request the CLI may not know.
+    * `schema` becomes `--json-schema`: the CLI validates the reply against
+      it and returns the object as `structured_output`, which lands in
+      the result as `data`. A CLI that rejects the flag runs without it
+      and `data` is then whatever `extract_json` can read out of the
+      text, so callers keep one code path and one fallback.
 
     The su-exec drop to the non-root user, the credential injection, and the
     working directory are the fiddly parts, and they must not have two
@@ -858,9 +927,16 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
     the journal line says so (``extra.landed``). A landing that also fails
     leaves the ordinary error, which names no setting — there is none.
     """
+    if job and not model:
+        model, planned_effort = planned(job)
+        effort = effort or planned_effort
     base = _claude_argv() + ["-p", "--output-format", "json"]
     if model:
         base += ["--model", model]
+    if effort:
+        base += ["--effort", effort]
+    if schema:
+        base += ["--json-schema", json.dumps(schema, separators=(",", ":"))]
     argv = base + ["--max-turns", str(max_turns)] + flags
     started = time.monotonic()
     session_id = str(uuid.uuid4())
@@ -868,8 +944,19 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
         run_sources.record(session_id, source)
     result = _spawn_cli(argv + ["--session-id", session_id],
                         prompt, timeout, timeout_message)
-    if not (result["ok"] or "session-id" not in (result.get("error") or "")):
-        result = _spawn_cli(argv, prompt, timeout, timeout_message)
+    # An optional flag the installed CLI does not know: drop it and go
+    # again, at most once per flag, so a run never fails over a request.
+    dropped: list[str] = []
+    while (flag := _rejected_flag(result)) and flag not in dropped:
+        dropped.append(flag)
+        base = _without(base, flag)
+        argv = base + ["--max-turns", str(max_turns)] + flags
+        tail = [] if "session-id" in dropped else ["--session-id", session_id]
+        result = _spawn_cli(argv + tail, prompt, timeout, timeout_message)
+    if schema and result.get("ok") and "data" not in result:
+        # The CLI ran without --json-schema (too old, or it was dropped
+        # above): read the object out of the text so callers see one shape.
+        result["data"] = extract_json(result.get("text") or "")
     landed = False
     if hit_turn_cap(result):
         # The CLI's own id first: after the older-CLI retry above the
@@ -884,10 +971,36 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
                 LANDING_PROMPT, remaining, timeout_message)
             if landing["ok"]:
                 result, landed = landing, True
+    extra: dict = {}
+    if landed:
+        extra["landed"] = True
+    if job:
+        extra["job"] = job
+    if effort:
+        extra["effort"] = effort
+    if dropped:
+        extra["dropped_flags"] = dropped
     _journal(source or "engine", result, model, timeout_message,
-             time.monotonic() - started,
-             extra={"landed": True} if landed else None)
+             time.monotonic() - started, extra=extra or None)
     return result
+
+
+def planned(job: str) -> tuple[str, str]:
+    """`(model, effort)` the model plan gives a job on this install.
+
+    The global `model` option (the add-on's Configuration tab, or the
+    panel's override of it) wins when set — a person who typed a model
+    meant every run — and the `thinking` setting scales the tiers. Read
+    at call time rather than at import, the way `insights_enabled()` is,
+    so a change in ⚙ reaches the next run.
+    """
+    try:
+        settings = settings_store.load()
+    except Exception:  # noqa: BLE001 - a settings file that will not read is the defaults
+        settings = {}
+    override = str(settings.get("model") or os.environ.get("BRAIN_MODEL", "") or "")
+    thinking = str(settings.get("thinking") or model_plan.DEFAULT_THINKING)
+    return model_plan.resolve(job, thinking, override)
 
 
 def _journal(source: str, result: dict, model: str, timeout_message: str,
@@ -958,7 +1071,11 @@ def _envelope(proc: subprocess.CompletedProcess) -> dict:
     }
     if isinstance(envelope.get("usage"), dict):
         meta["usage"] = envelope["usage"]
-    if envelope.get("is_error") or not text:
+    # `--json-schema` answers with the validated object beside the text.
+    # It is carried as `data` so a structured run and a text run have one
+    # result shape; absent when the CLI did not produce one.
+    structured = envelope.get("structured_output")
+    if envelope.get("is_error") or not (text or structured is not None):
         if envelope.get("subtype") == "error_max_turns":
             # Reached only when the landing in _run_cli failed too. No
             # setting is named because there is none to change: the cap
@@ -968,7 +1085,10 @@ def _envelope(proc: subprocess.CompletedProcess) -> dict:
         else:
             err = text or envelope.get("subtype") or stderr[-500:] or "empty result"
         return {"ok": False, "error": str(err)[:1000], "text": "", "meta": meta}
-    return {"ok": True, "text": text, "error": "", "meta": meta}
+    out = {"ok": True, "text": text, "error": "", "meta": meta}
+    if structured is not None:
+        out["data"] = structured if isinstance(structured, dict) else None
+    return out
 
 
 def validate_auth(timeout: int = 120) -> dict:
@@ -976,7 +1096,7 @@ def validate_auth(timeout: int = 120) -> dict:
     result = run_claude(
         "Reply with exactly: OK",
         "You are a connectivity check. Reply with exactly what the user asks and nothing else.",
-        timeout=timeout,
+        timeout=timeout, job="auth_check",
     )
     ok = result["ok"] and "OK" in result["text"].upper()
     return {"ok": ok, "error": "" if ok else (result["error"] or "unexpected reply")}

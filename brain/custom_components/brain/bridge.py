@@ -370,6 +370,7 @@ class ClaudeBridge:
         notify_entity: str | None = None,
         timeout: int | None = None,
         model: str | None = None,
+        tools: str | None = None,
     ) -> str:
         """Send an automation task and wait for the result."""
         task_id = uuid.uuid4().hex
@@ -389,6 +390,12 @@ class ClaudeBridge:
             task["notify_entity"] = notify_entity
         if model and model != "default":
             task["model"] = model
+        # Written only when it narrows something. The listener reads a
+        # missing key as `full`, which is what every task before this field
+        # existed asked for and what BRight's director still writes, so the
+        # default path puts the same JSON on disk it always did.
+        if tools and tools != "full":
+            task["tools"] = tools
 
         task_file = os.path.join(self.tasks_dir, f"{task_id}.json")
         result_file = os.path.join(self.task_results_dir, f"{task_id}.json")
