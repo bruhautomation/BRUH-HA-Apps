@@ -95,9 +95,14 @@ brain_with_store_lock() {  # brain_with_store_lock <store> <command...>
     fi
     # Append-create rather than truncate: whichever half gets here first
     # makes the file, and the other may only be able to read it.
-    # Group-shared and never world-readable — atomic_write.LOCK_MODE's
-    # rule, so the two halves make the same file whichever gets there first.
-    [ -e "$lock" ] || { : >> "$lock" && chmod 640 "$lock"; } 2>/dev/null
+    # Owner-only, and root hands it to the `claude` user —
+    # atomic_write.LOCK_MODE's rule, so the two halves make the same file
+    # whichever gets there first: root opens anything, so a lock the other
+    # user owns is one both can take, and no group or world bit is needed.
+    if [ ! -e "$lock" ]; then
+        { : >> "$lock" && chmod 600 "$lock"; } 2>/dev/null
+        [ "$(id -u)" = "0" ] && chown claude "$lock" 2>/dev/null
+    fi
     # The braces are load-bearing: `exec 7< f 2>/dev/null` with no command
     # applies BOTH redirections to this shell for good, and the second one
     # sent every later line the caller wrote to stderr — the consolidator's
