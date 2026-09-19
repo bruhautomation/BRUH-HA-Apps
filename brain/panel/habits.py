@@ -46,7 +46,11 @@ Half past midnight and half past eleven are forty minutes apart, and a
 straight median of them is noon — not a small error but the opposite
 side of the day. `rhythm.py` had this first and the arithmetic is its,
 imported rather than copied, which is the rule this module exists to
-apply one level up.
+apply one level up — it lives in `circular.py` now, a leaf both modules
+read, because `rhythm` reads `house`, `house` reads the ledgers and the
+ledgers read this file: the borrow closed an import ring. The join over
+the three ledgers (`habit_of`) is `habit_lookup.py` for the same reason,
+since a module the ledgers import may not import the ledgers back.
 
 **And a shape has to still be happening.** A sixty-day ledger goes on
 holding a beautiful March for a habit somebody stopped in March, and a
@@ -68,7 +72,7 @@ from __future__ import annotations
 import datetime as dt
 import time
 
-import rhythm
+import circular
 
 EVERY_DAY = "every day"
 WEEKDAYS = "weekdays"
@@ -251,10 +255,10 @@ def grade(stamps: list[float], tz=None, now: float | None = None, *,
         return None
 
     minutes = [w.hour * 60 + w.minute for w in whens]
-    centre = rhythm.circular_median(minutes)
+    centre = circular.circular_median(minutes)
     if centre is None:
         return None
-    spread = rhythm.circular_spread(minutes, centre)
+    spread = circular.circular_spread(minutes, centre)
     if max_spread_min is not None and spread > max_spread_min:
         return None
 
@@ -275,7 +279,7 @@ def grade(stamps: list[float], tz=None, now: float | None = None, *,
         "eligible_days": eligible,
         "share": round(share, 3),
         "median_minute": centre,
-        "at": rhythm.clock(centre),
+        "at": circular.clock(centre),
         "spread_min": round(spread, 1),
         "band": band([w.hour for w in whens], band_hours=band_hours,
                      band_share=band_share) if band_hours else None,
@@ -330,7 +334,7 @@ def best_shape(stamps: list[float], tz=None, now: float | None = None,
         # Both rounded, because that is the minute each half would be
         # reported at and a comparison against a figure nobody is shown
         # can refuse a pair that agrees on the clock.
-        apart = rhythm.circular_spread([round(end["median_minute"])],
+        apart = circular.circular_spread([round(end["median_minute"])],
                                        round(week["median_minute"]))
         if limit is None or apart <= limit:
             daily = grade(stamps, tz, now, shape=EVERY_DAY, **floors)
@@ -381,12 +385,12 @@ def odd_press(stamp: float, stamps_excluding_it: list[float], tz=None, *,
     allowance = max(floor_min, shape["spread_min"] * spreads)
     when = dt.datetime.fromtimestamp(float(stamp), tz)
     minute = when.hour * 60 + when.minute
-    away = rhythm.circular_distance(minute, round(shape["median_minute"]))
+    away = circular.circular_distance(minute, round(shape["median_minute"]))
     if away <= allowance:
         return None
     return {
         "minute": minute,
-        "at": rhythm.clock(minute),
+        "at": circular.clock(minute),
         "away_min": round(away),
         "allowance_min": round(allowance),
         "usually_at": shape["at"],
@@ -492,103 +496,9 @@ def sentence_for(name: str, state: str, shape: dict | None,
     return " ".join(parts)
 
 
-def habit_of(entity_id: str, *, routine_rows=(), override_rows=(),
-             manual_rows=(), tz=None, now: float | None = None,
-             automated: dict | None = None) -> dict:
-    """Everything the three ledgers know about one entity, in one answer.
-
-    The three were built for three producers and read by three surfaces,
-    so *"what do I do with this light, and what keeps undoing it"* — one
-    question a person actually has — could only be answered by opening
-    three tabs and joining them by eye. This is that join, and it is a
-    join rather than a fourth store: nothing here is written down, every
-    number comes out of the module that owns it, and the floors are the
-    producers' own, read at call time rather than restated.
-
-    A shape is looked for per **state**, because turning something on and
-    turning it off are two habits with two times, and the strongest is
-    the one reported. The overrides are graded with the override ledger's
-    floors and the odd presses with the manual ledger's, for the same
-    reason: this is the caller of three producers, not a fourth.
-    """
-    import manual_ledger  # noqa: PLC0415 — panel-local; the floors live
-    import override_ledger  # noqa: PLC0415   with the producer that owns
-    import routines  # noqa: PLC0415          them, never restated here
-
-    tz = tz or dt.timezone.utc
-    now = time.time() if now is None else now
-    entity_id = str(entity_id or "")
-
-    floors = {"min_days": routines.MIN_DAYS, "min_share": routines.MIN_SHARE,
-              "max_spread_min": routines.MAX_SPREAD_MIN,
-              "recent_days": routines.RECENT_DAYS}
-    by_state: dict[str, list[dict]] = {}
-    for row in routine_rows or []:
-        if str(row.get("entity_id") or "") != entity_id or not row.get("ts"):
-            continue
-        by_state.setdefault(str(row.get("state") or ""), []).append(row)
-
-    best: tuple | None = None
-    name = ""
-    for state, group in sorted(by_state.items()):
-        name = name or str(group[-1].get("name") or "")
-        found = best_shape([float(r["ts"]) for r in group], tz, now, **floors)
-        if not found:
-            continue
-        rank = (found["days"], found["share"])
-        if best is None or rank > best[0]:
-            best = (rank, state, found)
-    state = best[1] if best else ""
-    shape = best[2] if best else None
-
-    overrides = []
-    mine = [r for r in override_rows or []
-            if str(r.get("entity_id") or "") == entity_id and r.get("ts")]
-    for key, group in sorted(override_ledger.by_automation(mine).items()):
-        if len(group) < override_ledger.MIN_EVENTS:
-            continue
-        found = grade([float(r["ts"]) for r in group], tz, now,
-                      min_days=override_ledger.MIN_DAYS,
-                      recent_days=override_ledger.RECENT_DAYS,
-                      band_hours=override_ledger.BAND_HOURS,
-                      band_share=override_ledger.BAND_SHARE)
-        if not found or not found["still_happening"]:
-            continue
-        overrides.append({"automation": key,
-                          "name": group[-1].get("by_name") or key,
-                          "events": found["stamps"], "days": found["days"],
-                          "band": found["band"], "last": int(found["last"])})
-
-    odd = manual_ledger.off_pattern(
-        {"rows": [r for r in manual_rows or []
-                  if str(r.get("entity_id") or "") == entity_id],
-         "automated": {}}, tz, now)
-
-    # Something already does this. The override rows are the other half
-    # of the same question and are consulted too: a rule a person keeps
-    # undoing is, by construction, a rule that runs.
-    tally = automated or {}
-    does_it = bool(mine) or any(
-        str(key).split("|", 1)[0] == entity_id
-        and (now - float(stamp or 0.0)) <= routines.RECENT_DAYS * DAY_S
-        for key, stamp in tally.items())
-
-    name = name or (odd[0].get("name") if odd else "") or entity_id
-    return {
-        "entity_id": entity_id,
-        "name": name,
-        "state": state,
-        "habit": shape,
-        "overrides": overrides,
-        "odd": odd,
-        "automated": does_it,
-        "sentence": sentence_for(name, state, shape, overrides, does_it),
-    }
-
-
 __all__ = [
     "BAND_HOURS", "DAY_S", "EVERY_DAY", "SAYS_EVERY", "SAYS_NEARLY_EVERY",
     "SHAPES", "WEEKDAYS", "WEEKENDS", "band", "best_shape", "eligible_days",
-    "grade", "habit_of", "in_shape", "observed_shape", "odd_press",
+    "grade", "in_shape", "observed_shape", "odd_press",
     "sentence_for",
 ]

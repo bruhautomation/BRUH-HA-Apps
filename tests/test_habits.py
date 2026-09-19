@@ -27,6 +27,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 PANEL = BASE_DIR / "brain" / "panel"
 sys.path.insert(0, str(PANEL))
 
+import habit_lookup  # noqa: E402
 import habits  # noqa: E402
 import manual_ledger  # noqa: E402
 import override_ledger  # noqa: E402
@@ -341,7 +342,7 @@ class TestHabitOfJoinsTheThreeRealLedgers(unittest.TestCase):
         override_ledger.record(overrides, now=now, path=self.paths["overrides"])
 
         ledger = routines.load(self.paths["routines"])
-        answer = habits.habit_of(
+        answer = habit_lookup.habit_of(
             "light.porch", routine_rows=ledger.get("rows") or [],
             override_rows=override_ledger.load(self.paths["overrides"]),
             manual_rows=manual_ledger.load(self.paths["manual"]).get("rows") or [],
@@ -360,7 +361,7 @@ class TestHabitOfJoinsTheThreeRealLedgers(unittest.TestCase):
         self.assertEqual(answer["overrides"][0]["automation"], "automation.dusk")
 
     def test_an_entity_nobody_touches_has_no_habit_and_says_so(self):
-        answer = habits.habit_of("light.attic", tz=UTC, now=at(19, 12))
+        answer = habit_lookup.habit_of("light.attic", tz=UTC, now=at(19, 12))
         self.assertIsNone(answer["habit"])
         self.assertEqual(answer["overrides"], [])
         self.assertFalse(answer["automated"])
@@ -383,8 +384,40 @@ class TestTheOldArithmeticIsGone(unittest.TestCase):
 
     def test_habits_is_the_one_place_the_median_is_taken(self):
         src = (PANEL / "habits.py").read_text(encoding="utf-8")
-        self.assertIn("rhythm.circular_median(", src)
-        self.assertIn("rhythm.circular_distance(", src)
+        self.assertIn("circular.circular_median(", src)
+        self.assertIn("circular.circular_distance(", src)
+
+    def test_the_clock_arithmetic_has_one_home_and_rhythm_re_exports_it(self):
+        # `circular.py` is a leaf on purpose: `rhythm` reads `house`, `house`
+        # reads the ledgers, the ledgers read `habits`, and `habits` reading
+        # `rhythm` for the median closed the ring. The names every caller
+        # uses still resolve through `rhythm`, and to the same functions.
+        import circular
+        self.assertIs(rhythm.circular_median, circular.circular_median)
+        self.assertIs(rhythm.circular_spread, circular.circular_spread)
+        self.assertIs(rhythm.circular_distance, circular.circular_distance)
+        self.assertIs(rhythm.clock, circular.clock)
+        src = (PANEL / "rhythm.py").read_text(encoding="utf-8")
+        self.assertNotIn("def circular_median(", src)
+        leaf = (PANEL / "circular.py").read_text(encoding="utf-8")
+        self.assertNotIn("import baselines", leaf)
+        self.assertNotIn("import house", leaf)
+        # And the join over the ledgers is not in the module they import.
+        self.assertNotIn("def habit_of(", src)
+        self.assertNotIn("def habit_of(", (PANEL / "habits.py").read_text(encoding="utf-8"))
+
+    def test_no_import_ring_through_habits(self):
+        # Driven rather than grepped: each module imported fresh, alone,
+        # in its own interpreter, which is the order an import ring breaks in.
+        import subprocess
+        import sys as _sys
+        for name in ("habits", "habit_lookup", "rhythm", "routines",
+                     "override_ledger", "manual_ledger", "house", "circular"):
+            with self.subTest(module=name):
+                proc = subprocess.run(
+                    [_sys.executable, "-c", f"import {name}"],
+                    cwd=str(PANEL), capture_output=True, text=True, timeout=60)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
 
 
 if __name__ == "__main__":

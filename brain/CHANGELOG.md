@@ -33,7 +33,11 @@ chat teach memory the way voice already did.** Phase 2 of the AI-first plan.
 - **One habits module** (`panel/habits.py`). The three ledgers keep their
   files and lose their private arithmetic: the shape of when something
   happens — days, share, circular median, band, still happening — has one
-  implementation, and `habits(entity)` answers it for any entity.
+  implementation, and `habits(entity)` answers it for any entity. The
+  clock arithmetic it borrows is `panel/circular.py`, a leaf `rhythm`
+  re-exports, and the join over the three ledgers is `panel/habit_lookup.py`:
+  the first cut closed an import ring (`habits → rhythm → house → routines
+  → habits`) that CodeQL reported and nothing else could see.
 - **The terminal and the chat teach memory** (`scripts/brain-memory-extract.py`,
   a `Stop` hook). A cheap extraction over each turn of a person's own
   conversation queues durable facts, corrections and stated intents to the
