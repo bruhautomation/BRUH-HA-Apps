@@ -1096,7 +1096,7 @@ def validate_auth(timeout: int = 120) -> dict:
     result = run_claude(
         "Reply with exactly: OK",
         "You are a connectivity check. Reply with exactly what the user asks and nothing else.",
-        timeout=timeout,
+        timeout=timeout, job="auth_check",
     )
     ok = result["ok"] and "OK" in result["text"].upper()
     return {"ok": ok, "error": "" if ok else (result["error"] or "unexpected reply")}

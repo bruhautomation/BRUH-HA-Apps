@@ -196,10 +196,10 @@ import weekly
 # statement as the public names rather than a bare `import categories`
 # beside it — one module imported two ways is a CodeQL alert and, more to
 # the point, two spellings of one dependency.
-from categories import (ANALYST_SYSTEM, CATEGORIES, SYSTEM_PROMPT, _CARD_CONTRACT,
-                        _previous_block, build_orientation_prompt,
-                        build_prompt, get_category, house_block, memory_excerpt,
-                        stores_for)
+from categories import (ANALYST_SYSTEM, CARD_SCHEMA, CATEGORIES, SYSTEM_PROMPT,
+                        _CARD_CONTRACT, _previous_block,
+                        build_orientation_prompt, build_prompt, get_category,
+                        house_block, inject_styles, memory_excerpt, stores_for)
 
 HERE = Path(__file__).resolve().parent
 INSIGHTS_DIR = Path(os.environ.get("BRAIN_DIR", "/data/insights"))
@@ -398,6 +398,22 @@ def eff_keep_days() -> int:
 
 def eff_model() -> str:
     return str(_opt("model", MODEL))
+
+
+def _answer(result: dict) -> dict | None:
+    """The object a run answered with: the CLI's validated one first.
+
+    A run that carried a `--json-schema` comes back with `data` — the
+    object the CLI checked against the schema before it was sent — and
+    that wins over anything parsed out of the text, because a reply the
+    CLI validated cannot be a fenced block with a comma missing. A run
+    on a CLI too old for the flag has no `data`, and the text is what it
+    always was.
+    """
+    data = result.get("data")
+    if isinstance(data, dict):
+        return data
+    return engine.extract_json(result.get("text") or result.get("raw") or "")
 
 
 def eff_chat_model() -> str:
@@ -600,7 +616,21 @@ CHECKS_STATE: dict = {"running": False, "last": None}
 # rather than a module-level flag rebound through `global`: the two are
 # the same guard three lines apart in `run_checks`, and one of them
 # spelled differently is the drift a second idiom always produces.
-TRIAGE_STATE: dict = {"running": False}
+# `day`/`runs` are the per-day runaway guard (`triage.MAX_PER_DAY`):
+# counted per local day and reset with it. In memory on purpose — it is a
+# guard against a loop and not a budget, and a restart that forgets it
+# costs at most one more day's worth of runs, where a guard that survived
+# a restart would need a store nothing else reads.
+TRIAGE_STATE: dict = {"running": False, "day": "", "runs": 0}
+
+
+def _triage_runs_today(now: float) -> int:
+    """How many triage runs this local day has spent, rolling the day."""
+    day = time.strftime("%Y-%m-%d", time.localtime(now))
+    if TRIAGE_STATE.get("day") != day:
+        TRIAGE_STATE["day"] = day
+        TRIAGE_STATE["runs"] = 0
+    return int(TRIAGE_STATE.get("runs") or 0)
 CHECKS_FIRST_DELAY_S = 120
 CHECKS_TICK_S = 300
 # How far back a replay reaches by default. A month is what the recorder
@@ -1301,7 +1331,7 @@ async def _send_brief(now: float) -> str:
     result = await asyncio.to_thread(
         engine.run_analyst, brief.frame(reasons, state), brief.SYSTEM,
         eff_model(), brief.TIMEOUT_S, brief.MAX_TURNS,
-        "brief")
+        "brief", job="brief")
     if not result.get("ok"):
         BRIEF_STATE["last_error"] = str(result.get("error") or "no reply")
         log.warning("morning brief failed: %s", BRIEF_STATE["last_error"])
@@ -1569,7 +1599,8 @@ async def _send_weekly(now: float) -> str:
 
     result = await asyncio.to_thread(
         engine.run_analyst, weekly.frame(state), weekly.SYSTEM,
-        eff_model(), weekly.TIMEOUT_S, weekly.MAX_TURNS, "weekly")
+        eff_model(), weekly.TIMEOUT_S, weekly.MAX_TURNS, "weekly",
+        job="weekly")
     if not result.get("ok"):
         WEEKLY_STATE["last_error"] = str(result.get("error") or "no reply")
         log.warning("weekly report failed: %s", WEEKLY_STATE["last_error"])
@@ -1823,14 +1854,15 @@ async def _one_intent(req: dict, now: float) -> dict | None:
         result = await asyncio.to_thread(
             engine.run_analyst, intents.prompt(sentence, orientation),
             intents.SYSTEM, eff_model(), intents.TIMEOUT_S,
-            intents.MAX_TURNS, "intent")
+            intents.MAX_TURNS, "intent", job="intent", schema=intents.SCHEMA)
     except Exception as exc:  # noqa: BLE001
         result = {"ok": False, "error": str(exc)}
     journal.record("intent", "ok" if result.get("ok") else "error",
                    ok=bool(result.get("ok")),
                    error="" if result.get("ok") else str(result.get("error")),
                    duration_s=time.time() - started)
-    answer = intents.parse_answer(result.get("text") or result.get("raw") or "")
+    answer = intents.parse_answer(result.get("text") or result.get("raw") or "",
+                                  result.get("data"))
     if not result.get("ok") or answer is None:
         return await asyncio.to_thread(intents.note, {
             "sentence": sentence,
@@ -2373,6 +2405,7 @@ async def _search_run(insight_id: str, cat: dict, framing: dict):
     result = await asyncio.to_thread(
         engine.run_analyst, prompt, ANALYST_SYSTEM, eff_model(),
         eff_timeout_s(), ANALYST_MAX_TURNS, "card",
+        job="card", schema=CARD_SCHEMA,
     )
     return result, _record_usage(result, insight_id), {
         "gather_mode": "search", "bundle": orientation,
@@ -2405,7 +2438,7 @@ async def _snapshot_run(insight_id: str, cat: dict, framing: dict):
              len(prompt), _tok(len(prompt) // CHARS_PER_TOKEN))
     result = await asyncio.to_thread(
         engine.run_claude, prompt, SYSTEM_PROMPT, eff_model(), eff_timeout_s(),
-        source="card",
+        source="card", job="card", schema=CARD_SCHEMA,
     )
     return result, _record_usage(result, insight_id), {
         "gather_mode": "snapshot", "bundle": bundle, "prompt_chars": len(prompt)}
@@ -2540,10 +2573,12 @@ async def _generate(insight_id: str) -> None:
             raise RuntimeError(result["error"] or "generation failed")
 
         _set_job(insight_id, state="parsing")
-        obj = engine.extract_json(result["text"])
+        obj = _answer(result)
         if not obj or not isinstance(obj.get("html"), str) or not obj.get("title"):
             raise RuntimeError("Claude returned an unparseable insight (no JSON/html)")
-        html = obj["html"]
+        # The design system is a stylesheet the card is written against,
+        # injected once here rather than re-sent as hex in every prompt.
+        html = inject_styles(obj["html"])
         if len(html.encode()) > MAX_HTML_BYTES:
             raise RuntimeError("generated visualization too large")
         highlights = obj.get("highlights")
@@ -2721,12 +2756,13 @@ async def _run_plan(job_id: str) -> None:
             protected=automation_writer.protected_patterns())
         result = await asyncio.to_thread(
             engine.run_analyst, prompt, fixer.PLAN_SYSTEM, eff_model(),
-            PLAN_TIMEOUT_S, PLAN_MAX_TURNS, "fix")
+            PLAN_TIMEOUT_S, PLAN_MAX_TURNS, "fix",
+            job="fix_plan", schema=fixer.PLAN_SCHEMA)
         _record_usage(result, job_id)
         if not result["ok"]:
             raise RuntimeError(result["error"] or "the plan run failed")
 
-        plan = fixer.parse_plan(result["text"])
+        plan = fixer.parse_plan(result["text"], result.get("data"))
         row = await asyncio.to_thread(findings_store.set_plan, ts, plan)
         if row is None:
             # The finding was settled, or somebody pressed Cancel, while
@@ -2808,7 +2844,8 @@ async def _run_fix(job_id: str) -> None:
                                 started, None)
         result = await asyncio.to_thread(
             engine.run_agent, prompt, fixer.FIX_SYSTEM, eff_model(),
-            FIX_TIMEOUT_S, FIX_MAX_TURNS, "fix")
+            FIX_TIMEOUT_S, FIX_MAX_TURNS, "fix",
+            job="fix_apply", schema=fixer.RESULT_SCHEMA)
         # Counted here and stored, rather than on every fetch of the tab:
         # see `findings_store.set_fix_window`. This is also the last moment
         # at which the count is certainly about this run and nothing else.
@@ -2817,7 +2854,7 @@ async def _run_fix(job_id: str) -> None:
         if not result["ok"]:
             raise RuntimeError(result["error"] or "the fix run failed")
 
-        parsed = fixer.parse_result(result["text"])
+        parsed = fixer.parse_result(result["text"], result.get("data"))
         if parsed["needs_you"]:
             status = "needs_you"
         elif parsed["ok"]:
@@ -2942,11 +2979,12 @@ async def _run_milestone(job_id: str) -> None:
         _set_job(job_id, state="generating", error="")
         result = await asyncio.to_thread(
             engine.run_analyst, job.get("prompt") or "", ANALYST_SYSTEM,
-            eff_model(), eff_timeout_s(), ANALYST_MAX_TURNS, "card")
+            eff_model(), eff_timeout_s(), ANALYST_MAX_TURNS, "card",
+            job="milestone", schema=CARD_SCHEMA)
         _record_usage(result, job_id)
         if not result.get("ok"):
             raise RuntimeError(result.get("error") or "generation failed")
-        obj = engine.extract_json(result.get("text") or "")
+        obj = _answer(result)
         if not obj or not obj.get("title"):
             raise RuntimeError("Claude returned an unparseable card")
         card = await asyncio.to_thread(
@@ -4697,6 +4735,19 @@ async def _triage_drain(now: float) -> list[dict]:
     # comes back, and `STALE_S` is what says something does.
     batch = pending[:triage.MAX_BATCH]
 
+    # One clock up from `MAX_BATCH`: a day that has spent `MAX_PER_DAY`
+    # runs waits for tomorrow rather than surfacing unjudged, for the
+    # same reason, and `STALE_S` is still the promise that a queue which
+    # stopped draining is shown. Said once per day, or a busy house logs
+    # the same line every minute until midnight.
+    if _triage_runs_today(now) >= triage.MAX_PER_DAY:
+        if not TRIAGE_STATE.get("capped_said"):
+            TRIAGE_STATE["capped_said"] = True
+            log.warning("triage has spent its %d runs for today; %d rows wait "
+                        "for tomorrow's drain", triage.MAX_PER_DAY, len(pending))
+        return surfaced
+    TRIAGE_STATE["capped_said"] = False
+
     # The three gates every scheduled Claude run answers to (`_ask_why`'s
     # rule): a credential, the automatic switch, and the usage budget.
     # Failing one is not a reason to hide anything — it is a reason to
@@ -4728,10 +4779,12 @@ async def _triage_drain(now: float) -> list[dict]:
         # every correction they have ever made.
         memory=memory_excerpt(await asyncio.to_thread(_read_shared_memory)),
     )
+    TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
     try:
         result = await asyncio.to_thread(
             engine.run_analyst, prompt, triage.SYSTEM, eff_model(),
-            triage.TIMEOUT_S, triage.MAX_TURNS, "triage")
+            triage.TIMEOUT_S, triage.MAX_TURNS, "triage",
+            job="triage", schema=triage.SCHEMA)
     except Exception as exc:  # noqa: BLE001 — the findings are already
         # filed; what is at stake here is only whether anything looked.
         log.warning("a triage run failed: %s", exc)
@@ -4743,9 +4796,7 @@ async def _triage_drain(now: float) -> list[dict]:
             {int(f["ts"]): ("untriaged", triage.RUN_FAILED)
              for f in batch}, run_id, now)
 
-    verdicts = triage.parse(
-        engine.extract_json(result.get("text") or result.get("raw") or ""),
-        len(batch))
+    verdicts = triage.parse(_answer(result), len(batch))
     decided: dict[int, tuple[str, str]] = {}
     for i, row in enumerate(batch, 1):
         ts = int(row["ts"])
@@ -4848,15 +4899,15 @@ async def _run_curiosity(candidate: dict, ledger: dict, tz,
     )
     result = await asyncio.to_thread(
         engine.run_analyst, prompt, curiosity.SYSTEM, eff_model(),
-        curiosity.TIMEOUT_S, curiosity.MAX_TURNS, "curiosity")
+        curiosity.TIMEOUT_S, curiosity.MAX_TURNS, "curiosity",
+        job="curiosity", schema=curiosity.SCHEMA)
     if not result.get("ok"):
         error = str(result.get("error") or "no reply")
         await asyncio.to_thread(curiosity.record_answer, candidate["subject"],
                                 None, "", error, now)
         return "", error
 
-    answer = curiosity.parse(
-        engine.extract_json(result.get("text") or result.get("raw") or ""))
+    answer = curiosity.parse(_answer(result))
     if answer is None:
         await asyncio.to_thread(
             curiosity.record_answer, candidate["subject"], None, "",
@@ -5081,7 +5132,7 @@ async def _name_and_offer(obj: dict, area: str) -> None:
         result = await asyncio.to_thread(
             engine.run_claude, scenes.name_prompt(area), scenes.SYSTEM,
             eff_model(), scenes.NAME_TIMEOUT_S, scenes.NAME_MAX_TURNS,
-            "scene")
+            "scene", job="scene_names")
         names = scenes.read_names(result.get("text")
                                   or result.get("raw") or "")
     except Exception as exc:  # noqa: BLE001 — the card renders from the
@@ -5280,7 +5331,7 @@ async def _offer_playbooks(snapshot: dict, now: float) -> int:
                 engine.run_claude, playbooks.describe_prompt(obj),
                 playbooks.SYSTEM, eff_model(),
                 playbooks.DESCRIBE_TIMEOUT_S, playbooks.DESCRIBE_MAX_TURNS,
-                "playbook")
+                "playbook", job="playbook_text")
             obj["why"] = playbooks.tidy_description(
                 result.get("text") or result.get("raw") or "", obj["why"])
         except Exception as exc:  # noqa: BLE001 — the card renders from the
@@ -6842,7 +6893,8 @@ async def h_activity_summary(request: web.Request) -> web.Response:
                  "say about it.")
     result = await asyncio.to_thread(
         engine.run_analyst, prompt, episodes.SUMMARY_SYSTEM, eff_model(),
-        episodes.SUMMARY_TIMEOUT_S, episodes.SUMMARY_MAX_TURNS, "activity")
+        episodes.SUMMARY_TIMEOUT_S, episodes.SUMMARY_MAX_TURNS, "activity",
+        job="episode_summary")
     text = str(result.get("text") or "").strip()
     if not result.get("ok"):
         raise web.HTTPBadGateway(
@@ -7002,6 +7054,8 @@ def _diagnostics_payload() -> dict:
             "triage_oldest_wait_s": max(
                 [int(time.time() - f["ts"]) for f in rows
                  if f["status"] == "triaging"] or [0]),
+            "triage_runs_today": _triage_runs_today(time.time()),
+            "triage_runs_per_day": triage.MAX_PER_DAY,
             "scorecard": findings_store.scorecard(),
             # Which producers the homeowner has switched off. A quiet check
             # and a muted one look identical from the list, and only one
@@ -9257,7 +9311,7 @@ async def h_onboarding_recommend(request: web.Request) -> web.Response:
             engine.run_analyst,
             onboarding.build_orientation_prompt(memory, orientation),
             onboarding.RECOMMEND_SYSTEM, eff_model(),
-            TIMEOUT_S, ANALYST_MAX_TURNS, "card")
+            TIMEOUT_S, ANALYST_MAX_TURNS, "card", job="onboarding")
         return result
 
     async def snapshot() -> dict:
@@ -9277,7 +9331,8 @@ async def h_onboarding_recommend(request: web.Request) -> web.Response:
             raise web.HTTPBadGateway(text="could not read Home Assistant")
         return await asyncio.to_thread(
             engine.run_claude, onboarding.build_prompt(memory, bundle),
-            onboarding.RECOMMEND_SYSTEM, eff_model(), TIMEOUT_S, 8, "card")
+            onboarding.RECOMMEND_SYSTEM, eff_model(), TIMEOUT_S, 8, "card",
+            job="onboarding")
 
     def read(result: dict | None) -> dict | None:
         """The reply as recommendations, or None for "that did not work"."""
