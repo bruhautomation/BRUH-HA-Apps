@@ -474,7 +474,10 @@ class TestButtonsOnTheMessage(NotifyCase):
         super().setUp()
         os.environ["BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY"] = "info"
 
-    def test_one_finding_to_a_phone_arrives_with_the_three_endings(self):
+    def test_one_finding_to_a_phone_arrives_with_the_three_endings_and_reply(self):
+        # Three endings and one turn: Reply is the fourth button and the
+        # one that settles nothing (`test_finding_requests` drives the
+        # drain it lands in). The order is the strip's own.
         os.environ["BRAIN_FINDINGS_NOTIFY"] = "notify.mobile_app_pixel"
         row, _ = findings_store.add("The hall sensor has stopped")
         self._announce([row])
@@ -483,7 +486,8 @@ class TestButtonsOnTheMessage(NotifyCase):
         self.assertEqual([a["action"] for a in actions],
                          [f"brain.fixed.{row['ts']}",
                           f"brain.wrong.{row['ts']}",
-                          f"brain.snooze.{row['ts']}"])
+                          f"brain.snooze.{row['ts']}",
+                          f"brain.reply.{row['ts']}"])
 
     def test_any_other_notifier_gets_the_payload_it_always_did(self):
         # Not an empty `data` either: several notifiers treat the key's
@@ -2514,7 +2518,7 @@ class TestTheThreeTiersInThePanel(NotifyCase):
         data = self.payloads[-1]
         self.assertEqual([a["action"] for a in data["actions"]],
                          [f"brain.fixed.{ts}", f"brain.wrong.{ts}",
-                          f"brain.snooze.{ts}"])
+                          f"brain.snooze.{ts}", f"brain.reply.{ts}"])
         self.assertEqual(data["url"], "/hassio/ingress/local_brain")
 
     # -- and it stops the moment somebody answers --------------------------
