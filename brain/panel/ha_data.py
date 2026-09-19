@@ -812,14 +812,43 @@ def memory_budget() -> int:
     return kb * 1024 + MEMORY_SLACK_CHARS
 
 
-def _read_context() -> str:
-    """Learned memory (memory.md) first, then the CLAUDE.md excerpt.
+# The document's head behind a retrieval block: the nicknames and the
+# standing preferences the consolidator keeps at the top, and no more of
+# it than that. The block carries the facts about what the run is
+# reading, and the whole document is what a run got before the store
+# existed — which it still gets on a house with no facts yet.
+FACTS_HEAD_CHARS = 1_000
+
+
+def _memory_for(entities=(), areas=(), domains=()) -> str:
+    """The retrieval block plus the document's head, or the whole
+    document where there are no facts to retrieve from."""
+    try:
+        import facts_store  # noqa: PLC0415 — panel-local, optional here
+        block = facts_store.retrieval_block(
+            entities=entities, areas=areas, domains=domains,
+            limit_chars=min(memory_budget(), facts_store.RETRIEVAL_CHARS * 2))
+    except Exception:  # noqa: BLE001 — the whole document is the floor
+        block = ""
+    if not block:
+        return _read_capped(MEMORY_FILE, memory_budget())
+    head = _read_capped(MEMORY_FILE, FACTS_HEAD_CHARS)
+    if head and len(head) >= FACTS_HEAD_CHARS:
+        head = head.rsplit("\n", 1)[0]
+    return block + ("\n" + head if head else "")
+
+
+def _read_context(entities=(), areas=(), domains=()) -> str:
+    """Learned memory first, then the CLAUDE.md excerpt.
 
     Memory facts lead because they are distilled knowledge about this home;
-    the CLAUDE.md excerpt fills whatever budget remains.
+    the CLAUDE.md excerpt fills whatever budget remains. What "memory"
+    is here changed in 2.2: the facts about the entities this bundle
+    carries, over the document's head, rather than the whole document —
+    see `_memory_for`.
     """
     parts: list[str] = []
-    memory = _read_capped(MEMORY_FILE, memory_budget())
+    memory = _memory_for(entities, areas, domains)
     if memory:
         parts.append(memory)
     claude_md = _read_capped(CONTEXT_FILE, CONTEXT_CHARS)
@@ -1023,7 +1052,10 @@ async def collect_bundle(category: dict, history_days: int, question: str | None
             except Exception:  # noqa: BLE001 — stats are best-effort
                 pass
 
-        context = _read_context()
+        context = _read_context(
+            entities=[row.get("e") for row in bundle.get("entities") or []
+                      if isinstance(row, dict) and row.get("e")],
+            domains=list(category.get("domains") or []))
         if context:
             bundle["context"] = context
 

@@ -287,6 +287,15 @@ def house_block(snapshot: dict | None, limit: int = HOUSE_CHARS) -> str:
     return "\n".join(out)
 
 
+# The one header every memory block a run reads opens with. `facts_store`'s
+# retrieval block and the document excerpt below are two views of one
+# memory, and a model told twice, in two different sentences, what the
+# same block is would read them as two kinds of thing.
+MEMORY_HEAD = ("WHAT IS ALREADY KNOWN ABOUT THIS HOME — the homeowner's own "
+               "standing facts and preferences. Do not contradict them, and "
+               "do not repeat them back:")
+
+
 def memory_excerpt(text: str | None, limit: int = MEMORY_EXCERPT_CHARS) -> str:
     """The head of the memory document, cut at a line boundary.
 
@@ -303,9 +312,7 @@ def memory_excerpt(text: str | None, limit: int = MEMORY_EXCERPT_CHARS) -> str:
         body = body[:limit].rsplit("\n", 1)[0].rstrip()
     if not body:
         return ""
-    return ("WHAT IS ALREADY KNOWN ABOUT THIS HOME — the homeowner's own "
-            "standing facts and preferences. Do not contradict them, and "
-            "do not repeat them back:\n" + body)
+    return MEMORY_HEAD + "\n" + body
 
 
 # ---------------------------------------------------------------------------

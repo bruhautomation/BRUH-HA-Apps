@@ -30,6 +30,7 @@ PANEL_DIR = ADDON_DIR / "panel"
 
 sys.path.insert(0, str(PANEL_DIR))
 
+import facts_store  # noqa: E402
 import ha_data  # noqa: E402
 
 
@@ -104,12 +105,18 @@ class TestWhatActuallyReachesThePrompt(unittest.TestCase):
         self._memory, self._context = ha_data.MEMORY_FILE, ha_data.CONTEXT_FILE
         ha_data.MEMORY_FILE = os.path.join(self.tmp, "memory.md")
         ha_data.CONTEXT_FILE = os.path.join(self.tmp, "CLAUDE.md")
+        # An empty facts store is the floor these tests are about: with
+        # nothing to retrieve the whole document is injected. A store with
+        # rows in it would hand back a retrieval block instead.
+        self._facts = facts_store.FACTS_FILE
+        facts_store.FACTS_FILE = Path(self.tmp) / "facts.json"
         self.addCleanup(self._restore_paths)
         self._env = os.environ.pop("BRAIN_MEMORY_MAX_KB", None)
         self.addCleanup(self._restore_env)
 
     def _restore_paths(self):
         ha_data.MEMORY_FILE, ha_data.CONTEXT_FILE = self._memory, self._context
+        facts_store.FACTS_FILE = self._facts
 
     def _restore_env(self):
         if self._env is not None:

@@ -1315,6 +1315,17 @@ setup_claude_settings() {
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/scripts/brain-memory-extract.py",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

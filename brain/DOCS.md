@@ -63,7 +63,7 @@ subscription — or your own API key.
 
 Most AI integrations can turn on a light. brAIn administers the installation.
 
-It reaches Home Assistant three ways at once — a **native MCP server** (43 tools) for
+It reaches Home Assistant three ways at once — a **native MCP server** (51 tools) for
 reading and controlling, **65 registry-management services** for the parts of Home
 Assistant that normally only exist behind the Settings UI, and a **real shell** in
 `/config` for everything that is still a YAML file.
@@ -593,6 +593,38 @@ automation can call. A background consolidator folds them into the document, and
 
 Every part of brAIn reads the same memory. Tell the voice assistant something and the
 Insights cards know it.
+
+**Since 2.2 the document has a ledger underneath it.** Every fact that reaches the
+memory inbox — from voice, from a study session, from a card, from `brain memory
+add`, from a correction you typed under a finding — is also filed as one row in a
+**facts store**, tagged with the entities, rooms and people it is about, who filed
+it, when it was observed, and the run that produced it, so "why does brAIn think
+this" has an answer you can open. The document stays the thing you read and edit;
+the ledger is what a run *retrieves* from. A card about the kitchen is handed the
+facts about the kitchen, the morning brief the facts about the rooms it is
+reporting on, the Resident's look the facts about the signals in front of it —
+never the whole document, which on a mature house is 30 KB of things that are true
+and mostly beside the point. The Knowledge tab lists the ledger under **What brAIn
+knows**, with a ✕ on each row; a fact you forget there is gone from every future
+prompt, and the document is left for you to edit yourself.
+
+**A correction reaches the rule, not just the wording.** Pressing ✕ Wrong on a
+finding from a house check writes an *exception* into the facts store — this
+sensor, this check — and the check reads it on its next pass and says nothing about
+that sensor again. Before 2.2 a Wrong settled one sentence, and the same rule made
+the same mistake in new words the next morning. `dev.frozen`, `dev.implausible`,
+`chore.waiting` and `base.unusual` all consult it; a check that could not read the
+store treats it as empty, which is the direction in which being wrong shows a card.
+
+**The terminal and the chat teach memory too.** Claude Code runs a hook when a
+conversation's turn ends (`scripts/brain-memory-extract.py`, wired in the project's
+settings by the add-on). It reads the last exchange, judges from *your* words alone
+whether anything durable was said — a preference, a nickname, a correction, a
+plan — and if so spends one cheap run to write it to the memory inbox like any other
+writer. Machine conversations (voice, study, the consolidator, every scheduled run)
+are skipped, because they claim their session ids before they start and the hook
+only extracts from the ones nobody claimed: yours. It is off with `learning`, and it
+never writes `memory.md` — the consolidator is still the only thing that does.
 
 It also keeps a short list of **hypotheses** — things it thinks might be true and
 isn't sure about. Never more than three waiting on you, each expiring in a fortnight.
@@ -2165,6 +2197,20 @@ guessing; and `get_health` is brAIn's own verdict, the sign-in, the usage
 tracker's last word and the daemon roll-call, for *is brAIn OK*. Both are
 read-only and settle nothing.
 
+**Since 2.2 every measurement is a tool.** A run no longer has to be handed a
+block and hope it covers the question; it asks. `what_is_normal` places a reading
+inside its own baseline in the entity's own spreads; `room_physics` is a room's
+loss and gain rate and how long it takes to warm; `appliance_status` says whether a
+machine is idle, running or finished by its own measured shape; `house_rhythm` is
+the wake and settle times; `door_habits` is how much of each hour a closure is
+usually open; `habits` is what you do by hand with an entity, often enough to be a
+habit, and the overrides and odd presses against it; `simulate_automation` replays
+an automation config over the recorder's last weeks and grades it against what you
+actually did, calling nothing; and `recall` reads the facts store by subject or by
+words. Every one of them is on the read-only list, so the analyst, the Resident,
+the chat and a voice command can all ask, and each one says in as many words when
+a store has not measured yet rather than answering with a number it does not have.
+
 ## Checking brAIn itself
 
 Three of these, and they cost three different amounts.
@@ -2518,7 +2564,7 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `learning` | bool | `true` | Master switch for everything brAIn learns: the consolidator, the end-of-conversation reflection pass, and study sessions. Turning it off leaves existing memory untouched. |
+| `learning` | bool | `true` | Master switch for everything brAIn learns: the consolidator, the end-of-conversation reflection pass, the terminal and chat memory hook, and study sessions. Turning it off leaves existing memory untouched. |
 | `memory_injection` | bool | `true` | Splice learned memory into voice prompts. |
 | `memory_max_kb` | 1–64 | `32` | Size cap for the memory document. A pass that cannot fit under it files nothing, so this is the setting to raise when the log says the document is full. |
 | `study_timeout_minutes` | 2–120 | `30` | Wall-clock limit for a study session. |

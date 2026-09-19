@@ -31,6 +31,7 @@ import hypotheses  # noqa: E402
 import onboarding  # noqa: E402
 import feedback_store  # noqa: E402
 import card_tags  # noqa: E402
+import facts_store  # noqa: E402
 import findings_store  # noqa: E402
 import knowledge_store  # noqa: E402
 import prompt_store  # noqa: E402
@@ -456,6 +457,9 @@ class InsightsServerCase(unittest.TestCase):
         settings_store.save({"onboarded": True})
         self.server.SHARED_MEMORY_FILE = Path(self.tmp.name) / "memory.md"
         self.server.MEMORY_MARKER_FILE = Path(self.tmp.name) / ".last_consolidated"
+        self._old_facts = (facts_store.FACTS_FILE, facts_store.INGEST_STATE_FILE)
+        facts_store.FACTS_FILE = Path(self.tmp.name) / "facts.json"
+        facts_store.INGEST_STATE_FILE = Path(self.tmp.name) / "facts-ingest.json"
         self._old_www = self.server.WWW_CARD_DIR
         self._old_findings = (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR)
         self._old_tags = card_tags.TAGS_FILE
@@ -476,6 +480,7 @@ class InsightsServerCase(unittest.TestCase):
          self.server.MEMORY_MARKER_FILE) = self._olds
         self.server.WWW_CARD_DIR = self._old_www
         (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR) = self._old_findings
+        (facts_store.FACTS_FILE, facts_store.INGEST_STATE_FILE) = self._old_facts
         card_tags.TAGS_FILE = self._old_tags
         self.server.JOBS.clear()
         self.tmp.cleanup()

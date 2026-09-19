@@ -669,6 +669,256 @@ def get_house_model():
     }
 
 
+# ---------------------------------------------------------------------------
+# The measurements, as tools — 2.2
+# ---------------------------------------------------------------------------
+#
+# Every store the checks read (`baselines`, `thermal`, `appliances`,
+# `rhythm`, `closures`, the three ledgers) used to be readable by rules and
+# by nobody else: a card asked whether a reading was odd had to guess a
+# threshold, and voice asked "is the dishwasher done" had no way to know.
+# Each of these calls the panel's own route over loopback, `explain_change`'s
+# arrangement, because the panel already holds the one implementation of
+# each answer and a second copy here would be a second answer. A panel
+# that is not up is reported as such rather than as a house with nothing
+# measured, and a store that has not measured yet says so in words — a
+# measurement that has not been made is not "nothing is wrong".
+
+_ENTITY_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+
+
+def _entity_or_error(entity_id, example):
+    if not _ENTITY_RE.match(str(entity_id or "")):
+        return {"error": (
+            f"'{str(entity_id)[:64]}' is not an entity id. They look like "
+            f"{example} — use get_all_states to find the one you mean."
+        )}
+    return None
+
+
+def what_is_normal(entity_id):
+    """What this entity normally reads NOW, how far from that it is, and
+    where it has been heading — `get_baseline` with the question a run
+    actually asks answered at the top."""
+    bad = _entity_or_error(entity_id, "sensor.freezer_temp")
+    if bad:
+        return bad
+    base = get_baseline(entity_id)
+    if base.get("error") or not base.get("baseline", True):
+        return base
+    quoted = urllib.parse.quote(str(entity_id), safe="")
+    state = ha_api_request(f"/api/states/{quoted}")
+    reading = None
+    try:
+        reading = float((state or {}).get("state"))
+    except (TypeError, ValueError, AttributeError):
+        # `unavailable`, `unknown` or a Core that did not answer: the reading
+        # stays None and the answer says so beside the baseline.
+        pass
+    overall = base.get("overall") or {}
+    out = {
+        "entity_id": entity_id,
+        "reading_now": reading,
+        "unit": base.get("unit"),
+        "usual": overall,
+        "trend": base.get("trend"),
+        "measured_over_days": base.get("measured_over_days"),
+        "stale": base.get("stale"),
+    }
+    median = overall.get("median")
+    spread = overall.get("spread")
+    if reading is not None and median is not None and spread:
+        out["spreads_from_usual"] = round((reading - median) / spread, 2)
+        out["note"] = ("`spreads_from_usual` is how far outside its own "
+                       "normal the reading is, in its own median absolute "
+                       "deviations; past about six is unusual for this "
+                       "house. Ask `get_baseline` for the hour-of-week "
+                       "buckets when the time of day matters.")
+    else:
+        out["note"] = ("No live reading to compare, or no spread to compare "
+                       "it against — see `usual` and `trend`.")
+    return out
+
+
+def room_physics(area):
+    """How fast a room loses heat and gains it, from a month of nights."""
+    result = _panel_get("/api/knowledge/house/thermal")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    rooms = (result or {}).get("rooms") or []
+    want = str(area or "").strip().lower()
+    match = [r for r in rooms if isinstance(r, dict) and want in (
+        str(r.get("area") or "").lower(), str(r.get("name") or "").lower(),
+        str(r.get("id") or "").lower())]
+    if not match and want:
+        match = [r for r in rooms if isinstance(r, dict) and want in
+                 (str(r.get("area") or "") + " " + str(r.get("name") or "")).lower()]
+    if not rooms:
+        return {"area": area, "rooms": [], "note": (
+            "brAIn has not fitted a heat model to any room yet — it needs "
+            "a month of nights with an outdoor reference, and says which "
+            "rooms it could not fit and why in the Knowledge tab.")}
+    if not match:
+        return {"area": area, "rooms": [], "known_rooms": [
+            r.get("area") or r.get("name") for r in rooms if isinstance(r, dict)],
+            "note": "no measured room by that name — see known_rooms"}
+    return {"area": area, "outdoor_reference": (result or {}).get("outdoor"),
+            "unit": (result or {}).get("unit"),
+            "rooms": match,
+            "note": ("`k` is the loss rate per hour (its reciprocal `tau_h` is "
+                     "the time constant in hours), `gain` the degrees per "
+                     "hour with the heating on, `hours_to_warm` measured "
+                     "between the room's own `coolest` and `warmest` on the "
+                     "coldest night the month held.")}
+
+
+def appliance_status(entity_id):
+    """Idle, running, or finished-and-waiting, by this machine's OWN
+    measured thresholds — never a wattage somebody typed."""
+    bad = _entity_or_error(entity_id, "sensor.dishwasher_power")
+    if bad:
+        return bad
+    result = _panel_get("/api/knowledge/house/appliances")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    rows = (result or {}).get("appliances") or []
+    for row in rows:
+        if isinstance(row, dict) and row.get("entity_id") == entity_id:
+            live = row.get("now") if isinstance(row.get("now"), dict) else {}
+            return {"entity_id": entity_id, "state": live.get("state"),
+                    "now": live, "name": row.get("name"),
+                    "chore_kind": row.get("chore_kind"),
+                    "thresholds": {k: row.get(k) for k in
+                                   ("idle_w", "running_w", "threshold_w",
+                                    "settle_min", "cycles") if k in row},
+                    "live_error": (result or {}).get("live_error"),
+                    "note": (
+                "`state` is idle / running / finished from the machine's own "
+                "power shape; `finished` means the draw dropped past its "
+                "measured settle and nothing has run since — not that it "
+                "has been emptied, which no power reading can see.")}
+    return {"entity_id": entity_id, "state": None, "note": (
+        "brAIn has no power profile for this entity. It profiles power "
+        "sensors whose draw is clearly two-level (idle and running) from "
+        "ten days of five-minute statistics; a router or a fridge's "
+        "standing draw gets none on purpose.")}
+
+
+def house_rhythm():
+    """When this house wakes and settles, weekdays and weekends apart."""
+    result = _panel_get("/api/knowledge/house/rhythm")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    return {**(result or {}), "note": (
+        "Measured from the first and last thing a PERSON did each day — "
+        "not a motion sensor and not a light. A half with too few days or "
+        "too wide a spread reports no time, which is the floor doing its "
+        "job and not an error.")}
+
+
+def door_habits(entity_id):
+    """How much of each hour of the week this closure is usually open."""
+    bad = _entity_or_error(entity_id, "binary_sensor.back_door")
+    if bad:
+        return bad
+    result = _panel_get("/api/knowledge/house/closures")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    rows = result if isinstance(result, list) else (result or {}).get("rows") or []
+    for row in rows:
+        if isinstance(row, dict) and row.get("entity_id") == entity_id:
+            return {**row, "note": (
+                "`buckets` are hour-of-week (0 = Monday 00:00 local) → share "
+                "of that hour it was open, over the weeks watched; a missing "
+                "bucket was never watched, which is not 'never open then'. "
+                "`overall` is the share across the whole window.")}
+    return {"entity_id": entity_id, "buckets": None, "note": (
+        "brAIn has not measured this closure — it watches doors, windows, "
+        "locks, covers and garages by device class, nightly, and needs a "
+        "few days before a bucket means anything.")}
+
+
+def habits(entity_id):
+    """What a person does with this entity by hand, often enough to be a
+    habit — the days, the time, the share — and what keeps undoing it."""
+    bad = _entity_or_error(entity_id, "light.porch")
+    if bad:
+        return bad
+    quoted = urllib.parse.quote(str(entity_id), safe="")
+    result = _panel_get(f"/api/habits?entity_id={quoted}")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    return {**(result or {}), "note": (
+        "`habit` is the strongest shape across the entity's states "
+        "(days, share of the days it could have happened on, circular "
+        "median time, spread); `overrides` are automations somebody keeps "
+        "undoing about it; `odd` are recent presses far outside the "
+        "shape. `automated` says something already does this.")}
+
+
+def simulate_automation(config, days=7):
+    """When an automation WOULD have fired over the last days — replayed
+    against recorded history, calling nothing — and whether a person did
+    the same thing, the opposite, or nothing in that window."""
+    if not isinstance(config, dict):
+        return {"error": "config must be a Home Assistant automation object "
+                         "(trigger/condition/action)"}
+    try:
+        days = max(1, min(int(days or 7), 28))
+    except (TypeError, ValueError):
+        days = 7
+    body = json.dumps({"config": config, "days": days}).encode()
+    req = urllib.request.Request(
+        f"{PANEL_URL}/api/simulate", data=body, method="POST",
+        headers={"Accept": "application/json",
+                 "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as response:
+            result = json.loads(response.read().decode())
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"the brAIn panel did not answer: {e}"}
+    if result.get("refused"):
+        return {"refused": True, "days": days,
+                "error": (result.get("error")
+                          or (result.get("replay") or {}).get("error")
+                          or "brAIn cannot replay this automation"),
+                "note": ("Only time, state, numeric_state and template "
+                         "triggers can be replayed from the recorder; the "
+                         "refusal is whole, never a partial count.")}
+    return {**result, "note": (
+        "`replay.count` is how many times it would have fired; "
+        "`against_you` grades each firing against what a person did "
+        "within a few minutes: agreed (the same change), contradicted "
+        "(the opposite), disagreed (nothing).")}
+
+
+def recall(query="", subject="", limit=10):
+    """What brAIn remembers about this — ranked facts, each with where it
+    came from and when. Ask by subject (an entity id, `area:<id>`,
+    `person:<id>`, `house`) or by a few words."""
+    params = urllib.parse.urlencode({
+        "query": str(query or "")[:200], "subject": str(subject or "")[:255],
+        "limit": max(1, min(int(limit or 10), 50))})
+    result = _panel_get(f"/api/facts?{params}")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    rows = [{k: row.get(k) for k in
+             ("text", "subject", "subjects", "source", "observed",
+              "confidence", "run_id", "predicate")}
+            for row in (result or {}).get("facts") or [] if isinstance(row, dict)]
+    if not rows:
+        return {"facts": [], "note": (
+            "nothing remembered about that yet. Facts arrive from the "
+            "memory inbox — a correction on a finding, a study session, "
+            "something said in the chat, the terminal or by voice — and "
+            "`remember_fact` queues one.")}
+    return {"facts": rows, "note": (
+        "`source` says who taught it (a `correction` is the homeowner "
+        "saying brAIn had something wrong and wins over an older fact); "
+        "`predicate: exception:<check>` means a rule has been told to "
+        "stand down for that entity.")}
+
+
 # What one finding is reported as to a model: the row's own fields, less
 # the bookkeeping (undo tokens, snooze stamps, the run id). Named so the
 # list is one shape wherever a run reads it.
@@ -2034,17 +2284,23 @@ def reload_config(target):
     return {"error": "Invalid reload endpoint"}
 
 
-def remember_fact(fact, confidence="high"):
+def remember_fact(fact, confidence="high", subject="", person=""):
     """Queue a durable household fact for the memory consolidator.
 
     Appends one JSONL record to a fresh inbox file (one file per call —
     lock-free by construction). The brain memory consolidator later merges
-    pending records into /config/.brain/memory/memory.md.
+    pending records into /config/.brain/memory/memory.md, and the panel's
+    facts store files the same line under `subject` (an entity id,
+    `area:<id>`, `person:<id>` or `house`) — a writer that knows what its
+    fact is about beats a scan of the sentence. `person` is the person it
+    is about, for a preference that is theirs and not the house's.
     """
     if not isinstance(fact, str) or not fact.strip():
         return {"error": "fact must be a non-empty string"}
     if confidence not in ("high", "medium", "low"):
         confidence = "high"
+    subject = str(subject or "").strip()[:255]
+    person = str(person or "").strip()[:64]
 
     inbox_dir = os.path.join(MEMORY_DIR, "inbox")
     try:
@@ -2056,6 +2312,10 @@ def remember_fact(fact, confidence="high"):
             "fact": fact.strip(),
             "confidence": confidence,
         }
+        if subject:
+            record["subject"] = subject
+        if person:
+            record["person"] = person
         path = os.path.join(inbox_dir, f"{now}-assist.jsonl")
         with open(path, "a") as fh:
             fh.write(json.dumps(record) + "\n")
@@ -2941,6 +3201,141 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}}
     },
     {
+        "name": "what_is_normal",
+        "description": (
+            "What one numeric entity normally reads, how far from that it is "
+            "RIGHT NOW in its own spreads, and which way it has been heading "
+            "over the month. The first thing to call before saying a reading "
+            "is high, low or odd: a threshold you would guess is the same one "
+            "for a freezer and a water meter, and this is measured from this "
+            "house. `get_baseline` has the hour-of-week detail."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"entity_id": {"type": "string",
+                                         "description": "The entity ID"}},
+            "required": ["entity_id"]
+        }
+    },
+    {
+        "name": "room_physics",
+        "description": (
+            "How fast a room loses heat and how fast it warms, measured per "
+            "room from a month of nights: the loss rate, the time constant, "
+            "the gain with the heating on, and how long the coldest night's "
+            "climb took. For pre-heat timing, 'is a window open', setback "
+            "costs and freeze risk — questions a threshold cannot answer "
+            "because every house and every room differs by an order of "
+            "magnitude."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"area": {"type": "string",
+                                    "description": "The area name or id"}},
+            "required": ["area"]
+        }
+    },
+    {
+        "name": "appliance_status",
+        "description": (
+            "Whether a machine on a power sensor is idle, running, or "
+            "finished-and-waiting, by thresholds measured from ITS OWN power "
+            "shape rather than a wattage somebody typed. 'Is the dishwasher "
+            "done' and 'has the washing been taken out' — the second is a "
+            "question no power reading can answer, and the tool says so."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"entity_id": {"type": "string",
+                                         "description": "The power sensor"}},
+            "required": ["entity_id"]
+        }
+    },
+    {
+        "name": "house_rhythm",
+        "description": (
+            "When this house gets up and settles for the night — weekdays "
+            "and weekends measured apart, with the spread — from the first "
+            "and last thing a person did each day. For anything scheduled "
+            "'in the morning' or 'at bedtime': 07:00 is early on a Sunday "
+            "and late on a Tuesday in the same house."
+        ),
+        "inputSchema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "door_habits",
+        "description": (
+            "How much of each hour of the week a door, window, lock, cover "
+            "or garage is USUALLY open in this house, time-weighted over the "
+            "weeks watched. 'Is it odd that the back door is open at 23:40' "
+            "has a different answer in a house that shuts it every night and "
+            "one that airs the kitchen all summer."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"entity_id": {"type": "string",
+                                         "description": "The closure's entity ID"}},
+            "required": ["entity_id"]
+        }
+    },
+    {
+        "name": "habits",
+        "description": (
+            "What a person does with this entity BY HAND often enough to be "
+            "a habit — which days, at what time, how reliably, and whether "
+            "it is still happening — plus which automations they keep "
+            "undoing about it and whether something already automates it. "
+            "The evidence behind 'you seem to do this every evening; want "
+            "an automation for it'."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"entity_id": {"type": "string",
+                                         "description": "The entity ID"}},
+            "required": ["entity_id"]
+        }
+    },
+    {
+        "name": "simulate_automation",
+        "description": (
+            "Replay an automation config over the last N days of recorded "
+            "history — calling nothing — to see when it WOULD have fired, "
+            "and grade each firing against what a person actually did in "
+            "that window (agreed, contradicted, nothing). The sanity check "
+            "to run on any automation before proposing it. Only time, "
+            "state, numeric_state and template triggers can be replayed; "
+            "anything else is refused whole rather than counted wrongly."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "config": {"type": "object",
+                           "description": "A Home Assistant automation object: trigger(s), condition(s), action(s)"},
+                "days": {"type": "integer", "description": "How many days back (1–28, default 7)"}
+            },
+            "required": ["config"]
+        }
+    },
+    {
+        "name": "recall",
+        "description": (
+            "What brAIn remembers about something: ranked facts with who "
+            "taught each one and when. Ask by subject — an entity id, "
+            "`area:<id>`, `person:<id>` or `house` — or by a few words. Read "
+            "it before contradicting the homeowner about their own house: a "
+            "`correction` is them saying brAIn had it wrong, and an "
+            "`exception:` predicate is a rule they have told to stand down."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "A few words to match"},
+                "subject": {"type": "string", "description": "An entity id, area:<id>, person:<id> or house"},
+                "limit": {"type": "integer", "description": "At most this many (default 10)"}
+            }
+        }
+    },
+    {
         "name": "get_findings",
         "description": (
             "What brAIn has found wrong with this house and is waiting on the "
@@ -3126,6 +3521,14 @@ TOOLS = [
                     "type": "string",
                     "description": "The durable fact to remember, phrased as one short standalone sentence."
                 },
+                "subject": {
+                    "type": "string",
+                    "description": "What the fact is about: an entity id, area:<id>, person:<id> or house"
+                },
+                "person": {
+                    "type": "string",
+                    "description": "The person this preference belongs to, if it is theirs and not the house's"
+                },
                 "confidence": {
                     "type": "string",
                     "enum": ["high", "medium", "low"],
@@ -3250,6 +3653,16 @@ TOOL_IMPLEMENTATIONS = {
     "get_baseline": "get_baseline",
     "get_activity": "get_activity",
     "get_house_model": "get_house_model",
+    # The measurements as tools (2.2): every store the checks read,
+    # readable by every run, over the panel's own routes.
+    "what_is_normal": "what_is_normal",
+    "room_physics": "room_physics",
+    "appliance_status": "appliance_status",
+    "house_rhythm": "house_rhythm",
+    "door_habits": "door_habits",
+    "habits": "habits",
+    "simulate_automation": "simulate_automation",
+    "recall": "recall",
     "get_findings": "get_findings",
     "get_health": "get_health",
     "get_statistics": "get_statistics",

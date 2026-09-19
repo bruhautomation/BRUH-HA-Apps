@@ -2,6 +2,44 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.2.0
+
+**Tools and Memory v2: what brAIn has measured becomes tools every run can
+call, memory gets a facts store with provenance underneath the document, a
+correction finally reaches the rule it corrects, and the terminal and the
+chat teach memory the way voice already did.** Phase 2 of the AI-first plan.
+
+- **Measurements are tools** (`what_is_normal`, `room_physics`,
+  `appliance_status`, `house_rhythm`, `door_habits`, `habits`,
+  `simulate_automation`, `recall`). Every store the checks read is readable
+  by the analyst, the chat, voice and a fix run, over the panel's own
+  routes so there is one implementation of each answer.
+- **A facts store under `memory.md`** (`panel/facts_store.py`). Every line
+  that reaches the memory inbox is also filed as a fact tagged with its
+  subject — an entity, an area, a person, the house — carrying its source,
+  its date and the run that produced it. Retrieval hands a run the core
+  facts plus the ones about the entities it is reading, so an insight prompt
+  carries a fraction of the memory bytes it did and the document is no
+  longer sent whole. The Knowledge tab lists them under **What brAIn
+  knows** with the subject, the source and the date on each row, a
+  **See the run** that opens the conversation that learned it, and a ✕ that
+  forgets the fact from every future prompt and leaves the document alone
+  (`GET /api/facts`, `POST /api/fact/{id}/forget`; `/api/habits` and
+  `POST /api/simulate` are the two routes the new tools read).
+- **A correction reaches the rule it corrects.** Wrong on a check's finding
+  writes a standing exception for that entity under that check, and
+  `dev.frozen`, `dev.implausible`, `chore.waiting` and `base.unusual`
+  consult it before filing — the loop the Wrong button always promised.
+- **One habits module** (`panel/habits.py`). The three ledgers keep their
+  files and lose their private arithmetic: the shape of when something
+  happens — days, share, circular median, band, still happening — has one
+  implementation, and `habits(entity)` answers it for any entity.
+- **The terminal and the chat teach memory** (`scripts/brain-memory-extract.py`,
+  a `Stop` hook). A cheap extraction over each turn of a person's own
+  conversation queues durable facts, corrections and stated intents to the
+  memory inbox; machine-driven sessions are skipped by their claimed
+  session id, and `learning: false` switches it off with the rest.
+
 ## 2.1.0
 
 **The Resident: brAIn watches the house's own event bus, takes a cheap first

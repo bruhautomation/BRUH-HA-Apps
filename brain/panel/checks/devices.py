@@ -368,6 +368,8 @@ def implausible(snap: dict, now: float) -> list[dict]:
         lo, hi = bounds
         if not out_of_range(st, eid):
             continue
+        if house.excepted(eid, "dev.implausible"):
+            continue
         out.append({
             "text": f"{house.name(eid)} is reporting an impossible value",
             "detail": f"{value:g}{key[1]} as of {when(st.get('last_updated'))}"
@@ -416,6 +418,10 @@ def frozen(snap: dict, now: float) -> list[dict]:
             continue
         if abs(lo) < 1e-9:
             # A power sensor on an idle plug reads 0 for a week and is fine.
+            continue
+        if house.excepted(eid, "dev.frozen"):
+            # "It is a contact on a cupboard nobody opens" — said once,
+            # on the Wrong button, and read here ever after.
             continue
         unit = attrs.get("unit_of_measurement") or ""
         out.append({
