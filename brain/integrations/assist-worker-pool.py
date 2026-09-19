@@ -168,7 +168,66 @@ ASSIST_SETTINGS_FILE = os.path.join(SHARED_DIR, "assist_settings.json")
 
 # --include-partial-messages gives token-level deltas for streaming TTS.
 # Disabled automatically if the installed CLI predates the flag.
+#
+# **A flag turned off for the life of the process is a diagnosis nothing can
+# correct.** The only evidence there is that the CLI predates the flag is a
+# worker dying within a few seconds of being spawned with it — and a worker
+# dies within a few seconds for half a dozen other reasons: the image is
+# updating underneath us, the box is out of memory, the credential file is
+# being rewritten, `/config` is momentarily unreadable. Reading any one of
+# those as "this CLI does not know the flag" cost every voice answer its
+# token streaming until somebody restarted the add-on, and nothing on any
+# screen said so.
+#
+# An installed CLI that predates the flag fails EVERY time, so two in a row
+# is all the evidence a real one needs; and because even that can be wrong,
+# the answer has a clock on it — after the cooldown the next spawn carries
+# the flag again and a CLI that still cannot take it simply earns its two
+# deaths back. A worker that answers with the flag on clears the count,
+# because the deaths this counts are consecutive ones.
 PARTIAL_MESSAGES_OK = True
+PARTIAL_DISABLE_AFTER = int(os.environ.get("BRAIN_PARTIAL_DISABLE_AFTER", "2"))
+PARTIAL_RETRY_AFTER_S = float(os.environ.get("BRAIN_PARTIAL_RETRY_AFTER_S",
+                                             str(15 * 60)))
+# Consecutive early deaths of workers spawned WITH the flag, and the instant
+# the current disable lapses. Module state rather than pool state because
+# `Worker.__init__` builds the argv and does not have the pool.
+_partial_early_deaths = 0
+_partial_disabled_until = 0.0
+_partial_lock = threading.Lock()
+
+
+def partial_messages_ok() -> bool:
+    """Whether the next worker should be spawned with the flag."""
+    if not PARTIAL_MESSAGES_OK:
+        return False              # switched off by hand, no clock on it
+    with _partial_lock:
+        return time.time() >= _partial_disabled_until
+
+
+def note_partial_early_death() -> bool:
+    """A worker spawned with the flag died at once. Returns: now disabled?"""
+    global _partial_early_deaths, _partial_disabled_until
+    with _partial_lock:
+        _partial_early_deaths += 1
+        if _partial_early_deaths < PARTIAL_DISABLE_AFTER:
+            log(f"worker died at spawn ({_partial_early_deaths} of "
+                f"{PARTIAL_DISABLE_AFTER}) — keeping "
+                "--include-partial-messages for now")
+            return False
+        _partial_early_deaths = 0
+        _partial_disabled_until = time.time() + PARTIAL_RETRY_AFTER_S
+        log(f"{PARTIAL_DISABLE_AFTER} workers died at spawn — dropping "
+            f"--include-partial-messages for {int(PARTIAL_RETRY_AFTER_S)}s")
+        return True
+
+
+def note_partial_ok() -> None:
+    """A worker spawned with the flag answered: the run of deaths is over."""
+    global _partial_early_deaths
+    with _partial_lock:
+        _partial_early_deaths = 0
+
 
 # Last-used agent profile (custom prompt + model), persisted so the spare
 # can be pre-warmed right at startup instead of after the first request.
@@ -681,7 +740,11 @@ class Worker:
             "--max-turns", str(max(int(MAX_TURNS) * 10, 50)),
             "--system-prompt", system_prompt,
         ]
-        if PARTIAL_MESSAGES_OK:
+        # Recorded on the worker, because what matters afterwards is what
+        # THIS process was spawned with: a worker that died without the
+        # flag says nothing at all about the flag.
+        self.partial = partial_messages_ok()
+        if self.partial:
             cmd += ["--include-partial-messages"]
         cmd += scoping_args()
         if model and model != "default":
@@ -995,12 +1058,14 @@ class Pool:
                 with worker.lock:
                     response = worker.ask(message, deadline, delta_cb=delta_cb)
                 if response is None and not worker.alive() and \
-                        time.time() - worker.created < 5 and PARTIAL_MESSAGES_OK:
-                    # CLI likely predates --include-partial-messages: disable
-                    # it for future workers and let the fallback answer now.
-                    globals()["PARTIAL_MESSAGES_OK"] = False
-                    log("worker died at spawn — disabling --include-partial-messages")
+                        time.time() - worker.created < 5 and worker.partial:
+                    # CLI may predate --include-partial-messages — or this
+                    # may be one bad spawn. Counted rather than concluded
+                    # from; the fallback answers this request either way.
+                    note_partial_early_death()
                 if response is not None:
+                    if worker.partial:
+                        note_partial_ok()
                     worker.last_used = time.time()
                     self._store_session(conv_id, worker.session_id)
                     _record_exchange(worker, text, response)

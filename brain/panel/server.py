@@ -699,8 +699,54 @@ ACTIVE_STATES = ("queued", "collecting", "generating", "parsing", "planning",
                  "fixing")
 
 
+# A job that has ENDED, as opposed to one that is merely not in
+# `ACTIVE_STATES` — "searching" is neither, and a run in flight must never
+# be prunable because of a word the list has not been told about. What is
+# swept is what said it was finished.
+FINISHED_STATES = ("done", "error")
+
+# The ledger is unbounded by construction: `JOBS[id]` is written for every
+# card, every `fix:{ts}`, every `plan:{ts}`, every milestone and every deep
+# check, and only a card's own id is ever reused. A card job is keyed on the
+# card, so there are as many of those as there are cards; a fix or a plan is
+# keyed on a finding's TIMESTAMP, so a house that settles a few findings a
+# day grows this dict for ever and the only thing that empties it is a
+# restart. Two bounds, because they answer different failures: the age is
+# what keeps a long-running panel's ledger to the jobs somebody might still
+# be looking at, and the cap is what stops a burst outrunning the age.
+JOB_TTL_S = float(os.environ.get("BRAIN_JOB_TTL_S", 6 * 3600))
+MAX_JOBS = int(os.environ.get("BRAIN_MAX_JOBS", 200))
+
+
 def _job_active(job_id: str) -> bool:
     return JOBS.get(job_id, {}).get("state") in ACTIVE_STATES
+
+
+def _prune_jobs(now: float | None = None) -> int:
+    """Forget finished jobs. Returns how many were dropped.
+
+    **A running job is never taken**, whatever the cap says: the record is
+    how `/api/status` reports a spinner and how the worker finds its own
+    `kind`, so evicting one live would be a card that generates into
+    nothing. The cap therefore bounds what has FINISHED, and a panel with
+    200 jobs in flight is a panel with a different problem.
+
+    Oldest first, by the `updated_at` `_set_job` already stamps, so what
+    goes is what nobody has looked at for longest.
+    """
+    now = time.time() if now is None else now
+    finished = sorted(
+        (float(job.get("updated_at") or 0), job_id)
+        for job_id, job in JOBS.items()
+        if job.get("state") in FINISHED_STATES)
+    drop = [job_id for stamp, job_id in finished if now - stamp >= JOB_TTL_S]
+    over = len(JOBS) - len(drop) - MAX_JOBS
+    if over > 0:
+        drop += [job_id for _stamp, job_id in finished
+                 if job_id not in drop][:over]
+    for job_id in drop:
+        JOBS.pop(job_id, None)
+    return len(drop)
 
 
 def _set_job(insight_id: str, **fields) -> None:
@@ -708,6 +754,12 @@ def _set_job(insight_id: str, **fields) -> None:
         "updated_at"
     ] = time.time()
     JOBS[insight_id].update(fields)
+    # Swept where a job ENDS rather than on a timer, because that is the one
+    # moment the dict is known to have grown something prunable — and the
+    # entry just written is the freshest thing in it, so neither bound can
+    # take the answer somebody is about to read.
+    if fields.get("state") in FINISHED_STATES:
+        _prune_jobs()
 
 
 # ---------------------------------------------------------------------------
@@ -2934,6 +2986,11 @@ async def _worker() -> None:
                 await _generate(job_id)
         finally:
             QUEUE.task_done()
+            # `_set_job` sweeps every ordinary ending; this covers the one
+            # that is not ordinary — a handler that raised past its own
+            # error state — so nothing can leave a row behind by failing in
+            # a way nobody wrote down.
+            _prune_jobs()
 
 
 def _parse_generated_at(generated_at: str) -> float | None:
@@ -3435,8 +3492,67 @@ def _auth_verdict_is_stale(now: float | None = None) -> bool:
 # HTTP handlers
 # ---------------------------------------------------------------------------
 
+def _read_json(path: Path) -> dict | None:
+    """One stored JSON object, or None for "there is nothing readable here".
+
+    A file that is missing and one that is half-written are the same answer
+    to every caller here — a 404 — and both are what the handlers already
+    did with `except (OSError, ValueError)`. It is a named function so the
+    read can be handed whole to `asyncio.to_thread`: `open` and `json.loads`
+    are the blocking halves, and splitting them across the loop would put
+    one of them back on it.
+    """
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+# The five files the panel serves as itself, held in memory once they have
+# been read. They are baked into the image and cannot change under a running
+# add-on, and a `read_text` in a coroutine is a disk read on the event loop —
+# 300 KB of app.js on every hard refresh, on a Pi, while a checks pass is
+# using the same disk. Cached against the file's own mtime and size so a
+# developer editing them still sees the edit, and a miss is read off the
+# loop; a hit costs a `stat`, which is the one thing here small enough to
+# leave where it is.
+STATIC_FILES = ("index.html", "style.css", "app.js", "docs.js", "favicon.svg")
+_STATIC_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
+
+
+def _read_static(name: str) -> str:
+    """One panel asset, from memory if it is the same file we last read."""
+    if name not in STATIC_FILES:          # never a name off the wire
+        raise web.HTTPNotFound(text="no such file")
+    path = HERE / name
+    try:
+        st = path.stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        stamp = None
+    cached = _STATIC_CACHE.get(name)
+    if cached is not None and stamp is not None and cached[0] == stamp:
+        return cached[1]
+    text = path.read_text(encoding="utf-8")
+    if stamp is not None:
+        _STATIC_CACHE[name] = (stamp, text)
+    return text
+
+
+def _warm_static() -> None:
+    """Read the panel's own files once, at startup, off the loop."""
+    for name in STATIC_FILES:
+        try:
+            _read_static(name)
+        except OSError as exc:
+            # A missing asset is a 404 at request time, which is a much
+            # better place to notice it than a panel that will not start.
+            log.warning("could not pre-read %s: %s", name, exc)
+
+
 async def h_index(request: web.Request) -> web.Response:
-    html = (HERE / "index.html").read_text(encoding="utf-8")
+    html = await asyncio.to_thread(_read_static, "index.html")
     html = html.replace("{{VERSION}}", ADDON_VERSION)
     return web.Response(text=html, content_type="text/html")
 
@@ -3444,7 +3560,7 @@ async def h_index(request: web.Request) -> web.Response:
 def _static(name: str, ctype: str):
     async def handler(request: web.Request) -> web.Response:
         return web.Response(
-            text=(HERE / name).read_text(encoding="utf-8"), content_type=ctype,
+            text=await asyncio.to_thread(_read_static, name), content_type=ctype,
             headers={"Cache-Control": "public, max-age=86400"},
         )
     return handler
@@ -3761,9 +3877,8 @@ async def h_rename_insight(request: web.Request) -> web.Response:
     """
     insight_id = request.match_info["id"]
     path = _insight_path(insight_id)
-    try:
-        insight = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    insight = await asyncio.to_thread(_read_json, path)
+    if insight is None:
         raise web.HTTPNotFound(text="no such insight")
     body = await request.json()
     if not isinstance(body, dict):
@@ -3776,7 +3891,7 @@ async def h_rename_insight(request: web.Request) -> web.Response:
     if "icon" in body:
         insight["icon"] = (str(body.get("icon") or "").strip()[:prompt_store.MAX_ICON]
                            or "✨")
-    atomic_write.write_json(path, insight)
+    await asyncio.to_thread(atomic_write.write_json, path, insight)
     return web.json_response({
         "id": insight_id,
         "name": insight.get("category_title", ""),
@@ -3889,35 +4004,46 @@ async def h_insight_live(request: web.Request) -> web.Response:
 
 async def h_history_list(request: web.Request) -> web.Response:
     hdir = _history_dir(request.match_info["id"])
-    runs = []
-    for path in sorted(hdir.glob("*.json"), key=lambda p: p.name, reverse=True):
-        if not _STAMP_RE.match(path.stem):
-            continue
-        try:
-            obj = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        runs.append({
-            "ts": path.stem,
-            "generated_at": obj.get("generated_at"),
-            "title": obj.get("title"),
-        })
-    return web.json_response({"runs": runs})
+
+    def listing() -> list[dict]:
+        runs = []
+        for path in sorted(hdir.glob("*.json"), key=lambda p: p.name,
+                           reverse=True):
+            if not _STAMP_RE.match(path.stem):
+                continue
+            obj = _read_json(path)
+            if obj is None:
+                continue
+            runs.append({
+                "ts": path.stem,
+                "generated_at": obj.get("generated_at"),
+                "title": obj.get("title"),
+            })
+        return runs
+
+    # A directory walk and one read per past run — a card with thirty of
+    # them is thirty opens, and every one of them was on the event loop.
+    return web.json_response({"runs": await asyncio.to_thread(listing)})
 
 
 async def h_history_get(request: web.Request) -> web.Response:
-    path = _history_run_path(request)
-    try:
-        return web.json_response(json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, ValueError):
+    obj = await asyncio.to_thread(_read_json, _history_run_path(request))
+    if obj is None:
         raise web.HTTPNotFound(text="no such run")
+    return web.json_response(obj)
 
 
 async def h_history_delete(request: web.Request) -> web.Response:
     path = _history_run_path(request)
-    try:
-        path.unlink()
-    except OSError:
+
+    def remove() -> bool:
+        try:
+            path.unlink()
+        except OSError:
+            return False
+        return True
+
+    if not await asyncio.to_thread(remove):
         raise web.HTTPNotFound(text="no such run")
     return web.json_response({"deleted": request.match_info["ts"]})
 
@@ -3944,7 +4070,11 @@ def _prompt_record(cat_id: str) -> dict:
 
 
 async def h_prompts(request: web.Request) -> web.Response:
-    return web.json_response({"prompts": [_prompt_record(c["id"]) for c in CATEGORIES]})
+    # One read of the overrides file per category, and there are a dozen
+    # categories — off the loop, as one call rather than a dozen hops.
+    records = await asyncio.to_thread(
+        lambda: [_prompt_record(c["id"]) for c in CATEGORIES])
+    return web.json_response({"prompts": records})
 
 
 # ---------------------------------------------------------------------------
@@ -4231,9 +4361,17 @@ async def h_feedback_delete(request: web.Request) -> web.Response:
         ts = int(request.match_info["ts"])
     except ValueError:
         raise web.HTTPBadRequest(text="bad feedback id")
-    if not feedback_store.remove_feedback(cat_id, ts):
+
+    def remove() -> tuple[bool, list]:
+        # Read back inside the same hop: two would be two trips off the loop
+        # for one answer, and the list is what the tab repaints from.
+        removed = feedback_store.remove_feedback(cat_id, ts)
+        return removed, feedback_store.list_feedback(cat_id)
+
+    removed, feedback = await asyncio.to_thread(remove)
+    if not removed:
         raise web.HTTPNotFound(text="no such feedback entry")
-    return web.json_response({"feedback": feedback_store.list_feedback(cat_id)})
+    return web.json_response({"feedback": feedback})
 
 
 # -- dashboard cards ----------------------------------------------------------
@@ -4905,6 +5043,30 @@ async def _offer_conditions(snapshot: dict, now: float) -> int:
 # synchronous and only the naming run is not.
 SCENES_STATE: dict = {"designed": 0, "refused": 0, "last": "", "at": 0}
 
+# Which areas have a naming run in flight. Flipped SYNCHRONOUSLY, before the
+# first await in `_design_scenes` — `start_auth_check`'s rule and
+# `h_baselines_run`'s: `asyncio.create_task` only SCHEDULES, so a guard read
+# from inside the coroutine is a guard two presses in one tick both walk
+# past. The press here is a button on the ask bar, and pressing it twice is
+# what people do while a thing looks like it is doing nothing: without this,
+# two Claude naming runs go out for one room, and both come back to compose
+# the same four scenes — `proposals.knows` cannot tell them apart, because
+# neither has been added yet when the other is checked.
+SCENES_INFLIGHT: set[str] = set()
+
+
+async def _name_and_offer_once(obj: dict, area: str, key: str) -> None:
+    """`_name_and_offer`, releasing the area's claim however it ends.
+
+    A separate wrapper rather than a try/finally inside the run, so the
+    claim is taken and given back in one place and the run itself stays a
+    function about naming four scenes.
+    """
+    try:
+        await _name_and_offer(obj, area)
+    finally:
+        SCENES_INFLIGHT.discard(key)
+
 
 async def _name_and_offer(obj: dict, area: str) -> None:
     """Ask Claude for four names, then offer the set. Never raises.
@@ -4959,25 +5121,42 @@ async def _design_scenes(area: str) -> dict:
     SCENES_STATE["at"] = int(time.time())
     if not area:
         return {"refused": "brAIn could not tell which room that was."}
+    # Before the first await, because that is the only place it can be:
+    # everything below yields, and a second press lands in the gap.
+    key = area.casefold()
+    if key in SCENES_INFLIGHT:
+        return {"refused": (f"brAIn is already composing four scenes for "
+                            f"the {area} — they land on the Proposals tab "
+                            "when the naming run comes back."), "area": area}
+    SCENES_INFLIGHT.add(key)
+    spawned = False
     try:
-        snap = await checks.snapshot.collect_rooms()
-    except Exception as exc:  # noqa: BLE001 — "I could not look" is its own
-        # answer, and it is about brAIn rather than about the room.
-        log.warning("could not read the house for scenes: %s", exc)
-        return {"refused": f"brAIn could not read the house just now: {exc}"}
+        try:
+            snap = await checks.snapshot.collect_rooms()
+        except Exception as exc:  # noqa: BLE001 — "I could not look" is its
+            # own answer, and it is about brAIn rather than about the room.
+            log.warning("could not read the house for scenes: %s", exc)
+            return {"refused": f"brAIn could not read the house just now: {exc}"}
 
-    protected = automation_writer.protected_patterns()
-    obj = await asyncio.to_thread(scenes.build, snap, area, protected, None)
-    if obj.get("refused"):
-        SCENES_STATE["refused"] += 1
-        return {"refused": obj["refused"], "area": area}
-    if await asyncio.to_thread(proposals.knows, obj):
-        return {"refused": (f"brAIn has already offered these four scenes "
-                            f"for the {area} — the answer is on the "
-                            "Proposals tab."), "area": area}
-    obj["_snapshot"] = snap
-    asyncio.create_task(_name_and_offer(obj, area))
-    return {"scenes": area, "lights": len(obj["scene"]["lights"])}
+        protected = automation_writer.protected_patterns()
+        obj = await asyncio.to_thread(scenes.build, snap, area, protected, None)
+        if obj.get("refused"):
+            SCENES_STATE["refused"] += 1
+            return {"refused": obj["refused"], "area": area}
+        if await asyncio.to_thread(proposals.knows, obj):
+            return {"refused": (f"brAIn has already offered these four scenes "
+                                f"for the {area} — the answer is on the "
+                                "Proposals tab."), "area": area}
+        obj["_snapshot"] = snap
+        asyncio.create_task(_name_and_offer_once(obj, area, key))
+        spawned = True
+        return {"scenes": area, "lights": len(obj["scene"]["lights"])}
+    finally:
+        # The run that was started owns the claim from here; every other
+        # ending — a refusal, a house we could not read, a raise — gives it
+        # straight back, or one bad press locks the room out for good.
+        if not spawned:
+            SCENES_INFLIGHT.discard(key)
 
 
 async def _offer_scene_schedule(snapshot: dict, now: float) -> int:
@@ -8821,9 +9000,8 @@ async def h_finding_delete(request: web.Request) -> web.Response:
 async def h_card_tags_put(request: web.Request) -> web.Response:
     """Replace one card's visible tags. Stored as a diff — see card_tags."""
     card_id = request.match_info["id"]
-    try:
-        insight = json.loads(_insight_path(card_id).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    insight = await asyncio.to_thread(_read_json, _insight_path(card_id))
+    if insight is None:
         raise web.HTTPNotFound(text="no such card")
     body = await request.json()
     if not isinstance(body, dict) or not isinstance(body.get("tags"), list):
@@ -9037,39 +9215,97 @@ async def h_onboarding_learn(request: web.Request) -> web.Response:
 
 
 async def h_onboarding_recommend(request: web.Request) -> web.Response:
-    """One tool-free pass over the memory document plus a home snapshot."""
+    """One searching pass over the memory document and a map of the home.
+
+    `run_analyst` over the map, which is what every other analytical site
+    in this file does and for the same measured reason: a map plus
+    read-only tools costs a prompt of a couple of thousand characters
+    where the snapshot posts a hundred thousand, and it can go and LOOK — which matters more here than anywhere, because
+    the system prompt asks each proposal to cite what it found. A
+    snapshot is capped at `MAX_ENTITIES`, so this pass was proposing the
+    card set for whichever entities fitted under the cap and calling a
+    house sparse when they did not, with no way to read the history that
+    would have settled either question.
+
+    Reading tools only, because it is an unattended run over somebody's
+    house that is about to be handed a list to tick.
+
+    The snapshot path stays as the FLOOR under it, `_search_run`'s
+    arrangement and for its reason one step earlier in a person's day: a
+    map that could not be collected, a run that ended on its turn cap, a
+    reply that did not parse — none of those is a reason for the one
+    screen between a fresh install and having any cards at all to dead-end
+    on a 502. A fallback is logged, because a pass that keeps taking it is
+    a pass worth reading the log about.
+    """
     if not engine.get_auth():
         raise web.HTTPBadRequest(text="connect your Claude account first")
 
     import ha_data  # deferred so the module loads without aiohttp in tests
 
     memory = await asyncio.to_thread(_read_shared_memory)
-    # Any category works as a bundle shape here — we want the home, not a
-    # topic — so borrow the broadest one available.
-    shape = {"id": "onboarding", "title": "Home overview",
-             "focus": "A broad survey of this home."}
-    try:
-        bundle = await ha_data.collect_bundle(shape, eff_history_days())
-    except Exception as exc:  # noqa: BLE001 — report, don't 500
-        # `exc` is whatever the bundle collector hit, so its text is not
-        # ours and is not written for anyone to read. The log gets it; the
-        # response gets the one sentence that tells the user what to do.
-        log.warning("onboarding bundle failed: %s", exc, exc_info=True)
-        raise web.HTTPBadGateway(text="could not read Home Assistant")
 
-    prompt = onboarding.build_prompt(memory, bundle)
-    # Claimed as a card run: it proposes the card set, and "everything
-    # brAIn sent to Claude about the house" should include it.
-    result = await asyncio.to_thread(
-        engine.run_claude, prompt, onboarding.RECOMMEND_SYSTEM, eff_model(),
-        TIMEOUT_S, 8, "card")
-    _record_usage(result, "onboarding")
-    if not result["ok"]:
-        raise web.HTTPBadGateway(text=result.get("error") or "recommendation failed")
-    try:
-        parsed = onboarding.parse_recommendations(result["text"])
-    except ValueError as exc:
-        raise web.HTTPBadGateway(text=str(exc))
+    async def searching() -> dict | None:
+        """The map and read-only tools, or None to fall through."""
+        try:
+            orientation = await ha_data.collect_orientation(question=None)
+        except Exception as exc:  # noqa: BLE001 — a failed map is a
+            # fallback, not an error.
+            log.warning("onboarding: could not collect the map (%s)", exc)
+            return None
+        result = await asyncio.to_thread(
+            engine.run_analyst,
+            onboarding.build_orientation_prompt(memory, orientation),
+            onboarding.RECOMMEND_SYSTEM, eff_model(),
+            TIMEOUT_S, ANALYST_MAX_TURNS, "card")
+        return result
+
+    async def snapshot() -> dict:
+        """The whole slimmed home in one tool-free turn: what shipped."""
+        # Any category works as a bundle shape here — we want the home, not
+        # a topic — so borrow the broadest one available.
+        shape = {"id": "onboarding", "title": "Home overview",
+                 "focus": "A broad survey of this home."}
+        try:
+            bundle = await ha_data.collect_bundle(shape, eff_history_days())
+        except Exception as exc:  # noqa: BLE001 — report, don't 500
+            # `exc` is whatever the bundle collector hit, so its text is not
+            # ours and is not written for anyone to read. The log gets it;
+            # the response gets the one sentence that tells the user what to
+            # do.
+            log.warning("onboarding bundle failed: %s", exc, exc_info=True)
+            raise web.HTTPBadGateway(text="could not read Home Assistant")
+        return await asyncio.to_thread(
+            engine.run_claude, onboarding.build_prompt(memory, bundle),
+            onboarding.RECOMMEND_SYSTEM, eff_model(), TIMEOUT_S, 8, "card")
+
+    def read(result: dict | None) -> dict | None:
+        """The reply as recommendations, or None for "that did not work"."""
+        if not result:
+            return None
+        # Claimed as a card run: it proposes the card set, and "everything
+        # brAIn sent to Claude about the house" should include it.
+        _record_usage(result, "onboarding")
+        if not result.get("ok"):
+            return None
+        try:
+            return onboarding.parse_recommendations(result.get("text") or "")
+        except ValueError as exc:
+            log.info("onboarding: the recommendations did not parse (%s)", exc)
+            return None
+
+    result = await searching()
+    parsed = read(result)
+    if parsed is None:
+        log.warning("onboarding: the searching pass produced nothing (%s) — "
+                    "posting the whole home instead",
+                    (result or {}).get("error") or "unreadable reply")
+        fallback = await snapshot()
+        parsed = read(fallback)
+        if parsed is None:
+            raise web.HTTPBadGateway(
+                text=(fallback.get("error") if fallback else "")
+                or "recommendation failed")
     return web.json_response(await asyncio.to_thread(
         onboarding.save_recommendations, parsed))
 
@@ -9191,6 +9427,62 @@ def _inbox_pending() -> int:
                 for _p, o in _inbox_lines()})
 
 
+def _inbox_fingerprint(path: Path) -> tuple | None:
+    """What this inbox file was when we read it, or None if it is not there.
+
+    The inode rides along with the mtime and the size because the thing
+    being guarded against is a file that went away and came back: the
+    consolidator archives what it consumes by MOVING it into `processed/`,
+    and a name that is free again is a name anything may reuse.
+    """
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_ino, st.st_mtime_ns, st.st_size)
+
+
+def _consolidator_shared_fd() -> int | None:
+    """Hold the consolidator's lock shared, or None if we could not.
+
+    `_consolidation_running`'s probe, kept open instead of released: while
+    this fd holds LOCK_SH nothing can take the exclusive lock a pass runs
+    under, so the inbox cannot be archived out from under a read. Opened
+    read-only (`O_RDONLY`, never a truncating write) for the reason
+    CLAUDE.md gives — `9<` and not `9>` — and non-blocking, because asking
+    a question must never be something a real pass makes us wait on. A
+    refusal here is not an error: it means a pass IS running, and the
+    fingerprint check below is what covers that case.
+
+    Its own helper rather than a store's lock: this is one named file that
+    a shell script owns and takes exclusively for a whole pass, so what is
+    wanted is that exact path, shared, with no wait at all — where a store
+    locks a sidecar beside itself and can afford to queue behind one.
+    """
+    try:
+        fd = os.open(CONSOLIDATE_LOCK, os.O_RDONLY)
+    except OSError:
+        return None               # no lock file yet: nothing has ever run
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def _release_shared_fd(fd: int | None) -> None:
+    if fd is None:
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        # Closing the fd drops the lock anyway — this is the tidy half, and
+        # a caller can do nothing with the news that it failed.
+        pass
+    os.close(fd)
+
+
 def _drop_from_inbox(item_id: str) -> bool:
     """Take a fact out of the queue before it reaches the document.
 
@@ -9198,32 +9490,64 @@ def _drop_from_inbox(item_id: str) -> bool:
     definition never been filed (the consolidator archives what it consumes),
     so there is nothing in memory.md to forget. That is the difference from
     deleting a fact the document already holds.
+
+    **A rewrite is a write of what we READ, and between the two the file
+    may have stopped existing.** The consolidator is a separate process: it
+    takes the queue, files it into `memory.md` and MOVES the inbox file into
+    `processed/`. Land a rewrite after that and `atomic_write` creates the
+    file again at its inbox path — carrying every line but the dropped one,
+    all of them already in the document — so a press that removes one fact
+    resurrects the other nineteen as pending, and the next pass files them a
+    second time. Two guards, in the order they can be afforded. The
+    consolidator's lock is taken **shared** around the read and the write,
+    which is the whole race closed for as long as a pass is not already
+    running; and because a refusal to take it means exactly that a pass IS
+    running, each file is fingerprinted at read time and rewritten only if
+    it is still the same file. "I could not tell" leaves the line in the
+    queue, which is the old behaviour and is not a data loss — the pass that
+    moved the file has already filed the fact.
     """
-    kept: dict[Path, list[dict]] = {}
-    dropped: set[Path] = set()
-    for path, obj in _inbox_lines():
-        if _inbox_id(str(obj.get("source") or ""),
-                     str(obj["fact"]).strip()) == item_id:
-            dropped.add(path)
-        else:
-            kept.setdefault(path, []).append(obj)
-    if not dropped:
-        return False
-    # Only the files that actually held it are rewritten. Rewriting the rest
-    # would drop any torn line they carry, which _inbox_lines skips over —
-    # tidying a file we had no reason to touch is not this function's job.
-    for path in dropped:
-        lines = kept.get(path, [])
-        try:
-            if lines:
-                atomic_write.write_lines(path, lines)
+    fd = _consolidator_shared_fd()
+    try:
+        kept: dict[Path, list[dict]] = {}
+        dropped: set[Path] = set()
+        for path, obj in _inbox_lines():
+            if _inbox_id(str(obj.get("source") or ""),
+                         str(obj["fact"]).strip()) == item_id:
+                dropped.add(path)
             else:
-                path.unlink()
-        except OSError as exc:
-            # Best effort: a line we could not remove is filed at the next
-            # pass, which is the old behaviour and not a data loss.
-            log.debug("inbox rewrite failed for %s: %s", path, exc)
-    return True
+                kept.setdefault(path, []).append(obj)
+        if not dropped:
+            return False
+        before = {path: _inbox_fingerprint(path) for path in dropped}
+        # Only the files that actually held it are rewritten. Rewriting the
+        # rest would drop any torn line they carry, which _inbox_lines skips
+        # over — tidying a file we had no reason to touch is not this
+        # function's job.
+        for path in dropped:
+            stamp = before[path]
+            if stamp is None or _inbox_fingerprint(path) != stamp:
+                # Archived, rewritten or rotated since the read. Whatever it
+                # is now, it is not the file these lines came out of.
+                log.info("inbox file %s moved while dropping a line — "
+                         "leaving it alone", path.name)
+                continue
+            lines = kept.get(path, [])
+            try:
+                if lines:
+                    atomic_write.write_lines(path, lines)
+                else:
+                    path.unlink()
+            except OSError as exc:
+                # Best effort: a line we could not remove is filed at the next
+                # pass, which is the old behaviour and not a data loss.
+                log.debug("inbox rewrite failed for %s: %s", path, exc)
+        # True because the line MATCHED, which is the claim the caller acts
+        # on: it is not in the queue any more, whether this rewrote the file
+        # or a pass took the whole thing while we were reading it.
+        return True
+    finally:
+        _release_shared_fd(fd)
 
 
 def _memory_state() -> dict:
@@ -10713,6 +11037,10 @@ def make_app() -> web.Application:
         # in an unrelated teardown. Rebinding here costs one object and
         # keeps the queue an implementation detail of the running app.
         _rebind_queue()
+        # The panel's own four files, read into memory before the first
+        # request rather than on it — off the loop, where every read of them
+        # now happens.
+        await asyncio.to_thread(_warm_static)
         app["worker"] = asyncio.create_task(_worker())
         app["scheduler"] = asyncio.create_task(_scheduler())
         app["checks"] = asyncio.create_task(_checks_loop())

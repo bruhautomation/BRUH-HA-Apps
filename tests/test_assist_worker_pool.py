@@ -592,3 +592,127 @@ def test_no_denied_services_empty_env(tmp_path, monkeypatch):
         assert envs and envs[-1] == "ENV BRAIN_DENIED_SERVICES="
     finally:
         shutdown(pool)
+
+
+# ---------------------------------------------------------------------------
+# --include-partial-messages: a diagnosis with a way back
+# ---------------------------------------------------------------------------
+#
+# The only evidence there is that the installed CLI predates the flag is a
+# worker dying within a few seconds of being spawned with it — and a worker
+# dies within a few seconds for half a dozen other reasons (the image
+# updating underneath us, the box out of memory, the credential file being
+# rewritten). What shipped concluded from ONE of those, for the life of the
+# process, with no re-enable path: a single startup blip cost every voice
+# answer its token-level deltas until somebody restarted the add-on, and
+# nothing on any screen said so.
+#
+# A CLI that really does not know the flag fails every time, so a run of
+# them is all the evidence a real one needs — and even that gets a clock,
+# because the alternative is the failure this replaces with a longer fuse.
+
+def drop_spare(pool) -> None:
+    """Make the next request cold-spawn rather than adopt the pre-warm."""
+    with pool.lock:
+        if pool.spare is not None:
+            pool.spare.kill()
+            pool.spare = None
+
+
+def test_one_early_death_does_not_disable_partial_messages(tmp_path, monkeypatch):
+    """The shipped behaviour, named: one blip used to end it for good."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    assert mod.partial_messages_ok()
+    assert mod.note_partial_early_death() is False
+    assert mod.partial_messages_ok(), \
+        "one worker dying at spawn switched token streaming off for good"
+
+
+def test_two_in_a_row_disable_it_and_the_cooldown_brings_it_back(tmp_path, monkeypatch):
+    mod = load_pool_module(tmp_path, monkeypatch)
+    assert mod.note_partial_early_death() is False
+    assert mod.note_partial_early_death() is True
+    assert not mod.partial_messages_ok()
+    # A clock, not a verdict: the next spawn after the cooldown carries the
+    # flag again, and a CLI that still cannot take it earns its two deaths
+    # back in a few seconds.
+    mod._partial_disabled_until = time.time() - 1
+    assert mod.partial_messages_ok()
+
+
+def test_a_worker_that_answers_clears_the_run_of_deaths(tmp_path, monkeypatch):
+    """Consecutive, or a death in the morning and one in the evening add up
+    to a flag switched off on a pool that has been streaming all day."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    assert mod.note_partial_early_death() is False
+    mod.note_partial_ok()
+    assert mod.note_partial_early_death() is False
+    assert mod.partial_messages_ok()
+
+
+def test_the_decision_reaches_the_argv_of_the_next_worker(tmp_path, monkeypatch):
+    """The flag on the command line is the only thing that matters, and the
+    worker records what IT was spawned with — a worker that died without the
+    flag says nothing at all about the flag."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    pool = mod.Pool()
+    try:
+        pool.handle(make_request("hello", conv="withflag"))
+        first = argv_log(tmp_path)[-1]
+        assert "--include-partial-messages" in first
+        assert pool.workers["withflag"].partial is True
+
+        mod.note_partial_early_death()
+        mod.note_partial_early_death()          # now disabled
+        # The pre-warmed spare was spawned before the decision and is a live
+        # process that works; what the decision governs is the next SPAWN,
+        # so this asks for one.
+        drop_spare(pool)
+        pool.handle(make_request("hello again", conv="noflag"))
+        second = argv_log(tmp_path)[-1]
+        assert "--include-partial-messages" not in second
+        assert pool.workers["noflag"].partial is False
+
+        # …and back, once the cooldown lapses.
+        mod._partial_disabled_until = time.time() - 1
+        drop_spare(pool)
+        pool.handle(make_request("and again", conv="backagain"))
+        assert "--include-partial-messages" in argv_log(tmp_path)[-1]
+    finally:
+        shutdown(pool)
+
+
+def test_a_cooldown_is_longer_than_a_conversation(tmp_path, monkeypatch):
+    """Re-probing on every spawn would be the bug with no fuse at all: a CLI
+    that genuinely predates the flag would then kill a worker per request."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    assert mod.PARTIAL_RETRY_AFTER_S >= 60
+    assert mod.PARTIAL_DISABLE_AFTER >= 2
+
+
+def test_the_count_is_kept_by_the_real_request_path(tmp_path, monkeypatch):
+    """Driven through `Pool.handle` rather than the counter alone: what has
+    to be true is that a worker dying at spawn is NOTICED, and the field the
+    notice keys on (`worker.partial`) is set where the argv is built."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    monkeypatch.setenv("FAKE_MODE", "crash")
+    pool = mod.Pool()
+    try:
+        # Cold-spawned on purpose, both times. "Died at SPAWN" is measured
+        # from the worker's own birth, and a pre-warmed spare was born
+        # whenever the pool last had a spare moment — on a loaded machine
+        # that is minutes ago, and the request would be answered by a
+        # process too old for the question this test is asking.
+        drop_spare(pool)
+        pool.handle(make_request("first", conv="c1", timeout=40))
+        assert mod.partial_messages_ok(), \
+            "one crashed worker switched token streaming off for good"
+        assert mod._partial_early_deaths == 1
+        drop_spare(pool)
+        pool.handle(make_request("second", conv="c2", timeout=40))
+        assert not mod.partial_messages_ok()
+        # Both requests were still answered — the flag is about the deltas,
+        # never about whether voice replies.
+        assert mod._partial_early_deaths == 0
+    finally:
+        shutdown(pool)
