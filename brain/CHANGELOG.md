@@ -2,6 +2,41 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.1.0
+
+**The Resident: brAIn watches the house's own event bus, takes a cheap first
+look at everything before you are shown any of it, investigates what
+deserves it, and files what it finds as one kind of thing — a case — with
+three endings.** Phase 1 of the AI-first plan.
+
+- **Signals, not rules deciding** (`panel/signals.py`). Every house-check
+  row, baseline deviation, thermal or appliance event, a state change on an
+  entity that matters, a trace error, an override, a person arriving or
+  leaving and a reply to a notification becomes a signal with a salience
+  that orders and never decides.
+- **The event bus** (`panel/eventbus.py`). A WebSocket subscription to
+  Home Assistant's `state_changed`, `automation_triggered` and
+  `call_service`, with a reconnect ladder and a per-second ceiling that
+  counts what it dropped rather than hiding it.
+- **The first look** (`panel/resident.py`). Haiku, every few minutes and at
+  once on a hot signal, answers `ignore | watch | investigate | act` for a
+  batch — a protected entity, a safety device or a hot signal can never be
+  ignored, whatever the model says — and Sonnet investigates only what it
+  named, with reading tools, writing a case with a claim, evidence and
+  actions that each say what consent they need.
+- **Cases** (`panel/cases.py`). Findings, hypotheses, proposals and chores
+  are one list with one vocabulary — problem, opportunity, question, chore,
+  change — and three endings: **Do it**, **Not now** (the agent chooses when
+  it comes back and says so), **Wrong, because…**. The rare verbs live
+  behind ⋯. Every existing store, mirror, Repairs issue and `todo.brain` row
+  is unchanged underneath.
+- **A budget ledger** per tier per day: the first look never stops on it
+  (only on the usage tracker), investigations queue past their allowance,
+  and nothing on the top tiers runs unattended past its. The Home feed's
+  foot says what the day cost: looked, investigated, changed.
+- Triage is retired into the first look; the scorecard now grades the
+  Resident.
+
 ## 2.0.0
 
 **brAIn 2.0 begins here: every Claude run is planned by job rather than by
