@@ -35,6 +35,8 @@ import logging
 import os
 import time
 
+import habits
+
 log = logging.getLogger("brain.overrides")
 
 STORE = os.environ.get("BRAIN_OVERRIDE_LEDGER", "/data/overrides.json")
@@ -137,42 +139,13 @@ def record(overrides: list[dict], now: float | None = None,
 def _band(hours: list[int]) -> tuple[int, int, float] | None:
     """When of the day these happen, as the tightest hours that hold most.
 
-    Two things this must not do, and the second was found by driving it.
-
-    It **wraps midnight**, because "late evening" is 22:00–01:00 in a
-    great many households and a window that could not cross it would
-    report the busier half and call that the answer.
-
-    And it reports the hours that are actually **occupied**, not the
-    search window that found them. Fifteen overrides all at 08:10 fit
-    inside a four-hour window starting at 05:00 just as well as one
-    starting at 08:00, and the first version took whichever start it
-    tried first: it said *"almost always between 05:00 and 09:00"* about
-    something that only ever happens at ten past eight. That is not a
-    slightly loose answer — it is a condition somebody would write, which
-    would stand the automation down for three hours nothing happens in.
-    So the window is only the search, and what comes back is the span
-    from the first occupied hour in it to the last.
+    The arithmetic — a window that wraps midnight, and a span reported
+    from the first OCCUPIED hour to the last rather than the search
+    window that found it — is `habits.band`'s, with this ledger's own
+    `BAND_HOURS`. Kept under this name because it is what the tests and
+    the prose call it.
     """
-    if not hours:
-        return None
-    best = None
-    for start in range(24):
-        offsets = sorted((h - start) % 24 for h in hours
-                         if (h - start) % 24 < BAND_HOURS)
-        if not offsets:
-            continue
-        # More of them is better; a tie goes to the tighter span, which
-        # is what stops a window being reported instead of the hours.
-        rank = (len(offsets), -(offsets[-1] - offsets[0]))
-        if best is None or rank > best[0]:
-            best = (rank, start, offsets)
-    if best is None:
-        return None
-    _rank, start, offsets = best
-    return ((start + offsets[0]) % 24,
-            (start + offsets[-1] + 1) % 24,
-            len(offsets) / len(hours))
+    return habits.band(hours, band_hours=BAND_HOURS)
 
 
 def pattern(rows: list[dict], tz=None,
@@ -189,29 +162,28 @@ def pattern(rows: list[dict], tz=None,
         return None
     tz = tz or dt.timezone.utc
     now = time.time() if now is None else now
-    # Still happening, not merely well-shaped. See RECENT_DAYS.
-    last = max((r.get("ts") or 0) for r in rows)
-    if (now - last) > RECENT_DAYS * 86400:
-        return None
-    stamps = [dt.datetime.fromtimestamp(r["ts"], tz) for r in rows
-              if r.get("ts")]
-    days = {s.date() for s in stamps}
-    if len(days) < MIN_DAYS:
+    # One grading, this ledger's floors: no spread floor and no share
+    # floor (a band is reported rather than a time), `MIN_DAYS` in days,
+    # the band searched over `BAND_HOURS`. Still happening is read off
+    # the answer rather than re-derived — see RECENT_DAYS.
+    found = habits.grade([r["ts"] for r in rows if r.get("ts")], tz, now,
+                         min_days=MIN_DAYS, recent_days=RECENT_DAYS,
+                         band_hours=BAND_HOURS)
+    if not found or not found["still_happening"]:
         return None
 
-    out = {"events": len(stamps), "days": len(days),
-           "first": min(r["ts"] for r in rows),
-           "last": max(r["ts"] for r in rows)}
+    out = {"events": found["stamps"], "days": found["days"],
+           "first": int(found["first"]), "last": int(found["last"])}
 
-    band = _band([s.hour for s in stamps])
+    band = found.get("band")
     if band and band[2] >= BAND_SHARE:
         out["from_hour"], out["to_hour"], out["hour_share"] = band
 
-    weekend = sum(1 for s in stamps if s.weekday() >= 5)
-    if weekend == 0 and len(days) >= MIN_DAYS:
-        out["when_days"] = "weekdays"
-    elif weekend == len(stamps) and len(days) >= MIN_DAYS:
-        out["when_days"] = "weekends"
+    # The observed label, never a claim: this ledger has no denominator
+    # of its own to earn one against, so it says only which half of the
+    # week every one of these fell in.
+    if found["shape"] in (habits.WEEKDAYS, habits.WEEKENDS):
+        out["when_days"] = found["shape"]
     return out
 
 

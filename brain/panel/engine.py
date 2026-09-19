@@ -709,6 +709,19 @@ ANALYST_TOOLS = [
     f"{MCP}explain_change",       # what CAUSED a change, not just that it happened
     f"{MCP}get_activity",
     f"{MCP}get_house_model",   # what has been MEASURED here, and what has not
+    # The measurements as tools (2.2): what is normal for an entity right
+    # now, a room's physics, a machine's state by its own thresholds, the
+    # house's rhythm, a door's usual hours, a person's habit with an
+    # entity, an automation replayed against history, and what brAIn
+    # remembers about a subject. Reads, every one — a replay calls nothing.
+    f"{MCP}what_is_normal",
+    f"{MCP}room_physics",
+    f"{MCP}appliance_status",
+    f"{MCP}house_rhythm",
+    f"{MCP}door_habits",
+    f"{MCP}habits",
+    f"{MCP}simulate_automation",
+    f"{MCP}recall",
     f"{MCP}get_findings",      # what is on the Findings tab, so a run can
                                # answer "what needs attention" without guessing
     f"{MCP}get_health",        # whether brAIn itself is working, in its own words

@@ -151,6 +151,7 @@ import curiosity
 import doctor
 import energy
 import engine
+import facts_store
 import episodes
 import eventbus
 import feedback_store
@@ -160,6 +161,7 @@ import fixer
 import healing
 import health
 import house
+import habit_lookup
 import hypotheses
 import intents
 import journal
@@ -1108,6 +1110,39 @@ async def _submit_memory(fact: str, source: str = "insights") -> None:
     await asyncio.to_thread(_queue_memory_fact, fact, source)
 
 
+# What a run is told the house is like, and how much of the document that
+# costs. Until 2.2 every reader took `memory_excerpt` — the top 2 KB of
+# the document, whatever the run was about — and the card bundle took the
+# WHOLE document, which on a house with a real memory sent thirty
+# kilobytes of standing facts to a run about one room. The facts store
+# is what makes a smaller answer honest: the core facts (the house, the
+# people) plus the facts about the entities and areas THIS run is
+# reading, with the document's head behind them for the nicknames the
+# consolidator keeps there. A fresh install has no facts, and falls back
+# to exactly the excerpt it always got.
+MEMORY_HEAD_CHARS = 800
+
+
+def _memory_block(*, entities=(), areas=(), domains=(), query: str = "",
+                  head_chars: int = MEMORY_HEAD_CHARS) -> str:
+    """The retrieval block for these subjects, over the document's head."""
+    facts = ""
+    try:
+        facts = facts_store.retrieval_block(
+            entities=entities, areas=areas, domains=domains, query=query)
+    except Exception as exc:  # noqa: BLE001 — a store that will not read
+        log.debug("facts retrieval failed: %s", exc)   # costs the excerpt
+    document = _read_shared_memory()
+    if not facts:
+        return memory_excerpt(document)
+    head = memory_excerpt(document, limit=head_chars)
+    if head:
+        # One header. The excerpt's own is the same sentence the block
+        # opens with, so the document's lines ride under the block's.
+        head = head.split("\n", 1)[1] if "\n" in head else ""
+    return facts + ("\n" + head if head else "")
+
+
 # ---------------------------------------------------------------------------
 # Generation worker
 # ---------------------------------------------------------------------------
@@ -1469,7 +1504,7 @@ async def _send_brief(now: float) -> str:
     # store, and a second answer to what this house is like is the drift
     # `_CARD_CONTRACT` is shared to avoid.
     state["house"] = await _house_prompt_block(now)
-    state["memory"] = memory_excerpt(await asyncio.to_thread(_read_shared_memory))
+    state["memory"] = await asyncio.to_thread(_memory_block)
 
     result = await asyncio.to_thread(
         engine.run_analyst, brief.frame(reasons, state), brief.SYSTEM,
@@ -1739,7 +1774,7 @@ async def _send_weekly(now: float) -> str:
     # rides into /api/diagnostics and a memory excerpt is a fact about
     # somebody's home rather than a diagnostic.
     state["house"] = await _house_prompt_block(now)
-    state["memory"] = memory_excerpt(await asyncio.to_thread(_read_shared_memory))
+    state["memory"] = await asyncio.to_thread(_memory_block)
     if not weekly.worth_reporting(state):
         # Not an error: a quiet week is the design. Clearing it matters
         # because a stale `last_error` beside a report that never went is
@@ -3485,6 +3520,12 @@ async def _scheduler() -> None:
                 log.info("swept %d finding(s) from study sessions", len(swept))
         except Exception as exc:  # never let this kill the loop
             log.debug("findings sweep failed: %s", exc)
+        # And the memory inbox into the facts store — a READER of that
+        # queue, never a second drain of it (the consolidator goes on
+        # moving what it files). Every writer already goes through the
+        # inbox, which is what makes one sweep cover voice, the chat, the
+        # terminal, study, a correction and another add-on's line alike.
+        await asyncio.to_thread(_ingest_facts)
         # The drain that used to live here is the Resident's first look
         # now (`_resident_loop`), which reads the same `awaiting_triage()`
         # queue on its own five-second tick — so a row a study session just
@@ -4942,7 +4983,9 @@ async def _triage_drain(now: float) -> list[dict]:
         # opens" is exactly the kind of thing a homeowner has already
         # said once, and a triage run that cannot read it re-litigates
         # every correction they have ever made.
-        memory=memory_excerpt(await asyncio.to_thread(_read_shared_memory)),
+        memory=await asyncio.to_thread(
+            _memory_block,
+            entities=[r.get("entity_id") for r in batch if r.get("entity_id")]),
     )
     TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
     try:
@@ -5308,6 +5351,48 @@ def _signal_context() -> signals.RegistryContext:
     return _SIGNAL_CTX["ctx"]
 
 
+def _signal_entities(signal: dict) -> list[str]:
+    """The entity ids one signal is about: its subject and its evidence."""
+    out: list[str] = []
+    subject = str((signal or {}).get("subject") or "")
+    if subject:
+        out.append(subject)
+    for row in (signal or {}).get("evidence") or []:
+        eid = row.get("entity_id") if isinstance(row, dict) else row
+        if isinstance(eid, str) and eid and eid not in out:
+            out.append(eid)
+    return out
+
+
+# The registry the facts tagger reads: the entity ids and area names the
+# last checks pass saw. Refreshed from the snapshot that pass already
+# fetched, never fetched for the tagger's own sake — it runs on the
+# minute over every queued line, and a registry read per minute is a
+# request nobody asked for.
+_FACTS_CTX: dict = {"entities": frozenset(), "areas": {}, "at": 0.0}
+
+
+def _note_registry(snapshot: dict) -> None:
+    try:
+        states = snapshot.get("states") or {}
+        areas = {a["area_id"]: a.get("name") or a["area_id"]
+                 for a in (snapshot.get("areas") or []) if a.get("area_id")}
+        _FACTS_CTX.update(entities=frozenset(states), areas=areas,
+                          at=time.time())
+    except Exception as exc:  # noqa: BLE001
+        log.debug("facts registry note failed: %s", exc)
+
+
+def _ingest_facts() -> int:
+    try:
+        return facts_store.ingest_inbox(
+            MEMORY_INBOX_DIR, MEMORY_INBOX_DIR / "processed",
+            known_entities=_FACTS_CTX["entities"], areas=_FACTS_CTX["areas"])
+    except Exception as exc:  # noqa: BLE001
+        log.debug("facts ingest failed: %s", exc)
+        return 0
+
+
 def _open_case_rows(limit: int = 12) -> list[str]:
     """What is already in front of the homeowner, as lines for a prompt.
 
@@ -5546,8 +5631,12 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         # The load-bearing half. "That contact is on a cupboard nobody
         # opens" is exactly the kind of thing a homeowner has already said
         # once, and a look that cannot read it re-litigates every
-        # correction they have ever made.
-        memory_excerpt(await asyncio.to_thread(_read_shared_memory)),
+        # correction they have ever made. Retrieved for the batch's own
+        # subjects, so a look at twelve signals reads the facts about
+        # those twelve and not the head of a document about the house.
+        await asyncio.to_thread(
+            _memory_block,
+            entities=[sig.get("subject") for sig in batch if sig.get("subject")]),
         await asyncio.to_thread(_open_case_rows))
     TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
     RESIDENT_STATE["last_look_at"] = now
@@ -5785,7 +5874,7 @@ async def _resident_investigate(signal: dict, now: float,
     RESIDENT_STATE["last_investigation_at"] = now
     prompt = resident.investigate_prompt(
         signal,
-        memory_excerpt(await asyncio.to_thread(_read_shared_memory)),
+        await asyncio.to_thread(_memory_block, entities=_signal_entities(signal)),
         await _house_prompt_block(now),
         await asyncio.to_thread(_open_case_rows))
     result = await asyncio.to_thread(
@@ -5872,7 +5961,8 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
         engine.run_analyst,
         resident.investigate_prompt(
             signal,
-            memory_excerpt(await asyncio.to_thread(_read_shared_memory)),
+            await asyncio.to_thread(_memory_block,
+                                    entities=_signal_entities(signal)),
             await _house_prompt_block(now),
             await asyncio.to_thread(_open_case_rows)),
         resident.INVESTIGATE_SYSTEM, eff_model(),
@@ -6009,7 +6099,9 @@ async def _run_curiosity(candidate: dict, ledger: dict, tz,
         # The load-bearing half: without it a run happily rediscovers
         # something the document already says and spends a question
         # asking somebody to confirm what they told brAIn once.
-        memory=memory_excerpt(await asyncio.to_thread(_read_shared_memory)),
+        memory=await asyncio.to_thread(
+            _memory_block,
+            entities=[r.get("entity_id") for r in rows if r.get("entity_id")]),
         recent=list(reversed(rows)),
     )
     result = await asyncio.to_thread(
@@ -6601,6 +6693,7 @@ async def run_checks(reason: str = "schedule") -> dict:
     started = time.time()
     try:
         snapshot = await checks.snapshot.collect(started)
+        _note_registry(snapshot)
         # Filed BEFORE the checks run, so this pass's own overrides count
         # toward the pattern the check is about to read. The ledger is
         # deduped on the event, which is what makes that safe: passes run
@@ -8111,6 +8204,15 @@ def _cli_version() -> str:
 _OPTION_SECRET_WORDS = ("token", "password", "secret", "api_key", "credential")
 
 
+def _facts_summary_safe() -> dict:
+    """The facts store's own summary, or a row saying it could not be
+    read — `reports.faults`' rule: a payload it cannot read is a row."""
+    try:
+        return facts_store.summary()
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)[:200]}
+
+
 def _diagnostics_payload() -> dict:
     """Versions, options, the journal's last day, the stores' shapes, the
     last checks pass, the daemon roll-call and the auth verdict.
@@ -8188,6 +8290,7 @@ def _diagnostics_payload() -> dict:
         "memory": {
             "document_bytes": memory_bytes,
             "hypotheses_open": len(hypotheses.list_all("open")),
+            "facts": _facts_summary_safe(),
         },
         "checks": CHECKS_STATE["last"],
         # The last deep run's verdict — three facts, never the transcript.
@@ -8899,7 +9002,36 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
         fact = template.format(text=finding["text"], note=note,
                                date=time.strftime("%Y-%m-%d"))
         await _submit_memory(fact, source=spec.get("source", "homeowner"))
+    # And the rule it corrects. Wrong on a check's row is the homeowner
+    # saying this rule has this entity wrong — the sensor is not stuck, it
+    # is a contact on a cupboard nobody opens — and until 2.2 that landed
+    # in the settled ledger as one WORDING, so the next pass made the same
+    # mistake in new words. The exception is keyed on the check id and the
+    # entity, and the check reads it before filing (`House.excepted`). The
+    # note is the fact's text where there is one, because it is the
+    # sentence a person will want to read back beside the rule it muted.
+    if spec.get("kind") == "ignored":
+        await asyncio.to_thread(_record_exception, finding, note)
     return payload, fact
+
+
+def _record_exception(finding: dict, note: str) -> None:
+    """Best effort, `file_incident`'s rule: an ending must not fail on it."""
+    source = str(finding.get("source") or "")
+    entity_id = str(finding.get("entity_id") or "")
+    if not source.startswith("check:") or not entity_id:
+        return
+    check_id = source[len("check:"):]
+    text = note.strip() if note else (
+        f'"{finding.get("text", "")}" was reported and marked wrong')
+    try:
+        facts_store.add(
+            text, subject=entity_id, source="correction",
+            predicate=facts_store.EXCEPTION_PREFIX + check_id,
+            run_id=str(finding.get("run_id") or ""), confidence=0.95)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not record the exception for %s: %s",
+                  log_safe(entity_id), exc)
 
 
 # ---------------------------------------------------------------------------
@@ -11043,14 +11175,128 @@ async def h_knowledge(request: web.Request) -> web.Response:
         return _inbox_items(), _inbox_pending()
 
     inbox, pending = await asyncio.to_thread(queue)
+    # Current before it is listed: a fact taught a minute ago is the one
+    # somebody opened the tab to see.
+    await asyncio.to_thread(_ingest_facts)
+    facts = await asyncio.to_thread(_facts_payload)
     return web.json_response({
         "inbox": inbox,
+        "facts": facts["facts"],
+        "facts_summary": facts["summary"],
         "hypotheses": hypotheses.list_all("open"),
         "hypothesis_budget": hypotheses.budget(),
         "shared_memory": _read_shared_memory(),
         "memory_state": await asyncio.to_thread(_memory_state),
         "inbox_pending": pending,
     })
+
+
+FACTS_LIST_MAX = 200
+
+
+def _facts_payload(query: str = "", subject: str = "",
+                   limit: int = FACTS_LIST_MAX) -> dict:
+    rows = facts_store.recall(query=query, subject=subject,
+                              limit=max(1, min(int(limit), FACTS_LIST_MAX)))
+    known = run_sources.lookup([r.get("run_id") for r in rows
+                                if r.get("run_id")])
+    for row in rows:
+        # Provenance the House view can follow: a run id the ledger knows
+        # opens in the reader every other engine-store run opens in. An
+        # id nothing claimed is still shown — it is a fact about the
+        # fact — and simply has no link.
+        row["run_source"] = known.get(row.get("run_id") or "", "")
+    return {"facts": rows, "summary": facts_store.summary(),
+            "count": len(rows)}
+
+
+async def h_facts(request: web.Request) -> web.Response:
+    """What brAIn holds as facts, ranked for a question or a subject."""
+    q = request.query
+    try:
+        limit = int(q.get("limit") or FACTS_LIST_MAX)
+    except ValueError:
+        limit = FACTS_LIST_MAX
+    return web.json_response(await asyncio.to_thread(
+        _facts_payload, str(q.get("query") or "")[:200],
+        str(q.get("subject") or "")[:255], limit))
+
+
+async def h_fact_forget(request: web.Request) -> web.Response:
+    """Drop one fact. The document is not touched — a line already in
+    memory.md is edited out of memory.md, beside the queue."""
+    fact_id = request.match_info["id"]
+    if not re.fullmatch(r"[0-9a-f]{8,64}", fact_id):
+        raise web.HTTPBadRequest(text="not a fact id")
+    gone = await asyncio.to_thread(facts_store.forget, fact_id)
+    if not gone:
+        raise web.HTTPNotFound(text="no such fact")
+    return web.json_response({"ok": True, **await asyncio.to_thread(_facts_payload)})
+
+
+async def h_habits(request: web.Request) -> web.Response:
+    """One entity's habit — the shape, what keeps undoing it, whether
+    anything already does it — off the three ledgers, in one answer."""
+    entity_id = str(request.query.get("entity_id") or "").strip()
+    if not entity_id:
+        return web.json_response(await asyncio.to_thread(
+            _habits_payload, time.time()))
+    import ha_data  # noqa: PLC0415 — deferred, as every route that needs it
+
+    if not ha_data.ENTITY_ID_RE.match(entity_id):
+        raise web.HTTPBadRequest(text="not an entity id")
+
+    def read() -> dict:
+        tz, _name = baselines.house_timezone()
+        ledger = routines.load()
+        return habit_lookup.habit_of(
+            entity_id, routine_rows=ledger.get("rows") or [],
+            override_rows=override_ledger.load(),
+            manual_rows=(manual_ledger.load().get("rows") or []),
+            automated=ledger.get("automated") or {}, tz=tz, now=time.time())
+
+    return web.json_response(await asyncio.to_thread(read))
+
+
+SIMULATE_MAX_DAYS = 28
+
+
+async def h_simulate(request: web.Request) -> web.Response:
+    """When an automation WOULD have fired, and how that squares with what
+    a person actually did — a replay, never a call. `simulate_automation`
+    is the tool, and this is its one implementation: the same
+    `_replay_config` the Replay button and the habit miner use, graded by
+    `trials.evaluate` against the person ledger."""
+    body = await _json_body(request)
+    config = body.get("config")
+    if not isinstance(config, dict):
+        raise web.HTTPBadRequest(text="config must be an automation object")
+    try:
+        days = max(1, min(int(body.get("days") or 7), SIMULATE_MAX_DAYS))
+    except (TypeError, ValueError):
+        days = 7
+    now = time.time()
+    tz, _name = await asyncio.to_thread(baselines.house_timezone)
+    import aiohttp  # noqa: PLC0415
+
+    start = now - days * 86400
+    try:
+        async with aiohttp.ClientSession() as session:
+            replay = await _replay_config(session, config, start, now, tz)
+            if replay.get("refused"):
+                return web.json_response({"days": days, "replay": replay,
+                                          "refused": True})
+            watched = sorted(shadow.entities_watched(config))
+            history = await shadow.fetch_history(session, watched, start, now) \
+                if watched else {}
+    except Exception as exc:  # noqa: BLE001
+        return web.json_response({"days": days, "refused": True,
+                                  "error": f"brAIn could not replay it: {exc}"})
+    rows = (await asyncio.to_thread(routines.load)).get("rows") or []
+    graded = await asyncio.to_thread(
+        trials.evaluate, config, history, rows, start, now, tz, now)
+    return web.json_response({"days": days, "replay": replay,
+                              "against_you": graded})
 
 
 def _consolidate_now() -> tuple[bool, str]:
@@ -12385,6 +12631,10 @@ def make_app() -> web.Application:
     app.router.add_post("/api/onboarding/skip", h_onboarding_skip)
     app.router.add_post("/api/onboarding/reset", h_onboarding_reset)
     app.router.add_get("/api/knowledge", h_knowledge)
+    app.router.add_get("/api/facts", h_facts)
+    app.router.add_post("/api/fact/{id}/forget", h_fact_forget)
+    app.router.add_get("/api/habits", h_habits)
+    app.router.add_post("/api/simulate", h_simulate)
     app.router.add_post("/api/hypothesis/{ts}/confirm", h_hypothesis_confirm)
     app.router.add_post("/api/hypothesis/{ts}/reject", h_hypothesis_reject)
     app.router.add_put("/api/memory", h_memory_put)

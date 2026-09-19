@@ -5413,6 +5413,80 @@ function makeQueuedRow(f) {
   return row;
 }
 
+// One fact, with its provenance. The subject chip says what it is about,
+// the source says who taught it, and a run id the ledger knows becomes a
+// button that opens that run in the reader every other engine-store run
+// opens in — provenance a person can follow rather than a hash in a file.
+const FACT_SUBJECT_WORDS = { house: "the house" };
+function factSubjectLabel(subject) {
+  const s = String(subject || "house");
+  if (FACT_SUBJECT_WORDS[s]) return FACT_SUBJECT_WORDS[s];
+  if (s.startsWith("area:")) return s.slice(5).replace(/_/g, " ");
+  if (s.startsWith("person:")) return s.slice(7);
+  return s;
+}
+
+function makeFactRow(f) {
+  const row = el("div", "fbitem kfact");
+  const txt = el("div", "txt");
+  txt.appendChild(el("div", null, f.text));
+  const meta = el("div", "when");
+  meta.appendChild(el("span", "kfactsubj", factSubjectLabel(f.subject)));
+  meta.appendChild(document.createTextNode(" · " + kSourceLabel(f.source)));
+  if (f.observed) meta.appendChild(document.createTextNode(" · " + f.observed));
+  if (f.predicate && String(f.predicate).startsWith("exception:")) {
+    meta.appendChild(document.createTextNode(
+      " · stands " + String(f.predicate).slice(10) + " down"));
+  }
+  if (f.run_id && f.run_source) {
+    const see = el("button", "btn tiny ghost kfactrun", "See the run");
+    tip(see, "Open the run that learned this");
+    see.addEventListener("click", () => viewConversation({
+      id: f.run_id, source: f.run_source,
+      title: kSourceLabel(f.source) + " run", age: f.observed || "",
+    }));
+    meta.appendChild(see);
+  }
+  txt.appendChild(meta);
+  row.appendChild(txt);
+  const del = el("button", "btn icon", "✕");
+  tip(del, "Forget this fact — the memory document is not touched");
+  del.addEventListener("click", async () => {
+    del.disabled = true;
+    try {
+      const res = await api(`api/fact/${encodeURIComponent(f.id)}/forget`,
+                            { method: "POST" });
+      takeFacts(res.facts, res.summary);
+      toast("Forgotten");
+    } catch (e) {
+      toast(e.message);
+      del.disabled = false;
+    }
+  });
+  row.appendChild(del);
+  return row;
+}
+
+function takeFacts(facts, summary) {
+  const host = $("#kKnown");
+  if (!host) return;
+  host.textContent = "";
+  const rows = facts || [];
+  if (!rows.length) {
+    host.appendChild(el("div", "kempty",
+      "Nothing filed as a fact yet — corrections, study sessions, voice, " +
+      "the chat and the terminal all teach it."));
+    return;
+  }
+  rows.forEach((f) => host.appendChild(makeFactRow(f)));
+  const total = Number((summary || {}).count) || 0;
+  const hidden = Math.max(0, total - rows.length);
+  if (hidden) {
+    host.appendChild(el("div", "kmore",
+      `…and ${hidden} more. Ask brAIn to recall one by subject.`));
+  }
+}
+
 // The list and its count, drawn from the one payload that carries both.
 function takeQueue(inbox, pending) {
   const items = inbox || [];
@@ -5469,6 +5543,7 @@ async function renderKnowledge() {
   // right, which is the whole point of filing them.
   memState.lastState = data.memory_state;
   takeQueue(data.inbox, data.inbox_pending);
+  takeFacts(data.facts, data.facts_summary);
 
   // "Answered questions" is gone with the model it belonged to: a
   // confirmed guess becomes a plain memory line and its record is

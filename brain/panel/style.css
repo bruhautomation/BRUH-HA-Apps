@@ -847,6 +847,16 @@ body.modal-open {
 .kempty { font-size: 13px; color: var(--ink-3); padding: 6px 2px; }
 /* What the capped list is not showing. The count above is the real one. */
 .kmore { font-size: 12.5px; color: var(--ink-3); padding: 8px 2px 2px; font-style: italic; }
+/* The facts list under the queue: the subject rides as a chip so a row
+   about `sensor.hall_temp` and one about the house read differently at a
+   glance, and the run link sits in the meta line rather than as a fourth
+   button, because a row with three controls is a row nobody reads. */
+.kfactslabel { display: block; margin-top: 18px; }
+.kfact .when { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.kfactsubj { font-family: var(--mono, ui-monospace, monospace); font-size: 11px;
+  padding: 1px 6px; border-radius: 999px; background: var(--bg-3, rgba(127,127,127,.15));
+  color: var(--ink-2); }
+.kfactrun { margin-left: 4px; }
 .kadd { display: flex; gap: 7px; margin: 4px 0 8px; }
 .kadd input {
   flex: 1;
@@ -4368,4 +4378,14 @@ body.term-classic #termMode .ico-out { display: block; }
 @media (pointer: coarse) {
   .finding.case .findactions .btn { min-height: 44px; }
   .finding.case .findactions .btn.icon { min-width: 44px; }
+}
+
+/* The facts list's two controls: ✕ forgets a fact from every future prompt
+   and "See the run" opens the conversation that learned it. Scoped like the
+   Home feed's block above and for its reason — the rest of the panel's
+   icon buttons are a separate, real problem — and after it, because the
+   first `pointer: coarse` block in this file has to stay the text floor. */
+@media (pointer: coarse) {
+  .kfact .btn.icon { min-height: 44px; min-width: 44px; }
+  .kfact .kfactrun { min-height: 44px; padding-inline: 14px; }
 }

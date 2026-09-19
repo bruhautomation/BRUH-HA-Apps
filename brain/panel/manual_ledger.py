@@ -57,7 +57,7 @@ import logging
 import os
 import time
 
-import rhythm
+import habits
 
 log = logging.getLogger("brain.manual")
 
@@ -316,48 +316,34 @@ def shape(rows: list[dict], tz=None, now: float | None = None) -> dict | None:
     """
     tz = tz or dt.timezone.utc
     now = time.time() if now is None else now
-    stamps = [dt.datetime.fromtimestamp(r["ts"], tz) for r in rows or []
-              if r.get("ts")]
-    if not stamps:
+    if not rows:
         return None
-    days = {s.date() for s in stamps}
-    if len(days) < MIN_DAYS:
+    # One grading, this ledger's floors: looser than `routines` on
+    # purpose (a question is answerable about "most evenings"), and the
+    # share is over the SPAN the presses cover rather than a claimed
+    # shape's eligible days, because no claim is being made — the label
+    # is observed and rendered as "any day" when the week is mixed.
+    found = habits.grade([r["ts"] for r in rows if r.get("ts")], tz, now,
+                         min_days=MIN_DAYS, max_spread_min=MAX_SPREAD_MIN,
+                         recent_days=RECENT_DAYS)
+    if not found or not found["still_happening"]:
         return None
-
-    last = max(s.timestamp() for s in stamps)
-    if (now - last) > RECENT_DAYS * 86400:
-        return None
-
-    minutes = [s.hour * 60 + s.minute for s in stamps]
-    centre = rhythm.circular_median(minutes)
-    if centre is None:
-        return None
-    spread = rhythm.circular_spread(minutes, centre)
-    if spread > MAX_SPREAD_MIN:
-        return None
-
-    first = min(s.timestamp() for s in stamps)
+    first, last = found["first"], found["last"]
     span_days = max(1, int((last - first) // 86400) + 1)
-    share = len(days) / span_days
+    share = found["days"] / span_days
     if share < MIN_SHARE:
         return None
-
-    weekend = sum(1 for s in stamps if s.weekday() >= 5)
-    if weekend == 0:
-        when_days = "weekdays"
-    elif weekend == len(stamps):
-        when_days = "weekends"
-    else:
-        when_days = "any day"
+    when_days = ("any day" if found["shape"] == habits.EVERY_DAY
+                 else found["shape"])
 
     return {
-        "events": len(stamps),
-        "days": len(days),
+        "events": found["stamps"],
+        "days": found["days"],
         "span_days": span_days,
         "share": round(share, 3),
-        "minute": round(centre),
-        "at": rhythm.clock(centre),
-        "spread_min": round(spread, 1),
+        "minute": round(found["median_minute"]),
+        "at": found["at"],
+        "spread_min": found["spread_min"],
         "when_days": when_days,
         "first": int(first),
         "last": int(last),
@@ -445,24 +431,29 @@ def off_pattern(payload: dict | None = None, tz=None,
         found = shape(history, tz, now)
         if not found or found["days"] < OFF_PATTERN_MIN_DAYS:
             continue
-        allowance = max(OFF_PATTERN_FLOOR_MIN,
-                        found["spread_min"] * OFF_PATTERN_SPREADS)
+        # `habits.odd_press` is the one arithmetic — the distance the
+        # short way round, the allowance off the subject's own spread —
+        # handed the shape already graded so every press in this burst is
+        # judged against the same history.
+        judged_shape = {"days": found["days"], "spread_min": found["spread_min"],
+                        "median_minute": found["minute"], "at": found["at"]}
         for row in recent:
-            stamp = dt.datetime.fromtimestamp(row["ts"], tz)
-            minute = stamp.hour * 60 + stamp.minute
-            away = rhythm.circular_distance(minute, found["minute"])
-            if away <= allowance:
+            odd = habits.odd_press(row["ts"], [], tz, shape=judged_shape,
+                                   spreads=OFF_PATTERN_SPREADS,
+                                   floor_min=OFF_PATTERN_FLOOR_MIN,
+                                   min_days=OFF_PATTERN_MIN_DAYS)
+            if not odd:
                 continue
             out.append({
                 "kind": "off_pattern", "subject": key,
                 **_describe([row]),
                 "ts": int(row["ts"]),
-                "at": rhythm.clock(minute),
+                "at": odd["at"],
                 "cause": row.get("cause") or "person",
-                "usually_at": found["at"],
-                "usually_spread_min": found["spread_min"],
-                "away_min": round(away),
-                "allowance_min": round(allowance),
+                "usually_at": odd["usually_at"],
+                "usually_spread_min": odd["usually_spread_min"],
+                "away_min": odd["away_min"],
+                "allowance_min": odd["allowance_min"],
                 "days": found["days"],
                 "events": found["events"],
                 "when_days": found["when_days"],

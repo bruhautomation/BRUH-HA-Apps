@@ -514,6 +514,20 @@ async def collect(now: float | None = None) -> dict:
           "pass runs overnight")
 
 
+    # What the homeowner has said a rule has wrong about an entity —
+    # `facts_store.exception_map()`, read once here so the checks stay
+    # pure over the snapshot. Unreadable is an EMPTY map and a flag, never
+    # a missing key: a check must go on filing when the store is down,
+    # because a store that could not be read is not a homeowner saying
+    # the row is wrong.
+    try:
+        import facts_store  # noqa: PLC0415
+        snap["facts"] = facts_store.exception_map(now)
+        _mark("facts", True, "")
+    except Exception as exc:  # noqa: BLE001
+        snap["facts"] = {}
+        _mark("facts", False, f"the facts store could not be read: {exc}")
+
     recorder = load_recorder()
     snap["recorder"] = recorder or {}
     _mark("recorder", recorder is not None,

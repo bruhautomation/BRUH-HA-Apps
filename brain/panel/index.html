@@ -1436,6 +1436,17 @@
              "already in memory" made a drained queue look like it had never
              emptied. The ledger still holds them so nothing is re-announced;
              it just isn't a list anyone has to read. -->
+
+        <!-- What brAIn holds as FACTS — 2.2's store under the document. Not
+             the queue above (those are waiting) and not the document (that
+             is prose): each row is one tagged fact with who taught it and
+             when, which is the provenance the document cannot carry. A fact
+             with a run behind it links to that run, so "why do you think
+             that?" has an answer. ✕ forgets the fact and touches nothing
+             else — a line already in the document is edited there. -->
+        <label class="kfactslabel">What brAIn knows</label>
+        <p class="hint tight" id="kKnownHint">Facts brAIn holds about this house — each with who taught it and when. Press one's source to see the run that learned it.</p>
+        <div id="kKnown" class="klist"></div>
       </div>
     </div>
   </div>

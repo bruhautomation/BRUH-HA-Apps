@@ -95,6 +95,8 @@ def waiting(snap: dict, now: float) -> list[dict]:
         kind = kind_of(shape.get("name") or house.name(eid) or eid)
         if not kind:
             continue
+        if house.excepted(eid, "chore.waiting"):
+            continue
         reading = appliances.state_at(shape, recent.get(eid) or [], now)
         if reading.get("state") != appliances.FINISHED:
             continue
