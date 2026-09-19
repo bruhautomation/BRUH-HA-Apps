@@ -268,7 +268,10 @@ def _open_lock(lock: Path) -> int | None:
 # group-readable and never world-readable: the group is what carries it
 # across the two users, and a mode that let anyone on the box take a
 # panel store's lock would be a way to stall its writers from a shell.
-LOCK_MODE = 0o660
+# Read-only for the group too: flock wants a file description and never
+# write permission (`_open_lock` opens O_RDONLY), so a write bit would be
+# a permission nothing uses.
+LOCK_MODE = 0o640
 
 
 def _lock_group(store: Path) -> int:
