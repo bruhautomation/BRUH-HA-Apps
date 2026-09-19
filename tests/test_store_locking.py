@@ -37,7 +37,7 @@ import textwrap
 import threading
 import time
 import unittest
-from unittest import mock
+import unittest.mock
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -135,14 +135,14 @@ class TestLockedHelper(unittest.TestCase):
         self.assertEqual(mode & 0o077, 0, oct(mode))
         # The owner is the store's own user where that is not root, else
         # the `claude` user; and only root hands it over.
-        with mock.patch.object(atomic_write, "_preserved",
+        with unittest.mock.patch.object(atomic_write, "_preserved",
                                return_value=(0o644, 1234, 5678)):
             self.assertEqual(atomic_write._lock_owner(self.store), (1234, 5678))
         given: list[tuple] = []
-        with mock.patch.object(atomic_write, "_preserved",
+        with unittest.mock.patch.object(atomic_write, "_preserved",
                                return_value=(0o644, 1234, 5678)), \
-                mock.patch.object(atomic_write.os, "getuid", return_value=0), \
-                mock.patch.object(atomic_write.os, "fchown",
+                unittest.mock.patch.object(atomic_write.os, "getuid", return_value=0), \
+                unittest.mock.patch.object(atomic_write.os, "fchown",
                                   side_effect=lambda *a: given.append(a)):
             other = self.store.with_name("other.jsonl")
             with atomic_write.locked(other):
@@ -150,8 +150,8 @@ class TestLockedHelper(unittest.TestCase):
         self.assertEqual([g[1:] for g in given], [(1234, 5678)])
         # Not root: nothing to hand over, and nothing raised.
         given.clear()
-        with mock.patch.object(atomic_write.os, "getuid", return_value=1000), \
-                mock.patch.object(atomic_write.os, "fchown",
+        with unittest.mock.patch.object(atomic_write.os, "getuid", return_value=1000), \
+                unittest.mock.patch.object(atomic_write.os, "fchown",
                                   side_effect=lambda *a: given.append(a)):
             with atomic_write.locked(self.store.with_name("third.jsonl")):
                 pass
