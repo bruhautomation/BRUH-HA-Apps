@@ -294,7 +294,7 @@ class TestWhatComesOut(CoreCase):
 
     async def test_the_raw_hook_sees_everything_that_survived_the_ceiling(self):
         raw: list[tuple] = []
-        bus, _got = self.bus(known_ids=lambda: set(),
+        bus, _got = self.bus(known_ids=set,
                              on_event=lambda t, d: raw.append((t, d)))
         await bus.start()
         await self.settle(bus)

@@ -39,9 +39,9 @@ PANEL_DIR = BASE_DIR / "brain" / "panel"
 sys.path.insert(0, str(PANEL_DIR))
 
 # Imported for the names; every one of them is REBOUND in `setUpClass` to
-# the copy the panel itself holds — see the note there. `cases` is listed
-# because the feed's own module is one of the ones that can be doubled.
-import cases  # noqa: E402,F401
+# the copy the panel itself holds — see the note there. `cases` is not
+# imported: nothing here reads it by name, and the copy the feed uses is
+# reached as `cls.server.cases` where `point()` needs it.
 import findings_store  # noqa: E402
 import hypotheses  # noqa: E402
 import proposals  # noqa: E402
@@ -88,9 +88,8 @@ class LoopCase(unittest.TestCase):
         # CLAUDE.md's `atomic_write` rule, one import graph over: patch the
         # copy the code under test actually reads, and here that means all
         # of them.
-        global cases, findings_store, hypotheses, proposals, todo_store
+        global findings_store, hypotheses, proposals, todo_store
         global resident, signals, triage
-        cases = cls.server.cases
         findings_store = cls.server.findings_store
         hypotheses = cls.server.hypotheses
         proposals = cls.server.proposals

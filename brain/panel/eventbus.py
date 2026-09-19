@@ -247,8 +247,16 @@ class EventBus:
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            # Waited out with `asyncio.wait` and read, `terminal_proxy._settle`'s
+            # reason: a cancellation is the ending asked for, and anything
+            # else the pump died of is re-raised rather than left unretrieved.
+            done, _pending = await asyncio.wait({task})
+            for finished in done:
+                if finished.cancelled():
+                    continue
+                exc = finished.exception()
+                if exc is not None:
+                    raise exc
         self._connected = False
 
     def stats(self) -> dict:
