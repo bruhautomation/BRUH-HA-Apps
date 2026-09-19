@@ -67,6 +67,20 @@ run_task:
           min: 10
           max: 600
           unit_of_measurement: seconds
+    tools:
+      name: Tools
+      description: 'What this task is allowed to touch. full (default) keeps today''s
+        behaviour: the shell, file edits, web access and every Home Assistant tool.
+        house drops the shell, file edits and the web and leaves every Home Assistant
+        tool. read_only is the same list the scheduled analyst runs with — it can look
+        at anything and change nothing.'
+      default: full
+      selector:
+        select:
+          options:
+          - full
+          - house
+          - read_only
 clear_conversation:
   name: Clear conversation
   description: Clear a persistent Claude conversation session. This resets the conversation history

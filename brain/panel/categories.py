@@ -232,7 +232,7 @@ def get_category(cat_id: str) -> dict | None:
 HOUSE_CHARS = 2_000
 
 # What the brief and the weekly report get of the memory document. They
-# are handed a couple of paragraphs each, not the 34 KB the insight
+# are handed a couple of paragraphs each, not the ~66 KB the insight
 # bundle carries: what a lock-screen message needs from memory is the
 # handful of standing preferences at the top of the document, and the
 # rest is what makes it a report.
