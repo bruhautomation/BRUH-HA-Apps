@@ -1623,12 +1623,26 @@ class TestTurnBudgets(unittest.TestCase):
     def _after(argv, flag):
         return argv[argv.index(flag) + 1] if flag in argv else None
 
-    # -- no cap unless somebody set one ----------------------------------
+    # -- a study is capped; an ask still is not ---------------------------
 
-    def test_a_study_passes_no_turn_cap_by_default(self):
+    def test_a_study_carries_a_runaway_cap_by_default(self):
+        """A study session ran uncapped, for up to half an hour, on the
+        global model — so a run looping on a failing tool had nothing but
+        the wall clock between it and the whole of that. The cap is far past
+        any real session (depth IS the deliverable here), which is what
+        makes it invisible to the sessions it is not for, and a run that
+        trips it is landed rather than thrown away."""
         _, argvs, _ = self._drive("brain-learn.sh", ["energy"])
         self.assertEqual(len(argvs), 1)
         self.assertIn("-p", argvs[0])
+        self.assertEqual(self._after(argvs[0], "--max-turns"), "60")
+
+    def test_a_study_explicitly_set_to_zero_is_uncapped(self):
+        """0 stays reachable: the watcher passes a request's own cap through
+        this name, and a guard with no way to stand it down is a setting
+        whose only answer is to edit the script."""
+        _, argvs, _ = self._drive("brain-learn.sh", ["energy"],
+                                  BRAIN_LEARN_MAX_TURNS="0")
         self.assertNotIn("--max-turns", argvs[0])
 
     def test_a_study_passes_the_cap_somebody_set_by_hand(self):
