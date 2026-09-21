@@ -41,9 +41,18 @@ FROZEN_MIN_DAYS = 5
 # `monetary` is named as well because a fixed tariff carries it and sits
 # still for years, and `aqi`/`enum` because neither is a continuous
 # quantity. `battery` and `signal_strength` were already out.
+#
+# `duration` is the one the first cut missed, and it is the clearest case
+# in the set: a duration is a SPAN, and the spans a house publishes are
+# almost all either configured or last-measured. A button's hold time, a
+# timer's length, how long the last run took, a track's length — each
+# reads one value until somebody changes it or runs the thing again,
+# which on anything used occasionally is weeks. It reached the list the
+# way `temperature`'s ambient gap did: a real house, a real row, and a
+# sensor that was working exactly as intended.
 FROZEN_SKIP_CLASSES = frozenset({
     "battery", "signal_strength", "monetary", "enum", "aqi",
-    "timestamp", "date",
+    "timestamp", "date", "duration",
 })
 # And a cap, for `base.unusual`'s reason. More than a handful of sensors
 # frozen at once is not a house with a handful of broken sensors — it is
@@ -140,11 +149,26 @@ def measures_something_hot(eid: str, name: str) -> bool:
     return bool(words & _HOT_WHEN_PAIRED and words & _PAIR_WORDS)
 
 
+# brAIn's own integration. Its entities are readings ABOUT this add-on — the
+# usage figures, the health verdict, the open-findings count — and the
+# device checks reported them as hardware: "brAIn Usage Limits has been
+# unavailable for more than a day — check its power and its connection
+# (batteries, Wi-Fi, the hub it pairs through)", on the day the usage
+# tracker was stuck. The batteries advice is wrong for a sensor with no
+# batteries, and the fault it was about is `health.py`'s to report, which
+# it does with the switch named. A check that files a finding about the
+# add-on's own sensor is the add-on filing a bug report against itself
+# under somebody else's remedy.
+SELF_PLATFORMS = frozenset({"brain"})
+
+
 def _live_hardware(house: House):
     for eid, st in house.states.items():
         if domain_of(eid) in SOFTWARE_DOMAINS:
             continue
         if not house.enabled(eid):
+            continue
+        if (house.registry.get(eid) or {}).get("platform") in SELF_PLATFORMS:
             continue
         yield eid, st
 
@@ -344,6 +368,8 @@ def implausible(snap: dict, now: float) -> list[dict]:
         lo, hi = bounds
         if not out_of_range(st, eid):
             continue
+        if house.excepted(eid, "dev.implausible"):
+            continue
         out.append({
             "text": f"{house.name(eid)} is reporting an impossible value",
             "detail": f"{value:g}{key[1]} as of {when(st.get('last_updated'))}"
@@ -392,6 +418,10 @@ def frozen(snap: dict, now: float) -> list[dict]:
             continue
         if abs(lo) < 1e-9:
             # A power sensor on an idle plug reads 0 for a week and is fine.
+            continue
+        if house.excepted(eid, "dev.frozen"):
+            # "It is a contact on a cupboard nobody opens" — said once,
+            # on the Wrong button, and read here ever after.
             continue
         unit = attrs.get("unit_of_measurement") or ""
         out.append({

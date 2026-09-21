@@ -17,6 +17,24 @@ lives in the memory document, which is the point.
 Backed by the same JSONL the `brain memory` CLI reads, so the panel and
 the terminal are looking at one queue rather than two views that drift.
 
+**Which is also why every write here takes a cross-process lock.** One
+queue with three writers: this module (read the file, change one entry,
+write it all back), `brain-learn.sh` appending a proposed guess with a
+bare `>>`, and the consolidator's `retire_stale_hypotheses` rewriting the
+whole file. `atomic_write` makes each of those writes indivisible and
+does nothing whatever for the window between a read and its rename — a
+guess a study session appended in that window is not corrupted, it is
+*gone*, and nothing raises, because the file the panel wrote is complete
+and correct and simply predates it. So every read-modify-write below is
+wrapped in `atomic_write.locked(HYPOTHESES_FILE)`, and both shell writers
+take the same lock through `brain-memory-lock.sh`.
+
+`list_all` is the one that had to change shape rather than grow a lock: it
+expires stale entries, so a plain *read* rewrote the file on every call —
+the Findings tab asking what is open was a writer, competing with the two
+that had something to say. It now checks first and only takes the lock,
+re-reads and writes when something has genuinely aged out.
+
 Deliberately stdlib-only so the tests can import it without the add-on
 runtime.
 """
@@ -79,6 +97,24 @@ def _write(entries: list[dict]) -> None:
     atomic_write.write_lines(HYPOTHESES_FILE, entries)
 
 
+def _locked():
+    """The queue's lock, read off the module attribute at call time — the
+    tests (and the CLI) repoint HYPOTHESES_FILE, and a lock resolved at
+    import would guard whatever the file was called then."""
+    return atomic_write.locked(HYPOTHESES_FILE)
+
+
+STATUSES = ("open", "confirmed", "rejected", "expired")
+
+
+def _status_of(entry: dict) -> str:
+    """An unknown or missing status reads as `open`, which is what
+    ``list_all`` has always rendered — said once so the cap and the filter
+    cannot come to different conclusions about the same line."""
+    st = entry.get("status")
+    return st if st in STATUSES else "open"
+
+
 def _unique_ts(used: set[int]) -> int:
     """A timestamp no open entry already holds.
 
@@ -109,11 +145,17 @@ def _expire(entries: list[dict], now: float | None = None) -> bool:
 def list_all(status: str | None = None) -> list[dict]:
     entries = _read()
     if _expire(entries):
-        _write(entries)
+        # Only now is this read a write. Re-read under the lock rather than
+        # writing back the copy taken outside it: between the two, a study
+        # session may have appended a guess this list has never seen, and
+        # writing our copy would delete it.
+        with _locked():
+            entries = _read()
+            if _expire(entries):
+                _write(entries)
     out = []
     for e in entries:
-        st = e.get("status") if e.get("status") in (
-            "open", "confirmed", "rejected", "expired") else "open"
+        st = _status_of(e)
         if status is not None and st != status:
             continue
         out.append({
@@ -146,16 +188,31 @@ def is_known(text: str) -> bool:
 
 
 def propose(text: str, topic: str = "") -> dict | None:
-    """Queue a new guess, or return None if it is known or the queue is full."""
+    """Queue a new guess, or return None if it is known or the queue is full.
+
+    The known-check, the cap and the append are one decision over one read,
+    taken under the lock. Asking ``is_known``/``budget`` first and appending
+    afterwards — which is what this did — re-reads the file three times and
+    settles the cap against a queue two other writers are still changing:
+    two runs proposing at once both see two open guesses and both append,
+    and a queue whose whole design is that it holds three ends up holding
+    four.
+    """
     text = str(text or "").strip()[:MAX_TEXT_CHARS]
-    if not text or is_known(text) or budget() <= 0:
+    key = normalize(text)
+    if not text or not key:
         return None
-    entries = _read()
-    _expire(entries)
-    entry = {"ts": _unique_ts({int(e.get("ts") or 0) for e in entries}),
-             "text": text, "topic": str(topic or "")[:64], "status": "open"}
-    entries.append(entry)
-    _write(entries)
+    with _locked():
+        entries = _read()
+        _expire(entries)
+        if any(normalize(e.get("text") or "") == key for e in entries):
+            return None     # proposed before, in any status — never re-floated
+        if sum(1 for e in entries if _status_of(e) == "open") >= MAX_OPEN:
+            return None
+        entry = {"ts": _unique_ts({int(e.get("ts") or 0) for e in entries}),
+                 "text": text, "topic": str(topic or "")[:64], "status": "open"}
+        entries.append(entry)
+        _write(entries)
     return entry
 
 
@@ -176,16 +233,18 @@ def find_open(text: str) -> dict | None:
 
 
 def _settle(ts: int, status: str, note: str = "") -> dict | None:
-    entries = _read()
     note = str(note or "").strip()[:MAX_NOTE_CHARS]
-    for e in entries:
-        if int(e.get("ts") or 0) == ts and e.get("status") == "open":
-            e["status"] = status
-            e["settled_at"] = int(time.time())
-            if note:
-                e["note"] = note
-            _write(entries)
-            return {"ts": ts, "text": e["text"], "status": status, "note": note}
+    with _locked():
+        entries = _read()
+        for e in entries:
+            if int(e.get("ts") or 0) == ts and e.get("status") == "open":
+                e["status"] = status
+                e["settled_at"] = int(time.time())
+                if note:
+                    e["note"] = note
+                _write(entries)
+                return {"ts": ts, "text": e["text"], "status": status,
+                        "note": note}
     return None
 
 
@@ -214,16 +273,25 @@ def reopen(ts: int) -> dict | None:
     it then. An expired one stays expired — nobody pressed anything, and
     fourteen days is the answer.
     """
-    entries = _read()
-    for e in entries:
-        if int(e.get("ts") or 0) == ts and e.get("status") in (
-                "confirmed", "rejected"):
-            e["status"] = "open"
-            e.pop("settled_at", None)
-            e.pop("note", None)
-            _write(entries)
-            return {"ts": ts, "text": e["text"], "status": "open"}
+    with _locked():
+        entries = _read()
+        for e in entries:
+            if int(e.get("ts") or 0) == ts and e.get("status") in (
+                    "confirmed", "rejected"):
+                e["status"] = "open"
+                e.pop("settled_at", None)
+                e.pop("note", None)
+                _write(entries)
+                return {"ts": ts, "text": e["text"], "status": "open"}
     return None
+
+
+# How a rejected claim and the homeowner's reason are joined into one line.
+# Named because ``knowledge_store.prompt_block`` renders the union of these
+# and its own dismissed questions, and has to split the claim back out to
+# dedupe on it — a separator written down twice is a dedupe that stops
+# working the day one of them gains a comma.
+DEAD_END_SEP = " — they said: "
 
 
 def dead_ends(limit: int = 20) -> list[str]:
@@ -233,5 +301,5 @@ def dead_ends(limit: int = 20) -> list[str]:
     out = []
     for e in list_all("rejected")[-limit:]:
         note = e.get("note") or ""
-        out.append(f"{e['text']} — they said: {note}" if note else e["text"])
+        out.append(f"{e['text']}{DEAD_END_SEP}{note}" if note else e["text"])
     return out

@@ -109,6 +109,8 @@ def unusual(snap: dict, now: float) -> list[dict]:
         st = house.states.get(eid)
         if not st or not eligible(house, eid, st):
             continue
+        if house.excepted(eid, "base.unusual"):
+            continue
         # A reading far from normal on a sensor that has been walking one
         # way for a month is the walk, and `forecast.decline` says so with
         # the fix that matters ("before it reaches a number that does").

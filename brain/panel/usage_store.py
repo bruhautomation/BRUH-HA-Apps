@@ -47,6 +47,14 @@ LIMITS_FILE = os.environ.get(
 # Real utilization older than this is considered stale (tracker not running)
 LIMITS_MAX_AGE_S = 2 * 3600
 
+# The tracker polls on a slow heartbeat and asks immediately when brAIn
+# has just finished a Claude run — see `nudge`. The path is spelled here
+# and in usage-limits-tracker.py, which is a separate process that imports
+# nothing from the panel, so `tests/test_usage_nudge.py` reads both ends:
+# a rename that goes silent on one side is the failure `AUTH_BACKUP_FILE`
+# already had once.
+NUDGE_FILE = os.environ.get("BRAIN_USAGE_NUDGE", "/data/usage-nudge")
+
 SESSION_HOURS = 5.0
 KEEP_HOURS = 24.0
 DEFAULT_BUDGET = 25
@@ -216,6 +224,43 @@ def _tracker_file() -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def nudge() -> bool:
+    """Tell the tracker the account's usage has just moved. Never raises.
+
+    The figure changes when a run spends tokens and at no other time, so a
+    finished run is the moment worth one request — and it is also the only
+    moment the credential is certain to be usable, because the CLI mints
+    the next access token from the refresh token as part of a run and
+    nothing else on the box can. A quiet house therefore has nothing to
+    ask with, which is why the heartbeat is slow and this exists.
+
+    It is a file's mtime rather than a signal: the tracker is a separate
+    process started by run.sh, both ends run as root, and a pid to signal
+    is one more thing that can be stale. Content is deliberately not read
+    — the only question is "has anything happened since I last asked".
+
+    Best-effort by construction. This is called from the journal listener,
+    which may not fail the run it is being told about.
+    """
+    try:
+        os.makedirs(os.path.dirname(NUDGE_FILE) or ".", exist_ok=True)
+        with open(NUDGE_FILE, "w") as fh:
+            fh.write("")
+        return True
+    except OSError:
+        # A nudge that could not be written costs freshness until the next
+        # heartbeat, which is the state this was in before it existed.
+        return False
+
+
+def nudged_at() -> float:
+    """When the last nudge landed, or 0.0. Never raises."""
+    try:
+        return os.path.getmtime(NUDGE_FILE)
+    except OSError:
+        return 0.0
+
+
 def _fresh_payload() -> dict | None:
     """The whole tracker file, only when the data is fresh.
 
@@ -233,6 +278,69 @@ def _fresh_payload() -> dict | None:
     if stamp is None or time.time() - stamp > LIMITS_MAX_AGE_S:
         return None
     return data
+
+
+# The tracker's own codes that mean "no figure, and nobody has anything to
+# do about it". They are still reported on the pill and in the popover —
+# the number really is brAIn's local estimate and saying so is the whole
+# point of `limits_problem` — but they are not the ADD-ON being degraded,
+# which is a different question with a different reader.
+#
+# `oauth_token_awaiting_refresh` is the one this was written for. It says
+# in as many words that nothing is wrong with the sign-in and that signing
+# in again will not help: Claude Code mints the next access token itself
+# on its next run. It is deliberately absent from the tracker's own
+# `AUTH_PROBLEMS` for exactly that reason, and health was the one reader
+# that had not been told — so `sensor.brain_health` went `degraded`, HA's
+# Repairs raised `health_degraded`, and `reports.file_incident` wrote a
+# problem file, several hours out of every day, about a credential doing
+# what credentials do. A verdict that fires on a healthy install is the
+# check catalog's own first rule, one module over.
+#
+# `api_key_has_no_usage_limits` is here for the opposite reason: it can
+# never clear, because an API key has no subscription window to report.
+# Permanently degraded over an account that is working is worse noise than
+# the daily kind. And `http_429` is the endpoint's limit rather than the
+# account's — the tracker answers it with a backoff ladder built for it,
+# which is a refusal doing its job.
+#
+# Everything else stays a problem, because everything else names something
+# a person can do: sign in, re-run the account sign-in for the scope, or
+# find out why the tracker has written nothing at all.
+NEEDS_NOTHING = ("oauth_token_awaiting_refresh", "api_key_has_no_usage_limits",
+                 "http_429")
+
+# ...and the one of those whose "nothing to do" has a shelf life. The
+# tracker renews the account credential itself now, on every pass, so
+# "between refreshes" is a state that lasts a poll or two — and one that
+# has lasted longer is the tracker unable to renew for hours, which is
+# something a person needs to hear about. This is the report that prompted
+# it: four usage sensors unavailable for a day, and the only thing anywhere
+# about it was a verdict saying nothing was wrong. The 429 ladder is
+# deliberately not bounded here (its rungs are hours long by design and it
+# retries on its own), and an API key can never clear, so neither gets a
+# clock. Three hours is six ordinary polls, or one renewal that failed and
+# five more chances to make it.
+STUCK_AFTER = {"oauth_token_awaiting_refresh": 3 * 3600}
+
+
+def needs_nothing(code: str, since: float | None = None,
+                  now: float | None = None) -> bool:
+    """Whether this code's remedy is to do nothing.
+
+    A code this does not recognise answers False: "I do not know what
+    this means" and "there is nothing to do" are different claims, and
+    only the second may keep a fault off a verdict. And a code that has
+    stood longer than its shelf life (`STUCK_AFTER`) answers False too,
+    because "wait" is only an answer for as long as waiting can work.
+    """
+    code = str(code or "")
+    if code not in NEEDS_NOTHING:
+        return False
+    limit = STUCK_AFTER.get(code)
+    if limit and since:
+        return ((now if now is not None else time.time()) - since) < limit
+    return True
 
 
 def limits_problem() -> dict:
@@ -269,6 +377,29 @@ def limits_problem() -> dict:
     nxt = _parse_iso_epoch(data.get("next_attempt_at"))
     if nxt:
         out["next_attempt"] = nxt
+    # How long this verdict has stood. The tracker keeps the stamp across
+    # its own rewrites and across a restart, so this is the age of the
+    # PROBLEM rather than of the last poll that reported it.
+    since = _parse_iso_epoch(data.get("error_since"))
+    if since:
+        out["since"] = since
+    # Carried rather than re-derived by whoever reads it. `health.py` is
+    # stdlib-only and pure over the payload it is handed — it answers "is
+    # brAIn working" off the diagnostics dict and nothing else — so the
+    # module that owns this vocabulary is the one that says what a code
+    # means, and the answer rides in the file a person reads too. An older
+    # mirror carries no flag, which reads as False: the fault surfaces,
+    # which is the safe direction.
+    out["needs_nothing"] = needs_nothing(code, since)
+    if code in STUCK_AFTER and since and not out["needs_nothing"]:
+        # The same code, no longer the same claim: it is the reader's job
+        # to say so, because the tracker wrote the gloss when it was true.
+        hours = (time.time() - since) / 3600
+        out["stuck"] = True
+        out["detail"] = ((out.get("detail") or "") + (
+            f" It has been the answer for {hours:.0f} hours now, which is "
+            "longer than a renewal should take — the add-on log says what "
+            "the tracker ran into.")).strip()
     return out
 
 

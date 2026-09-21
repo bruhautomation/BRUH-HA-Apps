@@ -36,8 +36,23 @@ CONTEXT_CHARS = 4_000
 # CLAUDE.md excerpt handed whatever was left, which had two failure modes at
 # once: a memory document larger than 4 KB was silently truncated mid-fact,
 # and a document that filled the budget starved the house context entirely.
-# Sized to hold a full memory.md (memory_max_kb, 32 by default) plus slack.
-MEMORY_CHARS = 34_000
+#
+# Sized off the SCHEMA'S CEILING and not off the option's default. It was
+# 34_000 — the 32 KB default plus slack — and `memory_max_kb` is
+# `int(1,64)?`, so the moment a house raised the cap because the
+# consolidator said the document was full, every insight prompt started
+# arriving cut mid-fact: the exact failure this budget was introduced to
+# prevent, reached by the one route it did not cover, and silently, because
+# a truncated document reads as a shorter one. The bound is not remembered
+# here — tests/test_memory_prompt_budget.py parses config.yaml and binds
+# this constant to it, so a schema that moves fails CI rather than a house.
+MEMORY_MAX_KB_CEILING = 64
+# Headroom over the cap. The consolidator measures the document in BYTES
+# and this budget is in CHARACTERS (`str.read(n)`), so a document at the
+# cap is never more than this many characters; the slack also covers the
+# header lines the cap is measured across.
+MEMORY_SLACK_CHARS = 2_000
+MEMORY_CHARS = MEMORY_MAX_KB_CEILING * 1024 + MEMORY_SLACK_CHARS
 # Device-context expansion (sibling sensors of presence trackers)
 MAX_CONTEXT_ENTITIES = 150
 MAX_CONTEXT_PER_DEVICE = 40
@@ -757,14 +772,83 @@ def _read_capped(path: str, limit: int) -> str:
         return ""
 
 
-def _read_context() -> str:
-    """Learned memory (memory.md) first, then the CLAUDE.md excerpt.
+def _configured_memory_kb() -> int:
+    """The `memory_max_kb` this house is actually running, or 0.
+
+    The Supervisor's own snapshot first (it follows a Configuration-tab
+    edit without a restart), then the environment variable run.sh exports
+    from the same option. Zero means "could not tell", which the caller
+    reads as the ceiling rather than as the default — an over-generous
+    budget costs prompt characters, where an under-generous one cuts a
+    fact in half and says nothing.
+    """
+    try:
+        from addon_options import snapshot  # a panel module; absent in some tests
+        value = (snapshot() or {}).get("memory_max_kb")
+        if value is not None:
+            return int(value)
+    except Exception:
+        # No Supervisor (a dev checkout, the test suite), no snapshot yet, or
+        # a value that is not a number: all three mean "could not tell", and
+        # the environment variable below is the second place to ask.
+        pass
+    try:
+        return int(os.environ.get("BRAIN_MEMORY_MAX_KB", "") or 0)
+    except ValueError:
+        return 0
+
+
+def memory_budget() -> int:
+    """What the memory document gets in this bundle, in characters.
+
+    Read at call time rather than frozen at import, so a cap raised on the
+    Configuration tab is followed by the next card instead of by the next
+    restart. Anything outside the schema's own bound falls back to the
+    ceiling, for `_configured_memory_kb`'s reason.
+    """
+    kb = _configured_memory_kb()
+    if kb <= 0 or kb > MEMORY_MAX_KB_CEILING:
+        return MEMORY_CHARS
+    return kb * 1024 + MEMORY_SLACK_CHARS
+
+
+# The document's head behind a retrieval block: the nicknames and the
+# standing preferences the consolidator keeps at the top, and no more of
+# it than that. The block carries the facts about what the run is
+# reading, and the whole document is what a run got before the store
+# existed — which it still gets on a house with no facts yet.
+FACTS_HEAD_CHARS = 1_000
+
+
+def _memory_for(entities=(), areas=(), domains=()) -> str:
+    """The retrieval block plus the document's head, or the whole
+    document where there are no facts to retrieve from."""
+    try:
+        import facts_store  # noqa: PLC0415 — panel-local, optional here
+        block = facts_store.retrieval_block(
+            entities=entities, areas=areas, domains=domains,
+            limit_chars=min(memory_budget(), facts_store.RETRIEVAL_CHARS * 2))
+    except Exception:  # noqa: BLE001 — the whole document is the floor
+        block = ""
+    if not block:
+        return _read_capped(MEMORY_FILE, memory_budget())
+    head = _read_capped(MEMORY_FILE, FACTS_HEAD_CHARS)
+    if head and len(head) >= FACTS_HEAD_CHARS:
+        head = head.rsplit("\n", 1)[0]
+    return block + ("\n" + head if head else "")
+
+
+def _read_context(entities=(), areas=(), domains=()) -> str:
+    """Learned memory first, then the CLAUDE.md excerpt.
 
     Memory facts lead because they are distilled knowledge about this home;
-    the CLAUDE.md excerpt fills whatever budget remains.
+    the CLAUDE.md excerpt fills whatever budget remains. What "memory"
+    is here changed in 2.2: the facts about the entities this bundle
+    carries, over the document's head, rather than the whole document —
+    see `_memory_for`.
     """
     parts: list[str] = []
-    memory = _read_capped(MEMORY_FILE, MEMORY_CHARS)
+    memory = _memory_for(entities, areas, domains)
     if memory:
         parts.append(memory)
     claude_md = _read_capped(CONTEXT_FILE, CONTEXT_CHARS)
@@ -968,7 +1052,10 @@ async def collect_bundle(category: dict, history_days: int, question: str | None
             except Exception:  # noqa: BLE001 — stats are best-effort
                 pass
 
-        context = _read_context()
+        context = _read_context(
+            entities=[row.get("e") for row in bundle.get("entities") or []
+                      if isinstance(row, dict) and row.get("e")],
+            domains=list(category.get("domains") or []))
         if context:
             bundle["context"] = context
 

@@ -68,6 +68,25 @@ def snapshot() -> dict | None:
     return dict(_options) if _options is not None else None
 
 
+# What `/addons/self/info` said about the add-on itself, beyond its
+# options. Filled by `refresh`; read by `panel_path`.
+_info: dict = {}
+
+
+def panel_path() -> str | None:
+    """The Home Assistant route to this add-on's panel, or None.
+
+    `/hassio/ingress/<slug>` is where the sidebar entry points, and it is
+    the path a companion-app notification can open (`notify_router.
+    open_link`). None until the Supervisor has answered once — a dev
+    checkout and a box the Supervisor cannot be reached from both have no
+    slug, and a guessed one would open the wrong add-on or nothing.
+    `BRAIN_ADDON_SLUG` pins it, for a test or a box that knows better.
+    """
+    slug = os.environ.get("BRAIN_ADDON_SLUG", "").strip() or _info.get("slug")
+    return f"/hassio/ingress/{slug}" if slug else None
+
+
 def get(setting: str):
     """One option by its *settings* name, or None when unknown/unavailable.
 
@@ -109,6 +128,13 @@ async def refresh(force: bool = False) -> dict | None:
         if not isinstance(opts, dict):
             log.debug("supervisor options read returned no options object")
             return None
+        # The add-on's own slug rides in the same answer, and it is what a
+        # notification needs to open this panel (`panel_path`). Kept only
+        # when it is a real string: a link built on a missing slug is a
+        # link to nowhere, and no link is the honest answer for that.
+        slug = (body.get("data") or {}).get("slug")
+        if isinstance(slug, str) and slug.strip():
+            _info["slug"] = slug.strip()
         _options = opts
         _read_at = time.time()
         return dict(opts)

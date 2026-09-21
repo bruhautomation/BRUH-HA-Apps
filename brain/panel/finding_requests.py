@@ -57,13 +57,16 @@ REQUEST_DIR = Path(os.environ.get(
 # house", and "not now". Anything else — a fix run, a regeneration — is
 # work rather than an answer, and belongs behind the panel where the
 # thing it starts can be watched.
-ACTIONS = ("fixed", "wrong", "snooze")
+ACTIONS = ("fixed", "wrong", "snooze", "reply")
 
 # ...and the tab's own verb for each, so the two front doors settle a
 # finding through exactly the same code. "fixed" is the tab's "done" —
 # a person saying they handled it — and the wording differs only because
 # a button says "I've fixed it" while an action id has to be one word.
 VERBS = {"fixed": "done", "wrong": "wrong"}
+# `reply` and `snooze` are deliberately absent: neither ends a finding.
+# A reply is a turn in the case's conversation and is answered, not
+# applied.
 
 # A request is a few hundred bytes. Anything larger is not one.
 MAX_BYTES = 16 * 1024
@@ -80,10 +83,35 @@ SNOOZE_DEFAULT_H = 24
 SNOOZE_MAX_H = 24 * 30
 
 
+TODO_ACTIONS = ("done", "drop", "add")
+TODO_TEXT_MAX = 200
+
+# The third kind on this queue, and the only one that is not an answer
+# about a row: `brain.check` and the Run-checks button ask the panel to
+# look at the house now. It is an ASK rather than an ending, so nothing
+# here applies it — `server._apply_finding_requests` starts the pass, and
+# starting one is the panel's alone.
+CHECKS_KIND = "checks"
+
+
 def parse(obj) -> dict | None:
-    """A validated request, or None for anything that is not one."""
+    """A validated request, or None for anything that is not one.
+
+    Three kinds share this queue, because they arrive from the same few
+    surfaces and their order matters between them — a tick on an item the
+    same burst created has to be applied after the create, and a checks
+    pass asked for in the same burst as an ending has to run after it, or
+    it re-files what was just settled. A request with no `kind` is a
+    finding's, which is what every request written before the to-do list
+    existed is.
+    """
     if not isinstance(obj, dict):
         return None
+    kind = str(obj.get("kind") or "finding").strip().lower()
+    if kind == "todo":
+        return _parse_todo(obj)
+    if kind == "checks":
+        return _parse_checks(obj)
     ts = obj.get("ts")
     if isinstance(ts, bool) or not isinstance(ts, (int, float)):
         return None
@@ -104,6 +132,48 @@ def parse(obj) -> dict | None:
         # per-surface rule here would be a second policy nobody can see.
         "via": str(obj.get("via") or "")[:32],
     }
+
+
+def _parse_todo(obj: dict) -> dict | None:
+    """A validated to-do request, or None. Every field is another process's.
+
+    `add` carries a sentence and no id because the item does not exist
+    yet; everything else carries an id and no sentence. A request that
+    could never be applied is rejected here rather than reaching the
+    panel and being dropped there with a puzzled log line.
+    """
+    action = str(obj.get("action") or "").strip().lower()
+    if action not in TODO_ACTIONS:
+        return None
+    item_id = obj.get("id")
+    if isinstance(item_id, bool) or not isinstance(item_id, (int, float)):
+        item_id = 0
+    text = str(obj.get("text") or "").strip()[:TODO_TEXT_MAX]
+    if action == "add":
+        if not text:
+            return None
+    elif not item_id:
+        return None
+    return {
+        "kind": "todo",
+        "action": action,
+        "id": int(item_id),
+        "text": text,
+        "note": str(obj.get("note") or "").strip()[:NOTE_MAX],
+        "via": str(obj.get("via") or "")[:32],
+    }
+
+
+def _parse_checks(obj: dict) -> dict:
+    """A validated ask for a house checks pass. Never None.
+
+    There is nothing to validate but the word `checks`, which `parse` has
+    already read: this request names no row, carries no verb and takes no
+    argument, so the only field left is where it came from — and a `via`
+    that could not be read is a log line missing four characters, not a
+    reason to drop somebody's press.
+    """
+    return {"kind": "checks", "via": str(obj.get("via") or "")[:32]}
 
 
 def verb_for(action: str) -> str:
@@ -191,7 +261,8 @@ def pending() -> int:
 
 
 __all__ = [
-    "ACTIONS", "KEEP_S", "MAX_BYTES", "MAX_PER_PASS", "MAX_QUEUED",
+    "ACTIONS", "CHECKS_KIND", "KEEP_S", "MAX_BYTES", "MAX_PER_PASS", "MAX_QUEUED",
     "NOTE_MAX", "REQUEST_DIR", "SNOOZE_DEFAULT_H", "SNOOZE_MAX_H",
+    "TODO_ACTIONS", "TODO_TEXT_MAX",
     "collect", "parse", "pending", "verb_for",
 ]

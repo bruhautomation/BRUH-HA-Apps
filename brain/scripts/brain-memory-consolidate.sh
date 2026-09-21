@@ -40,6 +40,22 @@ if [ -r /data/.brain_env ]; then
     source /data/.brain_env
 fi
 
+# The hypothesis queue's cross-process lock. Sourced here, beside the paths
+# it guards, and with a fallback that runs unlocked rather than refusing —
+# a pass that will not consolidate is a much worse failure than the race.
+# The path is a variable so the tests can drive this against a checkout.
+BRAIN_STORE_LOCK_LIB="${BRAIN_STORE_LOCK_LIB:-/opt/scripts/brain-memory-lock.sh}"
+if [ -r "$BRAIN_STORE_LOCK_LIB" ]; then
+    # shellcheck disable=SC1090
+    . "$BRAIN_STORE_LOCK_LIB"
+elif [ -r "$(dirname "${BASH_SOURCE[0]}")/brain-memory-lock.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$(dirname "${BASH_SOURCE[0]}")/brain-memory-lock.sh"
+fi
+if ! command -v brain_with_store_lock > /dev/null 2>&1; then
+    brain_with_store_lock() { shift; "$@"; }
+fi
+
 MEMORY_DIR="${BRAIN_MEMORY_DIR:-/config/.brain/memory}"
 MEMORY_FILE="$MEMORY_DIR/memory.md"
 VOICE_FILE="$MEMORY_DIR/voice.md"
@@ -57,7 +73,10 @@ VOICE_MAX_BYTES=2048
 # Two: the first attempt is the merge, the second is the merge with the
 # measured overshoot fed back. A third would be the same prompt again.
 MAX_SIZE_ATTEMPTS="${BRAIN_MEMORY_SIZE_ATTEMPTS:-2}"
-CLAUDE_MODEL="${BRAIN_MEMORY_MODEL:-haiku}"
+# The pass's tier out of the model plan (`BRAIN_MODEL_MEMORY`, written by
+# run.sh off panel/model_plan.py); BRAIN_MEMORY_MODEL is the older
+# per-script override and still wins where somebody set it.
+CLAUDE_MODEL="${BRAIN_MEMORY_MODEL:-${BRAIN_MODEL_MEMORY:-haiku}}"
 # A pass rewrites the WHOLE document plus the voice distillate — up to
 # 10 KB of output in one turn, not a one-line answer. At 120s that was a
 # coin flip on a full document, and every loss looked identical to a
@@ -144,8 +163,16 @@ sweep_share_inbox() {
 
 # A guess nobody answers is noise. Expired ones stop being offered but
 # stay on record, so the same guess is never floated a second time.
-retire_stale_hypotheses() {
-    [ -s "$HYPOTHESES_FILE" ] || return 0
+#
+# This rewrites the WHOLE file, which makes it the third writer of a queue
+# the panel and `brain-learn.sh` also write — and the rewrite reads the
+# file, transforms every line and renames the result over the top, so a
+# guess a study session appended between the read and the `mv` is silently
+# dropped. The consolidation lock does not help: it says only one
+# consolidation runs at a time, and the writer this loses to is not a
+# consolidation. So the queue's own lock is taken, and it is the same lock
+# `atomic_write.locked` takes on the panel side.
+_retire_stale_hypotheses() {
     local now cutoff
     now=$(date +%s)
     cutoff=$((now - HYPOTHESIS_TTL_DAYS * 86400))
@@ -157,6 +184,12 @@ retire_stale_hypotheses() {
     else
         rm -f "${HYPOTHESES_FILE}.tmp"
     fi
+    return 0
+}
+
+retire_stale_hypotheses() {
+    [ -s "$HYPOTHESES_FILE" ] || return 0
+    brain_with_store_lock "$HYPOTHESES_FILE" _retire_stale_hypotheses
     return 0
 }
 
@@ -251,22 +284,65 @@ Dating rules — facts must never masquerade as timeless truths:
 Then print exactly this separator on its own line:
 ${VOICE_SEPARATOR}
 
-Then print a voice.md distillate (2 KB maximum): ONLY entity nicknames, the top preferences, and device caveats — what a voice assistant needs on every request. Short markdown bullets.
+Then print a voice.md distillate (${VOICE_MAX_BYTES} bytes maximum, hard): ONLY entity nicknames, the top preferences, and device caveats — what a voice assistant needs on every request. Short markdown bullets.
 
 Output ONLY the two files and the separator — no commentary, no code fences.
 ${retry_note}
 PROMPT
 }
 
-# What the model is told after it overshot the cap. It goes last, where the
+# What the model is told after it overshot a cap. It goes last, where the
 # instruction it contradicts cannot be the more recent one, and it names the
 # measured overshoot: the cap is already in the prompt and was already
 # missed, so repeating it is not a different prompt — and a prompt that is
 # not different is not a second attempt.
+#
+# A pass produces two files and either can overshoot, so both are named
+# whenever both did. A note about only one half invites an answer that fixes
+# that half and breaks the other, which spends the last attempt learning
+# nothing.
 size_retry_note() {
-    local produced="$1" over="$2"
-    printf '%s' "
-YOUR PREVIOUS ATTEMPT WAS REJECTED AND NOTHING WAS SAVED. The memory.md you produced was ${produced} bytes — ${over} bytes over the hard ${MEMORY_MAX_KB} KB ceiling. Produce the same merge again, but drop the lowest-value and oldest facts until memory.md is comfortably under $((MEMORY_MAX_KB * 1024)) bytes. Fitting matters more than keeping every fact: an over-size document is discarded whole, so the alternative to dropping a few old lines is filing nothing at all."
+    local mem_produced="$1" mem_over="$2" voice_produced="$3" voice_over="$4"
+    local note="
+YOUR PREVIOUS ATTEMPT WAS REJECTED AND NOTHING WAS SAVED."
+    if [ "$mem_over" -gt 0 ]; then
+        note="${note} The memory.md you produced was ${mem_produced} bytes — ${mem_over} bytes over the hard ${MEMORY_MAX_KB} KB ceiling. Produce the same merge again, but drop the lowest-value and oldest facts until memory.md is comfortably under $((MEMORY_MAX_KB * 1024)) bytes. Fitting matters more than keeping every fact: an over-size document is discarded whole, so the alternative to dropping a few old lines is filing nothing at all."
+    fi
+    if [ "$voice_over" -gt 0 ]; then
+        note="${note} The voice.md distillate you produced was ${voice_produced} bytes — ${voice_over} bytes over the hard ${VOICE_MAX_BYTES} byte ceiling. Produce it again, shorter: keep only the nicknames, preferences and caveats a voice assistant needs on EVERY request, and drop everything else. voice.md is a summary of memory.md and not a second copy of it, so nothing you leave out is lost — it is still in the document."
+    fi
+    printf '%s' "$note"
+}
+
+# Cut a distillate down to a budget, on line boundaries.
+#
+# This is only ever applied to voice.md, and the asymmetry with memory.md is
+# the point. memory.md IS the memory: a document cut short loses facts
+# nothing else holds, which is why an over-size one is refused whole. voice.md
+# is derived from it — rewritten from scratch by every pass, holding nothing
+# that is not in the document — so its last few bullets cost one voice turn's
+# worth of nicknames until the next pass, where refusing the pass costs the
+# whole memory pipeline with no setting anybody can raise to end it.
+#
+# Whole lines, because half a bullet is a nickname that maps to nothing. The
+# length is measured the same way the check that sent us here measures it, so
+# the result satisfies that check by construction rather than by agreement
+# between two arithmetics. A first line already past the budget has no line
+# boundary to cut on and is sliced instead: that is the degenerate case, and
+# a truncated distillate still beats none.
+trim_to_budget() {
+    local text="$1" budget="$2" out="" line
+    while IFS= read -r line; do
+        if [ "$(( ${#out} + ${#line} + 1 ))" -gt "$budget" ]; then
+            break
+        fi
+        out="${out}${line}
+"
+    done <<< "$text"
+    if [ -z "$out" ]; then
+        out="${text:0:$budget}"
+    fi
+    printf '%s' "$out"
 }
 
 # One Claude pass over $1, leaving the model's output in the file named by $2.
@@ -356,7 +432,9 @@ consolidate_once() {
     read_fingerprint=$(memory_fingerprint)
 
     local prompt output out_file attempt=1 retry_note=""
-    local new_memory new_voice old_content new_content shrink_floor over
+    local asked_to_shrink_memory=""
+    local new_memory new_voice old_content new_content shrink_floor
+    local over voice_over overshot
     out_file=$(mktemp 2>/dev/null || echo "/tmp/brain-memory-out.$$")
 
     log "consolidating $(printf '%s\n' "$inbox_lines" | wc -l) fact(s) with model ${CLAUDE_MODEL}..."
@@ -435,9 +513,16 @@ consolidate_once() {
         # is small enough that it legitimately doubles and halves as it finds
         # its shape, and skipped when it is at its cap, where shrinking is
         # the job we asked for — including the job the retry below asks for.
+        #
+        # It keys on `asked_to_shrink_memory` and not on `retry_note`, which
+        # is the same string for two different requests: a retry that asked
+        # only for a shorter voice.md said nothing about dropping facts, so
+        # reading it as licence to would stand this guard down on a pass
+        # nobody had excused — the one shape of answer it exists to catch,
+        # waved through because a sibling file was over its own budget.
         if [ "$old_content" -ge "$SHRINK_GUARD_MIN_LINES" ] \
            && [ "${#current_memory}" -lt $((MEMORY_MAX_KB * 1024 * 9 / 10)) ] \
-           && [ -z "$retry_note" ]; then
+           && [ -z "$asked_to_shrink_memory" ]; then
             shrink_floor=$((old_content * SHRINK_GUARD_PERCENT / 100))
             if [ "$new_content" -lt "$shrink_floor" ]; then
                 log "REFUSED: consolidation would cut memory.md from ${old_content} to ${new_content} facts — inbox left pending, document untouched"
@@ -446,22 +531,54 @@ consolidate_once() {
             fi
         fi
 
+        # A pass writes two files with a cap each, and from 1.18.0 until
+        # 1.52.1 only one of them was retried. An over-long voice.md
+        # `return 1`d on the first overshoot — no note, no attempt spent, the identical prompt
+        # again five minutes later — which is the memory loop's own bug left
+        # standing in its sibling, and worse in one way: MEMORY_MAX_KB is an
+        # add-on option the message could name, where VOICE_MAX_BYTES is a
+        # constant in this file, so the voice failure named no remedy anybody
+        # could perform and the queue could never drain at all.
+        #
+        # So both caps are measured together and either sends the pass round
+        # again. What differs is what happens when the attempts run out, and
+        # it differs because the two files are not the same kind of thing:
+        # see trim_to_budget.
         over=$(( ${#new_memory} - MEMORY_MAX_KB * 1024 ))
-        if [ "$over" -gt 0 ]; then
+        voice_over=$(( ${#new_voice} - VOICE_MAX_BYTES ))
+        if [ "$over" -gt 0 ] || [ "$voice_over" -gt 0 ]; then
+            overshot=""
+            if [ "$over" -gt 0 ]; then
+                overshot="memory.md came back ${#new_memory} bytes — ${over} over the ${MEMORY_MAX_KB} KB cap"
+            fi
+            if [ "$voice_over" -gt 0 ]; then
+                overshot="${overshot:+${overshot}; }voice.md came back ${#new_voice} bytes — ${voice_over} over the ${VOICE_MAX_BYTES} byte cap"
+            fi
             if [ "$attempt" -lt "$MAX_SIZE_ATTEMPTS" ]; then
-                log "memory.md came back ${#new_memory} bytes — ${over} over the ${MEMORY_MAX_KB} KB cap; asking for a tighter pass (attempt $((attempt + 1)) of ${MAX_SIZE_ATTEMPTS})"
-                retry_note=$(size_retry_note "${#new_memory}" "$over")
+                log "${overshot}; asking for a tighter pass (attempt $((attempt + 1)) of ${MAX_SIZE_ATTEMPTS})"
+                retry_note=$(size_retry_note "${#new_memory}" "$over" \
+                                             "${#new_voice}" "$voice_over")
+                if [ "$over" -gt 0 ]; then
+                    asked_to_shrink_memory=yes
+                fi
                 attempt=$((attempt + 1))
                 continue
             fi
-            log "memory.md is still ${over} bytes over the ${MEMORY_MAX_KB} KB cap after ${MAX_SIZE_ATTEMPTS} attempts — inbox left pending. The document is full: raise memory_max_kb in the add-on configuration (max 64) or the queue cannot drain."
-            rm -f "$out_file"
-            return 1
-        fi
-        if [ "${#new_voice}" -gt "$VOICE_MAX_BYTES" ]; then
-            log "voice.md distillate exceeds ${VOICE_MAX_BYTES} bytes — inbox left pending"
-            rm -f "$out_file"
-            return 1
+            # The document is the memory, so a document that will not fit is
+            # refused — and it is refused before the trim below gets a look,
+            # because there is nothing worth filing a distillate of.
+            if [ "$over" -gt 0 ]; then
+                log "memory.md is still ${over} bytes over the ${MEMORY_MAX_KB} KB cap after ${MAX_SIZE_ATTEMPTS} attempts — inbox left pending. The document is full: raise memory_max_kb in the add-on configuration (max 64) or the queue cannot drain."
+                rm -f "$out_file"
+                return 1
+            fi
+            new_voice=$(trim_to_budget "$new_voice" "$VOICE_MAX_BYTES")
+            if [ -z "$(printf '%s' "$new_voice" | tr -d '[:space:]')" ]; then
+                log "voice.md came back ${voice_over} bytes over the ${VOICE_MAX_BYTES} byte cap and nothing of it survives a trim — inbox left pending, both files untouched"
+                rm -f "$out_file"
+                return 1
+            fi
+            log "voice.md was still ${voice_over} bytes over the ${VOICE_MAX_BYTES} byte cap after ${MAX_SIZE_ATTEMPTS} attempts — trimmed to ${#new_voice} bytes and filed with the merge. It is a distillate the next pass rewrites whole, so nothing is lost that memory.md does not still hold."
         fi
         break
     done

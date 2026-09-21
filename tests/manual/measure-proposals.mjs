@@ -45,6 +45,7 @@
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openView } from './tabs.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
@@ -426,7 +427,7 @@ for (const width of WIDTHS) {
   page.on('pageerror', (e) => note(`${width}px`, `page error: ${e.message}`));
   await page.addInitScript(STUB);
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
-  await page.click('.viewtab[data-view="proposals"]');
+  await openView(page, 'proposals');
   await page.waitForSelector('.propcard');
 
   const read = () => page.evaluate((floor) => {
@@ -947,8 +948,8 @@ for (const width of WIDTHS) {
 
   // And the empty state does not congratulate anybody.
   await page.evaluate(() => { window.__empty = true; });
-  await page.click('.viewtab[data-view="insights"]');
-  await page.click('.viewtab[data-view="proposals"]');
+  await openView(page, 'insights');
+  await openView(page, 'proposals');
   await page.waitForSelector('#propList .empty');
   const empty = await page.evaluate(() => ({
     text: document.querySelector('#propList .empty').textContent,

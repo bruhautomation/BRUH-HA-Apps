@@ -48,6 +48,22 @@ INBOX_DIR="$MEMORY_DIR/inbox"
 HYPOTHESES_FILE="$MEMORY_DIR/hypotheses.jsonl"
 LOG_FILE="$MEMORY_DIR/memory.log.jsonl"
 
+# The hypothesis queue's cross-process lock — the same sidecar flock the
+# panel, the study session and the consolidator take, or `brain memory
+# confirm` can still lose a study session's append (the fourth writer of
+# one file). Falls back to running unlocked rather than refusing.
+BRAIN_STORE_LOCK_LIB="${BRAIN_STORE_LOCK_LIB:-/opt/scripts/brain-memory-lock.sh}"
+if [ -r "$BRAIN_STORE_LOCK_LIB" ]; then
+    # shellcheck disable=SC1090
+    . "$BRAIN_STORE_LOCK_LIB"
+elif [ -r "$(dirname "${BASH_SOURCE[0]}")/brain-memory-lock.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$(dirname "${BASH_SOURCE[0]}")/brain-memory-lock.sh"
+fi
+if ! command -v brain_with_store_lock > /dev/null 2>&1; then
+    brain_with_store_lock() { shift; "$@"; }
+fi
+
 # A guess nobody answers is noise: retire it rather than let it linger.
 HYPOTHESIS_TTL_DAYS="${BRAIN_HYPOTHESIS_TTL_DAYS:-14}"
 
@@ -176,8 +192,7 @@ cmd_clear() {
 # Hypotheses — the replacement for the old open-ended question list
 # --------------------------------------------------------------------------
 
-retire_stale_hypotheses() {
-    [ -s "$HYPOTHESES_FILE" ] || return 0
+_retire_stale_hypotheses_locked() {
     local now cutoff
     now=$(date +%s)
     cutoff=$((now - HYPOTHESIS_TTL_DAYS * 86400))
@@ -186,6 +201,11 @@ retire_stale_hypotheses() {
          then .status = "expired" else . end' \
         "$HYPOTHESES_FILE" > "${HYPOTHESES_FILE}.tmp" 2>/dev/null \
         && mv "${HYPOTHESES_FILE}.tmp" "$HYPOTHESES_FILE"
+}
+
+retire_stale_hypotheses() {
+    [ -s "$HYPOTHESES_FILE" ] || return 0
+    brain_with_store_lock "$HYPOTHESES_FILE" _retire_stale_hypotheses_locked
 }
 
 cmd_hypotheses() {
@@ -307,7 +327,7 @@ settle_via_panel() {
     return 1
 }
 
-settle_hypothesis() {  # settle_hypothesis <text> <confirmed|rejected>
+_settle_hypothesis_locked() {  # <text> <confirmed|rejected>
     local text="$1" status="$2" now
     now=$(date +%s)
     jq -c --arg t "$text" --arg s "$status" --argjson now "$now" \
@@ -315,6 +335,10 @@ settle_hypothesis() {  # settle_hypothesis <text> <confirmed|rejected>
          then .status = $s | .settled_at = $now else . end' \
         "$HYPOTHESES_FILE" > "${HYPOTHESES_FILE}.tmp" 2>/dev/null \
         && mv "${HYPOTHESES_FILE}.tmp" "$HYPOTHESES_FILE"
+}
+
+settle_hypothesis() {  # settle_hypothesis <text> <confirmed|rejected>
+    brain_with_store_lock "$HYPOTHESES_FILE" _settle_hypothesis_locked "$1" "$2"
 }
 
 SETTLED_TEXT=""

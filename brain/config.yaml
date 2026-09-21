@@ -1,7 +1,7 @@
 ---
 name: "brAIn"
 description: "Give your smart home a mind — Claude with full run of Home Assistant: every entity, device, area, dashboard and automation, plus insights, findings, memory, voice and a terminal"
-version: "1.50.2"
+version: "2.3.0"
 slug: "brain"
 init: false
 
@@ -120,12 +120,13 @@ options:
   dangerously_skip_permissions: false
   assist_fast_mode: true
   assist_tool_access: mcp_only
+  assist_exposure: exposed
   study_timeout_minutes: 30
   learning: true
   memory_injection: true
   memory_max_kb: 32
   findings_notify_service: ""
-  findings_notify_min_severity: serious
+  findings_notify_min_severity: critical
   notify_quiet_start: "22"
   notify_quiet_end: "7"
   morning_brief: false
@@ -133,6 +134,7 @@ options:
   weekly_report: false
   weekly_report_day: sunday
   checks_interval_hours: 6
+  ask_why: true
   self_healing: false
   protected_entities: []
   edit_journal_days: 14
@@ -163,6 +165,7 @@ schema:
   dangerously_skip_permissions: bool?
   assist_fast_mode: bool?
   assist_tool_access: "list(mcp_only|full)?"
+  assist_exposure: "list(exposed|all)?"
   study_timeout_minutes: "int(2,120)?"
   learning: bool?
   memory_injection: bool?
@@ -176,6 +179,7 @@ schema:
   weekly_report: bool?
   weekly_report_day: "list(monday|tuesday|wednesday|thursday|friday|saturday|sunday)?"
   checks_interval_hours: "int(0,168)?"
+  ask_why: bool?
   self_healing: bool?
   protected_entities:
     - str

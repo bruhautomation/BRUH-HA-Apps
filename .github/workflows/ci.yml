@@ -122,6 +122,38 @@ jobs:
       - name: Measure the Problems section
         run: node tests/manual/measure-problems.mjs
 
+      # ⚙ is five disclosures rather than one scroll, and the numbers that
+      # make that true — its open height, its lazy Advanced loaders, the
+      # prose it moved onto a ? — are only checkable by driving it.
+      - name: Measure the Settings dialog
+        run: node tests/manual/measure-settings.mjs
+
+      # A live card has two ages; the foot used to report one of them.
+      - name: Measure a live card's two ages
+        run: node tests/manual/measure-cardlive.mjs
+
+      # A chore you cannot finish from the screen it is on is
+      # indistinguishable from one nobody has got round to.
+      - name: Measure the To-do tab
+        run: node tests/manual/measure-todo.mjs
+
+      - name: Measure the resolutions card
+        run: node tests/manual/measure-chatres.mjs
+
+      # A card nothing checked must not read like one something did.
+      - name: Measure the triage view
+        run: node tests/manual/measure-triage.mjs
+
+      # One list of cases over four stores: a case whose ending is missing
+      # is work with nowhere to go and a badge that can never read as done.
+      - name: Measure the Home feed
+        run: node tests/manual/measure-home.mjs
+
+      # What a fix would change, read before it changes it — and what it
+      # did change, read before the undo beside it is pressed.
+      - name: Measure the fix plan card
+        run: node tests/manual/measure-fixplan.mjs
+
       - name: Measure BRight's light map
         run: node tests/manual/measure-lightmap.mjs
 

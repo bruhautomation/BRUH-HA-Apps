@@ -28,6 +28,7 @@ sys.path.insert(0, str(PANEL_DIR))
 import card_tags  # noqa: E402
 import engine  # noqa: E402
 import feedback_store  # noqa: E402
+import facts_store  # noqa: E402
 import findings_store  # noqa: E402
 import hypotheses  # noqa: E402
 import knowledge_store  # noqa: E402
@@ -132,6 +133,11 @@ class PanelCase(unittest.TestCase):
         self.server.MEMORY_INBOX_DIR = tmp / "memory-inbox"
         self.server.SHARED_MEMORY_FILE = tmp / "memory.md"
         self.server.MEMORY_MARKER_FILE = tmp / ".last_consolidated"
+        # The facts store ingests whatever the inbox holds, so it is patched
+        # beside the inbox or a test's queue lands in the real store.
+        self._old_facts = (facts_store.FACTS_FILE, facts_store.INGEST_STATE_FILE)
+        facts_store.FACTS_FILE = tmp / "facts.json"
+        facts_store.INGEST_STATE_FILE = tmp / "facts-ingest.json"
         prompt_store.OVERRIDES_FILE = os.path.join(self.tmp.name, "o", "ov.json")
         feedback_store.FEEDBACK_FILE = os.path.join(self.tmp.name, "fb.json")
         user_categories.USER_CATS_FILE = os.path.join(self.tmp.name, "uc.json")
@@ -161,6 +167,7 @@ class PanelCase(unittest.TestCase):
          knowledge_store.KNOWLEDGE_FILE, onboarding.STUDY_REQUESTS_DIR,
          engine.run_claude, self.server.CARD_TOKEN_FILE,
          self.server.WWW_CARD_DIR, self.server.MEMORY_MARKER_FILE) = self._olds
+        (facts_store.FACTS_FILE, facts_store.INGEST_STATE_FILE) = self._old_facts
         self.server.JOBS.clear()
         self.tmp.cleanup()
 

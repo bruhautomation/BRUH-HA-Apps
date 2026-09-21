@@ -148,9 +148,11 @@ class TestTheSeverityFloor(unittest.TestCase):
                          ["serious", "critical"])
 
     def test_an_unknown_floor_falls_back_rather_than_letting_everything_out(self):
+        # ...and the fallback is the shipped default, read off the one
+        # constant rather than spelled again here.
         kept = notify_router.worth_sending(self.rows(), "urgent")
-        self.assertEqual([r["severity"] for r in kept],
-                         ["serious", "critical"])
+        self.assertEqual([r["severity"] for r in kept], ["critical"])
+        self.assertEqual(notify_router.DEFAULT_MIN_SEVERITY, "critical")
 
     def test_a_row_with_a_nonsense_severity_is_treated_as_a_warning(self):
         kept = notify_router.worth_sending(
@@ -294,3 +296,329 @@ class TestEveryNamedCheckExists(unittest.TestCase):
     def test_a_full_disk_is_now(self):
         self.assertEqual(
             notify_router.urgency_of({"source": "check:sys.disk_space"}), "now")
+
+
+class TestWhereATapLands(unittest.TestCase):
+    """A notification about a finding opens the panel, not Home
+    Assistant's front page — but only where the notifier reads the keys,
+    and only once the Supervisor has said what this add-on's slug is."""
+
+    def test_a_companion_app_gets_the_panel_under_both_spellings(self):
+        self.assertEqual(
+            notify_router.open_link("notify.mobile_app_phone", "/hassio/ingress/x"),
+            {"url": "/hassio/ingress/x", "clickAction": "/hassio/ingress/x"})
+
+    def test_any_other_notifier_gets_nothing_it_might_misread(self):
+        self.assertEqual(notify_router.open_link("notify.telegram", "/x"), {})
+
+    def test_no_slug_is_no_link_never_a_guess(self):
+        self.assertEqual(notify_router.open_link("mobile_app_phone", None), {})
+        self.assertEqual(notify_router.open_link("mobile_app_phone", ""), {})
+
+
+class TestTheThreeTiers(unittest.TestCase):
+    """How loud a row is allowed to be, and why it is a PAIR.
+
+    Escalating on severity alone wakes a house about a battery three
+    weeks from dying; escalating on urgency alone wakes it about every
+    sensor that blinked. Only the pair describes the leak-and-freeze
+    class this exists for, and everything under the floor is quiet —
+    which is not lost, because the row is on the Findings tab either way.
+    """
+
+    def row(self, severity, source="check:dev.unavailable"):
+        return {"ts": 1, "text": "x", "severity": severity, "source": source}
+
+    def test_critical_and_now_escalates(self):
+        self.assertEqual(notify_router.tier_of(self.row("critical")),
+                         "escalate")
+
+    def test_critical_but_not_urgent_is_notified_once(self):
+        # A battery forecast is the canonical case: as bad as it gets and
+        # three weeks away.
+        self.assertEqual(
+            notify_router.tier_of(
+                self.row("critical", "check:forecast.battery")),
+            "notify")
+
+    def test_urgent_but_not_critical_is_not_escalated(self):
+        self.assertEqual(notify_router.tier_of(self.row("serious")), "quiet")
+        self.assertEqual(
+            notify_router.tier_of(self.row("serious"), "serious"), "notify")
+
+    def test_under_the_floor_is_quiet_whatever_its_urgency(self):
+        for sev in ("info", "warning", "serious"):
+            self.assertEqual(notify_router.tier_of(self.row(sev)), "quiet",
+                             sev)
+
+    def test_the_shipped_default_makes_a_serious_row_quiet(self):
+        # The change this release is about, stated as behaviour rather
+        # than as a constant: a dying battery no longer rings a phone
+        # unless somebody asks for it back.
+        self.assertEqual(
+            notify_router.tier_of({"severity": "serious",
+                                   "source": "check:forecast.battery"}),
+            "quiet")
+
+    def test_an_unlisted_producer_can_never_escalate(self):
+        # DEFAULT_URGENCY is `today`, so only the producers explicitly
+        # marked `now` can wake a house — a set of lines of code rather
+        # than a set of sentences a model wrote.
+        for source in ("energy", "", "fix", "check:something.new"):
+            self.assertEqual(
+                notify_router.tier_of(self.row("critical", source)),
+                "notify", source)
+
+    def test_classify_splits_one_batch_three_ways_in_order(self):
+        rows = [self.row("critical"), self.row("serious"),
+                self.row("critical", "check:forecast.battery")]
+        out = notify_router.classify(rows)
+        self.assertEqual(set(out), set(notify_router.TIERS))
+        self.assertEqual([r["source"] for r in out["escalate"]],
+                         ["check:dev.unavailable"])
+        self.assertEqual([r["source"] for r in out["notify"]],
+                         ["check:forecast.battery"])
+        self.assertEqual(len(out["quiet"]), 1)
+
+    def test_classify_keeps_every_row_exactly_once(self):
+        rows = [self.row(s, p) for s in
+                ("info", "warning", "serious", "critical")
+                for p in ("check:dev.unavailable", "check:forecast.battery")]
+        out = notify_router.classify(rows)
+        self.assertEqual(sum(len(v) for v in out.values()), len(rows))
+
+
+class TestTheLadder(unittest.TestCase):
+    """A reminder that repeats until somebody answers, and then stops.
+
+    Every case here is about one of the two ways this fails: a house
+    reminded for ever about a problem it has fixed, or a leak that was
+    mentioned once at 3am and never again.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.path = os.path.join(self.dir.name, "notify-escalation.json")
+
+    def finding(self, ts=1, text="Water where it should not be"):
+        return {"ts": ts, "text": text, "severity": "critical",
+                "source": "check:dev.unavailable"}
+
+    def test_every_rung_is_later_than_the_one_before(self):
+        # The usage tracker's `test_every_backoff_actually_backs_off`:
+        # a ladder whose second step is shorter than its first asks more
+        # often the longer a problem stands.
+        self.assertEqual(list(notify_router.ESCALATION_S),
+                         sorted(notify_router.ESCALATION_S))
+        self.assertEqual(len(set(notify_router.ESCALATION_S)),
+                         len(notify_router.ESCALATION_S))
+        self.assertGreater(notify_router.ESCALATION_S[0], 0)
+
+    def test_the_first_reminder_is_due_one_rung_after_the_announcement(self):
+        notify_router.begin_escalation([self.finding()], 1000.0, self.path)
+        [row] = notify_router.load_escalations(self.path).values()
+        self.assertEqual(row["next_at"], 1000.0 + notify_router.ESCALATION_S[0])
+        self.assertEqual(row["sent_at"], [1000])
+        self.assertEqual(notify_router.due_escalations(1000.0, self.path), [])
+
+    def test_the_whole_ladder_and_then_it_stops(self):
+        notify_router.begin_escalation([self.finding()], 0.0, self.path)
+        seen = []
+        for rung in notify_router.ESCALATION_S:
+            due = notify_router.due_escalations(rung, self.path)
+            self.assertEqual([r["ts"] for r in due], [1], rung)
+            seen.append(rung)
+            notify_router.record_reminder(1, rung, self.path)
+        # Three reminders, and then nothing is ever due again.
+        self.assertEqual(len(seen), len(notify_router.ESCALATION_S))
+        self.assertEqual(notify_router.due_escalations(10 ** 9, self.path), [])
+        [row] = notify_router.load_escalations(self.path).values()
+        self.assertEqual(row["next_at"], 0)
+        self.assertEqual(len(row["sent_at"]),
+                         len(notify_router.ESCALATION_S) + 1)
+
+    def test_nothing_is_due_before_its_rung(self):
+        notify_router.begin_escalation([self.finding()], 0.0, self.path)
+        self.assertEqual(
+            notify_router.due_escalations(
+                notify_router.ESCALATION_S[0] - 1, self.path), [])
+
+    def test_the_ledger_survives_a_restart_at_the_rung_it_was_on(self):
+        # `_resume_backoff`'s reason: a restart is the first thing somebody
+        # does when their phone is going off, and a ladder held in memory
+        # would start again from the first rung.
+        notify_router.begin_escalation([self.finding()], 0.0, self.path)
+        notify_router.record_reminder(1, notify_router.ESCALATION_S[0],
+                                      self.path)
+        # A fresh read is all a restart is, here.
+        rows = notify_router.load_escalations(self.path)
+        self.assertEqual(rows[1]["next_at"], notify_router.ESCALATION_S[1])
+        self.assertEqual(notify_router.next_escalation_at(self.path),
+                         notify_router.ESCALATION_S[1])
+        self.assertEqual(
+            notify_router.due_escalations(notify_router.ESCALATION_S[1] - 1,
+                                          self.path), [])
+        self.assertEqual(
+            [r["ts"] for r in notify_router.due_escalations(
+                notify_router.ESCALATION_S[1], self.path)], [1])
+
+    def test_a_row_that_was_answered_stops_being_reminded(self):
+        notify_router.begin_escalation(
+            [self.finding(1), self.finding(2)], 0.0, self.path)
+        gone = notify_router.prune_escalations({2}, self.path)
+        self.assertEqual(gone, [1])
+        self.assertEqual(list(notify_router.load_escalations(self.path)), [2])
+        self.assertEqual(
+            [r["ts"] for r in notify_router.due_escalations(10 ** 9, self.path)],
+            [2])
+
+    def test_pruning_nothing_leaves_the_ladder_alone(self):
+        notify_router.begin_escalation([self.finding()], 0.0, self.path)
+        self.assertEqual(notify_router.prune_escalations({1}, self.path), [])
+        self.assertEqual(list(notify_router.load_escalations(self.path)), [1])
+
+    def test_starting_a_row_twice_does_not_reset_its_ladder(self):
+        notify_router.begin_escalation([self.finding()], 0.0, self.path)
+        notify_router.record_reminder(1, notify_router.ESCALATION_S[0],
+                                      self.path)
+        self.assertEqual(
+            notify_router.begin_escalation([self.finding()], 9999.0, self.path),
+            0)
+        [row] = notify_router.load_escalations(self.path).values()
+        self.assertEqual(row["first_at"], 0)
+        self.assertEqual(len(row["sent_at"]), 2)
+
+    def test_the_cap_refuses_rather_than_dropping_a_climbing_row(self):
+        first = [self.finding(i) for i in
+                 range(1, notify_router.ESCALATION_MAX_ROWS + 1)]
+        self.assertEqual(
+            notify_router.begin_escalation(first, 0.0, self.path),
+            notify_router.ESCALATION_MAX_ROWS)
+        self.assertEqual(
+            notify_router.begin_escalation([self.finding(99999)], 0.0,
+                                           self.path), 0)
+        rows = notify_router.load_escalations(self.path)
+        self.assertEqual(len(rows), notify_router.ESCALATION_MAX_ROWS)
+        self.assertIn(1, rows)      # the oldest is still climbing
+        self.assertNotIn(99999, rows)
+
+    def test_nothing_due_is_no_wait_at_all(self):
+        self.assertEqual(notify_router.next_escalation_at(self.path), 0.0)
+        notify_router.begin_escalation([self.finding()], 0.0, self.path)
+        for rung in notify_router.ESCALATION_S:
+            notify_router.record_reminder(1, rung, self.path)
+        self.assertEqual(notify_router.next_escalation_at(self.path), 0.0)
+
+    def test_a_torn_or_wrong_shaped_file_is_an_empty_ladder(self):
+        for junk in ('{"1": {"sent_at": [1]},', '[1, 2]', '"nope"',
+                     '{"1": 3}', '{"x": {"sent_at": [1]}}',
+                     '{"1": {"sent_at": []}}'):
+            with open(self.path, "w", encoding="utf-8") as fh:
+                fh.write(junk)
+            self.assertEqual(notify_router.load_escalations(self.path), {},
+                             junk)
+
+    def test_a_missing_directory_is_not_a_crash(self):
+        notify_router.save_escalations(
+            {1: {"ts": 1, "sent_at": [1], "first_at": 1, "next_at": 2}},
+            os.path.join(self.dir.name, "no", "e.json"))
+
+    def test_the_row_is_not_a_second_copy_of_the_finding(self):
+        notify_router.begin_escalation([{
+            "ts": 1, "text": "Short", "severity": "critical",
+            "source": "check:dev.unavailable",
+            "detail": "x" * 5000, "fix": "y" * 5000,
+        }], 100.0, self.path)
+        with open(self.path, encoding="utf-8") as fh:
+            raw = fh.read()
+        self.assertLess(len(raw), 400)
+        self.assertNotIn("xxxx", raw)
+
+    def test_the_state_is_readable_from_diagnostics(self):
+        notify_router.begin_escalation([self.finding()], 100.0, self.path)
+        state = notify_router.escalation_state(self.path)
+        self.assertEqual(state["escalating"], 1)
+        self.assertEqual(state["escalation_reminders_sent"], 0)
+        self.assertEqual(state["escalation_since"], 100)
+        self.assertEqual(state["escalation_next_at"],
+                         int(100 + notify_router.ESCALATION_S[0]))
+        notify_router.record_reminder(1, 100 + notify_router.ESCALATION_S[0],
+                                      self.path)
+        self.assertEqual(
+            notify_router.escalation_state(
+                self.path)["escalation_reminders_sent"], 1)
+
+
+class TestWhatAReminderSays(unittest.TestCase):
+    def row(self, sends, first_at=0.0):
+        return {"ts": 1, "text": "Water under the sink", "severity": "critical",
+                "first_at": first_at, "sent_at": [int(first_at)] * sends}
+
+    def test_it_says_which_repeat_it_is(self):
+        _t, body = notify_router.compose_escalation(self.row(2))
+        self.assertIn("2nd reminder", body)
+        _t, body = notify_router.compose_escalation(self.row(1))
+        self.assertIn("1st reminder", body)
+
+    def test_it_says_since_when_in_the_house_s_own_clock(self):
+        when = dt.datetime(2026, 3, 4, 3, 10,
+                           tzinfo=dt.timezone.utc).timestamp()
+        _t, body = notify_router.compose_escalation(self.row(2, when))
+        self.assertIn("03:10", body)
+
+    def test_the_last_one_says_it_will_not_ask_again(self):
+        last = len(notify_router.ESCALATION_S)
+        _t, body = notify_router.compose_escalation(self.row(last))
+        self.assertIn("not ask about this again", body)
+        _t, body = notify_router.compose_escalation(self.row(last - 1))
+        self.assertNotIn("not ask about this again", body)
+
+    def test_it_carries_the_finding_and_is_bounded(self):
+        row = self.row(1)
+        row["text"] = "z" * 4000
+        _title, body = notify_router.compose_escalation(row)
+        self.assertLessEqual(len(body), notify_router.MESSAGE_MAX)
+        self.assertIn("critical", body)
+
+
+class TestTheDefaultFloorIsWrittenDownOnce(unittest.TestCase):
+    """Three files have to agree, and they are read from disk rather than
+    restated: `config.yaml` is what a fresh install gets, `run.sh`'s export
+    is the fallback for a Supervisor that cannot be read, and the panel's
+    own constant is what an unrecognised value falls back to. A default
+    that disagrees with itself is a second answer that wins exactly when
+    nobody is looking (`${VAR:-default}`'s rule)."""
+
+    def test_config_run_sh_and_the_panel_all_say_critical(self):
+        import re
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "brain", "config.yaml"),
+                  encoding="utf-8") as f:
+            conf = f.read()
+        with open(os.path.join(root, "brain", "run.sh"),
+                  encoding="utf-8") as f:
+            run = f.read()
+        in_config = re.search(
+            r"^  findings_notify_min_severity:\s*(\S+)\s*$", conf, re.M)
+        in_run = re.search(
+            r"bashio::config 'findings_notify_min_severity' '([^']*)'", run)
+        self.assertIsNotNone(in_config)
+        self.assertIsNotNone(in_run)
+        self.assertEqual(in_config.group(1), notify_router.DEFAULT_MIN_SEVERITY)
+        self.assertEqual(in_run.group(1), notify_router.DEFAULT_MIN_SEVERITY)
+        self.assertEqual(notify_router.DEFAULT_MIN_SEVERITY, "critical")
+
+    def test_the_option_s_help_text_names_the_way_back(self):
+        # Raising a default silently is how somebody's phone goes quiet
+        # with nothing on screen saying why, so the description says both
+        # what it now does and the one word that restores the old
+        # behaviour.
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "brain", "translations", "en.yaml"),
+                  encoding="utf-8") as f:
+            text = f.read()
+        block = text.split("findings_notify_min_severity:", 1)[1]
+        block = block.split("\n  notify_quiet_start:", 1)[0]
+        self.assertIn('"critical" (the default)', block)
+        self.assertIn('"serious"', block)

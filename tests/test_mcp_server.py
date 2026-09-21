@@ -498,15 +498,24 @@ class TestMCPProtocol(unittest.TestCase):
             "get_history", "get_statistics", "get_weather_forecast",
             # Activity — what caused a change
             "explain_change", "get_activity",
+            # The panel's own list and its own verdict
+            "get_findings", "get_health",
             # Baselines — what is normal here
             "get_baseline",
             # And what has been measured at all, so a silence can be read
             # as "not yet" rather than as "nothing is wrong"
             "get_house_model",
+            # 2.2: every measurement as a tool, and the facts store
+            "what_is_normal", "room_physics", "appliance_status",
+            "house_rhythm", "door_habits", "habits", "simulate_automation",
+            "recall",
             "get_error_log", "render_template", "fire_event",
             "get_supervisor_info", "reload_config",
             # Memory
             "remember_fact",
+            # Talking to the person reading: the ways a finding could end,
+            # offered as buttons inside the conversation about it
+            "offer_resolutions",
         }
         self.assertEqual(tool_names, expected_tools)
 

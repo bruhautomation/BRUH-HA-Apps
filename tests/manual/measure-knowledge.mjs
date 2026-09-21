@@ -56,6 +56,23 @@ const STORES = [
 
 const NOW = Math.floor(Date.now() / 1000);
 
+// "This morning" is a claim about the CALENDAR DAY, and `NOW - 3h` stops
+// being one for the three hours after local midnight: renderBrief compares
+// toDateString(), so a run at 00:09 measures a stamp dated yesterday, gets
+// yesterday's date back where the assertion wants the word, and fails on all
+// three widths. That is the clock deciding whether a layout measure is green
+// — it passed for twenty-one hours of every day and failed for three, which
+// reads as flakiness rather than as a fixture that is wrong. The stamp is the
+// later of three hours ago and a minute past today's local midnight, capped
+// at now: today wherever and whenever this runs, never in the future, and
+// three hours ago on every run outside that window.
+const LOCAL_MIDNIGHT = (() => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return Math.floor(d.getTime() / 1000);
+})();
+const BRIEF_SENT = Math.min(NOW, Math.max(NOW - 3 * 3600, LOCAL_MIDNIGHT + 60));
+
 // One house with all five states on it at once. That is not a realistic
 // morning and it is the point: every state has to render, and the ones that
 // only happen in the first fortnight of an install are exactly the ones
@@ -63,7 +80,7 @@ const NOW = Math.floor(Date.now() / 1000);
 const HOUSE = {
   generated_at: NOW,
   brief: {
-    enabled: true, last_sent: NOW - 3 * 3600, error: '',
+    enabled: true, last_sent: BRIEF_SENT, error: '',
     text: 'The freezer has been drifting warmer for a week and the hall '
       + 'motion sensor stopped reporting on Tuesday.',
     reasons: ['base.trend', 'dev.unavailable'],
@@ -270,11 +287,20 @@ window.fetch = async (url, opts) => {
                   trend: { per_day: 0.31 } },
     });
   }
+  if (p.includes('api/fact/') && p.includes('/forget')) {
+    const id = p.split('api/fact/')[1].split('/')[0];
+    window.__facts = window.__facts.filter((f) => f.id !== id);
+    window.__factsCount = Math.max(0, window.__factsCount - 1);
+    return answer({ ok: true, facts: window.__facts,
+                    summary: { count: window.__factsCount } });
+  }
   if (p.includes('api/knowledge')) {
     return answer({
       inbox: [{ id: 'a1', ts: ${NOW - 900}, source: 'analyst',
                 text: 'The garage fridge runs all night on purpose.' }],
       inbox_pending: 1,
+      facts: window.__facts || [],
+      facts_summary: { count: window.__factsCount || 0 },
       shared_memory: '# Home Memory\\n\\n- The hall light is on a timer.\\n',
       memory_state: { merging: false, running: false, stale_hours: 0, error: '' },
     });
@@ -305,6 +331,27 @@ window.fetch = async (url, opts) => {
 };
 `;
 
+// What brAIn knows: two facts in the shape `server._facts_payload` sends —
+// one a correction with the run that produced it, one an exception a Wrong
+// wrote with no run at all. The count is larger than the list on purpose,
+// because the list is capped and the count is not, and the row that says
+// so is the difference between "two facts" and "two of forty".
+const FACTS = [
+  { id: 'f1a2b3c4d5e6f7a8', text: 'The garage fridge runs all night on purpose.',
+    subject: 'sensor.garage_fridge_power', subjects: ['area:garage'],
+    source: 'correction', observed: '2026-09-12', confidence: 0.95,
+    run_id: 'run-0001', run_source: 'chat', predicate: '', first_seen: NOW - 86400 },
+  { id: 'a9b8c7d6e5f4a3b2', text: 'The porch contact is on a cupboard nobody opens.',
+    subject: 'binary_sensor.porch_contact', subjects: [],
+    source: 'correction', observed: '2026-09-15', confidence: 1.0,
+    run_id: '', run_source: '', predicate: 'exception:dev.frozen', first_seen: NOW - 3600 },
+  { id: 'c1d2e3f4a5b6c7d8', text: 'The garage is the coldest room in winter.',
+    subject: 'area:garage', subjects: [],
+    source: 'study', observed: '2026-09-01', confidence: 0.8,
+    run_id: 'run-0002', run_source: 'study', predicate: '', first_seen: NOW - 7200 },
+];
+const FACTS_COUNT = 41;
+
 const failures = [];
 const note = (where, message) => failures.push(`${where}: ${message}`);
 
@@ -319,6 +366,8 @@ async function openPanel(width, extra, touch) {
   });
   const page = await context.newPage();
   page.on('pageerror', (error) => note(`${width}px`, `page error: ${error.message}`));
+  await page.addInitScript(
+    `window.__facts = ${JSON.stringify(FACTS)}; window.__factsCount = ${FACTS_COUNT};`);
   await page.addInitScript(STUB);
   if (extra) await page.addInitScript(extra);
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
@@ -422,7 +471,7 @@ for (const width of WIDTHS) {
   }
   // Four sections, in order.
   const order = ['This morning', 'What brAIn has measured',
-                 'What it remembers', 'Waiting to be filed'];
+                 'What it remembers', 'Waiting to be filed', 'What brAIn knows'];
   const found = order.map((h) => m.sections.indexOf(h));
   found.forEach((at, i) => {
     if (at < 0) note(`${width}px`, `section "${order[i]}" is missing`);
@@ -598,6 +647,138 @@ for (const width of WIDTHS) {
 
   console.log(`${failures.length ? 'ok? ' : 'ok  '}${String(width).padStart(4)}px  `
     + `${m.rows.length} stores, 4 sections, drill-downs open one at a time`);
+  await context.close();
+}
+
+// ------------------------------------------------------------ what it knows
+// The facts list under the queue: 2.2's store, rendered with its
+// provenance. Driven as a phone at the narrow widths, because the two
+// controls on a row take their floor from a `pointer: coarse` block and a
+// fine-pointer context would measure the desktop density and call it a
+// pass. What is asserted is what a row SAYS — a fact with no subject or no
+// source is a sentence with no reason to believe it — and that the run
+// link is offered only where there is a run to open.
+for (const width of WIDTHS) {
+  const touch = width <= 768;
+  const { context, page } = await openPanel(width, '', touch);
+  const at = `facts/${width}px`;
+  await page.click('.viewtab[data-view="memory"]');
+  await page.waitForSelector('#kKnown .kfact', { timeout: 5000 })
+    .catch(() => note(at, 'no fact rows rendered'));
+
+  const f = await page.evaluate(() => {
+    const seen = (node) => {
+      if (!node) return false;
+      const cs = getComputedStyle(node);
+      return cs.display !== 'none' && cs.visibility !== 'hidden'
+        && node.getBoundingClientRect().height > 0;
+    };
+    const host = document.getElementById('kKnown');
+    const hostBox = host.getBoundingClientRect();
+    return {
+      rows: [...host.querySelectorAll('.kfact')].map((r) => {
+        const del = r.querySelector('.btn.icon');
+        const run = r.querySelector('.kfactrun');
+        const subj = r.querySelector('.kfactsubj');
+        const dbox = del ? del.getBoundingClientRect() : { width: 0, height: 0 };
+        const rbox = run ? run.getBoundingClientRect() : { width: 0, height: 0 };
+        return {
+          text: (r.querySelector('.txt > div') || {}).textContent || '',
+          meta: (r.querySelector('.when') || {}).textContent || '',
+          subject: subj ? subj.textContent.trim() : '',
+          subjectShown: seen(subj),
+          hasRun: !!run,
+          runH: Math.round(rbox.height), runW: Math.round(rbox.width),
+          delH: Math.round(dbox.height), delW: Math.round(dbox.width),
+          right: r.getBoundingClientRect().right,
+        };
+      }),
+      more: (host.querySelector('.kmore') || {}).textContent || '',
+      hint: (document.getElementById('kKnownHint') || {}).textContent || '',
+      hostRight: hostBox.right,
+      docWidth: document.documentElement.scrollWidth,
+    };
+  });
+
+  if (f.rows.length !== FACTS.length) {
+    note(at, `${f.rows.length} fact rows for ${FACTS.length} facts`);
+  }
+  FACTS.forEach((fact, i) => {
+    const row = f.rows[i];
+    if (!row) return;
+    if (!row.text.includes(fact.text)) {
+      note(at, `row ${i} does not carry its fact: "${row.text}"`);
+    }
+    if (!row.subject || !row.subjectShown) {
+      note(at, `row ${i} shows no subject chip`);
+    }
+    if (!/correction|study/i.test(row.meta)) {
+      note(at, `row ${i} does not name who taught it: "${row.meta}"`);
+    }
+    if (!row.meta.includes(fact.observed)) {
+      note(at, `row ${i} does not say when it was observed`);
+    }
+    if (row.hasRun !== !!fact.run_id) {
+      note(at, `row ${i} ${row.hasRun ? 'offers' : 'lacks'} a run link `
+        + `with run_id "${fact.run_id}"`);
+    }
+    if (fact.predicate && !/stands dev\.frozen down/.test(row.meta)) {
+      note(at, `an exception row does not say which check it stands down: "${row.meta}"`);
+    }
+    if (touch) {
+      if (row.delH < MIN_TARGET || row.delW < MIN_TARGET) {
+        note(at, `row ${i} ✕ is ${row.delW}x${row.delH}, under ${MIN_TARGET}`);
+      }
+      if (row.hasRun && row.runH < MIN_TARGET) {
+        note(at, `row ${i} run link is ${row.runH}px, under ${MIN_TARGET}`);
+      }
+    }
+    if (row.right > f.hostRight + 0.5) note(at, `row ${i} overflows its host`);
+  });
+  // The subject chip is the entity's own id for an entity — the one key
+  // a check, a tool and a person can all name — and a WORD for an area,
+  // which nobody thinks of as `area:garage`.
+  const subjects = f.rows.map((r) => r.subject);
+  if (subjects[0] !== 'sensor.garage_fridge_power') {
+    note(at, `an entity subject renders as "${subjects[0]}"`);
+  }
+  if (subjects[2] !== 'garage') {
+    note(at, `an area subject renders as "${subjects[2]}", not the room's word`);
+  }
+  // The count is not the list: the row that says so has to be there.
+  if (!new RegExp(`${FACTS_COUNT - FACTS.length} more`).test(f.more)) {
+    note(at, `the list does not say how many it is not showing: "${f.more}"`);
+  }
+  if (f.docWidth > width + 0.5) {
+    note(at, `page scrolls sideways (${f.docWidth}px)`);
+  }
+
+  // ✕ forgets, the list repaints from the answer, and the count follows.
+  await page.click('#kKnown .kfact .btn.icon');
+  await page.waitForFunction(
+    (n) => document.querySelectorAll('#kKnown .kfact').length === n,
+    FACTS.length - 1, { timeout: 5000 })
+    .catch(() => note(at, 'forgetting a fact did not take it off the list'));
+  const afterMore = await page.evaluate(
+    () => (document.querySelector('#kKnown .kmore') || {}).textContent || '');
+  if (!new RegExp(`${FACTS_COUNT - 1 - (FACTS.length - 1)} more`).test(afterMore)) {
+    note(at, `the count did not follow the forget: "${afterMore}"`);
+  }
+
+  // Nothing filed yet is a sentence, not a blank.
+  await page.evaluate(() => { window.__facts = []; window.__factsCount = 0; });
+  await page.click('.viewtab[data-view="findings"]');
+  await page.click('.viewtab[data-view="memory"]');
+  await page.waitForSelector('#kKnown .kempty', { timeout: 5000 })
+    .catch(() => note(at, 'an empty facts store renders nothing at all'));
+  const empty = await page.evaluate(
+    () => (document.querySelector('#kKnown .kempty') || {}).textContent || '');
+  if (!/teach/.test(empty)) {
+    note(at, `the empty state does not say where facts come from: "${empty}"`);
+  }
+
+  console.log(`${failures.length ? 'ok? ' : 'ok  '}${String(width).padStart(4)}px  `
+    + `facts: ${f.rows.length} rows with provenance, ✕ repaints, empty state says`);
   await context.close();
 }
 

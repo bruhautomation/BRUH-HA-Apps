@@ -45,7 +45,9 @@ import time
 import uuid
 
 import journal
+import model_plan
 import run_sources
+import settings_store
 import usage_store
 
 log = logging.getLogger("brain.auth")
@@ -67,6 +69,37 @@ SHARED_AUTH_FILE = os.environ.get(
 # holds the two together — a rename on one side only is otherwise silent.
 AUTH_BACKUP_FILE = os.environ.get(
     "BRAIN_AUTH_BACKUP", "/data/.brain_auth_backup/.credentials.json")
+# Touched while the guided sign-in is running and removed when it settles.
+# The usage tracker renews the CLI's credential file itself now, and the
+# flow below reads that file CHANGING as the code exchange having
+# succeeded — so a renewal landing mid-flow would say "Connected!" about a
+# code nothing had exchanged, which is `_signed_in_here`'s own bug in a
+# new disguise. The tracker (`usage-limits-tracker.SIGNIN_HOLD_FILE`)
+# spells the same path and writes nothing while the marker is fresh;
+# `tests/test_usage_tracker.py` holds the two spellings together, the
+# nudge file's rule.
+SIGNIN_HOLD_FILE = os.environ.get("BRAIN_USAGE_SIGNIN_HOLD",
+                                  "/data/usage-signin-hold")
+
+
+def _hold_renewals() -> None:
+    """Ask the usage tracker to leave the credentials file alone. Never
+    raises: a hold that cannot be written costs one rare race, and a
+    sign-in that failed to start over it would cost the sign-in."""
+    try:
+        os.makedirs(os.path.dirname(SIGNIN_HOLD_FILE) or ".", exist_ok=True)
+        with open(SIGNIN_HOLD_FILE, "w") as fh:
+            fh.write(str(int(time.time())))
+    except OSError as exc:
+        log.warning("could not hold usage renewals during sign-in: %s", exc)
+
+
+def _release_renewals() -> None:
+    try:
+        os.remove(SIGNIN_HOLD_FILE)
+    except OSError:
+        # Never held, or already released — nothing to take back.
+        pass
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|[\r\x08]")
 
@@ -596,6 +629,10 @@ def run_claude(
     timeout: int = 480,
     max_turns: int = 4,
     source: str = "",
+    *,
+    job: str = "",
+    effort: str = "",
+    schema: dict | None = None,
 ) -> dict:
     """Run `claude -p` headlessly. Returns {'ok', 'text', 'error', 'meta'}.
 
@@ -604,11 +641,14 @@ def run_claude(
     calls that non-interactive mode denies, burning through --max-turns and
     dying with "max number of turns" instead of producing the insight. The
     max_turns margin covers any residual multi-turn behavior.
+
+    `job`, `effort` and `schema` are the 2.0 additions shared by all three
+    runners — see `_run_cli`.
     """
     return _run_cli(
         prompt, ["--disallowedTools", "*", "--system-prompt", system_prompt],
         model, timeout, max_turns, f"Claude timed out after {timeout}s",
-        source)
+        source, job=job, effort=effort, schema=schema)
 
 
 # The analyst's tools: reading the home, and nothing else.
@@ -669,6 +709,22 @@ ANALYST_TOOLS = [
     f"{MCP}explain_change",       # what CAUSED a change, not just that it happened
     f"{MCP}get_activity",
     f"{MCP}get_house_model",   # what has been MEASURED here, and what has not
+    # The measurements as tools (2.2): what is normal for an entity right
+    # now, a room's physics, a machine's state by its own thresholds, the
+    # house's rhythm, a door's usual hours, a person's habit with an
+    # entity, an automation replayed against history, and what brAIn
+    # remembers about a subject. Reads, every one — a replay calls nothing.
+    f"{MCP}what_is_normal",
+    f"{MCP}room_physics",
+    f"{MCP}appliance_status",
+    f"{MCP}house_rhythm",
+    f"{MCP}door_habits",
+    f"{MCP}habits",
+    f"{MCP}simulate_automation",
+    f"{MCP}recall",
+    f"{MCP}get_findings",      # what is on the Findings tab, so a run can
+                               # answer "what needs attention" without guessing
+    f"{MCP}get_health",        # whether brAIn itself is working, in its own words
     f"{MCP}get_areas",
     f"{MCP}get_registry",
     f"{MCP}get_automations",
@@ -701,6 +757,12 @@ ANALYST_DENIED = [
     f"{MCP}control_light", f"{MCP}control_climate", f"{MCP}control_media_player",
     f"{MCP}control_cover", f"{MCP}control_fan", f"{MCP}control_switch",
     f"{MCP}control_lock", f"{MCP}control_alarm", f"{MCP}control_vacuum",
+    # Denied because it changes nothing and MEANS nothing here: it offers a
+    # person the ways a finding could end, and an unattended run has nobody
+    # to offer them to. A tool in neither list fails when it is reached,
+    # which from a card reads as a broken tool rather than as the policy it
+    # is — so this says which, the way every other name here does.
+    f"{MCP}offer_resolutions",
 ]
 
 
@@ -711,6 +773,10 @@ def run_analyst(
     timeout: int = 480,
     max_turns: int = 40,
     source: str = "",
+    *,
+    job: str = "",
+    effort: str = "",
+    schema: dict | None = None,
 ) -> dict:
     """Run `claude -p` with READ-ONLY Home Assistant tools. Same envelope.
 
@@ -738,7 +804,8 @@ def run_analyst(
          "--disallowedTools", ",".join(ANALYST_DENIED)]
         + project_flags(settings=False, files=False),
         model, timeout, max_turns,
-        f"the analysis passed its {timeout}s limit and was stopped", source)
+        f"the analysis passed its {timeout}s limit and was stopped", source,
+        job=job, effort=effort, schema=schema)
 
 
 def run_agent(
@@ -748,6 +815,10 @@ def run_agent(
     timeout: int = 900,
     max_turns: int = 60,
     source: str = "",
+    *,
+    job: str = "",
+    effort: str = "",
+    schema: dict | None = None,
 ) -> dict:
     """Run `claude -p` WITH its tools. Same envelope as ``run_claude``.
 
@@ -767,7 +838,8 @@ def run_agent(
         prompt, ["--append-system-prompt", system_prompt]
         + project_flags(settings=True, files=True),
         model, timeout, max_turns,
-        f"the fix run passed its {timeout}s limit and was stopped", source)
+        f"the fix run passed its {timeout}s limit and was stopped", source,
+        job=job, effort=effort, schema=schema)
 
 
 # A turn cap is a runaway guard, never a budget — and a guard that trips
@@ -795,9 +867,59 @@ def hit_turn_cap(result: dict) -> bool:
             and journal.classify(result) == "max_turns")
 
 
+# The flags the 2.0 runners add that an older CLI may not know. Each is
+# optional in the same sense `--session-id` is: the CLI names an unknown
+# flag on stderr and dies unspoken, and the run is retried without it.
+# What is NOT optional is the run — a job planned for `--effort low` on
+# a CLI that predates effort still runs, at the CLI's default depth.
+_OPTIONAL_FLAG_WORDS = ("effort", "json-schema", "session-id")
+
+
+def _rejected_flag(result: dict) -> str | None:
+    """Which optional flag a failed run's stderr names, if any."""
+    if result.get("ok"):
+        return None
+    err = str(result.get("error") or "")
+    for word in _OPTIONAL_FLAG_WORDS:
+        if word in err:
+            return word
+    return None
+
+
+def _without(argv: list[str], flag: str) -> list[str]:
+    """`argv` with `--<flag>` and its value removed."""
+    out: list[str] = []
+    skip = False
+    for item in argv:
+        if skip:
+            skip = False
+            continue
+        if item == f"--{flag}":
+            skip = True
+            continue
+        out.append(item)
+    return out
+
+
 def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
-             max_turns: int, timeout_message: str, source: str = "") -> dict:
+             max_turns: int, timeout_message: str, source: str = "",
+             *, job: str = "", effort: str = "",
+             schema: dict | None = None) -> dict:
     """Invoke `claude -p` and parse its envelope.
+
+    Three 2.0 additions ride on every runner and are resolved here, once:
+
+    * `job` names what the run is for ("card", "triage", "fix_apply").
+      When the caller passed no `model`, the model and the effort come
+      from `model_plan.resolve(job, …)` — the tiering the design page
+      calls "Haiku looks, Sonnet thinks, Opus acts". An explicit `model`
+      still wins, because a caller that named one meant it.
+    * `effort` becomes `--effort`, a depth request the CLI may not know.
+    * `schema` becomes `--json-schema`: the CLI validates the reply against
+      it and returns the object as `structured_output`, which lands in
+      the result as `data`. A CLI that rejects the flag runs without it
+      and `data` is then whatever `extract_json` can read out of the
+      text, so callers keep one code path and one fallback.
 
     The su-exec drop to the non-root user, the credential injection, and the
     working directory are the fiddly parts, and they must not have two
@@ -818,9 +940,16 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
     the journal line says so (``extra.landed``). A landing that also fails
     leaves the ordinary error, which names no setting — there is none.
     """
+    if job and not model:
+        model, planned_effort = planned(job)
+        effort = effort or planned_effort
     base = _claude_argv() + ["-p", "--output-format", "json"]
     if model:
         base += ["--model", model]
+    if effort:
+        base += ["--effort", effort]
+    if schema:
+        base += ["--json-schema", json.dumps(schema, separators=(",", ":"))]
     argv = base + ["--max-turns", str(max_turns)] + flags
     started = time.monotonic()
     session_id = str(uuid.uuid4())
@@ -828,8 +957,19 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
         run_sources.record(session_id, source)
     result = _spawn_cli(argv + ["--session-id", session_id],
                         prompt, timeout, timeout_message)
-    if not (result["ok"] or "session-id" not in (result.get("error") or "")):
-        result = _spawn_cli(argv, prompt, timeout, timeout_message)
+    # An optional flag the installed CLI does not know: drop it and go
+    # again, at most once per flag, so a run never fails over a request.
+    dropped: list[str] = []
+    while (flag := _rejected_flag(result)) and flag not in dropped:
+        dropped.append(flag)
+        base = _without(base, flag)
+        argv = base + ["--max-turns", str(max_turns)] + flags
+        tail = [] if "session-id" in dropped else ["--session-id", session_id]
+        result = _spawn_cli(argv + tail, prompt, timeout, timeout_message)
+    if schema and result.get("ok") and "data" not in result:
+        # The CLI ran without --json-schema (too old, or it was dropped
+        # above): read the object out of the text so callers see one shape.
+        result["data"] = extract_json(result.get("text") or "")
     landed = False
     if hit_turn_cap(result):
         # The CLI's own id first: after the older-CLI retry above the
@@ -844,10 +984,36 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
                 LANDING_PROMPT, remaining, timeout_message)
             if landing["ok"]:
                 result, landed = landing, True
+    extra: dict = {}
+    if landed:
+        extra["landed"] = True
+    if job:
+        extra["job"] = job
+    if effort:
+        extra["effort"] = effort
+    if dropped:
+        extra["dropped_flags"] = dropped
     _journal(source or "engine", result, model, timeout_message,
-             time.monotonic() - started,
-             extra={"landed": True} if landed else None)
+             time.monotonic() - started, extra=extra or None)
     return result
+
+
+def planned(job: str) -> tuple[str, str]:
+    """`(model, effort)` the model plan gives a job on this install.
+
+    The global `model` option (the add-on's Configuration tab, or the
+    panel's override of it) wins when set — a person who typed a model
+    meant every run — and the `thinking` setting scales the tiers. Read
+    at call time rather than at import, the way `insights_enabled()` is,
+    so a change in ⚙ reaches the next run.
+    """
+    try:
+        settings = settings_store.load()
+    except Exception:  # noqa: BLE001 - a settings file that will not read is the defaults
+        settings = {}
+    override = str(settings.get("model") or os.environ.get("BRAIN_MODEL", "") or "")
+    thinking = str(settings.get("thinking") or model_plan.DEFAULT_THINKING)
+    return model_plan.resolve(job, thinking, override)
 
 
 def _journal(source: str, result: dict, model: str, timeout_message: str,
@@ -918,7 +1084,11 @@ def _envelope(proc: subprocess.CompletedProcess) -> dict:
     }
     if isinstance(envelope.get("usage"), dict):
         meta["usage"] = envelope["usage"]
-    if envelope.get("is_error") or not text:
+    # `--json-schema` answers with the validated object beside the text.
+    # It is carried as `data` so a structured run and a text run have one
+    # result shape; absent when the CLI did not produce one.
+    structured = envelope.get("structured_output")
+    if envelope.get("is_error") or not (text or structured is not None):
         if envelope.get("subtype") == "error_max_turns":
             # Reached only when the landing in _run_cli failed too. No
             # setting is named because there is none to change: the cap
@@ -928,7 +1098,10 @@ def _envelope(proc: subprocess.CompletedProcess) -> dict:
         else:
             err = text or envelope.get("subtype") or stderr[-500:] or "empty result"
         return {"ok": False, "error": str(err)[:1000], "text": "", "meta": meta}
-    return {"ok": True, "text": text, "error": "", "meta": meta}
+    out = {"ok": True, "text": text, "error": "", "meta": meta}
+    if structured is not None:
+        out["data"] = structured if isinstance(structured, dict) else None
+    return out
 
 
 def validate_auth(timeout: int = 120) -> dict:
@@ -936,7 +1109,7 @@ def validate_auth(timeout: int = 120) -> dict:
     result = run_claude(
         "Reply with exactly: OK",
         "You are a connectivity check. Reply with exactly what the user asks and nothing else.",
-        timeout=timeout,
+        timeout=timeout, job="auth_check",
     )
     ok = result["ok"] and "OK" in result["text"].upper()
     return {"ok": ok, "error": "" if ok else (result["error"] or "unexpected reply")}
@@ -975,12 +1148,58 @@ def extract_json(text: str) -> dict | None:
 # Guided `claude setup-token` flow (subscription OAuth, no API key)
 # ---------------------------------------------------------------------------
 
+# The two sign-ins, and the difference between them is a SCOPE.
+#
+# `claude setup-token` asks Anthropic for `user:inference` and nothing else.
+# `claude auth login` asks for `org:create_api_key user:profile user:inference
+# user:sessions:claude_code user:mcp_servers user:file_upload`. Measured off
+# the authorize URL each one prints, which is the only place either states it.
+#
+# `user:profile` is what `/api/oauth/usage` requires, so a house signed in
+# with the first can never report its usage — not because anything is broken
+# but because nobody ever asked for the permission. brAIn knew that and said
+# so, and then named the remedy as `claude /login` **in the Terminal tab**:
+# a shell command, in a tab `enable_terminal` can remove and whose default
+# face is a chat with no shell in it. So the panel's own sign-in screen minted
+# the usage-blind credential, and the only cure it could name was somewhere a
+# person may have no way to reach. That is the whole of the complaint.
+#
+# `auth login` is a plain subcommand rather than the TUI's `/login`, so it
+# drives on a pty exactly like `setup-token` does: it prints an authorize URL
+# and waits for a pasted code. One flow serves both — the argv is the only
+# real difference, because success for `auth login` arrives as the credential
+# file being rewritten, which `_signed_in_here` already is.
+#
+# Neither replaces the other. A session credential refreshes itself and so
+# cannot be copied to the shared file other BRUH add-ons read; a long-lived
+# token can, and is the whole point of `ha login --share`. So the account
+# sign-in is what the panel offers first and the token is what you add when
+# something else needs it.
+FLOW_MODES = {
+    "account": {
+        "argv": ["auth", "login"],
+        "label": "auth login",
+        "what": "your Claude account",
+    },
+    "token": {
+        "argv": ["setup-token"],
+        "label": "setup-token",
+        "what": "a long-lived token",
+    },
+}
+DEFAULT_FLOW_MODE = "account"
+
+
 class SetupTokenFlow:
-    """Drives `claude setup-token` on a pty.
+    """Drives `claude auth login` (or `claude setup-token`) on a pty.
 
     Phases: idle → starting → awaiting_code → working → done | error.
     The panel polls status(); when phase == awaiting_code it shows `url`
     and posts the pasted code to submit_code().
+
+    The mode picks the argv and nothing else. `setup-token` prints a token
+    this scrapes and saves; `auth login` prints none and writes the CLI's
+    own credential file, which `_signed_in_here` reads as the success it is.
     """
 
     def __init__(self) -> None:
@@ -989,6 +1208,7 @@ class SetupTokenFlow:
 
     def _reset_locked(self) -> None:
         self.phase = "idle"
+        self.mode = DEFAULT_FLOW_MODE
         self.url = ""
         self.error = ""
         self.output = ""
@@ -1017,9 +1237,11 @@ class SetupTokenFlow:
                     detail = OAUTH_TOKEN_RE.sub("sk-ant-oat…", line)[:200]
                     break
             return {"phase": self.phase, "url": self.url, "error": self.error,
-                    "detail": detail}
+                    "detail": detail, "mode": self.mode}
 
-    def start(self) -> dict:
+    def start(self, mode: str = DEFAULT_FLOW_MODE) -> dict:
+        if mode not in FLOW_MODES:
+            mode = DEFAULT_FLOW_MODE
         with self._lock:
             active = self.phase in ("starting", "awaiting_code", "working")
             proc_dead = self._proc is None or self._proc.poll() is not None
@@ -1036,9 +1258,13 @@ class SetupTokenFlow:
             self.cancel()
         with self._lock:
             self._reset_locked()
+            self.mode = mode
             self.phase = "starting"
             self._deadline = time.time() + 600
             self._cred_before = _credential_fingerprint()
+        # From here until the flow settles, the credentials file changing
+        # means the exchange succeeded — so nothing else may change it.
+        _hold_renewals()
         try:
             leader, follower = pty.openpty()
             # ultra-wide terminal so the OAuth URL is never hard-wrapped
@@ -1049,7 +1275,7 @@ class SetupTokenFlow:
                 # A pty that will not take a window size still works — the only cost
                 # is that a long OAuth URL may wrap.
                 pass
-            argv = _claude_argv() + ["setup-token"]
+            argv = _claude_argv() + list(FLOW_MODES[mode]["argv"])
             env = dict(os.environ)
             env["HOME"] = CLAUDE_HOME
             env["TERM"] = "xterm-256color"
@@ -1067,7 +1293,9 @@ class SetupTokenFlow:
         except Exception as exc:  # noqa: BLE001
             with self._lock:
                 self.phase = "error"
-                self.error = f"Could not start claude setup-token: {exc}"
+                self.error = f"Could not start claude {self._label()}: {exc}"
+            # No reader thread will run, so nothing else releases it.
+            _release_renewals()
         return self.status()
 
     def submit_code(self, code: str) -> dict:
@@ -1104,8 +1332,13 @@ class SetupTokenFlow:
             except OSError:
                 # Already exited.
                 pass
+        _release_renewals()
 
     # -- internals ---------------------------------------------------------
+
+    def _label(self) -> str:
+        """The command this flow is driving, for the log and for a failure."""
+        return FLOW_MODES.get(self.mode, FLOW_MODES[DEFAULT_FLOW_MODE])["label"]
 
     def _signed_in_here(self) -> bool:
         """True when the CLI wrote a usable credential *during this flow*.
@@ -1163,7 +1396,7 @@ class SetupTokenFlow:
                     fresh = redacted[logged:] if logged <= len(redacted) else ""
                     logged = len(redacted)
                     if fresh.strip():
-                        log.info("setup-token: %s", fresh.strip()[:400])
+                        log.info("%s: %s", self._label(), fresh.strip()[:400])
                     with self._lock:
                         self.output = buf
                     self._scan(buf, tokens)
@@ -1182,7 +1415,7 @@ class SetupTokenFlow:
                 # some CLI versions save the credential without printing the
                 # token — the credentials file appearing IS success
                 if self._signed_in_here():
-                    log.info("setup-token: credentials file written — success")
+                    log.info("%s: credentials file written — success", self._label())
                     with self._lock:
                         self.phase = "done"
                     break
@@ -1191,7 +1424,7 @@ class SetupTokenFlow:
                 for i, at in enumerate(NUDGE_TIMES):
                     if elapsed > at and self._nudges <= i:
                         self._nudges = i + 1
-                        log.info("setup-token: no output for %.0fs — nudging with Enter", elapsed)
+                        log.info("%s: no output for %.0fs — nudging with Enter", self._label(), elapsed)
                         try:
                             os.write(fd, b"\r")
                         except OSError:
@@ -1211,7 +1444,7 @@ class SetupTokenFlow:
                             "The 'Paste a token' tab is a reliable alternative."
                             + (f" CLI output: …{tail}" if tail else "")
                         )
-                    log.warning("setup-token: exchange timed out after %.0fs", elapsed)
+                    log.warning("%s: exchange timed out after %.0fs", self._label(), elapsed)
                     break
         finally:
             # process ended (or timed out) — one final scan, then settle state
@@ -1224,7 +1457,7 @@ class SetupTokenFlow:
                         self.phase = "done"
                     else:
                         self.phase = "error"
-                        tail = buf.strip()[-300:] or "setup-token exited unexpectedly"
+                        tail = buf.strip()[-300:] or f"claude {self._label()} exited unexpectedly"
                         self.error = self.error or f"Setup did not complete: …{tail}"
             if proc and proc.poll() is None:
                 try:
@@ -1238,6 +1471,8 @@ class SetupTokenFlow:
                 except OSError:
                     # Already closed.
                     pass
+            # Settled, whichever way: the tracker may renew again.
+            _release_renewals()
 
     def _scan(self, buf: str, tokens: str | None = None) -> None:
         """`buf` is the display text; `tokens` the boundary-preserving copy.

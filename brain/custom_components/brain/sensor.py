@@ -45,8 +45,10 @@ SCAN_INTERVAL = timedelta(seconds=30)
 
 USAGE_LIMITS_FILENAME = "usage_limits.json"
 
-# A reading the tracker stopped refreshing is not a reading. It polls every
-# half hour, so anything this old means it is failing or not running, and
+# A reading the tracker stopped refreshing is not a reading. It asks after
+# every Claude run brAIn makes and on a half-hourly heartbeat besides — the
+# figure only moves when a run spends something — so anything this old
+# means it is failing or not running, and
 # reporting last night's utilization as if it were now is the one answer
 # worse than "unavailable". Same window the panel's usage_store applies to
 # the same file. The tracker's 429 backoff waits are deliberately longer
@@ -308,8 +310,25 @@ class BrainUsageTrackerSensor(SensorEntity):
                                         built on `claude setup-token`,
                                         which mints a token without the
                                         `user:profile` scope this endpoint
-                                        requires; only the interactive
-                                        `claude /login` asks for it
+                                        requires; the panel's own "Sign in
+                                        to your Claude account" asks for it
+      ``oauth_token_awaiting_refresh``
+                                        the account sign-in's access token
+                                        has lapsed and the tracker could
+                                        not renew it on this poll — it
+                                        renews it itself, so nothing is
+                                        wrong for a poll or two and the
+                                        remedy is to do nothing. One that
+                                        stands for hours is the tracker
+                                        unable to renew, and the panel's
+                                        diagnostics say so rather than
+                                        keep calling it fine. Before the
+                                        tracker renewed anything, the
+                                        search fell through such a token to
+                                        an older `ha login` one and
+                                        reported that one's scope refusal,
+                                        which is why signing in again
+                                        seemed never to help
       ``http_403``                      refused permission, no reason
                                         given — usually the same thing,
                                         unattributed

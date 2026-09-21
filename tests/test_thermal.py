@@ -242,6 +242,64 @@ class TestWhichSensorIsOutside(unittest.TestCase):
         self.assertEqual(thermal.pick_outdoor(states, {"sensor.a": "Hall"}),
                          ("", ""))
 
+    def test_a_dew_point_is_not_the_outdoor_temperature(self):
+        """The one out of a real report. `sensor.astroweather_2m_dewpoint`
+        carries `device_class: temperature` and sits in no area, which is
+        exactly the fallback branch — and `dewpoint` sorts before
+        `temperature`, so the alphabet chose the reference every `k` in
+        that house was measured against. The visible cost was a check
+        reporting an irrigation pump manifold as a room losing heat."""
+        states = {"sensor.hall": state("Hall", "20"),
+                  "sensor.astroweather_2m_dewpoint":
+                      state("AstroWeather 2m Dewpoint", "13"),
+                  "sensor.astroweather_2m_temperature":
+                      state("AstroWeather 2m Temperature", "4")}
+        self.assertEqual(
+            thermal.pick_outdoor(states, {"sensor.hall": "Hall"}),
+            ("sensor.astroweather_2m_temperature", "°C"))
+
+    def test_a_derived_reading_is_refused_even_when_it_says_outdoor(self):
+        """Checked before the outdoor words rather than after them:
+        "Outdoor Dew Point" satisfies both, and only one of the two
+        decides whether the number means what the model needs."""
+        states = {"sensor.hall": state("Hall", "20"),
+                  "sensor.dp": state("Outdoor Dew Point", "13"),
+                  "sensor.feels": state("Outside Feels Like", "2"),
+                  "sensor.real": state("Outside Temperature", "4")}
+        self.assertEqual(
+            thermal.pick_outdoor(states, {"sensor.hall": "Hall"}),
+            ("sensor.real", "°C"))
+
+    def test_the_whole_derived_set_is_refused(self):
+        for name in ("Dew Point", "Wet Bulb", "Heat Index", "Wind Chill",
+                     "Apparent Temperature", "Frost Point"):
+            states = {"sensor.hall": state("Hall", "20"),
+                      "sensor.derived": state(name, "13")}
+            self.assertEqual(
+                thermal.pick_outdoor(states, {"sensor.hall": "Hall"}),
+                ("", ""), name)
+
+    def test_a_house_with_nothing_but_derived_readings_says_so(self):
+        """A refusal that names no reference is the model's own honest
+        answer and the payload carries it; a dew point accepted quietly
+        is every room's physics wrong with nothing on screen."""
+        states = {"sensor.hall": state("Hall", "20"),
+                  "sensor.dp": state("Outdoor Dew Point", "13")}
+        self.assertEqual(thermal.pick_outdoor(states, {"sensor.hall": "Hall"}),
+                         ("", ""))
+
+    def test_a_dew_point_in_a_room_is_not_a_room(self):
+        """It has an area, it carries the class, and it reads inside the
+        band people live in — so the band alone lets one through."""
+        states = {"sensor.garden": state("Outside", "4"),
+                  "sensor.hall": state("Hall", "20"),
+                  "sensor.hall_dp": state("Hall Dew Point", "12")}
+        areas = {"sensor.hall": "Hall", "sensor.hall_dp": "Hall"}
+        outdoor, unit = thermal.pick_outdoor(states, areas)
+        self.assertEqual(
+            thermal.room_candidates(states, outdoor, unit, areas),
+            ["sensor.hall"])
+
     def test_the_reference_is_recorded_so_it_can_be_corrected(self):
         payload = asyncio.run(_build({
             "sensor.garden": state("Garden temperature", "4"),
@@ -701,6 +759,38 @@ class TestWindow(unittest.TestCase):
         self.assertLess(fall["rate"], at_start * thermal_check.WINDOW_FACTOR)
         self.assertGreater(fall["rate"], at_end * thermal_check.WINDOW_FACTOR)
         self.assertEqual(thermal_check.window(self.house(rows), NOW), [])
+
+    def test_a_fall_that_ENDS_below_the_reference_is_not_a_room(self):
+        """Newton's law is the whole model: a room cooling toward outdoors
+        approaches the outdoor reading and cannot pass it. A span that
+        ends below it disproves its own premise — this is outdoors, or it
+        is being cooled on purpose, or the reference is wrong — and in all
+        three `expected_fall` was computed from something that did not
+        happen. Taken from a real report, where an irrigation pump
+        manifold fell to 47.6°F against a reference reading 59.5."""
+        # The reference is well above the freeze floor, or `climate.freeze`
+        # claims the room first and this would pass for its reason instead
+        # of its own — which is exactly what the first cut of this test did.
+        rows = falling(21.4, 14.0)
+        fall = thermal.recent_fall(rows["sensor.study_temp"], NOW)
+        # It clears every other bar the check sets, so nothing else in it
+        # is what refuses this.
+        entry = four()["sensor.study_temp"]
+        expected = thermal.expected_fall(entry, fall["from"], 15.0)
+        self.assertGreater(fall["from"] - 15.0, thermal_check.WINDOW_MIN_DELTA_C)
+        self.assertGreater(fall["rate"], expected * thermal_check.WINDOW_FACTOR)
+        self.assertGreater(fall["to"], thermal_check.FREEZE_FLOOR_C)
+        self.assertLess(fall["to"], 15.0)
+        self.assertEqual(
+            thermal_check.window(self.house(rows, outdoor=15.0), NOW), [])
+
+    def test_a_room_that_stops_just_above_the_reference_is_still_reported(self):
+        """The guard is the crossing and not a margin — a room really can
+        coast most of the way down to outdoors with a window open."""
+        found = thermal_check.window(self.house(falling(21.4, 18.4),
+                                                outdoor=15.0), NOW)
+        self.assertEqual([f["entity_id"] for f in found],
+                         ["sensor.study_temp"])
 
     def test_a_room_with_no_model_is_not_measured_against_one(self):
         rooms = four()

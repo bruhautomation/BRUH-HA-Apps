@@ -41,7 +41,12 @@ import scoring  # noqa: E402
 # different facts about the house; here they are the same evidence about
 # the producer, which is why the mapping is written out rather than
 # assumed from the ledger's `kind`.
-CONFIRMED = ("done", "got_it")
+# `accepted` is a fourth ending and third confirming word: moving a card
+# onto the to-do list is somebody agreeing the report was real work,
+# which is the same evidence about the producer as having done it. The
+# chore being finished later re-labels nothing — the answer to "was
+# this report right" was given when it was accepted.
+CONFIRMED = ("done", "got_it", "accepted")
 DENIED = ("wrong",)
 
 _WS_RE = re.compile(r"\s+")

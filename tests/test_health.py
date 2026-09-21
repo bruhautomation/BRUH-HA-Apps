@@ -13,9 +13,14 @@ and the ones about a verdict going stale, which is the same failure the
 usage sensors had: a reading nothing can correct.
 """
 
+import json
+import os
 import re
 import sys
+import tempfile
+import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -91,6 +96,22 @@ class TestAHealthyAddOnIsSilent(unittest.TestCase):
     def test_a_fresh_install_with_no_checks_pass_is_not_overdue(self):
         got = health.verdict(diag(checks={}), now=NOW)
         self.assertNotIn("checks_overdue", ids(got["problems"]))
+
+
+# What `usage_store.limits_problem()` really returns, which is a dict and
+# was written down here as a bare string. `http_429` moved out of the fault
+# set with this release, so the one that stands for a real problem is a
+# refusal naming something a person can act on.
+REAL_PROBLEM = {"code": "http_401"}
+# And the one out of the user report that prompted the narrowing, verbatim.
+REFRESH_PENDING = {
+    "code": "oauth_token_awaiting_refresh",
+    "needs_nothing": True,
+    "detail": ("The signed-in account credential's access token has lapsed "
+               "and Claude Code mints the next one itself, from the refresh "
+               "token beside it, the next time anything runs Claude."),
+    "next_attempt": NOW + 300,
+}
 
 
 class TestTheThingsThatMatter(unittest.TestCase):
@@ -199,15 +220,40 @@ class TestTheThingsThatMatter(unittest.TestCase):
     def test_a_usage_tracker_that_cannot_report_is_degraded_not_failed(self):
         """The pill falls back to a local estimate. That is worth saying and
         it is not brAIn being broken."""
-        snap = diag(usage={"source": "estimate", "limits": "http_429"})
+        snap = diag(usage={"source": "estimate", "limits": REAL_PROBLEM})
         got = health.verdict(snap, now=NOW)
         self.assertEqual(got["state"], "degraded")
+
+    def test_a_code_whose_remedy_is_nothing_is_not_a_fault(self):
+        """Copied from a real report rather than written down from the
+        shape the code expects — the fixture above was a bare string for
+        the life of this check, which is why `if usage.get("limits")`
+        passed on it and nobody could see that every code was a fault.
+
+        An access token lapses several hours out of every day and Claude
+        Code mints the next one on its next run. Reporting that as
+        `degraded` put a Repairs issue and a problem report in front of
+        somebody daily, about a credential doing what credentials do."""
+        snap = diag(usage={"source": "estimate", "limits": REFRESH_PENDING})
+        got = health.verdict(snap, now=NOW)
+        self.assertEqual(got["state"], "ok")
+        self.assertNotIn("usage", ids(health.problems(snap, now=NOW)))
+
+    def test_a_mirror_written_before_this_release_still_reports(self):
+        """`health` reads a flag the payload carries rather than deciding
+        which codes mean what — it is stdlib-only and pure over the dict it
+        is handed, and `usage_store` owns that vocabulary. An older mirror
+        has no flag, which reads as False: the fault surfaces, which is the
+        safe direction."""
+        snap = diag(usage={"source": "estimate",
+                           "limits": {"code": "oauth_token_awaiting_refresh"}})
+        self.assertIn("usage", ids(health.problems(snap, now=NOW)))
 
 
 class TestTheWorstThingWins(unittest.TestCase):
     def test_the_reason_is_the_worst_problem_not_the_first_found(self):
         snap = diag(auth={"state": "error"},
-                    usage={"source": "estimate", "limits": "http_429"})
+                    usage={"source": "estimate", "limits": REAL_PROBLEM})
         got = health.verdict(snap, now=NOW)
         self.assertEqual(got["state"], "failed")
         self.assertIn("signed in", got["reason"])
@@ -216,7 +262,7 @@ class TestTheWorstThingWins(unittest.TestCase):
         """A verdict is a state and a sentence, never a score — one number
         over a house hides its worst problem inside an average."""
         snap = diag(auth={"state": "error"},
-                    usage={"source": "estimate", "limits": "http_429"})
+                    usage={"source": "estimate", "limits": REAL_PROBLEM})
         got = health.verdict(snap, now=NOW)
         self.assertEqual(len(got["problems"]), 2)
 
@@ -224,7 +270,7 @@ class TestTheWorstThingWins(unittest.TestCase):
         snap = diag(auth={"state": "error"},
                     checks={"finished_at": int(NOW - 40 * 3600)},
                     journal={"runs": 10, "by_outcome": {"ok": 1, "timeout": 9}},
-                    usage={"source": "estimate", "limits": "http_429"},
+                    usage={"source": "estimate", "limits": REAL_PROBLEM},
                     daemons={**ALL_DAEMONS,
                              "automation_listener": {"running": False},
                              "usage_tracker": {"running": False},
@@ -423,3 +469,93 @@ class TestWhichDaemonsWereAskedFor(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Which codes mean "there is nothing to do" — usage_store's own claim
+# ---------------------------------------------------------------------------
+
+class TestWhichMissingFiguresAreFaults(unittest.TestCase):
+    """The vocabulary lives beside `limits_problem`, which is the reader
+    that owns the tracker's file, and the flag it stamps is what `health`
+    goes on. Driven through the real function over a real file, because a
+    fixture that writes the shape down from the same guess the code did is
+    the failure `_error_code` shipped and this module's own `limits` string
+    repeated for four releases."""
+
+    def setUp(self):
+        import usage_store
+        self.usage_store = usage_store
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self._old = usage_store.LIMITS_FILE
+        self.addCleanup(setattr, usage_store, "LIMITS_FILE", self._old)
+        usage_store.LIMITS_FILE = os.path.join(self.tmp.name, "limits.json")
+
+    def problem(self, code: str) -> dict:
+        with open(self.usage_store.LIMITS_FILE, "w", encoding="utf-8") as fh:
+            json.dump({"error": code}, fh)
+        return self.usage_store.limits_problem()
+
+    def test_a_credential_between_refreshes_needs_nothing(self):
+        """It says in as many words that nothing is wrong with the sign-in
+        and that signing in again will not help, so a verdict of `degraded`
+        put a Repairs issue in front of somebody several hours out of every
+        day about a credential doing what credentials do."""
+        got = self.problem("oauth_token_awaiting_refresh")
+        self.assertTrue(got["needs_nothing"])
+
+    def _problem_since(self, code: str, hours_ago: float) -> dict:
+        since = time.time() - hours_ago * 3600
+        stamp = datetime.fromtimestamp(since, timezone.utc).isoformat()
+        with open(self.usage_store.LIMITS_FILE, "w", encoding="utf-8") as fh:
+            json.dump({"error": code, "error_since": stamp,
+                       "detail": "the tracker's own gloss"}, fh)
+        return self.usage_store.limits_problem()
+
+    def test_waiting_stops_being_nothing_after_hours(self):
+        """"Wait" is only an answer while waiting can work. The tracker
+        renews the credential itself every pass, so a verdict of "between
+        refreshes" that has stood for hours is a tracker that cannot
+        renew — which is the report this exists for: four sensors
+        unavailable for a day, and the only thing anywhere about it a
+        sentence saying nothing was wrong."""
+        fresh = self._problem_since("oauth_token_awaiting_refresh", 0.5)
+        self.assertTrue(fresh["needs_nothing"])
+        self.assertNotIn("stuck", fresh)
+        stuck = self._problem_since("oauth_token_awaiting_refresh", 5)
+        self.assertFalse(stuck["needs_nothing"])
+        self.assertTrue(stuck["stuck"])
+        self.assertIn("the tracker's own gloss", stuck["detail"])
+        self.assertIn("5 hours", stuck["detail"])
+        self.assertIn("add-on log", stuck["detail"])
+        # And the verdict the sensor reads follows the flag.
+        diag = {"usage": {"limits": stuck}, "daemons": {}, "options": {}}
+        self.assertIn("usage", [p["id"] for p in health.problems(diag)])
+
+    def test_the_clock_is_only_on_the_verdicts_that_can_clear(self):
+        """A 429 ladder has hour-long rungs by design and an API key can
+        never clear; neither may age into a fault."""
+        for code in ("http_429", "api_key_has_no_usage_limits"):
+            self.assertTrue(self._problem_since(code, 48)["needs_nothing"],
+                            code)
+
+    def test_an_api_key_has_no_window_to_report(self):
+        """And never will, so this one could not clear at all."""
+        self.assertTrue(self.problem("api_key_has_no_usage_limits")
+                        ["needs_nothing"])
+
+    def test_the_endpoints_own_rate_limit_is_a_refusal_doing_its_job(self):
+        """The tracker answers a 429 with a backoff ladder built for it."""
+        self.assertTrue(self.problem("http_429")["needs_nothing"])
+
+    def test_everything_that_names_something_a_person_can_do_is_a_fault(self):
+        for code in ("no_oauth_token", "http_401",
+                     "oauth_token_lacks_usage_scope"):
+            self.assertFalse(self.problem(code)["needs_nothing"], code)
+
+    def test_a_code_nothing_recognises_is_a_fault(self):
+        """"I do not know what this means" and "there is nothing to do" are
+        different claims, and only the second may keep one off a verdict."""
+        self.assertFalse(self.problem("something_new")["needs_nothing"])
+        self.assertFalse(self.usage_store.needs_nothing(""))

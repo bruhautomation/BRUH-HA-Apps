@@ -9,10 +9,14 @@ name means nothing to anyone.
 The lifecycle is deliberately short, because a list of problems nobody ever
 settles is just a second inbox:
 
-  open ──fix──▶ fixing ──▶ fixed       brAIn made the change; you haven't
-                       │               read what it did yet
-                       ├─▶ failed      it tried and couldn't
-                       └─▶ needs_you   only a human can (replace the battery)
+  open ──fix──▶ planning ─▶ planned    a read-only run says what it WOULD
+                                       change; nothing has happened yet
+  planned ──"Cancel"────────▶ open     the plan stays on the row
+  planned ──"Apply"─▶ fixing ─▶ fixed  brAIn made the change; you haven't
+                            │          read what it did yet
+                            ├─▶ failed      it tried and couldn't
+                            └─▶ needs_you   only a human can (the battery)
+  fixed ──"Undo"────────────▶ open     the files it wrote are back
        ──"I've handled it"───▶ settled: you fixed it yourself
        ──"Wrong"─────────────▶ settled: it isn't a problem here, and here is
                                         why — in the homeowner's own words
@@ -58,7 +62,6 @@ Stdlib only, so the test suite can import it without the add-on runtime.
 """
 from __future__ import annotations
 
-import atomic_write
 
 import functools
 import json
@@ -69,6 +72,9 @@ import threading
 import time
 import unicodedata
 from pathlib import Path
+
+import atomic_write
+import triage
 
 log = logging.getLogger("brain.findings")
 
@@ -101,6 +107,10 @@ MAX_SETTLED = 1000
 MAX_TEXT = 200
 MAX_DETAIL = 600
 MAX_FIX = 600
+# Who may have written a row's `fix` — see `_shape`. The rule's own
+# sentence is the empty string, which is what every row filed before this
+# existed reads as.
+FIX_AUTHORS = ("triage", "chat", "resident")
 MAX_RESULT = 1500
 MAX_CHANGED = 8
 # A correction is a sentence, not an essay. Long enough for "that sensor
@@ -108,15 +118,100 @@ MAX_CHANGED = 8
 # that twenty of them still fit in a prompt beside everything else.
 MAX_NOTE = 400
 
+# ---------------------------------------------------------------------------
+# What a Resident-written row carries, and what every other row does not
+# ---------------------------------------------------------------------------
+#
+# A finding has always been one shape: a sentence, a severity, and the rule
+# that said it. A **case** written by the Resident is that row with the
+# run's own reasoning on it — what it is claiming, how sure it is, what it
+# actually read, and what it proposes doing about it. Those facts exist
+# only inside the investigation that produced them, and the row is the one
+# thing that outlives the run, so the row is where they go.
+#
+# Every field below is OPTIONAL and ABSENT by default, which is the whole
+# of the compatibility argument: `_shape` adds a key only for a row that
+# carries something, so a house check's finding is byte-for-byte the dict
+# it has always been — in the store, in the shared-volume mirror, in
+# `/api/findings`, in a `todo.brain` item and in every test that pins one.
+#
+# The kinds live here rather than in `cases.py` because the word is written
+# on disk and this is the module that decides what may be: a second copy in
+# the reader would be a vocabulary the store refuses and the feed renders.
+CASE_KINDS = ("problem", "opportunity", "question", "chore", "change")
+STAKES = ("low", "medium", "high")
+# One sentence, and deliberately not a second title: `text` is what the
+# store dedupes on and what a check reports, where this is what the run
+# asserts. A card shows the claim; the ledger keys on the text.
+MAX_CLAIM = 240
+# What the run READ — the difference between an investigation and an
+# opinion, and the thing a person checks a claim against. Capped because a
+# card renders every row of it.
+MAX_EVIDENCE = 8
+MAX_EVIDENCE_ENTITY = 255
+MAX_EVIDENCE_VALUE = 120
+MAX_EVIDENCE_WHEN = 40
+# What it proposes doing. Four, because a case offering five things to
+# choose between is not a decision anybody makes on a phone.
+MAX_ACTIONS = 4
+MAX_ACTION_LABEL = 90
+MAX_ACTION_DETAIL = 400
+# The consent shapes, from the design page. `consent` is a separate flag
+# rather than something a shape implies, because "send a notification" and
+# "edit somebody's automations.yaml" are both real actions and only one of
+# them needs asking — and which is which is a claim the producer makes,
+# not a lookup this module could perform.
+ACTION_SHAPES = ("notify", "edit_file", "call_service", "write_automation")
+# What an ending ought to teach, in the run's own words. A sentence handed
+# to whoever writes the memory line, never a line written here: `memory.md`
+# has one writer and this store is not it.
+MAX_MEMORY_HINT = 300
+
+# What an ending can say. `fixed` and `ignored` are the two the tab has
+# always had; `accepted` is the third and it is a different claim from
+# both — the report was right AND the work is not done yet, which is what
+# moving a card to the to-do list means. It has to be its own word for two
+# reasons: the scorecard counts it as the report being confirmed (agreeing
+# to do something is agreeing it is real), and completing the chore later
+# re-settles the same key as `fixed`, which is an upgrade a shared word
+# could not express.
+SETTLE_KINDS = ("fixed", "ignored", "accepted")
+
 SEVERITIES = ("info", "warning", "serious", "critical")
-STATUSES = ("open", "fixing", "fixed", "failed", "needs_you", "ignored")
+# `triaging` and `held` are `triage.py`'s two words and they bracket
+# `open` rather than joining the lifecycle after it: a house check files
+# into `triaging` because nothing has looked at its row yet, and a run
+# that looked moves it to `open` (real) or `held` (looked at, not worth
+# showing). Both are deliberately absent from LIVE_STATUSES and
+# UNSETTLED_STATUSES — a row nothing has judged is not work waiting on
+# anybody, and a held one is not either — and both are CLEARABLE, because
+# a check that stops reporting something has stopped reporting it whether
+# or not it ever reached a screen.
+# `planning` and `planned` are the two halves of pressing Fix it, and they
+# are deliberately two words rather than one. `planning` is a read-only run
+# in flight working out what it WOULD change — nothing is waiting on a
+# person and nothing has been touched; `planned` is the answer sitting on
+# the card with Apply and Cancel under it, which is a decision and the only
+# kind of thing a badge may count. Collapsing them into one word would make
+# the badge count a run nobody can answer yet, and would make the card say
+# "apply this" over a plan that does not exist.
+STATUSES = ("triaging", "open", "planning", "planned", "fixing", "fixed",
+            "failed", "needs_you", "ignored", "held")
+# The statuses a PRODUCER may file into. Everything else is reached by a
+# person pressing something or by brAIn acting, so `coerce` takes only
+# these two off the wire: a row arriving as `ignored` would be a producer
+# settling a finding nobody was ever shown.
+PRE_STATUSES = ("open", "triaging")
 # Statuses that still want the homeowner's attention on the Findings tab.
 # `fixed` is in here: an automated fix changed something in the house, and
 # that stays on the list until somebody has read what it did.
-LIVE_STATUSES = ("open", "fixing", "fixed", "failed", "needs_you")
+LIVE_STATUSES = ("open", "planning", "planned", "fixing", "fixed", "failed",
+                 "needs_you")
 # ...and the subset the tab badge counts: a fix already running isn't a
-# decision anyone has to make.
-UNSETTLED_STATUSES = ("open", "fixed", "failed", "needs_you")
+# decision anyone has to make, and neither is the read-only run working out
+# what it would do. A `planned` row IS one — Apply or Cancel is exactly the
+# shape of question this badge exists to count.
+UNSETTLED_STATUSES = ("open", "planned", "fixed", "failed", "needs_you")
 
 # What goes back into the analyst's prompt. Ignored findings are the point of
 # the block — capped so it can never grow into a wall.
@@ -212,10 +307,15 @@ def _publish_state(items: list[dict]) -> None:
                 # whether to get up. Fifty rows of 600 characters each
                 # would be 60 KB of mirror for two paragraphs nobody
                 # scrolls to the end of.
+                #
+                # `kind` and `claim` are appended LAST and only for a row
+                # that carries them, so a mirror of ordinary findings is
+                # byte-for-byte the file the integration has always read.
                 {**{k: s[k] for k in ("ts", "text", "severity", "status",
                                       "entity_id", "fixable", "source_title")},
                  "detail": s["detail"][:STATE_MAX_PROSE],
-                 "fix": s["fix"][:STATE_MAX_PROSE]}
+                 "fix": s["fix"][:STATE_MAX_PROSE],
+                 **{k: s[k] for k in ("kind", "claim") if s.get(k)}}
                 for s in live[:STATE_MAX_ROWS]
             ],
         })
@@ -256,6 +356,179 @@ def _clean_changed(value) -> list[str]:
     return out
 
 
+# What a plan may say, capped. The steps are the load-bearing half — they
+# are what somebody reads before consenting to a change in their house — so
+# there are enough of them to describe a real fix and few enough that the
+# card stays a card.
+MAX_PLAN_STEPS = 10
+MAX_PLAN_STEP = 200
+MAX_PLAN_RISK = 300
+MAX_PLAN_SUMMARY = 600
+
+
+def _clean_plan(value) -> dict:
+    """One stored plan, normalized — `{}` when nothing has planned.
+
+    An empty dict rather than a `None` for `_clean_triage`'s reason: every
+    reader asks `.get("steps")`, and an absent list is the honest answer
+    for a row nothing has looked at. `can_fix` defaults FALSE, because the
+    card only offers Apply when a plan says software can do it, and a plan
+    this could not read must not be read as permission.
+    """
+    if not isinstance(value, dict):
+        return {}
+    steps = []
+    for item in value.get("steps") or []:
+        if isinstance(item, str) and item.strip():
+            steps.append(item.strip()[:MAX_PLAN_STEP])
+        if len(steps) >= MAX_PLAN_STEPS:
+            break
+    needs_you = bool(value.get("needs_you"))
+    return {
+        # Mutually exclusive by definition, the same way `fixer.parse_result`
+        # reads them: a fix that needs hands is not one software can make.
+        "can_fix": bool(value.get("can_fix")) and not needs_you,
+        "needs_you": needs_you,
+        "steps": steps,
+        "risk": str(value.get("risk") or "").strip()[:MAX_PLAN_RISK],
+        "summary": str(value.get("summary") or "").strip()[:MAX_PLAN_SUMMARY],
+        "at": int(value.get("at") or 0),
+    }
+
+
+def _clean_triage(value) -> dict:
+    """The triage record on a row, normalized — `{}` when nothing looked.
+
+    An empty dict rather than a `None` because every reader of it asks
+    `.get("verdict")` and an absent verdict is the honest answer for a
+    row nothing has judged. `triage.VERDICTS` is the closed vocabulary,
+    imported lazily so the store keeps no import of the module that
+    decides policy about it.
+    """
+    if not isinstance(value, dict):
+        return {}
+    verdict = str(value.get("verdict") or "").strip().lower()
+    if verdict not in triage.VERDICTS:
+        return {}
+    return {
+        "verdict": verdict,
+        "reason": str(value.get("reason") or "").strip()[:triage.MAX_REASON],
+        "run_id": str(value.get("run_id") or "").strip()[:64],
+        "at": int(value.get("at") or 0),
+        # Set when a person pressed "Bring it to the front" on a held row.
+        # Kept beside the verdict rather than over it: the verdict is what
+        # the run said, and overwriting it would lose the one piece of
+        # evidence that triage got this one wrong.
+        "elevated_by_person": bool(value.get("elevated_by_person")),
+        # Whether the row's `fix` is the run's own sentence rather than
+        # the generic one the rule filed. The text itself lives in `fix`,
+        # where every reader of a finding already looks; this is the
+        # record of who wrote it.
+        "wrote_fix": bool(value.get("wrote_fix")),
+    }
+
+
+def _clean_evidence(value) -> list[dict]:
+    """`[{entity, value, when}, ...]` — what a run says it read.
+
+    A row naming no entity is DROPPED rather than kept with an empty one.
+    The whole claim this field makes is *which* entity was read, so a row
+    that names none is an assertion wearing evidence's clothes, and one of
+    those under a heading saying "what I looked at" is worse than a short
+    list.
+    """
+    if not isinstance(value, list):
+        return []
+    out: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        entity = str(item.get("entity") or "").strip()[:MAX_EVIDENCE_ENTITY]
+        if not entity:
+            continue
+        out.append({
+            "entity": entity,
+            "value": str(item.get("value") or "").strip()[:MAX_EVIDENCE_VALUE],
+            "when": str(item.get("when") or "").strip()[:MAX_EVIDENCE_WHEN],
+        })
+        if len(out) >= MAX_EVIDENCE:
+            break
+    return out
+
+
+def _clean_actions(value) -> list[dict]:
+    """`[{label, shape, consent, detail}, ...]` — what a run proposes doing.
+
+    A shape this does not recognise is dropped, never coerced to the
+    nearest one it does: every entry here is something that would happen
+    to somebody's house, and reading an unknown word as the closest known
+    one is how a `notify` becomes a file edit. `consent` defaults TRUE for
+    `_clean_plan`'s reason one field over — an action this could not read
+    properly must never be read as permission already given.
+    """
+    if not isinstance(value, list):
+        return []
+    out: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        shape = str(item.get("shape") or "").strip().lower()
+        label = str(item.get("label") or "").strip()[:MAX_ACTION_LABEL]
+        if shape not in ACTION_SHAPES or not label:
+            continue
+        out.append({
+            "label": label,
+            "shape": shape,
+            "consent": item.get("consent", True) is not False,
+            "detail": str(item.get("detail") or "").strip()[:MAX_ACTION_DETAIL],
+        })
+        if len(out) >= MAX_ACTIONS:
+            break
+    return out
+
+
+def _case_fields(entry: dict) -> dict:
+    """The Resident's half of a row — only the keys it actually carries.
+
+    Absent rather than empty, so a row a check filed is the dict it has
+    always been and nothing downstream has to learn a new key in order to
+    go on rendering it. That is also why this is a separate function
+    rather than six more lines in `_shape`: `coerce` needs exactly the
+    same answer, and two copies of "what may a case say" is the drift a
+    second copy always produces.
+    """
+    out: dict = {}
+    kind = entry.get("kind")
+    if kind in CASE_KINDS:
+        out["kind"] = kind
+    claim = str(entry.get("claim") or "").strip()[:MAX_CLAIM]
+    if claim:
+        out["claim"] = claim
+    confidence = entry.get("confidence")
+    # `isinstance(True, int)` is True, and a bool here would render as a
+    # confidence of 1.0 — which is the one number this field must not be
+    # able to invent.
+    if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+        out["confidence"] = round(min(1.0, max(0.0, float(confidence))), 3)
+    if entry.get("stakes") in STAKES:
+        out["stakes"] = entry["stakes"]
+    evidence = _clean_evidence(entry.get("evidence"))
+    if evidence:
+        out["evidence"] = evidence
+    actions = _clean_actions(entry.get("actions"))
+    if actions:
+        out["actions"] = actions
+    hint = str(entry.get("memory_hint") or "").strip()[:MAX_MEMORY_HINT]
+    if hint:
+        out["memory_hint"] = hint
+    investigation = entry.get("investigation")
+    if isinstance(investigation, dict):
+        run_id = str(investigation.get("run_id") or "").strip()[:64]
+        if run_id:
+            out["investigation"] = {"run_id": run_id}
+    return out
+
+
 def _shape(entry: dict) -> dict:
     """One stored finding, normalized for the API."""
     status = entry.get("status")
@@ -264,11 +537,16 @@ def _shape(entry: dict) -> dict:
     severity = entry.get("severity")
     if severity not in SEVERITIES:
         severity = "warning"
-    return {
+    out = {
         "ts": int(entry.get("ts") or 0),
         "text": str(entry.get("text") or "")[:MAX_TEXT],
         "detail": str(entry.get("detail") or "")[:MAX_DETAIL],
         "fix": str(entry.get("fix") or "")[:MAX_FIX],
+        # Whose sentence `fix` is: "" for the rule's own, "triage" for the
+        # run that looked at the row before it was shown, "chat" for a
+        # conversation the homeowner had about it. The card says which.
+        "fix_by": (entry.get("fix_by")
+                   if entry.get("fix_by") in FIX_AUTHORS else ""),
         "severity": severity,
         "fixable": bool(entry.get("fixable", True)),
         "entity_id": str(entry.get("entity_id") or "")[:255],
@@ -290,6 +568,32 @@ def _shape(entry: dict) -> dict:
         # to leave the finding exactly as open as it was and just stop it
         # asking. A separate field is the only way to keep those apart.
         "snoozed_until": int(entry.get("snoozed_until") or 0),
+        # What looked at this before it was shown, if anything did.
+        # `{verdict, reason, run_id, at, elevated_by}` — `run_id` is the
+        # triage conversation, which the panel opens as a record through
+        # the reader every other engine-store run uses, because "I can see
+        # the discussion you had about it" is the half that makes a
+        # verdict arguable rather than a word.
+        "triage": _clean_triage(entry.get("triage")),
+        # What a read-only run said it WOULD change, if Fix it has been
+        # pressed. `{can_fix, needs_you, steps, risk, summary, at}` — see
+        # `_clean_plan`. It is kept across a Cancel on purpose: the plan
+        # cost a Claude run, and a person who wants to look at it again
+        # should not have to pay for it twice.
+        "plan": _clean_plan(entry.get("plan")),
+        # The wall-clock window the tool-enabled run ran in. It is what
+        # `unfix` reads the edit journal and the action ledger against, so
+        # it is on the row rather than in memory: the Undo button lives for
+        # as long as the row says `fixed`, which outlives any process.
+        "fix_started": float(entry.get("fix_started") or 0),
+        "fix_ended": float(entry.get("fix_ended") or 0),
+        # What that run changed, counted when it ended: files it journalled
+        # (which an undo puts back) and service calls it made (which an undo
+        # lists and never reverses). Two numbers because they are two
+        # different claims, and the card says which is which before the
+        # press rather than after it.
+        "fix_files": int(entry.get("fix_files") or 0),
+        "fix_calls": int(entry.get("fix_calls") or 0),
         # When somebody last pressed "Check again" and the check still
         # reported it. Written only by that press, never by the scheduled
         # pass: the schedule confirms every open row every few hours and a
@@ -297,6 +601,12 @@ def _shape(entry: dict) -> dict:
         # row nobody has looked at, which is the one claim this is for.
         "checked_at": int(entry.get("checked_at") or 0),
     }
+    # And the Resident's half, when there is one. Appended rather than
+    # declared above so a row that carries none is the dict every existing
+    # reader, mirror and test already knows, key for key and order for
+    # order — see the block by CASE_KINDS.
+    out.update(_case_fields(entry))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -304,13 +614,21 @@ def _shape(entry: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 @_mutates
-def sweep_inbox() -> list[dict]:
+def sweep_inbox(shape=None) -> list[dict]:
     """Fold `/config/.brain/findings/inbox/*.jsonl` into the store.
 
     Same contract as the memory inbox: append-only JSONL, one JSON object
     per line, consumed once. A torn or unparseable line is skipped rather
     than taking the whole file down — a study session that dies mid-write
     must not be able to wedge the Findings tab.
+
+    ``shape`` is `triage.gate`, passed in rather than reached for: this is
+    the one producer whose `add_many` call is inside the store, and a
+    store that knew the triage policy would be a second place it is
+    decided. Passing it is also what closes the bypass the other four do
+    not have — a line in the inbox is JSON from another process, so it can
+    name its own ``status``, and `coerce` honours one in `PRE_STATUSES`.
+    The gate overwrites it.
 
     Returns the findings that were actually NEW — the callers that log a
     count take a len(), and the notify hook needs the entries themselves,
@@ -341,7 +659,7 @@ def sweep_inbox() -> list[dict]:
     # One write for the whole sweep, not one per finding: a study session
     # that files five would otherwise rewrite the store five times, which on
     # an SD card is five erase cycles for one batch of results.
-    added = add_many(pending)
+    added = add_many(shape(pending) if shape else pending)
     for path in swept:
         try:
             path.unlink()
@@ -490,7 +808,7 @@ def coerce(obj: dict) -> dict | None:
     if not normalize(text):
         return None
     severity = str(obj.get("severity") or "").strip().lower()
-    return {
+    entry = {
         "text": text,
         "detail": detail[:MAX_DETAIL],
         "fix": str(obj.get("fix") or "").strip()[:MAX_FIX],
@@ -501,11 +819,33 @@ def coerce(obj: dict) -> dict | None:
         "source": str(obj.get("source") or "").strip()[:64],
         "source_title": str(obj.get("source_title") or "").strip()[:120],
         "run_id": str(obj.get("run_id") or "").strip()[:64],
-        "status": "open",
+        # A producer may file a row as not-yet-looked-at and nothing else
+        # (`PRE_STATUSES`). `triage.gate` is the one caller that does, and
+        # an unrecognised status reads as `open` rather than being
+        # refused: the safe direction here is the one that shows the
+        # finding.
+        "status": (obj.get("status")
+                   if obj.get("status") in PRE_STATUSES else "open"),
         "result": "",
         "changed": [],
         "settled_at": 0,
     }
+    # Whose sentence the `fix` is. A rule's own is the empty string, which
+    # is what every row filed before `FIX_AUTHORS` existed reads as; a
+    # producer that wrote its own says so, and an author this store cannot
+    # name falls back to the rule's rather than being believed.
+    if obj.get("fix_by") in FIX_AUTHORS:
+        entry["fix_by"] = obj["fix_by"]
+    # What looked at it, when the producer IS the thing that looked. Only
+    # `add_case` files one — every other producer's rows go through
+    # `triage.gate`, which files them as `triaging` for the drain to judge
+    # and `record_triage` then overwrites this block whole, so a line in
+    # the inbox cannot use it to claim a verdict nothing earned.
+    looked = _clean_triage(obj.get("triage"))
+    if looked:
+        entry["triage"] = looked
+    entry.update(_case_fields(obj))
+    return entry
 
 
 def _prune(items: list[dict]) -> list[dict]:
@@ -570,6 +910,73 @@ def add(text: str, **fields) -> tuple[dict | None, bool]:
     return (created[0], True) if created else (None, False)
 
 
+# Who the Resident files as. It is a producer like any other — which is
+# the point, because `scorecard()` adds endings up per producer and the
+# number the design page always wanted is the Resident's own precision.
+# The title is what the tab and the scorecard show instead of the id.
+RESIDENT_SOURCE = "resident"
+RESIDENT_TITLE = "The Resident"
+
+
+@_mutates
+def add_case(row: dict, *, run_id: str = "", when: float | None = None) -> dict | None:
+    """File a case an investigation wrote. Returns the row, or None.
+
+    Every other producer files through `triage.gate`, which marks its rows
+    `triaging` so the drain can go and look before anybody is shown one.
+    This one does not, and the reason is not an exemption: **a case IS the
+    look**. The row is written by a run that read the entity's history, the
+    area and what the house has already been told, and asking a second run
+    to grade it would be paying full price to have a model mark homework
+    it has just finished — which is the argument `triage.py`'s fourth rule
+    rejects for producers that were doing something *else* and mentioned a
+    problem on the way past. Nothing was doing something else here.
+
+    So what keeps the gate's promise — that nothing reaches a person
+    unjudged — is written ON the row rather than asserted in prose: the
+    verdict, the sentence that earned it and the run that said it go into
+    the same `triage` block `record_triage` writes, and the card renders
+    them exactly as it renders a drained one. A row with no ``claim`` is
+    **refused**, because the claim is the judgement: without it this would
+    be a door a producer that had not looked could file straight through,
+    which is the one thing the gate exists to prevent.
+
+    ``run_id`` is provenance and is not required. A CLI that refused the
+    session id leaves a case with no conversation to open, which costs a
+    link; refusing the case over it would throw away an investigation that
+    happened, and a guard whose cost is the whole feature is the wrong
+    guard — see `engine`'s own fallback for the same flag.
+
+    Deduping, the settled ledger, the unique id, the prune and the mirror
+    are `add_many`'s, because they are the store's rules and not this
+    door's. A case whose text somebody has already answered is therefore
+    dropped silently, in any status, exactly as a check's re-report is.
+    """
+    if not isinstance(row, dict):
+        return None
+    claim = str(row.get("claim") or "").strip()[:MAX_CLAIM]
+    if not claim:
+        return None
+    stamp = int(when if when is not None else time.time())
+    created = add_many([{
+        **row,
+        "source": str(row.get("source") or RESIDENT_SOURCE)[:64],
+        "source_title": str(row.get("source_title") or RESIDENT_TITLE)[:120],
+        "run_id": str(row.get("run_id") or run_id or "")[:64],
+        # A case is on the list the moment it is written. `held` is
+        # triage's word for "looked at and not worth showing", and a
+        # Resident run that judged a signal not worth showing wrote no
+        # case at all — so there is no second status to reach from here.
+        "status": "open",
+        "triage": {"verdict": "elevated", "reason": claim,
+                   "run_id": str(row.get("run_id") or run_id or ""),
+                   "at": stamp,
+                   "wrote_fix": bool(str(row.get("fix") or "").strip())},
+        "claim": claim,
+    }])
+    return created[0] if created else None
+
+
 @_mutates
 def set_status(ts: int, status: str, result: str = "",
                changed: list[str] | None = None) -> dict | None:
@@ -585,7 +992,219 @@ def set_status(ts: int, status: str, result: str = "",
             entry["result"] = str(result)[:MAX_RESULT]
         if changed is not None:
             entry["changed"] = _clean_changed(changed)
-        entry["settled_at"] = 0 if status in ("open", "fixing") else int(time.time())
+        entry["settled_at"] = (
+            0 if status in ("open", "planning", "planned", "fixing")
+            else int(time.time()))
+        _write(items)
+        return _shape(entry)
+    return None
+
+
+@_mutates
+def set_plan(ts: int, plan: dict, when: float | None = None) -> dict | None:
+    """Write what a read-only run said it would change, and stop there.
+
+    The row moves to `planned`, which is the whole point: pressing Fix it
+    now buys a *sentence about a change*, and the change itself waits for
+    a second press. A plan that says software cannot do this (`can_fix`
+    false, or `needs_you`) is stored exactly the same way and is simply
+    not offered an Apply — the card says what it says and offers Cancel,
+    because a button that cannot help is worse than the sentence.
+
+    Only a row this run is actually about is touched (`planning`, or the
+    `open` a Cancel put it back to): a plan arriving late about a finding
+    somebody settled in the meantime must not drag it back onto the list,
+    which is `record_triage`'s rule for the same reason. Unknown ids and
+    rows that have moved on return None.
+    """
+    stamp = int(when if when is not None else time.time())
+    shaped = _clean_plan({**(plan or {}), "at": stamp})
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) != int(ts):
+            continue
+        if entry.get("status") not in ("planning", "open"):
+            return None
+        entry["plan"] = shaped
+        entry["status"] = "planned"
+        entry["settled_at"] = 0
+        _write(items)
+        return _shape(entry)
+    return None
+
+
+@_mutates
+def set_fix_window(ts: int, started: float | None = None,
+                   ended: float | None = None, files: int | None = None,
+                   calls: int | None = None) -> dict | None:
+    """Stamp when the tool-enabled run began, when it stopped, and what it did.
+
+    This is what makes the Undo on a fixed card possible at all: the edit
+    journal and the action ledger are both append-only files stamped in
+    epoch seconds, and "what did THIS fix change" is answerable only as
+    "everything either of them recorded between these two instants".
+    Written in two calls rather than one because the start has to be on
+    disk before the run is spawned — a panel that dies mid-fix must still
+    leave a window somebody can ask about.
+
+    ``files`` and ``calls`` are counted ONCE, when the run ends, and
+    stored — never re-derived on the tab's own fetch. The two files they
+    are counted out of are append-only and the index has no cap, so a
+    count taken per fixed row per poll would read the whole of both every
+    few seconds; and the claim being made is about what the run DID, which
+    stops being true of a live file the moment anything else writes one.
+    What the undo actually managed is reported by the undo.
+    """
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) != int(ts):
+            continue
+        if started is not None:
+            entry["fix_started"] = float(started)
+            # A second attempt is a second window. Clearing the end and the
+            # counts here rather than leaving the old ones is what stops an
+            # Undo after a retry reverting the span between the two runs,
+            # and what stops the card describing the run before this one.
+            entry["fix_ended"] = 0.0
+            entry["fix_files"] = 0
+            entry["fix_calls"] = 0
+        if ended is not None:
+            entry["fix_ended"] = float(ended)
+        if files is not None:
+            entry["fix_files"] = max(0, int(files))
+        if calls is not None:
+            entry["fix_calls"] = max(0, int(calls))
+        _write(items)
+        return _shape(entry)
+    return None
+
+
+@_mutates
+def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
+                  when: float | None = None) -> list[dict]:
+    """Write what looked at a batch, and move each row to where it belongs.
+
+    ``verdicts`` is ``{ts: (verdict, reason)}`` or ``{ts: (verdict,
+    reason, fix)}``. An ``elevated`` or ``untriaged`` row becomes ``open``
+    — the second because nothing looked, which surfaces exactly like the
+    first and says so on the card — and a ``held`` row becomes ``held``.
+
+    **An elevated row that came with a ``fix`` takes it as its own.** The
+    rule that filed the row wrote the same sentence it writes for every
+    row of its kind ("check its power and its connection… then reload its
+    integration"), which is what the card showed under *What you'd need to
+    do* and what a person reading it called generic and useless. The run
+    that elevated the row has looked at the entity, its integration and
+    its area, so what it says to do is about THIS device in THIS house,
+    and the card carries that instead. The generic sentence is not kept:
+    it says nothing the check's own docs do not, and a second field for it
+    would be one more thing to render. ``refresh_details`` never touches
+    ``fix``, so a re-report on the next pass does not put the generic
+    sentence back. An empty ``fix`` leaves whatever was there — the run
+    wrote none, and the card is then the card it always was.
+
+    Only a row still in ``triaging`` is touched. Everything else is a row
+    a person or the fixer has already moved on from, and a verdict
+    arriving late about one of those must not drag it back: a run that
+    took four minutes can easily be answering about a finding somebody
+    settled in the meantime.
+
+    Returns the rows it changed, shaped.
+    """
+    stamp = int(when if when is not None else time.time())
+    items = _load()
+    changed: list[dict] = []
+    for entry in items:
+        ts = int(entry.get("ts") or 0)
+        if ts not in verdicts or entry.get("status") != "triaging":
+            continue
+        verdict, reason, *rest = verdicts[ts]
+        if verdict not in triage.VERDICTS:
+            continue
+        fix = str(rest[0] if rest else "").strip()[:MAX_FIX]
+        wrote_fix = bool(fix) and verdict == "elevated"
+        if wrote_fix:
+            entry["fix"] = fix
+            entry["fix_by"] = "triage"
+        entry["status"] = "held" if verdict == "held" else "open"
+        entry["triage"] = _clean_triage({
+            "verdict": verdict, "reason": reason,
+            "run_id": run_id, "at": stamp, "wrote_fix": wrote_fix})
+        changed.append(_shape(entry))
+    if changed:
+        _write(items)
+    return changed
+
+
+@_mutates
+def statuses(rows: list[int]) -> dict[int, str]:
+    """Where each of these rows stands now, from ONE read and no shaping.
+
+    The checks pass files, then a drain judges some of what is waiting —
+    including rows other producers filed — so "what happened to the ones
+    I filed" is a question only the store can answer afterwards, and it
+    is asked once per pass for a summary line.
+    """
+    want = {int(t) for t in rows}
+    return {int(e.get("ts") or 0): str(e.get("status") or "")
+            for e in _load() if int(e.get("ts") or 0) in want}
+
+
+def awaiting_triage() -> list[dict]:
+    """Every row still waiting for something to look at it, OLDEST FIRST.
+
+    The drain reads this rather than being handed what a caller just
+    filed, because five producers file and one of them is a tab fetch
+    that must not spend. A row filed by any of them is picked up by the
+    next drain whoever ran it, which is what makes "every finding is
+    triaged" true of the producer that cannot triage its own.
+
+    Oldest first is the half that makes `MAX_BATCH` waiting honest: a row
+    that did not fit this batch is at the front of the next one, so it
+    cannot lose the same lottery twice.
+    """
+    rows = [s for s in (_shape(e) for e in _load())
+            if s["text"] and s["status"] == "triaging"]
+    rows.sort(key=lambda f: f["ts"])
+    return rows
+
+
+def stale_triaging(cutoff: float) -> list[int]:
+    """The ids of rows left mid-triage before ``cutoff``.
+
+    A panel that died between filing and judging leaves rows nothing will
+    ever come back for, and a problem nobody is ever shown is the one
+    outcome this whole step must not be able to produce. The caller
+    promotes them through :func:`record_triage` with an ``untriaged``
+    verdict, so they surface carrying the reason they were never judged.
+    """
+    return [int(e.get("ts") or 0) for e in _load()
+            if e.get("status") == "triaging"
+            and int(e.get("ts") or 0) < int(cutoff)]
+
+
+@_mutates
+def elevate(ts: int) -> dict | None:
+    """Put a held finding on the list, because a person said to.
+
+    The verdict is kept and flagged rather than erased: what the run said
+    is the only evidence that triage was wrong about this house, and it
+    is what the scorecard and anybody reading the row afterwards are
+    owed. `unsettle`'s rule — the press stops the suppression and changes
+    nothing else.
+
+    Refuses anything that is not held: an open row is already on the list
+    and a settled one has an answer on it.
+    """
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) != ts or entry.get("status") != "held":
+            continue
+        entry["status"] = "open"
+        entry["settled_at"] = 0
+        record = _clean_triage(entry.get("triage"))
+        record["elevated_by_person"] = True
+        entry["triage"] = record
         _write(items)
         return _shape(entry)
     return None
@@ -634,7 +1253,7 @@ def settle_and_clear(ts: int, kind: str, note: str = "") -> dict | None:
     ``note`` is the homeowner's reason, kept verbatim on the ledger entry so
     the analyst reads why rather than only what.
     """
-    if kind not in ("fixed", "ignored"):
+    if kind not in SETTLE_KINDS:
         raise ValueError(f"unknown settlement: {kind}")
     items = _load()
     settled = None
@@ -653,9 +1272,17 @@ def settle_and_clear(ts: int, kind: str, note: str = "") -> dict | None:
 
 
 def _remember_settled(shaped: dict, kind: str, when: int = 0,
-                      note: str = "") -> None:
+                      note: str = "", key: str = "") -> None:
+    """Write the answer into the ledger, replacing anything under that key.
+
+    ``key`` is normally derived from the text, which is the only key any
+    caller holding a row could have. A caller holding an item whose row
+    was deleted weeks ago passes the key it stored then, because deriving
+    it a second time from a copy of the text is a second answer to "which
+    entry is this" — and the two would agree right up until they did not.
+    """
     ledger = _load_settled()
-    key = normalize(shaped["text"])
+    key = str(key or "").strip() or normalize(shaped["text"])
     ledger = [e for e in ledger if e.get("key") != key]
     ledger.append({
         "key": key,
@@ -705,7 +1332,12 @@ def scorecard() -> list[dict]:
         row = by.setdefault(src, {
             "source": src, "title": str(e.get("source_title") or src),
             "confirmed": 0, "wrong": 0})
-        if e.get("kind") == "fixed":
+        # Agreeing to do something is agreeing the report was right, so
+        # an accepted row scores exactly as a fixed one. The alternative
+        # was to count it as nothing until the chore is done, which would
+        # make a producer look worse the more of its reports people took
+        # seriously and had not got round to yet.
+        if e.get("kind") in ("fixed", "accepted"):
             row["confirmed"] += 1
         elif e.get("kind") == "ignored":
             row["wrong"] += 1
@@ -714,6 +1346,31 @@ def scorecard() -> list[dict]:
         r["total"] = r["confirmed"] + r["wrong"]
     rows.sort(key=lambda r: (-r["total"], r["source"]))
     return rows
+
+
+@_mutates
+def remember_answer(key: str, text: str, kind: str, *, note: str = "",
+                    source: str = "", source_title: str = "") -> bool:
+    """Record an answer for a problem whose row is already gone.
+
+    `settle_and_clear` is the ordinary door and it needs a row to delete.
+    A chore completed on the To-do tab has no row — the move deleted it
+    weeks ago — and the answer still has to reach the ledger, because the
+    entry written then said `accepted` and the truth now is `fixed`.
+    `_remember_settled` replaces by key, so this is an upgrade in place
+    rather than a second entry, which is what keeps one problem one row of
+    the scorecard.
+
+    Returns False for a key it will not write, so a caller cannot read
+    "nothing to record" as "recorded".
+    """
+    key = str(key or "").strip()
+    text = str(text or "").strip()
+    if not key or not text or kind not in SETTLE_KINDS:
+        return False
+    _remember_settled({"text": text, "source": source,
+                       "source_title": source_title}, kind, note=note, key=key)
+    return True
 
 
 def settled_listing() -> list[dict]:
@@ -842,10 +1499,21 @@ def reconcile_running(reason: str) -> int:
     job that would settle it is gone, and the tab offers no buttons in that
     status — the finding becomes permanently unreachable. Called at startup,
     which is the only moment we know for certain that nothing is in flight.
+
+    `planning` is orphaned the same way and does NOT land in the same
+    place. That run holds read-only tools, so a plan that died changed
+    nothing in the house and there is nothing to report as failed: the row
+    goes back to `open` with the button it came from, where `fixing` has to
+    say out loud that something may have been half-done. Two statuses, two
+    honest answers — the whole reason they are two words.
     """
     items = _load()
-    stuck = [f for f in items if f.get("status") == "fixing"]
+    stuck = [f for f in items if f.get("status") in ("fixing", "planning")]
     for entry in stuck:
+        if entry.get("status") == "planning":
+            entry["status"] = "open"
+            entry["settled_at"] = 0
+            continue
         entry["status"] = "failed"
         entry["result"] = reason
         entry["settled_at"] = int(time.time())
@@ -856,11 +1524,97 @@ def reconcile_running(reason: str) -> int:
 
 # What the house checks may take back. A row somebody has sent Claude at,
 # or that Claude has changed, is theirs to end — a check clears only what
-# is still simply *open*.
-CLEARABLE = ("open", "needs_you", "failed")
+# is still simply *open*, or has not got there: a row waiting on triage
+# and one triage held are both rows the homeowner has never answered, so
+# a check that no longer reports the problem may take either back.
+# `planned` is in here and `planning` is not, for the same reason `fixing`
+# is not: a plan is a sentence about a problem, so if the check stops
+# reporting the problem the plan is about nothing and the row should go —
+# but a run in flight must not have its row deleted out from under it.
+CLEARABLE = ("open", "planned", "needs_you", "failed", "triaging", "held")
 
 
 @_mutates
+@_mutates
+def clear_source(source: str) -> list[dict]:
+    """Take every row a producer has filed off the list, because the
+    homeowner has muted that producer.
+
+    The press's half of "Stop raising these": `triage.gate` drops what the
+    producer files from now on, and this removes what it has already
+    filed. Only rows nobody has acted on — `open`, `triaging`, `held`,
+    `needs_you` — and never `fixing` or `fixed`, which are a conversation
+    somebody is already having or a change brAIn already made. Nothing is
+    settled and no memory line is written: a mute is a statement about
+    the RULE and not about the house, which is `clear_resolved`'s reason
+    for writing nothing when a problem goes away on its own. Returns the
+    rows taken, shaped, so the toast can say how many.
+    """
+    items = _load()
+    taken: list[dict] = []
+    kept: list[dict] = []
+    for entry in items:
+        if (str(entry.get("source") or "") == source
+                and entry.get("status") in MUTE_CLEARS):
+            taken.append(_shape(entry))
+        else:
+            kept.append(entry)
+    if taken:
+        _write(kept)
+    return taken
+
+
+@_mutates
+def set_fix(ts: int, fix: str, by: str) -> dict | None:
+    """Replace what a row says to do, and record who said it.
+
+    The chat's door onto "What you'd need to do": a discussion that has
+    worked out the specific answer offers it as an option, and the press
+    lands here. It settles nothing and takes nothing away — the row stays
+    exactly where it was with a better sentence on it — which is why it
+    hands back no undo token. Refuses an empty sentence and an author the
+    row cannot name (`FIX_AUTHORS`); answers None for a row that is gone.
+    """
+    fix = str(fix or "").strip()[:MAX_FIX]
+    if not fix or by not in FIX_AUTHORS:
+        return None
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) == int(ts):
+            entry["fix"] = fix
+            entry["fix_by"] = by
+            _write(items)
+            return _shape(entry)
+    return None
+
+
+def source_titles() -> dict[str, str]:
+    """Every producer this store has seen, id → the title it filed under.
+
+    Live rows first, then the settled ledger, so a muted producer whose
+    rows are all gone can still be named on the tab rather than shown as
+    `check:dev.frozen`. A producer nothing has recorded a title for is
+    simply absent; the caller falls back to the id.
+    """
+    out: dict[str, str] = {}
+    for entry in _load_settled():
+        src = str(entry.get("source") or "")
+        title = str(entry.get("source_title") or "")
+        if src and title and src not in out:
+            out[src] = title
+    for entry in _load():
+        src = str(entry.get("source") or "")
+        title = str(entry.get("source_title") or "")
+        if src and title:
+            out[src] = title
+    return out
+
+
+# What a mute takes off the list: everything nobody has acted on. `fixing`
+# and `fixed` are a person's or the fixer's and stay.
+MUTE_CLEARS = ("open", "triaging", "held", "needs_you")
+
+
 def refresh_details(objs: list[dict]) -> int:
     """Update the detail and severity of rows a producer has re-reported.
 

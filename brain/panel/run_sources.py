@@ -68,6 +68,31 @@ SOURCES: dict[str, dict[str, str]] = {
     # asks for "you" — does not show it either.
     "doctor": {"label": "Doctor", "blurb": "a deep self-check round trip",
                "store": "engine"},
+    # The "why did you do that" run. A probe rather than a conversation,
+    # like `doctor` and `memory`: nobody asked it, and a rail offering
+    # somebody "Somebody in this home did something by hand…" as
+    # something they typed is the person's own chats buried under machine
+    # ones again.
+    "curiosity": {"label": "Curiosity",
+                  "blurb": "working out why somebody did something by hand",
+                  "store": "engine"},
+    # Deciding whether a house check's finding is worth showing. A probe
+    # like `doctor` and `curiosity`, and the one whose transcript somebody
+    # is most likely to open on purpose: the Findings tab links a held row
+    # straight to it, because "I can see the discussion you had about it"
+    # is what makes a verdict arguable rather than a word.
+    "triage": {"label": "Triage",
+               "blurb": "checking whether a finding is worth showing",
+               "store": "engine"},
+    # The attention loop: a first look over a batch of signals, and the
+    # investigation a verdict buys. A probe like `triage`, which is what it
+    # replaced — and the one here somebody is most likely to open on
+    # purpose, because a case on the Home feed links straight to the run
+    # that made the claim, and "I can read what it looked at" is what makes
+    # a claim arguable rather than an assertion.
+    "resident": {"label": "Resident",
+                 "blurb": "watching the house, and looking into what it saw",
+                 "store": "engine"},
     # `tests/corpus/replay.py` — the same argument as `doctor`, one step
     # further from a person: a replay re-runs somebody else's captured
     # prompt to score this release's version of it, so every turn is a

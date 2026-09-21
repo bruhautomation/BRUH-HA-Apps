@@ -388,6 +388,14 @@ html, body {
 .card .foot .because,
 .card .foot .hold { flex: 0 1 auto; }
 .card .foot .hold { color: var(--ink-2); }
+/* The live half of a card's age. Slightly less recessive than the rest of
+   the foot, because it is the one line saying which numbers on the card
+   are current -- and `stale` takes the warning colour, since a card
+   labelled live whose readings have stopped arriving is the reading
+   nothing can correct. The words say it too: colour is never the only
+   signal. */
+.card .foot .livemark { flex: 0 1 auto; color: var(--ink-2); }
+.card .foot .livemark.stale { color: var(--warning); }
 
 /* dimmed disabled category */
 .card.off > :not(.card-head) { opacity: 0.45; }
@@ -839,6 +847,16 @@ body.modal-open {
 .kempty { font-size: 13px; color: var(--ink-3); padding: 6px 2px; }
 /* What the capped list is not showing. The count above is the real one. */
 .kmore { font-size: 12.5px; color: var(--ink-3); padding: 8px 2px 2px; font-style: italic; }
+/* The facts list under the queue: the subject rides as a chip so a row
+   about `sensor.hall_temp` and one about the house read differently at a
+   glance, and the run link sits in the meta line rather than as a fourth
+   button, because a row with three controls is a row nobody reads. */
+.kfactslabel { display: block; margin-top: 18px; }
+.kfact .when { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.kfactsubj { font-family: var(--mono, ui-monospace, monospace); font-size: 11px;
+  padding: 1px 6px; border-radius: 999px; background: var(--bg-3, rgba(127,127,127,.15));
+  color: var(--ink-2); }
+.kfactrun { margin-left: 4px; }
 .kadd { display: flex; gap: 7px; margin: 4px 0 8px; }
 .kadd input {
   flex: 1;
@@ -1119,6 +1137,83 @@ body.modal-open {
   width: 2px;
   background: var(--ink-2);
   opacity: 0.85;
+}
+
+/* ⚙ sections. The dialog is five disclosures rather than one flat scroll,
+   and the summary is the only thing you are guaranteed to read, so it
+   carries a name AND a line saying what is behind it — a row of bare nouns
+   would be five words to guess at. 44px whatever the pointer is: this is
+   the dialog's navigation, not a link inside a paragraph, and a floor that
+   only existed on touch would leave the one control every visit starts with
+   at 19px on the screen it is designed at.
+
+   The marker is drawn rather than inherited: `list-style: none` (plus the
+   WebKit pseudo-element, which ignores it) takes the browser's triangle out,
+   and the chevron is two borders on a pseudo-element so `textContent` of a
+   summary stays the section's name — which is what the measure reads. */
+.setsec { border-top: 1px solid var(--hairline); }
+.setsec:first-child { border-top: 0; }
+.setsec > summary {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-height: 44px;
+  padding: 8px 4px 8px 22px;
+  position: relative;
+  cursor: pointer;
+  list-style: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.setsec > summary::-webkit-details-marker { display: none; }
+.setsec > summary:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.setsec > summary::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: calc(50% - 5px);
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid var(--ink-3);
+  border-bottom: 2px solid var(--ink-3);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.setsec[open] > summary::before { transform: rotate(45deg) translate(-1px, -1px); }
+.setsecname { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+/* Bold only when open, so a shut dialog reads as a list of places to go and
+   an open one says which place you are in. */
+.setsec[open] > summary .setsecname { font-weight: 700; }
+.setsecsub { font-size: 11.5px; color: var(--ink-3); line-height: 1.3; }
+.setsecbody { padding: 2px 0 16px; }
+
+/* A label and the ? that carries the rest of what used to be under it. The
+   button is a sibling of the label rather than inside it: a press inside a
+   `for=` label is a press on the control, so a tooltip would toggle the
+   checkbox it explains. */
+.setrow { display: flex; align-items: center; gap: 4px; margin: 12px 0 5px; }
+.setrow.top { align-items: flex-start; }
+.setrow > label { margin: 0; flex: 1; min-width: 0; }
+.setrow .btn.icon.tiny {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid var(--hairline);
+  border-radius: 50%;
+}
+/* Inside a paragraph rather than beside a label — the section intros have no
+   control to sit next to, so the ? follows the sentence it shortened. */
+.edit-body .hint .btn.icon.tiny {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid var(--hairline);
+  border-radius: 50%;
+  vertical-align: middle;
+  margin-left: 2px;
 }
 
 /* generation-defaults section of the ⚙ dialog */
@@ -1567,6 +1662,65 @@ body.modal-open {
 }
 
 .viewtab .badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* The sub-strip: the panes inside the tab you are on. It sits under the
+   bar and sticks with it, in normal flow, so nothing else has to know it
+   is there — the terminal and the docs nav are single-pane groups and
+   never see it (`--bar-h` is untouched). 44px targets, the tab's own
+   floor: this is navigation, and it is pressed on a phone. `[hidden]` is
+   restated at class specificity because a bare `display: flex` on the
+   class would beat the UA rule and leave an empty strip across the page
+   — BRUH Print's toast bug, in a new file. */
+.subtabs {
+  position: sticky;
+  top: var(--bar-h);
+  z-index: 29;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  overflow-x: auto;
+  background: color-mix(in srgb, var(--plane) 88%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--hairline);
+}
+.subtabs[hidden] { display: none; }
+.subtab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  font: inherit;
+  font-weight: 500;
+  font-size: 0.86rem;
+  height: 44px;
+  min-width: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+.subtab:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.subtab.active { color: var(--accent-2); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.subtab[hidden], .subtab.gone { display: none; }
+.subtab .badge {
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
@@ -2204,7 +2358,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   gap: 6px;
   margin-top: 8px;
 }
-.qcard .qopt {
+.qcard .qopt, .chatres .cresopt {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -2220,13 +2374,14 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   font-size: 13px;
   cursor: pointer;
 }
-.qcard .qopt:hover { border-color: var(--accent); }
+.qcard .qopt:hover, .chatres .cresopt:hover { border-color: var(--accent); }
 .qcard .qopt.on {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, var(--surface));
 }
-.qcard .qopt .qlabel { font-weight: 600; }
-.qcard .qopt .qdesc { color: var(--ink-2); font-size: 12px; }
+.qcard .qopt .qlabel, .chatres .cresopt .creslabel { font-weight: 600; }
+.qcard .qopt .qdesc,
+.chatres .cresopt .cresdoes { color: var(--ink-2); font-size: 12px; }
 .qcard .qother {
   width: 100%;
   margin-top: 8px;
@@ -2237,6 +2392,32 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   color: var(--ink);
   font-size: 13px;
 }
+
+/* The resolutions card — the ways the finding under discussion could end,
+   offered by Claude and pressed by a person. It borrows the question card's
+   option rows above (one definition, two cards: they are the same control,
+   and a second copy of it is a second copy that drifts) and differs only in
+   what it is made of, which is why its accent is the same one a finding
+   card uses rather than the chat's. */
+.chatres {
+  max-width: 760px;
+  width: 100%;
+  align-self: center;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--warning);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+}
+.chatres .creshead { font-weight: 600; color: var(--ink); }
+.chatres .cresbody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.chatres .cresnote { margin: 0; color: var(--ink-3); font-size: 12.5px; }
 
 .chatempty {
   margin: auto;
@@ -2685,8 +2866,8 @@ body.term-classic #termMode .ico-out { display: block; }
    controls to fit either. What changes with width is the layout, and there
    are two layouts:
 
-     >=1340   one row, tabs labelled             needs 1328px (failed login)
-     390-1339 two rows, tabs on their own strip   fits from 390px
+     >=920    one row, tabs labelled             needs 915px (failed login)
+     390-919  two rows, tabs on their own strip   fits from 390px
      <390     the same, without the wordmark      fits from 320px
 
    There used to be a third band — 960 to 1239, one row with the tab labels
@@ -2701,14 +2882,18 @@ body.term-classic #termMode .ico-out { display: block; }
    Measured by tests/manual/measure-topbar.mjs across the three states the
    bar can be in (running, paused, a failed login) — none is a superset of
    the others, and the two trouble states are the ones that put a second
-   chip in the row. Below 1340 they simply take a third line rather than
+   chip in the row. Below 920 they simply take a third line rather than
    costing anyone their tab labels.
 
-   The number moved from 1240 when the Proposals tab arrived: a seventh
-   tab is ~90px of row, and the one-row shape stopped fitting the two
-   trouble states at 1240 and at 1280. It is taken from what the measure
-   reports — 1302px paused, 1328px on a failed login — and not guessed,
-   which is the whole reason that script exists. */
+   The number moved from 1240 when the Proposals tab arrived, to 1340 when
+   the To-do tab did, and to 1430 for the eighth: a tab is ~90px of row, and
+   each time the one-row shape stopped fitting the two trouble states at the
+   old number. It came DOWN to 920 when the eight became four groups (Home,
+   Ask, House, Help) with the panes on a strip of their own under the bar —
+   measured at 903 paused and 915 on a failed login, and taken from what the
+   measure reports rather than guessed, which is the whole reason that script
+   exists. Adding a fifth tab will move it again, and the measure is what
+   says where to. */
 
 /* Nothing in the bar may shrink; only the spacer flexes. A shrinking chip
    compresses its own nowrap text and reads as a rendering glitch rather than
@@ -2717,7 +2902,7 @@ body.term-classic #termMode .ico-out { display: block; }
 .topbar > * { flex: none; }
 .topbar .spacer { flex: 1; min-width: 0; }
 
-@media (max-width: 1339px) {
+@media (max-width: 919px) {
   /* The two-row bar. One row cannot hold five thumb-sized targets and a
      labelled status pill at 320px — and dropping the labels to make it fit
      is what made the bar unreadable on the only device where hovering isn't
@@ -2825,7 +3010,7 @@ body.term-classic #termMode .ico-out { display: block; }
    it there is no such pressure, so the tab is typeset like the rest of the
    panel instead of like a phone's tab bar. The shape does not change; only
    the type does. */
-@media (min-width: 600px) and (max-width: 1339px) {
+@media (min-width: 600px) and (max-width: 919px) {
   :root { --bar-h: 109px; }
   .viewtab { height: 56px; font-size: 0.8rem; gap: 4px; }
   .viewtab .ico { width: 22px; height: 22px; }
@@ -2864,8 +3049,59 @@ body.term-classic #termMode .ico-out { display: block; }
 .findside { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .findscore { color: var(--ink-3); font-size: 12.5px; margin: -8px 0 14px; line-height: 1.5; }
 .findscore b { color: var(--ink-2); font-weight: 500; }
+/* The two presses on those lines sit inline with the sentence they are
+   about; a little air so a row of them does not read as one word. */
+.findscore .btn.tiny { margin-left: 8px; vertical-align: baseline; }
+.findmuted { margin-top: -6px; }
+/* Whose sentence "What you'd need to do" is. Muted because it qualifies the
+   instruction rather than being one, and inline because the instruction is
+   what the line is for. */
+.findfixby { color: var(--ink-3); font-size: 12px; }
+/* The optional box under a reason: one line, a real control, no smaller
+   than the note above it so a thumb can find it. */
+.findnotecheck { display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  font-size: 13px; color: var(--ink-2); min-height: 28px; cursor: pointer; }
+.findnotecheck input { width: 18px; height: 18px; margin: 0; }
 
 .findlist { display: grid; gap: 14px; }
+
+/* Adding something to the to-do list. One row, and it wraps rather than
+   shrinking: a text box squeezed to a sliver beside a button is the design
+   bar's own failure, and a wrap is something a measure can see. The input
+   takes the 16px floor from the `pointer: coarse` block like every other
+   text control — it must not set its own, or it beats that rule on
+   specificity and iOS zooms the panel inside the ingress iframe. */
+.todoadd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+.todoadd input {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  /* `font-family: inherit`, never `font: inherit`. The 16px touch floor is
+     a bare `input[type="text"]` selector in the first `pointer: coarse`
+     block, and any class-qualified rule outranks it — so the shorthand
+     quietly pulls this box back to the panel's 15px and iOS zooms the
+     ingress iframe in on focus and never back out. Already written down
+     one control over (`.propnote textarea`), and `measure-todo` is what
+     caught it here rather than a phone. */
+  font-family: inherit;
+}
+.todoadd input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--hairline));
+}
+/* A finished chore reads as finished without relying on colour alone: the
+   words on the row already say "done <when>", and this only reinforces it. */
+.finding.st-done { opacity: 0.72; }
+.finding.st-done .findtitle { text-decoration: line-through; }
 
 .findempty {
   color: var(--ink-3);
@@ -2952,6 +3188,37 @@ body.term-classic #termMode .ico-out { display: block; }
 .findchanged { margin: 8px 0 0; padding-left: 18px; }
 .findchanged li { margin: 3px 0; }
 
+/* The plan: what a read-only run says it WOULD change, sitting above the
+   Apply that would let it. It takes the accent border rather than the
+   plain surface the proposed fix does, because this is the one block on
+   the card that somebody is about to consent to. */
+.findplan {
+  margin-top: 11px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border-left: 3px solid var(--accent);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.findplanlabel {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.findplan p { margin: 0 0 7px; }
+.findplan p:last-child { margin-bottom: 0; }
+.findsteps { margin: 8px 0 7px; padding-left: 20px; }
+.findsteps li { margin: 4px 0; }
+/* Not a colour alone: the sentence opens with "What could go wrong", so
+   the shade only reinforces what the words already say. */
+.findrisk { color: var(--warning); }
+.findfixfoot { margin: 8px 0 0; font-size: 12px; color: var(--ink-3); }
+
 .findactions {
   display: flex;
   gap: 9px;
@@ -2969,6 +3236,67 @@ body.term-classic #termMode .ico-out { display: block; }
   background: color-mix(in srgb, var(--accent) 5%, var(--surface));
 }
 .finding.hypo .findsev { color: var(--accent); }
+
+/* ------------------------------------------------------------------ cases
+   One card per case over the four stores. The left edge is still SEVERITY,
+   because that is what sorts the feed and what the notifier keys on; what
+   the pill carries is the KIND, which is the different thing a person does
+   about it. Both are words as well as colours — the pill is read at 11px,
+   and status by colour alone is what the design system forbids. */
+.casekind {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  letter-spacing: 0.5px;
+}
+.casekind.ck-problem { color: var(--serious); }
+.casekind.ck-opportunity { color: var(--accent); }
+.casekind.ck-question { color: var(--accent); }
+.casekind.ck-change { color: var(--good); }
+/* How sure, and how much it matters — in words. Quieter than the pill
+   because it qualifies the claim rather than naming what it is. */
+.casecert { color: var(--ink-3); font-weight: 600; opacity: 0.8;
+  text-transform: none; letter-spacing: 0.2px; }
+
+/* What was actually READ, and what Do it would do. Both are lists rather
+   than paragraphs: they are the halves that make a claim checkable and a
+   press predictable, and a reader scans them rather than reading them. */
+.caseev, .caseacts {
+  margin-top: 11px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.caseevlist, .caseactlist { margin: 6px 0 0; padding: 0; list-style: none;
+  display: grid; gap: 5px; }
+.caseevlist li, .caseactlist li {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline;
+  min-width: 0;
+}
+.caseevent { font-size: 12px; color: var(--ink-2); word-break: break-word; }
+.caseevval { color: var(--ink-1); }
+.caseevwhen, .caseactdetail { color: var(--ink-3); font-size: 12px; }
+.caseactlabel { color: var(--ink-1); }
+/* What consent an action needs, said in words beside it: a list of things
+   that could happen to a house, where "asks you first" and "no consent
+   needed" are the whole difference, is not a list to distinguish by tint. */
+.caseactconsent {
+  flex: none;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px;
+  text-transform: uppercase; color: var(--ink-3);
+}
+/* The Resident's line, under the list it produced. */
+.findfoot {
+  margin: 16px 2px 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+  max-width: 70ch;
+}
 
 /* The reason box, in place of the card's buttons. It sits inside the card
    it is about — you are correcting something, and the thing being corrected
@@ -3184,37 +3512,106 @@ body.term-classic #termMode .ico-out { display: block; }
 .actnav { display: flex; align-items: center; gap: 10px; }
 .actrange { color: var(--ink-2); font-size: 13px; white-space: nowrap; }
 
-.actoverrides {
+/* When the house was empty. Above the list rather than in it, because it
+   is the context every row below is read in — the same reason the
+   overrides block it replaced sat there, for a fact that is a good deal
+   more useful than a count of them. */
+.actaway {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
   border: 1px solid var(--hairline);
-  border-left: 3px solid var(--warning);
+  border-left: 3px solid var(--ink-3);
   border-radius: 10px;
-  padding: 12px 14px;
-  margin-bottom: 16px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
   font-size: 13.5px;
   color: var(--ink-2);
-  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
 }
-.actoverrides h3 { margin: 0 0 6px; font-size: 14px; color: var(--ink-1); }
-.actoverrides b { color: var(--ink-1); font-weight: 600; }
-
-.actlist { display: grid; gap: 2px; }
-
-.acthour {
-  color: var(--ink-3);
-  font-size: 12px;
+.actawaylabel {
+  font-size: 11.5px;
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
-  padding: 16px 4px 6px;
+  color: var(--ink-3);
 }
 
-/* A row is a button because tapping it does something. 44px is the touch
-   floor, and it is set here rather than on a media query because a row
-   people miss is a row they stop tapping on any pointer. */
-.actrow {
+/* The press that spends, and the paragraph it buys. */
+.actask { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.actaskerr { color: var(--warning); font-size: 13px; }
+.actsum {
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.actsum p { margin: 0; font-size: 14.5px; line-height: 1.65; }
+.actsumfoot {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-top: 10px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+/* `minmax(0, 1fr)` and not the implicit `auto`: an auto grid column is
+   sized to its content's MIN-content, so one row whose cause and time
+   refuse to wrap makes the whole column wider than the page — measured at
+   390px as 1.45px of sideways scroll, which is invisible to read and
+   exactly what the measure is for. */
+.actlist { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+
+/* One section per kind of thing a house is made of. The heading and the
+   sentence under it are what make a row legible without its neighbours:
+   "9×" means something under Cameras & motion and nothing on its own. */
+.actsec { margin: 0 0 22px; min-width: 0; }
+.actsechead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 0 4px 2px;
+  border-bottom: 1px solid var(--hairline);
+}
+.actsechead h3 { margin: 0; font-size: 15px; }
+.actseccount {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.actsecblurb {
+  margin: 6px 4px 8px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.5;
+  max-width: 64ch;
+}
+
+.actfoot {
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.6;
+  padding: 4px 4px 0;
+  border-top: 1px solid var(--hairline);
+  max-width: 68ch;
+}
+
+/* The row WRAPS rather than shrinking, which is what makes the fit binary
+   and what keeps the cause on screen: a row that solved a narrow width by
+   ellipsising the name of the automation that did something would be
+   deleting the whole point of the row. `.what` is the flexible one and
+   everything else takes its own content, so what gives way at 390px is
+   the line and never a fact. */
+.actrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
   width: 100%;
   min-height: 44px;
   padding: 6px 10px;
@@ -3227,51 +3624,63 @@ body.term-classic #termMode .ico-out { display: block; }
   cursor: pointer;
 }
 .actrow:hover { background: var(--surface-2); }
-.actrow .t {
-  color: var(--ink-3);
-  font-size: 12.5px;
-  font-variant-numeric: tabular-nums;
-  flex: none;
-  width: 52px;
-}
-.actrow .who {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: none;
-  background: var(--ink-3);
-}
 .actrow .what {
-  flex: 1 1 auto;
+  flex: 1 1 180px;
   min-width: 0;
   font-size: 13.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
 }
 .actrow .what b { font-weight: 600; }
-.actrow .st { color: var(--ink-2); }
-.actrow .cause {
+.actrow .st { color: var(--ink-2); font-size: 12.5px; }
+/* When it happened is the second question and it is tabular, because a
+   column of times somebody is scanning down has to line up. */
+.actrow .when {
   flex: none;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.actrow .cause {
+  flex: 0 1 auto;
+  min-width: 0;
   color: var(--ink-3);
   font-size: 12.5px;
-  max-width: 34%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* The cause's own colour, on the dot and nowhere else. Six causes is more
-   than a palette can carry as text colour without the list turning into
-   confetti. */
-.actrow[data-cause="brain"] .who { background: var(--accent); }
-.actrow[data-cause="automation"] .who { background: #46b06a; }
-.actrow[data-cause="script"] .who { background: #46b06a; }
-.actrow[data-cause="scene"] .who { background: #46b06a; }
-.actrow[data-cause="voice"] .who { background: #a071e0; }
-.actrow[data-cause="person"] .who { background: var(--warning); }
+/* A person putting back what an automation had just done. It is on the ROW
+   now rather than in a block above the list: a count of "somebody put
+   things back 4×" is not something anybody can act on, where *this* row
+   being the one they undid is. */
+.actundid {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--warning);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* The cause's own colour, on the left edge and nowhere else. Six causes is
+   more than a palette can carry as text colour without the list turning
+   into confetti — and the words are on the row either way, which is what
+   makes the colour reinforcement rather than the signal. */
+.actrow { border-left: 3px solid transparent; }
+.actrow[data-cause="brain"] { border-left-color: var(--accent); }
+.actrow[data-cause="automation"],
+.actrow[data-cause="script"],
+.actrow[data-cause="scene"] { border-left-color: #46b06a; }
+.actrow[data-cause="voice"] { border-left-color: #a071e0; }
+.actrow[data-cause="person"] { border-left-color: var(--warning); }
 
 .actwhy {
-  margin: 2px 0 10px 62px;
+  margin: 2px 0 10px 14px;
   padding: 10px 12px;
   border-left: 2px solid var(--hairline);
   color: var(--ink-2);
@@ -3558,6 +3967,40 @@ body.term-classic #termMode .ico-out { display: block; }
    press and takes nothing back. */
 .finding.settled { border-left-color: var(--hairline); }
 .findsaid { margin: 6px 0 0; color: var(--ink-2); font-size: 13px; }
+
+/* What looked at a finding before it reached the tab, and the way into the
+   conversation that did. A held card is drawn quieter than a live one --
+   these are problems brAIn is saying you do NOT have -- but the state is
+   carried by the words on it ("Not shown", "brAIn checked", "Not checked
+   first"), never by the colour alone, which the design system forbids and
+   which matters most on a row read at 13px. */
+.finding.held { border-left-color: var(--hairline); opacity: 0.92; }
+.findtriage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.findtriagelabel {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-3, var(--ink-2));
+}
+.findtriage.unchecked .findtriagelabel { color: var(--warning); }
+.findlede {
+  margin: 0 0 14px;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.5;
+  max-width: 62ch;
+}
 
 /* ------------------------------------------------------------ proposals
    The fifth kind of knowledge, and the only list here that is not about
@@ -3865,6 +4308,44 @@ body.term-classic #termMode .ico-out { display: block; }
   .prob .probpick, .prob .probdel, .probbtns .btn { min-height: 44px; }
   .prob .probdel { min-width: 44px; }
   .prob .probcheck { width: 22px; height: 22px; }
+  /* ⚙ sections: the ? that carries the long version of a hint. Every one of
+     them, whether it sits beside a label or at the end of the sentence it
+     shortened — a floor one of them held and the other did not would be the
+     inconsistency rather than the fix, and the one inside a paragraph is the
+     only copy of that prose on a phone, where there is no hover to find it
+     with. It costs the line it is on its height, which is what a thumb-sized
+     control in a 12.5px paragraph costs. Scoped rather than raised on
+     `.btn.icon` globally, for the reason the blocks above give — and the
+     in-a-paragraph selector is repeated rather than left to the first,
+     because the rule it has to beat is class-qualified one level deeper and
+     order does not settle an unequal specificity. */
+  .edit-body .btn.icon.tiny,
+  .edit-body .hint .btn.icon.tiny { width: 44px; height: 44px; font-size: 14px; }
+  /* The 16px text floor at the top of this file is a bare `select` /
+     `input[type=…]` selector, and `.edit-body .selin` (and its siblings) are
+     class-qualified 13.5px rules that outrank it — so every dropdown and
+     number box in ⚙ zoomed an iPhone into the ingress iframe and left it
+     there, which is the exact failure that floor exists to prevent, reached
+     by the one route it cannot reach. Restated at a specificity that wins,
+     and scoped to this dialog rather than to `.edit-body`: this is a change
+     about the Settings dialog, and the other edit dialogs carrying the same
+     rules are a separate, real problem. */
+  #setModal .selin,
+  #setModal input[type="number"],
+  #setModal input[type="text"],
+  #setModal textarea { font-size: 16px; }
+  /* A filter chip is how you reach a view at all, and at 33px it was under
+     a thumb on every phone. Raised on the CLASS rather than on the Findings
+     tab's strip, because the To-do tab renders the same control and a floor
+     one of them held and the other did not would be the inconsistency
+     rather than the fix — which is the argument the blocks around this one
+     make for staying scoped, applied to a control two tabs share. */
+  .fchip { min-height: 40px; }
+  /* A resolution settles a finding — a decision somebody makes on purpose,
+     in answer to a conversation they have just read, and the row carries
+     two lines of text inside the press target. Scoped like the blocks
+     above rather than raised globally, for the reason they give. */
+  .chatres .cresopt { min-height: 44px; }
   /* The first-run flow. Every press here is a decision made once and lived
      with: where brAIn may reach you, whether it may wake the house, which
      cards exist at all. Scoped like the four blocks above rather than
@@ -3876,6 +4357,14 @@ body.term-classic #termMode .ico-out { display: block; }
   /* The one control on the Knowledge tab that asks brAIn for a Claude run,
      on the card it would rewrite. */
   .kcard .foot .btn { min-height: 44px; padding-inline: 14px; }
+  /* The To-do tab's add form: the whole of "put something on the list
+     yourself", and the one press on that tab somebody makes on purpose
+     rather than in answer to a card. Scoped like the five blocks above
+     rather than raised globally, for the reason they give — the rest of
+     the panel's card buttons are a separate, real problem, and the rows
+     on this tab are the Findings tab's own row of six. */
+  .todoadd input, .todoadd .btn { min-height: 44px; }
+  .todoadd .btn { padding-inline: 14px; }
 }
 /* The reason box replaces the buttons INSIDE the card, so what you are
    explaining stays on screen while you write about it. */
@@ -3934,3 +4423,30 @@ body.term-classic #termMode .ico-out { display: block; }
   font-size: 16px; line-height: 1.4; white-space: pre-wrap;
 }
 @media (min-width: 640px) { #editPromptText { font-size: 13px; } }
+
+/* The feed's own controls, on touch. The panel's floor is scoped per
+   control on purpose — `.findactions .btn` is deliberately not raised for
+   the Findings tab's older rows, which that file says in as many words is a
+   separate and real problem — so this raises the ones the Home feed adds
+   and nothing else. Three endings and a ⋯ is what somebody presses on a
+   phone every day, and a 32px target under a thumb is the one failure a
+   measure can see and reading cannot.
+
+   Last in the file, after the 16px text floor at the top: that block is
+   split on and read FIRST by `test_no_form_control_can_trigger_the_ios_zoom_trap`,
+   and a coarse block above it moves that test onto rules that were never
+   about zooming. */
+@media (pointer: coarse) {
+  .finding.case .findactions .btn { min-height: 44px; }
+  .finding.case .findactions .btn.icon { min-width: 44px; }
+}
+
+/* The facts list's two controls: ✕ forgets a fact from every future prompt
+   and "See the run" opens the conversation that learned it. Scoped like the
+   Home feed's block above and for its reason — the rest of the panel's
+   icon buttons are a separate, real problem — and after it, because the
+   first `pointer: coarse` block in this file has to stay the text floor. */
+@media (pointer: coarse) {
+  .kfact .btn.icon { min-height: 44px; min-width: 44px; }
+  .kfact .kfactrun { min-height: 44px; padding-inline: 14px; }
+}

@@ -260,6 +260,25 @@ JINJA
         return 1
     }
 
+    # What voice may see (assist_exposure: exposed, the default): the map is
+    # filtered to what Home Assistant exposes to Assist, through the one
+    # module the worker pool and the MCP server read. An exposure that
+    # cannot be read EMPTIES the map, with the reason in the log — fail
+    # closed, and `assist_exposure: all` is the switch that lifts it.
+    if [ "${BRAIN_ASSIST_EXPOSURE:-exposed}" != "all" ]; then
+        local filtered
+        if filtered=$(printf '%s\n' "$rendered" | python3 \
+                "${BRAIN_SCRIPTS_DIR:-/opt/scripts}/brain_exposed.py" filter \
+                "$CACHE_DIR/exposed_entities.json" \
+                2>> "$LOG_DIR/assist-$(date +%Y%m%d).log"); then
+            rendered="$filtered"
+        else
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] AREA-MAP emptied: Home Assistant's exposure settings could not be read (assist_exposure: all lifts the gate)" \
+                >> "$LOG_DIR/assist-$(date +%Y%m%d).log"
+            rendered=""
+        fi
+    fi
+
     # Truncate oversized maps on a line boundary (a cut-off entity_id would
     # be worse than a missing area) and make the truncation visible.
     if [ "${#rendered}" -gt "$AREA_MAP_MAX_BYTES" ]; then
@@ -402,6 +421,17 @@ log_response_debug() {
 #   output_file, stderr_file, final_system_prompt, model_flag
 # Args: $1=process timeout (s), $2=session spec ("resume:<id>", "new:<id>",
 #       or "" for legacy stateless), $3=user message
+# "1" while voice is gated to what Home Assistant exposes to Assist; the MCP
+# server launched for the turn reads it (BRAIN_EXPOSED_ONLY) and refuses to
+# read or act on anything else. Matches the pool's EXPOSED_ONLY.
+exposed_only_flag() {
+    if [ "${BRAIN_ASSIST_EXPOSURE:-exposed}" = "all" ]; then
+        echo 0
+    else
+        echo 1
+    fi
+}
+
 invoke_claude() {
     local limit="$1" session_spec="$2" message="$3"
     local session_args=()
@@ -422,7 +452,8 @@ invoke_claude() {
     # BRAIN_DENIED_SERVICES is inherited by the MCP server subprocess and
     # enforced in call_service (covers every control_* tool).
     # shellcheck disable=SC2086
-    (cd /config && printf '%s' "$message" | BRAIN_DENIED_SERVICES="${DENIED_SERVICES_CSV:-}" timeout "$limit" \
+    (cd /config && printf '%s' "$message" | BRAIN_DENIED_SERVICES="${DENIED_SERVICES_CSV:-}" \
+        BRAIN_EXPOSED_ONLY="$(exposed_only_flag)" timeout "$limit" \
         ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" \
         --system-prompt "$final_system_prompt" \
         "${session_args[@]}" "${scope_args[@]}" \
@@ -445,6 +476,7 @@ land_claude() {
     # with it.
     # shellcheck disable=SC2086
     if (cd /config && BRAIN_DENIED_SERVICES="${DENIED_SERVICES_CSV:-}" \
+        BRAIN_EXPOSED_ONLY="$(exposed_only_flag)" \
         brain_land "$sid" "$limit" "$stderr_file" -- \
         ${CLAUDE_BIN} -p --verbose \
         --system-prompt "$final_system_prompt" \
@@ -612,8 +644,13 @@ USER: ${stamped_text}"
     fi
 
     # Build model flag (each conversation agent can specify its own model)
+    # A conversation agent that names no model takes the plan's tier for
+    # voice (`BRAIN_MODEL_VOICE`, off panel/model_plan.py via /data/.brain_env).
+    if [ -z "$model" ] || [ "$model" = "default" ]; then
+        model="${BRAIN_MODEL_VOICE:-}"
+    fi
     local model_flag=""
-    if [ -n "$model" ] && [ "$model" != "default" ]; then
+    if [ -n "$model" ]; then
         model_flag="--model $model"
     fi
 

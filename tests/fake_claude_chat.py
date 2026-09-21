@@ -39,6 +39,14 @@ Behaviour switches via env:
                                    them is answered with an error result,
                                    which is the failure this fixture exists
                                    to reproduce
+                  resolutions      answer, and end the turn by calling the
+                                   MCP server's offer_resolutions — which is
+                                   how Claude offers the ways a finding could
+                                   end. The panel reads the CALL off this
+                                   stream, so this is the only fixture that
+                                   can prove the card is drawn from a real
+                                   one. FAKE_CHAT_RESOLUTIONS overrides the
+                                   options it offers, as JSON.
                   oddcontrol       send a control_request of a subtype the
                                    panel has never heard of before answering,
                                    and only proceed once it gets a
@@ -295,6 +303,30 @@ for line in sys.stdin:
         # registry is that this one keeps writing.
         time.sleep(float(os.environ.get("FAKE_CHAT_DELAY", "1.5")))
         finish_turn(text)
+        continue
+    if mode == "resolutions":
+        # A finding discussion's last act: say what is going on, then offer
+        # the endings as a tool call. The tool answers "offered" and changes
+        # nothing — the panel has already seen the call go past.
+        options = json.loads(os.environ.get("FAKE_CHAT_RESOLUTIONS") or "null")
+        if options is None:
+            options = [{"label": "Replaced the CR2032", "kind": "done"},
+                       {"label": "Replace the CR2032 in the garage sensor",
+                        "kind": "todo"},
+                       {"label": "That cupboard is never opened",
+                        "kind": "wrong"}]
+        emit({"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "The cell is at 5% and falling."},
+            {"type": "tool_use", "id": "toolu_res",
+             "name": "mcp__home-assistant__offer_resolutions",
+             "input": {"options": options}},
+        ], "usage": {"input_tokens": 900, "output_tokens": 30}}})
+        emit({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_res",
+             "content": [{"type": "text", "text": '{"status": "offered"}'}]},
+        ]}})
+        emit({"type": "result", "subtype": "success", "is_error": False,
+              "result": "Offered.", "duration_ms": 12, "num_turns": 1})
         continue
     if mode == "permission":
         # Ask before touching the tool, the way the real CLI does when

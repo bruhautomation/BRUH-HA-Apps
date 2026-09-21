@@ -9,6 +9,7 @@ than reconstructed from it.
 | --- | --- |
 | [brain-checks-and-self-tests.html](brain-checks-and-self-tests.html) | Deterministic house checks (findings that cost nothing), the in-situ self-test, and the feedback loop: run journal, diagnostics bundle, producer scorecard, corpus and replay. |
 | [brain-capability-map.html](brain-capability-map.html) | About a hundred capabilities in sixteen themes that would make brAIn proactive rather than a reporter, with the platform enablers most of them stand on and a ranked top twelve. |
+| [brain-ai-first.md](brain-ai-first.md) | The AI-first analysis and plan (grounded in 1.61.0): what brAIn is today by the numbers, the capability gaps, fifteen concrete bugs, the Resident agent and Cases architecture, model discipline (Haiku looks, Sonnet thinks, Opus acts, Fable is a press), what to remove, and a five-phase roadmap with acceptance tests. |
 
 **The pages are the design as intended; the tables below are what shipped.**
 Where the two disagree, the code is what shipped and the page is what was
@@ -67,12 +68,12 @@ Every check id the page names, and every surface it proposes.
 | `brain doctor --rehearse` (`panel/rehearsal.py`) | shipped | 1.47.0 |
 | Capture (`panel/capture.py`, off by default) | shipped | 1.47.0 |
 | Corpus and replay (`tests/corpus/`) | shipped | 1.47.0 |
-| Shadow mode (`panel/shadow_findings.py`, `checks.SHADOW` ships empty) | shipped | 1.47.0 |
+| Shadow mode (`panel/shadow_findings.py`; `checks.SHADOW` shipped empty until `sys.update_pending` entered it in 1.61.0) | shipped | 1.47.0 |
 | One report per problem, written when it happens (`panel/reports.py`) | shipped — not on the page: everything it proposed was pull-shaped, and the failure that matters is the one nobody went looking for | 1.48.0 |
 | `health_degraded` in HA's Repairs | shipped | 1.48.0 |
-| `brain.check` as a Home Assistant **service** | proposed — the CLI `brain check` and the Findings tab's button both exist | — |
-| `button.brain_run_checks` | proposed | — |
-| Repairs mirroring (`findings_to_repairs`) | proposed — 1.48.0 raises one Repairs entry for the health verdict, which is not the same thing as mirroring the findings list | — |
+| `brain.check` as a Home Assistant **service** | shipped — rides the findings request queue, so an ending given in the same breath is applied before the pass | 1.61.0 |
+| `button.brain_run_checks` | shipped — presses `brain.check` from the brAIn System device | 1.61.0 |
+| Repairs mirroring (`findings.FindingsWatcher.sync_issues`) | shipped — one issue per finding waiting on a person (`open`/`needs_you`/`failed`, never `info`), reconciled on every poll, with the tab's own endings as the fix flow | 1.61.0 |
 | Daily canary automation | proposed | — |
 | `brain.why` as a service | proposed — the context-chain walk exists as the `explain_change` tool and as the Activity tab | — |
 | `evaluate_condition` read tool ("rehearse an automation") | proposed — the shadow runner replays *triggers* over history, which is a different question | — |
@@ -113,8 +114,8 @@ The ranked twelve is **complete**. Each row below is what closed it.
 | House model | **partial** | 1.48.0 | `panel/house.py` is a **progress-and-summary surface over the stores that already exist** — every measurement answers `progress()` in one shape, aggregated behind `GET /api/knowledge/house`, drilled down per store, and read by Claude through `get_house_model`. It is **not** the page's `/config/.brain/house.json`: nothing writes a house document, and the seven measurements remain the record. |
 | Shadow runner | **partial** | 1.42.0 | The history half only: `shadow.replay` answers "when would this have fired over a window the recorder holds". There is no live-event shadow, and none is needed for a trial — but "what would it do next" is still unanswered. |
 | Policy engine | **partial** | 1.29.0 | `protected_entities` is the whole of it. There is no rule language, no per-face policy beyond `assist_tool_access`, and no policy surface. |
-| Notification router | **partial** | 1.33.0 → 1.48.0 | Quiet hours, urgency per producer, a hold queue, and buttons on a message about exactly one finding. 1.48.0 adds the **report** router beside it (`panel/reports.py`): a failure writes one file rather than a message. Still no per-person routing, no escalation, and no digest across producers. |
-| HA-native surfaces | **partial** | 1.38.0 | `todo.brain`, the notification buttons, `sensor.brain_health`, Download diagnostics, and one Repairs entry. No `brain.check` service, no `button.brain_run_checks`, no findings mirrored as repairs. |
+| Notification router | **partial** | 1.33.0 → 1.48.0 | Quiet hours, urgency per producer, a hold queue, and buttons on a message about exactly one finding. 1.48.0 adds the **report** router beside it (`panel/reports.py`): a failure writes one file rather than a message. 1.61.0 adds **escalation**, for `critical` rows from a `now` producer only: a 1h/4h/12h ladder that stops when the row is answered, and a default floor of `critical` so everything else stays on the tab. Still no per-person routing and no digest across producers — a digest cannot carry the answer buttons. |
+| HA-native surfaces | shipped | 1.38.0 → 1.61.0 | `todo.brain`, the notification buttons, `sensor.brain_health`, Download diagnostics, the health Repairs entry — and from 1.61.0 the findings mirrored as Repairs, `brain.check` and `button.brain_run_checks`. |
 | Vision | **not building** | — | Camera snapshots are a read tool; nothing interprets an image, and nothing on the roadmap should. |
 
 ### Also shipped, and not from the ranked twelve

@@ -155,6 +155,36 @@
         }
       }
     },
+    "run_task": {
+      "name": "Run task",
+      "description": "Run a Claude task with optional completion notification.",
+      "fields": {
+        "prompt": {
+          "name": "Prompt",
+          "description": "The task prompt for Claude."
+        },
+        "model": {
+          "name": "Model",
+          "description": "Claude model override (default, sonnet, opus, haiku)."
+        },
+        "notify": {
+          "name": "Notify on completion",
+          "description": "Send a persistent notification when the task completes."
+        },
+        "notify_entity": {
+          "name": "Notification entity",
+          "description": "The notify entity to use (e.g. notify.mobile_app_phone)."
+        },
+        "timeout": {
+          "name": "Timeout",
+          "description": "Maximum seconds to wait for the task to complete (default 120)."
+        },
+        "tools": {
+          "name": "Tools",
+          "description": "What this task is allowed to touch. full (default) keeps today's behaviour: the shell, file edits, web access and every Home Assistant tool. house drops the shell, file edits and the web and leaves every Home Assistant tool. read_only is the same list the scheduled analyst runs with \u2014 it can look at anything and change nothing."
+        }
+      }
+    },
     "create_area": {
       "name": "Create area",
       "description": "Create a new area. Returns the new area_id as response data.",
@@ -1165,6 +1195,28 @@
         }
       }
     },
+    "ask": {
+      "name": "Ask a question",
+      "description": "Ask brAIn something about the house and get the answer back as service response data — as text, and as a JSON object when you hand it the shape you want. Read-only tools by default.",
+      "fields": {
+        "question": {
+          "name": "Question",
+          "description": "What to ask — for example \"Which rooms are below 18 °C right now?\"."
+        },
+        "schema": {
+          "name": "Answer shape",
+          "description": "A JSON Schema the answer must fit, as an object or a JSON string. The validated object comes back as `data`."
+        },
+        "tools": {
+          "name": "Tools",
+          "description": "`read_only` (default), `house` (every Home Assistant tool, including control) or `full` (the shell and file editing too)."
+        },
+        "timeout": {
+          "name": "Timeout",
+          "description": "Seconds to wait for the answer (10–600)."
+        }
+      }
+    },
     "intent": {
       "name": "Do this once",
       "description": "Say one thing you want to happen next time. brAIn works out the automation and offers it on the Proposals tab; it runs once and disarms itself.",
@@ -1174,6 +1226,10 @@
           "description": "What should happen, and when — for example \"Turn the porch light off when the guests leave\"."
         }
       }
+    },
+    "check": {
+      "name": "Run house checks",
+      "description": "Ask brAIn to run its house checks now rather than waiting for the next scheduled pass. Returns immediately — a pass takes a minute or two, and what it finds arrives on the Findings tab."
     }
   },
   "issues": {
@@ -1202,6 +1258,32 @@
     "health_degraded": {
       "title": "brAIn hit a problem",
       "description": "{reason} A report is ready under ⚙ → Problems in the brAIn panel."
+    },
+    "finding": {
+      "title": "brAIn: {text}",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "brAIn found a problem",
+            "description": "**{text}**\n\n{detail}\n\n**What you'd need to do:** {fix}\n\nReported by {source_title}. Answering here is the same as answering on the brAIn panel's Findings tab — brAIn records what you say and stops raising it.",
+            "menu_options": {
+              "fixed": "I've fixed it",
+              "wrong": "Not a problem here",
+              "snooze": "Remind me tomorrow"
+            }
+          },
+          "wrong": {
+            "title": "Not a problem here",
+            "description": "**{text}**\n\nIf you say why, brAIn records it as a correction and stops making the same mistake in new words. Leaving it blank is fine.",
+            "data": {
+              "note": "Why is this not a problem? (optional)"
+            }
+          }
+        },
+        "abort": {
+          "cannot_write": "brAIn could not record your answer — the shared folder under /config/.brain could not be written to. The problem is still on the list; try again, or answer it on the brAIn panel's Findings tab."
+        }
+      }
     }
   }
 }
