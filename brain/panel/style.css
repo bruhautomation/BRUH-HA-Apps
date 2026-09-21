@@ -3174,8 +3174,13 @@ body.term-classic #termMode .ico-out { display: block; }
   font-size: 13px;
   color: var(--ink-2);
 }
-.findfix { display: flex; gap: 9px; align-items: baseline; }
+/* The label is a heading and the sentence under it is a sentence, so they
+   stack. They used to sit on one baseline, which is what made the label
+   read as a prefix to a `fix` that is already a capitalised imperative. */
+.findfix { display: grid; gap: 3px; }
 .findfixlabel {
+  /* A no-op in `.findfix`'s grid and in the block `.caseev`/`.caseacts`,
+     and kept so the span still behaves if it is ever put back in a row. */
   flex: none;
   font-size: 10.5px;
   font-weight: 700;

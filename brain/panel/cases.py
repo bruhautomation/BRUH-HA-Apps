@@ -326,14 +326,22 @@ def _base(store: str, key, *, kind: str, claim: str, detail: str,
         "memory_hint": "",
         "investigation": None,
         "ended": None,
-        # The four the four stores hold that a feed cannot render without.
+        # The five the four stores hold that a feed cannot render without.
         # `severity` is what the notifier already keys on and what sorts
-        # the feed; `entity_id` is what a card links to; `fix` is "What
-        # you'd need to do", which is the one sentence a person acts on;
-        # `snoozed_until` is what lets the card say when it comes back.
+        # the feed; `entity_id` is what a card links to; `fix` is the one
+        # sentence a person acts on; `fixable` says WHOSE sentence it is,
+        # and the card has nothing else to head it with; `snoozed_until`
+        # is what lets the card say when it comes back.
         "severity": "warning",
         "entity_id": "",
         "fix": "",
+        # Before this key existed the feed headed every `fix` "You'd need
+        # to" — so a row brAIn could act on told somebody to do it by hand
+        # while the same card's ⋯ offered to work the change out. False
+        # is the safe default rather than merely the common one: a card
+        # that says brAIn would do it, on a store where no press will, is
+        # a promise nothing can keep.
+        "fixable": False,
         "snoozed_until": 0,
     }
 
@@ -370,6 +378,12 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
         "severity": row.get("severity") or "warning",
         "entity_id": row.get("entity_id") or "",
         "fix": row.get("fix") or "",
+        # The store's own rule, not a second reading of it: absent means
+        # fixable and only an explicit false means hands are required, so
+        # a row written before the key existed keeps the answer
+        # `findings_store` would give it. `_base` defaults the other way
+        # because no other store makes that promise.
+        "fixable": row.get("fixable", True) is not False,
         "evidence": list(row.get("evidence") or []),
         "actions": list(row.get("actions") or []),
         "memory_hint": row.get("memory_hint") or "",

@@ -691,3 +691,58 @@ class TestEveryOtherRowIsUnchanged(StoresCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Whose fix it is
+# ---------------------------------------------------------------------------
+
+class TestWhoseFixItIs(StoresCase):
+    """`fixable` reaches the feed, because the card has nothing else.
+
+    The feed headed every `fix` sentence "You'd need to" — a single
+    hardcoded string — so a row brAIn could act on told somebody to do it
+    by hand while the same card's ⋯ offered to work the change out. The
+    heading is chosen from this key and from nothing else, so a case that
+    does not carry it cannot be rendered honestly.
+    """
+
+    def test_a_fixable_finding_says_so_on_its_case(self):
+        self.file_problem(text="The porch automation is switched off",
+                          fix="Turn it back on.", fixable=True)
+        row = next(c for c in cases.list_cases()
+                   if c["claim"].startswith("The porch"))
+        self.assertTrue(row["fixable"])
+
+    def test_a_hands_required_finding_says_so_too(self):
+        self.file_problem(text="The hall sensor battery is flat",
+                          fix="Replace the CR2032.", fixable=False)
+        row = next(c for c in cases.list_cases()
+                   if c["claim"].startswith("The hall sensor battery"))
+        self.assertFalse(row["fixable"])
+
+    def test_absent_reads_as_fixable_which_is_the_stores_own_rule(self):
+        """`findings_store` documents absent as fixable; cases may not
+        answer the same question differently, or a row written before the
+        key existed changes meaning on its way to the screen."""
+        row = self.file_problem(text="Something without the key")
+        self.assertTrue(findings_store.coerce(dict(row)).get("fixable", True))
+        case = next(c for c in cases.list_cases()
+                    if c["claim"] == "Something without the key")
+        self.assertTrue(case["fixable"])
+
+    def test_every_case_carries_the_key_whatever_store_it_came_from(self):
+        """A card that reads `undefined` picks the wrong heading silently."""
+        self.one_of_each()
+        rows = cases.list_cases()
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertIn("fixable", row, row.get("claim"))
+            self.assertIsInstance(row["fixable"], bool)
+
+    def test_a_chore_is_never_brains_to_do(self):
+        """A to-do item is work somebody accepted. Whatever the finding it
+        came from said, the person is the one doing it now."""
+        self.file_chore()
+        row = next(c for c in cases.list_cases() if c["kind"] == "chore")
+        self.assertFalse(row["fixable"])

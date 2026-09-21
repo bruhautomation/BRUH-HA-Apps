@@ -4052,6 +4052,20 @@ async function discussFinding(f, btns) {
   }
 }
 
+// The fix sentence's heading, and the whole of what it says is who does
+// the work — which is the question somebody reads a card to answer.
+//
+// It is a HEADING and used to be a sentence PREFIX ("You'd need to",
+// "brAIn would"), which is the awkwardness this replaced: every `fix` a
+// check writes is already a capitalised imperative, so the card rendered
+// "YOU'D NEED TO  Turn it back on, or delete it if it is not coming
+// back." — two subjects, one of them shouting. `.findfixlabel` has been
+// styled as a heading all along (uppercase, letter-spaced, bold), so the
+// words and the styling were saying different things about the same span.
+function fixHeading(fixable) {
+  return fixable ? "How brAIn would fix it" : "How you'd fix it";
+}
+
 // What a read-only run said it WOULD change, before it has changed
 // anything. The steps are the half a person is consenting to, so they are
 // rendered as a list rather than folded into a paragraph, and the risk
@@ -4242,8 +4256,7 @@ function makeFinding(f) {
     card.appendChild(box);
   } else if (f.fix) {
     const box = el("div", "findfix");
-    box.appendChild(el("span", "findfixlabel", f.fixable
-      ? "brAIn would" : "You'd need to"));
+    box.appendChild(el("span", "findfixlabel", fixHeading(f.fixable)));
     const text = el("span", null, f.fix);
     // Whose sentence it is. The rule's own is the default and says
     // nothing; one the look wrote, or one a conversation reached, says
@@ -4332,11 +4345,27 @@ function makeFinding(f) {
       findAction(f, "reopen", "Back on the list", btns));
   } else {
     if (f.fixable) {
+      // What this press BUYS is a read-only plan, and for two releases
+      // the tooltip promised to "make the change in Home Assistant" and
+      // the toast said brAIn was making it — while `h_finding_fix`
+      // queues the plan run and the change waits for Apply. The route
+      // was changed and the words pressed to reach it were not, which is
+      // the whole of "it says Fix it but it is not clear what that does".
+      //
+      // The NAME stays. "Fix it" is what DOCS.md, `FIND_STATUS`, the two
+      // fixer prompts and the ⋯ menu all call this flow, and the flow
+      // really is the fix — Apply is a step inside it, not a separate
+      // feature. Renaming one button would leave six other places
+      // describing something the panel no longer offers. What was wrong
+      // was never the verb but the claim that it had already happened,
+      // and the heading directly above it now says whose fix it is.
       const fix = add(el("button", "btn small primary",
         f.status === "failed" ? "✦  Try again" : "✦  Fix it"));
-      tip(fix, "Let brAIn make the change in Home Assistant, then report back");
+      tip(fix, "brAIn works out exactly what it would change and shows you "
+        + "the steps. Nothing in your house changes until you press Apply.");
       fix.addEventListener("click", () => findAction(
-        f, "fix", "On it — brAIn is making the change", btns));
+        f, "fix", "Working out what it would change — nothing has changed yet",
+        btns));
     }
     // "Is this still true?" — the one press on this card that says nothing
     // about the house, and the reason it exists is that a check reads one
@@ -4852,7 +4881,7 @@ function makeCase(row) {
 
   if (row.fix) {
     const box = el("div", "findfix");
-    box.appendChild(el("span", "findfixlabel", "You'd need to"));
+    box.appendChild(el("span", "findfixlabel", fixHeading(row.fixable)));
     const text = el("span", null, row.fix);
     if (row.fix_by === "triage" || row.fix_by === "resident") {
       text.appendChild(el("span", "findfixby", " — written after looking"));
@@ -4863,12 +4892,20 @@ function makeCase(row) {
     card.appendChild(box);
   }
 
-  // What could be done, and what consent each one needs. Rendered as a list
-  // and never as buttons: the press that performs any of them is *Do it*,
-  // and a second control beside it would be two ways to say yes.
+  // What could be done, and what consent each one needs. Rendered as a
+  // list and never as buttons: a second control beside *Do it* would be
+  // two ways to say yes.
+  //
+  // The heading is "What could be done" and not "What Do it would do",
+  // which is what it said and which was only true on some cards: *Do it*
+  // means a different thing per kind — it writes the change on an
+  // `opportunity`, and on a `problem` it moves the row onto your to-do
+  // list and performs nothing. A heading that named the button therefore
+  // promised, on the commonest kind of card there is, that pressing it
+  // would carry out the list underneath it.
   if ((row.actions || []).length) {
     const box = el("div", "caseacts");
-    box.appendChild(el("span", "findfixlabel", "What Do it would do"));
+    box.appendChild(el("span", "findfixlabel", "What could be done"));
     const list = el("ul", "caseactlist");
     row.actions.slice(0, 6).forEach((act) => {
       const li = el("li", null);
@@ -5173,7 +5210,7 @@ function makeTodo(item) {
   if (item.entity_id) card.appendChild(el("code", "findentity", item.entity_id));
   if (item.fix) {
     const box = el("div", "findfix");
-    box.appendChild(el("span", "findfixlabel", "You'd need to"));
+    box.appendChild(el("span", "findfixlabel", fixHeading(false)));
     box.appendChild(el("span", null, item.fix));
     card.appendChild(box);
   }
