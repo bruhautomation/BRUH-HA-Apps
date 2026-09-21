@@ -137,6 +137,14 @@ jobs:
       - name: Measure the To-do tab
         run: node tests/manual/measure-todo.mjs
 
+      # An idea is a proposal to spend a run every refresh interval for
+      # ever, so what the card says before you tick it IS the feature: the
+      # evidence from this house, and the question it would answer. And an
+      # empty page has three meanings — nobody has asked, the last look
+      # failed, brAIn had nothing to add — of which only one is a fault.
+      - name: Measure the Ideas tab
+        run: node tests/manual/measure-ideas.mjs
+
       - name: Measure the resolutions card
         run: node tests/manual/measure-chatres.mjs
 

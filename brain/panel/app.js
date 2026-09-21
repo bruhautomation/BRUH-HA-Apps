@@ -5122,6 +5122,206 @@ function updateTodoBadge(n) {
   badge.classList.toggle("hidden", !n);
 }
 
+// ---------------------------------------------------------------------------
+// Ideas — proposed cards, on their own page
+// ---------------------------------------------------------------------------
+// The separation from Insights is the whole design and not a layout
+// choice: an idea costs nothing until it is taken, where a card costs a
+// run every refresh interval for ever. So this page can afford to offer
+// eight things nobody wants, and the Insights tab cannot.
+
+const ideasState = { ideas: [], running: false, lastRun: 0, lastError: "",
+                     lastCount: 0, runs: 0, open: 0 };
+
+function takeIdeas(data) {
+  if (!data) return;
+  ideasState.ideas = data.ideas || [];
+  ideasState.running = !!data.running;
+  ideasState.lastRun = data.last_run || 0;
+  ideasState.lastError = data.last_error || "";
+  ideasState.lastCount = data.last_count || 0;
+  ideasState.runs = data.runs || 0;
+  ideasState.open = data.open || 0;
+  updateIdeasBadge(ideasState.open);
+}
+
+function updateIdeasBadge(n) {
+  const badge = $("#ideasBadge");
+  if (!badge) return;
+  badge.textContent = n ? String(n) : "";
+  badge.classList.toggle("hidden", !n);
+}
+
+async function refreshIdeas() {
+  try {
+    takeIdeas(await api("api/ideas"));
+  } catch (err) {
+    console.warn("could not load the ideas", err);
+  }
+}
+
+// A pass is minutes of work, so the page polls while one is in flight and
+// stops the moment it is not — `h_ideas_run` starts the run and does not
+// await it, so this is the only thing that will notice it finished.
+let ideasPoll = null;
+
+function ideasWatch() {
+  if (ideasPoll) return;
+  ideasPoll = setInterval(async () => {
+    await refreshIdeas();
+    renderIdeas();
+    if (!ideasState.running) { clearInterval(ideasPoll); ideasPoll = null; }
+  }, 4000);
+}
+
+async function ideasRun(btn) {
+  if (btn) btn.disabled = true;
+  try {
+    takeIdeas(await api("api/ideas/run", { method: "POST" }));
+    renderIdeas();
+    ideasWatch();
+  } catch (err) {
+    toast(err.message || "that didn't work");
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function ideaAction(idea, verb, message, btns) {
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    const data = await api(`api/idea/${idea.id}/${verb}`, { method: "POST" });
+    takeIdeas(data);
+    renderIdeas();
+    // Accepting made a card, so the tab that draws cards is now stale.
+    if (verb === "accept") {
+      refreshInsights().then(render).catch(() => {});
+    }
+    toast(message);
+  } catch (err) {
+    btns.forEach((b) => { b.disabled = false; });
+    toast(err.message || "that didn't work");
+  }
+}
+
+// One idea. Three things and then two presses: what it would be called,
+// why THIS house, and the question it would answer every run. The last is
+// the one that says whether it is worth having — a title tells you the
+// subject and only the question tells you what would arrive.
+function makeIdea(idea) {
+  const card = el("div", "finding idea");
+  // `findmeta` and not a class of its own: every card in the panel uses
+  // it for this row, and it is what supplies the gap and the caps. The
+  // first cut invented `findline`, which matches no rule in the
+  // stylesheet, so the pill and the date rendered as one run-on word.
+  const line = el("div", "findmeta");
+  line.appendChild(el("span", "findstate", `${idea.icon || "✨"} idea`));
+  if (idea.added_at) {
+    line.appendChild(el("span", "findchecked",
+      "suggested " + timeAgo(new Date(idea.added_at * 1000).toISOString())));
+  }
+  card.appendChild(line);
+  card.appendChild(el("h3", "findtitle", idea.title || ""));
+
+  if (idea.why) {
+    const box = el("div", "findfix");
+    box.appendChild(el("span", "findfixlabel", "Why this house"));
+    box.appendChild(el("span", null, idea.why));
+    card.appendChild(box);
+  }
+  if (idea.question) {
+    const box = el("div", "findfix");
+    box.appendChild(el("span", "findfixlabel", "What it would answer"));
+    box.appendChild(el("span", null, idea.question));
+    card.appendChild(box);
+  }
+
+  const actions = el("div", "findactions");
+  const btns = [];
+  const add = (node) => { btns.push(node); actions.appendChild(node); return node; };
+
+  const take = add(el("button", "btn small primary", "✓  Add this card"));
+  tip(take, "Put it on the Insights tab. It generates on the ordinary "
+    + "schedule from then on, and you can edit or delete it like any card.");
+  take.addEventListener("click", () => ideaAction(
+    idea, "accept", "Added — it's on Insights now", btns));
+
+  const no = add(el("button", "btn small ghost", "✕  Not for this house"));
+  tip(no, "Take it off the list. brAIn won't suggest it again.");
+  no.addEventListener("click", () => ideaAction(
+    idea, "dismiss", "Won't suggest that again", btns));
+
+  card.appendChild(actions);
+  return card;
+}
+
+// What the page says when there is nothing on it, which is three
+// different things: nobody has asked yet, the last run failed, or brAIn
+// looked and had nothing to add. Only the second is a fault, and the
+// third is a good answer about a well-covered house — rendering them the
+// same way is what teaches somebody to press the button again.
+function ideasEmptyText() {
+  if (ideasState.running) return "";
+  if (!ideasState.runs) {
+    return "brAIn hasn't looked for ideas yet. Press Suggest ideas, or wait "
+      + "for the weekly pass — it reads what it has learned and measured "
+      + "about this house, and proposes cards worth adding.";
+  }
+  if (ideasState.lastError) {
+    return `The last look didn't finish: ${ideasState.lastError}. `
+      + "Nothing was lost — press Suggest ideas to try again.";
+  }
+  return "Nothing new to suggest. brAIn looked and reckons this house is "
+    + "already well covered; it'll look again next week, or now if you press "
+    + "Suggest ideas.";
+}
+
+function renderIdeas() {
+  const list = $("#ideasList");
+  if (!list) return;
+  const btn = $("#ideasRun");
+  if (btn) {
+    btn.disabled = ideasState.running;
+    btn.textContent = ideasState.running
+      ? "✨  Looking…" : "✨  Suggest ideas";
+  }
+
+  const note = $("#ideasNote");
+  if (note) {
+    // The in-flight sentence is on the page and not only in the button,
+    // because a run is minutes long and a greyed-out button is the same
+    // thing a failed one looks like.
+    const words = ideasState.running
+      ? "Reading what it knows about your house… this takes a few "
+        + "minutes, and you can leave the page."
+      : "";
+    note.textContent = words;
+    note.hidden = !words;
+  }
+
+  list.textContent = "";
+  if (!ideasState.ideas.length) {
+    const words = ideasEmptyText();
+    if (words) list.appendChild(el("p", "findempty", words));
+  } else {
+    ideasState.ideas.forEach((i) => list.appendChild(makeIdea(i)));
+  }
+
+  const foot = $("#ideasFoot");
+  if (foot) {
+    const bits = [];
+    if (ideasState.lastRun) {
+      bits.push("Last looked "
+        + timeAgo(new Date(ideasState.lastRun * 1000).toISOString()));
+    }
+    if (ideasState.runs) {
+      bits.push(`${ideasState.lastCount} proposed that time`);
+    }
+    bits.push("brAIn looks again once a week");
+    foot.textContent = bits.join(" · ") + ".";
+    foot.hidden = false;
+  }
+}
+
 async function refreshTodo() {
   try {
     takeTodo(await api("api/todo"));
@@ -8565,6 +8765,16 @@ function switchView(name) {
   // Rendered from what we have, then again once the fetch lands — Findings'
   // own shape, so opening the tab is never a blank frame.
   if (name === "todo") { renderTodo(); refreshTodo().then(renderTodo); }
+  // Same shape: draw what we have, then again once the fetch lands, so
+  // opening the tab is never a blank frame. And pick the poll back up if
+  // a pass started before you navigated away — a run outlives the page.
+  if (name === "ideas") {
+    renderIdeas();
+    refreshIdeas().then(() => {
+      renderIdeas();
+      if (ideasState.running) ideasWatch();
+    });
+  }
   if (name === "memory") renderKnowledge();
   if (name === "docs") renderDocs();
   // Re-fetched on every entry rather than kept: the window ends "now", and
@@ -8593,6 +8803,8 @@ syncTabs(currentView);
 // Add one by hand. Nothing here is required beyond the sentence: a to-do
 // list that made you pick a severity before it would take a note is a form,
 // and the whole point of this one is that it takes what brAIn cannot see.
+$("#ideasRun").addEventListener("click", (ev) => ideasRun(ev.currentTarget));
+
 $("#todoAdd").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const input = $("#todoText");

@@ -108,6 +108,7 @@
 <nav id="subtabs" class="subtabs" role="tablist" aria-label="Sections" hidden>
   <button class="subtab" data-view="findings" data-group="home" role="tab">Home</button>
   <button class="subtab" data-view="insights" data-group="home" role="tab">Insights</button>
+  <button class="subtab" data-view="ideas" data-group="home" role="tab">Ideas <span id="ideasBadge" class="badge hidden"></span></button>
   <button class="subtab" data-view="todo" data-group="home" role="tab">To-do <span id="todoBadge" class="badge hidden"></span></button>
   <button class="subtab" data-view="proposals" data-group="home" role="tab">Proposals <span id="propBadge" class="badge hidden"></span></button>
   <button class="subtab" data-view="terminal" data-group="ask" role="tab">Chat</button>
@@ -424,6 +425,26 @@
      nothing on this list is a decision — it is a chore with the evidence
      still attached to it. The card that raised it is gone, which is why
      every word of it was copied here when it moved. -->
+<div id="viewIdeas" class="view">
+  <section class="findwrap">
+    <div class="findhead">
+      <div>
+        <h2>Ideas for new cards</h2>
+        <p class="sub">Cards brAIn thinks this house is missing, with what it
+          found that made it think so. Nothing here is generating anything —
+          an idea costs nothing until you take it, and taking one puts a new
+          card on Insights. Say no and it won't be suggested again.</p>
+      </div>
+      <div class="findside">
+        <button id="ideasRun" class="btn small primary">✨&nbsp; Suggest ideas</button>
+      </div>
+    </div>
+    <div id="ideasNote" class="ideasnote" hidden></div>
+    <div id="ideasList" class="findlist"></div>
+    <p id="ideasFoot" class="findfoot" hidden></p>
+  </section>
+</div>
+
 <div id="viewTodo" class="view">
   <section class="findwrap">
     <div class="findhead">

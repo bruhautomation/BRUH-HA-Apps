@@ -163,6 +163,7 @@ import health
 import house
 import habit_lookup
 import hypotheses
+import ideas
 import authoring
 import intents
 import journal
@@ -3613,6 +3614,19 @@ async def _scheduler() -> None:
             continue
         budget_logged = False
         _set_gate(None)
+        # The weekly top-up, past every gate above on purpose: proposing
+        # cards for a house whose insights are switched off, whose
+        # account is not connected or whose budget is spent is the rule
+        # this loop already keeps for every other scheduled run. The
+        # press skips the budget and this does not — "automatic
+        # insights pause; asking by hand always runs" is one promise with
+        # two halves, and `h_ideas_run` is the other.
+        try:
+            if ideas.due() and _start_ideas():
+                log.info("ideas: weekly top-up started")
+        except Exception as exc:  # noqa: BLE001 — a top-up must never
+            # take the refresh loop down with it.
+            log.debug("ideas top-up did not start: %s", exc)
         cards = {i["id"]: i for i in load_insights()}
         now = time.time()
         mode = eff_refresh_mode()
@@ -10976,6 +10990,169 @@ async def h_onboarding_accept(request: web.Request) -> web.Response:
                               "shipped": prompt_store.load_overrides()["accepted"]})
 
 
+# ---------------------------------------------------------------------------
+# Ideas — proposed cards, on their own page
+# ---------------------------------------------------------------------------
+# The run is STARTED and never awaited (`h_baselines_run`'s clock): it is
+# a reasoning turn with tools over a whole house, which is minutes of
+# work and far longer than ingress will hold a request open. The outcome
+# is read back off `GET /api/ideas`, which is a small payload rather than
+# the whole page of prose the run produced.
+
+IDEAS_STATE = {"running": False, "starting": False, "started_at": 0.0}
+
+
+def _measured_block() -> str:
+    """What brAIn has measured, as lines a prompt can act on.
+
+    `house.snapshot` is the one derivation of "is this measurement ready"
+    and this reads it rather than asking the seven stores again — two
+    answers to that question is the drift `house.py` exists to end. What
+    the run needs from it is narrow: a store that is ready can carry a
+    card, and one that is not cannot, so the sentence each store already
+    writes about itself is exactly the right amount.
+    """
+    snap = house.snapshot()
+    lines = []
+    for name in house.STORES:
+        row = (snap.get("stores") or {}).get(name) or {}
+        state = row.get("state") or "unknown"
+        says = row.get("summary") or row.get("reason") or ""
+        lines.append(f"- {name}: {state}" + (f" — {says}" if says else ""))
+    return "\n".join(lines)
+
+
+def _ideas_payload() -> dict:
+    """What the page renders, plus whether a pass is in flight."""
+    return {**ideas.state(),
+            "running": bool(IDEAS_STATE["running"] or IDEAS_STATE["starting"]),
+            "due": ideas.due()}
+
+
+async def _run_ideas() -> None:
+    """One pass: the map, the memory, the measurements, then one turn.
+
+    Every failure lands in `last_error` and the stamp is written either
+    way, because a pass that failed must not leave the weekly schedule
+    re-running it on the next tick for ever — `record_run`'s reason.
+    """
+    import ha_data  # noqa: PLC0415 — deferred, as everywhere else here
+
+    filed = 0
+    error = ""
+    try:
+        memory = await asyncio.to_thread(_read_shared_memory)
+        have = [c.get("title") or "" for c in all_categories()]
+        try:
+            orientation = await ha_data.collect_orientation(question=None)
+        except Exception as exc:  # noqa: BLE001 — a map that could not be
+            # collected is a thinner prompt, not a failed pass.
+            log.warning("ideas: could not collect the map (%s)", exc)
+            orientation = None
+        try:
+            measured = _measured_block()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ideas: could not read the measurements (%s)", exc)
+            measured = ""
+
+        result = await asyncio.to_thread(
+            engine.run_analyst,
+            ideas.build_prompt(memory, orientation, have, measured),
+            ideas.system_prompt(), eff_model(),
+            TIMEOUT_S, ANALYST_MAX_TURNS, "card", job="ideas")
+        _record_usage(result, "ideas")
+        if not result or not result.get("ok"):
+            error = (result or {}).get("error") or "the ideas run failed"
+        else:
+            try:
+                parsed = ideas.parse(result.get("text") or "")
+            except ValueError as exc:
+                # A reply that did not parse is a failed pass and not a
+                # quiet house: the two look identical on the page unless
+                # this says which.
+                error = f"the reply did not parse ({exc})"
+            else:
+                outcome = await asyncio.to_thread(
+                    ideas.add_many, parsed["ideas"],
+                    run_id=result.get("session_id") or "")
+                filed = len(outcome["filed"])
+                if outcome["full"]:
+                    log.info("ideas: %d proposed past the page cap",
+                             outcome["full"])
+    except Exception as exc:  # noqa: BLE001 — a pass that took the panel
+        # down with it would be worse than one that reported itself.
+        log.warning("ideas: the pass failed (%s)", exc, exc_info=True)
+        error = str(exc)[:200]
+    finally:
+        await asyncio.to_thread(ideas.record_run, filed, error=error)
+        IDEAS_STATE["running"] = False
+        IDEAS_STATE["starting"] = False
+
+
+def _start_ideas() -> bool:
+    """Claim the pass. The flag flips SYNCHRONOUSLY, `start_auth_check`'s
+    rule: `create_task` only schedules, so two presses in one tick would
+    both pass a guard reading a flag neither task has set yet."""
+    if IDEAS_STATE["running"] or IDEAS_STATE["starting"]:
+        return False
+    IDEAS_STATE["starting"] = True
+    IDEAS_STATE["started_at"] = time.time()
+
+    async def go() -> None:
+        IDEAS_STATE["running"] = True
+        IDEAS_STATE["starting"] = False
+        await _run_ideas()
+
+    try:
+        asyncio.create_task(go())
+    except RuntimeError:
+        # No running loop. Unreachable from the two real callers (a
+        # request handler and the scheduler are both inside one) and
+        # released anyway: a claim that outlives the spawn it was made
+        # for is a button that never works again, which is the failure
+        # every guard in this file is written against.
+        IDEAS_STATE["starting"] = False
+        raise
+    return True
+
+
+async def h_ideas(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_ideas_payload))
+
+
+async def h_ideas_run(request: web.Request) -> web.Response:
+    """Ask for ideas now. Deliberately skips the usage budget.
+
+    "Automatic insights pause; asking by hand always runs" is one promise
+    with two halves, and this is the second — `curiosity`'s pressed
+    route makes the same call for the same reason.
+    """
+    if not engine.get_auth():
+        raise web.HTTPBadRequest(text="connect your Claude account first")
+    if not _start_ideas():
+        raise web.HTTPConflict(text="already looking for ideas")
+    return web.json_response(await asyncio.to_thread(_ideas_payload))
+
+
+async def h_idea_accept(request: web.Request) -> web.Response:
+    """Turn one idea into a card on the Insights tab."""
+    idea_id = request.match_info.get("idea_id")
+    created = await asyncio.to_thread(ideas.accept, idea_id)
+    if not created:
+        raise web.HTTPConflict(
+            text="that idea is not open, or the card could not be created")
+    payload = await asyncio.to_thread(_ideas_payload)
+    return web.json_response({**payload, "created": created})
+
+
+async def h_idea_dismiss(request: web.Request) -> web.Response:
+    """Not for this house. It is not offered again."""
+    idea_id = request.match_info.get("idea_id")
+    if not await asyncio.to_thread(ideas.dismiss, idea_id):
+        raise web.HTTPConflict(text="that idea is not open")
+    return web.json_response(await asyncio.to_thread(_ideas_payload))
+
+
 async def h_onboarding_skip(request: web.Request) -> web.Response:
     await asyncio.to_thread(onboarding.skip)
     return web.json_response({"onboarded": True})
@@ -12736,6 +12913,10 @@ def make_app() -> web.Application:
     app.router.add_post("/api/onboarding/accept", h_onboarding_accept)
     app.router.add_post("/api/onboarding/skip", h_onboarding_skip)
     app.router.add_post("/api/onboarding/reset", h_onboarding_reset)
+    app.router.add_get("/api/ideas", h_ideas)
+    app.router.add_post("/api/ideas/run", h_ideas_run)
+    app.router.add_post("/api/idea/{idea_id}/accept", h_idea_accept)
+    app.router.add_post("/api/idea/{idea_id}/dismiss", h_idea_dismiss)
     app.router.add_get("/api/knowledge", h_knowledge)
     app.router.add_get("/api/facts", h_facts)
     app.router.add_post("/api/fact/{id}/forget", h_fact_forget)

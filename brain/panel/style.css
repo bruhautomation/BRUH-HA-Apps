@@ -3303,6 +3303,26 @@ body.term-classic #termMode .ico-out { display: block; }
   max-width: 70ch;
 }
 
+/* Ideas. The in-flight sentence is on the PAGE and not only in the button:
+   a pass is minutes long, and a greyed-out button looks exactly like a
+   failed one. It carries the accent edge because it is something that is
+   happening rather than something that is wrong. */
+.ideasnote {
+  margin: 14px 0 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface-2);
+  font-size: 13px;
+  color: var(--ink-2);
+  max-width: 70ch;
+}
+/* An idea is a proposal and not a problem, so it takes the neutral edge
+   rather than a severity colour — `.finding`'s own default, restated here
+   because every card on this page would otherwise read as `info` grey by
+   accident rather than on purpose. */
+.finding.idea { border-left-color: var(--accent); }
+
 /* The reason box, in place of the card's buttons. It sits inside the card
    it is about — you are correcting something, and the thing being corrected
    has to stay readable while you type about it. */

@@ -2,6 +2,63 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.4.0
+
+**Ideas, on a page of their own — and cards that say whose fix it is.**
+
+### Ideas: the cards brAIn thinks this house is missing
+
+Onboarding studies a home once and proposes a card set, and that was the
+only moment brAIn ever offered an idea of its own. Everything after it was
+yours to think of. So a house that has since grown a solar array, a heat
+pump and four months of history went on generating whatever was chosen in
+its first twenty minutes.
+
+**Home → Ideas** is a page of proposals, separate from Insights on purpose:
+an idea costs nothing until you take it, where a card costs a run every
+refresh interval for ever. That split is what lets the page be generous.
+
+Each idea says three things — what the card would be called, **why this
+house** (the rooms, meters and numbers it actually found), and **what it
+would answer** every run. Take one and it becomes an ordinary card on
+Insights; say "not for this house" and it is never suggested again.
+
+- **Press "Suggest ideas"** whenever you want one now. It skips the usage
+  budget, the same promise every by-hand run makes.
+- **A weekly pass** tops the page up on its own, past every gate the
+  scheduler already keeps (insights off, no credential, paused, budget
+  spent).
+- Nothing is proposed twice: a card this home already has, however it came
+  to have one, and every idea already answered are both consulted on every
+  pass.
+- An empty page says **which** silence it is — nobody has asked yet, the
+  last look failed, or brAIn looked and had nothing to add. Only the middle
+  one is a fault.
+
+### Cards say whose fix it is
+
+The fix block on a finding was headed "You'd need to" or "brAIn would" —
+words that only work as the start of the sentence under them, set in a
+style that reads as a heading. Every `fix` a check writes is already a
+capitalised imperative, so a card rendered *YOU'D NEED TO  Turn it back
+on…*: two subjects, one of them shouting.
+
+- The heading is now **How brAIn would fix it** or **How you'd fix it**,
+  and it sits above its sentence rather than in front of it.
+- The Home feed could not tell the two apart at all — it said "You'd need
+  to" on every card, including ones brAIn could act on. It carries the
+  answer now.
+- **"What Do it would do"** is **"What could be done"**. *Do it* means a
+  different thing per card — it writes the change on a suggestion, and on a
+  problem it moves the row to your to-do list and performs nothing — so a
+  heading naming the button promised, on the commonest kind of card there
+  is, that pressing it would carry out the list underneath.
+- **Fix it stopped claiming it had already fixed it.** The press has bought
+  a read-only plan since the plan step landed, and its tooltip still said it
+  would "make the change in Home Assistant" while the toast said brAIn was
+  making it. The name stays — Apply is a step inside that flow — and what
+  changed is the claim that it had already happened.
+
 ## 2.3.0
 
 **Talk, and four tabs: a rule in a sentence that is simulated before it is
