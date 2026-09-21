@@ -33,6 +33,7 @@ import secrets
 import shlex
 import socket
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -166,9 +167,78 @@ POOL_STATUS_FILE = os.path.join(CACHE_DIR, "pool_status.json")
 TOOL_ACCESS = os.environ.get("BRAIN_ASSIST_TOOL_ACCESS", "mcp_only")
 ASSIST_SETTINGS_FILE = os.path.join(SHARED_DIR, "assist_settings.json")
 
+# What voice may see: `exposed` (the default) is what Home Assistant exposes
+# to Assist under Settings → Voice assistants, applied to the area map here
+# and to every read and act in the MCP server through `BRAIN_EXPOSED_ONLY`;
+# `all` is the whole house, which is what every release before 2.3 gave
+# voice whatever the person had un-exposed. The rule is one module,
+# `scripts/brain_exposed.py`, read by the map filter and the gate alike.
+EXPOSURE = os.environ.get("BRAIN_ASSIST_EXPOSURE", "exposed")
+EXPOSED_ONLY = EXPOSURE != "all"
+EXPOSED_CACHE_FILE = os.path.join(CACHE_DIR, "exposed_entities.json")
+
 # --include-partial-messages gives token-level deltas for streaming TTS.
 # Disabled automatically if the installed CLI predates the flag.
+#
+# **A flag turned off for the life of the process is a diagnosis nothing can
+# correct.** The only evidence there is that the CLI predates the flag is a
+# worker dying within a few seconds of being spawned with it — and a worker
+# dies within a few seconds for half a dozen other reasons: the image is
+# updating underneath us, the box is out of memory, the credential file is
+# being rewritten, `/config` is momentarily unreadable. Reading any one of
+# those as "this CLI does not know the flag" cost every voice answer its
+# token streaming until somebody restarted the add-on, and nothing on any
+# screen said so.
+#
+# An installed CLI that predates the flag fails EVERY time, so two in a row
+# is all the evidence a real one needs; and because even that can be wrong,
+# the answer has a clock on it — after the cooldown the next spawn carries
+# the flag again and a CLI that still cannot take it simply earns its two
+# deaths back. A worker that answers with the flag on clears the count,
+# because the deaths this counts are consecutive ones.
 PARTIAL_MESSAGES_OK = True
+PARTIAL_DISABLE_AFTER = int(os.environ.get("BRAIN_PARTIAL_DISABLE_AFTER", "2"))
+PARTIAL_RETRY_AFTER_S = float(os.environ.get("BRAIN_PARTIAL_RETRY_AFTER_S",
+                                             str(15 * 60)))
+# Consecutive early deaths of workers spawned WITH the flag, and the instant
+# the current disable lapses. Module state rather than pool state because
+# `Worker.__init__` builds the argv and does not have the pool.
+# One dict rather than two globals rebound under `global`: CHECKS_STATE's
+# idiom, because a static reader takes a rebind it cannot see read as an
+# unused variable, and two idioms for one kind of state is the drift.
+_PARTIAL = {"deaths": 0, "disabled_until": 0.0}
+_partial_lock = threading.Lock()
+
+
+def partial_messages_ok() -> bool:
+    """Whether the next worker should be spawned with the flag."""
+    if not PARTIAL_MESSAGES_OK:
+        return False              # switched off by hand, no clock on it
+    with _partial_lock:
+        return time.time() >= _PARTIAL["disabled_until"]
+
+
+def note_partial_early_death() -> bool:
+    """A worker spawned with the flag died at once. Returns: now disabled?"""
+    with _partial_lock:
+        _PARTIAL["deaths"] += 1
+        if _PARTIAL["deaths"] < PARTIAL_DISABLE_AFTER:
+            log(f"worker died at spawn ({_PARTIAL['deaths']} of "
+                f"{PARTIAL_DISABLE_AFTER}) — keeping "
+                "--include-partial-messages for now")
+            return False
+        _PARTIAL["deaths"] = 0
+        _PARTIAL["disabled_until"] = time.time() + PARTIAL_RETRY_AFTER_S
+        log(f"{PARTIAL_DISABLE_AFTER} workers died at spawn — dropping "
+            f"--include-partial-messages for {int(PARTIAL_RETRY_AFTER_S)}s")
+        return True
+
+
+def note_partial_ok() -> None:
+    """A worker spawned with the flag answered: the run of deaths is over."""
+    with _partial_lock:
+        _PARTIAL["deaths"] = 0
+
 
 # Last-used agent profile (custom prompt + model), persisted so the spare
 # can be pre-warmed right at startup instead of after the first request.
@@ -336,12 +406,46 @@ def refresh_area_map() -> bool:
             f"{AREA_MAP_MAX_BYTES} (some areas omitted)"
         ])
         rendered = _truncate_at_line(rendered, AREA_MAP_MAX_BYTES)
+    rendered = apply_exposure(rendered)
     os.makedirs(CACHE_DIR, exist_ok=True)
     tmp = AREA_MAP_FILE + ".tmp"
     with open(tmp, "w") as fh:
         fh.write(rendered)
     os.replace(tmp, AREA_MAP_FILE)
     return True
+
+
+def _exposure_module():
+    """`scripts/brain_exposed.py`, a sibling directory in the image and the repo."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, "..", "scripts")
+    if path not in sys.path:
+        sys.path.insert(0, path)
+    import brain_exposed  # noqa: PLC0415
+    return brain_exposed
+
+
+def apply_exposure(rendered: str) -> str:
+    """The map with every unexposed entity taken out, when the channel is gated.
+
+    A snapshot that could not be read EMPTIES the map and says so in the
+    log — fail closed, `brain_exposed`'s rule: a map of things the gate
+    will then refuse sends the model to try them, where an empty one sends
+    it to say it cannot see them, and `assist_exposure: all` is the switch.
+    """
+    if not EXPOSED_ONLY:
+        return rendered
+    try:
+        mod = _exposure_module()
+        snap = mod.load_or_refresh(mod._default_ws(), EXPOSED_CACHE_FILE)
+    except Exception as exc:  # noqa: BLE001 — unreadable is the None branch below
+        debug_log([f"[{{ts}}] EXPOSURE could not be read: {exc}"])
+        snap = None
+    if snap is None:
+        debug_log(["[{ts}] AREA-MAP emptied: Home Assistant's exposure settings "
+                   "could not be read (assist_exposure: all lifts the gate)"])
+        return ""
+    return mod.filter_map(rendered, snap)
 
 
 def _truncate_at_line(text: str, cap: int) -> str:
@@ -681,7 +785,11 @@ class Worker:
             "--max-turns", str(max(int(MAX_TURNS) * 10, 50)),
             "--system-prompt", system_prompt,
         ]
-        if PARTIAL_MESSAGES_OK:
+        # Recorded on the worker, because what matters afterwards is what
+        # THIS process was spawned with: a worker that died without the
+        # flag says nothing at all about the flag.
+        self.partial = partial_messages_ok()
+        if self.partial:
             cmd += ["--include-partial-messages"]
         cmd += scoping_args()
         if model and model != "default":
@@ -694,6 +802,7 @@ class Worker:
         # via claude's environment). Per-worker, so it is per-agent.
         env = dict(os.environ)
         env["BRAIN_DENIED_SERVICES"] = denied_csv
+        env["BRAIN_EXPOSED_ONLY"] = "1" if EXPOSED_ONLY else "0"
         self.proc = subprocess.Popen(
             cmd,
             cwd=WORK_DIR,
@@ -995,12 +1104,14 @@ class Pool:
                 with worker.lock:
                     response = worker.ask(message, deadline, delta_cb=delta_cb)
                 if response is None and not worker.alive() and \
-                        time.time() - worker.created < 5 and PARTIAL_MESSAGES_OK:
-                    # CLI likely predates --include-partial-messages: disable
-                    # it for future workers and let the fallback answer now.
-                    globals()["PARTIAL_MESSAGES_OK"] = False
-                    log("worker died at spawn — disabling --include-partial-messages")
+                        time.time() - worker.created < 5 and worker.partial:
+                    # CLI may predate --include-partial-messages — or this
+                    # may be one bad spawn. Counted rather than concluded
+                    # from; the fallback answers this request either way.
+                    note_partial_early_death()
                 if response is not None:
+                    if worker.partial:
+                        note_partial_ok()
                     worker.last_used = time.time()
                     self._store_session(conv_id, worker.session_id)
                     _record_exchange(worker, text, response)
@@ -1074,6 +1185,7 @@ class Pool:
             cmd += ["--model", model]
         env = dict(os.environ)
         env["BRAIN_DENIED_SERVICES"] = denied_csv
+        env["BRAIN_EXPOSED_ONLY"] = "1" if EXPOSED_ONLY else "0"
         # The stream path claims its session off the CLI's own events; this
         # path spawns fresh and has no events to read, so it claims a minted
         # id up front like the bash listener does — unclaimed, every

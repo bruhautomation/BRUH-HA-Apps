@@ -51,6 +51,15 @@ EVENT_INSIGHT_COMPLETE = "brain_insight_complete"
 # the findings list to FINDINGS_STATE_FILENAME on the shared volume; the
 # integration diffs it and fires one event per new row.
 EVENT_FINDING = "brain_finding"
+# 2.3's catalogue. A case is the one thing brAIn files, so an automation
+# listens for one vocabulary whatever produced it: `brain_case` when one
+# opens, `brain_case_ended` when it leaves the feed (answered, cleared or
+# fixed), `brain_change` when brAIn itself changed the house. `brain_finding`
+# stays, because automations written against it must keep working; it is
+# the same moment as `brain_case` for a finding.
+EVENT_CASE = "brain_case"
+EVENT_CASE_ENDED = "brain_case_ended"
+EVENT_CHANGE = "brain_change"
 # Dispatcher signal (entry_id appended) for pushing results to the sensor
 SIGNAL_INSIGHT_UPDATE = "brain_insight_update_{}"
 
@@ -78,6 +87,12 @@ QUESTIONS_FILE = "questions.jsonl"
 # Findings mirror the add-on republishes on every change (see the add-on's
 # findings_store._publish_state): {ts, open, by_severity, findings[]}.
 FINDINGS_STATE_FILENAME = "findings_state.json"
+
+# The to-do mirror, beside the findings one and published the same way.
+# A separate file rather than a key on that one because they are separate
+# stores with separate lifetimes — an item outlives the finding that
+# raised it, which is the whole reason the list exists.
+TODO_STATE_FILENAME = "todo_state.json"
 
 # Where an answer given outside the panel is dropped for the add-on to
 # pick up. The panel owns the findings store and is deliberately its only

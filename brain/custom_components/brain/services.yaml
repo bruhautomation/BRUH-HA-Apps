@@ -67,6 +67,20 @@ run_task:
           min: 10
           max: 600
           unit_of_measurement: seconds
+    tools:
+      name: Tools
+      description: 'What this task is allowed to touch. full (default) keeps today''s
+        behaviour: the shell, file edits, web access and every Home Assistant tool.
+        house drops the shell, file edits and the web and leaves every Home Assistant
+        tool. read_only is the same list the scheduled analyst runs with — it can look
+        at anything and change nothing.'
+      default: full
+      selector:
+        select:
+          options:
+          - full
+          - house
+          - read_only
 clear_conversation:
   name: Clear conversation
   description: Clear a persistent Claude conversation session. This resets the conversation history
@@ -103,6 +117,55 @@ study:
         is studied as a one-off.
       required: false
 
+ask:
+  name: Ask a question
+  description: >-
+    Ask brAIn something about the house and get the answer back as service response
+    data — as text, and as a JSON object when you hand it the shape you want. The run
+    has Home Assistant's read-only tools (states, history, statistics, registries, the
+    measurements) unless you ask for more, so an automation can ask "which rooms are
+    below 18 °C right now?" and branch on the list rather than on a sentence.
+  fields:
+    question:
+      name: Question
+      required: true
+      example: Which rooms are below 18 °C right now, and how far below?
+      selector:
+        text:
+          multiline: true
+    schema:
+      name: Answer shape
+      description: >-
+        A JSON Schema the answer must fit, as an object or as a JSON string. The
+        validated object comes back as `data`; without one you get text only.
+      required: false
+      example: '{"type": "object", "properties": {"rooms": {"type": "array", "items": {"type": "string"}}}, "required": ["rooms"]}'
+      selector:
+        object:
+    tools:
+      name: Tools
+      description: >-
+        What the run may touch. `read_only` (the default) is Home Assistant's read-only
+        tools; `house` adds every Home Assistant tool including control; `full` adds
+        the shell and file editing.
+      required: false
+      default: read_only
+      selector:
+        select:
+          options:
+            - read_only
+            - house
+            - full
+    timeout:
+      name: Timeout
+      description: Seconds to wait for the answer (10–600).
+      required: false
+      selector:
+        number:
+          min: 10
+          max: 600
+          unit_of_measurement: s
+
 intent:
   name: Do this once
   description: >-
@@ -125,6 +188,31 @@ intent:
       example: energy
       selector:
         text:
+
+add_todo:
+  name: Add to the to-do list
+  description: >-
+    Put something on brAIn's to-do list. The same list findings land on when you accept
+    one as real work, so a chore brAIn spotted and one you thought of yourself sit
+    together — on the To-do tab in the panel, and in Home Assistant's own To-do app.
+  fields:
+    text:
+      name: What needs doing
+      description: >-
+        One line. For example: "Replace the hallway smoke alarm battery" or "Re-pair the
+        bedroom blind". There is nothing else to fill in — brAIn does not ask for a
+        priority or a date it would have to guess at.
+      required: true
+      example: Replace the hallway smoke alarm battery
+
+check:
+  name: Run house checks
+  description: >-
+    Ask brAIn to run its house checks now rather than waiting for the next scheduled
+    pass. Returns immediately — a pass takes a minute or two, and what it finds arrives
+    on the Findings tab. Two calls a few seconds apart are one pass, and a call made
+    while a pass is already running is noted in the log rather than queued: a second
+    pass over the same house would find the same things.
 
 add_memory:
   name: Add memory fact

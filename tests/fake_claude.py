@@ -35,6 +35,8 @@ if log_path:
         fh.write(json.dumps(argv) + "\n")
         fh.write("ENV BRAIN_DENIED_SERVICES="
                  + os.environ.get("BRAIN_DENIED_SERVICES", "") + "\n")
+        fh.write("ENV BRAIN_EXPOSED_ONLY="
+                 + os.environ.get("BRAIN_EXPOSED_ONLY", "") + "\n")
 
 mode = os.environ.get("FAKE_MODE", "ok")
 

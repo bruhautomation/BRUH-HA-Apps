@@ -339,13 +339,10 @@ def test_consolidate_failure_leaves_files_untouched(tmp_path):
     assert not (memory_dir / "voice.md").exists()
     assert len(inbox_lines(memory_dir)) == 1  # still pending
 
-    # Oversized voice.md is also rejected
-    fake = write_fake_consolidation_claude(
-        tmp_path, FAKE_MERGED_MEMORY + "-----VOICE-----\n" + "x" * 4000 + "\n"
-    )
-    result = run_consolidator(memory_dir, fake)
-    assert result.returncode != 0
-    assert (memory_dir / "memory.md").read_text() == original
+    # An over-long voice.md used to be asserted here as a second failure of
+    # the same kind, and it is not one: a distillate over its budget is
+    # retried and then trimmed, because it is derived from the document
+    # rather than being it. See "The OTHER file a pass writes" below.
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +432,268 @@ def test_a_document_that_will_not_fit_names_the_setting_that_ends_it(tmp_path):
     assert "memory_max_kb" in result.stdout
     # Nothing was lost while it failed.
     assert (memory_dir / "memory.md").read_text() == original
+    assert len(inbox_lines(memory_dir)) == 1
+
+
+# ---------------------------------------------------------------------------
+# The OTHER file a pass writes
+# ---------------------------------------------------------------------------
+# A pass produces memory.md and voice.md, each with a cap, and from 1.18.0
+# until 1.52.1 only one of them was retried: an over-long voice.md hit
+# `return 1` on its first overshoot with no note fed back and no attempt
+# spent, so the daemon ran the identical prompt every five minutes forever.
+# The memory loop's own bug, left standing in its sibling — and worse in one
+# way, because MEMORY_MAX_KB is an add-on option the message could name
+# while VOICE_MAX_BYTES is a constant in the script, so the voice failure
+# named no remedy anybody could perform.
+
+
+def write_voice_size_claude(tmp_path: Path, first: str, later: str) -> Path:
+    """A claude whose answer changes once it is told what it overshot."""
+    script = tmp_path / "fake_voice_size_claude.sh"
+    script.write_text(
+        "#!/bin/bash\n"
+        "prompt=$(cat)\n"
+        'printf "%s\\n=====\\n" "$prompt" >> "$FAKE_PROMPT_LOG"\n'
+        'if printf "%s" "$prompt" | grep -q "PREVIOUS ATTEMPT WAS REJECTED"; then\n'
+        "cat << 'LATER'\n" + later + "LATER\n"
+        "else\n"
+        "cat << 'FIRST'\n" + first + "FIRST\n"
+        "fi\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
+def _oversize_voice(lines: int = 80) -> str:
+    """A distillate comfortably past the 2 KB ceiling, in whole bullets."""
+    return "".join(f"- nickname number {i} = light.lamp_{i}\n"
+                   for i in range(lines))
+
+
+def _memory_with(content_lines: int) -> str:
+    body = "".join(f"- fact number {i} about the house\n"
+                   for i in range(content_lines))
+    return ("# Home Memory\n\n## Preferences\n" + body
+            + "\n## Entity nicknames\n\n## Household patterns\n\n"
+              "## Device notes\n")
+
+
+def test_an_oversize_voice_distillate_is_retried_like_an_oversize_document(tmp_path):
+    """The gap, reproduced: this used to fail on the first overshoot.
+
+    One prompt, no note, the inbox left pending, and the same prompt again
+    five minutes later — with nothing in the add-on's configuration able to
+    change the answer.
+    """
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    (memory_dir / "memory.md").write_text("# Home Memory\n\n## Preferences\n")
+    prompt_log = tmp_path / "prompts.txt"
+
+    fake = write_voice_size_claude(
+        tmp_path,
+        FAKE_MERGED_MEMORY + "-----VOICE-----\n" + _oversize_voice(),
+        FAKE_MERGED_MEMORY + "-----VOICE-----\n" + FAKE_VOICE,
+    )
+    result = run_consolidator(
+        memory_dir, fake, FAKE_PROMPT_LOG=str(prompt_log),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "asking for a tighter pass" in result.stdout
+    # The second attempt landed: the queue drained and both files moved.
+    assert "'the beacon'" in (memory_dir / "memory.md").read_text()
+    assert len(inbox_lines(memory_dir)) == 0
+    assert len((memory_dir / "voice.md").read_text()) < 2048
+
+    # And the retry says what it overshot, in the voice file's own units —
+    # repeating the budget it had already been given would not be a
+    # second attempt.
+    prompts = prompt_log.read_text().split("=====")
+    assert "PREVIOUS ATTEMPT WAS REJECTED" not in prompts[0]
+    assert "bytes over the hard 2048 byte ceiling" in prompts[1]
+    # It asks for a shorter distillate and NOT for facts to be dropped: the
+    # document was never the thing over its budget.
+    assert "memory.md you produced" not in prompts[1]
+
+
+def test_a_distillate_that_will_not_shrink_is_trimmed_rather_than_refused(tmp_path):
+    """The attempts run out and the pass still files.
+
+    memory.md is the memory and an over-size one is refused whole, because
+    the facts it would lose are held nowhere else. voice.md is derived from
+    it and rewritten by every pass, so its tail costs a few nicknames until
+    the next one — where refusing costs the whole pipeline, for ever, with
+    no setting anybody can raise to end it.
+    """
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    (memory_dir / "memory.md").write_text("# Home Memory\n\n## Preferences\n")
+    prompt_log = tmp_path / "prompts.txt"
+
+    stubborn = FAKE_MERGED_MEMORY + "-----VOICE-----\n" + _oversize_voice()
+    fake = write_voice_size_claude(tmp_path, stubborn, stubborn)
+    result = run_consolidator(
+        memory_dir, fake, FAKE_PROMPT_LOG=str(prompt_log),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    # It gave up asking after the second try rather than looping.
+    assert prompt_log.read_text().count("=====") == 2
+    # The queue drained and the document is the merged one.
+    assert len(inbox_lines(memory_dir)) == 0
+    assert "'the beacon'" in (memory_dir / "memory.md").read_text()
+
+    voice = (memory_dir / "voice.md").read_text()
+    assert len(voice) <= 2048
+    # Whole bullets: half a line is a nickname that maps to nothing.
+    kept = voice.splitlines()
+    assert kept, voice
+    for line in kept:
+        assert line in _oversize_voice().splitlines(), line
+    assert len(kept) < len(_oversize_voice().splitlines())
+
+    # A trim nobody is told about is a file quietly missing its tail.
+    assert "trimmed to" in result.stdout
+
+
+def test_a_distillate_with_no_line_boundary_is_still_filed(tmp_path):
+    """The degenerate shape: one line, already past the budget.
+
+    There is no bullet boundary to cut on, so the trim slices instead. A
+    truncated distillate is a poor answer and it still beats the pass that
+    refuses, because the refusal takes memory.md and the queue down with it.
+    """
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    (memory_dir / "memory.md").write_text("# Home Memory\n\n## Preferences\n")
+
+    fake = write_fake_consolidation_claude(
+        tmp_path, FAKE_MERGED_MEMORY + "-----VOICE-----\n" + "x" * 4000 + "\n"
+    )
+    result = run_consolidator(memory_dir, fake)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(inbox_lines(memory_dir)) == 0
+    voice = (memory_dir / "voice.md").read_text()
+    assert set(voice.strip()) == {"x"}
+    assert len(voice.strip()) == 2048
+
+
+def test_a_distillate_with_nothing_in_it_to_keep_is_refused(tmp_path):
+    """The one voice overshoot that still fails, and why it may.
+
+    Blank lines fit a budget, so a distillate whose first 2 KB is nothing but
+    whitespace trims to whitespace — and writing that over a good voice.md
+    would leave the voice path with no nicknames at all. Refusing keeps the
+    previous one and the inbox, which the next pass can still act on.
+    """
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    original = "# Home Memory\n\n## Preferences\n- keep me\n"
+    (memory_dir / "memory.md").write_text(original)
+    (memory_dir / "voice.md").write_text("- 'the beacon' = light.office_lamp\n")
+
+    padded = "\n" * 3000 + "- 'the beacon' = light.office_lamp\n"
+    fake = write_fake_consolidation_claude(
+        tmp_path, FAKE_MERGED_MEMORY + "-----VOICE-----\n" + padded
+    )
+    result = run_consolidator(memory_dir, fake)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "nothing of it survives a trim" in result.stdout
+    assert (memory_dir / "memory.md").read_text() == original
+    assert "beacon" in (memory_dir / "voice.md").read_text()
+    assert len(inbox_lines(memory_dir)) == 1
+
+
+def test_a_document_over_its_cap_is_never_trimmed(tmp_path):
+    """The asymmetry, asserted from the other side.
+
+    Trimming voice.md is safe because it is a summary. Doing the same to
+    memory.md would cut facts nothing else holds, so the document keeps its
+    refusal — and keeps naming the one setting that ends it.
+    """
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    original = "# Home Memory\n\n## Preferences\n- keep me\n"
+    (memory_dir / "memory.md").write_text(original)
+
+    too_big = _oversize_memory(200) + "-----VOICE-----\n" + _oversize_voice()
+    fake = write_voice_size_claude(tmp_path, too_big, too_big)
+    result = run_consolidator(
+        memory_dir, fake, BRAIN_MEMORY_MAX_KB="1",
+        FAKE_PROMPT_LOG=str(tmp_path / "prompts.txt"),
+    )
+
+    assert result.returncode != 0
+    assert "memory_max_kb" in result.stdout
+    assert "trimmed to" not in result.stdout
+    assert (memory_dir / "memory.md").read_text() == original
+    assert not (memory_dir / "voice.md").exists()
+    assert len(inbox_lines(memory_dir)) == 1
+
+
+def test_both_caps_are_named_when_both_overshot(tmp_path):
+    """A note about one half invites an answer that breaks the other.
+
+    Which spends the last attempt learning nothing, so an answer that missed
+    both budgets is told about both.
+    """
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    (memory_dir / "memory.md").write_text("# Home Memory\n\n## Preferences\n")
+    prompt_log = tmp_path / "prompts.txt"
+
+    both = _oversize_memory(200) + "-----VOICE-----\n" + _oversize_voice()
+    fake = write_voice_size_claude(
+        tmp_path, both,
+        FAKE_MERGED_MEMORY + "-----VOICE-----\n" + FAKE_VOICE,
+    )
+    result = run_consolidator(
+        memory_dir, fake, BRAIN_MEMORY_MAX_KB="1",
+        FAKE_PROMPT_LOG=str(prompt_log),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    retry = prompt_log.read_text().split("=====")[1]
+    assert "bytes over the hard 1 KB ceiling" in retry
+    assert "bytes over the hard 2048 byte ceiling" in retry
+    # And the log line says both, in each file's own units.
+    assert "memory.md came back" in result.stdout
+    assert "voice.md came back" in result.stdout
+
+
+def test_a_voice_retry_does_not_stand_down_the_erasure_guard(tmp_path):
+    """The hole a shared flag would have opened.
+
+    The proportional guard is skipped on a retry because a pass explicitly
+    told to drop facts is not a rewrite pretending to be a merge. A retry
+    that asked only for a shorter voice.md said nothing of the kind, so
+    keying the guard on "some retry happened" would wave through exactly the
+    answer it exists to catch — a wiped document — because a sibling file was
+    over its own budget.
+    """
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    (memory_dir / "memory.md").write_text(_memory_with(10))
+
+    fake = write_voice_size_claude(
+        tmp_path,
+        # First answer: the document is fine, the distillate is not.
+        _memory_with(10) + "-----VOICE-----\n" + _oversize_voice(),
+        # Told to shorten the distillate, it comes back having also thrown
+        # most of the house away.
+        _memory_with(2) + "-----VOICE-----\n" + FAKE_VOICE,
+    )
+    result = run_consolidator(
+        memory_dir, fake, FAKE_PROMPT_LOG=str(tmp_path / "prompts.txt"),
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "REFUSED" in result.stdout
+    assert (memory_dir / "memory.md").read_text() == _memory_with(10)
     assert len(inbox_lines(memory_dir)) == 1
 
 

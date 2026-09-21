@@ -18,15 +18,39 @@ import os
 import sys
 import tempfile
 import time
+import types
 import unittest
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+INTEGRATION_DIR = BASE_DIR / "brain" / "custom_components" / "brain"
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
 
 import finding_requests  # noqa: E402
 import findings_store  # noqa: E402
 import notify_router  # noqa: E402
+
+# The integration's own writer, for the checks half: it imports
+# `homeassistant.core` and nothing else on purpose, which is what makes it
+# drivable straight into the panel's reader from here.
+if "homeassistant" not in sys.modules:
+    sys.modules["homeassistant"] = types.ModuleType("homeassistant")
+if "homeassistant.core" not in sys.modules:
+    _core = types.ModuleType("homeassistant.core")
+    _core.HomeAssistant = type("HomeAssistant", (), {})
+    sys.modules["homeassistant.core"] = _core
+_pkg = types.ModuleType("brain_cc")
+_pkg.__path__ = [str(INTEGRATION_DIR)]
+sys.modules.setdefault("brain_cc", _pkg)
+brain_requests = importlib.import_module("brain_cc.requests")  # noqa: E402
+
+
+class _IntegrationHass:
+    """The two attributes `requests.py` reaches for, and nothing else."""
+
+    def __init__(self, base: str):
+        self.config = types.SimpleNamespace(
+            path=lambda *parts: os.path.join(base, *parts))
 
 
 class RequestCase(unittest.TestCase):
@@ -62,6 +86,17 @@ class TestWhatCountsAsARequest(RequestCase):
             got = finding_requests.parse({"ts": 12, "action": action})
             self.assertIsNotNone(got, action)
             self.assertEqual(got["action"], action)
+
+    def test_a_reply_is_a_request_and_not_an_ending(self):
+        # A reply typed into a notification is a turn in the case's
+        # conversation: it is accepted as a request, and it maps to no
+        # verb on the tab, because nothing about it settles the row.
+        got = finding_requests.parse({"ts": 12, "action": "reply",
+                                      "note": "why does this matter?"})
+        self.assertIsNotNone(got)
+        self.assertEqual(got["action"], "reply")
+        self.assertEqual(got["note"], "why does this matter?")
+        self.assertEqual(finding_requests.verb_for("reply"), "")
 
     def test_nothing_that_starts_work_is_an_answer(self):
         # A fix run, a regeneration, a delete: those are work rather than
@@ -178,13 +213,21 @@ class TestTheButtonsOnAMessage(unittest.TestCase):
         self.assertEqual(
             notify_router.actions_for([], "notify.mobile_app_pixel"), [])
 
-    def test_one_finding_gets_the_tab_s_own_three(self):
+    def test_one_finding_gets_the_tab_s_own_three_and_a_reply(self):
         got = notify_router.actions_for([{"ts": 1720, "text": "a"}],
                                         "notify.mobile_app_pixel")
         self.assertEqual([a["action"] for a in got],
                          ["brain.fixed.1720", "brain.wrong.1720",
-                          "brain.snooze.1720"])
+                          "brain.snooze.1720", "brain.reply.1720"])
         self.assertTrue(all(a["title"] for a in got))
+        # Reply is the one button that takes text: the companion app
+        # opens a box for `textInput` and sends what was typed as
+        # `reply_text`. The three endings carry no behaviour, because a
+        # box on "I've fixed it" is a chore in front of a one-press answer.
+        by_verb = {a["action"].split(".")[1]: a for a in got}
+        self.assertEqual(by_verb["reply"].get("behavior"), "textInput")
+        for verb in ("fixed", "wrong", "snooze"):
+            self.assertNotIn("behavior", by_verb[verb], verb)
 
     def test_a_row_with_no_id_gets_no_buttons(self):
         for row in ({"text": "a"}, {"ts": None, "text": "a"},
@@ -198,6 +241,8 @@ class TestTheButtonsOnAMessage(unittest.TestCase):
         # notification in the house, brAIn's and everybody else's.
         self.assertEqual(notify_router.parse_action("brain.fixed.1720"),
                          ("fixed", 1720))
+        self.assertEqual(notify_router.parse_action("brain.reply.1720"),
+                         ("reply", 1720))
         for junk in ("", None, "brain", "brain.fixed", "brain.fixed.x",
                      "brain.explode.1720", "other.fixed.1720",
                      "brain.fixed.1720.extra", "BRAIN.fixed.1720"):
@@ -283,6 +328,85 @@ class TestBothFrontDoorsSettleTheSame(RequestCase):
         self.assertIn("that cupboard is never opened", facts[0]["fact"])
         self.assertEqual(facts[0]["source"], "correction")
 
+    def _stub_reply_run(self, answer="Still off since Tuesday; its hub rebooted at 03:10.",
+                        ok=True):
+        prompts: list[str] = []
+        sent: list[tuple] = []
+
+        def run_analyst(prompt, system, model, timeout, max_turns, source, **kw):
+            prompts.append(prompt)
+            return {"ok": ok, "text": answer, "error": "" if ok else "boom"}
+
+        async def send(rows, message=None, **kw):
+            sent.append((rows, message))
+            return True
+
+        self._old_run = self.server.engine.run_analyst
+        self._old_send = self.server._send_notification
+        self.server.engine.run_analyst = run_analyst
+        self.server._send_notification = send
+        self.addCleanup(setattr, self.server.engine, "run_analyst", self._old_run)
+        self.addCleanup(setattr, self.server, "_send_notification", self._old_send)
+        return prompts, sent
+
+    def test_a_reply_is_answered_by_push_and_settles_nothing(self):
+        # The Reply button is the case's conversation reached from a lock
+        # screen: what was typed goes to the Resident under the finding
+        # it was typed about, the answer comes back as the next
+        # notification about the same row, and the row is exactly where
+        # it was — the three verbs are still the only endings.
+        prompts, sent = self._stub_reply_run()
+        entry = self.a_finding()
+        self.drop("001.json", {"ts": entry["ts"], "action": "reply",
+                               "note": "why does this matter?",
+                               "via": "notification"})
+        got = asyncio.run(self.server._apply_finding_requests())
+
+        self.assertEqual(len(got), 1)
+        self.assertTrue(got[0]["ok"], got[0])
+        self.assertEqual(got[0]["via"], "notification")
+        # The run was handed the finding AND the words, as a reply.
+        self.assertEqual(len(prompts), 1)
+        self.assertIn(entry["text"], prompts[0])
+        self.assertIn("They replied from their phone", prompts[0])
+        self.assertIn("why does this matter?", prompts[0])
+        # The answer went back to the same row, so it carries the same
+        # buttons, and the body is what the run said.
+        self.assertEqual(len(sent), 1)
+        rows, message = sent[0]
+        self.assertEqual([r["ts"] for r in rows], [entry["ts"]])
+        self.assertIn("Still off since Tuesday", message[1])
+        # Nothing settled: the row is on the list, the ledger is empty,
+        # and no memory line was written about a question.
+        self.assertEqual([r["ts"] for r in findings_store.list_all()],
+                         [entry["ts"]])
+        self.assertEqual(findings_store.settled_listing(), [])
+        self.assertEqual(self.facts(), [])
+
+    def test_a_failed_run_still_answers_rather_than_going_quiet(self):
+        # A reply that vanished into silence is worse than one that says
+        # brAIn could not look; the row stays and the person is told.
+        _prompts, sent = self._stub_reply_run(answer="", ok=False)
+        entry = self.a_finding()
+        self.drop("001.json", {"ts": entry["ts"], "action": "reply",
+                               "note": "is it still off?"})
+        got = asyncio.run(self.server._apply_finding_requests())
+        self.assertTrue(got[0]["ok"])
+        self.assertEqual(len(sent), 1)
+        self.assertIn("could not look", sent[0][1][1])
+        self.assertEqual(len(findings_store.list_all()), 1)
+
+    def test_an_empty_reply_is_not_a_turn(self):
+        prompts, sent = self._stub_reply_run()
+        entry = self.a_finding()
+        self.drop("001.json", {"ts": entry["ts"], "action": "reply",
+                               "note": "   "})
+        got = asyncio.run(self.server._apply_finding_requests())
+        self.assertFalse(got[0]["ok"])
+        self.assertIn("empty", got[0]["why"])
+        self.assertEqual(prompts, [])
+        self.assertEqual(sent, [])
+
     def test_the_two_doors_produce_the_same_ledger_entry(self):
         # Driven rather than described: the same text, ended each way, has
         # to leave the same shape behind.
@@ -365,6 +489,142 @@ class TestBothFrontDoorsSettleTheSame(RequestCase):
         self.drop("002.json", {"ts": 2, "action": "fixed"})
         self.assertEqual(self.server._requests_diagnostics()["pending"], 2)
 
+
+class TestAskingForAChecksPass(RequestCase):
+    """`brain.check` and the Run-checks button, from both ends.
+
+    The one kind on this queue that is not an ending: it names no row,
+    carries no verb, and what it asks for is minutes of work the drain
+    loop cannot wait for. Two things have to hold — two asks in one drain
+    are ONE pass (`create_task` only schedules, so two tasks made in the
+    same tick would both clear `run_checks`' own guard), and a pass
+    already running consumes the request rather than queueing it.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.server = importlib.import_module("server")
+        self._old_inbox = self.server.MEMORY_INBOX_DIR
+        self.server.MEMORY_INBOX_DIR = Path(self.tmp.name) / "memory-inbox"
+        self._old_run = self.server.run_checks
+        self._old_state = dict(self.server.CHECKS_REQUEST_STATE)
+        self._old_running = self.server.CHECKS_STATE["running"]
+        self.runs: list[str] = []
+
+        async def fake_run_checks(reason="schedule"):
+            self.runs.append(reason)
+            return {"reason": reason}
+
+        self.server.run_checks = fake_run_checks
+
+    def tearDown(self):
+        self.server.run_checks = self._old_run
+        self.server.MEMORY_INBOX_DIR = self._old_inbox
+        self.server.CHECKS_REQUEST_STATE.clear()
+        self.server.CHECKS_REQUEST_STATE.update(self._old_state)
+        self.server.CHECKS_STATE["running"] = self._old_running
+        super().tearDown()
+
+    def a_finding(self) -> dict:
+        entry, _created = findings_store.add(
+            "The hall sensor has not reported since Tuesday",
+            severity="serious", source="check:dev.unavailable",
+            source_title="Devices")
+        return entry
+
+    def drain(self) -> list[dict]:
+        """One pass of the drain, with the started task allowed to run."""
+        async def go():
+            out = await self.server._apply_finding_requests()
+            # `_start_requested_checks` starts the pass and does not await
+            # it — the loop has to be back for the next answer somebody
+            # gives from their phone — so the test yields to let the task
+            # it created reach its first line.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            return out
+
+        return asyncio.run(go())
+
+    def test_what_the_integration_writes_is_what_the_panel_parses(self):
+        # Neither process can import the other, so the format is driven
+        # end to end rather than written down twice.
+        hass = _IntegrationHass(self.tmp.name)
+        self.assertTrue(brain_requests.write_checks_request(hass, "service"))
+        old = finding_requests.REQUEST_DIR
+        finding_requests.REQUEST_DIR = Path(brain_requests.requests_dir(hass))
+        try:
+            got = finding_requests.collect()
+        finally:
+            finding_requests.REQUEST_DIR = old
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["kind"], "checks")
+        self.assertEqual(got[0]["via"], "service")
+
+    def test_a_checks_request_starts_a_pass(self):
+        self.drop("001.json", {"kind": "checks", "via": "service"})
+        got = self.drain()
+        self.assertEqual(self.runs, ["service"])
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["kind"], "checks")
+        self.assertTrue(got[0]["ok"])
+
+    def test_two_requests_in_one_drain_are_one_pass(self):
+        self.drop("001.json", {"kind": "checks", "via": "service"})
+        self.drop("002.json", {"kind": "checks", "via": "button"})
+        got = self.drain()
+        self.assertEqual(self.runs, ["service"])
+        row = [r for r in got if r.get("kind") == "checks"][0]
+        self.assertEqual(row["asked"], 2)
+        self.assertIn("button", row["via"])
+        self.assertIn("service", row["via"])
+
+    def test_a_pass_already_running_consumes_the_request(self):
+        """Not queued: a second pass a minute later over the same house
+        finds the same things, and the one running is about to answer the
+        question that was asked."""
+        self.server.CHECKS_STATE["running"] = True
+        self.drop("001.json", {"kind": "checks", "via": "service"})
+        got = self.drain()
+        self.assertEqual(self.runs, [])
+        row = [r for r in got if r.get("kind") == "checks"][0]
+        self.assertFalse(row["ok"])
+        self.assertIn("already running", row["why"])
+        # ...and the file is gone, so it cannot be applied again later.
+        self.assertEqual(finding_requests.pending(), 0)
+
+    def test_an_ending_in_the_same_burst_is_applied_before_the_pass(self):
+        """A pass that ran first would re-file what the answer settled."""
+        entry = self.a_finding()
+        order: list[str] = []
+
+        async def watching_run_checks(reason="schedule"):
+            order.append("checks")
+            return {"reason": reason}
+
+        self.server.run_checks = watching_run_checks
+        real_end = self.server._end_finding
+
+        async def watching_end(finding, spec, note=""):
+            order.append("ending")
+            return await real_end(finding, spec, note)
+
+        self.server._end_finding = watching_end
+        try:
+            self.drop("001.json", {"kind": "checks", "via": "service"})
+            self.drop("002.json", {"ts": entry["ts"], "action": "fixed"})
+            self.drain()
+        finally:
+            self.server._end_finding = real_end
+        self.assertEqual(order, ["ending", "checks"])
+
+    def test_a_request_nobody_can_see_is_a_request_that_swallows(self):
+        self.drop("001.json", {"kind": "checks", "via": "service"})
+        before = self.server._requests_diagnostics()["checks_asked"]
+        self.drain()
+        after = self.server._requests_diagnostics()
+        self.assertEqual(after["checks_asked"] - before, 1)
+        self.assertGreater(after["checks_asked_last"], 0)
 
 
 if __name__ == "__main__":

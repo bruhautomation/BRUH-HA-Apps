@@ -49,7 +49,8 @@ def _power_tool_services():
 # brAIn's own services, as distinct from the Power Tools catalog below.
 PRE_EXISTING_SERVICES = {
     "send_prompt", "run_task", "clear_conversation", "run_insight",
-    "add_memory", "answer_question", "study", "intent",
+    "add_memory", "answer_question", "study", "intent", "add_todo", "check",
+    "ask",
 }
 
 
@@ -332,10 +333,26 @@ class TestMcpDashboardTools(unittest.TestCase):
         self.assertEqual(result["views"][0]["cards"], 50)
 
     def test_get_dashboard_unsaved_config_hint(self):
+        """A REGISTERED dashboard with no stored config gets the hint.
+
+        The registration is what the hint is about, so it has to be read
+        rather than assumed: this used to patch every call with the same
+        error — the dashboard list included — and still answered
+        "auto-generated, save it with take_control", which is a claim about
+        a dashboard it had no way to check. That case is now its own answer
+        (`test_dashboard_report.py`), and this one supplies the row.
+        """
         err = {"error": "{'code': 'config_not_found', 'message': '...'}"}
-        with patch.object(ha_mcp_server, "_ws_command", return_value=err):
+
+        def ws(message, timeout=None):
+            if message.get("type") == "lovelace/dashboards/list":
+                return [{"url_path": "fresh", "title": "Fresh"}]
+            return err
+
+        with patch.object(ha_mcp_server, "_ws_command", side_effect=ws):
             result = ha_mcp_server.get_dashboard("fresh")
         self.assertIn("auto-generated", result["note"])
+        self.assertEqual(result["url_path"], "fresh")
 
 
 class TestDashboardServices(unittest.TestCase):

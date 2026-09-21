@@ -94,6 +94,36 @@ def is_failure(row: dict) -> bool:
     return str(row.get("outcome") or "error") in FAILURE_OUTCOMES
 
 
+# The four fields only a Claude invocation can carry. A checks pass, a
+# baseline build and an overnight heal are journal rows with no model
+# behind them and set none of these; `engine._journal` sets all four where
+# the envelope has them, and the chat sets its model and its turns.
+RUN_FIELDS = ("tokens", "turns", "model", "run_id")
+
+
+def is_claude_run(row: dict) -> bool:
+    """Whether a model actually ran for this row.
+
+    Asked by the usage tracker's nudge: the account's usage figure moves
+    when a run spends tokens and at no other time, so a finished run is
+    the one moment worth asking the endpoint about — and, because only a
+    run mints the next access token from the refresh token, the one moment
+    the credential is certain to be live.
+
+    Keyed on the ROW and never on a list of source names: a source is a
+    string a caller passes, so the set of names that mean "a model ran"
+    would be a second place the answer lives, and the drift is invisible
+    until a new producer is missing from it.
+
+    Presence, not truthiness. `record` writes each of these keys only for
+    a value it accepted, and a run that ended on its first turn writes
+    ``turns: 0`` — which a truthiness test reads as no run at all.
+    """
+    if not isinstance(row, dict):
+        return False
+    return any(key in row for key in RUN_FIELDS)
+
+
 _LOCK = threading.Lock()
 # Who wants to hear about a row once it has landed. `server` registers the
 # problem-report writer here so a failed run of ANY kind is reported without

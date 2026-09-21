@@ -333,6 +333,12 @@ MEMORYMD
     # work paid for and thrown away — so each face carries a large
     # runaway guard of its own now and no option feeds it.
     export BRAIN_ASSIST_TOOL_ACCESS="$assist_tool_access"
+    # What voice may see: Home Assistant's own exposure list (the default)
+    # or the whole house. Exported for the pool and written to the env
+    # file for the classic listener, exactly as assist_tool_access is.
+    local assist_exposure
+    assist_exposure=$(bashio::config 'assist_exposure' 'exposed')
+    export BRAIN_ASSIST_EXPOSURE="$assist_exposure"
 
     # Memory / learning options — exported here too (not just written to the
     # env file) so the worker pool and listeners launched by this script
@@ -352,7 +358,7 @@ MEMORYMD
     # its fallback for when the Supervisor cannot be read.
     local findings_notify findings_notify_sev
     findings_notify=$(bashio::config 'findings_notify_service' '')
-    findings_notify_sev=$(bashio::config 'findings_notify_min_severity' 'serious')
+    findings_notify_sev=$(bashio::config 'findings_notify_min_severity' 'critical')
     export BRAIN_FINDINGS_NOTIFY="$findings_notify"
     export BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY="$findings_notify_sev"
     local quiet_start quiet_end
@@ -397,6 +403,15 @@ MEMORYMD
     local self_healing
     self_healing=$(bashio::config 'self_healing' 'false')
     export BRAIN_SELF_HEALING="$self_healing"
+    # "Why did you do that": at most one Claude run a day, on the manual
+    # action brAIn can least account for. ON by default, unlike the
+    # brief and the healing above — it is the feature rather than an
+    # extra, and what bounds its cost is the one-a-day budget rather
+    # than the switch. The panel prefers the live Supervisor option and
+    # this export is the fallback, exactly as the others are.
+    local ask_why
+    ask_why=$(bashio::config 'ask_why' 'true')
+    export BRAIN_ASK_WHY="$ask_why"
 
     local env_file="/data/.brain_env"
     cat > "$env_file" << ENVEOF
@@ -415,6 +430,7 @@ export HA_TOKEN="${SUPERVISOR_TOKEN}"
 export HA_BASE_URL="http://supervisor/core/api"
 export SUPERVISOR_API_URL="http://supervisor"
 export BRAIN_ASSIST_TOOL_ACCESS="${assist_tool_access}"
+export BRAIN_ASSIST_EXPOSURE="${assist_exposure}"
 export BRAIN_ASSIST_LEARNING="${assist_learning}"
 export BRAIN_MEMORY_INJECTION="${memory_injection}"
 export BRAIN_MEMORY_MAX_KB="${memory_max_kb}"
@@ -423,11 +439,25 @@ export BRAIN_LEARN_TIMEOUT="${study_timeout_s}"
 export BRAIN_CHECKS_INTERVAL_HOURS="${checks_interval_hours}"
 export BRAIN_PROTECTED_ENTITIES="${protected_entities}"
 export BRAIN_SELF_HEALING="${self_healing}"
+export BRAIN_ASK_WHY="${ask_why}"
 export TZ="${TZ:-}"
 export CLAUDE_CODE_DISABLE_MCP_DISCOVERY=1
 export CLAUDE_MCP_SERVERS_OVERRIDE="/config/.mcp.json"
 export DISABLE_AUTOUPDATER=1
 ENVEOF
+
+    # Which model does which job: the panel plans every run off
+    # panel/model_plan.py, and the shell half (the consolidator, study,
+    # both listeners) reads the SAME table through these exports rather
+    # than a copy of it. A typed `model` option overrides every tier,
+    # which is what it did before 2.0. A plan that cannot be printed
+    # leaves the readers on their own fallbacks — a boot must not stop
+    # over a model name.
+    local model_override
+    model_override=$(bashio::config 'model' '')
+    if ! python3 /opt/panel/model_plan.py "$model_override" >> "$env_file" 2>/dev/null; then
+        bashio::log.warning "Could not write the model plan to $env_file; the shell half runs on its fallbacks"
+    fi
 
     # Append enabled directory env vars to the env file
     [ -n "${SHARE_DIR:-}" ] && echo "export SHARE_DIR=\"${SHARE_DIR}\"" >> "$env_file"
@@ -1289,6 +1319,17 @@ setup_claude_settings() {
           {
             "type": "command",
             "command": "python3 /opt/scripts/brain-edit-snapshot.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/scripts/brain-memory-extract.py",
+            "timeout": 10
           }
         ]
       }

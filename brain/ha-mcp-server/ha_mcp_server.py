@@ -317,6 +317,102 @@ def _protected_target(payload, empty_is_all=False):
     return None
 
 
+# What Home Assistant exposes to Assist, applied to the voice channel.
+# `BRAIN_EXPOSED_ONLY=1` is set by the worker pool and the classic listener
+# on every voice process when `assist_exposure` is `exposed` (the default),
+# and by nothing else: the terminal, the chat, the fixer and the automation
+# listener see the whole house, exactly as before. Where DENIED_SERVICES
+# restricts a channel by SERVICE and PROTECTED_ENTITIES restricts every
+# channel by ENTITY, this restricts one channel by what the person has
+# exposed in Settings → Voice assistants — which is the switch Home
+# Assistant already has for exactly this question, and the one an
+# integration that registers itself as a voice assistant is expected to
+# honour. The rule itself lives in `scripts/brain_exposed.py`, the one
+# module the pool, the listener and this server all read, so the map
+# voice is shown and the gate voice meets cannot disagree.
+EXPOSED_ONLY = os.environ.get("BRAIN_EXPOSED_ONLY", "") == "1"
+EXPOSURE_TTL_S = 60.0
+_EXPOSURE = {"at": 0.0, "snap": None}
+
+
+def _exposure():
+    """The exposure snapshot, or None when it could not be read.
+
+    Cached in-process for `EXPOSURE_TTL_S` and on disk by the module for
+    the same window, so a voice turn making six tool calls reads Core
+    once. None means fail closed: every caller refuses on it.
+    """
+    now = time.time()
+    if _EXPOSURE["snap"] is not None and now - _EXPOSURE["at"] < EXPOSURE_TTL_S:
+        return _EXPOSURE["snap"]
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                        "..", "scripts"))
+        import brain_exposed  # noqa: PLC0415 — sibling directory, see the module
+        snap = brain_exposed.load_or_refresh(_ws_command)
+    except Exception:  # noqa: BLE001 — unreadable is "fail closed", below
+        snap = None
+    if snap is not None:
+        _EXPOSURE.update(at=now, snap=snap)
+    return snap
+
+
+def _entity_exposed(entity_id):
+    """Whether the voice channel may see this entity; True off the channel."""
+    if not EXPOSED_ONLY:
+        return True
+    snap = _exposure()
+    if snap is None:
+        return False
+    import brain_exposed  # noqa: PLC0415 — on sys.path once _exposure ran
+    return brain_exposed.is_exposed(entity_id, snap)
+
+
+UNEXPOSED_READ = (
+    "{eid} is not exposed to voice assistants in Home Assistant, so this "
+    "assistant cannot see it. Tell the user it can be exposed under "
+    "Settings → Voice assistants; do not retry."
+)
+
+
+def _exposure_refusal(payload):
+    """Why a service call's targets reach something voice cannot see, or None.
+
+    Only entity targets can be checked against the exposure list; an area,
+    device, label or floor target is refused while the channel is gated,
+    because expanding one needs registries this check does not hold and a
+    hidden entity reached through its room is the bypass. The area map
+    voice is shown lists the exposed ids per area, so the model can name
+    them — which is what the sentence asks for.
+    """
+    if not EXPOSED_ONLY:
+        return None
+    payload = payload if isinstance(payload, dict) else {}
+    target = payload.get("target")
+    scopes = [payload] + ([target] if isinstance(target, dict) else [])
+    entity_ids = []
+    for scope in scopes:
+        raw = scope.get("entity_id")
+        if isinstance(raw, str):
+            entity_ids.extend(x.strip() for x in raw.split(",") if x.strip())
+        elif isinstance(raw, list):
+            entity_ids.extend(str(x) for x in raw)
+        for key in ("area_id", "device_id", "label_id", "floor_id"):
+            if scope.get(key):
+                return ("it targets an area, device, label or floor, and voice "
+                        "may only act on the entities Home Assistant exposes "
+                        "to it — name the entity ids instead")
+    if _exposure() is None:
+        return ("Home Assistant's exposure settings could not be read, and "
+                "voice may only act on what is exposed to it")
+    for eid in entity_ids:
+        if eid.lower() == "all":
+            return "it addresses all entities, including ones not exposed to voice"
+        if not _entity_exposed(eid):
+            return f"{eid} is not exposed to voice assistants in Home Assistant"
+    return None
+
+
 def ha_api_request(endpoint, method="GET", data=None, accept=None):
     """Make a request to the Home Assistant API."""
     if endpoint.startswith("/api/"):
@@ -402,6 +498,8 @@ def _ws_command(payload, timeout=15):
 
 def get_entity_state(entity_id):
     """Get the current state of a specific entity."""
+    if not _entity_exposed(entity_id):
+        return {"error": UNEXPOSED_READ.format(eid=entity_id)}
     result = ha_api_request(f"/api/states/{entity_id}")
     if "error" not in result:
         return {
@@ -425,6 +523,12 @@ def get_all_states(domain=None, name_filter=None):
     if isinstance(result, list):
         if domain:
             result = [e for e in result if e.get("entity_id", "").startswith(f"{domain}.")]
+        if EXPOSED_ONLY:
+            # A gated channel is shown the exposed rows and nothing else; a
+            # snapshot that could not be read shows nothing, which sends the
+            # model to say it cannot see rather than to act on a row it
+            # would then be refused.
+            result = [e for e in result if _entity_exposed(e.get("entity_id"))]
         entities = [
             {
                 "entity_id": e.get("entity_id"),
@@ -487,6 +591,13 @@ def call_service(domain, service, data=None, return_response=False):
             "homeowner has put it on brAIn's protected list, and nothing "
             "brAIn does may act on it. Tell the user; do not retry or "
             "look for another route."
+        )}
+    unexposed = _exposure_refusal(data)
+    if unexposed:
+        return {"error": (
+            f"{domain}.{service} is refused because {unexposed}. Tell the "
+            "user it can be exposed under Settings → Voice assistants; do "
+            "not retry or look for another route."
         )}
     payload = data or {}
     record_action(domain, service, payload)
@@ -666,6 +777,354 @@ def get_house_model():
                    for name, row in stores.items() if isinstance(row, dict)},
         "brief": (result or {}).get("brief") or {},
         "weekly": (result or {}).get("weekly") or {},
+    }
+
+
+# ---------------------------------------------------------------------------
+# The measurements, as tools — 2.2
+# ---------------------------------------------------------------------------
+#
+# Every store the checks read (`baselines`, `thermal`, `appliances`,
+# `rhythm`, `closures`, the three ledgers) used to be readable by rules and
+# by nobody else: a card asked whether a reading was odd had to guess a
+# threshold, and voice asked "is the dishwasher done" had no way to know.
+# Each of these calls the panel's own route over loopback, `explain_change`'s
+# arrangement, because the panel already holds the one implementation of
+# each answer and a second copy here would be a second answer. A panel
+# that is not up is reported as such rather than as a house with nothing
+# measured, and a store that has not measured yet says so in words — a
+# measurement that has not been made is not "nothing is wrong".
+
+_ENTITY_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+
+
+def _entity_or_error(entity_id, example):
+    if not _ENTITY_RE.match(str(entity_id or "")):
+        return {"error": (
+            f"'{str(entity_id)[:64]}' is not an entity id. They look like "
+            f"{example} — use get_all_states to find the one you mean."
+        )}
+    return None
+
+
+def what_is_normal(entity_id):
+    """What this entity normally reads NOW, how far from that it is, and
+    where it has been heading — `get_baseline` with the question a run
+    actually asks answered at the top."""
+    bad = _entity_or_error(entity_id, "sensor.freezer_temp")
+    if bad:
+        return bad
+    base = get_baseline(entity_id)
+    if base.get("error") or not base.get("baseline", True):
+        return base
+    quoted = urllib.parse.quote(str(entity_id), safe="")
+    state = ha_api_request(f"/api/states/{quoted}")
+    reading = None
+    try:
+        reading = float((state or {}).get("state"))
+    except (TypeError, ValueError, AttributeError):
+        # `unavailable`, `unknown` or a Core that did not answer: the reading
+        # stays None and the answer says so beside the baseline.
+        pass
+    overall = base.get("overall") or {}
+    out = {
+        "entity_id": entity_id,
+        "reading_now": reading,
+        "unit": base.get("unit"),
+        "usual": overall,
+        "trend": base.get("trend"),
+        "measured_over_days": base.get("measured_over_days"),
+        "stale": base.get("stale"),
+    }
+    median = overall.get("median")
+    spread = overall.get("spread")
+    if reading is not None and median is not None and spread:
+        out["spreads_from_usual"] = round((reading - median) / spread, 2)
+        out["note"] = ("`spreads_from_usual` is how far outside its own "
+                       "normal the reading is, in its own median absolute "
+                       "deviations; past about six is unusual for this "
+                       "house. Ask `get_baseline` for the hour-of-week "
+                       "buckets when the time of day matters.")
+    else:
+        out["note"] = ("No live reading to compare, or no spread to compare "
+                       "it against — see `usual` and `trend`.")
+    return out
+
+
+def room_physics(area):
+    """How fast a room loses heat and gains it, from a month of nights."""
+    result = _panel_get("/api/knowledge/house/thermal")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    rooms = (result or {}).get("rooms") or []
+    want = str(area or "").strip().lower()
+    match = [r for r in rooms if isinstance(r, dict) and want in (
+        str(r.get("area") or "").lower(), str(r.get("name") or "").lower(),
+        str(r.get("id") or "").lower())]
+    if not match and want:
+        match = [r for r in rooms if isinstance(r, dict) and want in
+                 (str(r.get("area") or "") + " " + str(r.get("name") or "")).lower()]
+    if not rooms:
+        return {"area": area, "rooms": [], "note": (
+            "brAIn has not fitted a heat model to any room yet — it needs "
+            "a month of nights with an outdoor reference, and says which "
+            "rooms it could not fit and why in the Knowledge tab.")}
+    if not match:
+        return {"area": area, "rooms": [], "known_rooms": [
+            r.get("area") or r.get("name") for r in rooms if isinstance(r, dict)],
+            "note": "no measured room by that name — see known_rooms"}
+    return {"area": area, "outdoor_reference": (result or {}).get("outdoor"),
+            "unit": (result or {}).get("unit"),
+            "rooms": match,
+            "note": ("`k` is the loss rate per hour (its reciprocal `tau_h` is "
+                     "the time constant in hours), `gain` the degrees per "
+                     "hour with the heating on, `hours_to_warm` measured "
+                     "between the room's own `coolest` and `warmest` on the "
+                     "coldest night the month held.")}
+
+
+def appliance_status(entity_id):
+    """Idle, running, or finished-and-waiting, by this machine's OWN
+    measured thresholds — never a wattage somebody typed."""
+    bad = _entity_or_error(entity_id, "sensor.dishwasher_power")
+    if bad:
+        return bad
+    result = _panel_get("/api/knowledge/house/appliances")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    rows = (result or {}).get("appliances") or []
+    for row in rows:
+        if isinstance(row, dict) and row.get("entity_id") == entity_id:
+            live = row.get("now") if isinstance(row.get("now"), dict) else {}
+            return {"entity_id": entity_id, "state": live.get("state"),
+                    "now": live, "name": row.get("name"),
+                    "chore_kind": row.get("chore_kind"),
+                    "thresholds": {k: row.get(k) for k in
+                                   ("idle_w", "running_w", "threshold_w",
+                                    "settle_min", "cycles") if k in row},
+                    "live_error": (result or {}).get("live_error"),
+                    "note": (
+                "`state` is idle / running / finished from the machine's own "
+                "power shape; `finished` means the draw dropped past its "
+                "measured settle and nothing has run since — not that it "
+                "has been emptied, which no power reading can see.")}
+    return {"entity_id": entity_id, "state": None, "note": (
+        "brAIn has no power profile for this entity. It profiles power "
+        "sensors whose draw is clearly two-level (idle and running) from "
+        "ten days of five-minute statistics; a router or a fridge's "
+        "standing draw gets none on purpose.")}
+
+
+def house_rhythm():
+    """When this house wakes and settles, weekdays and weekends apart."""
+    result = _panel_get("/api/knowledge/house/rhythm")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    return {**(result or {}), "note": (
+        "Measured from the first and last thing a PERSON did each day — "
+        "not a motion sensor and not a light. A half with too few days or "
+        "too wide a spread reports no time, which is the floor doing its "
+        "job and not an error.")}
+
+
+def door_habits(entity_id):
+    """How much of each hour of the week this closure is usually open."""
+    bad = _entity_or_error(entity_id, "binary_sensor.back_door")
+    if bad:
+        return bad
+    result = _panel_get("/api/knowledge/house/closures")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    rows = result if isinstance(result, list) else (result or {}).get("rows") or []
+    for row in rows:
+        if isinstance(row, dict) and row.get("entity_id") == entity_id:
+            return {**row, "note": (
+                "`buckets` are hour-of-week (0 = Monday 00:00 local) → share "
+                "of that hour it was open, over the weeks watched; a missing "
+                "bucket was never watched, which is not 'never open then'. "
+                "`overall` is the share across the whole window.")}
+    return {"entity_id": entity_id, "buckets": None, "note": (
+        "brAIn has not measured this closure — it watches doors, windows, "
+        "locks, covers and garages by device class, nightly, and needs a "
+        "few days before a bucket means anything.")}
+
+
+def habits(entity_id):
+    """What a person does with this entity by hand, often enough to be a
+    habit — the days, the time, the share — and what keeps undoing it."""
+    bad = _entity_or_error(entity_id, "light.porch")
+    if bad:
+        return bad
+    quoted = urllib.parse.quote(str(entity_id), safe="")
+    result = _panel_get(f"/api/habits?entity_id={quoted}")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    return {**(result or {}), "note": (
+        "`habit` is the strongest shape across the entity's states "
+        "(days, share of the days it could have happened on, circular "
+        "median time, spread); `overrides` are automations somebody keeps "
+        "undoing about it; `odd` are recent presses far outside the "
+        "shape. `automated` says something already does this.")}
+
+
+def simulate_automation(config, days=7):
+    """When an automation WOULD have fired over the last days — replayed
+    against recorded history, calling nothing — and whether a person did
+    the same thing, the opposite, or nothing in that window."""
+    if not isinstance(config, dict):
+        return {"error": "config must be a Home Assistant automation object "
+                         "(trigger/condition/action)"}
+    try:
+        days = max(1, min(int(days or 7), 28))
+    except (TypeError, ValueError):
+        days = 7
+    body = json.dumps({"config": config, "days": days}).encode()
+    req = urllib.request.Request(
+        f"{PANEL_URL}/api/simulate", data=body, method="POST",
+        headers={"Accept": "application/json",
+                 "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as response:
+            result = json.loads(response.read().decode())
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"the brAIn panel did not answer: {e}"}
+    if result.get("refused"):
+        return {"refused": True, "days": days,
+                "error": (result.get("error")
+                          or (result.get("replay") or {}).get("error")
+                          or "brAIn cannot replay this automation"),
+                "note": ("Only time, state, numeric_state and template "
+                         "triggers can be replayed from the recorder; the "
+                         "refusal is whole, never a partial count.")}
+    return {**result, "note": (
+        "`replay.count` is how many times it would have fired; "
+        "`against_you` grades each firing against what a person did "
+        "within a few minutes: agreed (the same change), contradicted "
+        "(the opposite), disagreed (nothing).")}
+
+
+def recall(query="", subject="", limit=10):
+    """What brAIn remembers about this — ranked facts, each with where it
+    came from and when. Ask by subject (an entity id, `area:<id>`,
+    `person:<id>`, `house`) or by a few words."""
+    params = urllib.parse.urlencode({
+        "query": str(query or "")[:200], "subject": str(subject or "")[:255],
+        "limit": max(1, min(int(limit or 10), 50))})
+    result = _panel_get(f"/api/facts?{params}")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    rows = [{k: row.get(k) for k in
+             ("text", "subject", "subjects", "source", "observed",
+              "confidence", "run_id", "predicate")}
+            for row in (result or {}).get("facts") or [] if isinstance(row, dict)]
+    if not rows:
+        return {"facts": [], "note": (
+            "nothing remembered about that yet. Facts arrive from the "
+            "memory inbox — a correction on a finding, a study session, "
+            "something said in the chat, the terminal or by voice — and "
+            "`remember_fact` queues one.")}
+    return {"facts": rows, "note": (
+        "`source` says who taught it (a `correction` is the homeowner "
+        "saying brAIn had something wrong and wins over an older fact); "
+        "`predicate: exception:<check>` means a rule has been told to "
+        "stand down for that entity.")}
+
+
+# What one finding is reported as to a model: the row's own fields, less
+# the bookkeeping (undo tokens, snooze stamps, the run id). Named so the
+# list is one shape wherever a run reads it.
+_FINDING_FIELDS = ("ts", "severity", "text", "detail", "fix", "fix_by",
+                   "entity_id", "source_title", "status", "fixable")
+
+
+def get_findings(status="open", limit=50):
+    """What is on the Findings tab, for a run that wants to know what needs
+    attention rather than guess.
+
+    Reads the panel's own listing over loopback — `brain findings`' rule:
+    one implementation, one answer, and the panel is where the store, the
+    triage verdicts and the settled ledger all meet. A panel that is not
+    up is reported as such rather than as a house with nothing wrong.
+    `held` rows are the ones a look judged not worth showing; they are
+    offered on request because "is anything broken" and "what did you
+    decide not to tell me" are both fair questions, but the default is
+    the list a person sees.
+    """
+    status = str(status or "open").strip().lower()
+    if status not in ("open", "held", "all"):
+        return {"error": "status must be open, held or all"}
+    try:
+        limit = max(1, min(200, int(limit or 50)))
+    except (TypeError, ValueError):
+        limit = 50
+    result = _panel_get("/api/findings")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    rows = (result or {}).get("findings") or []
+    if status == "open":
+        rows = [r for r in rows if r.get("status") in
+                ("open", "fixing", "fixed", "failed", "needs_you")]
+    elif status == "held":
+        rows = [r for r in rows if r.get("status") == "held"]
+    out = []
+    for row in rows[:limit]:
+        if not isinstance(row, dict):
+            continue
+        item = {k: row.get(k) for k in _FINDING_FIELDS if k in row}
+        verdict = row.get("triage") or {}
+        if isinstance(verdict, dict) and verdict.get("reason"):
+            item["looked"] = verdict.get("reason")
+        out.append(item)
+    hypotheses = [{"ts": h.get("ts"), "claim": h.get("claim") or h.get("text")}
+                  for h in ((result or {}).get("hypotheses") or [])
+                  if isinstance(h, dict)]
+    return {
+        "open": (result or {}).get("open", 0),
+        "findings": out,
+        # Guesses waiting to be confirmed ride the same tab, because they
+        # are the same job: a question only the person living there can
+        # answer.
+        "hypotheses": hypotheses[:limit],
+        "note": ("Nothing here is settled by reading it. If the homeowner "
+                 "is discussing one of these with you, offer_resolutions "
+                 "is how a decision reaches the card."),
+    }
+
+
+def get_health():
+    """Is brAIn working — the verdict the panel, the mirror and the health
+    sensor all read, and nothing derived a second time here.
+
+    The whole diagnostics payload is a page of JSON; what a model can act
+    on is the verdict with its sentence and switch, the sign-in, the usage
+    tracker's last word, and the daemon roll-call. Everything else is the
+    report's job (`brain report`).
+    """
+    result = _panel_get("/api/diagnostics")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    result = result or {}
+    health = result.get("health") or {}
+    usage = result.get("usage") or {}
+    daemons = result.get("daemons") or {}
+    return {
+        "state": health.get("state"),
+        "reason": health.get("reason"),
+        "fix": health.get("fix"),
+        "problems": [{k: p.get(k) for k in ("id", "state", "reason", "fix")}
+                     for p in (health.get("problems") or [])
+                     if isinstance(p, dict)],
+        "signed_in": (result.get("auth") or {}).get("state"),
+        "usage": {
+            "source": usage.get("source"),
+            "limits": usage.get("limits") or None,
+        },
+        "daemons": {name: bool((row or {}).get("running"))
+                    for name, row in daemons.items()
+                    if isinstance(row, dict)},
+        "versions": result.get("versions") or {},
+        "faults": [f for f in (result.get("faults") or [])
+                   if isinstance(f, dict)][:20],
     }
 
 
@@ -1287,6 +1746,8 @@ def get_logbook(hours=1, entity_id=None):
 def get_history(entity_id, hours=24):
     """Get recent state history for one entity (recorder, detailed)."""
     from datetime import datetime, timedelta, timezone
+    if not _entity_exposed(entity_id):
+        return {"error": UNEXPOSED_READ.format(eid=entity_id)}
     try:
         hours = max(1, min(int(hours), 168))
     except (TypeError, ValueError):
@@ -1341,6 +1802,8 @@ def get_statistics(entity_id, period="hour", days=7):
     questions like 'how cold did it get last week' that get_history can't.
     """
     from datetime import datetime, timedelta, timezone
+    if not _entity_exposed(entity_id):
+        return {"error": UNEXPOSED_READ.format(eid=entity_id)}
     if period not in ("5minute", "hour", "day", "week", "month"):
         period = "hour"
     try:
@@ -1705,11 +2168,62 @@ def list_dashboards(include_resources=False):
 MAX_DASHBOARD_BYTES = 200_000
 
 
+# The token that means "the one you get when you ask for nothing". It is
+# `brain.update_dashboard`'s own (`power_tools._dashboard_key` maps it and
+# None to the same storage key), and the two tools have to agree on it: the
+# documented workflow is fetch, edit, save, so a word one of them hands back
+# and the other refuses breaks the round trip at the first step. `url_path:
+# "default"` is exactly what get_dashboard used to report and then reject.
+DEFAULT_DASHBOARD = "default"
+
+
+def _dashboard_wire_path(url_path):
+    """What to put on the wire — None for the default dashboard.
+
+    `lovelace/config` takes the real url_path or null, and has never heard
+    of "default": passing it through asks for a dashboard nobody has, which
+    comes back as config_not_found and reads as "you have no such dashboard".
+    """
+    if url_path in (None, "", DEFAULT_DASHBOARD):
+        return None
+    return url_path
+
+
+def _dashboard_named(url_path, config=None, registered=None):
+    """Which dashboard this actually is, never an echo of the argument.
+
+    The old report was `url_path or "default"`, which says nothing a caller
+    did not already know and cannot tell "I asked for nothing and got the
+    default" from "I asked for a dashboard called default". What is useful is
+    the same two facts every time: the token that fetches it again, and
+    enough of a name to recognise it by — so a fetch that read the wrong
+    dashboard is visible in its own answer rather than at the save.
+    """
+    wire = _dashboard_wire_path(url_path)
+    out = {"url_path": wire or DEFAULT_DASHBOARD, "is_default": wire is None}
+    title = None
+    if isinstance(config, dict) and isinstance(config.get("title"), str):
+        title = config["title"]
+    if not title and isinstance(registered, list):
+        for row in registered:
+            if isinstance(row, dict) and row.get("url_path") == wire:
+                title = row.get("title")
+                break
+    if not title and wire is None:
+        # The one dashboard with no registry row of its own: Home Assistant
+        # serves it at /lovelace and reports no url_path for it at all.
+        title = "the default dashboard (served at /lovelace)"
+    if title:
+        out["dashboard"] = title
+    return out
+
+
 def get_dashboard(url_path=None, view_index=None):
     """Fetch a dashboard's configuration (default dashboard when url_path
-    is omitted). Pair with brain.update_dashboard to edit: fetch,
-    modify the JSON, save — the service backs up the old config
-    automatically.
+    is omitted, or url_path="default"). Pair with brain.update_dashboard to
+    edit: fetch, modify the JSON, save — the service backs up the old config
+    automatically. The answer says which dashboard it actually read and the
+    url_path that fetches it again.
 
     Large dashboards are retrievable in full through view_index: when the
     whole config exceeds MAX_DASHBOARD_BYTES the response is a view
@@ -1718,8 +2232,10 @@ def get_dashboard(url_path=None, view_index=None):
     (HA's delayed writes) and must never be treated as a source of truth.
     """
     try:
-        result = _ws_command({"type": "lovelace/config", "url_path": url_path or None},
-                             timeout=30)
+        result = _ws_command(
+            {"type": "lovelace/config",
+             "url_path": _dashboard_wire_path(url_path)},
+            timeout=30)
     except ImportError:
         return {"error": "websockets package not available in this environment"}
     except Exception as e:  # noqa: BLE001
@@ -1731,7 +2247,8 @@ def get_dashboard(url_path=None, view_index=None):
             # url_path that doesn't exist at all. Distinguish them — the old
             # blanket "save it to take control" note pointed callers at an
             # update_dashboard call that cannot succeed for the latter.
-            if url_path:
+            registered = None
+            if _dashboard_wire_path(url_path):
                 try:
                     registered = _ws_command({"type": "lovelace/dashboards/list"})
                 except Exception:  # noqa: BLE001
@@ -1744,8 +2261,18 @@ def get_dashboard(url_path=None, view_index=None):
                             f"Dashboard not found: {url_path}."
                             + (f" Existing: {available}" if available else "")
                         )}
+                else:
+                    # "I could not look" is not "it is registered". Claiming
+                    # the second sends a caller to take_control on a
+                    # dashboard that may not exist, and the save is where
+                    # they find out.
+                    return {"error": (
+                        f"Home Assistant has no stored config for "
+                        f"{url_path}, and the dashboard list could not be "
+                        "read — so whether it exists at all is unknown. "
+                        "Try list_dashboards.")}
             return {
-                "url_path": url_path or "default",
+                **_dashboard_named(url_path, registered=registered),
                 "note": ("This dashboard is registered but has no stored "
                          "config yet (it is auto-generated). Saving with "
                          "brain.update_dashboard (take_control: true) "
@@ -1765,16 +2292,16 @@ def get_dashboard(url_path=None, view_index=None):
                               f"dashboard has {len(views)} views (0-"
                               f"{max(len(views) - 1, 0)})")}
         return {
-            "url_path": url_path or "default",
+            **_dashboard_named(url_path, result),
             "view_index": view_index,
             "view_count": len(views),
             "view": views[view_index],
         }
 
-    payload = {"url_path": url_path or "default", "config": result}
+    payload = {**_dashboard_named(url_path, result), "config": result}
     if len(json.dumps(payload)) > MAX_DASHBOARD_BYTES:
         return {
-            "url_path": url_path or "default",
+            **_dashboard_named(url_path, result),
             "note": (f"Config too large to return whole (> {MAX_DASHBOARD_BYTES} "
                      "bytes) — view summary below. Fetch each view with "
                      "get_dashboard(url_path, view_index=N). Do NOT read "
@@ -1872,17 +2399,23 @@ def reload_config(target):
     return {"error": "Invalid reload endpoint"}
 
 
-def remember_fact(fact, confidence="high"):
+def remember_fact(fact, confidence="high", subject="", person=""):
     """Queue a durable household fact for the memory consolidator.
 
     Appends one JSONL record to a fresh inbox file (one file per call —
     lock-free by construction). The brain memory consolidator later merges
-    pending records into /config/.brain/memory/memory.md.
+    pending records into /config/.brain/memory/memory.md, and the panel's
+    facts store files the same line under `subject` (an entity id,
+    `area:<id>`, `person:<id>` or `house`) — a writer that knows what its
+    fact is about beats a scan of the sentence. `person` is the person it
+    is about, for a preference that is theirs and not the house's.
     """
     if not isinstance(fact, str) or not fact.strip():
         return {"error": "fact must be a non-empty string"}
     if confidence not in ("high", "medium", "low"):
         confidence = "high"
+    subject = str(subject or "").strip()[:255]
+    person = str(person or "").strip()[:64]
 
     inbox_dir = os.path.join(MEMORY_DIR, "inbox")
     try:
@@ -1894,6 +2427,10 @@ def remember_fact(fact, confidence="high"):
             "fact": fact.strip(),
             "confidence": confidence,
         }
+        if subject:
+            record["subject"] = subject
+        if person:
+            record["person"] = person
         path = os.path.join(inbox_dir, f"{now}-assist.jsonl")
         with open(path, "a") as fh:
             fh.write(json.dumps(record) + "\n")
@@ -1904,6 +2441,72 @@ def remember_fact(fact, confidence="high"):
         "fact": fact.strip(),
         "confidence": confidence,
         "note": "Queued for memory consolidation.",
+    }
+
+
+# ---------------------------------------------------------------------------
+# The ways a finding could end, offered inside the conversation about it
+# ---------------------------------------------------------------------------
+
+# What an option may be. These are the panel's own ending verbs rather than
+# a friendlier set translated at the far end: one vocabulary from the tool
+# schema to the HTTP route is one fewer place for two answers to the same
+# question to drift apart.
+RESOLUTION_KINDS = ("done", "wrong", "todo", "advice")
+MAX_RESOLUTIONS = 4
+MAX_RESOLUTION_LABEL = 90
+# `advice` replaces the card's "What you'd need to do" with the sentence
+# the conversation reached, and settles nothing — so its label is a
+# paragraph's worth rather than a button's, capped at what the findings
+# store keeps for that field.
+MAX_ADVICE_LABEL = 600
+
+
+def offer_resolutions(options):
+    """Put the ways this finding could end on the homeowner's screen.
+
+    This tool changes NOTHING — not the house, not brAIn, not the finding.
+    The panel is already streaming this conversation, so it reads the call
+    itself and renders one button per option; pressing one is what settles
+    the finding, and it settles it in the words of the option pressed.
+
+    Which is why the label IS the record: there is no second string a person
+    cannot see before they press. A label written as "Replaced the CR2032"
+    is what goes into memory; one written as "that cupboard is never opened"
+    is what corrects brAIn about the house.
+
+    It only means anything inside a finding discussion, which is the panel's
+    Discuss button. Anywhere else there is no finding to attach options to
+    and nothing is shown — so this is not a way to ask a general question.
+    """
+    if not isinstance(options, list) or not options:
+        return {"error": "options must be a non-empty list of "
+                         "{label, kind} objects"}
+    if len(options) > MAX_RESOLUTIONS:
+        return {"error": f"at most {MAX_RESOLUTIONS} options — this is a row "
+                         "of buttons on a phone, not a menu"}
+    cleaned = []
+    for option in options:
+        if not isinstance(option, dict):
+            return {"error": "each option is an object with label and kind"}
+        label = option.get("label")
+        kind = option.get("kind")
+        if not isinstance(label, str) or not label.strip():
+            return {"error": "every option needs a label — it is both the "
+                             "button and what gets recorded"}
+        if kind not in RESOLUTION_KINDS:
+            return {"error": "kind must be one of "
+                             + ", ".join(RESOLUTION_KINDS)}
+        cap = MAX_ADVICE_LABEL if kind == "advice" else MAX_RESOLUTION_LABEL
+        cleaned.append({"label": label.strip()[:cap], "kind": kind})
+    return {
+        "status": "offered",
+        "options": cleaned,
+        "note": "Shown as buttons under this message. The homeowner presses "
+                "one, or none — you are not told which, and nothing is "
+                "settled until they do. An `advice` option settles nothing "
+                "either way: pressing it puts your sentence on the card as "
+                "what to do about it.",
     }
 
 
@@ -2060,7 +2663,7 @@ TOOLS = [
             "properties": {
                 "url_path": {
                     "type": "string",
-                    "description": "Dashboard url_path from list_dashboards; omit for the default dashboard"
+                    "description": "Dashboard url_path from list_dashboards; omit or pass \"default\" for the default dashboard (the same word brain.update_dashboard takes for it). The answer says which dashboard it actually read."
                 },
                 "view_index": {
                     "type": "integer",
@@ -2713,6 +3316,181 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}}
     },
     {
+        "name": "what_is_normal",
+        "description": (
+            "What one numeric entity normally reads, how far from that it is "
+            "RIGHT NOW in its own spreads, and which way it has been heading "
+            "over the month. The first thing to call before saying a reading "
+            "is high, low or odd: a threshold you would guess is the same one "
+            "for a freezer and a water meter, and this is measured from this "
+            "house. `get_baseline` has the hour-of-week detail."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"entity_id": {"type": "string",
+                                         "description": "The entity ID"}},
+            "required": ["entity_id"]
+        }
+    },
+    {
+        "name": "room_physics",
+        "description": (
+            "How fast a room loses heat and how fast it warms, measured per "
+            "room from a month of nights: the loss rate, the time constant, "
+            "the gain with the heating on, and how long the coldest night's "
+            "climb took. For pre-heat timing, 'is a window open', setback "
+            "costs and freeze risk — questions a threshold cannot answer "
+            "because every house and every room differs by an order of "
+            "magnitude."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"area": {"type": "string",
+                                    "description": "The area name or id"}},
+            "required": ["area"]
+        }
+    },
+    {
+        "name": "appliance_status",
+        "description": (
+            "Whether a machine on a power sensor is idle, running, or "
+            "finished-and-waiting, by thresholds measured from ITS OWN power "
+            "shape rather than a wattage somebody typed. 'Is the dishwasher "
+            "done' and 'has the washing been taken out' — the second is a "
+            "question no power reading can answer, and the tool says so."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"entity_id": {"type": "string",
+                                         "description": "The power sensor"}},
+            "required": ["entity_id"]
+        }
+    },
+    {
+        "name": "house_rhythm",
+        "description": (
+            "When this house gets up and settles for the night — weekdays "
+            "and weekends measured apart, with the spread — from the first "
+            "and last thing a person did each day. For anything scheduled "
+            "'in the morning' or 'at bedtime': 07:00 is early on a Sunday "
+            "and late on a Tuesday in the same house."
+        ),
+        "inputSchema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "door_habits",
+        "description": (
+            "How much of each hour of the week a door, window, lock, cover "
+            "or garage is USUALLY open in this house, time-weighted over the "
+            "weeks watched. 'Is it odd that the back door is open at 23:40' "
+            "has a different answer in a house that shuts it every night and "
+            "one that airs the kitchen all summer."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"entity_id": {"type": "string",
+                                         "description": "The closure's entity ID"}},
+            "required": ["entity_id"]
+        }
+    },
+    {
+        "name": "habits",
+        "description": (
+            "What a person does with this entity BY HAND often enough to be "
+            "a habit — which days, at what time, how reliably, and whether "
+            "it is still happening — plus which automations they keep "
+            "undoing about it and whether something already automates it. "
+            "The evidence behind 'you seem to do this every evening; want "
+            "an automation for it'."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"entity_id": {"type": "string",
+                                         "description": "The entity ID"}},
+            "required": ["entity_id"]
+        }
+    },
+    {
+        "name": "simulate_automation",
+        "description": (
+            "Replay an automation config over the last N days of recorded "
+            "history — calling nothing — to see when it WOULD have fired, "
+            "and grade each firing against what a person actually did in "
+            "that window (agreed, contradicted, nothing). The sanity check "
+            "to run on any automation before proposing it. Only time, "
+            "state, numeric_state and template triggers can be replayed; "
+            "anything else is refused whole rather than counted wrongly."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "config": {"type": "object",
+                           "description": "A Home Assistant automation object: trigger(s), condition(s), action(s)"},
+                "days": {"type": "integer", "description": "How many days back (1–28, default 7)"}
+            },
+            "required": ["config"]
+        }
+    },
+    {
+        "name": "recall",
+        "description": (
+            "What brAIn remembers about something: ranked facts with who "
+            "taught each one and when. Ask by subject — an entity id, "
+            "`area:<id>`, `person:<id>` or `house` — or by a few words. Read "
+            "it before contradicting the homeowner about their own house: a "
+            "`correction` is them saying brAIn had it wrong, and an "
+            "`exception:` predicate is a rule they have told to stand down."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "A few words to match"},
+                "subject": {"type": "string", "description": "An entity id, area:<id>, person:<id> or house"},
+                "limit": {"type": "integer", "description": "At most this many (default 10)"}
+            }
+        }
+    },
+    {
+        "name": "get_findings",
+        "description": (
+            "What brAIn has found wrong with this house and is waiting on the "
+            "homeowner about: the Findings tab, as rows — each with what is "
+            "wrong, the detail, what to do, the entity, who raised it and "
+            "what the look before it was shown concluded. Use it for 'what "
+            "needs attention', 'is anything broken', 'what should I do "
+            "today', and before reporting a problem the house already "
+            "knows about. Read-only; it changes nothing and settles nothing."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "description": ("Which rows: 'open' (default — waiting on a "
+                                    "person, the tab's own list), 'held' "
+                                    "(looked at and judged not worth showing), "
+                                    "or 'all'.")
+                },
+                "limit": {
+                    "type": "number",
+                    "description": "Most rows to return (1-200, default 50)"
+                }
+            }
+        }
+    },
+    {
+        "name": "get_health",
+        "description": (
+            "Whether brAIn itself is working, in its own words: the health "
+            "verdict (ok / degraded / failed) with the sentence and the "
+            "switch for the worst thing found, whether it is signed in, what "
+            "the usage sensors last said, and which of its background jobs "
+            "are running. Use it when somebody asks whether brAIn is OK, why "
+            "the usage figure is missing, or why nothing has run. Read-only."
+        ),
+        "inputSchema": {"type": "object", "properties": {}}
+    },
+    {
         "name": "get_activity",
         "description": (
             "What changed in the house recently, with a cause on every row, plus "
@@ -2858,6 +3636,14 @@ TOOLS = [
                     "type": "string",
                     "description": "The durable fact to remember, phrased as one short standalone sentence."
                 },
+                "subject": {
+                    "type": "string",
+                    "description": "What the fact is about: an entity id, area:<id>, person:<id> or house"
+                },
+                "person": {
+                    "type": "string",
+                    "description": "The person this preference belongs to, if it is theirs and not the house's"
+                },
                 "confidence": {
                     "type": "string",
                     "enum": ["high", "medium", "low"],
@@ -2879,6 +3665,57 @@ TOOLS = [
                 }
             },
             "required": ["target"]
+        }
+    },
+    {
+        "name": "offer_resolutions",
+        "description": (
+            "Offer the homeowner the ways the finding you are discussing "
+            "could end, as buttons under your message. Use it once you have "
+            "looked into the problem and can name what would actually "
+            "settle it. Each option's label is BOTH the button and what "
+            "gets recorded, so write it in the voice of its kind: 'done' is "
+            "something they have already done (\"Replaced the CR2032\"), "
+            "'todo' is work to put on their list (\"Replace the CR2032 in "
+            "the garage sensor\"), 'wrong' is a fact about the house that "
+            "means this was never a problem (\"That cupboard is never "
+            "opened\"). 'advice' is the fourth kind and is not an ending: "
+            "its label is what you would tell them to DO about it, specific "
+            "to this house (\"Power-cycle the Tuya hub in the garage — the "
+            "other three valves on it are answering\"), and pressing it "
+            "replaces the generic 'What you'd need to do' on the card with "
+            "that sentence while the finding stays open. Offer only endings "
+            "your own investigation supports, and leave out any you cannot "
+            "justify — two honest options beat four. This changes nothing "
+            "by itself: nothing is settled until they press, and you are not "
+            "told whether they did. It works only inside a finding "
+            "discussion."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "options": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "description": "Up to 4 ways this could end, best first.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {
+                                "type": "string",
+                                "description": "What the button says, and what gets recorded. One short line, in the voice of its kind."
+                            },
+                            "kind": {
+                                "type": "string",
+                                "enum": ["done", "todo", "wrong", "advice"],
+                                "description": "done = they have already done this, and it goes into memory as a fix. todo = work for their to-do list, written as an instruction. wrong = brAIn has misread the house, and the label is the correction. advice = not an ending: the label becomes the card's 'What you'd need to do', specific to this house, and the finding stays open."
+                            }
+                        },
+                        "required": ["label", "kind"]
+                    }
+                }
+            },
+            "required": ["options"]
         }
     },
 ]
@@ -2931,6 +3768,18 @@ TOOL_IMPLEMENTATIONS = {
     "get_baseline": "get_baseline",
     "get_activity": "get_activity",
     "get_house_model": "get_house_model",
+    # The measurements as tools (2.2): every store the checks read,
+    # readable by every run, over the panel's own routes.
+    "what_is_normal": "what_is_normal",
+    "room_physics": "room_physics",
+    "appliance_status": "appliance_status",
+    "house_rhythm": "house_rhythm",
+    "door_habits": "door_habits",
+    "habits": "habits",
+    "simulate_automation": "simulate_automation",
+    "recall": "recall",
+    "get_findings": "get_findings",
+    "get_health": "get_health",
     "get_statistics": "get_statistics",
     "get_weather_forecast": "get_weather_forecast",
     "get_error_log": "get_error_log",
@@ -2940,6 +3789,8 @@ TOOL_IMPLEMENTATIONS = {
     "reload_config": "reload_config",
     # Memory / learning
     "remember_fact": "remember_fact",
+    # Talking to the person who is reading
+    "offer_resolutions": "offer_resolutions",
 }
 
 

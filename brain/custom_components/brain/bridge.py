@@ -370,8 +370,34 @@ class ClaudeBridge:
         notify_entity: str | None = None,
         timeout: int | None = None,
         model: str | None = None,
+        tools: str | None = None,
+        schema: dict | None = None,
     ) -> str:
-        """Send an automation task and wait for the result."""
+        """Send an automation task and wait for the result's text."""
+        answer = await self.async_send_task_full(
+            prompt, notify=notify, notify_entity=notify_entity,
+            timeout=timeout, model=model, tools=tools, schema=schema)
+        return answer["text"]
+
+    async def async_send_task_full(
+        self,
+        prompt: str,
+        notify: bool = False,
+        notify_entity: str | None = None,
+        timeout: int | None = None,
+        model: str | None = None,
+        tools: str | None = None,
+        schema: dict | None = None,
+    ) -> dict:
+        """Send a task and wait for the whole result: ``{"text", "data"}``.
+
+        `schema` is a JSON Schema the listener hands the CLI as
+        `--json-schema`; the object the CLI validated comes back as
+        `data`, and is `None` when the run carried no schema, the CLI was
+        too old for the flag, or the reply did not validate — the text is
+        still the text either way, so `brain.ask` never answers with
+        nothing.
+        """
         task_id = uuid.uuid4().hex
         # Tasks default to a longer window than conversations — the add-on
         # listener allows up to BRAIN_AUTOMATION_TIMEOUT (300s default), and
@@ -389,6 +415,14 @@ class ClaudeBridge:
             task["notify_entity"] = notify_entity
         if model and model != "default":
             task["model"] = model
+        # Written only when it narrows something. The listener reads a
+        # missing key as `full`, which is what every task before this field
+        # existed asked for and what BRight's director still writes, so the
+        # default path puts the same JSON on disk it always did.
+        if tools and tools != "full":
+            task["tools"] = tools
+        if isinstance(schema, dict) and schema:
+            task["schema"] = schema
 
         task_file = os.path.join(self.tasks_dir, f"{task_id}.json")
         result_file = os.path.join(self.task_results_dir, f"{task_id}.json")
@@ -399,8 +433,22 @@ class ClaudeBridge:
 
         _LOGGER.debug("Task %s written (timeout=%ds)", task_id, timeout)
 
-        result_text = await self._poll_for_response(result_file, timeout)
-        return result_text
+        return await self._poll_for_result(result_file, timeout)
+
+    async def _poll_for_result(self, path: str, timeout: int) -> dict:
+        """`_poll_for_response`, keeping the whole file rather than its text."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            result = await self._hass.async_add_executor_job(
+                self._read_json_and_remove, path
+            )
+            if result is not None:
+                return result
+            await asyncio.sleep(POLL_INTERVAL)
+
+        raise TimeoutError(
+            f"No response within {timeout}s for {os.path.basename(path)}"
+        )
 
     async def _poll_for_response(self, path: str, timeout: int) -> str:
         """Poll for a response file, return its content or raise TimeoutError."""
@@ -428,6 +476,42 @@ class ClaudeBridge:
         with open(tmp, "w") as fh:
             json.dump(data, fh)
         os.replace(tmp, path)  # atomic on POSIX
+
+    @classmethod
+    def _read_json_and_remove(cls, path: str) -> dict | None:
+        """A result file as ``{"text", "data"}``, deleted once read.
+
+        `data` is the listener's `data` field when it wrote one — the
+        object the CLI validated against the task's schema — and `None`
+        otherwise. The text is read exactly as `_read_and_remove` reads
+        it, so the two readers cannot disagree about a corrupt file.
+        """
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path) as fh:
+                data = json.load(fh)
+        except json.JSONDecodeError as exc:
+            _LOGGER.warning("Corrupt response file %s: %s", path, exc)
+            try:
+                os.remove(path)
+            except OSError:
+                # As below: the next pass reports the same corruption.
+                pass
+            return {"text": "Error: received corrupt response from Claude Terminal.",
+                    "data": None}
+        except OSError as exc:
+            _LOGGER.warning("Failed to read response %s: %s", path, exc)
+            return None
+        try:
+            os.remove(path)
+        except OSError as exc:
+            _LOGGER.warning("Could not remove response %s: %s", path, exc)
+        if not isinstance(data, dict):
+            return {"text": json.dumps(data), "data": None}
+        structured = data.get("data")
+        return {"text": data.get("text", data.get("result", json.dumps(data))),
+                "data": structured if isinstance(structured, (dict, list)) else None}
 
     @staticmethod
     def _read_and_remove(path: str) -> str | None:

@@ -123,6 +123,25 @@ MAX_ROOMS = 60
 OUTDOOR_WORDS = ("outdoor", "outside", "exterior", "garden", "backyard",
                  "back yard", "patio", "balcony", "terrace", "porch",
                  "ambient", "external")
+# And what a temperature-classed reading can be that is NOT a temperature
+# anybody is standing in. Every one of these is published by weather
+# integrations with `device_class: temperature` and no area — which is
+# exactly the branch `pick_outdoor` falls through to — so without this the
+# reference is settled by whichever sorts first, and `dewpoint` sorts
+# before `temperature`. That is how a real house came to have every `k` in
+# it measured against `sensor.astroweather_2m_dewpoint`: a number that
+# tracks humidity, sits well above the night air, and made a check report
+# an irrigation manifold as a room with a window open.
+#
+# It is a name gate, which is a guess, made in the direction where being
+# wrong is cheap (`measures_something_hot`'s trade): refusing a real
+# outdoor sensor with an odd name costs the model, and the payload SAYS it
+# found no reference, where accepting a derived one costs every room's
+# physics silently. A frost point and a wet bulb are the same claim.
+DERIVED_WORDS = ("dew point", "dewpoint", "dew_point", "feels like",
+                 "feels_like", "apparent", "heat index", "heat_index",
+                 "wind chill", "wind_chill", "windchill", "wet bulb",
+                 "wet_bulb", "wetbulb", "frost point", "frost_point")
 # A store older than this describes a season that has ended.
 STALE_DAYS = 10.0
 
@@ -583,10 +602,25 @@ def _temperature_sensors(states: dict) -> list[tuple[str, dict, str]]:
     return out
 
 
-def _looks_outdoor(eid: str, st: dict) -> bool:
-    name = (str(((st.get("attributes") or {}).get("friendly_name")) or "")
+def _name_of(eid: str, st: dict) -> str:
+    return (str(((st.get("attributes") or {}).get("friendly_name")) or "")
             + " " + eid).lower()
+
+
+def _looks_outdoor(eid: str, st: dict) -> bool:
+    name = _name_of(eid, st)
     return any(word in name for word in OUTDOOR_WORDS)
+
+
+def is_derived(eid: str, st: dict) -> bool:
+    """A temperature-classed reading that is not the air temperature.
+
+    Checked BEFORE the outdoor words rather than after them, because
+    "Outdoor Dew Point" satisfies both and only one of them decides
+    whether the number means what the model needs it to mean.
+    """
+    name = _name_of(eid, st)
+    return any(word in name for word in DERIVED_WORDS)
 
 
 def pick_outdoor(states: dict, areas: dict | None = None) -> tuple[str, str]:
@@ -598,11 +632,19 @@ def pick_outdoor(states: dict, areas: dict | None = None) -> tuple[str, str]:
     **recorded in the payload** rather than only used, because a reference
     nobody can check is a reference nobody can correct — and every ``k``
     in the house is measured against this one choice.
+
+    A derived temperature is refused in **both** branches (`is_derived`):
+    the fallback takes the first unplaced sensor in order, and a weather
+    integration publishes several temperature-classed readings that are
+    not the air temperature, so without that the reference is decided by
+    the alphabet.
     """
     areas = areas or {}
     named: list[tuple[str, str]] = []
     unplaced: list[tuple[str, str]] = []
     for eid, st, unit in _temperature_sensors(states):
+        if is_derived(eid, st):
+            continue
         if _looks_outdoor(eid, st):
             named.append((eid, unit))
         elif not areas.get(eid):
@@ -627,6 +669,10 @@ def room_candidates(states: dict, outdoor: str, unit: str,
     out = []
     for eid, st, own in _temperature_sensors(states):
         if eid == outdoor or own != unit or _looks_outdoor(eid, st):
+            continue
+        # A dew point sitting in a room's area reads inside the band and
+        # carries the class, so the band alone lets one through as a room.
+        if is_derived(eid, st):
             continue
         try:
             value = float(st.get("state"))

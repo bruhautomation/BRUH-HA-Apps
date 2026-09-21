@@ -52,13 +52,38 @@ cadence, because retrying a 429 is what sustains it; and `Retry-After` may
 only ever lengthen that silence, because the endpoint sends
 `Retry-After: 0` while still refusing, so obeying it literally is how a
 tracker retries straight back into the limit it was just told about.
+
+**And the tracker renews the account credential ITSELF, because the run
+that was supposed to renew it never touches that file.** The account
+sign-in writes Claude Code's `.credentials.json`: an access token that
+lives a few hours beside the refresh token that mints the next one. Every
+release up to 1.59.0 waited for the CLI to do that minting "on its next
+run" — and on a box that also holds a panel-store or `ha login` token,
+`engine.get_auth` hands the CLI THAT token through the environment on
+every run, so the CLI never opens its own file, never refreshes it, and the
+access token in it lapses a few hours after the sign-in and stays lapsed
+for ever. Twenty-seven runs in a day and not one of them renewed it; the
+tracker reported `oauth_token_awaiting_refresh` — "nothing is wrong, wait"
+— for a day, and four sensors were unavailable the whole time with a
+message saying there was nothing to do. So `_renew` performs the same
+request the CLI performs (the token endpoint, the grant, the client id,
+the scopes — read off the installed binary, not remembered), writes the
+result back the way the CLI writes it (compare-and-swap on the refresh
+token, so whichever of the two got there first wins and the loser's
+answer is dropped), and the lapsed state is a few minutes long instead of
+permanent. A renewal Anthropic REFUSES is a dead session and is said so,
+once, with the remedy — signing in again — and a renewal that could not be
+made is retried on every pass, with a clock on it (`error_since`) so that
+"waiting" can never again be the answer for a day.
 """
 
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 import urllib.error
@@ -72,17 +97,53 @@ from email.utils import parsedate_to_datetime
 CLAUDE_HOME = os.environ.get("BRAIN_HOME") or os.environ.get("HOME", "/data/home")
 CLAUDE_CONFIG_DIR = os.environ.get("CLAUDE_CONFIG_DIR", "")
 USAGE_FILE = "/config/.brain/usage_limits.json"
-# Every 5 minutes. The interval was 30 minutes for as long as the tracker
-# introduced itself as `brain/1.0` — the wrong User-Agent put it in the
-# endpoint's hostile rate-limit bucket, where 2-minute polling bought nine
-# working hours and then a 429 wall, which read as a daily meter. With the
-# CLI's own UA (see user_agent below) the endpoint serves the statusline
-# ecosystem at 1–5 minute cadences sustainably; 5 minutes keeps the sensors
-# close to live (the five-hour window moves ~1% every three minutes at a
-# hard sprint) while still asking for far less than the tools that poll on
-# every keystroke's response. The hour-scale 429 ladder below stays as the
-# safety net either way.
-POLL_INTERVAL = int(os.environ.get("USAGE_LIMITS_INTERVAL", "300"))  # seconds
+# Touched by the panel when a Claude run finishes — see `_nudged_at` and
+# usage_store.nudge, which spells this same path. A separate process
+# importing nothing from the panel means two spellings of one path, so
+# tests/test_usage_nudge.py reads both ends.
+NUDGE_FILE = os.environ.get("BRAIN_USAGE_NUDGE", "/data/usage-nudge")
+# Touched by the panel while its guided sign-in is running, and removed
+# when the flow settles — `engine.SetupTokenFlow` spells the same path. The
+# flow reads a rewritten credentials file as the exchange having succeeded
+# (it fingerprints the file when it starts and waits for it to change), so
+# a renewal landing in the middle of one would report "Connected!" about a
+# code that had not been exchanged, which is the 1.5x bug in a new
+# disguise. While the marker is fresh nothing here writes that file; a
+# marker older than the flow's own lifetime is a panel that died mid-flow
+# and is ignored.
+SIGNIN_HOLD_FILE = os.environ.get("BRAIN_USAGE_SIGNIN_HOLD",
+                                  "/data/usage-signin-hold")
+SIGNIN_HOLD_MAX_S = 660
+# Every 30 minutes, and immediately when a run has just spent something.
+#
+# The number was 30 minutes when the tracker introduced itself as
+# `brain/1.0`, then 5 when the User-Agent fix (see user_agent below) moved
+# it out of the endpoint's hostile bucket — on the argument that the
+# five-hour window moves ~1% every three minutes at a hard sprint, so a
+# tight timer is what keeps the sensors close to live. That argument was
+# answering the wrong question. The figure moves when a run spends tokens
+# and at no other time, so 288 requests a day bought a fresh reading on
+# the handful of occasions anything had changed and re-asked an unchanged
+# question 280-odd times — against an endpoint Claude Code itself calls
+# only from the /usage screen, on demand, never on a timer.
+#
+# So freshness comes from the event now and the timer is the floor under
+# it: the panel touches NUDGE_FILE when a run ends and this wakes within
+# NUDGE_CHECK_S, which is both when the number changed AND the only moment
+# the credential is certain to work — the CLI mints the next access token
+# from the refresh token as part of a run, and nothing else on the box
+# can, which is why a quiet house reports nothing however hard it polls.
+POLL_INTERVAL = int(os.environ.get("USAGE_LIMITS_INTERVAL", "1800"))  # seconds
+# How often the ordinary wait looks for a nudge. Small enough that the
+# sensors move while somebody is watching the run that moved them.
+NUDGE_CHECK_S = 5
+# The floor between two requests, however many runs finish. A checks pass
+# that triages, files and heals is several runs in a minute and that is
+# one thing that happened to the figure, not five questions to ask about
+# it. Deliberately not a "coalesce the batch" debounce: the last run of a
+# burst is the one whose number we want, and waiting this long after the
+# first gets it without machinery to detect the end of a burst.
+MIN_SPACING_S = 120
 # How long a reading stays usable when polls start failing. Matches
 # usage_store.LIMITS_MAX_AGE_S, which is the panel's own staleness rule for
 # the same file — two answers to "is this still true" would be one too many.
@@ -104,6 +165,48 @@ EXPIRY_SKEW_S = 60
 # figure, and no amount of retrying, backing off or re-running `ha login`
 # changes that.
 SCOPE_ERROR = "oauth_token_lacks_usage_scope"
+# And the status that keeps that verdict honest. An access token lives for
+# hours and Claude Code mints the next one from the `refreshToken` beside
+# it on its next run — so a lapsed token in that file is not a dead
+# credential, it is the *right* credential between refreshes. Reading one
+# as nothing at all is what made the scope verdict unclearable: the
+# account sign-in that carries `user:profile` stopped being offered a few
+# hours after it landed, the search fell through to the older `ha login`
+# setup token, that earned the scope refusal, and the popover then told
+# somebody to perform the sign-in they had just performed. It worked for
+# an afternoon each time, which is why it reads as "I keep signing in over
+# and over and the message never goes away".
+#
+# It is deliberately NOT in AUTH_PROBLEMS: it says nothing is wrong with
+# the sign-in, so — `http_429`'s rule — it must let a good reading age out
+# rather than blank four working sensors. And it is not settled, because
+# the one thing that clears it is a renewal landing — which, from 1.60.0,
+# this tracker performs itself (see _renew), so the status now means "the
+# renewal could not be made this pass" and is minutes long, not a day.
+REFRESH_PENDING = "oauth_token_awaiting_refresh"
+# Where Claude Code renews its own credential, and who it says it is when
+# it does. Both are read off the installed binary (`grep -a` for the URL
+# and the id; the request body is `{grant_type, refresh_token, client_id,
+# scope}` as JSON, and the answer is `{access_token, refresh_token?,
+# expires_in, scope?}`), because a shape remembered rather than read is
+# the `ETB` byte that shipped a printer that could not print. The client
+# id is the CLI's public OAuth client — it is in every copy of the binary
+# and in the authorize URL the guided sign-in shows on screen — and the
+# request is made on behalf of the install it belongs to, with that
+# install's own refresh token, which is the same standing the usage
+# request itself has.
+TOKEN_URL = os.environ.get("BRAIN_OAUTH_TOKEN_URL",
+                           "https://platform.claude.com/v1/oauth/token")
+OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+REFRESH_TIMEOUT_S = 30
+# What a renewal can come back as. `renewed` is a live token in hand;
+# `rejected` is Anthropic saying the session is over (`invalid_grant`, or a
+# 4xx on the grant), which no retry changes; `failed` is anything about
+# the request rather than the credential — the network, a 5xx, the token
+# endpoint's own rate limit — and is asked again next pass; `raced` is the
+# CLI having rewritten the file while our request was in flight, in which
+# case ITS answer is the one on disk and ours is dropped unread.
+RENEWED, REJECTED, FAILED, RACED = "renewed", "rejected", "failed", "raced"
 AUTH_PROBLEMS = ("no_oauth_token", "api_key_has_no_usage_limits", "http_401",
                  SCOPE_ERROR)
 # A bare `http_403` is deliberately NOT in that list. The narrowed code above
@@ -135,14 +238,31 @@ ERROR_DETAIL = {
         "usage limits: `claude setup-token`, which `ha login` is built on, "
         "mints a token without the `user:profile` scope this endpoint "
         "requires. Retrying cannot clear it and neither can running "
-        "`ha login` again. Run `claude /login` in the Terminal tab — the "
-        "interactive sign-in asks for that scope — and the numbers come "
-        "back on the next poll."
+        "`ha login` again. In the panel, open Settings -> Claude account -> "
+        "Sign in again and choose \"Sign in to your Claude account\": that "
+        "one asks for the scope, and the numbers come back on the next poll. "
+        "No terminal is needed — it is `claude auth login`, run for you."
+    ),
+    REFRESH_PENDING: (
+        "The signed-in account credential's access token has lapsed and "
+        "brAIn could not renew it this time — Anthropic's token endpoint "
+        "did not answer, or answered with an error that is not a refusal. "
+        "brAIn renews it itself, on the next poll and every poll after, "
+        "so nothing is wrong with the sign-in and signing in again will not "
+        "make the figure arrive sooner. If this has been the answer for "
+        "more than a few hours the add-on log says what the renewal ran "
+        "into."
+    ),
+    "http_401": (
+        "Anthropic refused the saved credential: the session has expired "
+        "or been revoked, or its renewal was rejected. Signing in again "
+        "from the panel's Settings -> Claude account -> Sign in again is "
+        "what restores the real numbers."
     ),
     "http_403": (
         "Anthropic refused this credential permission to read usage limits "
-        "and did not say why. Signing in again with `claude /login` in the "
-        "Terminal tab is what usually fixes it."
+        "and did not say why. Signing in again from the panel's Settings -> "
+        "Claude account -> Sign in again is what usually fixes it."
     ),
     "http_429": (
         "Anthropic rate-limited the usage endpoint itself — this is not your "
@@ -178,6 +298,14 @@ CREDENTIAL_REFUSALS = ("http_401", "http_403", SCOPE_ERROR)
 # blacklisting a credential for the life of the process over the second is
 # how a working sign-in stays unread. A scope verdict is structural.
 SETTLED_REFUSALS = (SCOPE_ERROR,)
+# And the verdicts a credential merely between refreshes must not be
+# reported as. Both of them would tell somebody who is signed in to sign
+# in — the scope refusal names the account flow they have already done,
+# and `no_oauth_token` says nothing has signed in at all — so both are
+# answers about a house with a different problem. A 401 is deliberately
+# absent: it is a real refusal of a real credential and saying so is
+# right even while another one waits on a refresh.
+MASKED_BY_REFRESH = SETTLED_REFUSALS + ("no_oauth_token",)
 
 ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 
@@ -361,8 +489,37 @@ def oauth_tokens(state=None):
     for path in CREDENTIAL_PATHS:
         if not unread(path):
             continue
-        token = _read_token_from_file(path)
-        if token and unseen(token):
+        kind, token = _credential_state(path)
+        if kind == CRED_LAPSED:
+            # This is the one store an account sign-in writes, and it
+            # always ranks first, so a lapse here means "the credential
+            # that can read usage is between refreshes". It used to be
+            # noted and left for the CLI to renew on its next run — and on
+            # a box holding a panel or `ha login` token as well, the CLI
+            # is handed THAT token on every run and never opens this file,
+            # so the lapse was permanent. The renewal is made here now.
+            token, outcome = _renew(path, state)
+            if token and unseen(token):
+                # Renewed here, or renewed by the CLI in the same moment
+                # (RACED) — either way a live token, and the file says so.
+                _note_source(state, "claude cli")
+                yield token
+            elif outcome == REJECTED:
+                # A dead session, said so by the only party that can say
+                # it. Not "between refreshes": _fetch_with_any_credential
+                # must NOT mask a lower store's verdict for it, and if no
+                # store answers, the verdict is the refusal.
+                if state is not None:
+                    state["rejected"] = True
+            elif token is None:
+                # Could not ask (FAILED). Still the right credential,
+                # still merely waiting — which is why
+                # _fetch_with_any_credential will not let a lower store's
+                # settled verdict speak for it — and asked again next pass.
+                if state is not None:
+                    state["lapsed"] = True
+            continue
+        if kind == CRED_TOKEN and token and unseen(token):
             _note_source(state, "claude cli")
             yield token
 
@@ -441,29 +598,333 @@ def _oauth_expired(oauth):
     return expires / 1000.0 <= time.time() + EXPIRY_SKEW_S
 
 
+def _refreshable(oauth):
+    """Does this credential carry the means to mint its own next token?
+
+    The question `engine._cli_credentials_present` asks, for the same
+    reason and with the opposite conclusion. There, "can the CLI still get
+    a live token out of this" decides whether the panel reports itself
+    signed in; here the access token is what goes on the wire, so a lapsed
+    one still cannot be sent — what the refresh token changes is not
+    whether this credential is usable *now* but what its being unusable
+    MEANS, which is "wait" rather than "this is the wrong sign-in".
+    """
+    token = oauth.get("refreshToken")
+    return isinstance(token, str) and bool(token.strip())
+
+
+# What one credentials file holds, as a verdict this module can act on.
+# Three answers rather than two, because "there is nothing here" and
+# "there is a credential here, between refreshes" send the search to the
+# same next store and must not send the same message to the person.
+CRED_NONE = "none"
+CRED_TOKEN = "token"
+CRED_LAPSED = "lapsed"
+
+
+def _credential_state(path):
+    """``(CRED_*, token or None)`` for one credentials JSON file."""
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return CRED_NONE, None
+    if not isinstance(data, dict):
+        return CRED_NONE, None
+
+    # Standard format: {"claudeAiOauth": {"accessToken": "sk-ant-oat01-..."}}
+    oauth = data.get("claudeAiOauth")
+    if isinstance(oauth, dict):
+        token = oauth.get("accessToken")
+        has_token = isinstance(token, str) and bool(token.strip())
+        if has_token and not _oauth_expired(oauth):
+            return CRED_TOKEN, token.strip()
+        if has_token and _refreshable(oauth):
+            # The account sign-in, an hour after it landed. Not offered —
+            # a known-dead access token on a rate-limited endpoint is a
+            # guaranteed 401 — and not silence either.
+            return CRED_LAPSED, None
+
+    # Fallback: check for a flat "accessToken" key
+    token = data.get("accessToken")
+    if isinstance(token, str) and token.strip():
+        return CRED_TOKEN, token.strip()
+
+    return CRED_NONE, None
+
+
 def _read_token_from_file(path):
     """Read a live OAuth access token from a credentials JSON file."""
+    return _credential_state(path)[1]
+
+
+# ---------------------------------------------------------------------------
+# Renewing the account credential
+# ---------------------------------------------------------------------------
+
+def _load_oauth(path):
+    """The `claudeAiOauth` block of one credentials file, or None."""
     try:
         with open(path) as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError):
         return None
-    if not isinstance(data, dict):
+    oauth = data.get("claudeAiOauth") if isinstance(data, dict) else None
+    return oauth if isinstance(oauth, dict) else None
+
+
+def _refusal_named(body):
+    """The OAuth error code in an error body, if it carries one.
+
+    Two shapes are read: the RFC 6749 one (`{"error": "invalid_grant"}`)
+    and Anthropic's envelope (`{"error": {"type": …}}`). Anything else is
+    None, which the caller reads as "the status alone decides".
+    """
+    try:
+        parsed = json.loads(body) if body else None
+    except (ValueError, TypeError):
         return None
-
-    # Standard format: {"claudeAiOauth": {"accessToken": "sk-ant-oat01-..."}}
-    oauth = data.get("claudeAiOauth")
-    if isinstance(oauth, dict) and not _oauth_expired(oauth):
-        token = oauth.get("accessToken")
-        if isinstance(token, str) and token.strip():
-            return token.strip()
-
-    # Fallback: check for a flat "accessToken" key
-    token = data.get("accessToken")
-    if isinstance(token, str) and token.strip():
-        return token.strip()
-
+    if not isinstance(parsed, dict):
+        return None
+    err = parsed.get("error")
+    if isinstance(err, str):
+        return err
+    if isinstance(err, dict):
+        for key in ("type", "error", "code"):
+            if isinstance(err.get(key), str):
+                return err[key]
     return None
+
+
+# The grant answers that mean the session is over. `invalid_grant` is the
+# spec's word for a refresh token that is expired, revoked or already
+# used; the other two say the client itself is not welcome, which is not
+# something a retry changes either.
+GRANT_REFUSALS = ("invalid_grant", "invalid_client", "unauthorized_client")
+
+
+def _refresh_request(refresh_token, scopes):
+    """One renewal round trip → (payload, None) or (None, REJECTED|FAILED).
+
+    The request is the CLI's own, field for field: JSON, the refresh
+    grant, its client id, and the scopes the file already holds (so a
+    renewal cannot quietly widen or narrow what the sign-in was granted).
+    The User-Agent is the one every poll sends, for the reason every poll
+    sends it.
+
+    Which failures are which is the load-bearing half. A 401, a 403, or a
+    4xx whose body names one of GRANT_REFUSALS is REJECTED: Anthropic has
+    said the session is over, and asking again is the request nobody will
+    ever answer that the scope verdict's memory exists to stop. Everything
+    else — the network, a 5xx, a 429 on the token endpoint, a 400 with no
+    recognisable code (which is more likely OUR request being malformed
+    than the session being dead, and must not send somebody to sign in
+    again over a bug in this file) — is FAILED, and is asked again next
+    pass.
+    """
+    body = {"grant_type": "refresh_token", "refresh_token": refresh_token,
+            "client_id": OAUTH_CLIENT_ID}
+    if scopes:
+        body["scope"] = " ".join(scopes)
+    req = urllib.request.Request(
+        TOKEN_URL, data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json",
+                 "Accept": "application/json",
+                 "User-Agent": user_agent()},
+        method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=REFRESH_TIMEOUT_S) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        text = ""
+        try:
+            text = exc.read().decode("utf-8", errors="replace")[:ERROR_BODY_MAX]
+        except Exception:
+            # The status speaks for itself below.
+            pass
+        sys.stderr.write(
+            f"usage-limits-tracker: HTTP {status} renewing the signed-in "
+            f"account credential: {text[:ERROR_BODY_LOG]}\n")
+        if status in (401, 403) or (
+                400 <= status < 500 and status != 429
+                and _refusal_named(text) in GRANT_REFUSALS):
+            return None, REJECTED
+        return None, FAILED
+    except (urllib.error.URLError, OSError) as exc:
+        sys.stderr.write("usage-limits-tracker: network error renewing the "
+                         f"signed-in account credential: {exc}\n")
+        return None, FAILED
+    except json.JSONDecodeError as exc:
+        sys.stderr.write("usage-limits-tracker: the token endpoint answered "
+                         f"something that is not JSON: {exc}\n")
+        return None, FAILED
+    token = payload.get("access_token") if isinstance(payload, dict) else None
+    if not isinstance(token, str) or not token.strip():
+        # A 200 with nothing in it is a request problem, not a refusal.
+        sys.stderr.write("usage-limits-tracker: the token endpoint answered "
+                         "200 with no access token in it\n")
+        return None, FAILED
+    return payload, None
+
+
+# What an answer with no `expires_in` is good for. The CLI would compute
+# NaN here; an hour is short enough that a wrong guess costs one early
+# renewal and long enough that it is not a renewal per poll.
+DEFAULT_EXPIRES_IN_S = 3600
+
+
+def _renewed(oauth, payload, now_ms):
+    """The `claudeAiOauth` block after a renewal — the CLI's own shape.
+
+    Every key the file already held is kept (`subscriptionType`,
+    `rateLimitTier`, `clientId`, whatever a future CLI adds) and only what
+    the answer names is replaced. A refresh token the answer omits is the
+    one we sent, which is what the CLI assumes too (`refresh_token: U = e`
+    in its bundle); one it includes is the rotation and MUST be kept, or
+    the CLI's next renewal is made with a token the server has retired.
+    """
+    out = dict(oauth)
+    out["accessToken"] = payload["access_token"].strip()
+    refresh = payload.get("refresh_token")
+    if isinstance(refresh, str) and refresh.strip():
+        out["refreshToken"] = refresh.strip()
+    expires_in = payload.get("expires_in")
+    if not isinstance(expires_in, (int, float)) or expires_in <= 0:
+        expires_in = DEFAULT_EXPIRES_IN_S
+    out["expiresAt"] = int(now_ms + expires_in * 1000)
+    refresh_expires_in = payload.get("refresh_token_expires_in")
+    if isinstance(refresh_expires_in, (int, float)) and refresh_expires_in > 0:
+        out["refreshTokenExpiresAt"] = int(now_ms + refresh_expires_in * 1000)
+    scope = payload.get("scope")
+    if isinstance(scope, str) and scope.split():
+        out["scopes"] = scope.split()
+    return out
+
+
+def _write_credentials(path, oauth, sent_refresh):
+    """Compare-and-swap the renewed block into the file → True if written.
+
+    The CLI's own rule — its save is guarded by the on-disk refresh token
+    still being the one the renewal was made with (or empty). If the CLI
+    renewed in the meantime, ITS answer is the one on disk: a refresh
+    token may be single-use, so the second answer to arrive is the one to
+    keep and this one is dropped unread. Same-directory tmp + `os.replace`
+    so the swap is atomic against the CLI reading it, and owner and mode
+    carried over, because the file is the `claude` user's and this
+    process is root: a credential file that changed hands is a sign-in the
+    CLI can no longer open, which is `atomic_write`'s reason for existing
+    one add-on over. A chown that cannot be done aborts the write for the
+    same reason.
+    """
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    current = data.get("claudeAiOauth")
+    on_disk = current.get("refreshToken") if isinstance(current, dict) else None
+    if on_disk not in ("", sent_refresh):
+        return False
+    data["claudeAiOauth"] = oauth
+    directory = os.path.dirname(path) or "."
+    tmp = None
+    try:
+        st = os.stat(path)
+        fd, tmp = tempfile.mkstemp(prefix=".credentials.", suffix=".tmp",
+                                   dir=directory)
+        with os.fdopen(fd, "w") as fh:
+            json.dump(data, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, stat.S_IMODE(st.st_mode))
+        if (st.st_uid, st.st_gid) != (os.getuid(), os.getgid()):
+            os.chown(tmp, st.st_uid, st.st_gid)
+        os.replace(tmp, path)
+        tmp = None
+    except OSError as exc:
+        sys.stderr.write("usage-limits-tracker: could not write the renewed "
+                         f"credential back: {exc}\n")
+        return False
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                # The scratch file is already gone, or its directory is;
+                # either way there is nothing left to tidy.
+                pass
+    return True
+
+
+def _signin_in_progress(now=None):
+    """True while the panel's guided sign-in holds the credentials file.
+
+    The marker's age is the whole test: the flow removes it when it
+    settles, and a panel that died mid-flow leaves one that ages out.
+    """
+    try:
+        age = (now if now is not None else time.time()) \
+            - os.path.getmtime(SIGNIN_HOLD_FILE)
+    except OSError:
+        return False
+    return 0 <= age < SIGNIN_HOLD_MAX_S
+
+
+def _renew(path, state):
+    """Renew the lapsed credential in `path` → (live token or None, outcome).
+
+    Never raises, and never sends the same dead refresh token twice: a
+    REJECTED one is remembered in `state` for the life of the process, the
+    way a scope verdict is, and only a different one (a new sign-in) is
+    tried. A FAILED one is not remembered, because the failure was about
+    the request and the next pass is the right time to make it again.
+    """
+    if _signin_in_progress():
+        # The panel is exchanging a code for this very file. Not a
+        # request, not a verdict: waiting, and the flow will have
+        # rewritten the file by the next pass.
+        return None, FAILED
+    oauth = _load_oauth(path)
+    refresh = (oauth or {}).get("refreshToken")
+    if not isinstance(refresh, str) or not refresh.strip():
+        # The file changed between being read as lapsed and being read
+        # here. Whatever is there now decides.
+        kind, token = _credential_state(path)
+        return (token, RACED) if kind == CRED_TOKEN else (None, FAILED)
+    refresh = refresh.strip()
+    dead = state.setdefault("dead_refresh", set()) if state is not None else set()
+    if refresh in dead:
+        return None, REJECTED
+    scopes = oauth.get("scopes") if isinstance(oauth.get("scopes"), list) else []
+    scopes = [s for s in scopes if isinstance(s, str) and s]
+    payload, outcome = _refresh_request(refresh, scopes)
+    if payload is None:
+        if outcome == REJECTED:
+            dead.add(refresh)
+            _say_once(
+                state, "refresh:rejected",
+                "usage-limits-tracker: Anthropic refused to renew the "
+                "signed-in account credential — that session has been "
+                "revoked or has expired for good; sign in again from the "
+                "panel's Settings -> Claude account -> Sign in again\n")
+        return None, outcome
+    renewed = _renewed(oauth, payload, time.time() * 1000)
+    if not _write_credentials(path, renewed, refresh):
+        # The CLI got there first, or the file went away. What is on disk
+        # is the answer — a token the server may now consider superseded
+        # is not worth a 401 on an endpoint that counts them.
+        sys.stderr.write("usage-limits-tracker: the CLI renewed the account "
+                         "credential at the same moment — using its answer\n")
+        kind, token = _credential_state(path)
+        return (token, RACED) if kind == CRED_TOKEN else (None, FAILED)
+    hours = max(renewed["expiresAt"] / 1000.0 - time.time(), 0) / 3600
+    sys.stderr.write("usage-limits-tracker: renewed the signed-in account "
+                     "credential's access token (the next renewal is due in "
+                     f"about {hours:.0f}h)\n")
+    return renewed["accessToken"], RENEWED
 
 
 def _load_brain_auth(path):
@@ -737,6 +1198,9 @@ def _record_failure(error, delay_s, strikes=0):
     if not isinstance(data, dict):
         data = {}
     now = datetime.now(timezone.utc)
+    # Before `last_error` is overwritten: the clock reads the previous
+    # verdict to decide whether it is still running.
+    data["error_since"] = _error_since(data, error, now.isoformat())
     data["last_error"] = error
     data["last_error_at"] = now.isoformat()
     data["next_attempt_at"] = (now + timedelta(seconds=delay_s)).isoformat()
@@ -787,6 +1251,57 @@ def _restate_next_attempt(delay_s, strikes):
     _record_failure(error, delay_s, strikes)
 
 
+def _nudged_at():
+    """When the panel last said a run finished, or 0.0. Never raises."""
+    try:
+        return os.path.getmtime(NUDGE_FILE)
+    except OSError:
+        return 0.0
+
+
+def _wait(delay, seen, interruptible=True, sleeper=time.sleep,
+          clock=time.monotonic, stamp=_nudged_at):
+    """Sleep `delay`, cut short by a finished run. → the stamp acted on.
+
+    `seen` is the nudge stamp this process has already answered; the
+    return value replaces it, so a nudge that lands *during* a request is
+    still pending when the wait starts and is not lost.
+
+    Two rules, and the second is why this takes `interruptible` rather
+    than reading the delay and deciding for itself:
+
+    A nudge may only ever SHORTEN THE ORDINARY CADENCE. A 429 backoff and
+    the five-failure backoff are promises of quiet, and the whole reason
+    they exist is that asking again cannot help — a run finishing is not
+    news to an endpoint that has just refused us, and letting it through
+    would be `Retry-After: 0` obeyed literally, which is how a tracker
+    retries straight back into the limit it was told about. So those waits
+    are served whole.
+
+    And MIN_SPACING_S is a floor, not a filter: a nudge inside it is held
+    until the floor passes rather than dropped, because the run that
+    fired it is exactly the one whose spend we have not read yet.
+    """
+    if not interruptible:
+        sleeper(delay)
+        return seen
+    started = clock()
+    while True:
+        waited = clock() - started
+        left = delay - waited
+        if left <= 0:
+            return seen
+        latest = stamp()
+        pending = latest > seen
+        if pending and waited >= MIN_SPACING_S:
+            return latest
+        nap = min(NUDGE_CHECK_S, left)
+        if pending:
+            # Wake when the floor lifts rather than one slice later.
+            nap = min(nap, max(MIN_SPACING_S - waited, 0.01))
+        sleeper(nap)
+
+
 def _resume_backoff():
     """(seconds still owed to a pre-restart 429 backoff, strikes to resume).
 
@@ -832,13 +1347,40 @@ def _resume_backoff():
     return min(remaining, RETRY_AFTER_MAX_S), strikes
 
 
+def _error_since(existing, error, now_iso):
+    """When this same verdict was FIRST written, carried across rewrites.
+
+    Every failure writer rewrites its stamp, so nothing in the file said
+    how long a verdict had stood — and "the credential is between
+    refreshes, nothing to do" is a true sentence for twenty minutes and a
+    fault after a day, which is exactly how four sensors sat unavailable
+    for a day under a message saying nothing was wrong. The clock starts
+    when the code changes and survives a restart on purpose: a restart is
+    the first thing anybody tries, and it must not make a day-old verdict
+    look new. `usage_store.limits_problem` is what reads it.
+    """
+    if isinstance(existing, dict) and (
+            existing.get("error") or existing.get("last_error")) == error:
+        since = existing.get("error_since")
+        if isinstance(since, str) and since:
+            return since
+    return now_iso
+
+
 def write_error_status(error_msg, detail=None):
     """Write an error status file so sensors know what's wrong."""
     os.makedirs(os.path.dirname(USAGE_FILE), exist_ok=True)
+    try:
+        with open(USAGE_FILE) as fh:
+            existing = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        existing = None
+    now = datetime.now(timezone.utc).isoformat()
     output = {
         "source": "anthropic_api",
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": now,
         "error": error_msg,
+        "error_since": _error_since(existing, error_msg, now),
     }
     if detail:
         output["detail"] = detail
@@ -917,6 +1459,14 @@ def _fetch_with_any_credential(state):
     if state is not None:
         # Whether this pass put a request on the wire at all — see main().
         state["asked"] = False
+        # And whether the account credential was merely between refreshes
+        # this pass. Reset here rather than in oauth_tokens, because
+        # `state` outlives a pass and a stale True would go on excusing a
+        # real scope refusal after the credential was revoked.
+        state["lapsed"] = False
+        # And whether Anthropic refused to RENEW it this pass, which is
+        # the opposite claim and must not be read as waiting.
+        state["rejected"] = False
     data = error = settled = None
     for token in oauth_tokens(state):
         if token in unusable:
@@ -943,7 +1493,34 @@ def _fetch_with_any_credential(state):
                 "usage-limits-tracker: that credential was refused, "
                 "trying the next store\n"
             )
-    return data, (error or settled or credential_problem())
+    verdict = error or settled or credential_problem()
+    if (data is None and verdict in MASKED_BY_REFRESH
+            and (state or {}).get("lapsed")):
+        # A structural verdict earned by a *lower* store must not be the
+        # pass's answer while the account credential was only between
+        # refreshes. It is true of the token that earned it and useless as
+        # a message, because its remedy — sign in to your Claude account —
+        # is the thing the person has already done, which is how the same
+        # popover survived being obeyed. The keying is on the KIND of
+        # verdict and not on whether it was remembered: a scope refusal
+        # arriving for the first time this pass says exactly what a
+        # remembered one says, and the first pass after a lapse is the one
+        # somebody is most likely to be looking at.
+        #
+        # The scope memory is kept either way — that credential really
+        # cannot read usage, and nothing here asks it again.
+        return None, REFRESH_PENDING
+    if (data is None and verdict == "no_oauth_token"
+            and (state or {}).get("rejected")):
+        # The only credential was the account sign-in and Anthropic
+        # refused to renew it. That is a found credential being refused,
+        # not the absence of one — `no_oauth_token` renders as "nothing
+        # has signed in yet", which sends somebody to look for a sign-in
+        # that is right there — and its remedy is the 401's: sign in
+        # again. A lower store's own verdict (a scope refusal, an API key)
+        # still wins above, because it is true and its remedy is the same.
+        return None, "http_401"
+    return data, verdict
 
 
 def run_once(state):
@@ -970,8 +1547,9 @@ def run_once(state):
             _say_once(
                 state, error,
                 f"usage-limits-tracker: no usable OAuth credential ({error}) — "
-                + ("run `claude /login` in the Terminal tab; `ha login` "
-                   "cannot mint a token with the usage scope"
+                + ("sign in from the panel's Settings -> Claude account -> "
+                   "Sign in again; `ha login` cannot mint a token with the "
+                   "usage scope"
                    if error == SCOPE_ERROR else
                    "sign in from the panel, the terminal, or with `ha login`")
                 + "\n"
@@ -1027,7 +1605,8 @@ def _next_failure_count(count, asked):
 
 def main():
     sys.stderr.write(
-        f"usage-limits-tracker: starting (interval={POLL_INTERVAL}s)\n"
+        f"usage-limits-tracker: starting (heartbeat={POLL_INTERVAL}s, and "
+        f"on any finished run, at most one request per {MIN_SPACING_S}s)\n"
     )
 
     # A rate-limit backoff promised before a restart is still owed after it.
@@ -1051,6 +1630,10 @@ def main():
     # is the one failure that retrying makes worse. Seeded by _resume_backoff
     # so a restart mid-wall picks the ladder up where it left it.
     last_logged = None
+    # The nudge stamp already answered. Seeded from disk rather than 0, so
+    # a restart does not read a nudge left by a run this process has never
+    # been able to report on as news — the first poll happens anyway.
+    seen_nudge = _nudged_at()
     # Which credential store answered last time, so the log says so once
     # rather than every poll.
     state = {}
@@ -1115,10 +1698,13 @@ def main():
                     f"(not your account's usage) — waiting {delay / 60:.0f} "
                     "minutes before asking again\n"
                 )
+            heartbeat = False
         elif consecutive_failures >= 5:
             delay = FAILURE_BACKOFF_S
+            heartbeat = False
         else:
             delay = POLL_INTERVAL
+            heartbeat = True
 
         if not success:
             # The reason and the next attempt, on disk, before the wait —
@@ -1126,7 +1712,19 @@ def main():
             _record_failure(error or "tracker_error", delay,
                             rate_limit_strikes)
 
-        time.sleep(delay)
+        # A backoff is a promise of quiet and is served whole; only the
+        # ordinary cadence gives way to a finished run. `heartbeat` is set
+        # beside the delay it describes rather than re-deriving the same
+        # three conditions, because a threshold moved in one of two copies
+        # is a promise of quiet a nudge quietly starts cutting short.
+        answered = _wait(delay, seen_nudge, interruptible=heartbeat)
+        if answered != seen_nudge:
+            seen_nudge = answered
+            # `next_attempt_at` promised `delay` and we are asking now, so
+            # the promise on disk is no longer true — _restate_next_attempt's
+            # rule, which a restart already owed for the same reason. It
+            # writes nothing when there is no failure on record.
+            _restate_next_attempt(0, rate_limit_strikes)
 
 
 if __name__ == "__main__":

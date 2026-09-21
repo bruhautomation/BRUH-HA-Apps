@@ -442,6 +442,86 @@ START_GRACE = float(os.environ.get("BRAIN_CHAT_START_GRACE", "10"))
 # who made it and why.
 PERMISSION_TIMEOUT = float(os.environ.get("BRAIN_CHAT_PERMISSION_TIMEOUT", "600"))
 
+# ---------------------------------------------------------------------------
+# The ways a finding could end, offered inside the conversation about it
+# ---------------------------------------------------------------------------
+#
+# Discussing a finding is how you work out what to actually DO about it, and
+# until now the conversation could not hand that back: the four endings above
+# the composer are generic — "I fixed it", "Wrong" — while the useful answer
+# is the specific one the conversation just arrived at ("the CR2032 is flat;
+# replace it", "that cupboard is never opened"). Typing it into the reason box
+# afterwards means saying the same thing twice.
+#
+# So Claude offers the endings as buttons, by calling the MCP server's
+# `offer_resolutions`. That tool changes nothing anywhere — the panel is
+# already streaming this conversation, so **the call itself is the offer**,
+# read off the stream here. Which is why this is a tool and not a fenced block
+# in the reply: prose is what gets reworded, a tool call is schema-validated
+# by the CLI before it is sent, and nothing model-authored lands in the bubble
+# where the card is supposed to be.
+#
+# Three things keep it honest.
+#
+# **The press is the consent.** Claude proposes; nothing is settled until a
+# person presses, and a press goes to the same `/api/finding/{ts}/{verb}`
+# route the tab's own buttons use — one ending, one implementation, whichever
+# surface it was given on.
+#
+# **The label IS the record.** One string per option: it is both the button
+# and the note that ending writes, so there is no second string a person
+# cannot see before they press. That is what makes a model-written memory
+# line acceptable — you read it on the button.
+#
+# **No resolution touches the house.** The verbs are the three that record a
+# DECISION (done, wrong, todo). "Fix it" — the one button that sends Claude at
+# the house — is deliberately not offerable: it stays where it always was, on
+# the strip, pressed deliberately, and it does not end the finding anyway
+# (it moves it to `fixing`, which is a different lifecycle from "dismissed").
+RESOLUTION_TOOL = "offer_resolutions"
+RESOLUTION_VERBS = ("done", "wrong", "todo", "advice")
+MAX_RESOLUTIONS = 4
+MAX_RESOLUTION_LABEL = 90
+# `advice` is the one kind whose label is a paragraph rather than a
+# button's worth of words: it is the sentence that replaces "What you'd
+# need to do" on the card, so it takes the store's own cap for that field
+# (`findings_store.MAX_FIX`) and not a button's.
+MAX_ADVICE_LABEL = 600
+_LABEL_CAP = {"advice": MAX_ADVICE_LABEL}
+
+
+def resolution_offer(name: str, args: object) -> list[dict] | None:
+    """The options in an `offer_resolutions` call, or None if it is not one.
+
+    Pure over the wire shape, which is why it is here rather than in the
+    server: the MCP tool name arrives prefixed (`mcp__home-assistant__…`) and
+    the arguments arrive as whatever the model wrote. A call this cannot read
+    is **not** an offer — it falls through to the ordinary tool chip, so the
+    error the MCP server sends back is visible and Claude can correct it,
+    rather than a card silently rendering with nothing on it.
+    """
+    if not isinstance(name, str) or not name.endswith(RESOLUTION_TOOL):
+        return None
+    if not isinstance(args, dict):
+        return None
+    raw = args.get("options")
+    if not isinstance(raw, list) or not raw:
+        return None
+    out = []
+    for option in raw[:MAX_RESOLUTIONS]:
+        if not isinstance(option, dict):
+            continue
+        label = option.get("label")
+        verb = option.get("kind")
+        if not isinstance(label, str) or not label.strip():
+            continue
+        if verb not in RESOLUTION_VERBS:
+            continue
+        out.append({"label": label.strip()[:_LABEL_CAP.get(
+            verb, MAX_RESOLUTION_LABEL)], "verb": verb})
+    return out or None
+
+
 # A tool call the permission set refused fails like any other tool call, and
 # "that broke" and "brAIn was not allowed to do that" are different things to
 # be told — the first sends you debugging, the second sends you to Settings.
@@ -608,6 +688,13 @@ class ChatSession:
         # cap). The next send restarts with --resume first, so the counter
         # resets and the conversation carries on.
         self._respawn_pending = False
+        # Which finding this conversation is about, set by the Discuss route
+        # and cleared by reset(). It is stamped onto every `resolutions`
+        # event rather than resolved when one is rendered, because the
+        # transcript outlives this object: a panel restart replays the card,
+        # and a card that had to ask the live session what it was about would
+        # come back attached to nothing.
+        self.finding_ts = 0
         # The approval the turn is waiting on, if any: what the panel's card
         # renders, and — via ``_pending_input`` — the untouched tool input the
         # allow answer must hand back (the CLI validates it against the
@@ -1124,6 +1211,13 @@ class ChatSession:
                     self._take_context(
                         (event.get("message") or {}).get("usage"))
                 for norm in _normalise(event):
+                    if norm["type"] == "resolutions":
+                        # Never the model's own idea of which finding: it is
+                        # not asked, so it cannot name the wrong one. A zero
+                        # here is a conversation that is not about a finding,
+                        # which the card says out loud rather than offering
+                        # buttons that would settle nothing.
+                        norm["finding_ts"] = self.finding_ts
                     # Deltas and run stats are live-only: the assistant event
                     # that follows carries the same text as a whole block, so
                     # keeping both would double every answer in the
@@ -1570,6 +1664,7 @@ class ChatSession:
             self.info = {}
             self.context = {}
             self.meta = {}
+            self.finding_ts = 0
             self._seq = 0
             self._persist()
             self._emit({"type": "cleared"}, keep=False)
@@ -1622,6 +1717,17 @@ def _normalise(event: dict) -> list[dict]:
                             "text": _clip(block["thinking"], MAX_RESULT_CHARS)})
             elif btype == "tool_use":
                 args = block.get("input") if isinstance(block.get("input"), dict) else {}
+                # The one tool call that is a message to the person rather
+                # than work: it renders as the buttons it offered, and the
+                # tool chip would be a second thing on screen for one call.
+                # `finding_ts` is stamped by the read loop, which is the half
+                # that knows what the conversation is about.
+                options = resolution_offer(block.get("name") or "", args)
+                if options:
+                    out.append({"type": "resolutions",
+                                "id": block.get("id") or "",
+                                "options": options})
+                    continue
                 out.append({
                     "type": "tool",
                     "id": block.get("id") or "",

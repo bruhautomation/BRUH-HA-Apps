@@ -206,7 +206,9 @@ for (const width of WIDTHS) {
 
   // ---- a login that cannot be shared says so, and offers no button ----
   await page.evaluate(() => { window.__auth = window.__mkAuth('cli'); });
-  await page.click('#diagRefresh');           // any control; reload the dialog
+  // Was a press on #diagRefresh, which now lives behind the collapsed
+  // Advanced section — and it was only ever "any control", because the two
+  // lines under it drive the real loader themselves.
   await page.evaluate(() => window.loadAuth && window.loadAuth());
   await page.waitForTimeout(150);
   const cli = await page.evaluate(async () => {

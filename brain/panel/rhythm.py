@@ -57,8 +57,6 @@ KEEP_DAYS = 90.0
 # Past this much scatter there is no usual time — an answer here would be
 # a confident number over data that holds none.
 MAX_SPREAD_MIN = 90.0
-# A day with nothing on it is a day nobody was home; it is not a 00:00.
-MINUTES_PER_DAY = 1440
 
 WEEKDAY = "weekday"
 WEEKEND = "weekend"
@@ -67,55 +65,13 @@ WEEKEND = "weekend"
 # ---------------------------------------------------------------------------
 # Clock arithmetic that does not break at midnight
 # ---------------------------------------------------------------------------
-
-def circular_median(minutes: list[int]) -> float | None:
-    """The middle of a set of times of day, measured around the clock.
-
-    A straight median puts 23:40 and 00:20 at noon, which is not a small
-    error — it is the answer pointing at the opposite side of the day.
-    The arc that holds every sample most tightly is found first, the
-    median is taken inside it, and the result is rotated back.
-    """
-    if not minutes:
-        return None
-    import baselines  # noqa: PLC0415 — one median, one mad, one home
-
-    best = None
-    for offset in sorted(set(minutes)):
-        rotated = sorted((m - offset) % MINUTES_PER_DAY for m in minutes)
-        span = rotated[-1] - rotated[0]
-        if best is None or span < best[0]:
-            best = (span, offset, rotated)
-    _span, offset, rotated = best
-    return (baselines.median([float(v) for v in rotated])
-            + offset) % MINUTES_PER_DAY
-
-
-def circular_spread(minutes: list[int], centre: float) -> float:
-    """How far these times stray from their centre, the short way round.
-
-    The distance between two times of day is never more than twelve
-    hours: 23:50 is twenty minutes from 00:10, not twenty-three hours and
-    forty.
-    """
-    import baselines  # noqa: PLC0415
-
-    if not minutes:
-        return 0.0
-    away = []
-    for m in minutes:
-        d = abs(m - centre) % MINUTES_PER_DAY
-        away.append(min(d, MINUTES_PER_DAY - d))
-    return baselines.median(away)
-
-
-def clock(minutes: float | None) -> str:
-    """`437.0` as `07:17`. Empty for nothing, never as `00:00`."""
-    if minutes is None:
-        return ""
-    total = int(round(minutes)) % MINUTES_PER_DAY
-    return f"{total // 60:02d}:{total % 60:02d}"
-
+# The arithmetic lives in `circular.py` — a leaf, because this module reads
+# `house` for its progress sentence and `house` reads the ledgers that
+# delegate to `habits`, which borrows the median: keeping it here closed an
+# import ring. Re-exported under the names every caller has always used.
+from circular import (  # noqa: E402, F401 — re-exported, see above
+    MINUTES_PER_DAY, circular_distance, circular_median, circular_spread, clock,
+)
 
 # ---------------------------------------------------------------------------
 # The store
@@ -338,7 +294,8 @@ def settle_minute(payload: dict, when: dt.datetime) -> float | None:
 
 __all__ = [
     "KEEP_DAYS", "MAX_SPREAD_MIN", "MINUTES_PER_DAY", "MIN_DAYS",
-    "PROGRESS_UNIT_S", "STORE", "WEEKDAY", "WEEKEND", "circular_median",
+    "PROGRESS_UNIT_S", "STORE", "WEEKDAY", "WEEKEND", "circular_distance",
+    "circular_median",
     "circular_spread", "clock", "load", "profile", "progress", "record",
     "save", "settle_minute", "wake_minute",
 ]

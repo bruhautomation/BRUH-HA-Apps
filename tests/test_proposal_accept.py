@@ -810,7 +810,40 @@ class TestOneOffIntents(AcceptCase):
         self.assertIn(SENTENCE, self.prompts[0])
         self.assertIn("Porch", self.prompts[0])
 
-    async def test_a_refused_sentence_is_a_row_on_the_tab_not_a_log_line(self):
+    async def test_a_standing_rule_is_offered_rather_than_refused(self):
+        """Until 2.3 `once: false` was a refusal card telling the person
+        to ask some other way. It is the other way now: the same run's
+        answer becomes an ordinary proposal — no disarm action, the
+        sentence and the restatement on the row, and the case line the
+        simulations composed — that *Do it* writes and *Try it for a
+        week* shadow-runs like any other."""
+        self.answers = [json.dumps({
+            "once": False,
+            "plain": "Turn the porch light on whenever the front door opens.",
+            "trigger": [{"platform": "state",
+                         "entity_id": "binary_sensor.front_door", "to": "on"}],
+            "action": [{"service": "light.turn_on",
+                        "target": {"entity_id": "light.porch"}}]})]
+        await self.ask("whenever the front door opens, turn the porch light on")
+        self.assertEqual(await self.server._apply_intent_requests(), 1)
+        self.assertEqual(self.intents.listing(), [])
+        rows = self.proposals.listing()
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["kind"], "automation")
+        self.assertEqual(row["source"], "sentence")
+        self.assertIsNone(row["intent"])
+        self.assertTrue(row["config"]["id"].startswith("brain_asked_"))
+        self.assertEqual([a["service"] for a in row["config"]["action"]],
+                         ["light.turn_on"], "a standing rule never disarms itself")
+        self.assertEqual(row["spoken"]["sentence"],
+                         "whenever the front door opens, turn the porch light on")
+        self.assertIn("front door", row["spoken"]["plain"])
+        self.assertIsInstance(row["spoken"]["case"], str)
+        self.assertTrue(row["spoken"]["case"])
+        self.assertIn("front door opens", row["why"])
+
+    async def test_a_standing_answer_with_no_automation_in_it_is_refused(self):
         self.answers = [json.dumps({"once": False,
                                     "plain": "every evening at sunset"})]
         await self.ask()
@@ -819,7 +852,24 @@ class TestOneOffIntents(AcceptCase):
         rows = self.intents.listing()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["status"], "refused")
-        self.assertIn("standing rule", rows[0]["refused"])
+        self.assertIn("no trigger or no action", rows[0]["refused"])
+
+    async def test_accepting_a_standing_rule_records_who_asked(self):
+        self.answers = [json.dumps({
+            "once": False, "plain": "Porch on when the door opens.",
+            "trigger": [{"platform": "state",
+                         "entity_id": "binary_sensor.front_door", "to": "on"}],
+            "action": [{"service": "light.turn_on",
+                        "target": {"entity_id": "light.porch"}}]})]
+        await self.ask("whenever the front door opens, turn the porch light on")
+        await self.server._apply_intent_requests()
+        row = self.proposals.listing()[0]
+        self.live.add(f"automation.{self.writer.slugify(row['title'])}")
+        status, out = await self.accept(row["ts"])
+        self.assertEqual(status, 200, out)
+        self.assertIn("Asked brAIn for an automation", out["learned"])
+        self.assertEqual(self.intents.listing(), [], "nothing is armed")
+        self.assertEqual(len(self.rows()), 2)
 
     async def test_a_claude_run_that_says_nothing_is_reported_the_same_way(self):
         self.answers = []

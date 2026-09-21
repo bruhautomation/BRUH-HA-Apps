@@ -45,7 +45,7 @@ import scoring  # noqa: E402
 # own `required` lists below, so the two cannot drift.
 REQUIRED = ("schema", "kind", "id", "captured_at", "labels")
 KINDS = ("checks", "analyst")
-VERBS = ("done", "wrong", "got_it")
+VERBS = ("done", "wrong", "got_it", "accepted")
 ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\-]{0,127}")
 CHECK_RE = re.compile(r"[a-z]+\.[a-z_]+")
 
@@ -128,7 +128,7 @@ class TestTheValidatorMatchesThePublishedSchema(unittest.TestCase):
         # entry with its labels filled in later.
         self.assertEqual(sorted(capture.KINDS), sorted(KINDS))
 
-    def test_the_ending_words_are_the_same_three(self):
+    def test_the_ending_words_are_the_same_everywhere(self):
         analyst = self.schema["properties"]["labels"]["items"]["oneOf"][1]
         self.assertEqual(sorted(analyst["properties"]["verb"]["enum"]),
                          sorted(VERBS))
@@ -257,8 +257,21 @@ class TestTheDeterministicReplay(unittest.TestCase):
         self.assertEqual(entry["labels"], [])
         got = replay.replay_checks(entry)
         self.assertEqual(got["extra_rows"], [])
-        # And nothing was skipped, or "silent" would mean "did not look".
-        self.assertEqual(got["skipped"], {})
+        # And nothing was skipped for a reason this house could answer, or
+        # "silent" would mean "did not look". A FROZEN entry records the
+        # house as it was, so a snapshot key added after it was written is
+        # absent from its `available` map and every check that needs one is
+        # skipped — which is the honest answer rather than a check gone
+        # quiet, and regenerating the entry to make the number go away is
+        # the one thing a frozen entry exists to prevent. So what is
+        # asserted is that every skip names a key this entry predates.
+        import checks
+        have = set((entry["snapshot"].get("available") or {}))
+        for cid, why in got["skipped"].items():
+            needs = set(checks.get_check(cid)["needs"])
+            self.assertTrue(needs - have,
+                            f"{cid} was skipped over a key this house has: "
+                            f"{why}")
         self.assertEqual(got["errors"], {})
 
     def test_the_rehearsal_house_proves_the_checks_the_rehearsal_plants_for(self):

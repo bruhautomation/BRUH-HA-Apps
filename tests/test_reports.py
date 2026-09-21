@@ -1016,6 +1016,38 @@ class TestEverythingThatIsWrongRightNow(unittest.TestCase):
                        "check:dev.frozen"):
             self.assertIn(wanted, said, wanted)
 
+    def test_checks_a_missing_snapshot_key_took_down_are_one_row_not_six(self):
+        """The report that prompted this opened with seven rows about one
+        fact: five climate checks skipped on "snapshot is missing thermal",
+        the thermal snapshot row saying why, and the Rooms store saying the
+        same why again. Every check is still NAMED — on the key's own row —
+        and a check skipped for a reason of its own keeps its row."""
+        why = ("no room could be measured honestly yet — a month of nights "
+               "with the outdoor temperature moving is what the fit needs")
+        diag = {
+            "checks": {
+                "skipped": {"climate.freeze": "snapshot is missing thermal",
+                            "climate.window": "snapshot is missing thermal",
+                            "climate.preheat": "snapshot is missing thermal",
+                            "evening.left_open": "no bedtime measured yet"},
+                "errors": {}, "snapshot_errors": {"thermal": why}},
+            "thermal": {"measured": 0, "asked": 9, "reason": why},
+        }
+        rows = reports.faults(diag)
+        said = _said(rows)
+        snapshot = [r for r in rows if r["where"] == "Snapshot (thermal)"]
+        self.assertEqual(len(snapshot), 1)
+        for name in ("climate.freeze", "climate.window", "climate.preheat"):
+            self.assertIn(name, snapshot[0]["detail"])
+            self.assertNotIn(f"Check {name}", said)
+        self.assertIn("3 checks did not run", snapshot[0]["detail"])
+        self.assertIn("Check evening.left_open: could not run", said)
+        self.assertNotIn("Rooms:", said)
+        # The store's own sentence still shows when it is a different one.
+        diag["thermal"]["reason"] = "the builder raised"
+        self.assertIn("Rooms: could not be measured the builder raised",
+                      _said(reports.faults(diag)))
+
     def test_a_producer_that_is_right_is_not_a_fault(self):
         """`dev.battery_low` is 3 confirmed and 0 wrong: a working rule
         in a section about broken ones is how the section stops being
@@ -1046,6 +1078,37 @@ class TestEverythingThatIsWrongRightNow(unittest.TestCase):
                  "daemons": {"ttyd": {"running": True}}}
         self.assertEqual(reports.faults(clean), [])
         self.assertIn("Nothing", reports.faults_text([]))
+
+    def test_a_missing_figure_nobody_can_act_on_is_not_a_fault(self):
+        """The sweep's own rule, broken by the row it produced most often.
+
+        A credential between refreshes put a row at the top of a report
+        several hours out of every day, under a heading that says what is
+        wrong RIGHT NOW, carrying a detail whose own words are that
+        nothing is wrong and signing in again will not help."""
+        payload = {"health": {"state": "ok", "problems": []},
+                   "journal": {"failures": []},
+                   "checks": {"skipped": {}, "errors": {},
+                              "snapshot_errors": {}},
+                   "usage": {"source": "estimate", "needs_nothing": True,
+                             "limits": {
+                                 "code": "oauth_token_awaiting_refresh",
+                                 "needs_nothing": True,
+                                 "detail": "Nothing is wrong with the sign-in."}},
+                   "daemons": {}}
+        self.assertEqual(reports.faults(payload), [])
+
+    def test_a_missing_figure_somebody_CAN_act_on_is_still_a_fault(self):
+        payload = {"health": {"state": "ok", "problems": []},
+                   "journal": {"failures": []},
+                   "checks": {"skipped": {}, "errors": {},
+                              "snapshot_errors": {}},
+                   "usage": {"source": "estimate",
+                             "limits": {"code": "oauth_token_lacks_usage_scope",
+                                        "detail": "Use the account sign-in."}},
+                   "daemons": {}}
+        self.assertIn("oauth_token_lacks_usage_scope",
+                      _said(reports.faults(payload)))
 
     def test_a_refusal_doing_its_job_is_not_a_fault(self):
         """`heal_skipped`, a producer standing down, a shadow check with

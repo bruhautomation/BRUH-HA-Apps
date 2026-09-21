@@ -274,7 +274,14 @@ def problems(diag: dict, options: dict | None = None,
             "runs"))
 
     usage = diag.get("usage") or {}
-    if usage.get("limits"):
+    # Not every missing figure is a fault. `usage_store.NEEDS_NOTHING` is
+    # the set whose remedy is to do nothing — a credential between
+    # refreshes, an API key that has no window to report, the endpoint's
+    # own rate limit — and a verdict that fires on those is a health
+    # sensor people stop reading. The pill still says the number is an
+    # estimate and why; that is a different question from this one.
+    limits = usage.get("limits") or {}
+    if limits and not limits.get("needs_nothing"):
         found.append(_problem(
             "degraded", "usage figures are not being reported",
             "The pill is showing brAIn's own local estimate rather than "

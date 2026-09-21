@@ -311,6 +311,17 @@ def _row(out: list, where: str, what: str, detail: str = "") -> None:
                     "detail": str(detail or "")[:400]})
 
 
+# The sentence `checks.run_all` writes for a check it could not run because
+# the snapshot has no such key. Read as a shape rather than a lookup so a
+# renamed key still folds; anything else is the check's own reason.
+_MISSING_KEY_RE = re.compile(r"^snapshot is missing (\w+)$")
+
+
+def _missing_snapshot_key(why) -> str:
+    match = _MISSING_KEY_RE.match(str(why or "").strip())
+    return match.group(1) if match else ""
+
+
 def _faults(diag) -> list[dict]:
     if callable(diag):
         try:
@@ -357,7 +368,15 @@ def _faults(diag) -> list[dict]:
              auth.get("error"))
     usage = diag.get("usage") or {}
     limits = usage.get("limits") if isinstance(usage.get("limits"), dict) else {}
-    if limits.get("code"):
+    if limits.get("needs_nothing"):
+        # A refusal doing its job is not a fault, which is this sweep's own
+        # rule and the one it was breaking most often: a credential between
+        # refreshes put a row at the top of a report several hours out of
+        # every day, under a heading that says what is wrong right now,
+        # carrying a detail that says nothing is wrong. `usage_store`
+        # decides which codes those are; this reads its answer.
+        pass
+    elif limits.get("code"):
         _row(out, "Usage figures",
              f"the tracker last answered {limits.get('code')}",
              limits.get("detail"))
@@ -368,15 +387,41 @@ def _faults(diag) -> list[dict]:
 
     # Checks that could not look. "I could not look" and "it went away" are
     # different claims, and only the first belongs here.
+    #
+    # A check skipped because a snapshot key could not be fetched is that
+    # key's fault, not the check's: five climate checks skipped on "snapshot
+    # is missing thermal" beside "Snapshot (thermal): could not be fetched"
+    # is one fact written six times, and the report that prompted this
+    # opened with exactly those six rows — plus a seventh from the store —
+    # about a house whose one problem was that September nights are not
+    # cold enough to fit a heat-loss model to yet. So the checks a missing
+    # key took down are NAMED on the key's own row (every fault still
+    # findable, which is this sweep's rule) and get no row of their own.
     checks = diag.get("checks") or {}
-    for cid, why in sorted((checks.get("skipped") or {}).items())[:FAULTS_PER_KIND]:
+    snapshot_errors = {str(k): v for k, v in
+                       (checks.get("snapshot_errors") or {}).items()}
+    taken_down: dict[str, list[str]] = {}
+    own_skips: list[tuple[str, str]] = []
+    for cid, why in sorted((checks.get("skipped") or {}).items()):
+        key = _missing_snapshot_key(why)
+        if key and key in snapshot_errors:
+            taken_down.setdefault(key, []).append(cid)
+        else:
+            own_skips.append((cid, why))
+    for cid, why in own_skips[:FAULTS_PER_KIND]:
         _row(out, f"Check {cid}", "could not run", why)
     for cid, why in sorted((checks.get("errors") or {}).items())[:FAULTS_PER_KIND]:
         _row(out, f"Check {cid}", "raised while running", why)
     if checks.get("error"):
         _row(out, "House checks", "the pass itself failed", checks.get("error"))
-    for key, why in sorted((checks.get("snapshot_errors") or {}).items()):
-        _row(out, f"Snapshot ({key})", "could not be fetched", why)
+    for key, why in sorted(snapshot_errors.items()):
+        skipped = taken_down.get(key) or []
+        detail = str(why or "")
+        if skipped:
+            detail = (f"{detail} — so {len(skipped)} check"
+                      f"{'s' if len(skipped) != 1 else ''} did not run: "
+                      + ", ".join(skipped)).strip(" —")
+        _row(out, f"Snapshot ({key})", "could not be fetched", detail)
 
     # The measurement stores. A store that measured nothing of what it
     # asked about is the shape the doors-and-windows bug wore for the life
@@ -389,8 +434,12 @@ def _faults(diag) -> list[dict]:
         if not isinstance(store, dict):
             continue
         if store.get("error") or store.get("reason"):
-            _row(out, label, "could not be measured",
-                 store.get("error") or store.get("reason"))
+            why = store.get("error") or store.get("reason")
+            # The snapshot row above already carries this sentence when
+            # the checks pass could not fetch this store for the same
+            # reason: one fact, one row.
+            if str(snapshot_errors.get(key) or "") != str(why):
+                _row(out, label, "could not be measured", why)
             continue
         asked = store.get("asked")
         measured = store.get("measured")
@@ -402,6 +451,25 @@ def _faults(diag) -> list[dict]:
         if store.get("stale"):
             _row(out, label, "has gone stale",
                  "the nightly pass has not written it recently")
+
+    # And the one that asks rather than measures. Only its own failure is
+    # a fault: a feature that is off, still watching, or simply has
+    # nothing it cannot account for is a refusal doing its job, and a
+    # section that listed those is one people learn to skim — which is
+    # the failure this sweep was written against.
+    curious = diag.get("curiosity")
+    if isinstance(curious, dict):
+        if curious.get("error"):
+            _row(out, "Why you did something", "could not be read",
+                 curious.get("error"))
+        else:
+            failed = int((curious.get("counts") or {}).get("failed") or 0)
+            if failed:
+                _row(out, "Why you did something",
+                     f"{failed} asking{'' if failed == 1 else 's'} ended "
+                     "without an answer",
+                     "the run spent its money and filed nothing; the run "
+                     "journal above says what happened to it")
 
     # The rehearsal and the deep check: both are opt-in and both leave a
     # verdict nothing else reports.

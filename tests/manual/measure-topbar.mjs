@@ -1,7 +1,7 @@
 // Render the brAIn topbar across viewport widths and assert, per width, that
 // it lays out as intended and that everything in it is big enough to hit.
 //
-// Two shapes, not five. At >=1340px the bar is a single 56px row with every
+// Two shapes, not five. At >=920px the bar is a single 56px row with every
 // tab named. Below that it is the two-row bar: status and actions on top,
 // the tabs on a full-width strip of their own underneath, still named. So
 // the check is no longer "always one row" — it is "the shape this width is
@@ -42,12 +42,13 @@ const OUT = process.env.TOPBAR_SHOT_DIR || '';
 // the HA sidebar open actually rendered, so the compromise was what most
 // people saw. Labels now leave only when the whole row does.
 //
-// It moved from 1239 when the Proposals tab arrived: a seventh tab is
-// ~90px of row, and the single-row shape stopped fitting the two trouble
-// states (1302px paused, 1328px on a failed login). The number comes from
-// what this script reports rather than from a guess, which is the whole
+// It moved from 1239 when the Proposals tab arrived and to 1429 for the
+// eighth tab — a tab is ~90px of row — and came DOWN to 919 when the eight
+// became four groups with their panes on a strip under the bar: the one-row
+// shape needs 903px paused and 915px on a failed login now. The number comes
+// from what this script reports rather than from a guess, which is the whole
 // reason it exists — keep the two in step with style.css's own band.
-const PHONE_MAX = 1339;
+const PHONE_MAX = 919;
 // Tabs and icon buttons are 44px, the smallest a target has any business
 // being on a touchscreen. Chips are pills of text and sit at 40 — still a
 // real target, just not a square one.
@@ -57,6 +58,7 @@ const MIN_CHIP = 40;
 const WIDTHS = [
   320, 340, 360, 375, 379, 380, 390, 400, 414, 428, 480, 500, 540, 600, 640, 700, 720,
   768, 800, 900, 959, 960, 1000, 1024, 1100, 1199, 1200, 1239, 1240, 1280, 1339, 1340,
+  919, 920, 1429, 1430,
   1440, 1920,
 ];
 const KEEP_SHOTS = new Set([320, 390, 480, 800, 1100, 1280]);

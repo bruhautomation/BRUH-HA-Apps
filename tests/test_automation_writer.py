@@ -438,13 +438,23 @@ class TestRevert(WriterCase):
         self.assertFalse((self.config / "automations.yaml").exists())
 
     def test_a_lost_snapshot_is_reported_rather_than_faked(self):
+        """It names the file and says the change is still in it.
+
+        The sentence used to say the added automation was "the last block
+        in it", which is true of an append and false of the two callers
+        that splice one entry — and false again now that `unfix` reverts
+        whatever a fix run edited. Naming the file is the part somebody
+        can act on; claiming where in it the change sits is the part that
+        was only ever right for one caller.
+        """
         self.house()
         self.apply()
         entry = self.index_lines()[0]
         (self.journal / "snapshots" / entry["snapshot"]).unlink()
         back = self.w.revert(entry, config_dir=str(self.config))
         self.assertFalse(back["ok"])
-        self.assertIn("last block", back["error"])
+        self.assertIn("automations.yaml", back["error"])
+        self.assertIn("still there", back["error"])
 
     def test_it_will_not_write_outside_the_config_folder_it_was_given(self):
         self.house()

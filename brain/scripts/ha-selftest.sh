@@ -712,7 +712,21 @@ if [ -f "$USAGE_FILE" ]; then
         # sign-in worked, and the command that performed it is what cannot
         # mint a token the usage endpoint accepts.
         warn "Usage sensors: this sign-in has no permission to read usage limits"
-        info "Fix: run 'claude /login' in the Terminal tab — 'ha login' is built on 'claude setup-token', which cannot ask for that permission"
+        info "Fix: in the panel, Settings -> Claude account -> Sign in again -> 'Sign in to your Claude account' — 'ha login' is built on 'claude setup-token', which cannot ask for that permission"
+    elif [ "$uerr" = "oauth_token_awaiting_refresh" ]; then
+        # The one status here whose remedy is to do nothing — for a poll or
+        # two: the access token lapsed and the tracker renews it itself on
+        # its next pass. Reported as info rather than a warning, because a
+        # report whose warnings include things that are working is a report
+        # people learn to skim. Past a few hours it is the tracker unable to
+        # renew, which IS a warning, and the clock is the tracker's own.
+        usince=$(jq -r '.error_since // empty' "$USAGE_FILE" 2>/dev/null)
+        usince_s=$(date -d "$usince" +%s 2>/dev/null || echo 0)
+        if [ "$usince_s" -gt 0 ] && [ $(( $(date +%s) - usince_s )) -gt 10800 ]; then
+            warn "Usage sensors: the sign-in's access token lapsed and the tracker has not managed to renew it for $(( ($(date +%s) - usince_s) / 3600 ))h — the add-on log says what the renewal ran into"
+        else
+            info "Usage sensors: the sign-in's access token is between refreshes — the tracker renews it itself on its next poll; signing in again will not help"
+        fi
     elif [ -n "$uerr" ]; then
         warn "Usage sensors unavailable: ${uerr}"
         udetail=$(jq -r '.detail // empty' "$USAGE_FILE" 2>/dev/null)

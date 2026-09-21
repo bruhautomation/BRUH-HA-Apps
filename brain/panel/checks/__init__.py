@@ -80,9 +80,15 @@ CHECK_IDS = [c["id"] for c in CHECKS]
 # threshold would be a threshold nobody can see deciding what a house is
 # told.
 #
-# Empty on purpose: every check shipped so far has earned its place, and
-# a set with something in it "for now" is how a trial becomes permanent.
-SHADOW: frozenset[str] = frozenset()
+# A set with something in it "for now" is how a trial becomes permanent,
+# so every entry says when its fortnight started.
+#
+#   sys.update_pending  on trial from 1.61.0. The rule itself cannot be
+#       wrong about a house — the Supervisor either lists an update or it
+#       does not — so what the fortnight measures is whether a row about
+#       one belongs on a list of decisions at all, or whether it is the
+#       small, technically-true row that teaches people to stop reading.
+SHADOW: frozenset[str] = frozenset({"sys.update_pending"})
 
 
 def is_shadow(check_id: str) -> bool:

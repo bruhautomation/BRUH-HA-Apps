@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import time
+from functools import partial
 
 import voluptuous as vol
 
@@ -110,12 +111,27 @@ SEND_PROMPT_SCHEMA = vol.Schema(
     }
 )
 
+# How much of the project grant one task may reach. A task runs in /config
+# with `/config/.claude/settings.local.json` behind it, which holds Bash,
+# Write, Edit, WebFetch, WebSearch and every MCP tool — and until this
+# field existed, every `brain.run_task` call got all of it whatever it was
+# asked to do, with no way for the automation that asked to say otherwise.
+#
+# `full` is the DEFAULT and must stay one: BRight's director drives the
+# same tasks folder and depends on that grant, so narrowing the default
+# would break a working add-on next door. The two narrower values are
+# opt-in, and the listener derives both from the panel's own analyst lists
+# rather than from a copy kept here.
+TASK_TOOLS = ("full", "house", "read_only")
+DEFAULT_TASK_TOOLS = "full"
+
 RUN_TASK_SCHEMA = vol.Schema(
     {
         vol.Required("prompt"): str,
         vol.Optional("notify", default=False): bool,
         vol.Optional("notify_entity"): str,
         vol.Optional("timeout"): vol.All(int, vol.Range(min=10, max=600)),
+        vol.Optional("tools", default=DEFAULT_TASK_TOOLS): vol.In(TASK_TOOLS),
     }
 )
 
@@ -157,11 +173,52 @@ STUDY_SCHEMA = vol.Schema(
     }
 )
 
+# `brain.ask`: a question with an optional JSON Schema, answered with the
+# validated object as `data` beside the text. Read-only tools by default —
+# an automation asking a question is not asking for its files to be
+# edited — and `full` has to be typed. The schema may arrive as an object
+# (a YAML automation writes one naturally) or as a JSON string (a
+# template or a script that built it), and either becomes the same dict.
+
+
+def _schema_value(value):
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError as exc:
+            raise vol.Invalid(f"schema is not valid JSON: {exc}") from exc
+        if isinstance(parsed, dict):
+            return parsed
+    raise vol.Invalid("schema must be a JSON Schema object")
+
+
+ASK_SCHEMA = vol.Schema(
+    {
+        vol.Required("question"): vol.All(str, vol.Length(min=1, max=4000)),
+        vol.Optional("schema"): _schema_value,
+        vol.Optional("timeout"): vol.All(int, vol.Range(min=10, max=600)),
+        vol.Optional("tools", default="read_only"): vol.In(TASK_TOOLS),
+    }
+)
+
 INTENT_SCHEMA = vol.Schema(
     {
         vol.Required("sentence"): vol.All(str, vol.Length(min=1, max=300)),
     }
 )
+
+ADD_TODO_SCHEMA = vol.Schema(
+    {
+        vol.Required("text"): vol.All(str, vol.Length(min=1, max=200)),
+    }
+)
+
+# A checks pass takes no arguments: it looks at the whole house, and a
+# field naming one check would be a second answer to "what is a pass" that
+# `run_checks` does not have.
+CHECK_SCHEMA = vol.Schema({})
 
 
 def entry_type(entry: ConfigEntry) -> str:
@@ -181,6 +238,10 @@ def _get_platforms(entry: ConfigEntry) -> list[Platform]:
         platforms.append(Platform.SENSOR)
         # The system health binary sensor rides with the sensors-owner entry
         platforms.append(Platform.BINARY_SENSOR)
+        # ...and so does the Run-checks button, which sits on the same
+        # brAIn System device. Until now BUTTON was an insight job's
+        # platform only, so the main entry never set it up.
+        platforms.append(Platform.BUTTON)
         # The work list rides with them too — it is the same findings
         # mirror the open-findings sensor counts, as items. Looked up
         # rather than named: `todo` arrived in 2023.11 and this
@@ -229,9 +290,9 @@ def _make_action_handler(hass: HomeAssistant):
             # this fires for every button in the house.
             return
         action, ts = parsed
-        # A text-input action carries what was typed here. brAIn's three
-        # do not offer one, so this is empty today — reading it costs
-        # nothing and is what a "why?" button would need.
+        # A text-input action carries what was typed here: the Reply
+        # button's box (2.3). For the three verbs it is empty and is
+        # carried as the note, exactly as a reason typed on the tab is.
         reply = str((event.data or {}).get("reply_text") or "")[:500]
         await hass.async_add_executor_job(
             write_finding_request, hass, ts, action, reply, "notification",
@@ -292,6 +353,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             unsub_learning()
             unsub_findings()
             unsub_actions()
+            # The Repairs entries are this watcher's, so they leave with
+            # it: a reload puts them back on the first poll, and removing
+            # the integration should not leave brAIn's rows on somebody's
+            # Repairs page with nothing behind them.
+            findings_watcher.clear_issues()
             hass.data[DOMAIN].pop("_learning_watcher", None)
 
         entry.async_on_unload(_stop_learning)
@@ -349,6 +415,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # The work list rides with the health sensor and claims its own
         # pair for the same reason: a flag left set over a reload is an
         # entity that never comes back until Home Assistant restarts.
+        # The Run-checks button claims its own pair for the same reason:
+        # a flag left set over a reload is an entity that never comes
+        # back until Home Assistant restarts.
+        if hass.data[DOMAIN].get("_checks_button_entry") == entry.entry_id:
+            hass.data[DOMAIN].pop("_checks_button_entry", None)
+            hass.data[DOMAIN].pop("_checks_button_added", None)
         if hass.data[DOMAIN].get("_todo_entry") == entry.entry_id:
             hass.data[DOMAIN].pop("_todo_entry", None)
             hass.data[DOMAIN].pop("_todo_added", None)
@@ -380,6 +452,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "add_memory",
                 "answer_question",
                 "study",
+                "check",
+                "ask",
+                "intent",
+                "add_todo",
                 *POWER_TOOL_SERVICES,
             ):
                 if hass.services.has_service(DOMAIN, service):
@@ -824,18 +900,36 @@ def _register_services(hass: HomeAssistant) -> None:
         notify = call.data.get("notify", False)
         notify_entity = call.data.get("notify_entity")
         timeout = call.data.get("timeout")
+        tools = call.data.get("tools", DEFAULT_TASK_TOOLS)
 
         try:
-            result = await bridge.async_send_task(
+            answer = await bridge.async_send_task_full(
                 prompt=prompt,
                 notify=notify,
                 notify_entity=notify_entity,
                 timeout=timeout,
+                tools=tools,
             )
         except TimeoutError:
-            result = "Claude task did not complete in time."
+            answer = {"text": "Claude task did not complete in time.",
+                      "data": None}
 
-        return {"response": result}
+        return {"response": answer["text"], "data": answer.get("data")}
+
+    async def handle_ask(call: ServiceCall):
+        """A question, and optionally the shape the answer must take."""
+        bridge = _get_bridge(hass)
+        schema = call.data.get("schema")
+        try:
+            answer = await bridge.async_send_task_full(
+                prompt=call.data["question"],
+                timeout=call.data.get("timeout"),
+                tools=call.data.get("tools", "read_only"),
+                schema=schema if isinstance(schema, dict) else None,
+            )
+        except TimeoutError:
+            answer = {"text": "Claude did not answer in time.", "data": None}
+        return {"response": answer["text"], "data": answer.get("data")}
 
     async def handle_run_insight(call: ServiceCall):
         name = (call.data.get("name") or "").strip().lower()
@@ -903,6 +997,45 @@ def _register_services(hass: HomeAssistant) -> None:
         await hass.async_add_executor_job(
             write_intent, hass, sentence, "service")
         _LOGGER.info("Queued a one-off intent: %s", sentence)
+
+    async def handle_add_todo(call: ServiceCall):
+        """Put something on brAIn's to-do list.
+
+        The same drop the To-do app's own Add button writes, so an
+        automation and a person land on one list through one path — and
+        it is fire-and-forget for `handle_intent`'s reason, narrowed:
+        the add-on may be stopped, and a chore that could not be written
+        for thirty seconds is worth waiting for where a service call
+        that blocked on it is not.
+        """
+        from .requests import write_todo_request  # noqa: PLC0415 — that
+        # module imports homeassistant.core and nothing else on purpose
+
+        text = call.data["text"]
+        await hass.async_add_executor_job(
+            partial(write_todo_request, hass, "add", text=text,
+                    via="service"))
+        _LOGGER.info("Queued a to-do: %s", text)
+
+    async def handle_check(call: ServiceCall):
+        """Ask the add-on to run its house checks now.
+
+        Fire-and-forget, for `handle_study`'s reason with a shorter clock:
+        a pass collects a snapshot of the whole house, runs every check
+        against it and triages what it filed, which is minutes rather than
+        the seconds a service call should block for — and what it finds
+        arrives on the Findings tab, in the mirror, and through the
+        ``brain_finding`` event, not in this call's response.
+
+        It crosses the gap as a request file, exactly as an ending given in
+        the To-do app does: the panel owns the checks and Home Assistant
+        cannot reach port 8099.
+        """
+        from .requests import write_checks_request  # noqa: PLC0415 — that
+        # module imports homeassistant.core and nothing else on purpose
+
+        await hass.async_add_executor_job(write_checks_request, hass, "service")
+        _LOGGER.info("Asked brAIn to run its house checks")
 
     async def handle_answer_question(call: ServiceCall):
         memory_dir = hass.config.path(SHARED_DIR, MEMORY_DIR)
@@ -972,9 +1105,31 @@ def _register_services(hass: HomeAssistant) -> None:
 
     hass.services.async_register(
         DOMAIN,
+        "ask",
+        handle_ask,
+        schema=ASK_SCHEMA,
+        **extra_kwargs,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
         "intent",
         handle_intent,
         schema=INTENT_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "add_todo",
+        handle_add_todo,
+        schema=ADD_TODO_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "check",
+        handle_check,
+        schema=CHECK_SCHEMA,
     )
 
     # BRUH Power Tools: registry-management admin services (power_tools.py)

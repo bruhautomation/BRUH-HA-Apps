@@ -63,7 +63,7 @@ import logging
 import os
 import time
 
-import rhythm
+import habits
 
 log = logging.getLogger("brain.routines")
 
@@ -221,10 +221,10 @@ def record(actions: list[dict], now: float | None = None,
 # ---------------------------------------------------------------------------
 
 def _in_shape(stamp, shape: str) -> bool:
-    weekend = stamp.weekday() >= 5
-    return (shape == "every day"
-            or (shape == "weekdays" and not weekend)
-            or (shape == "weekends" and weekend))
+    """Kept as the name this module has always used. One reading of "is
+    this a weekend" lives in `habits.in_shape`, which answers it for a
+    date and for a datetime alike."""
+    return habits.in_shape(stamp, shape)
 
 
 def _eligible_days(shape: str, first: float, last: float, tz) -> int:
@@ -233,94 +233,61 @@ def _eligible_days(shape: str, first: float, last: float, tz) -> int:
     The denominator, and it is counted in the routine's own shape: a
     weekday habit graded against every day of the window would report
     five days in seven as 71% and refuse a habit that never misses.
+    `habits.eligible_days` is the one implementation of it — this stays
+    because the name is what this module's tests and prose call it.
     """
-    start = dt.datetime.fromtimestamp(first, tz).date()
-    end = dt.datetime.fromtimestamp(last, tz).date()
-    n = 0
-    day = start
-    while day <= end:
-        weekend = day.weekday() >= 5
-        if (shape == "every day"
-                or (shape == "weekdays" and not weekend)
-                or (shape == "weekends" and weekend)):
-            n += 1
-        day += dt.timedelta(days=1)
-    return n
+    return habits.eligible_days(shape, first, last, tz)
+
+
+def _floors() -> dict:
+    """This module's bar, handed to the one grading.
+
+    The floors stay here because they are this producer's judgement: a
+    time trigger is wrong if it fires at the wrong end of an hour, which
+    is why `MAX_SPREAD_MIN` is tighter than `rhythm`'s and than
+    `manual_ledger`'s. What is shared is the arithmetic, not the bar.
+    """
+    return {"min_days": MIN_DAYS, "min_share": MIN_SHARE,
+            "max_spread_min": MAX_SPREAD_MIN, "recent_days": RECENT_DAYS}
+
+
+def _as_routine(shape: dict) -> dict:
+    """A `habits.Shape` in this module's own vocabulary.
+
+    The wire shape is somebody's — it rides into `proposals.key_for`,
+    into `to_config`, into `why_for` and onto a card — so the rename
+    happens here rather than anywhere downstream.
+    """
+    return {"when_days": shape["shape"], "minute": round(shape["median_minute"]),
+            "at": shape["at"], "spread_min": shape["spread_min"],
+            "days": shape["days"], "eligible_days": shape["eligible_days"],
+            "share": shape["share"], "events": shape["stamps"],
+            "first": int(shape["first"]), "last": int(shape["last"])}
 
 
 def _grade(stamps: list, shape: str, tz) -> dict | None:
     """Does this set of presses hold up as a habit of this shape?
 
     Everything a routine has to clear, in one place, so a shape cannot
-    be adopted on one set of floors and reported against another.
+    be adopted on one set of floors and reported against another — and
+    that place is now `habits.grade`, which `override_ledger` and
+    `manual_ledger` ask the same question of with their own floors.
     """
-    kept = [s for s in stamps if _in_shape(s, shape)]
-    if not kept:
-        return None
-    days = {s.date() for s in kept}
-    if len(days) < MIN_DAYS:
-        return None
-
-    minutes = [s.hour * 60 + s.minute for s in kept]
-    centre = rhythm.circular_median(minutes)
-    if centre is None:
-        return None
-    spread = rhythm.circular_spread(minutes, centre)
-    if spread > MAX_SPREAD_MIN:
-        return None
-
-    first = min(s.timestamp() for s in kept)
-    last = max(s.timestamp() for s in kept)
-    eligible = _eligible_days(shape, first, last, tz)
-    if eligible <= 0:
-        return None
-    share = len(days) / eligible
-    if share < MIN_SHARE:
-        return None
-
-    return {"when_days": shape, "minute": round(centre),
-            "at": rhythm.clock(centre), "spread_min": round(spread, 1),
-            "days": len(days), "eligible_days": eligible,
-            "share": round(share, 3), "events": len(kept),
-            "first": int(first), "last": int(last)}
+    found = habits.grade([s.timestamp() for s in stamps], tz,
+                         shape=shape, **_floors())
+    return _as_routine(found) if found else None
 
 
 def _best_shape(stamps: list, tz) -> dict | None:
     """`every day` only when BOTH halves of the week hold up on their own.
 
-    A habit on ten weekdays and one Sunday clears the whole-window share
-    comfortably — ten days out of fourteen — and calling it `every day`
-    builds a trigger that fires on two mornings it was never wanted on.
-    So the broad claim has to be earned twice, once on each half, and
-    what a not-quite-daily habit falls back to is the narrower true
-    statement rather than the wider convenient one.
-
-    The cost is worth naming: a genuinely daily habit reads as
-    `weekdays` for its first three weeks, because six weekend days take
-    that long to accrue. That is the same floor `rhythm` pays for
-    measuring weekends apart, and it is the cheaper mistake — a routine
-    that misses two days a week is a smaller wrong than one that fires
-    on two mornings somebody is asleep.
+    `habits.best_shape` is the rule and its reasoning; this is the
+    adapter, because `mine` spreads the answer onto a row that carries
+    this module's own field names.
     """
-    week = _grade(stamps, "weekdays", tz)
-    end = _grade(stamps, "weekends", tz)
-    if week and end:
-        # Both halves hold up on their own — at the SAME time. A habit at
-        # 07:00 on weekdays and 10:00 at weekends is two clean shapes,
-        # and the merged set does not refuse it: the spread is a median
-        # deviation, so fifteen weekday presses hide six weekend ones
-        # completely and `every day at 07:00` comes out with a spread of
-        # zero. That is the trigger this function exists to refuse — a
-        # daily 07:00 in a house that sleeps until ten on Sundays — so
-        # the halves have to agree on the hour before the union is asked,
-        # and a refusal either way falls back to the narrower true claim.
-        apart = rhythm.circular_spread([end["minute"]], week["minute"])
-        if apart <= MAX_SPREAD_MIN:
-            daily = _grade(stamps, "every day", tz)
-            if daily:
-                return daily
-        return week if week["days"] >= end["days"] else end
-    return week or end
+    found = habits.best_shape([s.timestamp() for s in stamps], tz,
+                              **_floors())
+    return _as_routine(found) if found else None
 
 
 def mine(payload: dict | None = None, tz=None, now: float | None = None,

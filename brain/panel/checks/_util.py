@@ -146,6 +146,26 @@ class House:
     def exists(self, entity_id: str) -> bool:
         return entity_id in self.states or entity_id in self.registry
 
+    def excepted(self, entity_id: str, check_id: str) -> bool:
+        """Has the homeowner said this rule is wrong about this entity?
+
+        `snap["facts"]` is `facts_store.exception_map()`, loaded once by
+        the collector: `{entity_id: {check_id, …}}`, where `*` is the
+        whole-entity form. Wrong on a check's finding writes one, and a
+        check reads it here before filing the same row again in new
+        words — the loop the Wrong button always promised. A snapshot
+        with no key (an older collector, a store that could not be read)
+        excepts nothing, which is the direction in which being wrong
+        shows a card.
+        """
+        table = self.snap.get("facts")
+        if not isinstance(table, dict):
+            return False
+        rules = table.get(entity_id)
+        if not rules:
+            return False
+        return check_id in rules or "*" in rules
+
     def enabled(self, entity_id: str) -> bool:
         reg = self.registry.get(entity_id)
         if reg is None:

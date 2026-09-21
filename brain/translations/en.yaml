@@ -67,6 +67,13 @@ configuration:
       "Home Assistant only" limits voice to entities, services and the
       registry. "Full" also gives it the shell and your files — more
       capable, and a much larger blast radius for a misheard sentence.
+  assist_exposure:
+    name: What voice can see
+    description: >-
+      "Exposed" honours Home Assistant's own list — Settings → Voice
+      assistants → Expose — so an entity you have not exposed is invisible
+      to voice and cannot be acted on by it. "All" gives voice the whole
+      house, which is what every release before 2.3 did.
   study_timeout_minutes:
     name: Study session timeout
     description: How long a study session may run before it is stopped.
@@ -97,9 +104,13 @@ configuration:
     name: Notify from severity
     description: >-
       Only findings at or above this severity are sent to the notify
-      service. "serious" (the default) means batteries about to die and
-      sensors gone silent ring your phone, while naming nitpicks wait on
-      the Findings tab.
+      service. "critical" (the default) keeps your phone for the things
+      that cannot wait — a leak, a freeze, a hub that has stopped
+      answering, which are also the only ones brAIn will remind you about
+      a second time. Everything else waits on the Findings tab, in your
+      to-do list and in Home Assistant's Repairs. Set it back to
+      "serious" for the old behaviour, where a dying battery is pushed
+      once as well.
   notify_quiet_start:
     name: Quiet hours start (hour, 0-23)
     description: >-
@@ -163,6 +174,20 @@ configuration:
       never call Claude, so they cost nothing; what they find lands on the
       Findings tab. 0 turns the schedule off (`brain check` still runs them
       by hand).
+  ask_why:
+    name: Ask why you did something
+    description: >-
+      brAIn notices the things somebody here does by hand — running the
+      sprinklers, pushing the heating up, starting a script — and once a
+      day, at most, it spends one Claude run working out WHY. It looks at
+      the weather, the sun, the season and the history around the moment,
+      and either records what it worked out or puts one short question on
+      the Findings tab. Manual actions are the only place a home says
+      what it actually wants, and the timing alone never explains itself:
+      an automation built from "most evenings at seven" is wrong the
+      first week it rains. One a day and three a week is the whole cost;
+      brAIn never asks twice about the same thing, and it will not ask
+      about locks, alarms or where anybody is.
   self_healing:
     name: Fix three things overnight
     description: >-

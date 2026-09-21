@@ -44,13 +44,58 @@ of regression that only shows up in somebody's log weeks later:
   write it, and the old prune quietly undid that. Root can hand a file over;
   a non-root writer cannot, so this is best-effort by nature.
 
+``locked`` is the other half, and it answers a different failure. An
+atomic replace makes a *write* indivisible; it does nothing at all for a
+read-modify-write, which is what every store in this panel performs —
+read the whole file, change one entry, write it all back. A line another
+process appended between the read and the rename is simply gone, and
+nothing raises: the winner's bytes are complete and correct and do not
+contain it. ``/config/.brain/memory/hypotheses.jsonl`` had three
+uncoordinated writers doing exactly that (the panel, ``brain-learn.sh``
+appending with ``>>``, and the consolidator's expiry rewrite), and the
+panel alone has two — the knowledge and feedback stores are written from
+``asyncio.to_thread`` request handlers, so two concurrent requests race
+each other.
+
+The lock is a **sidecar** (``<store>.lock``) rather than the store file
+itself, and that is forced rather than chosen: ``os.replace`` swaps in a
+new inode, so a lock taken on the store is released into a file nobody
+can see the moment the write lands — the next writer would lock the new
+inode and the two would never meet. The sidecar's inode is stable.
+
+It is ``flock``, so it is advisory, per-open-file-description, released
+by the kernel when the process dies, and — the part that matters here —
+**shared with the shell**, which is the only way a Python store and a
+``jq``/``>>`` script can take the same lock. The file is opened read-only
+(``O_RDONLY``), because ``flock`` needs an fd and not write permission,
+and because ``O_WRONLY``/``>`` truncates the holder's file at open. Which
+means root and the ``claude`` user can each lock a file the other
+created.
+
+A lock that cannot be taken **does not refuse the work**: past the
+timeout the caller proceeds unlocked, logging that it did, because the
+behaviour that leaves is exactly the behaviour every one of these stores
+had before this existed — where refusing would lose a homeowner's press
+over a lock a dead process left held on a filesystem that does not
+support locking at all.
+
 Stdlib only, like every store that imports it.
 """
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
 import os
+import time
 from pathlib import Path
+
+try:  # Linux everywhere this ships; absent on Windows, where the tests do not run.
+    import fcntl
+except ImportError:  # pragma: no cover - not reachable on any supported image
+    fcntl = None
+
+_LOG = logging.getLogger("brain.atomic_write")
 
 # The scratch file is created private and opened up only once it is
 # complete. Nothing else has any business reading a half-written store, and
@@ -167,3 +212,169 @@ def write_lines(path, lines, *, mode: int | None = None, **dumps) -> None:
     dumps.setdefault("ensure_ascii", False)
     write_text(path, "".join(json.dumps(o, **dumps) + "\n" for o in lines),
                mode=mode)
+
+
+# ---------------------------------------------------------------------------
+# Cross-process locking, for the read-modify-write an atomic replace cannot
+# make safe on its own.
+# ---------------------------------------------------------------------------
+
+# The sidecar's name, spelled once. The shell half (brain-memory-lock.sh)
+# spells the same thing, and `tests/test_store_locking.py` reads it out of
+# that script rather than trusting the two to agree: a lock whose two halves
+# name different files is no lock at all, and it fails silently.
+LOCK_SUFFIX = ".lock"
+
+# How long a caller waits before giving up and doing the work unlocked. A
+# consolidation pass rewriting the queue is seconds; a study session never
+# holds this across its Claude run (it takes the lock only to append). Ten
+# seconds is far past any honest holder and far short of a request timeout.
+LOCK_TIMEOUT_S = float(os.environ.get("BRAIN_STORE_LOCK_WAIT", "10"))
+LOCK_POLL_S = 0.02
+
+
+def lock_path(path) -> Path:
+    """The sidecar this store's lock is taken on."""
+    return Path(str(path) + LOCK_SUFFIX)
+
+
+def _open_lock(lock: Path) -> int | None:
+    """An fd on the sidecar, creating it if this is the first caller.
+
+    Read-only on purpose: ``flock`` wants a file description and not write
+    permission, so whichever of root and the ``claude`` user gets there
+    first can create it and the other can still lock it.
+    """
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    for create in (False, True):
+        try:
+            fd = os.open(lock, os.O_RDONLY | (os.O_CREAT if create else 0),
+                         LOCK_MODE)
+        except FileNotFoundError:
+            continue        # first caller: round again, this time with O_CREAT
+        except OSError:
+            return None
+        if create:
+            _share_lock(fd, lock)
+        return fd
+    return None
+
+
+# The lock is shared between root (the panel) and the `claude` user (a
+# study session, the consolidator) and nobody else. It is owner-only —
+# no group bit, no world bit: a mode that let anyone on the box take a
+# panel store's lock would be a way to stall its writers from a shell,
+# and a scanner reads any group bit as exactly that. What carries the
+# lock across the two users is OWNERSHIP rather than a mode: root can
+# open a file whatever its bits say, so a lock owned by the `claude`
+# user is one both halves can take, and root hands it over on create.
+LOCK_MODE = 0o600
+
+
+def _lock_owner(store: Path) -> tuple[int, int]:
+    """The uid and gid the other half of this lock runs as, or (-1, -1).
+
+    The store's own owner where the store is not root's (the file was
+    made by the user who will contend for it); otherwise the `claude`
+    user, who is who the panel shares every store with. A box with no
+    such user is a dev checkout, where one user takes every lock and
+    nothing is owed.
+    """
+    _mode, uid, gid = _preserved(store)
+    if uid > 0:
+        return uid, gid
+    try:
+        import pwd
+        entry = pwd.getpwnam(LOCK_PEER_USER)
+        return entry.pw_uid, entry.pw_gid
+    except (KeyError, ImportError, OSError):
+        return -1, -1
+
+
+# The user the panel shares its stores with; run.sh creates it as UID 1000.
+LOCK_PEER_USER = "claude"
+
+
+def _share_lock(fd: int, lock: Path) -> None:
+    """Make a lock this process just created takable by the other user.
+
+    Owner-only bits, and the owner is the `claude` user: root can open
+    anything, so handing the file over is what lets both halves take
+    it. Only root can hand it over; the `claude` user cannot, and does
+    not need to.
+    """
+    try:
+        os.fchmod(fd, LOCK_MODE)
+    except OSError:
+        return              # somebody else created it; theirs is already right
+    if os.getuid() != 0:
+        return
+    uid, gid = _lock_owner(lock.with_name(lock.name[:-len(LOCK_SUFFIX)])
+                           if lock.name.endswith(LOCK_SUFFIX) else lock)
+    if uid < 0:
+        return
+    try:
+        os.fchown(fd, uid, gid)
+    except OSError:
+        pass                # a box with nobody to hand it to
+
+
+def _take(fd: int, shared: bool, timeout: float) -> bool:
+    """Poll for the lock rather than blocking, so the timeout is real.
+
+    ``LOCK_NB`` in a loop is also exactly what the shell half does, because
+    BusyBox's ``flock`` has no ``-w`` — and answers an unknown flag with the
+    same exit status as "the lock is held".
+    """
+    mode = (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        try:
+            fcntl.flock(fd, mode)
+            return True
+        except OSError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(LOCK_POLL_S)
+
+
+@contextlib.contextmanager
+def locked(path, *, shared: bool = False, timeout: float | None = None):
+    """Hold this store's lock for the body. Yields whether it was taken.
+
+    Wrap the WHOLE read-modify-write, never just the write: the window this
+    closes is between the read and the rename, so a lock taken around the
+    rename alone protects nothing.
+
+    ``shared=True`` is for asking a question of the file — several readers
+    may hold it at once and none of them blocks another, which is what
+    makes "is anybody writing" a question that can never itself contend.
+    """
+    if fcntl is None:  # pragma: no cover - not reachable on any supported image
+        yield False
+        return
+    fd = _open_lock(lock_path(path))
+    if fd is None:
+        # An unwritable directory, or a lock file we may not open. The work
+        # still happens: this is the behaviour every store had before.
+        _LOG.warning("no lock available for %s — writing unlocked", path)
+        yield False
+        return
+    wait = LOCK_TIMEOUT_S if timeout is None else timeout
+    try:
+        held = _take(fd, shared, wait)
+        if not held:
+            _LOG.warning("waited %.0fs for the lock on %s — writing unlocked",
+                         wait, path)
+        yield held
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            # Closing the fd releases the lock anyway — this is the tidy
+            # half, and failing it changes nothing a caller can act on.
+            pass
+        os.close(fd)
