@@ -842,15 +842,30 @@ def run_agent(
         job=job, effort=effort, schema=schema)
 
 
-# A turn cap is a runaway guard, never a budget — and a guard that trips
-# has to change what happens next, or every token the run spent is thrown
-# away with the answer. So a run that ends on `error_max_turns` is asked to
-# LAND: one more invocation, `--resume` on the same session, two turns,
-# and a prompt that says finish now with what you have. The resumed
-# conversation still holds everything the run read, so what comes back is
-# the answer in the task's own format with one sentence about what it did
-# not get to — a partial that files, instead of a thorough one that never
-# did. The landing is charged to the same wall-clock budget as the run.
+# There is NO turn cap on a panel run. `_run_cli` sends no `--max-turns`
+# at all: the wall clock is the guard, and it is the only one that answers
+# "how much may this cost" in a unit people have an intuition about. The
+# caps used to be "large and invisible" and one of them was neither — the
+# Resident's first look ran under a cap of four, and a structured reply
+# the CLI validates against a schema is itself a tool turn, so a look that
+# needed one more try ended `error_max_turns`, spent its tokens, filed
+# nothing and wrote a fault into the next report. That fault is the one
+# this was reported from, in the words it arrived in: *"I really don't
+# want to get 'max number of turns errors'. Get rid of that constraint."*
+# The `max_turns` argument every runner still takes is accepted and
+# ignored, so no caller changes shape; a run that loops on a failing tool
+# is ended by its timeout, which it always was past the cap anyway.
+#
+# The landing below stays, for a CLI that carries a cap of its own: a
+# guard that trips has to change what happens next, or every token the
+# run spent is thrown away with the answer. So a run that ends on
+# `error_max_turns` is asked to LAND: one more invocation, `--resume` on
+# the same session, two turns, and a prompt that says finish now with what
+# you have. The resumed conversation still holds everything the run read,
+# so what comes back is the answer in the task's own format with one
+# sentence about what it did not get to — a partial that files, instead
+# of a thorough one that never did. The landing is charged to the same
+# wall-clock budget as the run.
 LANDING_TURNS = 2
 LANDING_MIN_S = 20
 LANDING_PROMPT = (
@@ -865,6 +880,22 @@ def hit_turn_cap(result: dict) -> bool:
     """Did this run end on the CLI's own turn cap (not ours, not a timeout)?"""
     return (not result.get("ok")
             and journal.classify(result) == "max_turns")
+
+
+# An overloaded API is not a failed run, and a card that died on a 529
+# with 15 minutes of its budget unspent is a card nobody asked for twice.
+# The CLI retries inside a call; when it gives up, `_run_cli` waits this
+# long and tries the whole run once more — once, because a second refusal
+# in a row is the service saying wait longer than any run can. Bounded by
+# the run's own clock: no retry is started without room for it.
+OVERLOAD_RETRY_S = int(os.environ.get("BRAIN_OVERLOAD_RETRY_S", "45"))
+_OVERLOADED_RE = re.compile(r"\b529\b|overloaded", re.IGNORECASE)
+
+
+def overloaded(result: dict) -> bool:
+    """Did this run fail because the API said it was overloaded?"""
+    return (not result.get("ok")
+            and bool(_OVERLOADED_RE.search(str(result.get("error") or ""))))
 
 
 # The flags the 2.0 runners add that an older CLI may not know. Each is
@@ -950,7 +981,10 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
         base += ["--effort", effort]
     if schema:
         base += ["--json-schema", json.dumps(schema, separators=(",", ":"))]
-    argv = base + ["--max-turns", str(max_turns)] + flags
+    # No `--max-turns`: see the note above LANDING_TURNS. The argument is
+    # kept so every runner and every caller keeps its shape.
+    del max_turns
+    argv = base + flags
     started = time.monotonic()
     session_id = str(uuid.uuid4())
     if source:
@@ -963,9 +997,18 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
     while (flag := _rejected_flag(result)) and flag not in dropped:
         dropped.append(flag)
         base = _without(base, flag)
-        argv = base + ["--max-turns", str(max_turns)] + flags
+        argv = base + flags
         tail = [] if "session-id" in dropped else ["--session-id", session_id]
         result = _spawn_cli(argv + tail, prompt, timeout, timeout_message)
+    retried = False
+    if overloaded(result):
+        remaining = int(timeout - (time.monotonic() - started))
+        if remaining > OVERLOAD_RETRY_S + LANDING_MIN_S:
+            time.sleep(OVERLOAD_RETRY_S)
+            tail = [] if "session-id" in dropped else ["--session-id", session_id]
+            again = _spawn_cli(argv + tail, prompt,
+                               remaining - OVERLOAD_RETRY_S, timeout_message)
+            result, retried = again, True
     if schema and result.get("ok") and "data" not in result:
         # The CLI ran without --json-schema (too old, or it was dropped
         # above): read the object out of the text so callers see one shape.
@@ -987,6 +1030,8 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
     extra: dict = {}
     if landed:
         extra["landed"] = True
+    if retried:
+        extra["retried"] = "overloaded"
     if job:
         extra["job"] = job
     if effort:

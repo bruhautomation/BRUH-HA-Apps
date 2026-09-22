@@ -90,7 +90,8 @@ class LandingCase(unittest.TestCase):
         first, second = self._argvs()
         sid = self._after(first, "--session-id")
         self.assertTrue(sid)
-        self.assertEqual(self._after(first, "--max-turns"), "40")
+        # No cap of our own on the run: the wall clock is the guard.
+        self.assertNotIn("--max-turns", first)
         self.assertEqual(self._after(second, "--resume"), sid)
         self.assertEqual(self._after(second, "--max-turns"),
                          str(engine.LANDING_TURNS))
@@ -172,3 +173,77 @@ class LandingCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNoTurnCapOnAPanelRun(LandingCase):
+    """`_run_cli` sends no `--max-turns`, on any of the three paths.
+
+    The Resident's first look ran under a cap of four and a structured
+    reply is itself a tool turn, so a look that needed one more try ended
+    `error_max_turns` — spent, unfiled, and a fault in the next report.
+    The wall clock is the guard now, and the argument every runner takes
+    is accepted and ignored so no caller changes shape.
+    """
+
+    def test_none_of_the_three_paths_sends_a_cap(self):
+        engine.run_claude("p", "s", timeout=30, max_turns=4)
+        engine.run_analyst("p", "s", timeout=30, max_turns=40)
+        engine.run_agent("p", "s", timeout=30, max_turns=60)
+        argvs = self._argvs()
+        self.assertEqual(len(argvs), 3)
+        for argv in argvs:
+            self.assertNotIn("--max-turns", argv, argv)
+
+    def test_the_landing_keeps_its_own_two_turn_room(self):
+        """The landing is a "finish now" call and its cap is the one
+        number here that is a guard rather than a budget."""
+        os.environ["FAKE_MODE"] = "max_turns_then_land"
+        engine.run_claude("p", "s", timeout=60)
+        first, second = self._argvs()
+        self.assertNotIn("--max-turns", first)
+        self.assertEqual(self._after(second, "--max-turns"),
+                         str(engine.LANDING_TURNS))
+
+
+class TestAnOverloadedApiIsRetriedOnce(LandingCase):
+    """A 529 with the run's budget unspent buys one more attempt after a
+    pause; a second refusal is the run's ending."""
+
+    def setUp(self):
+        super().setUp()
+        self.once = Path(self.tmp.name) / "once"
+        os.environ["FAKE_ONCE_FILE"] = str(self.once)
+        self.quick = unittest.mock.patch.object(engine, "OVERLOAD_RETRY_S", 0)
+        self.quick.start()
+
+    def tearDown(self):
+        self.quick.stop()
+        os.environ.pop("FAKE_ONCE_FILE", None)
+        super().tearDown()
+
+    def test_the_run_is_tried_again_and_the_journal_says_so(self):
+        os.environ["FAKE_MODE"] = "overloaded_then_ok"
+        result = engine.run_claude("p", "s", timeout=60, source="card")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(len(self._argvs()), 2)
+        row = self._rows()[-1]
+        self.assertEqual(row["outcome"], "ok")
+        self.assertEqual(row.get("extra"), {"retried": "overloaded"})
+
+    def test_no_retry_without_the_time_for_one(self):
+        os.environ["FAKE_MODE"] = "overloaded_then_ok"
+        with unittest.mock.patch.object(engine, "OVERLOAD_RETRY_S", 100):
+            result = engine.run_claude("p", "s", timeout=60)
+        self.assertFalse(result["ok"])
+        self.assertIn("529", result["error"])
+        self.assertEqual(len(self._argvs()), 1)
+
+    def test_overloaded_is_read_off_the_error_and_nothing_else(self):
+        self.assertTrue(engine.overloaded(
+            {"ok": False, "error": "API Error: 529 Overloaded"}))
+        self.assertTrue(engine.overloaded(
+            {"ok": False, "error": "overloaded_error"}))
+        self.assertFalse(engine.overloaded(
+            {"ok": True, "text": "529 devices overloaded the hub", "error": ""}))
+        self.assertFalse(engine.overloaded(
+            {"ok": False, "error": "claude exited 1: no output"}))

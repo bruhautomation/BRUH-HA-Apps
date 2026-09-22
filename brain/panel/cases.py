@@ -64,6 +64,7 @@ import time
 from pathlib import Path
 from typing import Callable, NamedTuple
 
+import answers as answers_mod
 import atomic_write
 import findings_store
 import hypotheses
@@ -378,6 +379,22 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
         "severity": row.get("severity") or "warning",
         "entity_id": row.get("entity_id") or "",
         "fix": row.get("fix") or "",
+        # Whose sentence the fix is, so the card can say so.
+        "fix_by": row.get("fix_by") or "",
+        # The store's own status word, beside the case's four. `planned`,
+        # `planning` and `fixing` are three different screens — a plan
+        # waiting for consent, a read-only run, a run changing the house
+        # — and the case status folds two of them into `acting`, so the
+        # answers are read off this and the card renders Apply/Cancel
+        # from it. It is why the feed used to show *Do it* over a plan.
+        "finding_status": status,
+        "plan": dict(row.get("plan") or {}),
+        "fix_started": float(row.get("fix_started") or 0),
+        "fix_ended": float(row.get("fix_ended") or 0),
+        "fix_files": int(row.get("fix_files") or 0),
+        "fix_calls": int(row.get("fix_calls") or 0),
+        "checked_at": int(row.get("checked_at") or 0),
+        "triage": dict(row.get("triage") or {}),
         # The store's own rule, not a second reading of it: absent means
         # fixable and only an explicit false means hands are required, so
         # a row written before the key existed keeps the answer
@@ -656,6 +673,24 @@ def end(value: str, verb: str, note: str = "", *, hooks: Hooks,
 # The rest of the verbs
 # ---------------------------------------------------------------------------
 
+def answers(case: dict) -> list[dict]:
+    """The presses this case shows, primary first — `answers.answers`,
+    reached through this module so a caller holding a case never has to
+    know which module decides. See `answers.py` for the argument."""
+    return answers_mod.answers(case)
+
+
+def situation(case: dict) -> str:
+    return answers_mod.situation(case)
+
+
+def more(case: dict) -> list[dict]:
+    """What goes behind the ⋯: *Later* and every rare verb the visible
+    row has not already offered. `overflow` is unchanged underneath, so
+    a test of what a case CAN do still reads it whole."""
+    return answers_mod.more(case, answers(case), overflow(case))
+
+
 def overflow(case: dict) -> list[dict]:
     """The rare verbs still available for this case, as `{verb, route}`.
 
@@ -726,6 +761,6 @@ def overflow(case: dict) -> list[dict]:
 __all__ = [
     "CHORE_SNOOZE_S", "Hooks", "KINDS", "LIVE_STATUSES", "MAX_SNOOZED",
     "MIN_SNOOZE_S", "PREFIXES", "SNOOZE_BY_STAKES", "SNOOZE_FILE", "STAKES",
-    "STATUSES", "STORES", "VERBS", "case_id", "end", "get", "list_cases",
-    "open_count", "overflow", "split_id",
+    "STATUSES", "STORES", "VERBS", "answers", "case_id", "end", "get",
+    "list_cases", "more", "open_count", "overflow", "situation", "split_id",
 ]

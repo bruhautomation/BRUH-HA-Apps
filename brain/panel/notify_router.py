@@ -65,6 +65,8 @@ import json
 import logging
 import os
 
+import answers
+
 log = logging.getLogger("brain.notify")
 
 QUEUE_FILE = os.environ.get("BRAIN_NOTIFY_QUEUE", "/data/notify-queue.json")
@@ -707,6 +709,12 @@ def can_answer(service: str) -> bool:
     return name.startswith("mobile_app_")
 
 
+# How many answer buttons ride on one notification, before Reply. Three
+# is what the companion app renders on Android; the fourth would be the
+# one that never appears, so the row is the feed's own three.
+MAX_ANSWER_BUTTONS = 3
+
+
 def actions_for(rows: list[dict], service: str) -> list[dict]:
     """The buttons for this message, or none.
 
@@ -715,18 +723,42 @@ def actions_for(rows: list[dict], service: str) -> list[dict]:
     to guess which — so a held batch and a checks pass that filed three
     arrive as they always did, and the person opens the tab. That is the
     honest answer rather than ending an arbitrary one of them.
+
+    **The buttons are the card's own answers**, decided once in
+    `answers.request_answers` off the row itself (a battery gets *Add to
+    to-do · Replaced it · Not a problem*, a device that has gone quiet
+    gets *It's off on purpose*), capped at `MAX_ANSWER_BUTTONS`, and then
+    Reply. A row that answers with nothing — a run in flight — gets
+    Reply alone. The classic labels in `ACTION_LABELS` are what a row's
+    action is called when the answers carry no label of their own.
     """
     if len(rows) != 1 or not can_answer(service):
         return []
-    ts = rows[0].get("ts")
+    row = rows[0]
+    ts = row.get("ts")
     if isinstance(ts, bool) or not isinstance(ts, (int, float)):
         return []
+    offered = row.get("answers")
+    if not isinstance(offered, list):
+        offered = answers.request_answers(row)
+    fallback = dict(ACTION_LABELS)
     out = []
-    for verb, title in ACTION_LABELS:
-        button = {"action": f"{ACTION_PREFIX}.{verb}.{int(ts)}", "title": title}
-        if verb in ACTION_BEHAVIOUR:
-            button["behavior"] = ACTION_BEHAVIOUR[verb]
-        out.append(button)
+    seen: set[str] = set()
+    for item in offered:
+        if not isinstance(item, dict):
+            continue
+        verb = str(item.get("action") or "")
+        if not verb or verb in seen or verb == "reply":
+            continue
+        seen.add(verb)
+        title = str(item.get("label") or fallback.get(verb) or verb)
+        out.append({"action": f"{ACTION_PREFIX}.{verb}.{int(ts)}",
+                    "title": title[:40]})
+        if len(out) >= MAX_ANSWER_BUTTONS:
+            break
+    button = {"action": f"{ACTION_PREFIX}.reply.{int(ts)}", "title": "Reply"}
+    button["behavior"] = ACTION_BEHAVIOUR["reply"]
+    out.append(button)
     return out
 
 
@@ -760,7 +792,9 @@ def parse_action(identifier: str) -> tuple[str, int] | None:
     if len(parts) != 3 or parts[0] != ACTION_PREFIX:
         return None
     verb = parts[1]
-    if verb not in [v for v, _t in ACTION_LABELS]:
+    # Every action a button can carry: the classic four, and the two the
+    # answers row added (`todo`, `ack`) — one list, `answers.py`'s.
+    if verb not in ("reply", *answers.REQUEST_ACTIONS):
         return None
     try:
         return verb, int(parts[2])

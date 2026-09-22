@@ -217,12 +217,19 @@ class TestTheTwoSidesAgree(WriterCase):
         # The add-on writes it into the notification; this side reads it
         # back off the companion app's event. Two processes, one format,
         # driven end to end rather than written down twice.
-        for ts, verb in ((1720, "fixed"), (1, "wrong"), (1_760_000_000, "snooze")):
-            wanted = [a for a in notify_router.actions_for(
+        # The buttons are the row's own answers now (`answers.py`), so
+        # the verbs are read off what the router really put on the
+        # message rather than written down here — and every one of them
+        # has to parse on this side, Reply included.
+        for ts in (1720, 1, 1_760_000_000):
+            buttons = notify_router.actions_for(
                 [{"ts": ts, "text": "a"}], "mobile_app_x")
-                if a["action"].split(".")[1] == verb][0]
-            self.assertEqual(brain_requests.parse_action(wanted["action"]),
-                             (verb, ts))
+            self.assertGreaterEqual(len(buttons), 2)
+            for button in buttons:
+                verb = button["action"].split(".")[1]
+                self.assertEqual(brain_requests.parse_action(button["action"]),
+                                 (verb, ts))
+                self.assertIn(verb, brain_requests.ACTIONS)
 
     def test_the_reader_rejects_every_other_button_in_the_house(self):
         # The companion app fires this event for every actionable

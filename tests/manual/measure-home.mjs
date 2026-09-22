@@ -1,31 +1,33 @@
 // Render the Home feed against one case of every kind and assert that each
-// one can be answered from the screen it is on.
+// one can be answered from the screen it is on — with the buttons that FIT
+// it, and no more than three of them.
 //
-// The failure this exists to prevent is the one the whole feed is written
-// against: four inboxes became one list, so a case whose ending is missing
-// is not a tidy-up — it is work that has nowhere to go and a badge that can
-// never read as done. So the checks are about what a card OFFERS.
+// The failures this exists to prevent are the ones the redesign was written
+// against, in the words they arrived in: "Yes/no questions have a 'do it'
+// button. There are lots of buttons. I don't always see a dismiss. Some
+// items are boiled down to 'change the batteries' but I'm getting a 'disable
+// the integration' prompt." So the checks are about what a card OFFERS and
+// how much it asks you to read first.
 //
-//   * every case carries its endings, and a `change` carries exactly one,
-//     because offering a decision about something brAIn already did is a
-//     decision about nothing.
-//   * every case says what KIND it is, in a word. Five stores sit under
-//     this list and a person does five different things about them; the
-//     left edge is severity, so the pill is the only thing that says which.
-//   * every ending clears the touch floor at phone widths. This is the row
-//     somebody presses every day, and a 32px target under a thumb is the
-//     one failure reading cannot see.
-//   * the ⋯ opens. The rare verbs are still real and they are behind it, so
-//     a menu that does not open is thirteen verbs reduced to three.
-//   * the foot line carries all three of the Resident's counts, because a
-//     quiet feed and a loop that has stopped look identical without it.
-//   * nothing scrolls sideways, and every element id the tab's handlers
-//     bind to is still there — an id going missing is the one thing a move
-//     like this loses quietly.
+//   * every answerable case carries at most three visible presses, and one
+//     of them is always a way to say no (`data-verb` wrong / no / decline /
+//     drop / cancel) — never behind the ⋯, never wrapped out of sight.
+//   * a question offers Yes and No and never "Do it"; a battery leads with
+//     the to-do list and never a plan run; a plan waiting for consent offers
+//     Apply and Cancel; a change offers Got it alone.
+//   * the face of the card names things by their friendly NAME: the entity
+//     chip and the claim carry "Garage Freezer", and the id is a tooltip.
+//   * the evidence, the actions and the reasoning are behind one
+//     disclosure, closed by default, and it opens to show them.
+//   * every ending clears the touch floor at phone widths, the ⋯ opens, the
+//     foot line carries the Resident's three counts, nothing scrolls
+//     sideways, and every element id the tab's handlers bind to is there.
 //
 // It drives the panel's REAL `renderFindings`/`makeCase` behind a stubbed
 // fetch — measure-activity's rule, because a copy of the renderer in this
-// file would only ever agree with itself.
+// file would only ever agree with itself. The fixture carries the server's
+// own shape (`answers`, `more`, `names`, `finding_status`), so a field the
+// renderer stops reading fails here rather than on a phone.
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,19 +57,32 @@ const kase = (over) => ({
   stakes: 'medium', evidence: [], actions: [], status: 'open', source: '',
   source_title: '', ts: NOW, origin: { store: 'findings', key: NOW },
   memory_hint: '', investigation: null, ended: null, severity: 'warning',
-  entity_id: '', fix: '', fixable: false, snoozed_until: 0, overflow: [],
+  entity_id: '', entity_name: '', area: '', fix: '', fix_by: '',
+  fixable: false, finding_status: 'open', plan: {}, triage: {},
+  snoozed_until: 0, overflow: [], answers: [], more: [], situation: '',
   ...over,
+});
+// What `answers.py` hands a card: verb, label, route, and whether the press
+// opens the reason box. Spelled per case the way the server spells it, so
+// the renderer is driven with the real shape rather than a plausible one.
+const A = (verb, label, route, over = {}) => ({
+  verb, label, route, method: 'POST', request: null, primary: false,
+  note: false, prefill: '', done: label, hint: `${label} — hint`, ...over,
 });
 
 const FEED = [
   kase({
     id: 'f:1001', kind: 'problem', severity: 'serious', stakes: 'high',
-    confidence: 0.86,
-    claim: 'The garage freezer has been six degrees warmer for a week',
+    confidence: 0.86, situation: 'hands',
+    claim: 'sensor.garage_freezer has been six degrees warmer for a week',
     detail: 'Its own month of statistics drifts upward and no other freezer '
-      + 'in the house does.',
-    entity_id: 'sensor.garage_freezer',
-    fix: 'Check the door seal, then the compressor relay.',
+      + 'in the house does. The kitchen freezer, on the same circuit, has '
+      + 'held its temperature to within half a degree over the same month, '
+      + 'so this is not the supply and not the room: it is this one '
+      + 'appliance, and the drift began on the ninth.',
+    entity_id: 'sensor.garage_freezer', entity_name: 'Garage Freezer',
+    area: 'Garage',
+    fix: 'Check the door seal on sensor.garage_freezer, then the compressor relay.',
     fix_by: 'resident',
     source: 'resident', source_title: 'The Resident',
     origin: { store: 'findings', key: 1001 },
@@ -80,9 +95,13 @@ const FEED = [
       { label: 'Tell me when it passes -10', shape: 'notify', consent: false,
         detail: 'A push, once.' },
     ],
-    overflow: [
-      { verb: 'done', label: 'I had already done it',
-        route: '/api/finding/1001/done', method: 'POST' },
+    answers: [
+      A('todo', 'Add to to-do', '/api/case/f:1001/do', { primary: true, request: 'todo' }),
+      A('done', 'Already done', '/api/finding/1001/done', { request: 'fixed' }),
+      A('wrong', 'Not a problem', '/api/case/f:1001/wrong', { note: true, request: 'wrong' }),
+    ],
+    more: [
+      A('not_now', 'Later', '/api/case/f:1001/not_now'),
       { verb: 'discuss', label: 'Talk about it',
         route: '/api/finding/1001/discuss', method: 'POST' },
       { verb: 'mute', label: 'Stop raising these',
@@ -91,19 +110,21 @@ const FEED = [
   }),
   kase({
     id: 'f:1006', kind: 'problem', severity: 'warning', stakes: 'medium',
+    situation: 'automation',
     claim: 'The porch automation is switched off',
     detail: 'It has been off since 3 Sep and nothing has turned it on.',
-    entity_id: 'automation.porch_light',
+    entity_id: 'automation.porch_light', entity_name: 'Porch Light',
     fix: 'Turn it back on, or delete it if it is not coming back.',
     fixable: true,
-    source: 'check:auto.forgotten_off', source_title: 'Automation checks',
+    source: 'check:auto.forgotten_off', source_title: 'Automation check',
     origin: { store: 'findings', key: 1006 },
-    // What `cases.overflow` really puts on an open problem. Without it
-    // this card would claim brAIn would fix it and offer no route to
-    // asking it to — which is the fixture being wrong, not the card.
-    overflow: [
-      { verb: 'fix', label: 'Work out what to change',
-        route: '/api/finding/1006/fix', method: 'POST' },
+    answers: [
+      A('fix', 'Let brAIn fix it', '/api/finding/1006/fix', { primary: true }),
+      A('todo', 'Add to to-do', '/api/case/f:1006/do', { request: 'todo' }),
+      A('wrong', 'Not a problem', '/api/case/f:1006/wrong', { note: true, request: 'wrong' }),
+    ],
+    more: [
+      A('not_now', 'Later', '/api/case/f:1006/not_now'),
       { verb: 'discuss', label: 'Talk about it',
         route: '/api/finding/1006/discuss', method: 'POST' },
       { verb: 'recheck', label: 'Check again',
@@ -111,37 +132,101 @@ const FEED = [
     ],
   }),
   kase({
+    id: 'f:1007', kind: 'problem', severity: 'serious', stakes: 'high',
+    situation: 'battery',
+    claim: 'Mudroom battery is low',
+    detail: '0% as of 22 Sep in the Kitchen.',
+    entity_id: 'sensor.mudroom_battery', entity_name: 'Mudroom Battery',
+    area: 'Kitchen',
+    fix: 'Replace the battery.',
+    source: 'check:dev.battery_low', source_title: 'Device check',
+    origin: { store: 'findings', key: 1007 },
+    answers: [
+      A('todo', 'Add to to-do', '/api/case/f:1007/do', { primary: true, request: 'todo' }),
+      A('done', 'Replaced it', '/api/finding/1007/done', { request: 'fixed' }),
+      A('wrong', 'Not a problem', '/api/case/f:1007/wrong', { note: true, request: 'wrong' }),
+    ],
+    more: [A('not_now', 'Later', '/api/case/f:1007/not_now')],
+  }),
+  kase({
+    id: 'f:1008', kind: 'problem', severity: 'warning', stakes: 'medium',
+    situation: 'planned', finding_status: 'planned', fixable: true,
+    claim: 'The hall automation points at a sensor that no longer exists',
+    entity_id: 'automation.hall', entity_name: 'Hall',
+    fix: 'Point it at the new sensor.',
+    plan: { can_fix: true, needs_you: false, summary: 'Edit automations.yaml.',
+            steps: ['Replace binary_sensor.hall_old with binary_sensor.hall.'],
+            risk: 'None worth naming.' },
+    source: 'check:auto.dead_ref', source_title: 'Automation check',
+    origin: { store: 'findings', key: 1008 },
+    answers: [
+      A('apply', 'Apply', '/api/finding/1008/apply', { primary: true }),
+      A('cancel', "Don't change it", '/api/finding/1008/cancel'),
+      A('wrong', 'Not a problem', '/api/case/f:1008/wrong', { note: true }),
+    ],
+  }),
+  kase({
     id: 'p:1002', kind: 'opportunity', severity: 'info', stakes: 'low',
+    situation: 'opportunity',
     claim: 'Turn the porch light off at 23:10 on weekdays',
     detail: 'You have done it by hand on nine of the last twelve weekdays.',
     source: 'routines', source_title: 'routine',
     origin: { store: 'proposals', key: 1002 },
-    overflow: [{ verb: 'trial', label: 'Try it for a week',
-                 route: '/api/proposal/1002/trial', method: 'POST' }],
+    answers: [
+      A('accept', 'Make the change', '/api/case/p:1002/do', { primary: true }),
+      A('trial', 'Try it for a week', '/api/proposal/1002/trial'),
+      A('decline', 'No thanks', '/api/case/p:1002/wrong', { note: true }),
+    ],
+    more: [A('not_now', 'Later', '/api/case/p:1002/not_now')],
   }),
   kase({
     id: 'h:1003', kind: 'question', severity: 'info', stakes: 'low',
+    situation: 'question',
     claim: 'The garage fridge is meant to run 24/7',
     source: 'hypothesis', source_title: 'energy',
     origin: { store: 'hypotheses', key: 1003 },
+    answers: [
+      A('yes', 'Yes', '/api/case/h:1003/do', { primary: true }),
+      A('no', 'No', '/api/case/h:1003/wrong', { note: true }),
+    ],
+    more: [A('not_now', 'Later', '/api/case/h:1003/not_now')],
   }),
   kase({
     id: 't:1004', kind: 'chore', severity: 'warning', stakes: 'medium',
+    situation: 'chore',
     claim: 'Replace the hallway smoke alarm battery',
     fix: 'CR2032, behind the cover.',
     source: 'check:dev.battery', source_title: 'Battery forecast',
     origin: { store: 'todo', key: 1004 },
+    answers: [
+      A('complete', 'Done', '/api/case/t:1004/do', { primary: true }),
+      A('drop', 'Remove', '/api/case/t:1004/wrong'),
+    ],
+    more: [A('not_now', 'Later', '/api/case/t:1004/not_now')],
   }),
   kase({
     id: 'f:1005', kind: 'change', severity: 'warning', stakes: 'medium',
+    situation: 'change', finding_status: 'fixed',
     claim: 'brAIn pointed the hall automation at the new sensor',
     detail: 'binary_sensor.hall_old had been renamed.',
-    source: 'check:auto.dead_ref', source_title: 'Automation checks',
+    source: 'check:auto.dead_ref', source_title: 'Automation check',
     origin: { store: 'findings', key: 1005 },
-    overflow: [{ verb: 'unfix', label: 'Put it back',
-                 route: '/api/finding/1005/unfix', method: 'POST' }],
+    fix_started: NOW - 60, fix_ended: NOW - 30, fix_files: 1, fix_calls: 0,
+    answers: [
+      A('ack', 'Got it', '/api/case/f:1005/do', { primary: true, request: 'ack' }),
+      A('unfix', 'Undo the fix', '/api/finding/1005/unfix'),
+    ],
   }),
 ];
+
+// The name map the server sends beside the feed, off the last checks pass.
+const NAMES = {
+  'sensor.garage_freezer': { name: 'Garage Freezer', area: 'Garage' },
+  'sensor.kitchen_freezer': { name: 'Kitchen Freezer', area: 'Kitchen' },
+  'sensor.mudroom_battery': { name: 'Mudroom Battery', area: 'Kitchen' },
+  'automation.porch_light': { name: 'Porch Light', area: '' },
+  'automation.hall': { name: 'Hall', area: '' },
+};
 
 const LEDGER = { day: '2026-09-19', looked: 96, investigated: 3, acted: 0,
                  tokens: { haiku: 240000, sonnet: 61000 } };
@@ -149,6 +234,7 @@ const LEDGER = { day: '2026-09-19', looked: 96, investigated: 3, acted: 0,
 const STUB = `
 window.__cases = {
   cases: ${JSON.stringify(FEED)},
+  names: ${JSON.stringify(NAMES)},
   open: ${FEED.length},
   ledger: ${JSON.stringify(LEDGER)},
   resident: { running: false, queue_len: 4, waiting: 0, hot_pending: 0,
@@ -229,8 +315,21 @@ const read = (page) => page.evaluate((ids) => {
         })(),
         actionRows: [...c.querySelectorAll('.caseactlist li')].map((li) => li.textContent),
         words: c.textContent,
+        entityChip: c.querySelector('.findentity')?.textContent || '',
+        entityTip: c.querySelector('.findentity')?.title || '',
+        detail: c.querySelector('.finddetail')?.textContent || '',
+        hasMore: !!c.querySelector('.detailmore'),
+        details: (() => {
+          const d = c.querySelector('details.casemore');
+          if (!d) return null;
+          const r = d.querySelector('summary').getBoundingClientRect();
+          return { open: d.open, h: Math.round(r.height),
+                   summary: d.querySelector('summary').textContent.trim() };
+        })(),
+        planShown: !!c.querySelector('.findplan'),
         verbs: [...c.querySelectorAll('.findactions button')].map((b) => ({
           label: b.textContent.trim(),
+          verb: b.dataset.verb || '',
           h: Math.round(b.getBoundingClientRect().height),
           w: Math.round(b.getBoundingClientRect().width),
           icon: b.classList.contains('icon'),
@@ -260,6 +359,11 @@ for (const { width, touch } of CASES) {
   await page.waitForSelector('#findList .finding');
 
   const feed = await read(page);
+  // `SHOT_DIR=/some/dir` saves what was measured, for a person to look at.
+  if (process.env.SHOT_DIR) {
+    await page.screenshot({ path: path.join(process.env.SHOT_DIR, `home-${width}.png`),
+                            fullPage: true });
+  }
 
   if (feed.missing.length) {
     note(`${width}px`, `element id(s) gone: ${feed.missing.join(', ')}`);
@@ -271,6 +375,7 @@ for (const { width, touch } of CASES) {
     note(`${width}px`, `${feed.cards.length} cards for ${FEED.length} cases`);
   }
 
+  const NO = new Set(['wrong', 'no', 'decline', 'drop', 'cancel']);
   const kinds = new Set();
   for (const card of feed.cards) {
     kinds.add(card.kind);
@@ -280,29 +385,38 @@ for (const { width, touch } of CASES) {
     if (!card.pill.trim()) {
       note(`${width}px`, `${card.id} (${card.kind}) has no kind pill`);
     }
-    const labels = card.verbs.map((v) => v.label);
-    if (!card.verbs.length) {
+    const endings = card.verbs.filter((v) => !v.icon);
+    const labels = endings.map((v) => v.label);
+    if (!endings.length) {
       note(`${width}px`, `${card.id} offers no way to answer it`);
     }
+    // At most three. Four is the row that wrapped the dismiss out of sight.
+    if (endings.length > 3) {
+      note(`${width}px`, `${card.id} offers ${endings.length} buttons: ${labels.join(' | ')}`);
+    }
+    // ...and one of them is always a way to say no, except on a change
+    // (news to read) and a finished chore (already answered).
+    if (card.kind !== 'change' && !endings.some((v) => NO.has(v.verb))) {
+      note(`${width}px`, `${card.id} has no way to say no (${labels.join(' | ')})`);
+    }
+    // Never the old catch-all. "Do it" on a question, on a battery and on
+    // a plan meant three different things, and none of them was said.
+    if (labels.some((l) => /^✓?\s*Do it$/i.test(l))) {
+      note(`${width}px`, `${card.id} still offers "Do it"`);
+    }
     if (card.kind === 'change') {
-      // One ending. A change is news to read, and the only honest answer to
-      // news brAIn made itself is that you have read it.
-      const endings = card.verbs.filter((v) => !v.icon);
-      if (endings.length !== 1 || !/Got it/i.test(endings[0].label)) {
-        note(`${width}px`,
-             `a change offers ${endings.length} ending(s): ${labels.join(' | ')}`);
-      }
-    } else {
-      for (const want of [/Do it/i, /Not now/i, /Wrong/i]) {
-        if (!labels.some((l) => want.test(l))) {
-          note(`${width}px`,
-               `${card.id} is missing ${want} (${labels.join(' | ')})`);
-        }
+      // Got it leads. The undo is offered beside it, never a decision.
+      if (!/Got it/i.test(labels[0] || '')) {
+        note(`${width}px`, `a change leads with "${labels[0]}", not Got it`);
       }
     }
     // A number is a false precision on a card; the words are the claim.
     if (/\b0\.\d+\b/.test(card.cert)) {
       note(`${width}px`, `${card.id} renders a confidence as a number: "${card.cert}"`);
+    }
+    // No entity id on the face where the server knew a name for it.
+    if (/\b(sensor|automation|binary_sensor)\.[a-z_]+\b/.test(card.title)) {
+      note(`${width}px`, `${card.id} names an entity id in its title: "${card.title}"`);
     }
     if (touch) {
       for (const v of card.verbs) {
@@ -314,11 +428,71 @@ for (const { width, touch } of CASES) {
           note(`${width}px`, `the ⋯ on ${card.id} is ${v.w}px wide on touch`);
         }
       }
+      if (card.details && card.details.h < MIN_TARGET) {
+        note(`${width}px`, `the disclosure on ${card.id} is ${card.details.h}px tall on touch`);
+      }
     }
     if (card.right > feed.viewport + 1) {
       note(`${width}px`, `${card.id} hangs off the side`);
     }
   }
+
+  // The buttons that FIT. Each is the situation's own row, and the wrong
+  // one is the complaint this feed was rewritten against.
+  const expect = {
+    'h:1003': ['yes', 'no'],
+    'f:1007': ['todo', 'done', 'wrong'],
+    'f:1008': ['apply', 'cancel', 'wrong'],
+    'f:1006': ['fix', 'todo', 'wrong'],
+    't:1004': ['complete', 'drop'],
+  };
+  for (const [id, verbs] of Object.entries(expect)) {
+    const card = feed.cards.find((c) => c.id === id);
+    if (!card) continue;
+    const got = card.verbs.filter((v) => !v.icon).map((v) => v.verb);
+    if (got.join(',') !== verbs.join(',')) {
+      note(`${width}px`, `${id} offers ${got.join(',')}, wanted ${verbs.join(',')}`);
+    }
+  }
+  const battery = feed.cards.find((c) => c.id === 'f:1007');
+  if (battery && battery.verbs.some((v) => v.verb === 'fix')) {
+    note(`${width}px`, 'a battery offers a plan run');
+  }
+  const planned = feed.cards.find((c) => c.id === 'f:1008');
+  if (planned && !planned.planShown) {
+    note(`${width}px`, 'a plan waiting for consent is not shown on its card');
+  }
+
+  // Pretty names. The chip carries the name and the room; the id is the
+  // tooltip; the claim's id was replaced.
+  const freezer = feed.cards.find((c) => c.id === 'f:1001');
+  if (freezer) {
+    if (!/Garage Freezer/.test(freezer.entityChip) || !/Garage/.test(freezer.entityChip)) {
+      note(`${width}px`, `the entity chip reads "${freezer.entityChip}"`);
+    }
+    if (freezer.entityTip !== 'sensor.garage_freezer') {
+      note(`${width}px`, `the entity id is not in the chip's tooltip ("${freezer.entityTip}")`);
+    }
+    if (!/Garage Freezer has been six degrees/.test(freezer.title)) {
+      note(`${width}px`, `the claim still carries the id: "${freezer.title}"`);
+    }
+    if (!/Garage Freezer/.test(freezer.fixText)) {
+      note(`${width}px`, `the fix still carries the id: "${freezer.fixText}"`);
+    }
+    // A long detail is clamped with a More, never truncated silently and
+    // never shown whole on the face.
+    if (!freezer.hasMore) {
+      note(`${width}px`, 'a five-sentence detail is shown whole with no More');
+    }
+    if (!freezer.details) {
+      note(`${width}px`, 'the investigated case has no disclosure');
+    } else if (freezer.details.open) {
+      note(`${width}px`, 'the disclosure is open by default');
+    } else if (!freezer.evidence.length) {
+      note(`${width}px`, 'the disclosure holds no evidence rows');
+    }
+  }
+
   for (const want of ['problem', 'opportunity', 'question', 'chore', 'change']) {
     if (!kinds.has(want)) note(`${width}px`, `no ${want} case rendered`);
   }
@@ -330,6 +504,7 @@ for (const { width, touch } of CASES) {
   // one nobody sees is wrong.
   const heads = { 'f:1006': /how brain would fix it/i,
                   'f:1001': /how you'd fix it/i,
+                  'f:1007': /how you'd fix it/i,
                   't:1004': /how you'd fix it/i };
   for (const [id, want] of Object.entries(heads)) {
     const card = feed.cards.find((c) => c.id === id);
@@ -360,9 +535,32 @@ for (const { width, touch } of CASES) {
     }
     if (!investigated.actionRows.length) {
       note(`${width}px`, 'the investigated case does not say what could be done');
-    } else if (!/consent|asks you/i.test(investigated.actionRows.join(' '))) {
+    } else if (!/ask you|can do this/i.test(investigated.actionRows.join(' '))) {
       note(`${width}px`, 'an action row does not say what consent it needs');
     }
+  }
+
+  // The disclosure opens, and the More opens the rest of the detail.
+  try {
+    await page.click('#findList .finding[data-case-id="f:1001"] details.casemore summary');
+    await page.click('#findList .finding[data-case-id="f:1001"] .detailmore');
+    const opened = await page.evaluate(() => {
+      const c = document.querySelector('#findList .finding[data-case-id="f:1001"]');
+      return {
+        open: c.querySelector('details.casemore').open,
+        rows: c.querySelectorAll('.caseevlist li').length,
+        detail: c.querySelector('.finddetail').textContent,
+        more: !!c.querySelector('.detailmore'),
+      };
+    });
+    if (!opened.open || opened.rows !== 2) {
+      note(`${width}px`, `the disclosure did not open onto the evidence (${opened.rows} rows)`);
+    }
+    if (opened.more || !/began on the ninth/.test(opened.detail)) {
+      note(`${width}px`, 'More did not open the rest of the detail');
+    }
+  } catch (e) {
+    note(`${width}px`, `the disclosure could not be driven: ${e.message}`);
   }
 
   // The foot line. Three counts, because a quiet feed and a loop that has
@@ -401,6 +599,9 @@ for (const { width, touch } of CASES) {
   if (menu && menu.length < 3) {
     note(`${width}px`, `the ⋯ menu holds ${menu.length} row(s)`);
   }
+  if (menu && !menu.some((row) => /Later/i.test(row))) {
+    note(`${width}px`, 'Later is not behind the ⋯');
+  }
 
   console.log(`${String(width).padStart(5)}  ${feed.cards.length} cases  `
     + `kinds ${[...kinds].join('/')}  badge ${feed.badge}  `
@@ -415,5 +616,6 @@ if (failures.length) {
   failures.forEach((f) => console.error('  - ' + f));
   process.exit(1);
 }
-console.log('\nevery case can be answered from the card it is on, every kind '
-  + 'says what it is, and the Resident line says what it did today');
+console.log('\nevery case offers the presses that fit it and a way to say no, '
+  + 'names things by name, keeps its reasoning one press away, and the '
+  + 'Resident line says what it did today');

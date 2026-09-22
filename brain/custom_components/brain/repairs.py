@@ -33,11 +33,23 @@ from .requests import write_request
 
 _LOGGER = logging.getLogger(__name__)
 
-# The three endings a finding can be given from outside the panel, in the
-# order the menu offers them. They are `requests.ACTIONS` and nothing new:
-# anything that starts WORK — a fix run, a regeneration — belongs behind
-# the panel where the thing it starts can be watched.
-FLOW_ACTIONS = ("fixed", "wrong", "snooze")
+# Every ending a finding can be given from outside the panel, in the
+# order the menu offers them. They are `requests.ACTIONS` less Reply and
+# nothing new: anything that starts WORK — a fix run, a regeneration —
+# belongs behind the panel where the thing it starts can be watched.
+#
+# Which of them a given dialog SHOWS is the add-on's call, not this
+# file's: the mirror row carries the answers the panel's own card offers
+# (`answers`, decided once in the add-on's `answers.py`), the watcher
+# stamps them onto the issue, and the flow shows that subset in this
+# order. A battery therefore gets *Add it to my to-do list · I've fixed
+# it · Not a problem here · Remind me tomorrow*, and a change brAIn made
+# gets *Got it* — the same buttons as the panel, because a finding
+# asking two different questions on two surfaces is the confusion the
+# feed's redesign was written against. An issue raised by an older
+# add-on carries no list and gets `DEFAULT_ACTIONS`, the classic three.
+FLOW_ACTIONS = ("todo", "fixed", "wrong", "snooze", "ack")
+DEFAULT_ACTIONS = ("fixed", "wrong", "snooze")
 
 # "Remind me tomorrow", in hours. The same default the panel's own snooze
 # uses; a box asking for a number would be a form in front of the one
@@ -106,18 +118,41 @@ class FindingRepairFlow(RepairsFlow):
     reappear seconds after being closed.
     """
 
-    def __init__(self, ts: int, text: str = "") -> None:
+    def __init__(self, ts: int, text: str = "",
+                 answers=None) -> None:
         self._ts = int(ts)
         self._text = text
+        self._answers = tuple(str(a) for a in (answers or ()))
+
+    def menu(self) -> list[str]:
+        """The options this dialog shows, in `FLOW_ACTIONS` order: the
+        add-on's own answers for the row where it stamped any, and the
+        classic three otherwise. Never empty — a dialog with no way to
+        answer is a row nobody can clear."""
+        chosen = [a for a in FLOW_ACTIONS if a in self._answers]
+        return chosen or list(DEFAULT_ACTIONS)
 
     async def async_step_init(
         self, user_input: dict[str, str] | None = None
     ) -> data_entry_flow.FlowResult:
         return self.async_show_menu(
             step_id="init",
-            menu_options=list(FLOW_ACTIONS),
+            menu_options=self.menu(),
             description_placeholders={"text": self._text},
         )
+
+    async def async_step_todo(
+        self, user_input: dict[str, str] | None = None
+    ) -> data_entry_flow.FlowResult:
+        """"It's real and I'll get to it" — the feed's own *Add to
+        to-do*, applied by the add-on through the same door."""
+        return await self._answer("todo")
+
+    async def async_step_ack(
+        self, user_input: dict[str, str] | None = None
+    ) -> data_entry_flow.FlowResult:
+        """"Got it" on a change brAIn made."""
+        return await self._answer("ack")
 
     async def async_step_fixed(
         self, user_input: dict[str, str] | None = None
@@ -204,7 +239,8 @@ async def async_create_fix_flow(
             # dialog can name the finding without going back to the
             # mirror — and an issue raised by an older build that carries
             # none still ends the right row, because the ts is in the id.
-            return FindingRepairFlow(ts, str((data or {}).get("text") or ""))
+            return FindingRepairFlow(ts, str((data or {}).get("text") or ""),
+                                     (data or {}).get("answers") or ())
     if issue_id.startswith("user_"):
         # Issues created via brain.create_repair_issue: confirming
         # simply acknowledges and removes the issue.

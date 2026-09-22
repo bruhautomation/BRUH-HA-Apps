@@ -46,7 +46,10 @@ _LOGGER = logging.getLogger(__name__)
 
 # `reply` is the fourth and is not an ending: it is what was typed into
 # the notification's reply box, on its way to the case's conversation.
-ACTIONS = ("fixed", "wrong", "snooze", "reply")
+# `todo` (the feed's *Add to to-do*) and `ack` (*Got it* on a change
+# brAIn made) are the panel's own presses carried out here, so Repairs
+# and a notification offer what the card offers.
+ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack")
 
 # What can be asked of the to-do list from out here. They are the tab's
 # own presses and nothing new: tick one off, take it off the list, put a

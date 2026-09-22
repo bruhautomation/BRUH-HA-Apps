@@ -183,16 +183,46 @@ class TestTheThreeEndings(FlowCase):
     `requests.ACTIONS` is three words long and this menu is too.
     """
 
-    def test_the_menu_offers_exactly_the_three_a_request_can_carry(self):
+    def test_the_menu_offers_the_classic_three_when_the_row_says_nothing(self):
+        """An issue from an older add-on carries no answers; the dialog
+        still has to be answerable."""
         got = asyncio.run(self.flow().async_step_init())
         self.assertEqual(got["type"], "menu")
-        self.assertEqual(got["menu_options"], list(repairs.FLOW_ACTIONS))
+        self.assertEqual(got["menu_options"], list(repairs.DEFAULT_ACTIONS))
         # Every action a request can carry except Reply, which is a turn
         # in the conversation rather than an ending and needs a text box
         # a Repairs menu has no room for: a reply is a phone's button.
-        self.assertEqual(set(got["menu_options"]),
+        self.assertEqual(set(repairs.FLOW_ACTIONS),
                          set(finding_requests.ACTIONS) - {"reply"})
         self.assertNotIn("reply", repairs.FLOW_ACTIONS)
+
+    def test_the_menu_is_the_cards_own_row_when_the_row_says_which(self):
+        """The add-on decides the buttons once (`answers.py`); the dialog
+        shows that subset, in the flow's own order, and never a verb it
+        has no step for."""
+        flow = repairs.FindingRepairFlow(1720, "a", ("wrong", "todo", "bogus"))
+        flow.hass = self.hass
+        got = asyncio.run(flow.async_step_init())
+        self.assertEqual(got["menu_options"], ["todo", "wrong"])
+        for option in got["menu_options"]:
+            self.assertTrue(hasattr(flow, f"async_step_{option}"), option)
+        # The flow built by `async_create_fix_flow` carries what the
+        # watcher stamped on the issue.
+        built = asyncio.run(repairs.async_create_fix_flow(
+            self.hass, "finding_1720", {"ts": 1720, "text": "a",
+                                        "answers": ["ack"]}))
+        built.hass = self.hass
+        self.assertEqual(built.menu(), ["ack"])
+        # A change brAIn made is answered with Got it, and the request
+        # is the ack the panel's own button writes.
+        asyncio.run(built.async_step_ack())
+        self.assertEqual(self.written()[-1]["action"], "ack")
+
+    def test_add_to_my_to_do_list_is_the_feeds_own_press(self):
+        got = asyncio.run(self.flow(ts=1720).async_step_todo())
+        self.assertEqual(got["type"], "entry")
+        row = self.written()[-1]
+        self.assertEqual((row["ts"], row["action"]), (1720, "todo"))
 
     def test_ive_fixed_it_writes_the_tabs_own_ending(self):
         got = asyncio.run(self.flow(ts=1720).async_step_fixed())
