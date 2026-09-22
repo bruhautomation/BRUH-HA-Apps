@@ -170,28 +170,46 @@ what today cost:
 > Looked 96 times today, investigated 3, changed nothing. Watching 6.
 > Watching the house live.
 
-**Cases and the three endings.** brAIn used to keep four lists of "something is
-waiting on you" — findings, proposals, hypotheses and chores — each with its own
-tab, its own badge and its own vocabulary, thirteen verbs between them. They are
-one feed now, on the **Home** tab, and every card ends the same three ways:
+**Cases, and the buttons that fit them.** brAIn used to keep four lists of
+"something is waiting on you" — findings, proposals, hypotheses and chores — each
+with its own tab, its own badge and its own vocabulary, thirteen verbs between
+them. They are one feed now, on the **Home** tab, and every card offers **the two
+or three answers that fit it**, decided from what kind of thing it is:
 
-- **Do it** — yes. On a problem that puts it on your to-do list (and writes the
-  memory line when the chore is actually finished, not when you agree to it); on a
-  suggestion it writes the automation; on a guess it files the fact; on a chore it
-  ticks it off. On a **change** — something brAIn did that is news to read — the one
-  ending is **Got it**.
-- **Not now** — brAIn picks when it comes back and the card says when. It takes
-  nothing away and teaches nothing.
-- **Wrong, because…** — the correction path, unchanged. The reason goes into memory
-  and into what every future run knows about your house, and it is the half that
-  stops the next four reports like it.
+- A **flat battery** or anything else that needs your hands: **Add to to-do**
+  (it's real, you'll get to it — brAIn stops raising it while it waits there),
+  **Already done** / **Replaced it**, and **Not a problem**.
+- A **device that has gone quiet**: **Add to to-do**, **It's back** (brAIn checks
+  again, now), and **It's off on purpose** — which tells the check to stop
+  reporting that device.
+- A **sensor stuck on one reading**: **Add to to-do**, **Check again**, and
+  **It's normal here**.
+- Something **brAIn could change itself**: **Let brAIn fix it** (it works out the
+  exact steps and shows them first; nothing changes until you press **Apply**),
+  **Add to to-do**, **Not a problem**.
+- A **plan waiting for consent**: **Apply**, **Don't change it**, **Not a problem**.
+- A **guess** brAIn wants confirmed: **Yes** and **No**.
+- A **suggestion**: **Make the change**, **Try it for a week**, **No thanks**.
+- A **chore** on your list: **Done** and **Remove**.
+- A **change brAIn made**: **Got it**, and **Undo the fix** while it can be put back.
 
-Discuss, Check again, Bring it to the front, I had already done it, Say what to do,
-Stop raising these, Try it for a week and Put it back are all still there, behind
-the **⋯** on the card. They are real and they are rare, which is exactly what an
-overflow is for. Nothing was removed — the stores underneath are the same four
-stores, the settled ledger is the same ledger, and every key you have ever answered
-is still remembered.
+One of them is always a way to say no, and saying no opens a box for the reason —
+optional, but it is the half brAIn learns from: the reason goes into memory and
+into what every future run knows about your house, and on a check's row it tells
+that rule to stop making the same mistake about that entity. **Later** (brAIn
+picks when it comes back and the card says when), Talk about it, Check again, Bring
+it to the front, I had already done it, Say what to do, Stop raising these and Put
+it back sit behind the **⋯**. Nothing was removed — the stores underneath are the
+same four stores, the settled ledger is the same ledger, and every key you have
+ever answered is still remembered.
+
+**What is on the face of a card, and what is one press away.** The card shows what
+kind of thing it is, how bad, what it is called — by the name you know it by, with
+the room, and the entity id in a tooltip — a sentence or three of why, one line of
+what to do, and the buttons. A long explanation is cut at a sentence with **More**.
+What brAIn actually read (entity, reading, when), what could be done and what
+consent it would need, how sure it is and what looked at the finding before you
+did are all behind **Why brAIn thinks so**, closed until you open it.
 
 **When it is not working.** ⚙ → Diagnostics carries the loop: how many signals are
 waiting, how many did not fit the last batch, when it last looked, what the day has
@@ -208,9 +226,10 @@ automation whose trigger can never fire.
 brAIn files findings on its own, from scheduled analysis and from study sessions.
 Each one is judged by the Resident's first look before you see it, and reaches you
 as a **problem** case on the **Home** tab with a severity, a plain-English
-explanation and what to do about it. The three endings on the card are **Do it**,
-**Not now** and **Wrong, because…**; everything below is what sits behind the
-**⋯** beside them, and every one of them is still exactly the press it was.
+explanation and what to do about it. The buttons on the card are the ones that fit
+that finding (see *Cases, and the buttons that fit them* above); everything below
+is what sits behind the **⋯** beside them, and every one of them is still exactly
+the press it was.
 
 - **Fix it** — brAIn goes and looks, and tells you what it *would* change before it
   changes anything. That look is read-only by construction: it reads the entity, its
@@ -283,13 +302,13 @@ explanation and what to do about it. The three endings on the card are **Do it**
   ending that writes **no** memory line, because nothing is true yet — the battery
   is still flat. The line gets written when you tick the chore off.
 
-The endings — **Do it** (which is ＋ To-do on a problem), **Wrong**, **Got it**
-after an automated fix, and **I had already done it** — each do the same three
-things: a plain line into memory, a key in the settled ledger so it is never
-re-raised, and the row deleted. (Do it on a problem defers the first of those; see
-above.) The buttons on a **notification** are the same endings under their own
-wording (*I've fixed it*, *Not a problem*, *Later*), because that message is
-written for a lock screen rather than for a list.
+The endings — **Add to to-do**, **Not a problem**, **Got it** after an automated
+fix, and **Already done** — each do the same three things: a plain line into
+memory, a key in the settled ledger so it is never re-raised, and the row deleted.
+(Add to to-do defers the first of those; see above.) The buttons on a
+**notification** and the options in a **Repairs** entry are the same answers the
+card offers, under the same words, because a finding asking two different
+questions on two surfaces is a finding nobody can answer confidently on either.
 
 An **Answered** filter appears once the settled ledger holds something — capped,
 hidden until then, no badge, and one verb on each row: *Let brAIn raise it again*,
@@ -543,12 +562,13 @@ Set both to the same value (or leave both empty) to notify at any hour.
 Every finding that is a decision waiting on you also appears under
 **Settings → System → Repairs**, so you do not have to open the panel to
 answer one. The entry carries the finding's own text, what brAIn measured,
-what you'd need to do and which check or category raised it, and opening
-it offers the same three endings the Home feed does — *I've fixed it*,
-*Not a problem here* (with an optional reason, which brAIn records as a
-correction), and *Remind me tomorrow*. Answering here is answering on the
-tab: it is the same ending, written the same way, so brAIn learns the same
-thing either way.
+what to do and which check or category raised it, and opening it offers
+the same answers the Home feed's card does — *Add it to my to-do list*,
+*I've fixed it*, *Not a problem here* (with an optional reason, which brAIn
+records as a correction), *Remind me tomorrow*, and *Got it* on a change
+brAIn made — whichever of those fit that finding. Answering here is
+answering on the tab: it is the same ending, written the same way, so brAIn
+learns the same thing either way.
 
 What does **not** appear there: findings marked `info` (there is nothing to
 do about them), a finding brAIn is already running a fix for, and one it
@@ -2014,7 +2034,7 @@ strip under the bar, shown only where a tab holds more than one.
 
 | Tab | What's there |
 | --- | --- |
-| **Home** | What is waiting on you and what brAIn has made. **Home** is one feed of cases — problems, suggestions, guesses and the work you have accepted — with three endings on each card (**Do it**, **Not now**, **Wrong, because…**) and Fix it, Discuss, Check again, Elevate, Advice, Stop raising these and the rest behind the **⋯**; a count on the tab means something is waiting on you, and the line under the list says what the Resident did today. **Insights** is your cards and the ask bar that makes new ones (a question becomes a card; a line starting "learn about…" starts a study session; a rule in a sentence becomes a proposal), with a **Today** strip saying when the checks last ran, when the measurements were rebuilt, when memory was filed and how many problems have been written up since yesterday. **Ideas** is the cards brAIn thinks this house is missing — each one names what it found here that made it think so and the question the card would answer every run; take one and it becomes an ordinary card on Insights, say no and it is not suggested again. Nothing on that page is generating anything, which is why it is a separate page: an idea costs nothing until you take it. Press **Suggest ideas** for one now, or leave it — brAIn looks again once a week. **To-do** is the work you agreed to, and **Proposals** the changes brAIn would like to make — a habit worth automating, a condition an automation you keep undoing is missing, an emergency playbook, four scenes for a room, a rule you asked for in a sentence. |
+| **Home** | What is waiting on you and what brAIn has made. **Home** is one feed of cases — problems, suggestions, guesses and the work you have accepted — with the two or three answers that fit each card (a battery gets **Add to to-do · Replaced it · Not a problem**, a guess gets **Yes · No**, a plan gets **Apply · Don't change it**) and Later, Discuss, Check again, Elevate, Advice, Stop raising these and the rest behind the **⋯**; a count on the tab means something is waiting on you, and the line under the list says what the Resident did today. **Insights** is your cards and the ask bar that makes new ones (a question becomes a card; a line starting "learn about…" starts a study session; a rule in a sentence becomes a proposal), with a **Today** strip saying when the checks last ran, when the measurements were rebuilt, when memory was filed and how many problems have been written up since yesterday. **Ideas** is the cards brAIn thinks this house is missing — each one names what it found here that made it think so and the question the card would answer every run; take one and it becomes an ordinary card on Insights, say no and it is not suggested again. Nothing on that page is generating anything, which is why it is a separate page: an idea costs nothing until you take it. Press **Suggest ideas** for one now, or leave it — brAIn looks again once a week. **To-do** is the work you agreed to, and **Proposals** the changes brAIn would like to make — a habit worth automating, a condition an automation you keep undoing is missing, an emergency playbook, four scenes for a room, a rule you asked for in a sentence. |
 | **Ask** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with the button on the tab, or in ⚙ Settings. Press ⤢ to give either the whole screen. |
 | **House** | What brAIn knows and what happened. **Knowledge** is this morning's brief, the seven measurements and how far along each is, the facts with their provenance, the memory document and the queue waiting to be filed into it. **Activity** is what changed in your house and what caused it — a person, an automation, a script, voice, brAIn itself — plus the overrides that are evidence rather than history, fetched fresh every visit and never cached. |
 | **Help** | This guide, in the panel. ⚙ Settings stays in the bar. |
@@ -2677,18 +2697,20 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 > it in the add-on's own environment) raises or lowers that. An insight card
 > is handed the whole document instead, up to `memory_max_kb`.
 
-> **There are no turn-limit options any more.** `assist_max_turns`,
-> `automation_max_turns` and `study_max_turns` were retired in 1.48.0. A turn
-> cap is a runaway guard, not a budget, and it was the wrong thing to put in
-> front of somebody: set it low and a run stops mid-thought and produces
-> nothing parseable, having paid for every token it spent; set it high and it
-> never fires. The guards are still there — large, and invisible: 40 turns for
-> voice, 200 for an automation task, 40 for a card, 60 for a fix, 24 for the
-> brief, the weekly report and a one-off intent, and **none at all** for a
-> study session, `brain ask` or the chat. And a run that trips one is now
-> **landed** rather than truncated: it is resumed with two more turns and told
-> to finish with what it has, in the format the task asked for, so a partial
-> answer files instead of a thorough one that never did.
+> **There are no turn limits on anything the panel runs.** `assist_max_turns`,
+> `automation_max_turns` and `study_max_turns` were retired in 1.48.0, and 2.5.0
+> took the caps off every run the panel starts — a card, a fix, the Resident's
+> looks and investigations, triage, the brief, the weekly report — because one
+> of them was binding: a structured reply the CLI validates against a schema is
+> itself a turn, so the Resident's first look ran out of room, spent its tokens,
+> filed nothing and wrote a fault into the next report. What bounds a run is the
+> wall clock, which is the guard that actually answers "how much may this
+> cost". The voice and automation listeners keep a guard of their own (40 and
+> 200 turns) far past any real run, and a run that trips one is **landed**
+> rather than truncated: it is resumed with two more turns and told to finish
+> with what it has, in the format the task asked for, so a partial answer
+> files instead of a thorough one that never did. A run the API refuses with
+> *529 Overloaded* is tried once more after a pause, inside its own clock.
 >
 > What is left to reason about is the **wall clock**, which is the guard that
 > actually bounds what a run costs: `study_timeout_minutes` for a study

@@ -1265,11 +1265,13 @@
         "step": {
           "init": {
             "title": "brAIn found a problem",
-            "description": "**{text}**\n\n{detail}\n\n**What you'd need to do:** {fix}\n\nReported by {source_title}. Answering here is the same as answering on the brAIn panel's Findings tab — brAIn records what you say and stops raising it.",
+            "description": "**{text}**\n\n{detail}\n\n**What to do:** {fix}\n\nReported by {source_title}. These are the same answers the brAIn panel offers on its Home tab — brAIn records what you say and stops raising it.",
             "menu_options": {
+              "todo": "Add it to my to-do list",
               "fixed": "I've fixed it",
               "wrong": "Not a problem here",
-              "snooze": "Remind me tomorrow"
+              "snooze": "Remind me tomorrow",
+              "ack": "Got it"
             }
           },
           "wrong": {

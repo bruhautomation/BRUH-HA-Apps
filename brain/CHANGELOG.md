@@ -2,6 +2,58 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.5.0
+
+**Cards you can answer at a glance — and the buttons that fit them, on every surface.**
+
+### The Home feed
+
+Every card offered the same three buttons — *Do it*, *Not now*, *Wrong,
+because…* — and they were the wrong three: a yes/no question wore a button
+called *Do it*, a flat battery led with a press that promised brAIn would do
+something, the dismiss was sometimes the one control that had wrapped out of
+sight, and the plan a fix run had written was not on the card at all. The
+buttons are decided from the case now, once, and rendered wherever the case
+appears:
+
+- **A battery** or anything else that needs your hands: *Add to to-do ·
+  Replaced it · Not a problem*. **A device that has gone quiet**: *Add to
+  to-do · It's back · It's off on purpose* (which tells that check to stop
+  reporting the device). **A stuck sensor**: *… · Check again · It's normal
+  here*. **Something brAIn could change**: *Let brAIn fix it* leads, and its
+  first step is still a plan you consent to. **A plan waiting**: *Apply ·
+  Don't change it*. **A guess**: *Yes · No*. **A suggestion**: *Make the
+  change · Try it for a week · No thanks*. **A chore**: *Done · Remove*.
+  **A change brAIn made**: *Got it*, and *Undo the fix* while it can be.
+- **At most three buttons, and one of them is always a way to say no.** Later
+  and the rare verbs sit behind the ⋯.
+- **Things are called by their names.** "Laundry Room Countertop · Laundry
+  Room", not `light.laundry_room_countertop`; the id is in the tooltip, and
+  every id a Resident claim, a fix or an evidence row mentions is rendered as
+  the name the last checks pass saw for it.
+- **The face of the card is what you need to answer it.** A long explanation
+  is cut at a sentence with *More*; what brAIn read, what could be done, how
+  sure it is and what looked at the finding first are behind *Why brAIn
+  thinks so*, closed until you open it. The Resident is asked for a claim
+  under twenty words, three sentences of detail, friendly names and no
+  millisecond timestamps.
+
+### The same answers in Home Assistant
+
+The Repairs entry for a finding shows the card's own buttons — *Add it to my
+to-do list* and *Got it* joined *I've fixed it*, *Not a problem here* and
+*Remind me tomorrow*, whichever fit that finding — and a notification's
+buttons are the same list. One press, one meaning, on every surface.
+
+### No more "ran out of room"
+
+The panel sends no turn cap on any run it starts. The Resident's first look
+ran under a cap of four, a structured reply is itself a turn, and a look that
+needed one more try ended `max_turns` — spent, unfiled, and a fault in the
+next report. The wall clock bounds a run now. And a run the API refuses with
+*529 Overloaded* is tried once more after a pause, inside its own clock,
+rather than ending as an error with fifteen minutes of budget unspent.
+
 ## 2.4.0
 
 **Ideas, on a page of their own — and cards that say whose fix it is.**

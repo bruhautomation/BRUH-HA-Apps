@@ -474,17 +474,19 @@ class TestButtonsOnTheMessage(NotifyCase):
         super().setUp()
         os.environ["BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY"] = "info"
 
-    def test_one_finding_to_a_phone_arrives_with_the_three_endings_and_reply(self):
-        # Three endings and one turn: Reply is the fourth button and the
-        # one that settles nothing (`test_finding_requests` drives the
-        # drain it lands in). The order is the strip's own.
+    def test_one_finding_to_a_phone_arrives_with_the_cards_own_answers_and_reply(self):
+        # The card's own answers and one turn: Reply is the last button and
+        # the one that settles nothing (`test_finding_requests` drives the
+        # drain it lands in). A bare row reads as fixable, so a phone gets
+        # the to-do, the dismiss and Later — the plan run it cannot start
+        # is the panel's alone. The order is the card's own.
         os.environ["BRAIN_FINDINGS_NOTIFY"] = "notify.mobile_app_pixel"
         row, _ = findings_store.add("The hall sensor has stopped")
         self._announce([row])
         self.assertEqual(len(self.payloads), 1)
         actions = self.payloads[0]["actions"]
         self.assertEqual([a["action"] for a in actions],
-                         [f"brain.fixed.{row['ts']}",
+                         [f"brain.todo.{row['ts']}",
                           f"brain.wrong.{row['ts']}",
                           f"brain.snooze.{row['ts']}",
                           f"brain.reply.{row['ts']}"])
@@ -2516,9 +2518,17 @@ class TestTheThreeTiersInThePanel(NotifyCase):
         self.clock(self.at(self.rung(0)))
         self.tick()
         data = self.payloads[-1]
+        # The buttons are the card's own answers for the LIVE row — what
+        # the feed offers, not a fixed list and not the ledger's slim copy
+        # — with Reply last.
+        import answers  # noqa: PLC0415
+        import notify_router  # noqa: PLC0415
+        live = findings_store.get(ts)
+        wanted = [f"brain.{a['action']}.{ts}"
+                  for a in answers.request_answers(live)][:notify_router.MAX_ANSWER_BUTTONS]
         self.assertEqual([a["action"] for a in data["actions"]],
-                         [f"brain.fixed.{ts}", f"brain.wrong.{ts}",
-                          f"brain.snooze.{ts}", f"brain.reply.{ts}"])
+                         wanted + [f"brain.reply.{ts}"])
+        self.assertIn(f"brain.wrong.{ts}", wanted)
         self.assertEqual(data["url"], "/hassio/ingress/local_brain")
 
     # -- and it stops the moment somebody answers --------------------------

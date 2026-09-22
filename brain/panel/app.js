@@ -3935,6 +3935,10 @@ function openNoteForm(card, actions, onSend, opts) {
   ta.rows = 2;
   ta.maxLength = 400;
   ta.placeholder = opts.placeholder;
+  // A situation's own commonest reason, offered as text rather than as a
+  // hint: it is one tap to send and still edits, where a placeholder is
+  // the thing somebody has to retype.
+  if (opts.prefill) ta.value = opts.prefill;
   form.appendChild(ta);
   // An optional box beside the note, for the one ending that has a second
   // thing to say: "Wrong — and stop raising these". `opts.check` is its
@@ -4643,52 +4647,13 @@ function caseConfidence(value) {
 const CASE_STAKES = {
   high: "matters a lot", medium: "worth knowing", low: "minor" };
 
-// The three endings, per kind. The words are the same three everywhere the
-// design page names them, because thirteen verbs on a row is the card
-// nobody could hold in their head — what changes per kind is the TIP, which
-// says what this press does to this thing.
-const CASE_ENDINGS = {
-  problem: {
-    do: ["✓  Do it", "It's real and you'll do it. Off this list and onto "
-         + "your to-do list — brAIn won't raise it again while it's there.",
-         "On your to-do list"],
-    not_now: ["⏰  Not now", "Take it off the list for a while. brAIn picks "
-              + "when it comes back and the card says when.", "Back later"],
-    wrong: ["✕  Wrong, because…", "brAIn has this wrong, or it's normal "
-            + "here — say why, and it learns from that rather than just "
-            + "dropping the card.", "Noted"],
-  },
-  opportunity: {
-    do: ["✓  Do it", "Write the change into Home Assistant and reload. "
-         + "Undo takes it straight back out.", "Done — Undo puts it back"],
-    not_now: ["⏰  Not now", "Not this week. It comes back on its own.",
-              "Back later"],
-    wrong: ["✕  Wrong, because…", "Not for this house — say why, and the "
-            + "reason reaches every future suggestion.", "Noted"],
-  },
-  question: {
-    do: ["✓  Do it", "Yes, that's right. It becomes a plain fact in memory.",
-         "Filed into memory"],
-    not_now: ["⏰  Not now", "Leave it open. brAIn stops asking until it has "
-              + "something new.", "Back later"],
-    wrong: ["✕  Wrong, because…", "No — and the reason retires every guess "
-            + "built on the same misreading.", "Noted"],
-  },
-  chore: {
-    do: ["✓  Do it", "Tick it off. This is the moment the fact goes into "
-         + "memory.", "Done — written into memory"],
-    not_now: ["⏰  Not now", "Not this week.", "Back later"],
-    wrong: ["✕  Wrong, because…", "Take it off the list undone. brAIn is "
-            + "free to find it again.", "Off the list"],
-  },
-  change: {
-    // One ending, because offering a decision about something already done
-    // is a decision about nothing. brAIn wrote what it changed into memory
-    // when it made the change; this press is only "I have read it".
-    do: ["✓  Got it", "Clear it off the list — what brAIn changed is "
-         + "already in memory.", "Cleared"],
-  },
-};
+// There is deliberately NO table of endings here. What a card offers is
+// decided once, server-side (`answers.py`), from the case's situation —
+// a flat battery leads with the to-do list, a question with Yes/No, a
+// plan with Apply — and the card renders what it is handed. A second
+// table in this file would be a second answer to "what does this press
+// do", and the Repairs dialog and the notification buttons read the same
+// list, so the three surfaces cannot disagree.
 
 // Which rare verbs open the reason box rather than posting straight away,
 // and which need a field of their own. Everything absent from here is a
@@ -4697,6 +4662,7 @@ const CASE_ENDINGS = {
 const CASE_OVERFLOW_ICONS = {
   discuss: "💬", recheck: "↻", elevate: "↑", done: "✓", fix: "✦",
   unfix: "↩", advice: "✎", mute: "⌫", trial: "◷", reopen: "↺",
+  not_now: "⏰",
 };
 
 // Every press that ends something on one of the four stores moves the
@@ -4722,6 +4688,9 @@ async function refreshCases() {
 function takeCases(data) {
   if (!data) return;
   state.cases = data.cases || [];
+  // What every entity id the feed mentions is CALLED, off the last checks
+  // pass. The card renders names; the id stays in a tooltip.
+  state.names = data.names || {};
   state.caseMeta = {
     ledger: data.ledger || {}, resident: data.resident || {},
     eventbus: data.eventbus || {}, watching: data.watching || 0,
@@ -4729,37 +4698,77 @@ function takeCases(data) {
   updateFindBadge(data.open);
 }
 
-// Every press on a case goes through here: one route, one payload, and the
-// undo token rides on the endings that took something away.
-async function caseAction(row, verb, btns, note) {
+// A press's answer is either the feed's payload or the findings tab's,
+// depending on which route it went to. Both are absorbed and the tab is
+// repainted from whichever is freshest.
+function absorbAnswer(data) {
+  if (!data) return;
+  if (Array.isArray(data.cases)) takeCases(data);
+  if (Array.isArray(data.findings)) takeFindings(data);
+  if (data.todo) updateTodoBadge(data.todo.open);
+}
+
+// Every press on a case goes through here. An answer is what the server
+// handed the card (`answers.py`: verb, label, route, whether it opens the
+// reason box) — so this file holds no table of what a verb does, and a
+// battery, a quiet device and a plan waiting for consent each get the
+// three presses that fit them without the panel knowing why.
+async function runAnswer(row, answer, btns, note) {
+  const finding = caseAsFinding(row);
+  // Two presses are the Findings tab's own controls rather than a plain
+  // POST: Check again reports three different answers and only one of
+  // them takes a card away, so it keeps its own runner.
+  if (answer.verb === "recheck" && finding) {
+    return recheckFinding(finding, btns, btns.find((b) => b.dataset.verb === "recheck"));
+  }
   btns.forEach((b) => { b.disabled = true; });
-  const words = (CASE_ENDINGS[row.kind] || {})[verb] || [];
   try {
-    const data = await api(`api/case/${encodeURIComponent(row.id)}/${verb}`, {
-      method: "POST",
+    const data = await api(answer.route.replace(/^\//, ""), {
+      method: answer.method || "POST",
       ...(note ? { body: JSON.stringify({ note }) } : {}),
     });
-    takeCases(data);
-    // A case's ending changes a findings row, a proposal, a guess or a
-    // chore, so every list that renders one has to be told. They are
-    // separate fetches because they are separate stores; the feed is what
-    // the person is looking at, so it is the one that is awaited.
+    absorbAnswer(data);
+    // A press changes a findings row, a proposal, a guess or a chore, so
+    // every list that renders one has to be told. They are separate
+    // fetches because they are separate stores; the feed is what the
+    // person is looking at, so it is the one repainted first.
+    await refreshCases();
     renderFindings();
     refreshFindings().then(() => renderFindings());
     refreshTodo().then(renderTodo);
     refreshProposals();
-    toast(words[2] || "Done", data.undo);
+    toast(answer.done || answer.label, data && data.undo);
   } catch (e) {
     toast(e.message || "that didn't work");
     btns.forEach((b) => { b.disabled = false; });
   }
 }
 
+// An answer that wants a reason opens the box in place of the buttons.
+// `prefill` is the situation's own commonest reason ("It's unplugged on
+// purpose"), offered so the press that fits is one tap and still edits.
+function askThenRun(row, answer, btns) {
+  openNoteForm(btns.card, btns.actions,
+    (text, formBtns) => runAnswer(row, answer, btns.concat(formBtns), text), {
+      hint: answer.verb === "no"
+        ? "Say why if you can — the reason retires every guess built on "
+          + "the same misreading. Optional."
+        : "Optional. Say why, and brAIn learns from the reason rather than "
+          + "just dropping the card.",
+      placeholder: answer.prefill || "That sensor always reads on — it's not stuck.",
+      send: answer.label,
+      prefill: answer.prefill || "",
+    });
+}
+
 // The rare verbs. Each row's route is the server's — `cases.overflow` hands
 // back the route the tab already used, so a hypothesis being a different
 // store from a finding is not something this file has to know.
 function caseOverflow(row, btns) {
-  const rows = (row.overflow || []).map((item) => [
+  // `more` is the overflow minus whatever is already a visible button —
+  // the server's own split — with `overflow` as the floor for a payload
+  // served before the split existed.
+  const rows = (row.more || row.overflow || []).map((item) => [
     CASE_OVERFLOW_ICONS[item.verb] || "•", item.label, caseOverflowHint(item),
     () => runCaseOverflow(row, item, btns),
   ]);
@@ -4767,6 +4776,7 @@ function caseOverflow(row, btns) {
 }
 
 function caseOverflowHint(item) {
+  if (item.hint) return item.hint;
   if (item.verb === "mute") return "Stop this rule raising anything at all";
   if (item.verb === "discuss") return "Talk about it in the chat, changing nothing";
   if (item.verb === "recheck") return "Run the check that found this, now";
@@ -4804,10 +4814,10 @@ async function postCaseOverflow(row, item, btns, body) {
       method: item.method || "POST",
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
-    takeFindings(data);
+    absorbAnswer(data);
     await refreshCases();
     renderFindings();
-    toast(`${item.label} — done`, data.undo);
+    toast(item.done || `${item.label} — done`, data.undo);
   } catch (e) {
     toast(e.message || "that didn't work");
     btns.forEach((b) => { b.disabled = false; });
@@ -4828,61 +4838,98 @@ function caseAsFinding(row) {
   };
 }
 
+// Every entity id in a sentence, as the name a person knows it by. Ids
+// the last checks pass never saw stay ids, which is honest; the map is
+// the server's (`names` on the feed payload), never a guess made here.
+function prettyText(text) {
+  const names = state.names || {};
+  return String(text || "").replace(/\b[a-z_]+\.[a-z0-9_]+\b/g, (id) =>
+    (names[id] && names[id].name) ? names[id].name : id);
+}
+
+// How much of the detail shows before "More". Two short sentences read
+// on a phone; a Resident's paragraph does not, and the whole point of
+// the card is to be answerable at a glance.
+const DETAIL_GLANCE = 220;
+
+// The detail, clamped at a sentence boundary with a press that opens the
+// rest. Never truncated silently: a card whose sentence ends mid-word is
+// a card that reads as broken.
+function detailNode(text) {
+  const full = prettyText(text);
+  const p = el("p", "finddetail");
+  if (full.length <= DETAIL_GLANCE) { p.textContent = full; return p; }
+  let cut = full.lastIndexOf(". ", DETAIL_GLANCE);
+  if (cut < DETAIL_GLANCE / 2) cut = full.lastIndexOf(" ", DETAIL_GLANCE);
+  if (cut < 0) cut = DETAIL_GLANCE;
+  const short = full.slice(0, cut + 1).trim();
+  const body = el("span", null, short + " ");
+  const more = el("button", "btn tiny ghost detailmore", "More");
+  p.appendChild(body);
+  p.appendChild(more);
+  more.addEventListener("click", () => {
+    body.textContent = full;
+    more.remove();
+  });
+  return p;
+}
+
+// The line under the actions while a run is in flight. There is nothing
+// to press, and a card with no buttons and no sentence reads as dead.
+function phaseLine(text) {
+  const busy = el("div", "phase");
+  busy.appendChild(el("span", "orbit"));
+  busy.appendChild(el("span", null, text));
+  return busy;
+}
+
 function makeCase(row) {
   const kind = CASE_KINDS[row.kind] || CASE_KINDS.problem;
   const card = el("article", `finding case k-${row.kind} sev-${row.severity}`);
   card.dataset.caseId = row.id;
+  card.dataset.situation = row.situation || "";
 
+  // The face of the card is what you need to answer it and nothing else:
+  // what kind of thing this is, how bad, what it is called, one sentence
+  // of what to do, and the buttons. Everything that makes the claim
+  // checkable — what was read, what could be done, what looked at it —
+  // is one disclosure down, because it is read once and the card is read
+  // every visit.
   const line = el("div", "findmeta");
-  // The pill says what KIND of thing this is, in a word, because the five
-  // stores under the feed are five different things to do something about
-  // and the left-edge colour is severity rather than kind.
   const pill = el("span", `casekind ck-${row.kind}`, kind.label);
   tip(pill, kind.hint);
   line.appendChild(pill);
-  line.appendChild(el("span", "findsev", FIND_SEVERITY[row.severity] || "Degraded"));
+  if (row.kind === "problem" || row.kind === "chore") {
+    line.appendChild(el("span", "findsev", FIND_SEVERITY[row.severity] || "Degraded"));
+  }
   if (row.source_title) line.appendChild(el("span", "findsrc", row.source_title));
-  // How sure, and how much it matters — in words, never as a number: 0.62
-  // and 0.68 are the same claim and a decimal on a card invites somebody to
-  // read a difference that is not there.
-  const sure = caseConfidence(row.confidence);
-  const says = [sure, CASE_STAKES[row.stakes] || ""].filter(Boolean).join(" · ");
-  if (says) line.appendChild(el("span", "casecert", says));
   if (row.ended && row.ended.when) {
     line.appendChild(el("span", "findchecked", "done "
       + timeAgo(new Date(row.ended.when * 1000).toISOString())));
-  } else if (row.confirmed_at || row.checked_at) {
+  } else if (row.checked_at) {
     line.appendChild(el("span", "findchecked", "confirmed "
-      + timeAgo(new Date((row.confirmed_at || row.checked_at) * 1000).toISOString())));
+      + timeAgo(new Date(row.checked_at * 1000).toISOString())));
   }
   card.appendChild(line);
 
-  card.appendChild(el("h3", "findtitle", row.claim || ""));
-  if (row.detail) card.appendChild(el("p", "finddetail", row.detail));
-  if (row.entity_id) card.appendChild(el("code", "findentity", row.entity_id));
+  card.appendChild(el("h3", "findtitle", prettyText(row.claim || "")));
+  if (row.detail) card.appendChild(detailNode(row.detail));
 
-  // What was actually READ. It is the half that makes a claim checkable, so
-  // it is rendered as rows rather than folded into the paragraph — an
-  // entity, what it said, and when.
-  if ((row.evidence || []).length) {
-    const box = el("div", "caseev");
-    box.appendChild(el("span", "findfixlabel", "What it read"));
-    const list = el("ul", "caseevlist");
-    row.evidence.slice(0, 6).forEach((ev) => {
-      const li = el("li", null);
-      li.appendChild(el("code", "caseevent", ev.entity || ""));
-      li.appendChild(el("span", "caseevval", ev.value || ""));
-      if (ev.when) li.appendChild(el("span", "caseevwhen", ev.when));
-      list.appendChild(li);
-    });
-    box.appendChild(list);
-    card.appendChild(box);
+  // The entity, by the name a person knows it by, with the room. The id
+  // is in the tooltip: it is what you type into a template, not what you
+  // read on a card.
+  if (row.entity_id) {
+    const where = [row.entity_name || row.entity_id, row.area]
+      .filter(Boolean).join(" · ");
+    const chip = el("span", "findentity", where);
+    if (row.entity_name) chip.title = row.entity_id;
+    card.appendChild(chip);
   }
 
   if (row.fix) {
     const box = el("div", "findfix");
     box.appendChild(el("span", "findfixlabel", fixHeading(row.fixable)));
-    const text = el("span", null, row.fix);
+    const text = el("span", null, prettyText(row.fix));
     if (row.fix_by === "triage" || row.fix_by === "resident") {
       text.appendChild(el("span", "findfixby", " — written after looking"));
     } else if (row.fix_by === "chat") {
@@ -4892,60 +4939,47 @@ function makeCase(row) {
     card.appendChild(box);
   }
 
-  // What could be done, and what consent each one needs. Rendered as a
-  // list and never as buttons: a second control beside *Do it* would be
-  // two ways to say yes.
-  //
-  // The heading is "What could be done" and not "What Do it would do",
-  // which is what it said and which was only true on some cards: *Do it*
-  // means a different thing per kind — it writes the change on an
-  // `opportunity`, and on a `problem` it moves the row onto your to-do
-  // list and performs nothing. A heading that named the button therefore
-  // promised, on the commonest kind of card there is, that pressing it
-  // would carry out the list underneath it.
-  if ((row.actions || []).length) {
-    const box = el("div", "caseacts");
-    box.appendChild(el("span", "findfixlabel", "What could be done"));
-    const list = el("ul", "caseactlist");
-    row.actions.slice(0, 6).forEach((act) => {
-      const li = el("li", null);
-      li.appendChild(el("span", "caseactlabel", act.label || ""));
-      li.appendChild(el("span", "caseactconsent",
-        act.consent ? "asks you first" : "no consent needed"));
-      if (act.detail) li.appendChild(el("span", "caseactdetail", act.detail));
-      list.appendChild(li);
-    });
-    box.appendChild(list);
-    card.appendChild(box);
+  // The plan a read-only run wrote, above the Apply that would let it —
+  // the one block on the card somebody is about to consent to, so it is
+  // never folded away.
+  if (row.finding_status === "planned" || row.finding_status === "planning") {
+    const planned = planBlock(row);
+    if (planned) card.appendChild(planned);
+  }
+  if (row.finding_status === "fixed") {
+    card.appendChild(el("p", "findfixfoot", fixFootLine(row)));
   }
 
-  const seen = triageLine(caseTriageRow(row));
-  if (seen) card.appendChild(seen);
+  const more = caseDetailsNode(row);
+  if (more) card.appendChild(more);
 
   const actions = el("div", "findactions");
   const btns = [];
   btns.card = card;
   btns.actions = actions;
   const add = (node) => { btns.push(node); actions.appendChild(node); return node; };
-  const endings = CASE_ENDINGS[row.kind] || CASE_ENDINGS.problem;
 
-  Object.keys(endings).forEach((verb) => {
-    const [label, hint] = endings[verb];
-    const primary = verb === "do" ? " primary" : (verb === "wrong" ? " ghost" : "");
-    const btn = add(el("button", `btn small${primary}`, label));
-    tip(btn, hint);
-    if (verb === "wrong") {
-      btn.addEventListener("click", () => openNoteForm(card, actions,
-        (note, formBtns) => caseAction(row, "wrong", btns.concat(formBtns), note),
-        {
-          hint: "What's brAIn got wrong? Optional — it goes into memory and "
-            + "into what the next analysis knows about your house.",
-          placeholder: "That sensor always reads on — it's not stuck.",
-          send: "Send",
-        }));
-    } else {
-      btn.addEventListener("click", () => caseAction(row, verb, btns));
+  const answers = row.answers || [];
+  if (!answers.length) {
+    // A run in flight. Say what it is doing, because a row with no
+    // buttons and no sentence reads as a card that has stopped working.
+    if (row.finding_status === "planning") {
+      actions.appendChild(phaseLine(
+        "Working out what it would change — nothing is being changed yet"));
+    } else if (row.finding_status === "fixing") {
+      actions.appendChild(phaseLine("Fixing it now — this can take a few minutes"));
     }
+  }
+  answers.forEach((answer) => {
+    const cls = answer.primary ? " primary"
+      : (answer.verb === "wrong" || answer.verb === "no" || answer.verb === "decline"
+         || answer.verb === "drop" || answer.verb === "cancel") ? " ghost" : "";
+    const btn = add(el("button", `btn small${cls}`, answer.label));
+    btn.dataset.verb = answer.verb;
+    if (answer.hint) tip(btn, answer.hint);
+    btn.addEventListener("click", () => answer.note
+      ? askThenRun(row, answer, btns)
+      : runAnswer(row, answer, btns));
   });
 
   const menu = caseOverflow(row, btns);
@@ -4960,12 +4994,72 @@ function makeCase(row) {
   return card;
 }
 
+// Everything that makes the claim checkable, behind one disclosure: what
+// was READ (entity, value, when), what could be done and the consent each
+// needs, how sure and how much it matters, and what looked at it before
+// you did. It is a `<details>` rather than a second card because a person
+// answers a card first and argues with it rarely — and a card that showed
+// all of it every time was the wall of text this replaced.
+function caseDetailsNode(row) {
+  const box = el("details", "casemore");
+  const summary = el("summary", null, "Why brAIn thinks so");
+  box.appendChild(summary);
+  let anything = false;
+
+  // How sure, and how much it matters, in words. It rides along but is
+  // never the reason to render the disclosure: "minor" alone is not
+  // reasoning, and a summary that opens onto one word teaches people not
+  // to open it.
+  const sure = caseConfidence(row.confidence);
+  const says = [sure, CASE_STAKES[row.stakes] || ""].filter(Boolean).join(" · ");
+  if (says) box.appendChild(el("p", "casecert", says));
+  if ((row.evidence || []).length) {
+    const ev = el("div", "caseev");
+    ev.appendChild(el("span", "findfixlabel", "What it read"));
+    const list = el("ul", "caseevlist");
+    row.evidence.slice(0, 6).forEach((item) => {
+      const li = el("li", null);
+      const name = el("span", "caseevent", prettyText(item.entity || ""));
+      if (item.entity) name.title = item.entity;
+      li.appendChild(name);
+      li.appendChild(el("span", "caseevval", prettyText(item.value || "")));
+      if (item.when) li.appendChild(el("span", "caseevwhen", item.when));
+      list.appendChild(li);
+    });
+    ev.appendChild(list);
+    box.appendChild(ev);
+    anything = true;
+  }
+  // What could be done — a list and never buttons: a second control
+  // beside the answers would be two ways to say yes. The consent word is
+  // the whole difference between the rows, so it is said in words.
+  if ((row.actions || []).length) {
+    const acts = el("div", "caseacts");
+    acts.appendChild(el("span", "findfixlabel", "What could be done"));
+    const list = el("ul", "caseactlist");
+    row.actions.slice(0, 6).forEach((act) => {
+      const li = el("li", null);
+      li.appendChild(el("span", "caseactlabel", prettyText(act.label || "")));
+      li.appendChild(el("span", "caseactconsent",
+        act.consent ? "would ask you first" : "brAIn can do this"));
+      if (act.detail) li.appendChild(el("span", "caseactdetail", prettyText(act.detail)));
+      list.appendChild(li);
+    });
+    acts.appendChild(list);
+    box.appendChild(acts);
+    anything = true;
+  }
+  const seen = triageLine(caseTriageRow(row));
+  if (seen) { box.appendChild(seen); anything = true; }
+  return anything ? box : null;
+}
+
 // A case in the shape `triageLine` reads. The feed shows what looked at a
 // row for the same reason the Findings tab does — "brAIn checked" is
 // evidence the card is real and "nothing checked this one" must never be
 // silent — and it is one renderer rather than two.
 function caseTriageRow(row) {
-  const look = row.triage || (row.investigation
+  const look = (row.triage && row.triage.verdict) ? row.triage : (row.investigation
     ? { verdict: "elevated", reason: "", run_id: row.investigation.run_id }
     : null);
   return look ? { triage: look, text: row.claim } : { triage: {} };

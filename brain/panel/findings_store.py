@@ -73,6 +73,7 @@ import time
 import unicodedata
 from pathlib import Path
 
+import answers
 import atomic_write
 import triage
 
@@ -315,6 +316,13 @@ def _publish_state(items: list[dict]) -> None:
                                       "entity_id", "fixable", "source_title")},
                  "detail": s["detail"][:STATE_MAX_PROSE],
                  "fix": s["fix"][:STATE_MAX_PROSE],
+                 # The presses this row can be given from outside the
+                 # panel, `[{action, label}]`, decided by the same table
+                 # the feed renders from. Repairs shows this subset and
+                 # a notification's buttons are these, so a battery is
+                 # *Add to to-do · Replaced it · Not a problem* on every
+                 # surface rather than three different questions.
+                 "answers": answers.request_answers(s),
                  **{k: s[k] for k in ("kind", "claim") if s.get(k)}}
                 for s in live[:STATE_MAX_ROWS]
             ],

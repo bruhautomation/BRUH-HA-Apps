@@ -3294,6 +3294,45 @@ body.term-classic #termMode .ico-out { display: block; }
   font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px;
   text-transform: uppercase; color: var(--ink-3);
 }
+/* Everything that makes a claim checkable, one disclosure down. The face
+   of the card is what you need to ANSWER it; this is what you need to
+   argue with it, and it is read once where the face is read every visit.
+   The summary is a real 44px target on touch (the scoped coarse block at
+   the end of the file), because it is the one control on the card that is
+   not a button. */
+.casemore {
+  margin-top: 10px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 4px;
+}
+.casemore > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-3);
+  padding: 6px 0;
+  user-select: none;
+}
+.casemore > summary::-webkit-details-marker { display: none; }
+.casemore > summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 14px;
+  transition: transform 0.15s;
+}
+.casemore[open] > summary::before { transform: rotate(90deg); }
+.casemore .casecert { margin: 4px 0 0; font-size: 12.5px; }
+.casemore .findtriage { margin-top: 10px; }
+/* "More" on a clamped detail: inline with the sentence it opens. */
+.detailmore {
+  vertical-align: baseline;
+  padding: 0 6px;
+  min-height: 0;
+  height: auto;
+  line-height: 1.4;
+}
+
 /* The Resident's line, under the list it produced. */
 .findfoot {
   margin: 16px 2px 0;
@@ -4464,6 +4503,13 @@ body.term-classic #termMode .ico-out { display: block; }
 @media (pointer: coarse) {
   .finding.case .findactions .btn { min-height: 44px; }
   .finding.case .findactions .btn.icon { min-width: 44px; }
+  /* The disclosure's summary is the one control on the card that is not
+     a button, and it is pressed on a phone to read the evidence. */
+  .finding.case .casemore > summary {
+    min-height: 44px; display: flex; align-items: center; }
+  /* "More" on a clamped detail sits inline with prose, so it keeps the
+     text's own height and takes its target from padding instead. */
+  .finding.case .detailmore { min-height: 32px; padding: 4px 10px; }
 }
 
 /* The facts list's two controls: ✕ forgets a fact from every future prompt

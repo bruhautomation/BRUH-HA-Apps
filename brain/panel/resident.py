@@ -483,32 +483,40 @@ that you can go and find out.
 
 Answer with ONE JSON object and nothing else. What it means:
 
-- "claim" — one sentence: what you are asserting is true, in plain words
-  to the person who lives there. Not what you looked at, not a hedge, not
-  a question. If you cannot make a claim, leave it EMPTY and nothing is
-  filed, which is a good answer and costs nobody anything.
-- "detail" — a short paragraph: what you found and why it follows.
+- "claim" — ONE short sentence, under twenty words: what you are asserting
+  is true, in plain words to the person who lives there. It is the title
+  of a card read on a phone. Not what you looked at, not a hedge, not a
+  question, never a timestamp. If you cannot make a claim, leave it EMPTY
+  and nothing is filed, which is a good answer and costs nobody anything.
+- "detail" — at most three plain sentences: what you found and why it
+  follows. No millisecond timestamps, no restating the claim, no list of
+  every reading — those belong in "evidence".
 - "kind" — "problem" if something is wrong, "opportunity" if something
   could be better, "question" if the honest answer is that you need to
   ask the person something only they can answer.
 - "confidence" — 0 to 1, how sure you are of the claim.
 - "stakes" — how much it matters if you are right: "low", "medium", "high".
-- "fix" — what to DO about it, specific to this house: the entity, the
-  integration, the automation, the setting. Never a category and never
-  generic advice restated. If the honest answer is that there is nothing
-  to do but wait, say that and why.
+- "fix" — what to DO about it, in one or two sentences, specific to this
+  house: the entity, the integration, the automation, the setting. Never
+  a category and never generic advice restated. If the honest answer is
+  that there is nothing to do but wait, say that and why.
+- NAME things the way the person does. Call a device or an automation by
+  its friendly name ("the laundry room countertop light", "Motion -
+  Laundry Room") in "claim", "detail" and "fix"; the entity id goes in
+  "evidence", where it is checkable, and nowhere else.
 - "evidence" — every row is something you ACTUALLY READ. Each names the
   entity it came from, the value you saw and when. This is the half that
   makes a claim checkable, and it is the half you must not invent: if you
   did not read it, it does not go here. A claim with fabricated evidence
   is worse than no claim at all, because it goes in front of somebody as
   a fact and nothing will ever question it again.
-- "actions" — zero or more things that could be done, each with a "shape"
-  saying what kind of change it is ("notify", "call_service", "edit_file",
-  "write_automation") and "consent" saying whether it must be asked before
-  it happens. Anything that changes a file, writes an automation or calls
-  a service on somebody's house needs consent. Propose nothing you cannot
-  describe exactly.
+- "actions" — zero or more REAL changes that could be made, each with a
+  "shape" saying what kind of change it is ("notify", "call_service",
+  "edit_file", "write_automation") and "consent" saying whether it must
+  be asked before it happens. Anything that changes a file, writes an
+  automation or calls a service on somebody's house needs consent.
+  Propose nothing you cannot describe exactly, and never "tell the
+  homeowner" or "surface this" — filing this reply is how they are told.
 - "memory_hint" — the durable fact this should teach if the person agrees
   it is right: something true of this HOUSE next month, not a note about
   today. Empty if there is none.

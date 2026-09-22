@@ -172,6 +172,20 @@ def mark_answered(hass: HomeAssistant, ts: int) -> None:
     hass.data.setdefault(DOMAIN, {}).setdefault(ANSWERED_KEY, set()).add(int(ts))
 
 
+def _answers(row: dict) -> tuple:
+    """The wire actions the add-on says this row can be answered with,
+    in the order it offers them — `[{action, label}]` on the mirror row,
+    reduced to the action ids the Repairs flow has a step for. A mirror
+    from an older add-on carries none, and an empty tuple means the flow
+    falls back to its classic three."""
+    out = []
+    for item in row.get("answers") or []:
+        action = str((item or {}).get("action") or "") if isinstance(item, dict) else ""
+        if action and action not in out:
+            out.append(action)
+    return tuple(out)
+
+
 def _placeholders(row: dict) -> tuple:
     """What the Repairs entry says about a finding, as a stable tuple.
 
@@ -345,7 +359,7 @@ class FindingsWatcher:
                 continue
             if str(row.get("status") or "open") not in REPAIR_STATUSES:
                 continue
-            wanted[ts] = (severity, _placeholders(row))
+            wanted[ts] = (severity, _placeholders(row), _answers(row))
             if len(wanted) >= MAX_REPAIR_ISSUES:
                 break
         return wanted
@@ -370,7 +384,7 @@ class FindingsWatcher:
         for ts, spec in wanted.items():
             if self._issues.get(ts) == spec:
                 continue
-            severity, placeholders = spec
+            severity, placeholders, answers = spec
             ir.async_create_issue(
                 self.hass,
                 DOMAIN,
@@ -381,7 +395,12 @@ class FindingsWatcher:
                 translation_placeholders=dict(placeholders),
                 # What the fix flow is about, so it does not have to go
                 # back to the mirror to name the finding it is ending.
-                data={"ts": int(ts), "text": placeholders[0][1]},
+                # ...and which answers the panel offers it, so the
+                # dialog's menu is the card's row of buttons and not a
+                # second, fixed list: a battery gets *Add to to-do*, a
+                # change brAIn made gets *Got it*.
+                data={"ts": int(ts), "text": placeholders[0][1],
+                      "answers": list(answers)},
             )
             self._issues[ts] = spec
         self._forget_answered(current)

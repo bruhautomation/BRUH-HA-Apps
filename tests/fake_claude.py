@@ -21,6 +21,9 @@ Behavior switches via env:
                      that is not a --resume, and a normal answer prefixed
                      "LANDED: " for one that is — the shape of a run that
                      tripped the guard and was landed on its own session)
+                   | overloaded_then_ok (one-shot: the first call answers
+                     the API's own 529 envelope, every later call answers
+                     normally; "first" is remembered in FAKE_ONCE_FILE)
 """
 
 import json
@@ -106,6 +109,23 @@ else:
     for flag in ("--resume", "--session-id"):
         if flag in argv:
             sid = argv[argv.index(flag) + 1]
+    if mode == "overloaded_then_ok":
+        once = os.environ.get("FAKE_ONCE_FILE") or ""
+        first = bool(once) and not os.path.exists(once)
+        if first:
+            with open(once, "w") as fh:
+                fh.write("1")
+            msg = ("API Error: 529 Overloaded. This is a server-side issue, "
+                   "usually temporary — try again in a moment.")
+            if json_out:
+                print(json.dumps({
+                    "type": "result", "subtype": "success", "is_error": True,
+                    "result": msg, "session_id": sid, "num_turns": 1,
+                    "duration_ms": 50,
+                }))
+            else:
+                print(msg, file=sys.stderr)
+            sys.exit(1)
     tripped = mode == "max_turns" or (
         mode == "max_turns_then_land" and "--resume" not in argv)
     if tripped:

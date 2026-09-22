@@ -657,8 +657,12 @@ class TestEveryOtherRowIsUnchanged(StoresCase):
         "entity_id", "source", "source_title", "run_id", "status", "result",
         "changed", "settled_at", "snoozed_until", "triage", "plan",
         "fix_started", "fix_ended", "fix_files", "fix_calls", "checked_at")
+    # `answers` is the one key added since the mirror was first written:
+    # the presses a row can be given from outside the panel, `[{action,
+    # label}]`, so Repairs and a notification offer what the feed does.
+    # An older integration ignores a key it does not read.
     MIRROR = ("ts", "text", "severity", "status", "entity_id", "fixable",
-              "source_title", "detail", "fix")
+              "source_title", "detail", "fix", "answers")
 
     def test_a_row_that_carries_no_case_fields_grows_no_keys(self):
         row = self.file_problem()

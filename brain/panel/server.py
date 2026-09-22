@@ -141,6 +141,7 @@ import brief
 import capture
 import card_tags
 import cases
+from checks._util import House
 import chat_session
 import closures
 import checks
@@ -1910,6 +1911,18 @@ async def _apply_finding_requests() -> list[dict]:
                 result["ok"] = ok
                 if not ok:
                     result["why"] = why
+        elif action == "todo":
+            # The feed's own *Add to to-do*, from a Repairs dialog or a
+            # notification button: the same move the tab makes, through
+            # the same door, so the item, the settled key and the missing
+            # memory line are exactly what the panel's press produces.
+            finding = await asyncio.to_thread(findings_store.get, ts)
+            if finding:
+                try:
+                    await _move_finding_to_todo(finding, req.get("note", ""))
+                    result["ok"] = True
+                except web.HTTPException as exc:
+                    result["why"] = exc.text or "the to-do list refused it"
         else:
             finding = await asyncio.to_thread(findings_store.get, ts)
             spec = FINDING_VERBS.get(finding_requests.verb_for(action))
@@ -2479,8 +2492,10 @@ async def _escalation_tick() -> int:
     """
     try:
         now = time.time()
-        live = {int(f.get("ts") or 0) for f in findings_store.list_all("open")
-                if not findings_store.is_snoozed(f, now)}
+        rows_live = {int(f.get("ts") or 0): f
+                     for f in findings_store.list_all("open")
+                     if not findings_store.is_snoozed(f, now)}
+        live = set(rows_live)
     except Exception as exc:  # noqa: BLE001 — see the docstring: not knowing
         # whether a problem is over is not a licence to ask again.
         log.info("could not read the findings store before a reminder: %s", exc)
@@ -2496,7 +2511,12 @@ async def _escalation_tick() -> int:
     sent = 0
     for row in due:
         message = notify_router.compose_escalation(row, tz)
-        await _send_notification([row], message=message)
+        # The buttons are the card's own answers, read off the LIVE row
+        # rather than the ledger's slim copy: a battery's reminder offers
+        # "Replaced it" because its card does, and the ledger row carries
+        # neither the check that raised it nor whether hands are needed.
+        target = rows_live.get(int(row.get("ts") or 0), row)
+        await _send_notification([target], message=message)
         notify_router.record_reminder(int(row.get("ts") or 0), time.time())
         sent += 1
     return sent
@@ -5431,6 +5451,19 @@ def _signal_entities(signal: dict) -> list[str]:
 # request nobody asked for.
 _FACTS_CTX: dict = {"entities": frozenset(), "areas": {}, "at": 0.0}
 
+# What every entity the last checks pass saw is CALLED, and where it is:
+# `{entity_id: {"name": ..., "area": ...}}`. The feed reads it so a card
+# says "Laundry Room Countertop" rather than `light.laundry_room_countertop`
+# — a check's own sentence already uses the friendly name, but a Resident
+# claim, a fix and every evidence row name the id, and an id is a thing a
+# person has to translate before they can read the card. Refreshed from
+# the snapshot that pass already fetched, `_FACTS_CTX`'s rule: never a
+# registry read for the feed's own sake.
+_NAMES: dict[str, dict] = {}
+# Entity ids in prose. The same shape `ha_data.ENTITY_ID_RE` accepts,
+# bounded so `e.g.` and a version number do not read as one.
+_ENTITY_IN_TEXT_RE = re.compile(r"\b([a-z_]+)\.([a-z0-9_]+)\b")
+
 
 def _note_registry(snapshot: dict) -> None:
     try:
@@ -5441,6 +5474,27 @@ def _note_registry(snapshot: dict) -> None:
                           at=time.time())
     except Exception as exc:  # noqa: BLE001
         log.debug("facts registry note failed: %s", exc)
+    try:
+        house = House(snapshot)
+        names = {}
+        for eid in set(house.states) | set(house.registry):
+            names[eid] = {"name": house.name(eid), "area": house.area_of(eid)}
+        _NAMES.clear()
+        _NAMES.update(names)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("names note failed: %s", exc)
+
+
+def _entity_names_in(*texts: str) -> dict[str, dict]:
+    """The names for every known entity id mentioned in these strings."""
+    out: dict[str, dict] = {}
+    for text in texts:
+        for m in _ENTITY_IN_TEXT_RE.finditer(str(text or "")):
+            eid = m.group(0)
+            row = _NAMES.get(eid)
+            if row is not None:
+                out[eid] = row
+    return out
 
 
 def _ingest_facts() -> int:
@@ -8762,10 +8816,31 @@ def _cases_payload(now: float | None = None) -> dict:
     """
     now = time.time() if now is None else now
     rows = cases.list_cases(now=now)
+    names: dict[str, dict] = {}
     for case in rows:
+        # The presses, decided once (`answers.py`) and rendered as handed:
+        # `answers` is the visible row, `more` what sits behind the ⋯, and
+        # `overflow` is kept whole for a caller that wants every verb.
         case["overflow"] = cases.overflow(case)
+        case["answers"] = cases.answers(case)
+        case["more"] = cases.more(case)
+        case["situation"] = cases.situation(case)
+        # Pretty names: the entity the card is about, and every id the
+        # prose mentions, so the panel can render words a person reads
+        # rather than ids they translate. Only ids the last snapshot saw
+        # — an id nothing knows stays an id, which is honest.
+        row = _NAMES.get(case.get("entity_id") or "")
+        case["entity_name"] = (row or {}).get("name") or ""
+        case["area"] = (row or {}).get("area") or ""
+        names.update(_entity_names_in(
+            case.get("claim"), case.get("detail"), case.get("fix"),
+            *(ev.get("entity") or "" for ev in case.get("evidence") or []),
+            *(a.get("label") or "" for a in case.get("actions") or [])))
+        if row:
+            names[case["entity_id"]] = row
     return {
         "cases": rows,
+        "names": names,
         "open": cases.open_count(now),
         "ledger": LEDGER.summary(now),
         "resident": _resident_diagnostics(),
