@@ -2,6 +2,21 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.5.1
+
+**Accepted work is off the feed, and the feed is called Findings.**
+
+- **A chore no longer renders on the feed.** A finding moved to the to-do list
+  came back beside the real findings as *Broken · Device check · battery is
+  low* over *Done · Remove* — a card that read as a finding with no way onto
+  the to-do list, which is what was reported. The feed (`cases.FEED_KINDS`)
+  now lists problems, suggestions and guesses only; what you have accepted
+  lives on the **To-do** tab with its own count, and the feed's badge stops
+  counting it. Every finding on the feed still offers its way onto the list,
+  its fixed ending and its dismiss.
+- **The pane is called Findings.** The Home group's first tab was itself
+  labelled *Home*; it is *Findings* now (Home → Findings), and the docs follow.
+
 ## 2.5.0
 
 **Cards you can answer at a glance — and the buttons that fit them, on every surface.**

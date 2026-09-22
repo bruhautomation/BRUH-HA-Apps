@@ -4606,8 +4606,12 @@ function makeSettled(entry) {
 }
 
 // ---------------------------------------------------------------------- cases
-// The Home feed. One card per case over the four stores, three endings on
-// each of them, and everything rarer behind a ⋯.
+// The Findings feed (the Home group's opening pane). One card per case
+// over the stores, at most three answers on each, and everything rarer
+// behind a ⋯. A chore is deliberately NOT here — the server's `FEED_KINDS`
+// leaves it off, because an accepted battery rendered beside real findings
+// as *Done · Remove* read as a finding with no way onto the to-do list,
+// and the To-do tab is its surface.
 //
 // **The list is the cases plus anything live that no case covers.** On a
 // real install the derivation covers every open row, so the second half is

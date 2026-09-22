@@ -192,19 +192,6 @@ const FEED = [
     more: [A('not_now', 'Later', '/api/case/h:1003/not_now')],
   }),
   kase({
-    id: 't:1004', kind: 'chore', severity: 'warning', stakes: 'medium',
-    situation: 'chore',
-    claim: 'Replace the hallway smoke alarm battery',
-    fix: 'CR2032, behind the cover.',
-    source: 'check:dev.battery', source_title: 'Battery forecast',
-    origin: { store: 'todo', key: 1004 },
-    answers: [
-      A('complete', 'Done', '/api/case/t:1004/do', { primary: true }),
-      A('drop', 'Remove', '/api/case/t:1004/wrong'),
-    ],
-    more: [A('not_now', 'Later', '/api/case/t:1004/not_now')],
-  }),
-  kase({
     id: 'f:1005', kind: 'change', severity: 'warning', stakes: 'medium',
     situation: 'change', finding_status: 'fixed',
     claim: 'brAIn pointed the hall automation at the new sensor',
@@ -395,7 +382,7 @@ for (const { width, touch } of CASES) {
       note(`${width}px`, `${card.id} offers ${endings.length} buttons: ${labels.join(' | ')}`);
     }
     // ...and one of them is always a way to say no, except on a change
-    // (news to read) and a finished chore (already answered).
+    // (news to read).
     if (card.kind !== 'change' && !endings.some((v) => NO.has(v.verb))) {
       note(`${width}px`, `${card.id} has no way to say no (${labels.join(' | ')})`);
     }
@@ -444,7 +431,6 @@ for (const { width, touch } of CASES) {
     'f:1007': ['todo', 'done', 'wrong'],
     'f:1008': ['apply', 'cancel', 'wrong'],
     'f:1006': ['fix', 'todo', 'wrong'],
-    't:1004': ['complete', 'drop'],
   };
   for (const [id, verbs] of Object.entries(expect)) {
     const card = feed.cards.find((c) => c.id === id);
@@ -493,7 +479,10 @@ for (const { width, touch } of CASES) {
     }
   }
 
-  for (const want of ['problem', 'opportunity', 'question', 'chore', 'change']) {
+  // Never a chore: an accepted finding lives on the To-do tab, and one on
+  // this feed is a finding with no way onto the list.
+  if (kinds.has('chore')) note(`${width}px`, 'a chore case rendered on the feed');
+  for (const want of ['problem', 'opportunity', 'question', 'change']) {
     if (!kinds.has(want)) note(`${width}px`, `no ${want} case rendered`);
   }
 
@@ -504,8 +493,7 @@ for (const { width, touch } of CASES) {
   // one nobody sees is wrong.
   const heads = { 'f:1006': /how brain would fix it/i,
                   'f:1001': /how you'd fix it/i,
-                  'f:1007': /how you'd fix it/i,
-                  't:1004': /how you'd fix it/i };
+                  'f:1007': /how you'd fix it/i };
   for (const [id, want] of Object.entries(heads)) {
     const card = feed.cards.find((c) => c.id === id);
     if (!card) continue;
