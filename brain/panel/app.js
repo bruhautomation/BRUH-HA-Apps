@@ -4052,6 +4052,20 @@ async function discussFinding(f, btns) {
   }
 }
 
+// The fix sentence's heading, and the whole of what it says is who does
+// the work — which is the question somebody reads a card to answer.
+//
+// It is a HEADING and used to be a sentence PREFIX ("You'd need to",
+// "brAIn would"), which is the awkwardness this replaced: every `fix` a
+// check writes is already a capitalised imperative, so the card rendered
+// "YOU'D NEED TO  Turn it back on, or delete it if it is not coming
+// back." — two subjects, one of them shouting. `.findfixlabel` has been
+// styled as a heading all along (uppercase, letter-spaced, bold), so the
+// words and the styling were saying different things about the same span.
+function fixHeading(fixable) {
+  return fixable ? "How brAIn would fix it" : "How you'd fix it";
+}
+
 // What a read-only run said it WOULD change, before it has changed
 // anything. The steps are the half a person is consenting to, so they are
 // rendered as a list rather than folded into a paragraph, and the risk
@@ -4242,8 +4256,7 @@ function makeFinding(f) {
     card.appendChild(box);
   } else if (f.fix) {
     const box = el("div", "findfix");
-    box.appendChild(el("span", "findfixlabel", f.fixable
-      ? "brAIn would" : "You'd need to"));
+    box.appendChild(el("span", "findfixlabel", fixHeading(f.fixable)));
     const text = el("span", null, f.fix);
     // Whose sentence it is. The rule's own is the default and says
     // nothing; one the look wrote, or one a conversation reached, says
@@ -4332,11 +4345,27 @@ function makeFinding(f) {
       findAction(f, "reopen", "Back on the list", btns));
   } else {
     if (f.fixable) {
+      // What this press BUYS is a read-only plan, and for two releases
+      // the tooltip promised to "make the change in Home Assistant" and
+      // the toast said brAIn was making it — while `h_finding_fix`
+      // queues the plan run and the change waits for Apply. The route
+      // was changed and the words pressed to reach it were not, which is
+      // the whole of "it says Fix it but it is not clear what that does".
+      //
+      // The NAME stays. "Fix it" is what DOCS.md, `FIND_STATUS`, the two
+      // fixer prompts and the ⋯ menu all call this flow, and the flow
+      // really is the fix — Apply is a step inside it, not a separate
+      // feature. Renaming one button would leave six other places
+      // describing something the panel no longer offers. What was wrong
+      // was never the verb but the claim that it had already happened,
+      // and the heading directly above it now says whose fix it is.
       const fix = add(el("button", "btn small primary",
         f.status === "failed" ? "✦  Try again" : "✦  Fix it"));
-      tip(fix, "Let brAIn make the change in Home Assistant, then report back");
+      tip(fix, "brAIn works out exactly what it would change and shows you "
+        + "the steps. Nothing in your house changes until you press Apply.");
       fix.addEventListener("click", () => findAction(
-        f, "fix", "On it — brAIn is making the change", btns));
+        f, "fix", "Working out what it would change — nothing has changed yet",
+        btns));
     }
     // "Is this still true?" — the one press on this card that says nothing
     // about the house, and the reason it exists is that a check reads one
@@ -4852,7 +4881,7 @@ function makeCase(row) {
 
   if (row.fix) {
     const box = el("div", "findfix");
-    box.appendChild(el("span", "findfixlabel", "You'd need to"));
+    box.appendChild(el("span", "findfixlabel", fixHeading(row.fixable)));
     const text = el("span", null, row.fix);
     if (row.fix_by === "triage" || row.fix_by === "resident") {
       text.appendChild(el("span", "findfixby", " — written after looking"));
@@ -4863,12 +4892,20 @@ function makeCase(row) {
     card.appendChild(box);
   }
 
-  // What could be done, and what consent each one needs. Rendered as a list
-  // and never as buttons: the press that performs any of them is *Do it*,
-  // and a second control beside it would be two ways to say yes.
+  // What could be done, and what consent each one needs. Rendered as a
+  // list and never as buttons: a second control beside *Do it* would be
+  // two ways to say yes.
+  //
+  // The heading is "What could be done" and not "What Do it would do",
+  // which is what it said and which was only true on some cards: *Do it*
+  // means a different thing per kind — it writes the change on an
+  // `opportunity`, and on a `problem` it moves the row onto your to-do
+  // list and performs nothing. A heading that named the button therefore
+  // promised, on the commonest kind of card there is, that pressing it
+  // would carry out the list underneath it.
   if ((row.actions || []).length) {
     const box = el("div", "caseacts");
-    box.appendChild(el("span", "findfixlabel", "What Do it would do"));
+    box.appendChild(el("span", "findfixlabel", "What could be done"));
     const list = el("ul", "caseactlist");
     row.actions.slice(0, 6).forEach((act) => {
       const li = el("li", null);
@@ -5085,6 +5122,206 @@ function updateTodoBadge(n) {
   badge.classList.toggle("hidden", !n);
 }
 
+// ---------------------------------------------------------------------------
+// Ideas — proposed cards, on their own page
+// ---------------------------------------------------------------------------
+// The separation from Insights is the whole design and not a layout
+// choice: an idea costs nothing until it is taken, where a card costs a
+// run every refresh interval for ever. So this page can afford to offer
+// eight things nobody wants, and the Insights tab cannot.
+
+const ideasState = { ideas: [], running: false, lastRun: 0, lastError: "",
+                     lastCount: 0, runs: 0, open: 0 };
+
+function takeIdeas(data) {
+  if (!data) return;
+  ideasState.ideas = data.ideas || [];
+  ideasState.running = !!data.running;
+  ideasState.lastRun = data.last_run || 0;
+  ideasState.lastError = data.last_error || "";
+  ideasState.lastCount = data.last_count || 0;
+  ideasState.runs = data.runs || 0;
+  ideasState.open = data.open || 0;
+  updateIdeasBadge(ideasState.open);
+}
+
+function updateIdeasBadge(n) {
+  const badge = $("#ideasBadge");
+  if (!badge) return;
+  badge.textContent = n ? String(n) : "";
+  badge.classList.toggle("hidden", !n);
+}
+
+async function refreshIdeas() {
+  try {
+    takeIdeas(await api("api/ideas"));
+  } catch (err) {
+    console.warn("could not load the ideas", err);
+  }
+}
+
+// A pass is minutes of work, so the page polls while one is in flight and
+// stops the moment it is not — `h_ideas_run` starts the run and does not
+// await it, so this is the only thing that will notice it finished.
+let ideasPoll = null;
+
+function ideasWatch() {
+  if (ideasPoll) return;
+  ideasPoll = setInterval(async () => {
+    await refreshIdeas();
+    renderIdeas();
+    if (!ideasState.running) { clearInterval(ideasPoll); ideasPoll = null; }
+  }, 4000);
+}
+
+async function ideasRun(btn) {
+  if (btn) btn.disabled = true;
+  try {
+    takeIdeas(await api("api/ideas/run", { method: "POST" }));
+    renderIdeas();
+    ideasWatch();
+  } catch (err) {
+    toast(err.message || "that didn't work");
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function ideaAction(idea, verb, message, btns) {
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    const data = await api(`api/idea/${idea.id}/${verb}`, { method: "POST" });
+    takeIdeas(data);
+    renderIdeas();
+    // Accepting made a card, so the tab that draws cards is now stale.
+    if (verb === "accept") {
+      refreshInsights().then(render).catch(() => {});
+    }
+    toast(message);
+  } catch (err) {
+    btns.forEach((b) => { b.disabled = false; });
+    toast(err.message || "that didn't work");
+  }
+}
+
+// One idea. Three things and then two presses: what it would be called,
+// why THIS house, and the question it would answer every run. The last is
+// the one that says whether it is worth having — a title tells you the
+// subject and only the question tells you what would arrive.
+function makeIdea(idea) {
+  const card = el("div", "finding idea");
+  // `findmeta` and not a class of its own: every card in the panel uses
+  // it for this row, and it is what supplies the gap and the caps. The
+  // first cut invented `findline`, which matches no rule in the
+  // stylesheet, so the pill and the date rendered as one run-on word.
+  const line = el("div", "findmeta");
+  line.appendChild(el("span", "findstate", `${idea.icon || "✨"} idea`));
+  if (idea.added_at) {
+    line.appendChild(el("span", "findchecked",
+      "suggested " + timeAgo(new Date(idea.added_at * 1000).toISOString())));
+  }
+  card.appendChild(line);
+  card.appendChild(el("h3", "findtitle", idea.title || ""));
+
+  if (idea.why) {
+    const box = el("div", "findfix");
+    box.appendChild(el("span", "findfixlabel", "Why this house"));
+    box.appendChild(el("span", null, idea.why));
+    card.appendChild(box);
+  }
+  if (idea.question) {
+    const box = el("div", "findfix");
+    box.appendChild(el("span", "findfixlabel", "What it would answer"));
+    box.appendChild(el("span", null, idea.question));
+    card.appendChild(box);
+  }
+
+  const actions = el("div", "findactions");
+  const btns = [];
+  const add = (node) => { btns.push(node); actions.appendChild(node); return node; };
+
+  const take = add(el("button", "btn small primary", "✓  Add this card"));
+  tip(take, "Put it on the Insights tab. It generates on the ordinary "
+    + "schedule from then on, and you can edit or delete it like any card.");
+  take.addEventListener("click", () => ideaAction(
+    idea, "accept", "Added — it's on Insights now", btns));
+
+  const no = add(el("button", "btn small ghost", "✕  Not for this house"));
+  tip(no, "Take it off the list. brAIn won't suggest it again.");
+  no.addEventListener("click", () => ideaAction(
+    idea, "dismiss", "Won't suggest that again", btns));
+
+  card.appendChild(actions);
+  return card;
+}
+
+// What the page says when there is nothing on it, which is three
+// different things: nobody has asked yet, the last run failed, or brAIn
+// looked and had nothing to add. Only the second is a fault, and the
+// third is a good answer about a well-covered house — rendering them the
+// same way is what teaches somebody to press the button again.
+function ideasEmptyText() {
+  if (ideasState.running) return "";
+  if (!ideasState.runs) {
+    return "brAIn hasn't looked for ideas yet. Press Suggest ideas, or wait "
+      + "for the weekly pass — it reads what it has learned and measured "
+      + "about this house, and proposes cards worth adding.";
+  }
+  if (ideasState.lastError) {
+    return `The last look didn't finish: ${ideasState.lastError}. `
+      + "Nothing was lost — press Suggest ideas to try again.";
+  }
+  return "Nothing new to suggest. brAIn looked and reckons this house is "
+    + "already well covered; it'll look again next week, or now if you press "
+    + "Suggest ideas.";
+}
+
+function renderIdeas() {
+  const list = $("#ideasList");
+  if (!list) return;
+  const btn = $("#ideasRun");
+  if (btn) {
+    btn.disabled = ideasState.running;
+    btn.textContent = ideasState.running
+      ? "✨  Looking…" : "✨  Suggest ideas";
+  }
+
+  const note = $("#ideasNote");
+  if (note) {
+    // The in-flight sentence is on the page and not only in the button,
+    // because a run is minutes long and a greyed-out button is the same
+    // thing a failed one looks like.
+    const words = ideasState.running
+      ? "Reading what it knows about your house… this takes a few "
+        + "minutes, and you can leave the page."
+      : "";
+    note.textContent = words;
+    note.hidden = !words;
+  }
+
+  list.textContent = "";
+  if (!ideasState.ideas.length) {
+    const words = ideasEmptyText();
+    if (words) list.appendChild(el("p", "findempty", words));
+  } else {
+    ideasState.ideas.forEach((i) => list.appendChild(makeIdea(i)));
+  }
+
+  const foot = $("#ideasFoot");
+  if (foot) {
+    const bits = [];
+    if (ideasState.lastRun) {
+      bits.push("Last looked "
+        + timeAgo(new Date(ideasState.lastRun * 1000).toISOString()));
+    }
+    if (ideasState.runs) {
+      bits.push(`${ideasState.lastCount} proposed that time`);
+    }
+    bits.push("brAIn looks again once a week");
+    foot.textContent = bits.join(" · ") + ".";
+    foot.hidden = false;
+  }
+}
+
 async function refreshTodo() {
   try {
     takeTodo(await api("api/todo"));
@@ -5173,7 +5410,7 @@ function makeTodo(item) {
   if (item.entity_id) card.appendChild(el("code", "findentity", item.entity_id));
   if (item.fix) {
     const box = el("div", "findfix");
-    box.appendChild(el("span", "findfixlabel", "You'd need to"));
+    box.appendChild(el("span", "findfixlabel", fixHeading(false)));
     box.appendChild(el("span", null, item.fix));
     card.appendChild(box);
   }
@@ -8528,6 +8765,16 @@ function switchView(name) {
   // Rendered from what we have, then again once the fetch lands — Findings'
   // own shape, so opening the tab is never a blank frame.
   if (name === "todo") { renderTodo(); refreshTodo().then(renderTodo); }
+  // Same shape: draw what we have, then again once the fetch lands, so
+  // opening the tab is never a blank frame. And pick the poll back up if
+  // a pass started before you navigated away — a run outlives the page.
+  if (name === "ideas") {
+    renderIdeas();
+    refreshIdeas().then(() => {
+      renderIdeas();
+      if (ideasState.running) ideasWatch();
+    });
+  }
   if (name === "memory") renderKnowledge();
   if (name === "docs") renderDocs();
   // Re-fetched on every entry rather than kept: the window ends "now", and
@@ -8556,6 +8803,8 @@ syncTabs(currentView);
 // Add one by hand. Nothing here is required beyond the sentence: a to-do
 // list that made you pick a severity before it would take a note is a form,
 // and the whole point of this one is that it takes what brAIn cannot see.
+$("#ideasRun").addEventListener("click", (ev) => ideasRun(ev.currentTarget));
+
 $("#todoAdd").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const input = $("#todoText");

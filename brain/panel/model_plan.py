@@ -67,6 +67,12 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     "weekly":          ("sonnet", "medium", True,  True),
     "curiosity":       ("sonnet", "medium", True,  False),
     "onboarding":      ("sonnet", "medium", True,  False),
+    # Proposing a card set is the same job onboarding does, at a moment
+    # when the house has months of history behind it — so it reasons
+    # rather than summarises, and it may not step DOWN: a weak ideas pass
+    # proposes the generic cards the whole page exists to avoid, and the
+    # page is the only thing that would show it.
+    "ideas":           ("sonnet", "high",   False, True),
     "study":           ("sonnet", "medium", True,  True),
     "investigate":     ("sonnet", "high",   False, True),
     "fix_plan":        ("sonnet", "high",   False, True),

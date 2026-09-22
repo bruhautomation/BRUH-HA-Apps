@@ -3174,8 +3174,13 @@ body.term-classic #termMode .ico-out { display: block; }
   font-size: 13px;
   color: var(--ink-2);
 }
-.findfix { display: flex; gap: 9px; align-items: baseline; }
+/* The label is a heading and the sentence under it is a sentence, so they
+   stack. They used to sit on one baseline, which is what made the label
+   read as a prefix to a `fix` that is already a capitalised imperative. */
+.findfix { display: grid; gap: 3px; }
 .findfixlabel {
+  /* A no-op in `.findfix`'s grid and in the block `.caseev`/`.caseacts`,
+     and kept so the span still behaves if it is ever put back in a row. */
   flex: none;
   font-size: 10.5px;
   font-weight: 700;
@@ -3297,6 +3302,26 @@ body.term-classic #termMode .ico-out { display: block; }
   color: var(--ink-3);
   max-width: 70ch;
 }
+
+/* Ideas. The in-flight sentence is on the PAGE and not only in the button:
+   a pass is minutes long, and a greyed-out button looks exactly like a
+   failed one. It carries the accent edge because it is something that is
+   happening rather than something that is wrong. */
+.ideasnote {
+  margin: 14px 0 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface-2);
+  font-size: 13px;
+  color: var(--ink-2);
+  max-width: 70ch;
+}
+/* An idea is a proposal and not a problem, so it takes the neutral edge
+   rather than a severity colour — `.finding`'s own default, restated here
+   because every card on this page would otherwise read as `info` grey by
+   accident rather than on purpose. */
+.finding.idea { border-left-color: var(--accent); }
 
 /* The reason box, in place of the card's buttons. It sits inside the card
    it is about — you are correcting something, and the thing being corrected

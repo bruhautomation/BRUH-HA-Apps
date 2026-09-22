@@ -55,7 +55,8 @@ const kase = (over) => ({
   stakes: 'medium', evidence: [], actions: [], status: 'open', source: '',
   source_title: '', ts: NOW, origin: { store: 'findings', key: NOW },
   memory_hint: '', investigation: null, ended: null, severity: 'warning',
-  entity_id: '', fix: '', snoozed_until: 0, overflow: [], ...over,
+  entity_id: '', fix: '', fixable: false, snoozed_until: 0, overflow: [],
+  ...over,
 });
 
 const FEED = [
@@ -86,6 +87,27 @@ const FEED = [
         route: '/api/finding/1001/discuss', method: 'POST' },
       { verb: 'mute', label: 'Stop raising these',
         route: '/api/findings/mute', method: 'POST' },
+    ],
+  }),
+  kase({
+    id: 'f:1006', kind: 'problem', severity: 'warning', stakes: 'medium',
+    claim: 'The porch automation is switched off',
+    detail: 'It has been off since 3 Sep and nothing has turned it on.',
+    entity_id: 'automation.porch_light',
+    fix: 'Turn it back on, or delete it if it is not coming back.',
+    fixable: true,
+    source: 'check:auto.forgotten_off', source_title: 'Automation checks',
+    origin: { store: 'findings', key: 1006 },
+    // What `cases.overflow` really puts on an open problem. Without it
+    // this card would claim brAIn would fix it and offer no route to
+    // asking it to — which is the fixture being wrong, not the card.
+    overflow: [
+      { verb: 'fix', label: 'Work out what to change',
+        route: '/api/finding/1006/fix', method: 'POST' },
+      { verb: 'discuss', label: 'Talk about it',
+        route: '/api/finding/1006/discuss', method: 'POST' },
+      { verb: 'recheck', label: 'Check again',
+        route: '/api/finding/1006/recheck', method: 'POST' },
     ],
   }),
   kase({
@@ -189,6 +211,22 @@ const read = (page) => page.evaluate((ids) => {
         cert: c.querySelector('.casecert')?.textContent || '',
         title: c.querySelector('.findtitle')?.textContent || '',
         evidence: [...c.querySelectorAll('.caseevlist li')].map((li) => li.textContent),
+        // The fix block, as two separate reads: the heading says WHOSE
+        // fix it is and the sentence is the fix. They were one line and
+        // one string before, which is how the heading came to be a
+        // sentence prefix nobody could tell from the sentence.
+        fixHead: c.querySelector('.findfix .findfixlabel')?.textContent || '',
+        fixText: c.querySelector('.findfix span:not(.findfixlabel)')
+          ?.textContent || '',
+        fixStacked: (() => {
+          const box = c.querySelector('.findfix');
+          if (!box) return true;
+          const h = box.querySelector('.findfixlabel');
+          const t = box.querySelector('span:not(.findfixlabel)');
+          if (!h || !t) return true;
+          return Math.round(t.getBoundingClientRect().top)
+            >= Math.round(h.getBoundingClientRect().bottom);
+        })(),
         actionRows: [...c.querySelectorAll('.caseactlist li')].map((li) => li.textContent),
         words: c.textContent,
         verbs: [...c.querySelectorAll('.findactions button')].map((b) => ({
@@ -284,6 +322,34 @@ for (const { width, touch } of CASES) {
   for (const want of ['problem', 'opportunity', 'question', 'chore', 'change']) {
     if (!kinds.has(want)) note(`${width}px`, `no ${want} case rendered`);
   }
+
+  // Whose fix it is. The feed headed every `fix` sentence "You'd need to",
+  // one hardcoded string, so a row brAIn could act on told somebody to do
+  // it by hand while the same card's ⋯ offered to work the change out.
+  // Both headings have to be reachable or the one that is missing is the
+  // one nobody sees is wrong.
+  const heads = { 'f:1006': /how brain would fix it/i,
+                  'f:1001': /how you'd fix it/i,
+                  't:1004': /how you'd fix it/i };
+  for (const [id, want] of Object.entries(heads)) {
+    const card = feed.cards.find((c) => c.id === id);
+    if (!card) continue;
+    if (!want.test(card.fixHead.replace(/\u2019/g, "'"))) {
+      note(`${width}px`,
+           `${id} heads its fix "${card.fixHead.trim()}", not ${want}`);
+    }
+    // A heading that sits on the sentence's own baseline reads as its
+    // first words, which is what made "YOU'D NEED TO  Turn it back on"
+    // two subjects. Styled as a heading, it has to sit like one.
+    if (!card.fixStacked) {
+      note(`${width}px`, `${id} puts its fix heading inline with the fix`);
+    }
+    // The sentence has to stand on its own, because every `fix` a check
+    // writes is already a capitalised imperative.
+    if (!card.fixText.trim()) {
+      note(`${width}px`, `${id} renders a fix heading with no fix under it`);
+    }
+  }
   // The evidence and the actions are the two halves that make a claim
   // checkable and a press predictable.
   const investigated = feed.cards.find((c) => c.id === 'f:1001');
@@ -293,7 +359,7 @@ for (const { width, touch } of CASES) {
            `the investigated case shows ${investigated.evidence.length} evidence row(s)`);
     }
     if (!investigated.actionRows.length) {
-      note(`${width}px`, 'the investigated case does not say what Do it would do');
+      note(`${width}px`, 'the investigated case does not say what could be done');
     } else if (!/consent|asks you/i.test(investigated.actionRows.join(' '))) {
       note(`${width}px`, 'an action row does not say what consent it needs');
     }
