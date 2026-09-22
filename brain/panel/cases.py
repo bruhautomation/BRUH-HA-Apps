@@ -93,6 +93,18 @@ STATUSES = ("open", "watching", "acting", "done")
 # is reachable by asking for it and absent from everything that counts.
 LIVE_STATUSES = ("open", "watching", "acting")
 
+# What the FEED lists. A chore is out of it on purpose: the Findings feed
+# is the list of decisions waiting on a person, and a chore is a decision
+# already made — the press that made it was "yes, that is real, I will do
+# it", and the To-do tab is where that work lives, with its own badge.
+# Rendered beside real findings, an accepted battery came back as a card
+# reading *Broken · Device check · battery is low* over *Done · Remove*,
+# which is a finding with no way onto the to-do list — the complaint, in
+# the words it arrived in: "I don't see ways to move stuff to the to do
+# list?" A chore is still a case (`get` answers for it, the To-do tab's
+# endings ride `CASE_HOOKS`), so asking for `kinds=KINDS` still lists it.
+FEED_KINDS = tuple(k for k in KINDS if k != "chore")
+
 VERBS = ("do", "not_now", "wrong")
 # And the statuses a verb may be given on. A run is changing the house in
 # `acting`, so an ending there would delete the row the fixer is still
@@ -539,11 +551,16 @@ def list_cases(status: str | None = None, kinds=None,
     A snoozed case is **hidden until its time**, never dropped: "not now"
     is not a decision, so the case has to come back, and the store rows it
     is built from are untouched throughout.
+
+    ``kinds`` defaults to `FEED_KINDS`, which is every kind but a chore: a
+    chore is work already accepted and lives on the To-do tab, so a caller
+    that wants one (a diagnostics count, a prompt saying what the house
+    already knows about) asks for it by name — `kinds=KINDS`.
     """
     now = time.time() if now is None else now
     snoozes = _read_snoozes()
     cases = _all_cases(snoozes)
-    wanted = set(kinds) if kinds else None
+    wanted = set(kinds) if kinds else set(FEED_KINDS)
     out = []
     for case in cases:
         if wanted is not None and case["kind"] not in wanted:
@@ -568,7 +585,9 @@ def open_count(now: float | None = None) -> int:
 
     `watching` and `acting` are out of it for `UNSETTLED_STATUSES`' reason
     — a run in flight and a guess brAIn is still watching are not
-    decisions anybody can make yet — and so is a finished chore.
+    decisions anybody can make yet — and so is every chore, finished or
+    not: accepting a finding is the press that takes it OFF this count,
+    and the To-do tab carries its own (`FEED_KINDS`).
     """
     return len(list_cases("open", now=now))
 
@@ -759,7 +778,7 @@ def overflow(case: dict) -> list[dict]:
 
 
 __all__ = [
-    "CHORE_SNOOZE_S", "Hooks", "KINDS", "LIVE_STATUSES", "MAX_SNOOZED",
+    "CHORE_SNOOZE_S", "Hooks", "KINDS", "FEED_KINDS", "LIVE_STATUSES", "MAX_SNOOZED",
     "MIN_SNOOZE_S", "PREFIXES", "SNOOZE_BY_STAKES", "SNOOZE_FILE", "STAKES",
     "STATUSES", "STORES", "VERBS", "answers", "case_id", "end", "get",
     "list_cases", "more", "open_count", "overflow", "situation", "split_id",

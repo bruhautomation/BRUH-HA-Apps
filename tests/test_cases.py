@@ -138,7 +138,7 @@ class StoresCase(unittest.TestCase):
 class TestOneListOverFourStores(StoresCase):
     def test_four_stores_become_one_list_of_four_kinds(self):
         self.one_of_each()
-        listed = cases.list_cases()
+        listed = cases.list_cases(kinds=cases.KINDS)
         self.assertEqual(len(listed), 4)
         self.assertEqual({c["kind"] for c in listed},
                          {"problem", "question", "opportunity", "chore"})
@@ -180,11 +180,28 @@ class TestOneListOverFourStores(StoresCase):
         findings_store.set_status(row["ts"], "planning")
         self.assertEqual(cases.open_count(), 1)
 
+    def test_a_chore_is_on_the_todo_tab_and_never_on_the_feed(self):
+        """Accepting a finding is the press that takes it OFF the feed and
+        off its badge: the To-do tab carries the work and its own count.
+        Rendered on the feed, an accepted battery came back as *Broken ·
+        Device check · battery is low* over *Done · Remove* — a finding
+        with no way onto the to-do list, which is what was reported."""
+        self.file_problem()
+        item = self.file_chore()
+        self.assertEqual([c["kind"] for c in cases.list_cases()], ["problem"])
+        self.assertEqual(cases.open_count(), 1)
+        self.assertNotIn("chore", cases.FEED_KINDS)
+        # Still a case: the To-do tab's endings ride the same hooks, and a
+        # caller that wants it asks for it by name.
+        self.assertEqual(cases.get(f"t:{item['id']}")["kind"], "chore")
+        self.assertIn("chore", {c["kind"] for c in
+                                cases.list_cases(kinds=cases.KINDS)})
+
     def test_a_finished_chore_is_a_record_rather_than_a_decision(self):
         item = self.file_chore()
         todo_store.complete(item["id"])
-        self.assertEqual(cases.list_cases(), [])
-        [done] = cases.list_cases("done")
+        self.assertEqual(cases.list_cases(kinds=cases.KINDS), [])
+        [done] = cases.list_cases("done", kinds=cases.KINDS)
         self.assertEqual(done["kind"], "chore")
         self.assertEqual(done["ended"]["verb"], "do")
 
@@ -748,5 +765,6 @@ class TestWhoseFixItIs(StoresCase):
         """A to-do item is work somebody accepted. Whatever the finding it
         came from said, the person is the one doing it now."""
         self.file_chore()
-        row = next(c for c in cases.list_cases() if c["kind"] == "chore")
+        row = next(c for c in cases.list_cases(kinds=cases.KINDS)
+                   if c["kind"] == "chore")
         self.assertFalse(row["fixable"])

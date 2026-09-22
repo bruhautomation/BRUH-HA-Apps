@@ -5516,7 +5516,9 @@ def _open_case_rows(limit: int = 12) -> list[str]:
     as much "already said" as a problem is.
     """
     try:
-        rows = cases.list_cases("open")
+        # Every kind, chores included: an accepted chore is off the feed and
+        # is still something the house has already said.
+        rows = cases.list_cases("open", kinds=cases.KINDS)
     except Exception as exc:  # noqa: BLE001 — a prompt section, not the run
         log.debug("could not list the open cases: %s", exc)
         return []

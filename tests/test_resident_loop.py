@@ -768,8 +768,11 @@ class TestTheCasesRoute(RouteCase):
         status, payload = self.get("/api/cases")
         self.assertEqual(status, 200)
         kinds = sorted({c["kind"] for c in payload["cases"]})
-        self.assertEqual(kinds, ["chore", "opportunity", "problem", "question"])
-        self.assertEqual(payload["open"], 4)
+        # Never the chore: accepted work is the To-do tab's, with its own
+        # count, and on this feed it read as a finding with no way onto
+        # the list.
+        self.assertEqual(kinds, ["opportunity", "problem", "question"])
+        self.assertEqual(payload["open"], 3)
         # …and the three things the feed's foot line is built from.
         for key in ("ledger", "resident", "eventbus", "watching"):
             self.assertIn(key, payload)
