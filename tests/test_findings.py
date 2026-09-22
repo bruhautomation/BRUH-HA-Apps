@@ -477,9 +477,9 @@ class TestButtonsOnTheMessage(NotifyCase):
     def test_one_finding_to_a_phone_arrives_with_the_cards_own_answers_and_reply(self):
         # The card's own answers and one turn: Reply is the last button and
         # the one that settles nothing (`test_finding_requests` drives the
-        # drain it lands in). A bare row reads as fixable, so a phone gets
-        # the to-do, the dismiss and Later — the plan run it cannot start
-        # is the panel's alone. The order is the card's own.
+        # drain it lands in). A phone gets the feed's fixed row less the
+        # plan run it cannot start — Add to list, Dismiss, Not a problem —
+        # in the row's own order.
         os.environ["BRAIN_FINDINGS_NOTIFY"] = "notify.mobile_app_pixel"
         row, _ = findings_store.add("The hall sensor has stopped")
         self._announce([row])
@@ -487,9 +487,11 @@ class TestButtonsOnTheMessage(NotifyCase):
         actions = self.payloads[0]["actions"]
         self.assertEqual([a["action"] for a in actions],
                          [f"brain.todo.{row['ts']}",
-                          f"brain.wrong.{row['ts']}",
                           f"brain.snooze.{row['ts']}",
+                          f"brain.wrong.{row['ts']}",
                           f"brain.reply.{row['ts']}"])
+        self.assertEqual([a["title"] for a in actions],
+                         ["Add to list", "Dismiss", "Not a problem", "Reply"])
 
     def test_any_other_notifier_gets_the_payload_it_always_did(self):
         # Not an empty `data` either: several notifiers treat the key's
@@ -1618,7 +1620,7 @@ class TestFindingsUI(unittest.TestCase):
         # The work and what is waiting are still the chips that are always
         # there.
         self.assertIn('{ id: "live", label: "Needs you"', self.js)
-        self.assertIn('{ id: "snoozed", label: "Later"', self.js)
+        self.assertIn('{ id: "snoozed", label: "Dismissed"', self.js)
         # 1.48.0 narrows the rule rather than dropping it. `unsettle` is
         # the one thing that removes a settled entry and CLAUDE.md says it
         # happens "only because a person pressed 'Let brAIn raise it

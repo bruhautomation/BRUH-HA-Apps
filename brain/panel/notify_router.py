@@ -680,8 +680,9 @@ def compose_accepted(title: str, entity_id: str) -> tuple[str, str]:
 # actionable notifications can tell whose button was pressed, and short
 # because it travels in a payload with a length limit nobody documents.
 ACTION_PREFIX = "brain"
-ACTION_LABELS = (("fixed", "I've fixed it"), ("wrong", "Not a problem"),
-                 ("snooze", "Later"), ("reply", "Reply"))
+ACTION_LABELS = (("todo", "Add to list"), ("fixed", "I've fixed it"),
+                 ("wrong", "Not a problem"), ("snooze", "Dismiss"),
+                 ("reply", "Reply"))
 # The one button that opens a text box rather than pressing a verb: the
 # companion app renders `behavior: textInput` as a reply field on both
 # platforms and fires the same event with `reply_text` filled in. What is
@@ -725,9 +726,9 @@ def actions_for(rows: list[dict], service: str) -> list[dict]:
     honest answer rather than ending an arbitrary one of them.
 
     **The buttons are the card's own answers**, decided once in
-    `answers.request_answers` off the row itself (a battery gets *Add to
-    to-do · Replaced it · Not a problem*, a device that has gone quiet
-    gets *It's off on purpose*), capped at `MAX_ANSWER_BUTTONS`, and then
+    `answers.request_answers` off the row itself — the feed's fixed row
+    less the one press a phone cannot start (a plan run), so *Add to list
+    · Dismiss · Not a problem* — capped at `MAX_ANSWER_BUTTONS`, and then
     Reply. A row that answers with nothing — a run in flight — gets
     Reply alone. The classic labels in `ACTION_LABELS` are what a row's
     action is called when the answers carry no label of their own.

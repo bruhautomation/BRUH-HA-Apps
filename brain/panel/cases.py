@@ -743,10 +743,10 @@ def overflow(case: dict) -> list[dict]:
             add("discuss", "Talk about it", f"/api/finding/{key}/discuss")
             return out
         if kind == "problem":
-            # The claim *Do it* deliberately does not make. It is rarer
-            # than agreeing to do something and it writes a memory line
-            # that is only true once the work is finished.
-            add("done", "I had already done it", f"/api/finding/{key}/done")
+            # The claim *Add to list* deliberately does not make. It is
+            # rarer than agreeing to do something and it writes a memory
+            # line that is only true once the work is finished.
+            add("done", "I've already fixed it", f"/api/finding/{key}/done")
             if status == "open":
                 add("fix", "Work out what to change",
                     f"/api/finding/{key}/fix")

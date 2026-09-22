@@ -2,6 +2,32 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.5.2
+
+**One row of answers on every card.**
+
+- **Every problem card offers the same four presses, in the same order**: *Fix
+  it* where brAIn could make the change itself, then *Add to list*, *Dismiss*
+  and *Not a problem*. 2.5.0 gave each kind of row its own words — *Replaced
+  it*, *It's back*, *It's off on purpose*, *It's normal here* — and the row had
+  to be read afresh on every card, which is what "this all feels really
+  complicated" meant. What a situation decides now is the reason the *Not a
+  problem* box opens with, never the buttons. *I've already fixed it* and
+  *Check again* moved behind the ⋯. A guess offers *Yes · No · Dismiss*, a
+  suggestion *Make the change · Try it for a week · Dismiss · No thanks*.
+- **Dismiss is on every answerable card**, and it is the press that was
+  missing: "ignore this, and you may bring it up later". It was *Later* behind
+  the ⋯. It settles nothing and teaches nothing; brAIn brings the card back
+  later if it is still true, sooner the more it matters, and the toast says
+  when. The filter that holds them is called **Dismissed**. *Not a problem* is
+  the other no, and stays the one that is for good.
+- **The card leaves when you press.** A case press repainted the feed before
+  the findings list had been re-read, so for a moment the row that had just
+  been moved was drawn off the stale list as an old-style card with different
+  buttons under the case that had just gone. The press answers with every
+  list it moved and the tab is painted from one consistent read.
+- The notification buttons carry the same words.
+
 ## 2.5.1
 
 **Accepted work is off the feed, and the feed is called Findings.**

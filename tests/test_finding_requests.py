@@ -214,31 +214,27 @@ class TestTheButtonsOnAMessage(unittest.TestCase):
             notify_router.actions_for([], "notify.mobile_app_pixel"), [])
 
     def test_one_finding_gets_the_cards_own_answers_and_a_reply(self):
-        """The buttons are the row's own answers (`answers.py`), so a
-        problem that needs hands leads with the to-do list and a device
-        that has gone quiet offers "It's off on purpose" — the same
-        three the feed's card shows — and Reply rides last."""
-        # A bare row reads as fixable (the store's own rule: absent means
-        # brAIn could act), so its lead press is a plan run the phone
-        # cannot start; what a phone CAN carry is the to-do, the dismiss
-        # and Later. A row that needs hands leads with the to-do and
-        # offers "Already done" beside it.
+        """The buttons are the row's own answers (`answers.py`): the feed's
+        fixed row less the one press a phone cannot start (a plan run), so
+        *Add to list · Dismiss · Not a problem* on every problem, and Reply
+        rides last."""
         got = notify_router.actions_for([{"ts": 1720, "text": "a"}],
                                         "notify.mobile_app_pixel")
         self.assertEqual([a["action"] for a in got],
-                         ["brain.todo.1720", "brain.wrong.1720",
-                          "brain.snooze.1720", "brain.reply.1720"])
-        self.assertTrue(all(a["title"] for a in got))
+                         ["brain.todo.1720", "brain.snooze.1720",
+                          "brain.wrong.1720", "brain.reply.1720"])
+        self.assertEqual([a["title"] for a in got],
+                         ["Add to list", "Dismiss", "Not a problem", "Reply"])
         hands = notify_router.actions_for(
             [{"ts": 1720, "text": "a", "fixable": False}],
             "notify.mobile_app_pixel")
         self.assertEqual([a["action"].split(".")[1] for a in hands],
-                         ["todo", "fixed", "wrong", "reply"])
+                         ["todo", "snooze", "wrong", "reply"])
         quiet = notify_router.actions_for(
             [{"ts": 1720, "text": "a", "source": "check:dev.unavailable",
               "fixable": False}], "notify.mobile_app_pixel")
-        self.assertEqual([a["title"] for a in quiet][:2],
-                         ["Add to to-do", "It's off on purpose"])
+        self.assertEqual([a["title"] for a in quiet],
+                         ["Add to list", "Dismiss", "Not a problem", "Reply"])
         # A change brAIn made gets Got it and nothing that would claim
         # somebody else's work.
         change = notify_router.actions_for(

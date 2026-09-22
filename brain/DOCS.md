@@ -170,39 +170,45 @@ what today cost:
 > Looked 96 times today, investigated 3, changed nothing. Watching 6.
 > Watching the house live.
 
-**Cases, and the buttons that fit them.** brAIn used to keep four lists of
-"something is waiting on you" — findings, proposals and hypotheses — each
-with its own tab, its own badge and its own vocabulary, thirteen verbs between
-them. They are one feed now, on the **Findings** tab (the first pane under
-**Home**), and every card offers **the two or three answers that fit it**, decided
-from what kind of thing it is. Work you have already accepted is deliberately not
-on it: **Add to to-do** moves a card to the **To-do** tab, which carries its own
-count, so the feed stays a list of things still waiting on a decision.
+**Cases, and one row of answers.** brAIn used to keep four lists of "something
+is waiting on you" — findings, proposals and hypotheses — each with its own tab,
+its own badge and its own vocabulary, thirteen verbs between them. They are one
+feed now, on the **Findings** tab (the first pane under **Home**), and every
+problem on it takes **the same four answers, in the same order**, so a row of
+buttons can be read without reading the words:
 
-- A **flat battery** or anything else that needs your hands: **Add to to-do**
-  (it's real, you'll get to it — brAIn stops raising it while it waits there),
-  **Already done** / **Replaced it**, and **Not a problem**.
-- A **device that has gone quiet**: **Add to to-do**, **It's back** (brAIn checks
-  again, now), and **It's off on purpose** — which tells the check to stop
-  reporting that device.
-- A **sensor stuck on one reading**: **Add to to-do**, **Check again**, and
-  **It's normal here**.
-- Something **brAIn could change itself**: **Let brAIn fix it** (it works out the
-  exact steps and shows them first; nothing changes until you press **Apply**),
-  **Add to to-do**, **Not a problem**.
-- A **plan waiting for consent**: **Apply**, **Don't change it**, **Not a problem**.
-- A **guess** brAIn wants confirmed: **Yes** and **No**.
-- A **suggestion**: **Make the change**, **Try it for a week**, **No thanks**.
-- A **chore** on your list: **Done** and **Remove**.
-- A **change brAIn made**: **Got it**, and **Undo the fix** while it can be put back.
+- **Fix it** — only where brAIn could make the change itself. It works out the
+  exact steps and shows them first; nothing changes until you press **Apply**.
+  A flat battery or anything else that needs your hands never offers it.
+- **Add to list** — it's real and you'll get to it. The card moves to the
+  **To-do** tab, which carries its own count, and brAIn stops raising it while
+  it waits there.
+- **Dismiss** — not this week. Nothing is recorded and nothing is taught; brAIn
+  brings it back later if it is still true, sooner the more it matters (a day
+  for something serious, a week for a tidy-up), and the toast says when.
+- **Not a problem** — brAIn has this wrong, or it's normal here. It stops
+  raising it for good, and the box that opens asks why (optional — it is the
+  half brAIn learns from). On a quiet device the box already says *It's
+  unplugged or switched off on purpose*; on a stuck sensor, *That is normal
+  for this sensor*.
 
-One of them is always a way to say no, and saying no opens a box for the reason —
-optional, but it is the half brAIn learns from: the reason goes into memory and
-into what every future run knows about your house, and on a check's row it tells
-that rule to stop making the same mistake about that entity. **Later** (brAIn
-picks when it comes back and the card says when), Talk about it, Check again, Bring
-it to the front, I had already done it, Say what to do, Stop raising these and Put
-it back sit behind the **⋯**. Nothing was removed — the stores underneath are the
+The other kinds of card take the same shape with their own words: a **guess**
+brAIn wants confirmed offers **Yes**, **No** and **Dismiss**; a **suggestion**
+offers **Make the change**, **Try it for a week**, **Dismiss** and **No thanks**;
+a **plan waiting for consent** offers **Apply**, **Don't change it** and **Not a
+problem**; a **change brAIn made** offers **Got it**, and **Undo the fix** while it
+can be put back; a chore on your **To-do** tab offers **Done** and **Remove**. A
+chore a house check raised — empty the dishwasher, shut the back door — leads
+with **Done**, because the work is minutes and a list is sillier than doing it.
+
+Dismiss and Not a problem are both on every answerable card — one is "not now"
+and the other is "you have this wrong", and only the second teaches: the reason
+goes into memory and into what every future run knows about your house, and on a
+check's row it tells that rule to stop making the same mistake about that entity.
+The rare presses — I've already fixed it, Check again, Talk about it, Bring it to
+the front, Say what to do, Stop raising these and Put it back — sit behind the
+**⋯**, because each is right for one card in twenty and the row is what you read
+on every one. Nothing was removed — the stores underneath are the
 same four stores, the settled ledger is the same ledger, and every key you have
 ever answered is still remembered.
 
@@ -288,12 +294,11 @@ the press it was.
   could not look this time, nothing changes and it says why: "I could not look" and
   "it went away" are different answers. It appears only on findings a house check
   raised; one the analyst wrote is re-run with **Regenerate** on its card.
-- **Remind me later** — an hour, tomorrow, next week, next month. Not a decision: the
-  finding stays exactly as open as it was and simply stops asking, and it waits under
-  the **Later** filter with the date it comes back.
-- **Dismiss** — off the list now, and free to come back. It teaches the analyst
-  nothing, so the next run may well raise it again. That is the whole difference
-  between this and Wrong.
+- **Dismiss** — not now. Not a decision: the finding stays exactly as open as it
+  was and simply stops asking, and it waits under the **Dismissed** filter with the
+  date it comes back — brAIn picks the date from how much it matters. It teaches
+  the analyst nothing, which is the whole difference between this and Not a
+  problem.
 - **Wrong** — brAIn has misread your house, and the box asks why. That reason is the
   half that teaches: it goes verbatim under the finding in every future analysis and
   into memory as a correction, so the same non-problem is never raised at you twice
@@ -305,10 +310,11 @@ the press it was.
   ending that writes **no** memory line, because nothing is true yet — the battery
   is still flat. The line gets written when you tick the chore off.
 
-The endings — **Add to to-do**, **Not a problem**, **Got it** after an automated
-fix, and **Already done** — each do the same three things: a plain line into
-memory, a key in the settled ledger so it is never re-raised, and the row deleted.
-(Add to to-do defers the first of those; see above.) The buttons on a
+The endings — **Add to list**, **Not a problem**, **Got it** after an automated
+fix, and **I've already fixed it** — each do the same three things: a plain line
+into memory, a key in the settled ledger so it is never re-raised, and the row
+deleted. (Add to list defers the first of those; see above.) **Dismiss** is
+deliberately not an ending: it settles nothing and the row comes back. The buttons on a
 **notification** and the options in a **Repairs** entry are the same answers the
 card offers, under the same words, because a finding asking two different
 questions on two surfaces is a finding nobody can answer confidently on either.
@@ -530,7 +536,7 @@ stopped answering — is pushed straight away, quiet hours or not, and then
 **asked again**: an hour later, four hours later and twelve hours later, three
 reminders and then it stops. Each one says which repeat it is and how long the
 problem has been open, and the last one says brAIn will not ask again. Any
-answer ends them — "I've fixed it", "Wrong", "Later", "＋ To-do", or the check
+answer ends them — "I've fixed it", "Not a problem", "Dismiss", "Add to list", or the check
 simply stopping reporting it — and so does a restart, which picks the ladder up
 where it left off rather than starting it over.
 
@@ -1672,7 +1678,7 @@ guess with a calendar entry attached to it.
 The list needs Home Assistant 2023.11 or newer (the To-do panel's own floor).
 On anything older it is simply absent.
 
-**Notifications get buttons** — *I've fixed it*, *Not a problem*, *Later* —
+**Notifications get buttons** — *Add to list*, *Dismiss*, *Not a problem* —
 when two things are true: the notify service is the Home Assistant companion
 app (`notify.mobile_app_*`), and the message is about exactly one finding.
 Every other notifier means something different by the payload the buttons ride
@@ -2037,7 +2043,7 @@ strip under the bar, shown only where a tab holds more than one.
 
 | Tab | What's there |
 | --- | --- |
-| **Home** | What is waiting on you and what brAIn has made. **Findings** is one feed of cases — problems, suggestions and guesses — with the two or three answers that fit each card (a battery gets **Add to to-do · Replaced it · Not a problem**, a guess gets **Yes · No**, a plan gets **Apply · Don't change it**) and Later, Discuss, Check again, Elevate, Advice, Stop raising these and the rest behind the **⋯**; a count on the tab means something is waiting on you, and the line under the list says what the Resident did today. **Insights** is your cards and the ask bar that makes new ones (a question becomes a card; a line starting "learn about…" starts a study session; a rule in a sentence becomes a proposal), with a **Today** strip saying when the checks last ran, when the measurements were rebuilt, when memory was filed and how many problems have been written up since yesterday. **Ideas** is the cards brAIn thinks this house is missing — each one names what it found here that made it think so and the question the card would answer every run; take one and it becomes an ordinary card on Insights, say no and it is not suggested again. Nothing on that page is generating anything, which is why it is a separate page: an idea costs nothing until you take it. Press **Suggest ideas** for one now, or leave it — brAIn looks again once a week. **To-do** is the work you agreed to, and **Proposals** the changes brAIn would like to make — a habit worth automating, a condition an automation you keep undoing is missing, an emergency playbook, four scenes for a room, a rule you asked for in a sentence. |
+| **Home** | What is waiting on you and what brAIn has made. **Findings** is one feed of cases — problems, suggestions and guesses — each with the same row of answers (**Fix it** where brAIn can, **Add to list**, **Dismiss**, **Not a problem**; a guess gets **Yes · No · Dismiss**, a plan gets **Apply · Don't change it**) and I've already fixed it, Check again, Talk about it, Elevate, Advice, Stop raising these and the rest behind the **⋯**; a count on the tab means something is waiting on you, and the line under the list says what the Resident did today. **Insights** is your cards and the ask bar that makes new ones (a question becomes a card; a line starting "learn about…" starts a study session; a rule in a sentence becomes a proposal), with a **Today** strip saying when the checks last ran, when the measurements were rebuilt, when memory was filed and how many problems have been written up since yesterday. **Ideas** is the cards brAIn thinks this house is missing — each one names what it found here that made it think so and the question the card would answer every run; take one and it becomes an ordinary card on Insights, say no and it is not suggested again. Nothing on that page is generating anything, which is why it is a separate page: an idea costs nothing until you take it. Press **Suggest ideas** for one now, or leave it — brAIn looks again once a week. **To-do** is the work you agreed to, and **Proposals** the changes brAIn would like to make — a habit worth automating, a condition an automation you keep undoing is missing, an emergency playbook, four scenes for a room, a rule you asked for in a sentence. |
 | **Ask** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with the button on the tab, or in ⚙ Settings. Press ⤢ to give either the whole screen. |
 | **House** | What brAIn knows and what happened. **Knowledge** is this morning's brief, the seven measurements and how far along each is, the facts with their provenance, the memory document and the queue waiting to be filed into it. **Activity** is what changed in your house and what caused it — a person, an automation, a script, voice, brAIn itself — plus the overrides that are evidence rather than history, fetched fresh every visit and never cached. |
 | **Help** | This guide, in the panel. ⚙ Settings stays in the bar. |

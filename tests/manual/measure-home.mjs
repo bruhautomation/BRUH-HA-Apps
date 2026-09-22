@@ -1,17 +1,21 @@
-// Render the Home feed against one case of every kind and assert that each
-// one can be answered from the screen it is on — with the buttons that FIT
-// it, and no more than three of them.
+// Render the Findings feed against one case of every kind and assert that
+// each one can be answered from the screen it is on — with ONE row of
+// answers, the same on every problem, and never more than four of them.
 //
 // The failures this exists to prevent are the ones the redesign was written
 // against, in the words they arrived in: "Yes/no questions have a 'do it'
-// button. There are lots of buttons. I don't always see a dismiss. Some
-// items are boiled down to 'change the batteries' but I'm getting a 'disable
-// the integration' prompt." So the checks are about what a card OFFERS and
-// how much it asks you to read first.
+// button. There are lots of buttons. I don't always see a dismiss." — and
+// then, one release later, "I don't see a dismiss button. If I just want to
+// ignore something and you may bring it up later, how do I do that? This
+// all feels really complicated." So the checks are about what a card
+// OFFERS and how much it asks you to read first.
 //
-//   * every answerable case carries at most three visible presses, and one
-//     of them is always a way to say no (`data-verb` wrong / no / decline /
-//     drop / cancel) — never behind the ⋯, never wrapped out of sight.
+//   * every answerable case carries at most four visible presses, one of
+//     them is always a way to say no (`data-verb` wrong / no / decline /
+//     drop / cancel), and every card a person answers carries Dismiss
+//     (`not_now`) — never behind the ⋯, never wrapped out of sight.
+//   * every problem takes the same row in the same order: Fix it where
+//     brAIn could act, Add to list, Dismiss, Not a problem.
 //   * a question offers Yes and No and never "Do it"; a battery leads with
 //     the to-do list and never a plan run; a plan waiting for consent offers
 //     Apply and Cancel; a change offers Got it alone.
@@ -96,12 +100,13 @@ const FEED = [
         detail: 'A push, once.' },
     ],
     answers: [
-      A('todo', 'Add to to-do', '/api/case/f:1001/do', { primary: true, request: 'todo' }),
-      A('done', 'Already done', '/api/finding/1001/done', { request: 'fixed' }),
+      A('todo', 'Add to list', '/api/case/f:1001/do', { primary: true, request: 'todo' }),
+      A('not_now', 'Dismiss', '/api/case/f:1001/not_now', { request: 'snooze' }),
       A('wrong', 'Not a problem', '/api/case/f:1001/wrong', { note: true, request: 'wrong' }),
     ],
     more: [
-      A('not_now', 'Later', '/api/case/f:1001/not_now'),
+      { verb: 'done', label: "I've already fixed it",
+        route: '/api/finding/1001/done', method: 'POST' },
       { verb: 'discuss', label: 'Talk about it',
         route: '/api/finding/1001/discuss', method: 'POST' },
       { verb: 'mute', label: 'Stop raising these',
@@ -119,12 +124,12 @@ const FEED = [
     source: 'check:auto.forgotten_off', source_title: 'Automation check',
     origin: { store: 'findings', key: 1006 },
     answers: [
-      A('fix', 'Let brAIn fix it', '/api/finding/1006/fix', { primary: true }),
-      A('todo', 'Add to to-do', '/api/case/f:1006/do', { request: 'todo' }),
+      A('fix', 'Fix it', '/api/finding/1006/fix', { primary: true }),
+      A('todo', 'Add to list', '/api/case/f:1006/do', { request: 'todo' }),
+      A('not_now', 'Dismiss', '/api/case/f:1006/not_now', { request: 'snooze' }),
       A('wrong', 'Not a problem', '/api/case/f:1006/wrong', { note: true, request: 'wrong' }),
     ],
     more: [
-      A('not_now', 'Later', '/api/case/f:1006/not_now'),
       { verb: 'discuss', label: 'Talk about it',
         route: '/api/finding/1006/discuss', method: 'POST' },
       { verb: 'recheck', label: 'Check again',
@@ -142,11 +147,12 @@ const FEED = [
     source: 'check:dev.battery_low', source_title: 'Device check',
     origin: { store: 'findings', key: 1007 },
     answers: [
-      A('todo', 'Add to to-do', '/api/case/f:1007/do', { primary: true, request: 'todo' }),
-      A('done', 'Replaced it', '/api/finding/1007/done', { request: 'fixed' }),
+      A('todo', 'Add to list', '/api/case/f:1007/do', { primary: true, request: 'todo' }),
+      A('not_now', 'Dismiss', '/api/case/f:1007/not_now', { request: 'snooze' }),
       A('wrong', 'Not a problem', '/api/case/f:1007/wrong', { note: true, request: 'wrong' }),
     ],
-    more: [A('not_now', 'Later', '/api/case/f:1007/not_now')],
+    more: [{ verb: 'done', label: "I've already fixed it",
+             route: '/api/finding/1007/done', method: 'POST' }],
   }),
   kase({
     id: 'f:1008', kind: 'problem', severity: 'warning', stakes: 'medium',
@@ -175,9 +181,10 @@ const FEED = [
     answers: [
       A('accept', 'Make the change', '/api/case/p:1002/do', { primary: true }),
       A('trial', 'Try it for a week', '/api/proposal/1002/trial'),
+      A('not_now', 'Dismiss', '/api/case/p:1002/not_now', { request: 'snooze' }),
       A('decline', 'No thanks', '/api/case/p:1002/wrong', { note: true }),
     ],
-    more: [A('not_now', 'Later', '/api/case/p:1002/not_now')],
+    more: [],
   }),
   kase({
     id: 'h:1003', kind: 'question', severity: 'info', stakes: 'low',
@@ -188,8 +195,9 @@ const FEED = [
     answers: [
       A('yes', 'Yes', '/api/case/h:1003/do', { primary: true }),
       A('no', 'No', '/api/case/h:1003/wrong', { note: true }),
+      A('not_now', 'Dismiss', '/api/case/h:1003/not_now', { request: 'snooze' }),
     ],
-    more: [A('not_now', 'Later', '/api/case/h:1003/not_now')],
+    more: [],
   }),
   kase({
     id: 'f:1005', kind: 'change', severity: 'warning', stakes: 'medium',
@@ -280,6 +288,7 @@ const read = (page) => page.evaluate((ids) => {
       return {
         id: c.dataset.caseId || '',
         kind: (c.className.match(/\bk-([a-z]+)\b/) || [])[1] || '',
+        situation: c.dataset.situation || '',
         pill: c.querySelector('.casekind')?.textContent || '',
         cert: c.querySelector('.casecert')?.textContent || '',
         title: c.querySelector('.findtitle')?.textContent || '',
@@ -377,9 +386,34 @@ for (const { width, touch } of CASES) {
     if (!endings.length) {
       note(`${width}px`, `${card.id} offers no way to answer it`);
     }
-    // At most three. Four is the row that wrapped the dismiss out of sight.
-    if (endings.length > 3) {
+    // At most four: the fixed row. Five would be the one that wraps a
+    // press somebody wanted out of sight.
+    if (endings.length > 4) {
       note(`${width}px`, `${card.id} offers ${endings.length} buttons: ${labels.join(' | ')}`);
+    }
+    // Dismiss is on every card a person answers — the press that was
+    // missing — and it is called Dismiss, in the same place each time.
+    const answerable = !['change', 'planned', 'watching'].includes(
+      card.situation || card.kind);
+    if (answerable && card.kind !== 'change') {
+      const dismiss = endings.find((v) => v.verb === 'not_now');
+      if (!dismiss) {
+        note(`${width}px`, `${card.id} has no Dismiss (${labels.join(' | ')})`);
+      } else if (dismiss.label !== 'Dismiss') {
+        note(`${width}px`, `${card.id}'s snooze is called "${dismiss.label}", not Dismiss`);
+      }
+    }
+    // Every problem takes the same row in the same order, so a row can be
+    // read without reading the words.
+    if (card.kind === 'problem' && answerable) {
+      const tail = endings.map((v) => v.verb).filter((v) => v !== 'fix');
+      if (tail.join(',') !== 'todo,not_now,wrong') {
+        note(`${width}px`, `${card.id} breaks the fixed row: ${labels.join(' | ')}`);
+      }
+      const words = endings.map((v) => v.label).filter((l) => l !== 'Fix it');
+      if (words.join(',') !== 'Add to list,Dismiss,Not a problem') {
+        note(`${width}px`, `${card.id} uses its own words: ${labels.join(' | ')}`);
+      }
     }
     // ...and one of them is always a way to say no, except on a change
     // (news to read).
@@ -427,10 +461,11 @@ for (const { width, touch } of CASES) {
   // The buttons that FIT. Each is the situation's own row, and the wrong
   // one is the complaint this feed was rewritten against.
   const expect = {
-    'h:1003': ['yes', 'no'],
-    'f:1007': ['todo', 'done', 'wrong'],
+    'h:1003': ['yes', 'no', 'not_now'],
+    'f:1007': ['todo', 'not_now', 'wrong'],
     'f:1008': ['apply', 'cancel', 'wrong'],
-    'f:1006': ['fix', 'todo', 'wrong'],
+    'f:1006': ['fix', 'todo', 'not_now', 'wrong'],
+    'p:1002': ['accept', 'trial', 'not_now', 'decline'],
   };
   for (const [id, verbs] of Object.entries(expect)) {
     const card = feed.cards.find((c) => c.id === id);
@@ -587,8 +622,13 @@ for (const { width, touch } of CASES) {
   if (menu && menu.length < 3) {
     note(`${width}px`, `the ⋯ menu holds ${menu.length} row(s)`);
   }
-  if (menu && !menu.some((row) => /Later/i.test(row))) {
-    note(`${width}px`, 'Later is not behind the ⋯');
+  // The rare press lives behind the ⋯ and the snooze does not: Dismiss is
+  // on the row, so a menu offering it again is the same press twice.
+  if (menu && !menu.some((row) => /already fixed it/i.test(row))) {
+    note(`${width}px`, '"I\'ve already fixed it" is not behind the ⋯');
+  }
+  if (menu && menu.some((row) => /^(Later|Dismiss)\b/i.test(row))) {
+    note(`${width}px`, 'the ⋯ offers the snooze a second time');
   }
 
   console.log(`${String(width).padStart(5)}  ${feed.cards.length} cases  `

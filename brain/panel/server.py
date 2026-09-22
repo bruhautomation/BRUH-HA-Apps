@@ -8891,7 +8891,16 @@ async def h_case_verb(request: web.Request) -> web.Response:
         # ago. Said as it was said rather than flattened into a 404, which
         # is `cases.end`'s own note about `result`.
         raise web.HTTPConflict(text=str(outcome["error"]))
-    payload = {**await asyncio.to_thread(_cases_payload, now), **ended}
+    # The answer carries every list the press moved, in one read: the
+    # hook's own payload first (a finding ending answers with the findings
+    # tab's list and the to-do counts, a proposal with the proposals), the
+    # feed over it, the ending over that. The panel paints from what it
+    # is handed, and a feed that arrived without the findings list it is
+    # rendered beside left the row that had just been moved to be drawn
+    # off the STALE list — as an old-style card with different buttons,
+    # under the case that had just gone. Two lists, one press, one read.
+    payload = {**(outcome if isinstance(outcome, dict) else {}),
+               **await asyncio.to_thread(_cases_payload, now), **ended}
     # The token the finding routes already hand back, where the ending had
     # one. `not_now` has none on purpose: it took nothing away, and the
     # card says when it comes back.

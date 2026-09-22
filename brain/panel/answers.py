@@ -21,36 +21,44 @@ asking two different questions.
 
 Four rules.
 
-**A situation picks the answers, and a situation is a small closed
-vocabulary** (`SITUATIONS`), read off the case's kind, its status, the
-check that raised it and whether brAIn could act on it. A flat battery is
-a `battery`; a device that has gone quiet is `unplugged`; a sensor stuck
-on one value is `stuck`; an automation problem is `automation`; a plan
-waiting for consent is `planned`. The table is named rather than derived
-from the sentence on the row — a derivation over words is a name gate, the
-failure `dev.implausible` documents — and a check nobody has classified
-gets the honest generic set rather than a guess.
+**Every problem card offers the same row, in the same order, and only the
+first press on it is conditional.** *Fix it* where brAIn could make the
+change itself (`fixable`, the row's own claim), then *Add to list*,
+*Dismiss* and *Not a problem* — always those words, always that order,
+so a row of buttons can be read without reading the words. The first cut
+of this module gave each situation its own vocabulary (*Replaced it*,
+*It's back*, *It's off on purpose*, *It's normal here*) on the theory
+that a specific press teaches more, and what it taught was that the row
+changed from card to card and had to be read every time: *"this all
+feels really complicated"*. What a situation decides now is the
+**reason** the *Not a problem* box offers ("It's unplugged or switched
+off on purpose."), never the buttons.
 
-**At most three visible presses, and one of them is always a way to say
-no.** The dismiss is the press people reach for most and the one they
-reported not being able to find; it is never behind the ⋯ and never
-absent from an answerable case. What the three are differs by situation
-— *Add to to-do · Replaced it · Not a problem* on a battery, *Yes · No* on
-a question, *Apply · Cancel* on a plan — but the shape is the same, so a
-row of buttons can be read without reading the words.
+**Dismiss is on every answerable card, and it is a snooze.** "I just
+want to ignore this and you may bring it up later" is the commonest
+answer to a card and it was behind the ⋯ as *Later*. It is the case's
+own `not_now`: nothing is settled, nothing is taught, and brAIn picks
+when it comes back — sooner the more it matters (`cases.SNOOZE_BY_STAKES`)
+— which the toast and the card both say. *Not a problem* is the other
+no, and they are different claims: one is "not this week", the other is
+"you have this wrong", and only the second teaches and only the second
+is for good.
 
 **A press that needs hands is never led by a press that needs a run.**
 `fixable` is the row's own claim about whose sentence the fix is, and a
 card whose fix is *Replace the battery* leads with the to-do list, never
 with a plan run: the run costs money to work out that a person has to
-open a cover. Where brAIn could act, *Let brAIn fix it* leads, and its
-first step is still a read-only plan you consent to.
+open a cover. Where brAIn could act, *Fix it* leads, and its first step
+is still a read-only plan you consent to.
 
 **Every answer names its route and its wire action**, so the panel does
 not hold a second table of what a verb does, and the HA side can carry
 the same press back as a request (`request` is `finding_requests`'
 action name, or None for a press only the panel can make, like a plan
-run whose progress has to be watched).
+run whose progress has to be watched). *I've already fixed it*, *Check
+again* and the rest sit behind the ⋯ (`cases.overflow`), because each is
+right for one card in twenty and a row is what somebody reads on every
+one.
 
 Stdlib only, and it imports no store: `cases.py` and `findings_store.py`
 both read it, and a module both of those import may import neither.
@@ -93,9 +101,22 @@ AUTOMATION_PREFIX = "auto."
 # module and the integration reads the mirror.
 REQUEST_ACTIONS = ("todo", "fixed", "wrong", "snooze", "ack")
 
-# How many presses a card shows before the ⋯. Three is the row a thumb
-# can tell apart; four is the row that wrapped the dismiss out of sight.
-MAX_VISIBLE = 3
+# How many presses a card shows before the ⋯. Four: the fixed row is
+# *Fix it · Add to list · Dismiss · Not a problem*, and on a phone it wraps
+# to two rows of two rather than dropping the one press somebody wanted.
+MAX_VISIBLE = 4
+
+# The situations whose "Not a problem" box opens with a reason already in
+# it — the commonest correction for that kind of row, offered so the press
+# that fits is one tap and still edits. Every other situation opens empty.
+PREFILL = {
+    "unplugged": "It's unplugged or switched off on purpose.",
+    "stuck": "That is normal for this sensor.",
+}
+# The situations on which brAIn is never offered as the one to fix it,
+# whatever the row claims: each is a thing a person does with their hands,
+# and a plan run that concludes "open the cover" is money spent to say so.
+HANDS = ("battery", "unplugged", "stuck", "chore_check", "hands")
 
 
 def _answer(verb: str, label: str, hint: str, *, route: str,
@@ -164,29 +185,39 @@ def _finding_key(case: dict):
     return (case.get("origin") or {}).get("key")
 
 
-def _dismiss(case_id: str, label: str = "Not a problem",
-             hint: str = "", prefill: str = "") -> dict:
-    """The one press every answerable case has. It is `wrong` under
-    whatever name the situation gives it, and it always opens the reason
-    box, because the reason is the half that teaches."""
+def _wrong(case_id: str, prefill: str = "", label: str = "Not a problem") -> dict:
+    """The correction. It is `wrong` on every card, always opens the reason
+    box (optional — the reason is the half that teaches), and settles the
+    row for good."""
     return _answer(
         "wrong", label,
-        hint or "brAIn has this wrong, or it's normal here. Say why if you "
-                "like — it learns from the reason, not just the press.",
+        "brAIn has this wrong, or it's normal here. It stops raising this. "
+        "Say why if you like — it learns from the reason, not just the press.",
         route=f"/api/case/{case_id}/wrong", request="wrong", note=True,
-        prefill=prefill, done="Noted")
+        prefill=prefill, done="Noted — brAIn won't raise this again")
 
 
-def _todo(case_id: str, label: str = "Add to to-do", primary: bool = True) -> dict:
+def _dismiss(case_id: str) -> dict:
+    """The snooze. Off the list for now, nothing settled, nothing taught,
+    and brAIn picks when it comes back."""
     return _answer(
-        "todo", label,
-        "It's real and you'll get to it. Onto your to-do list, and brAIn "
+        "not_now", "Dismiss",
+        "Off the list for now. Nothing is recorded — brAIn brings it back "
+        "later if it's still true, sooner the more it matters.",
+        route=f"/api/case/{case_id}/not_now", request="snooze",
+        done="Dismissed")
+
+
+def _todo(case_id: str, primary: bool = False) -> dict:
+    return _answer(
+        "todo", "Add to list",
+        "It's real and you'll get to it. Onto the To-do tab, and brAIn "
         "won't raise it again while it's there.",
         route=f"/api/case/{case_id}/do", request="todo", primary=primary,
         done="On your to-do list")
 
 
-def _done(key, label: str = "Already done", primary: bool = False) -> dict:
+def _done(key, label: str = "Done", primary: bool = False) -> dict:
     return _answer(
         "done", label,
         "You've handled it yourself. brAIn records that and stops raising it.",
@@ -194,30 +225,13 @@ def _done(key, label: str = "Already done", primary: bool = False) -> dict:
         done="Recorded")
 
 
-def _fix(key, label: str = "Let brAIn fix it", primary: bool = True) -> dict:
+def _fix(key) -> dict:
     return _answer(
-        "fix", label,
+        "fix", "Fix it",
         "brAIn works out exactly what it would change and shows you the "
         "steps. Nothing changes until you press Apply.",
-        route=f"/api/finding/{key}/fix", primary=primary,
+        route=f"/api/finding/{key}/fix", primary=True,
         done="Working out what it would change — nothing has changed yet")
-
-
-def _recheck(key, label: str = "Check again") -> dict:
-    return _answer(
-        "recheck", label,
-        "Run the check that found this, now. If the problem has gone, the "
-        "card goes with it.",
-        route=f"/api/finding/{key}/recheck", done="Checked")
-
-
-def _later(case_id: str) -> dict:
-    return _answer(
-        "not_now", "Later",
-        "Take it off the list for a while. brAIn picks when it comes back "
-        "and the card says when.",
-        route=f"/api/case/{case_id}/not_now", request="snooze",
-        done="Back later")
 
 
 def answers(case: dict) -> list[dict]:
@@ -249,7 +263,7 @@ def answers(case: dict) -> list[dict]:
             "plan stays on the card so you can read it again for free.",
             route=f"/api/finding/{key}/cancel", primary=not out,
             done="Left alone — the plan is still here"))
-        out.append(_dismiss(cid))
+        out.append(_wrong(cid))
         return out[:MAX_VISIBLE]
 
     if sit == "change":
@@ -274,6 +288,7 @@ def answers(case: dict) -> list[dict]:
                     "reason retires every guess built on the same "
                     "misreading.", route=f"/api/case/{cid}/wrong",
                     note=True, done="Noted"),
+            _dismiss(cid),
         ]
 
     if sit == "opportunity":
@@ -287,6 +302,7 @@ def answers(case: dict) -> list[dict]:
                 "trial", "Try it for a week", "Replay the last week and "
                 "grade what it would have done against what you did.",
                 route=f"/api/proposal/{key}/trial", done="Trial started"))
+        out.append(_dismiss(cid))
         out.append(_answer(
             "decline", "No thanks", "Not for this house. Say why if you "
             "like, and the reason reaches every future suggestion.",
@@ -314,45 +330,30 @@ def answers(case: dict) -> list[dict]:
                     "not to bother you. This puts it on the list as the "
                     "check filed it.", route=f"/api/finding/{key}/elevate",
                     primary=True, done="On the list"),
-            _dismiss(cid),
+            _wrong(cid),
         ]
 
-    # -- problems ----------------------------------------------------------
-    if sit == "battery":
-        return [_todo(cid),
-                _done(key, "Replaced it"),
-                _dismiss(cid)]
-    if sit == "unplugged":
-        return [_todo(cid),
-                _recheck(key, "It's back"),
-                _dismiss(cid, "It's off on purpose",
-                         "It is unplugged, switched off or put away on "
-                         "purpose. brAIn stops reporting this device.",
-                         prefill="It's unplugged or switched off on purpose.")]
-    if sit == "stuck":
-        return [_todo(cid),
-                _recheck(key),
-                _dismiss(cid, "It's normal here",
-                         "That reading is what this sensor does. brAIn "
-                         "stops raising this rule for it.",
-                         prefill="That is normal for this sensor.")]
+    # -- problems: one row, whatever the check --------------------------------
+    # A chore check (empty the dishwasher, shut the back door) is the one
+    # problem whose honest first press is "Done": the work is minutes and
+    # putting it on a list is sillier than doing it. Everything else leads
+    # with Fix it where brAIn could act and the list where it could not.
     if sit == "chore_check":
-        return [_done(key, "Done", primary=True),
-                _later(cid),
-                _dismiss(cid)]
-    if sit == "automation":
-        if case.get("fixable"):
-            return [_fix(key), _todo(cid, primary=False), _dismiss(cid)]
-        return [_todo(cid), _done(key), _dismiss(cid)]
-    if sit == "generic":
-        return [_fix(key), _todo(cid, primary=False), _dismiss(cid)]
-    # hands: a fix a person has to make.
-    return [_todo(cid), _done(key), _dismiss(cid)]
+        return [_done(key, primary=True), _dismiss(cid), _wrong(cid)]
+    out: list[dict] = []
+    if sit not in HANDS and case.get("fixable"):
+        out.append(_fix(key))
+    out.append(_todo(cid, primary=not out))
+    out.append(_dismiss(cid))
+    out.append(_wrong(cid, prefill=PREFILL.get(sit, "")))
+    return out[:MAX_VISIBLE]
 
 
 def more(case: dict, visible: list[dict], overflow: list[dict]) -> list[dict]:
-    """What goes behind the ⋯: *Later* where it is not already on the row,
-    then every rare verb the row has not already offered.
+    """What goes behind the ⋯: the two presses of the fixed row a card
+    does not show (*Add to list* on a chore check, *Dismiss* wherever the
+    row leaves it off), then every rare verb the row has not already
+    offered.
 
     `overflow` is `cases.overflow`'s list, unchanged — this only drops a
     verb that is already a visible button, so the same press is never
@@ -361,9 +362,14 @@ def more(case: dict, visible: list[dict], overflow: list[dict]) -> list[dict]:
     shown = {a["verb"] for a in visible}
     out: list[dict] = []
     sit = situation(case)
+    cid = str(case.get("id") or "")
+    if (visible and "todo" not in shown and case.get("kind") == "problem"
+            and case.get("status") == "open"
+            and sit not in ("planned", "change")):
+        out.append(_todo(cid))
     if (visible and "not_now" not in shown
             and sit not in ("planned", "change", "chore_done", "watching")):
-        out.append(_later(str(case.get("id") or "")))
+        out.append(_dismiss(cid))
     for item in overflow or []:
         if item.get("verb") in shown:
             continue
@@ -379,9 +385,9 @@ def request_answers(row: dict) -> list[dict]:
     Built from a bare store row rather than a case, because the mirror is
     written by the store and the store cannot import `cases`. The
     situation is read the same way; only the presses HA can carry back as
-    a request survive, and *Later* rides at the end for every row that
-    has a to-do or a dismiss on it, because "not this minute" is the
-    lock-screen answer even when the panel keeps it behind the ⋯.
+    a request survive, and *Dismiss* rides at the end of any row that
+    somehow left it off, because "not this minute" is the lock-screen
+    answer.
     """
     case = {
         "id": f"f:{int(row.get('ts') or 0)}",
@@ -400,10 +406,10 @@ def request_answers(row: dict) -> list[dict]:
            for a in answers(case) if a.get("request")]
     actions = {a["action"] for a in out}
     if out and "snooze" not in actions and case["kind"] != "change":
-        out.append({"action": "snooze", "label": "Later"})
+        out.append({"action": "snooze", "label": "Dismiss"})
     return out
 
 
-__all__ = ["AUTOMATION_PREFIX", "CHECK_SITUATIONS", "MAX_VISIBLE",
-           "REQUEST_ACTIONS", "SITUATIONS", "answers", "more",
+__all__ = ["AUTOMATION_PREFIX", "CHECK_SITUATIONS", "HANDS", "MAX_VISIBLE",
+           "PREFILL", "REQUEST_ACTIONS", "SITUATIONS", "answers", "more",
            "request_answers", "situation"]
