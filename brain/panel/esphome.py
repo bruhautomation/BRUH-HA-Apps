@@ -1006,11 +1006,10 @@ async def _run_job(job: Job, route_: Route, spec: dict, port: str) -> None:
         job.finish("failed", error=f"the dashboard connection failed: {exc}")
     finally:
         job.finish("failed", error="the command ended without an exit code")
-        # The file name passed `CONFIG_RE` already; flattened again here
-        # with literal replaces, `server.log_safe`'s barrier, because a
-        # log line is evidence only while every line in it is ours.
-        name = job.configuration.replace("\r", " ").replace("\n", " ")
-        log.info("esphome %s %s: %s", job.kind, name[:128], job.state)
+        # Only values minted here: the job id is ours and the state is
+        # one of ours. The kind and the file name came off a request, and
+        # the panel shows both beside the id for anybody who needs them.
+        log.info("esphome job %s ended %s", job.id, job.state)
 
 
 async def _run_update(job: Job, entity_id: str) -> None:
