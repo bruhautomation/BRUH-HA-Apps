@@ -63,7 +63,7 @@ subscription — or your own API key.
 
 Most AI integrations can turn on a light. brAIn administers the installation.
 
-It reaches Home Assistant three ways at once — a **native MCP server** (64 tools) for
+It reaches Home Assistant three ways at once — a **native MCP server** (71 tools) for
 reading and controlling, **65 registry-management services** for the parts of Home
 Assistant that normally only exist behind the Settings UI, and a **real shell** in
 `/config` for everything that is still a YAML file.
@@ -1755,6 +1755,51 @@ waiting can still be updated **through Home Assistant**'s own update entity.
 every entity it carries, so a device holding anything on your
 `protected_entities` list is refused, naming the entity.
 
+### It runs Music Assistant
+
+**House → Music Assistant** is Music Assistant from brAIn's side: whether brAIn
+can reach it and as whom, every player with what it is playing, every music and
+player provider with the last error it reported, and the players worth clearing
+out. From there you can:
+
+- **Play/pause, skip, set the volume and switch a player on or off** without
+  opening Music Assistant.
+- **Clear out stale players.** A player Music Assistant remembers and has not
+  seen since — every speaker a removed provider or an AirCast bridge left
+  behind — is listed with why. **Remove** forgets one; **Remove all stale
+  players** forgets every one of them, after showing you the list. This is the
+  part Home Assistant's own registry tools cannot do: the player's config lives
+  in Music Assistant, so deleting the Home Assistant entity only lasts until
+  Music Assistant announces it again. Once Music Assistant forgets it, Home
+  Assistant drops the entity by itself. A player still registered by a
+  provider that cannot remove players is reported as held, and can be
+  **disabled** instead.
+- **Reload a provider** that is showing an error.
+
+Claude can do everything Music Assistant's own interface can, from the chat or
+the terminal: "group the kitchen and the lounge and play my Discover Weekly",
+"why is the Sonos provider erroring?", "remove every AirCast player", "turn on
+crossfade for the office", "make a playlist of what we played on Saturday". It
+has an overview tool, a search, a player tool, a play tool, the clean-up, and a
+tool that runs **any** command in Music Assistant's API — players, queues, the
+library, playlists, providers and server settings. Scheduled runs may only
+read; voice uses Home Assistant's own `music_assistant.play_media` on the media
+players you have exposed, not these tools.
+
+**No setup.** brAIn connects where Home Assistant's Music Assistant integration
+connects, with the same sign-in Music Assistant gave Home Assistant. That
+sign-in can control, group, configure and remove players and edit the library;
+**adding, changing or removing providers and changing server settings need a
+Music Assistant admin**, so for those set `music_assistant_token` to an admin's
+long-lived token (Music Assistant → Settings → your profile → Tokens). When
+brAIn is refused for want of that, it says so rather than just failing. A Music
+Assistant server Home Assistant is not connected to is named with
+`music_assistant_url` plus a token.
+
+**Protected entities apply.** A Music Assistant player that is a Home Assistant
+entity on your `protected_entities` list is not played, changed or removed, and
+the refusal names it.
+
 ### It knows what happened, and what caused it
 
 A state does not carry a cause. Nothing in `light.kitchen` being on says
@@ -2753,6 +2798,13 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `esphome_dashboard_url` | string | *(empty)* | Where your ESPHome dashboard is, when it is not the ESPHome add-on (which brAIn finds by itself) — e.g. `http://192.168.1.20:6052`. Editing device files never needs it; validating, compiling, installing and logs do. |
+
+### Music Assistant
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `music_assistant_url` | string | *(empty)* | A Music Assistant server Home Assistant's integration is not connected to, e.g. `http://192.168.1.20:8095`. Leave empty to use the server Home Assistant uses, with its sign-in. |
+| `music_assistant_token` | password | *(empty)* | A Music Assistant admin's long-lived token. Without it brAIn controls, configures and removes players and edits the library; with it, brAIn can also manage providers and server settings. It is in Home Assistant backups like every option, so use one you can revoke. |
 
 > **What the terminal is told about your memory.** `auto_generate_context`
 > writes `/config/CLAUDE.md` at startup, and the learned-memory document is

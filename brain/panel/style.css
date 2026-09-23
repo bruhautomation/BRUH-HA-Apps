@@ -4569,6 +4569,14 @@ body.term-classic #termMode .ico-out { display: block; }
 }
 .espmenu .btn { justify-content: flex-start; text-align: left; }
 .espimport { margin-top: 18px; }
+/* Music Assistant reuses the ESPHome tab's device-list styles; these are
+   the pieces it has that ESPHome does not. */
+.masec { font-size: 14px; margin: 18px 0 8px; color: var(--ink-2); }
+.masec[hidden] { display: none; }
+.mastale { border-color: color-mix(in srgb, var(--warning) 45%, transparent); margin-bottom: 4px; }
+.marow { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 8px 0 0; border-top: 1px solid var(--line); margin-top: 8px; }
+.marowtext { display: flex; flex-direction: column; min-width: 0; }
+.marowtext b { overflow-wrap: anywhere; }
 .espimport h3 { font-size: 14px; margin: 0 0 6px; color: var(--ink-2); }
 
 .modal .box.espbox { width: min(980px, 100%); max-height: calc(100vh - 32px); }
@@ -4615,5 +4623,6 @@ body.term-classic #termMode .ico-out { display: block; }
   .espacts .btn, .espmenu .btn, .esprow .btn, .espactions .btn,
   .espconhead .btn { min-height: 44px; }
   .espmore > summary { min-height: 44px; display: inline-flex; align-items: center; }
+  .marow .btn, .mastale .espdevhead .btn { min-height: 44px; }
   .espseckey { min-height: 44px; }
 }

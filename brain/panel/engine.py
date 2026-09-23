@@ -750,6 +750,11 @@ ANALYST_TOOLS = [
     f"{MCP}esphome_validate",
     f"{MCP}esphome_logs",
     f"{MCP}esphome_job",
+    # Music Assistant, the reading half: the overview, a search, and any
+    # command the panel's own table says only reads.
+    f"{MCP}music_assistant_status",
+    f"{MCP}music_assistant_query",
+    f"{MCP}music_assistant_search",
 ]
 # Named explicitly rather than left to the allow-list, because `--allowedTools`
 # governs what runs WITHOUT a prompt, and a headless run cannot be prompted:
@@ -776,6 +781,10 @@ ANALYST_DENIED = [
     f"{MCP}esphome_delete_device", f"{MCP}esphome_compile",
     f"{MCP}esphome_install", f"{MCP}esphome_update_firmware",
     f"{MCP}esphome_clean", f"{MCP}esphome_set_secret",
+    # Music Assistant, the acting half: every one plays, changes or forgets
+    # something on a server a family listens to.
+    f"{MCP}music_assistant_command", f"{MCP}music_assistant_player",
+    f"{MCP}music_assistant_play", f"{MCP}music_assistant_remove_players",
 ]
 
 

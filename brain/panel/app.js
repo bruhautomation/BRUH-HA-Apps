@@ -8893,6 +8893,7 @@ function switchView(name) {
   // Drawn from what we have, then again once the fetch lands; the fetch
   // asks the dashboard for its devices, which is a second or two.
   if (name === "esphome") { renderEsphome(); refreshEsphome(false); }
+  if (name === "music") { renderMusic(); refreshMusic(); }
   // Rendered from what we have, then again once the fetch lands — the same
   // shape Findings uses, so opening the tab is never a blank frame.
   if (name === "proposals") {
@@ -11713,6 +11714,219 @@ $("#espSecSave").addEventListener("click", async () => {
   const again = await espApi("api/esphome/secrets");
   if (again.keys) renderEspSecrets(again.keys);
 });
+
+// ---------------------------------------------------------- music assistant
+// Music Assistant is a server of its own; the panel reaches it over its API
+// with the sign-in Home Assistant's integration uses (or an admin's token).
+// The tab is the part of it a person comes to brAIn for — what is playing
+// where, what is broken, and the players that will not go away — and every
+// refusal is the server's own sentence, read out of the body by espApi.
+const maState = { data: null, loading: false, busy: {} };
+
+function maStatusText(d) {
+  if (!d) return "Looking for Music Assistant…";
+  const srv = d.server || {};
+  if (!srv.reachable) return srv.reason || "brAIn could not reach Music Assistant.";
+  const who = srv.signed_in_as ? ` as ${srv.signed_in_as}` : "";
+  const role = srv.admin
+    ? "an admin, so providers and server settings can be changed too"
+    : "players and the library can be managed; providers and server settings need music_assistant_token";
+  return `Connected to ${srv.name || "Music Assistant"} ${srv.server_version || ""}${who} — ${role}.`;
+}
+
+async function maPost(path, body) {
+  return espApi(path, { method: "POST", body: JSON.stringify(body || {}) });
+}
+
+async function maPlayer(id, action, value) {
+  const key = `${id}:${action}`;
+  if (maState.busy[key]) return;
+  maState.busy[key] = true;
+  try {
+    const r = await maPost(`api/music-assistant/player/${encodeURIComponent(id)}/${action}`,
+      value === undefined ? {} : { value });
+    if (!r.ok) { toast(r.error || `Could not ${action}`); return; }
+  } finally {
+    delete maState.busy[key];
+  }
+  setTimeout(() => refreshMusic(), 600);
+}
+
+async function maRemove(ids, label) {
+  const dry = await maPost("api/music-assistant/players/remove",
+    { player_ids: ids, stale_only: true, dry_run: true });
+  if (!dry.ok) { toast(dry.error || "Could not check those players"); return; }
+  const names = (dry.candidates || []).map((c) => c.name || c.player_id);
+  if (!names.length) { toast("Nothing to remove"); refreshMusic(); return; }
+  const list = names.length > 12 ? names.slice(0, 12).join(", ") + ` and ${names.length - 12} more`
+    : names.join(", ");
+  if (!window.confirm(`Make Music Assistant forget ${label || names.length + " players"}?\n\n${list}\n\nA device that is still on your network may be found again.`)) return;
+  const r = await maPost("api/music-assistant/players/remove",
+    { player_ids: ids, stale_only: true, dry_run: false });
+  if (!r.ok) { toast(r.error || "Could not remove them"); return; }
+  const parts = [];
+  if ((r.removed || []).length) parts.push(`Removed ${r.removed.length}`);
+  if ((r.held_by_provider || []).length) parts.push(`${r.held_by_provider.length} held by their provider — disable them instead`);
+  if ((r.failed || []).length) parts.push(`${r.failed.length} failed: ${r.failed[0].error}`);
+  toast(parts.join(" · ") || "Nothing changed");
+  refreshMusic();
+}
+
+function renderMusic() {
+  const d = maState.data;
+  const status = $("#maStatus");
+  status.textContent = maStatusText(d);
+  status.classList.toggle("espwarn", !!(d && !(d.server || {}).reachable));
+  const players = $("#maPlayers");
+  const provs = $("#maProviders");
+  const stale = $("#maStale");
+  players.textContent = "";
+  provs.textContent = "";
+  stale.textContent = "";
+  if (!d) { players.appendChild(el("p", "espempty", "Loading…")); return; }
+  if (!(d.server || {}).reachable) return;
+  for (const err of d.errors || []) stale.appendChild(el("p", "espmeta esperr", err));
+
+  const gone = d.stale_players || [];
+  if (gone.length) {
+    const box = el("div", "espdev mastale");
+    const head = el("div", "espdevhead");
+    const title = el("div", "espdevname");
+    title.appendChild(el("b", null, `${gone.length} player${gone.length === 1 ? "" : "s"} worth clearing out`));
+    title.appendChild(el("span", "espmeta",
+      "Music Assistant remembers these but they are gone or unavailable. Removing one here is what makes Home Assistant drop its entity for good."));
+    head.appendChild(title);
+    const all = el("button", "btn small primary", "Remove all stale players");
+    all.addEventListener("click", () => maRemove(gone.map((g) => g.player_id), `all ${gone.length} stale players`));
+    head.appendChild(all);
+    box.appendChild(head);
+    for (const g of gone) {
+      const row = el("div", "marow");
+      const txt = el("div", "marowtext");
+      txt.appendChild(el("b", null, g.name || g.player_id));
+      txt.appendChild(el("span", "espmeta", `${g.provider_name || g.provider || "unknown provider"} · ${g.reason}`));
+      row.appendChild(txt);
+      const rm = el("button", "btn small ghost", "Remove");
+      rm.addEventListener("click", () => maRemove([g.player_id], g.name || g.player_id));
+      row.appendChild(rm);
+      box.appendChild(row);
+    }
+    stale.appendChild(box);
+  }
+
+  const rows = d.players || [];
+  if (!rows.length) players.appendChild(el("p", "espempty", "Music Assistant has no players."));
+  for (const p of rows) {
+    const card = el("div", "espdev");
+    const head = el("div", "espdevhead");
+    const title = el("div", "espdevname");
+    title.appendChild(el("b", null, p.name || p.player_id));
+    title.appendChild(el("span", "espfile", `${p.provider_name || p.provider} · ${p.player_id}`));
+    head.appendChild(title);
+    const badges = el("div", "espbadges");
+    if (!p.available) badges.appendChild(espBadge("Unavailable", "bad"));
+    else if (p.state === "playing") badges.appendChild(espBadge("Playing", "good"));
+    else if (p.state) badges.appendChild(espBadge(p.state[0].toUpperCase() + p.state.slice(1), ""));
+    if (!p.enabled) badges.appendChild(espBadge("Disabled", "warn"));
+    if (p.powered === false) badges.appendChild(espBadge("Off", ""));
+    if (p.synced_to) badges.appendChild(espBadge("Grouped", "run"));
+    if (p.protected) badges.appendChild(espBadge("Protected", ""));
+    head.appendChild(badges);
+    card.appendChild(head);
+    const now = p.now_playing;
+    if (now && (now.title || now.artist)) {
+      card.appendChild(el("div", "espmeta", [now.title, now.artist, now.album].filter(Boolean).join(" — ")));
+    }
+    const meta = [];
+    if (p.volume !== null && p.volume !== undefined) meta.push(`volume ${p.volume}${p.muted ? " (muted)" : ""}`);
+    if ((p.group_members || []).length > 1) meta.push(`group of ${p.group_members.length}`);
+    if (p.model) meta.push(p.model);
+    if (meta.length) card.appendChild(el("div", "espmeta", meta.join(" · ")));
+    const acts = el("div", "espacts");
+    const off = !p.available || p.protected;
+    const add = (label, fn, hint) => {
+      const b = el("button", "btn small ghost", label);
+      b.disabled = off;
+      if (hint) tip(b, hint);
+      b.addEventListener("click", fn);
+      acts.appendChild(b);
+    };
+    add(p.state === "playing" ? "Pause" : "Play", () => maPlayer(p.player_id, "play_pause"));
+    add("Next", () => maPlayer(p.player_id, "next"));
+    add("Vol −", () => maPlayer(p.player_id, "volume_down"), "Volume down");
+    add("Vol +", () => maPlayer(p.player_id, "volume_up"), "Volume up");
+    if (p.powered !== null && p.powered !== undefined) {
+      add(p.powered ? "Turn off" : "Turn on", () => maPlayer(p.player_id, "power", !p.powered));
+    }
+    const more = el("details", "espmore");
+    more.appendChild(el("summary", "btn small ghost", "More"));
+    const menu = el("div", "espmenu");
+    const item = (label, fn, disabled) => {
+      const b = el("button", "btn small ghost", label);
+      b.disabled = !!disabled;
+      b.addEventListener("click", () => { more.open = false; fn(); });
+      menu.appendChild(b);
+    };
+    item("Stop", () => maPlayer(p.player_id, "stop"), off);
+    item("Clear queue", () => maPlayer(p.player_id, "clear_queue"), off);
+    item(p.enabled ? "Disable in Music Assistant" : "Enable in Music Assistant",
+      () => maPlayer(p.player_id, p.enabled ? "disable" : "enable"), p.protected);
+    item("Rename…", () => {
+      const name = window.prompt("New name for this player in Music Assistant", p.name || "");
+      if (name && name.trim()) maPlayer(p.player_id, "rename", name.trim());
+    }, p.protected);
+    more.appendChild(menu);
+    acts.appendChild(more);
+    card.appendChild(acts);
+    players.appendChild(card);
+  }
+
+  for (const pr of d.providers || []) {
+    const card = el("div", "espdev");
+    const head = el("div", "espdevhead");
+    const title = el("div", "espdevname");
+    title.appendChild(el("b", null, pr.name || pr.domain));
+    title.appendChild(el("span", "espfile", `${pr.type || "provider"} · ${pr.domain} · ${pr.instance_id}`));
+    head.appendChild(title);
+    const badges = el("div", "espbadges");
+    if (!pr.enabled) badges.appendChild(espBadge("Disabled", "warn"));
+    else if (pr.available) badges.appendChild(espBadge("Loaded", "good"));
+    else badges.appendChild(espBadge("Not loaded", "bad"));
+    head.appendChild(badges);
+    card.appendChild(head);
+    if (pr.last_error) card.appendChild(el("div", "espmeta esperr", pr.last_error));
+    if (pr.enabled) {
+      const acts = el("div", "espacts");
+      const re = el("button", "btn small ghost", "Reload");
+      re.addEventListener("click", async () => {
+        re.disabled = true;
+        const r = await maPost(`api/music-assistant/provider/${encodeURIComponent(pr.instance_id)}/reload`);
+        toast(r.ok ? `Reloaded ${pr.name || pr.domain}` : (r.error || "Could not reload it"));
+        refreshMusic();
+      });
+      acts.appendChild(re);
+      card.appendChild(acts);
+    }
+    provs.appendChild(card);
+  }
+  $("#maProvHead").hidden = !(d.providers || []).length;
+  $("#maPlayHead").hidden = false;
+}
+
+async function refreshMusic() {
+  if (maState.loading) return;
+  maState.loading = true;
+  try {
+    const d = await espApi("api/music-assistant");
+    if (d && d.server) maState.data = d;
+    else toast((d && d.error) || "Could not read Music Assistant");
+  } finally {
+    maState.loading = false;
+  }
+  if (currentView === "music") renderMusic();
+}
+
+$("#maRefresh").addEventListener("click", () => refreshMusic());
 
 (async function init() {
   bindSetup();

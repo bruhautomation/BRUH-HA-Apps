@@ -101,6 +101,9 @@ jobs:
       - name: Measure the ESPHome tab
         run: node tests/manual/measure-esphome.mjs
 
+      - name: Measure the Music Assistant tab
+        run: node tests/manual/measure-music.mjs
+
       # Seven measurement rows, five states, four sections and the Today
       # strip. The failure it exists to catch is the tab's own reason for
       # existing: a store that has stopped, one that has not started and a

@@ -418,6 +418,17 @@ MEMORYMD
     local esphome_dashboard_url
     esphome_dashboard_url=$(bashio::config 'esphome_dashboard_url' '')
     export BRAIN_ESPHOME_DASHBOARD_URL="$esphome_dashboard_url"
+    # Music Assistant: the panel finds it through Home Assistant's own
+    # music_assistant config entry (its url and the token Music Assistant
+    # gave Home Assistant). These two are for a server elsewhere and for an
+    # admin's token, which can reconfigure providers and server settings the
+    # integration's token may not. Only the panel reads them — the MCP tools
+    # go through the panel's API — so neither is written to .brain_env.
+    local music_assistant_url music_assistant_token
+    music_assistant_url=$(bashio::config 'music_assistant_url' '')
+    music_assistant_token=$(bashio::config 'music_assistant_token' '')
+    export BRAIN_MUSIC_ASSISTANT_URL="$music_assistant_url"
+    export BRAIN_MUSIC_ASSISTANT_TOKEN="$music_assistant_token"
 
     local env_file="/data/.brain_env"
     cat > "$env_file" << ENVEOF

@@ -197,6 +197,23 @@ configuration:
       http://192.168.1.20:6052. Editing device files works without it;
       validating, compiling, installing and reading logs need a dashboard
       brAIn can reach.
+  music_assistant_url:
+    name: Music Assistant address
+    description: >-
+      Leave empty if Home Assistant's Music Assistant integration is set
+      up — brAIn connects where Home Assistant connects, with the same
+      sign-in. Set it only for a Music Assistant server Home Assistant is
+      not connected to, for example http://192.168.1.20:8095 (with a token
+      below).
+  music_assistant_token:
+    name: Music Assistant admin token
+    description: >-
+      Optional. Without it brAIn can control, group, configure and remove
+      players and edit the library. With a Music Assistant admin's
+      long-lived token (Music Assistant → Settings → your profile →
+      Tokens) it can also add, change and remove music providers and
+      change server settings. It is stored like every add-on option, so
+      it is in Home Assistant backups; make one you can revoke.
   self_healing:
     name: Fix three things overnight
     description: >-
