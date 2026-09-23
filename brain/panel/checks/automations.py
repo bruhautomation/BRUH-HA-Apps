@@ -518,6 +518,11 @@ RATE_MIN_RUNS = 8
 # simply have changed their mind, while two rules that have disagreed
 # twice will disagree every time their triggers land in that order.
 CONFLICT_MIN = 2
+# A second rule landing this soon after the first is a RACE: both answered
+# the same moment (two automations on one trigger), and which one wins is
+# the order Core happened to run them in. Anything slower in one direction
+# only is a sequence somebody built — see `conflicting`.
+RACE_S = 5.0
 
 
 def _override_history() -> dict[str, list[dict]]:
@@ -681,6 +686,20 @@ def conflicting(snap: dict, now: float) -> list[dict]:
     Read off `actions.find_conflicts` rather than recomputed here, the
     same reason `overridden` reads `find_overrides`: the window, the
     must-differ rule and the one-undo-per-move rule have one home.
+
+    **A sequence is not a fight, and it was most of what this reported.**
+    "Motion turns the hall light on" and "no motion for two minutes turns
+    it off" put the light back every single time, inside the window, in
+    different states, from different rules — and that is two automations
+    doing exactly what they were written to do. So were sunset-on and
+    bedtime-off, and a fan that another rule stops after ten minutes. The
+    producer scorecard read 3 of 4 marked Wrong, which is the Findings tab
+    saying this rule is wrong about this house. What makes a disagreement
+    is that NEITHER rule reliably has the last word: the pair has undone
+    each other in **both** directions, or the second answered within
+    `RACE_S` — the same trigger reaching two rules, where which one wins is
+    the order Core ran them in. A one-way pair slower than that is a
+    sequence somebody built and says nothing, whatever the count.
     """
     mined = snap.get("actions") or {}
     pairs: dict[tuple, dict] = {}
@@ -688,6 +707,8 @@ def conflicting(snap: dict, now: float) -> list[dict]:
         first, second = c.get("first") or "", c.get("second") or ""
         if not first or not second:
             continue
+        after = c.get("after_s")
+        raced = after is not None and float(after) <= RACE_S
         # A pair is a pair whichever way round it happened this time —
         # keyed unordered, or A-undoes-B and B-undoes-A count as two
         # separate disagreements between the same two rules.
@@ -695,9 +716,12 @@ def conflicting(snap: dict, now: float) -> list[dict]:
         names = {first: c.get("first_name") or first,
                  second: c.get("second_name") or second}
         p = pairs.setdefault(key, {"names": names, "count": 0,
-                                   "entities": [], "last": 0.0})
+                                   "entities": [], "last": 0.0,
+                                   "ways": set(), "raced": False})
         p["names"].update(names)
         p["count"] += 1
+        p["ways"].add((first, second))
+        p["raced"] = p["raced"] or raced
         if c["entity_id"] not in p["entities"]:
             p["entities"].append(c["entity_id"])
         p["last"] = max(p["last"], c.get("ts") or 0.0)
@@ -705,6 +729,8 @@ def conflicting(snap: dict, now: float) -> list[dict]:
     out = []
     for key, p in sorted(pairs.items()):
         if p["count"] < CONFLICT_MIN:
+            continue
+        if len(p["ways"]) < 2 and not p["raced"]:
             continue
         a, b = (p["names"].get(k, k) for k in key)
         out.append({
