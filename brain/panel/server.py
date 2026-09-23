@@ -154,6 +154,7 @@ import energy
 import engine
 import facts_store
 import episodes
+import esphome
 import eventbus
 import feedback_store
 import finding_requests
@@ -13050,6 +13051,8 @@ def make_app() -> web.Application:
     # The terminal tab: /terminal/ is reverse-proxied through to ttyd
     # so the whole add-on lives behind one ingress port.
     terminal_proxy.setup(app)
+    # ESPHome devices: their YAML here, their builds on the dashboard.
+    esphome.setup(app)
 
     async def on_startup(app: web.Application) -> None:
         # Startup is the one moment we know nothing is in flight, so it is

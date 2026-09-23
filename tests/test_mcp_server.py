@@ -516,6 +516,12 @@ class TestMCPProtocol(unittest.TestCase):
             # Talking to the person reading: the ways a finding could end,
             # offered as buttons inside the conversation about it
             "offer_resolutions",
+            # 2.6: ESPHome devices, through the panel
+            "esphome_list_devices", "esphome_get_config",
+            "esphome_write_config", "esphome_create_device",
+            "esphome_delete_device", "esphome_validate", "esphome_compile",
+            "esphome_install", "esphome_update_firmware", "esphome_clean",
+            "esphome_logs", "esphome_job", "esphome_set_secret",
         }
         self.assertEqual(tool_names, expected_tools)
 

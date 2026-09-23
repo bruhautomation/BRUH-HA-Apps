@@ -412,6 +412,12 @@ MEMORYMD
     local ask_why
     ask_why=$(bashio::config 'ask_why' 'true')
     export BRAIN_ASK_WHY="$ask_why"
+    # Where the ESPHome dashboard is, when it is not the ESPHome add-on on
+    # this machine (the panel finds that one through the Supervisor). Only
+    # the panel reads it — the MCP tools go through the panel's API.
+    local esphome_dashboard_url
+    esphome_dashboard_url=$(bashio::config 'esphome_dashboard_url' '')
+    export BRAIN_ESPHOME_DASHBOARD_URL="$esphome_dashboard_url"
 
     local env_file="/data/.brain_env"
     cat > "$env_file" << ENVEOF

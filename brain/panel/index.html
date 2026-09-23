@@ -114,6 +114,7 @@
   <button class="subtab" data-view="terminal" data-group="ask" role="tab">Chat</button>
   <button class="subtab" data-view="memory" data-group="house" role="tab">Knowledge</button>
   <button class="subtab" data-view="activity" data-group="house" role="tab">Activity</button>
+  <button class="subtab" data-view="esphome" data-group="house" role="tab">ESPHome</button>
   <button class="subtab" data-view="docs" data-group="help" role="tab">Docs</button>
 </nav>
 
@@ -530,6 +531,29 @@
   </section>
 </div>
 
+<!-- ESPHome devices. The files are brAIn's to read and write (they live in
+     /config/esphome); building, installing and logs go through the ESPHome
+     dashboard, which brAIn reaches through Home Assistant's own ingress. The
+     status line says which of those is working, in words, because "no
+     dashboard" and "no devices" are different answers to one empty list. -->
+<div id="viewEsphome" class="view">
+  <section class="espwrap">
+    <div class="esphead">
+      <div>
+        <h2>ESPHome devices</h2>
+        <p id="espStatus" class="sub">Looking for your ESPHome dashboard&hellip;</p>
+      </div>
+      <div class="espactions">
+        <button id="espNew" class="btn primary">＋ New device</button>
+        <button id="espSecrets" class="btn ghost">Wi-Fi &amp; secrets</button>
+        <button id="espRefresh" class="btn ghost" data-tip="Look for the dashboard again">Refresh</button>
+      </div>
+    </div>
+    <div id="espList" class="esplist"></div>
+    <div id="espImport" class="espimport"></div>
+  </section>
+</div>
+
 <!-- The terminal is the same ttyd the add-on runs, reverse-proxied through
      this panel at /terminal/ so it lives behind one ingress port. The frame
      is only pointed at it on first activation — no session is started for
@@ -813,6 +837,100 @@
         <button id="editSaveRegen" class="btn">Save &amp; regenerate</button>
         <button id="editReset" class="btn ghost hidden">Restore default</button>
         <button id="editDelete" class="btn ghost danger">Remove card</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- One dialog for a device: its YAML, and the output of whatever is running
+     for it. The console is below the editor rather than in its own dialog,
+     because the commonest loop is edit, validate, read the error, edit —
+     and that loop wants both on screen at once. -->
+<div id="espModal" class="modal" role="dialog" aria-modal="true">
+  <div class="box espbox">
+    <header>
+      <span>📟</span>
+      <span id="espTitle"></span>
+      <div class="spacer"></div>
+      <button id="espClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
+    </header>
+    <div class="espbody">
+      <p id="espNote" class="espnote" hidden></p>
+      <div id="espEditor" class="espeditor">
+        <textarea id="espText" spellcheck="false" autocapitalize="off"
+                  autocomplete="off" wrap="off" aria-label="Device YAML"></textarea>
+        <div class="esprow">
+          <button id="espSave" class="btn primary">Save</button>
+          <button id="espValidate" class="btn">Validate</button>
+          <button id="espInstall" class="btn">Save &amp; install</button>
+          <button id="espLogs" class="btn ghost">Logs</button>
+          <span id="espDirty" class="espdirty"></span>
+        </div>
+      </div>
+      <div id="espConsole" class="espconsole" hidden>
+        <div class="espconhead">
+          <span id="espConTitle" class="espcontitle"></span>
+          <button id="espStop" class="btn small ghost">Stop</button>
+        </div>
+        <pre id="espOut" class="espout"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="espNewModal" class="modal" role="dialog" aria-modal="true">
+  <div class="box edit">
+    <header>
+      <span>📟</span>
+      <span>New ESPHome device</span>
+      <div class="spacer"></div>
+      <button id="espNewClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
+    </header>
+    <div class="edit-body">
+      <label for="espNewName">Device name (its hostname)</label>
+      <input id="espNewName" type="text" maxlength="31" autocomplete="off"
+             autocapitalize="off" spellcheck="false" placeholder="e.g. porch-light">
+      <label for="espNewFriendly">Friendly name</label>
+      <input id="espNewFriendly" type="text" maxlength="60" placeholder="e.g. Porch light">
+      <label for="espNewPlatform">Chip</label>
+      <select id="espNewPlatform" class="selin"></select>
+      <label for="espNewBoard">Board</label>
+      <input id="espNewBoard" type="text" maxlength="60" autocomplete="off"
+             autocapitalize="off" spellcheck="false">
+      <p class="hint">brAIn writes the file the dashboard's own wizard would:
+        a fresh encryption key, OTA password and fallback hotspot for this
+        device, and Wi-Fi from your secrets. The first install to a new
+        board has to be over USB from the ESPHome dashboard; after that
+        brAIn can install over the air.</p>
+      <p id="espNewErr" class="hint esperr" hidden></p>
+      <div class="row">
+        <button id="espNewCreate" class="btn primary">Create &amp; edit</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="espSecModal" class="modal" role="dialog" aria-modal="true">
+  <div class="box edit">
+    <header>
+      <span>🔑</span>
+      <span>ESPHome secrets</span>
+      <div class="spacer"></div>
+      <button id="espSecClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
+    </header>
+    <div class="edit-body">
+      <p class="hint">The names in <code>secrets.yaml</code>. Values are never shown —
+        type a new one to replace it. Every device's Wi-Fi comes from
+        <code>wifi_ssid</code> and <code>wifi_password</code>.</p>
+      <div id="espSecList" class="espseclist"></div>
+      <label for="espSecKey">Name</label>
+      <input id="espSecKey" type="text" maxlength="64" autocomplete="off"
+             autocapitalize="off" spellcheck="false" placeholder="wifi_ssid">
+      <label for="espSecVal">Value</label>
+      <input id="espSecVal" type="password" maxlength="512" autocomplete="off">
+      <p id="espSecErr" class="hint esperr" hidden></p>
+      <div class="row">
+        <button id="espSecSave" class="btn primary">Set</button>
       </div>
     </div>
   </div>

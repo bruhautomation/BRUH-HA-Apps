@@ -4521,3 +4521,99 @@ body.term-classic #termMode .ico-out { display: block; }
   .kfact .btn.icon { min-height: 44px; min-width: 44px; }
   .kfact .kfactrun { min-height: 44px; padding-inline: 14px; }
 }
+
+/* ------------------------------------------------------------------ esphome
+   A device per card, its state in words on badges, and one dialog that holds
+   the YAML over the console of whatever is running for it — the loop is
+   edit, validate, read the error, edit, and that wants both on screen. */
+.espwrap { max-width: 900px; }
+.esphead {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 18px; flex-wrap: wrap; margin-bottom: 18px;
+}
+.esphead > div:first-child { flex: 1 1 420px; min-width: 0; }
+.esphead h2 { margin: 0 0 4px; font-size: 21px; }
+.esphead .sub { color: var(--ink-2); margin: 0; font-size: 14px; max-width: 68ch; }
+.esphead .sub.espwarn { color: var(--warning); }
+.espactions { display: flex; gap: 8px; flex-wrap: wrap; }
+.esplist { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.espempty { color: var(--ink-2); }
+.espdev {
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius); padding: 12px 14px; min-width: 0;
+}
+.espdevhead { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.espdevname { display: flex; flex-direction: column; min-width: 0; }
+.espdevname b { font-size: 15.5px; overflow-wrap: anywhere; }
+.espfile { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--ink-3); overflow-wrap: anywhere; }
+.espbadges { display: flex; gap: 6px; flex-wrap: wrap; }
+.espbadge {
+  font-size: 11.5px; font-weight: 650; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--hairline); color: var(--ink-2); white-space: nowrap;
+}
+.espbadge.good { color: var(--good); border-color: color-mix(in srgb, var(--good) 45%, transparent); }
+.espbadge.bad { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 45%, transparent); }
+.espbadge.warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+.espbadge.run { color: var(--accent-2); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.espmeta { font-size: 13px; color: var(--ink-2); margin-top: 6px; overflow-wrap: anywhere; }
+.esperr { color: var(--critical) !important; }
+.espacts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: flex-start; }
+.espmore { position: relative; }
+.espmore > summary { list-style: none; cursor: pointer; }
+.espmore > summary::-webkit-details-marker { display: none; }
+.espmenu {
+  position: absolute; z-index: 5; top: calc(100% + 4px); right: 0;
+  display: flex; flex-direction: column; gap: 4px; padding: 6px;
+  background: var(--surface-2); border: 1px solid var(--hairline);
+  border-radius: 10px; box-shadow: var(--shadow); min-width: 180px;
+}
+.espmenu .btn { justify-content: flex-start; text-align: left; }
+.espimport { margin-top: 18px; }
+.espimport h3 { font-size: 14px; margin: 0 0 6px; color: var(--ink-2); }
+
+.modal .box.espbox { width: min(980px, 100%); max-height: calc(100vh - 32px); }
+.espbody { padding: 12px 14px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.espnote { margin: 0; font-size: 13px; color: var(--ink-2); }
+.espeditor { display: flex; flex-direction: column; gap: 10px; }
+.espeditor[hidden] { display: none; }
+#espText {
+  width: 100%; min-height: 46vh; resize: vertical; tab-size: 2;
+  border: 1px solid var(--hairline); border-radius: 10px;
+  background: var(--plane); color: var(--ink); padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px; line-height: 1.45; white-space: pre; overflow: auto;
+}
+#espText:focus { outline: none; border-color: var(--accent); }
+.esprow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.espdirty { font-size: 12.5px; color: var(--warning); margin-left: auto; }
+.espconsole[hidden] { display: none; }
+.espconhead { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.espcontitle { font-weight: 650; font-size: 13.5px; flex: 1; min-width: 0; }
+.espcontitle.succeeded { color: var(--good); }
+.espcontitle.failed { color: var(--critical); }
+.espcontitle.running { color: var(--accent-2); }
+.espout {
+  margin: 0; max-height: 40vh; min-height: 120px; overflow: auto;
+  background: #05101a; color: #d5e4f0; border-radius: 10px; padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.espseclist { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.espseckey {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+  background: var(--surface-2); color: var(--ink); border: 1px solid var(--hairline);
+  border-radius: 8px; padding: 4px 10px; cursor: pointer;
+}
+
+/* ESPHome on touch. Last in the file for the reason every block after the
+   first one is: the first `pointer: coarse` block is the 16px text floor
+   and a test reads it by position. `#espText` is id-qualified, which beats
+   that floor's bare `textarea`, so the 16px is restated here — or iOS zooms
+   the ingress iframe in on the first tap into the editor and never back. */
+@media (pointer: coarse) {
+  #espText, #espNewPlatform { font-size: 16px; }
+  .espacts .btn, .espmenu .btn, .esprow .btn, .espactions .btn,
+  .espconhead .btn { min-height: 44px; }
+  .espmore > summary { min-height: 44px; display: inline-flex; align-items: center; }
+  .espseckey { min-height: 44px; }
+}

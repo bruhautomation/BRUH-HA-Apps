@@ -1128,6 +1128,206 @@ def get_health():
     }
 
 
+
+# ---------------------------------------------------------------------------
+# ESPHome — through the panel, which owns the files, the dashboard route and
+# the jobs. A second implementation here would be a second answer to "which
+# dashboard" and "is this device protected", so every tool is one request.
+# ---------------------------------------------------------------------------
+
+def _panel_send(method, path, body=None, timeout=60):
+    """A request to the panel that reads the body of a refusal too.
+
+    `_panel_get` reports a 409 as "the panel did not answer", which throws
+    away the one sentence that says why — a protected device, a file that
+    changed on disk, a dashboard nobody can reach. The panel answers every
+    refusal as JSON with an `error`, so that is what comes back here.
+    """
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(
+        f"{PANEL_URL}{path}", data=data, method=method,
+        headers={"Accept": "application/json",
+                 "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return json.loads(response.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        try:
+            answer = json.loads(e.read().decode() or "{}")
+            if isinstance(answer, dict):
+                answer.setdefault("error", f"HTTP {e.code}")
+                return answer
+        except Exception:  # noqa: BLE001
+            pass
+        return {"error": f"the brAIn panel refused: HTTP {e.code}"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"the brAIn panel did not answer: {e}"}
+
+
+def _esphome_name(configuration):
+    name = str(configuration or "").strip()
+    if name and not name.endswith((".yaml", ".yml")):
+        name += ".yaml"
+    return urllib.parse.quote(name, safe="")
+
+
+def _job_tail(job, lines=120):
+    if not isinstance(job, dict):
+        return job
+    out = dict(job)
+    rows = out.get("lines") or []
+    if len(rows) > lines:
+        out["lines"] = rows[-lines:]
+        out["lines_omitted"] = len(rows) - lines
+    return out
+
+
+def _esphome_run(action, configuration, wait_seconds, port=None):
+    body = {"port": port} if port else {}
+    started = _panel_send(
+        "POST", f"/api/esphome/config/{_esphome_name(configuration)}/{action}",
+        body, timeout=60)
+    job = (started or {}).get("job") if isinstance(started, dict) else None
+    if not job or not started.get("ok"):
+        return started
+    try:
+        wait_seconds = max(0, min(int(wait_seconds or 0), 540))
+    except (TypeError, ValueError):
+        wait_seconds = 0
+    if wait_seconds and job.get("state") == "running":
+        followed = _panel_get(
+            f"/api/esphome/job/{job['id']}?wait={wait_seconds}",
+            timeout=wait_seconds + 30)
+        if isinstance(followed, dict) and followed.get("job"):
+            job = followed["job"]
+    result = {"job": _job_tail(job)}
+    if job.get("state") == "running":
+        result["note"] = (f"Still running — call esphome_job with job_id "
+                          f"{job['id']} to follow it.")
+    return result
+
+
+def esphome_list_devices(refresh=False):
+    """Every ESPHome device file, what the dashboard knows of it (address,
+    deployed and current firmware version, online), which Home Assistant
+    device it is, and whether the dashboard can be reached at all."""
+    result = _panel_get("/api/esphome" + ("?fresh=1" if refresh else ""))
+    if isinstance(result, dict) and result.get("error") and "devices" not in result:
+        return result
+    result = result or {}
+    keep = ("configuration", "name", "friendly_name", "platform", "board",
+            "comment", "error", "is_device", "address", "online",
+            "deployed_version", "current_version", "update_available",
+            "ha_name", "area_id", "entity_count", "update_entity", "protected")
+    return {
+        "folder": result.get("dir"),
+        "dashboard": result.get("dashboard"),
+        "devices": [{k: d.get(k) for k in keep if d.get(k) not in (None, "", [])}
+                    for d in (result.get("devices") or []) if isinstance(d, dict)],
+        "discovered_not_adopted": result.get("importable") or [],
+        "secret_keys": result.get("secret_keys") or [],
+        "running_jobs": [j for j in (result.get("jobs") or [])
+                         if isinstance(j, dict) and j.get("state") == "running"],
+    }
+
+
+def esphome_get_config(configuration):
+    """One device's YAML, exactly as it is on disk."""
+    if str(configuration or "").strip() in ("secrets.yaml", "secrets"):
+        keys = _panel_get("/api/esphome/secrets")
+        return {"error": "secrets.yaml is not read out — its values are "
+                         "passwords. Its keys are listed here; set one with "
+                         "esphome_set_secret.",
+                "keys": (keys or {}).get("keys", [])}
+    return _panel_send("GET", f"/api/esphome/config/{_esphome_name(configuration)}")
+
+
+def esphome_write_config(configuration, content, create=False):
+    """Save a device's YAML (the old file is snapshotted first, so `brain
+    undo` puts it back). Validate afterwards; install to put it on the
+    device."""
+    return _panel_send(
+        "PUT", f"/api/esphome/config/{_esphome_name(configuration)}",
+        {"content": content, "create": bool(create)})
+
+
+def esphome_create_device(name, platform="esp32", board="", friendly_name=""):
+    """Start a new device file the way the dashboard's wizard does."""
+    return _panel_send("POST", "/api/esphome/create",
+                       {"name": name, "platform": platform, "board": board,
+                        "friendly_name": friendly_name})
+
+
+def esphome_delete_device(configuration):
+    """Move a device file into the archive folder (not a hard delete)."""
+    return _panel_send(
+        "POST", f"/api/esphome/config/{_esphome_name(configuration)}/delete", {})
+
+
+def esphome_validate(configuration, wait_seconds=90):
+    """Check a device's YAML the way ESPHome itself does, changing nothing."""
+    return _esphome_run("validate", configuration, wait_seconds)
+
+
+def esphome_compile(configuration, wait_seconds=60):
+    """Build a device's firmware without installing it."""
+    return _esphome_run("compile", configuration, wait_seconds)
+
+
+def esphome_install(configuration, target="OTA", wait_seconds=60):
+    """Compile and install a device's firmware (over the air by default)."""
+    return _esphome_run("install", configuration, wait_seconds, port=target)
+
+
+def esphome_update_firmware(configuration, wait_seconds=30):
+    """Install the waiting firmware update through Home Assistant's own
+    update entity — for when the dashboard cannot be reached directly."""
+    return _esphome_run("update", configuration, wait_seconds)
+
+
+def esphome_clean(configuration):
+    """Delete a device's build files so the next compile starts clean."""
+    return _esphome_run("clean", configuration, 60)
+
+
+def esphome_logs(configuration, seconds=20):
+    """Read a device's live log for a few seconds and stop."""
+    try:
+        seconds = max(3, min(int(seconds or 20), 120))
+    except (TypeError, ValueError):
+        seconds = 20
+    started = _panel_send(
+        "POST", f"/api/esphome/config/{_esphome_name(configuration)}/logs",
+        {}, timeout=60)
+    job = (started or {}).get("job") if isinstance(started, dict) else None
+    if not job or not started.get("ok"):
+        return started
+    time.sleep(seconds)
+    _panel_send("POST", f"/api/esphome/job/{job['id']}/stop", {})
+    followed = _panel_get(f"/api/esphome/job/{job['id']}?wait=5", timeout=40)
+    return {"job": _job_tail((followed or {}).get("job") or job, lines=200)}
+
+
+def esphome_job(job_id, since=0):
+    """Follow a running or finished ESPHome command by its job id."""
+    try:
+        since = max(0, int(since or 0))
+    except (TypeError, ValueError):
+        since = 0
+    result = _panel_get(f"/api/esphome/job/{urllib.parse.quote(str(job_id), safe='')}"
+                        f"?since={since}")
+    if isinstance(result, dict) and result.get("job"):
+        return {"job": _job_tail(result["job"], lines=200)}
+    return result
+
+
+def esphome_set_secret(key, value):
+    """Set one key in ESPHome's secrets.yaml (the value is never read back)."""
+    return _panel_send(
+        "PUT", f"/api/esphome/secret/{urllib.parse.quote(str(key or ''), safe='')}",
+        {"value": value})
+
+
 def get_activity(hours=24, cause=None, limit=200):
     """What changed in the house recently, with a cause on every row.
 
@@ -2515,6 +2715,171 @@ def offer_resolutions(options):
 # ============================================================================
 
 TOOLS = [
+    # ESPHome — files here, builds on the dashboard, all through the panel.
+    {
+        "name": "esphome_list_devices",
+        "description": (
+            "List every ESPHome device configuration (/config/esphome): its "
+            "node and friendly name, platform and board, the dashboard's view "
+            "of it (address, online, deployed vs current firmware version, "
+            "update available), the Home Assistant device it is and whether "
+            "it carries a protected entity. Also says whether the ESPHome "
+            "dashboard can be reached and why not, the discovered devices "
+            "not yet adopted, and the keys (never values) in secrets.yaml. "
+            "Read-only."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "refresh": {"type": "boolean",
+                        "description": "Look for the dashboard again rather than "
+                                       "using the route found a few minutes ago."}}},
+    },
+    {
+        "name": "esphome_get_config",
+        "description": (
+            "Read one ESPHome device's YAML exactly as it is on disk, with its "
+            "file modification time. secrets.yaml is never read out (its keys "
+            "are listed instead). Read-only."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "configuration": {"type": "string",
+                              "description": "The file name, e.g. porch-light.yaml"}},
+            "required": ["configuration"]},
+    },
+    {
+        "name": "esphome_write_config",
+        "description": (
+            "Save an ESPHome device's YAML (the whole file). The previous file "
+            "is snapshotted into the edit journal first, so `brain undo` "
+            "restores it. A file that does not parse is still saved and the "
+            "answer says so. This changes nothing on the device until it is "
+            "installed; run esphome_validate after writing."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "configuration": {"type": "string"},
+            "content": {"type": "string", "description": "The complete YAML."},
+            "create": {"type": "boolean",
+                       "description": "True to create a new file (refused if it exists)."}},
+            "required": ["configuration", "content"]},
+    },
+    {
+        "name": "esphome_create_device",
+        "description": (
+            "Start a new ESPHome device file the way the dashboard's wizard "
+            "does: a fresh API encryption key, OTA password and fallback "
+            "hotspot, Wi-Fi from secrets.yaml. The name becomes the hostname "
+            "(lowercase letters, digits, hyphens)."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "name": {"type": "string"},
+            "platform": {"type": "string",
+                         "enum": ["esp32", "esp8266", "rp2040", "bk72xx", "rtl87xx"]},
+            "board": {"type": "string",
+                      "description": "PlatformIO board id (empty for the usual one)."},
+            "friendly_name": {"type": "string"}},
+            "required": ["name"]},
+    },
+    {
+        "name": "esphome_delete_device",
+        "description": (
+            "Move an ESPHome device file into the archive folder, the way the "
+            "dashboard deletes one. Refused for a device carrying a protected "
+            "entity."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "configuration": {"type": "string"}}, "required": ["configuration"]},
+    },
+    {
+        "name": "esphome_validate",
+        "description": (
+            "Validate an ESPHome configuration with ESPHome itself (on the "
+            "dashboard) and return its output and exit code. Changes nothing. "
+            "Needs a reachable dashboard."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "configuration": {"type": "string"},
+            "wait_seconds": {"type": "integer",
+                             "description": "How long to wait for it (default 90)."}},
+            "required": ["configuration"]},
+    },
+    {
+        "name": "esphome_compile",
+        "description": (
+            "Compile an ESPHome device's firmware on the dashboard without "
+            "installing it. Takes minutes; returns a job to follow with "
+            "esphome_job if it has not finished within wait_seconds."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "configuration": {"type": "string"},
+            "wait_seconds": {"type": "integer"}}, "required": ["configuration"]},
+    },
+    {
+        "name": "esphome_install",
+        "description": (
+            "Compile and install firmware onto an ESPHome device — over the "
+            "air by default (target 'OTA'), or to an address. This replaces "
+            "the firmware the device runs and reboots it. Refused for a device "
+            "carrying a protected entity. Returns a job to follow with "
+            "esphome_job."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "configuration": {"type": "string"},
+            "target": {"type": "string",
+                       "description": "'OTA' (default) or the device's IP address."},
+            "wait_seconds": {"type": "integer"}}, "required": ["configuration"]},
+    },
+    {
+        "name": "esphome_update_firmware",
+        "description": (
+            "Install the firmware update Home Assistant says is waiting for "
+            "an ESPHome device, through Home Assistant's own update entity. "
+            "Use this when the dashboard cannot be reached directly; it only "
+            "works while an update is actually waiting."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "configuration": {"type": "string"},
+            "wait_seconds": {"type": "integer"}}, "required": ["configuration"]},
+    },
+    {
+        "name": "esphome_clean",
+        "description": "Delete an ESPHome device's build files on the dashboard.",
+        "inputSchema": {"type": "object", "properties": {
+            "configuration": {"type": "string"}}, "required": ["configuration"]},
+    },
+    {
+        "name": "esphome_logs",
+        "description": (
+            "Read an ESPHome device's live log for a few seconds (default 20, "
+            "at most 120) and return the lines. Connects to the device "
+            "through the dashboard; changes nothing."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "configuration": {"type": "string"},
+            "seconds": {"type": "integer"}}, "required": ["configuration"]},
+    },
+    {
+        "name": "esphome_job",
+        "description": (
+            "Follow an ESPHome command (validate, compile, install, logs, "
+            "clean) by its job id: its state, exit code and output lines "
+            "after `since`. Read-only."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "job_id": {"type": "string"},
+            "since": {"type": "integer",
+                      "description": "Line number to continue from (the last `total`)."}},
+            "required": ["job_id"]},
+    },
+    {
+        "name": "esphome_set_secret",
+        "description": (
+            "Set one key in ESPHome's secrets.yaml (e.g. wifi_ssid, "
+            "wifi_password). Only that line changes; the value is never "
+            "read back."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "key": {"type": "string"}, "value": {"type": "string"}},
+            "required": ["key", "value"]},
+    },
     # ------------------------------------------------------------------
     # Entity & State Tools
     # ------------------------------------------------------------------
@@ -3791,6 +4156,20 @@ TOOL_IMPLEMENTATIONS = {
     "remember_fact": "remember_fact",
     # Talking to the person who is reading
     "offer_resolutions": "offer_resolutions",
+    # ESPHome devices
+    "esphome_list_devices": "esphome_list_devices",
+    "esphome_get_config": "esphome_get_config",
+    "esphome_write_config": "esphome_write_config",
+    "esphome_create_device": "esphome_create_device",
+    "esphome_delete_device": "esphome_delete_device",
+    "esphome_validate": "esphome_validate",
+    "esphome_compile": "esphome_compile",
+    "esphome_install": "esphome_install",
+    "esphome_update_firmware": "esphome_update_firmware",
+    "esphome_clean": "esphome_clean",
+    "esphome_logs": "esphome_logs",
+    "esphome_job": "esphome_job",
+    "esphome_set_secret": "esphome_set_secret",
 }
 
 
