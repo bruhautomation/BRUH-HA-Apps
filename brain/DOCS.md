@@ -63,7 +63,7 @@ subscription — or your own API key.
 
 Most AI integrations can turn on a light. brAIn administers the installation.
 
-It reaches Home Assistant three ways at once — a **native MCP server** (51 tools) for
+It reaches Home Assistant three ways at once — a **native MCP server** (64 tools) for
 reading and controlling, **65 registry-management services** for the parts of Home
 Assistant that normally only exist behind the Settings UI, and a **real shell** in
 `/config` for everything that is still a YAML file.
@@ -1702,6 +1702,55 @@ Either way the answer reaches the add-on through a small file on
 not published — so if the add-on is stopped when you tick something off, the
 answer waits for it rather than being lost.
 
+### It manages your ESPHome devices
+
+**House → ESPHome** lists every device file in `/config/esphome` — the folder the
+ESPHome add-on keeps them in — with what each one is: its name, the chip and
+board, whether it is online, the firmware it is running against the version the
+dashboard would build now, and which Home Assistant device it is. From there you
+can:
+
+- **Edit** a device's YAML in the panel, with the output of whatever you run for
+  it underneath: edit, **Validate**, read ESPHome's own error, edit again.
+- **Install** — compile and flash it over the air — and watch the build scroll
+  past; **Logs** streams the device's own log live; **Compile only** and
+  **Clean build files** are behind **More**.
+- **＋ New device** writes the file the dashboard's wizard would, with a fresh
+  API encryption key, OTA password and fallback hotspot for that device and
+  Wi-Fi from your secrets. The first install onto a brand-new board has to be
+  over USB from the ESPHome dashboard itself; every one after that can be from
+  here.
+- **Wi-Fi & secrets** lists the names in `secrets.yaml` and sets one without
+  ever showing its value.
+- **Delete** moves the file into `archive/`, exactly as the dashboard does. The
+  device goes on running its firmware.
+
+Claude can do all of it too, from the chat, the terminal or voice — "add a
+DHT22 on GPIO4 to the garage sensor and install it", "why does the porch light
+keep dropping off Wi-Fi?" (it reads the logs). Scheduled runs may read device
+files, validate them and read logs; writing, compiling and installing only ever
+happen when somebody asked.
+
+**Every save is undoable.** The file is snapshotted into the same edit journal
+`brain undo` reads before it is written, and a file that has been saved from the
+ESPHome dashboard since you opened it is refused rather than overwritten. A file
+whose YAML does not parse is still saved — it is yours — and the panel says
+where the parser stopped.
+
+**Building needs the ESPHome dashboard.** brAIn edits files itself, but the
+toolchains ESPHome compiles with do not run inside brAIn's container, so
+validate, compile, install and logs go to the dashboard. With the ESPHome
+add-on installed and started, brAIn finds it on its own and reaches it through
+Home Assistant's ingress — nothing to configure, no port to open. A dashboard
+somewhere else (a container on another machine) is named with the
+`esphome_dashboard_url` option. When neither can be reached the tab says
+exactly why, file editing keeps working, and a device with a firmware update
+waiting can still be updated **through Home Assistant**'s own update entity.
+
+**Protected entities apply.** Installing new firmware on a device is acting on
+every entity it carries, so a device holding anything on your
+`protected_entities` list is refused, naming the entity.
+
 ### It knows what happened, and what caused it
 
 A state does not carry a cause. Nothing in `light.kitchen` being on says
@@ -2694,6 +2743,12 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 | `morning_brief_hour` | string | `7` | When to send it until brAIn has measured your home's own hour (10 weekdays, so about two weeks), or if your days are too irregular for there to be one. |
 | `weekly_report` | bool | `false` | One message a week: what the house used against the week before, what was found and answered, what brAIn learned, and the one thing worth doing. Needs `findings_notify_service` set — point it at `notify.notify` and it reaches everybody. |
 | `weekly_report_day` | list | `sunday` | Which day it goes out. The hour is `morning_brief_hour`, or your home's own measured hour once brAIn knows it. |
+
+### ESPHome
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `esphome_dashboard_url` | string | *(empty)* | Where your ESPHome dashboard is, when it is not the ESPHome add-on (which brAIn finds by itself) — e.g. `http://192.168.1.20:6052`. Editing device files never needs it; validating, compiling, installing and logs do. |
 
 > **What the terminal is told about your memory.** `auto_generate_context`
 > writes `/config/CLAUDE.md` at startup, and the learned-memory document is

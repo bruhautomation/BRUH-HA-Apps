@@ -743,6 +743,13 @@ ANALYST_TOOLS = [
     f"{MCP}get_dashboard",
     f"{MCP}get_error_log",
     f"{MCP}get_supervisor_info",
+    # ESPHome, the reading half: the device list, one file, a validation
+    # (ESPHome checks the YAML and changes nothing) and a device's log.
+    f"{MCP}esphome_list_devices",
+    f"{MCP}esphome_get_config",
+    f"{MCP}esphome_validate",
+    f"{MCP}esphome_logs",
+    f"{MCP}esphome_job",
 ]
 # Named explicitly rather than left to the allow-list, because `--allowedTools`
 # governs what runs WITHOUT a prompt, and a headless run cannot be prompted:
@@ -763,6 +770,12 @@ ANALYST_DENIED = [
     # which from a card reads as a broken tool rather than as the policy it
     # is — so this says which, the way every other name here does.
     f"{MCP}offer_resolutions",
+    # ESPHome, the acting half: every one writes a file, spends minutes of
+    # somebody's CPU on a build, or replaces the firmware a device runs.
+    f"{MCP}esphome_write_config", f"{MCP}esphome_create_device",
+    f"{MCP}esphome_delete_device", f"{MCP}esphome_compile",
+    f"{MCP}esphome_install", f"{MCP}esphome_update_firmware",
+    f"{MCP}esphome_clean", f"{MCP}esphome_set_secret",
 ]
 
 

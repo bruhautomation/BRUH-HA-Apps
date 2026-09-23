@@ -188,6 +188,15 @@ configuration:
       first week it rains. One a day and three a week is the whole cost;
       brAIn never asks twice about the same thing, and it will not ask
       about locks, alarms or where anybody is.
+  esphome_dashboard_url:
+    name: ESPHome dashboard address
+    description: >-
+      Leave empty if you use the ESPHome add-on — brAIn finds it through
+      Home Assistant by itself. Set it only when your ESPHome dashboard
+      runs somewhere else (a container on another machine), for example
+      http://192.168.1.20:6052. Editing device files works without it;
+      validating, compiling, installing and reading logs need a dashboard
+      brAIn can reach.
   self_healing:
     name: Fix three things overnight
     description: >-

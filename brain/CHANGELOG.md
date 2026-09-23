@@ -2,6 +2,35 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.6.0
+
+**ESPHome devices, managed from brAIn.**
+
+- **House → ESPHome** lists every device file in `/config/esphome` with what
+  it is and how it is doing: chip and board, online or not, the firmware it
+  runs against the version the dashboard would build now, and the Home
+  Assistant device it is. Edit a device's YAML in the panel with the output of
+  whatever you run for it underneath; **Validate**, **Install** over the air,
+  stream **Logs**, **Compile only** and **Clean build files**; start a
+  **＋ New device** with its own encryption key, OTA password and fallback
+  hotspot; set **Wi-Fi & secrets** without a value ever being shown; and
+  **Delete** into `archive/` the way the dashboard does.
+- **Thirteen new tools** let Claude do the same from the chat, the terminal
+  and voice — list, read, write, create, delete, validate, compile, install,
+  update through Home Assistant, clean, read logs, follow a build, set a
+  secret. Scheduled runs may read, validate and read logs; nothing unattended
+  writes a file or flashes a device.
+- **Every save is undoable** with `brain undo` (the file goes through the
+  same edit journal), and a file saved from the ESPHome dashboard since you
+  opened it is refused rather than overwritten.
+- **No setup for the ESPHome add-on**: brAIn finds it through the Supervisor
+  and reaches it through Home Assistant's own ingress. A dashboard elsewhere
+  is named with the new `esphome_dashboard_url` option. When no dashboard can
+  be reached the tab says why, editing keeps working, and a waiting firmware
+  update can still be installed through Home Assistant's update entity.
+- **Protected entities apply to firmware**: a device carrying anything on
+  `protected_entities` is not flashed or deleted, and the refusal names it.
+
 ## 2.5.2
 
 **One row of answers on every card.**

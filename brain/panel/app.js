@@ -8890,6 +8890,9 @@ function switchView(name) {
   // a timeline showing the state of the house when you last looked is the
   // one thing a timeline may not do.
   if (name === "activity") { actState.end = null; actState.open = ""; refreshActivity(); }
+  // Drawn from what we have, then again once the fetch lands; the fetch
+  // asks the dashboard for its devices, which is a second or two.
+  if (name === "esphome") { renderEsphome(); refreshEsphome(false); }
   // Rendered from what we have, then again once the fetch lands — the same
   // shape Findings uses, so opening the tab is never a blank frame.
   if (name === "proposals") {
@@ -11264,6 +11267,451 @@ document.addEventListener("visibilitychange", () => {
   api("api/auth/setup/status").then((st) => {
     if (["starting", "awaiting_code", "working"].includes(st.phase)) pollSetup();
   }).catch(() => {});
+});
+
+// ------------------------------------------------------------------ esphome
+// Device files are read and written here; builds, installs and logs run on
+// the ESPHome dashboard and come back as a job this polls. Every refusal the
+// server can give — a protected device, a file changed on disk, a dashboard
+// nobody can reach — is a sentence, so this reads the body of a 4xx rather
+// than letting `api` turn it into a status code.
+const espState = {
+  data: null, loading: false, open: "", mtime: null, loaded: "",
+  drafts: {}, job: null, since: 0, poll: null, listPoll: null,
+};
+
+async function espApi(path, opts = {}) {
+  let resp;
+  try {
+    resp = await fetch(path.replace(/^\//, ""), {
+      headers: { "Content-Type": "application/json" }, ...opts });
+  } catch (e) {
+    return { ok: false, error: "The add-on did not answer: " + e.message };
+  }
+  let body = {};
+  try { body = await resp.json(); } catch (e) { body = {}; }
+  if (!resp.ok && body.ok === undefined) body.ok = false;
+  if (!resp.ok && !body.error) body.error = `HTTP ${resp.status}`;
+  return body;
+}
+
+const espFile = (name) => encodeURIComponent(name);
+
+function espStatusText(d) {
+  const dash = (d && d.dashboard) || {};
+  if (!d) return "Looking for your ESPHome dashboard…";
+  if (dash.reachable) {
+    const via = dash.via === "option"
+      ? `at ${dash.url}` : `through the ${(dash.addon || {}).name || "ESPHome"} add-on`;
+    const ver = dash.version ? ` ${dash.version}` : "";
+    return `Connected to ESPHome${ver} ${via}. Edit, validate, install and read logs from here.`;
+  }
+  return dash.reason || "brAIn could not reach an ESPHome dashboard.";
+}
+
+function espBadge(text, cls) { return el("span", "espbadge " + (cls || ""), text); }
+
+function renderEsphome() {
+  const d = espState.data;
+  const status = $("#espStatus");
+  status.textContent = espStatusText(d);
+  status.classList.toggle("espwarn", !!(d && !(d.dashboard || {}).reachable));
+  const list = $("#espList");
+  list.textContent = "";
+  if (!d) { list.appendChild(el("p", "espempty", "Loading…")); return; }
+  const rows = d.devices || [];
+  if (!d.dir_exists) {
+    list.appendChild(el("p", "espempty",
+      `There is no ${d.dir} folder yet. Install the ESPHome add-on, or press ＋ New device and brAIn will start one.`));
+  } else if (!rows.length) {
+    list.appendChild(el("p", "espempty",
+      `No device files in ${d.dir} yet. Press ＋ New device to start one.`));
+  }
+  const reachable = !!(d.dashboard || {}).reachable;
+  for (const dev of rows) {
+    const card = el("div", "espdev");
+    const head = el("div", "espdevhead");
+    const title = el("div", "espdevname");
+    title.appendChild(el("b", null, dev.friendly_name || dev.name || dev.configuration));
+    title.appendChild(el("span", "espfile", dev.configuration));
+    head.appendChild(title);
+    const badges = el("div", "espbadges");
+    if (dev.online === true) badges.appendChild(espBadge("Online", "good"));
+    else if (dev.online === false) badges.appendChild(espBadge("Offline", "bad"));
+    if (dev.error) badges.appendChild(espBadge("YAML error", "bad"));
+    else if (!dev.is_device) badges.appendChild(espBadge("Package / include", ""));
+    if (dev.update_available) badges.appendChild(espBadge("Update available", "warn"));
+    if (dev.protected) badges.appendChild(espBadge("Protected", ""));
+    if (dev.job) badges.appendChild(espBadge(`${dev.job.label}…`, "run"));
+    head.appendChild(badges);
+    card.appendChild(head);
+    const meta = [];
+    if (dev.platform) meta.push(dev.platform.toUpperCase() + (dev.board ? ` · ${dev.board}` : ""));
+    if (dev.address) meta.push(dev.address);
+    if (dev.deployed_version) {
+      meta.push(dev.update_available
+        ? `firmware ${dev.deployed_version} → ${dev.current_version}`
+        : `firmware ${dev.deployed_version}`);
+    }
+    if (dev.ha_name) meta.push(`in Home Assistant as “${dev.ha_name}”, ${dev.entity_count} entities`);
+    if (meta.length) card.appendChild(el("div", "espmeta", meta.join(" · ")));
+    if (dev.comment) card.appendChild(el("div", "espmeta", dev.comment));
+    if (dev.error) card.appendChild(el("div", "espmeta esperr", dev.error));
+    const acts = el("div", "espacts");
+    const edit = el("button", "btn small", "Edit");
+    edit.addEventListener("click", () => openEsp(dev.configuration));
+    acts.appendChild(edit);
+    if (dev.is_device) {
+      const inst = el("button", "btn small", "Install");
+      inst.disabled = !reachable;
+      tip(inst, reachable ? "Compile and install over the air" : "Needs the ESPHome dashboard");
+      inst.addEventListener("click", () => espRunFor(dev.configuration, "install"));
+      acts.appendChild(inst);
+      if (!reachable && dev.update_entity && dev.update_available !== false) {
+        const upd = el("button", "btn small", "Update via Home Assistant");
+        upd.addEventListener("click", () => espRunFor(dev.configuration, "update"));
+        acts.appendChild(upd);
+      }
+      const logs = el("button", "btn small ghost", "Logs");
+      logs.disabled = !reachable;
+      logs.addEventListener("click", () => espRunFor(dev.configuration, "logs"));
+      acts.appendChild(logs);
+    }
+    const more = el("details", "espmore");
+    more.appendChild(el("summary", "btn small ghost", "More"));
+    const menu = el("div", "espmenu");
+    const addItem = (label, fn, disabled) => {
+      const b = el("button", "btn small ghost", label);
+      b.disabled = !!disabled;
+      b.addEventListener("click", () => { more.open = false; fn(); });
+      menu.appendChild(b);
+    };
+    addItem("Validate", () => espRunFor(dev.configuration, "validate"), !reachable);
+    addItem("Compile only", () => espRunFor(dev.configuration, "compile"), !reachable);
+    addItem("Clean build files", () => espRunFor(dev.configuration, "clean"), !reachable);
+    addItem("Delete (archive)", () => espDelete(dev), false);
+    more.appendChild(menu);
+    acts.appendChild(more);
+    card.appendChild(acts);
+    list.appendChild(card);
+  }
+  const imp = $("#espImport");
+  imp.textContent = "";
+  const found = d.importable || [];
+  if (found.length) {
+    imp.appendChild(el("h3", null, "Found on your network, not adopted yet"));
+    for (const f of found) {
+      imp.appendChild(el("div", "espmeta",
+        `${f.friendly_name || f.name} (${f.name}) — adopt it from the ESPHome dashboard to bring its file here.`));
+    }
+  }
+}
+
+async function refreshEsphome(fresh) {
+  if (espState.loading) return;
+  espState.loading = true;
+  try {
+    const d = await espApi("api/esphome" + (fresh ? "?fresh=1" : ""));
+    if (d && Array.isArray(d.devices)) espState.data = d;
+    else toast((d && d.error) || "Could not read the ESPHome devices");
+  } finally {
+    espState.loading = false;
+  }
+  if (currentView === "esphome") renderEsphome();
+  // A build started somewhere else (a Claude run, another viewer) shows on
+  // its row; poll only while one is running AND somebody is looking.
+  clearTimeout(espState.listPoll);
+  const busy = ((espState.data || {}).devices || []).some((x) => x.job);
+  if (busy && currentView === "esphome") {
+    espState.listPoll = setTimeout(() => refreshEsphome(false), 5000);
+  }
+}
+
+function espDirty() {
+  return espState.open && $("#espText").value !== espState.loaded;
+}
+
+function espSyncDirty() {
+  $("#espDirty").textContent = espDirty() ? "Unsaved changes" : "";
+}
+
+function espNote(text, bad) {
+  const n = $("#espNote");
+  n.hidden = !text;
+  n.textContent = text || "";
+  n.classList.toggle("esperr", !!bad);
+}
+
+async function openEsp(configuration, opts = {}) {
+  espState.open = configuration;
+  $("#espTitle").textContent = configuration;
+  espNote("");
+  $("#espEditor").hidden = false;
+  $("#espText").value = "Loading…";
+  $("#espText").disabled = true;
+  if (!opts.keepConsole) espShowJob(null);
+  openBox("#espModal");
+  const r = await espApi(`api/esphome/config/${espFile(configuration)}`);
+  if (espState.open !== configuration) return;
+  $("#espText").disabled = false;
+  if (!r.ok) {
+    $("#espText").value = "";
+    espState.loaded = "";
+    espNote(r.error, true);
+    return;
+  }
+  espState.loaded = r.content;
+  espState.mtime = r.mtime;
+  // Escape closes every dialog without asking, so an unsaved edit is kept
+  // here and put back when the same file is opened again — unless the
+  // file changed underneath it, which is the conflict Save would refuse.
+  const draft = espState.drafts[configuration];
+  if (draft && draft.base === r.content && draft.text !== r.content) {
+    $("#espText").value = draft.text;
+    espNote("Your unsaved edit from before is back — Save keeps it; closing without saving keeps it for next time.");
+  } else {
+    $("#espText").value = r.content;
+    delete espState.drafts[configuration];
+  }
+  if (r.error) espNote(`This file does not parse: ${r.error}`, true);
+  espSyncDirty();
+}
+
+async function espSave() {
+  const name = espState.open;
+  if (!name) return false;
+  const content = $("#espText").value;
+  const r = await espApi(`api/esphome/config/${espFile(name)}`, {
+    method: "PUT", body: JSON.stringify({ content, mtime: espState.mtime }) });
+  if (!r.ok) {
+    espNote(r.error || "Could not save", true);
+    return false;
+  }
+  espState.loaded = content;
+  espState.mtime = r.mtime;
+  delete espState.drafts[name];
+  espSyncDirty();
+  espNote(r.warning || "", !!r.warning);
+  if (!r.warning) toast(`Saved ${name}`);
+  refreshEsphome(false);
+  return true;
+}
+
+function espStopPoll() {
+  clearTimeout(espState.poll);
+  espState.poll = null;
+}
+
+function espShowJob(job) {
+  espStopPoll();
+  espState.job = job;
+  espState.since = 0;
+  const con = $("#espConsole");
+  if (!job) { con.hidden = true; $("#espOut").textContent = ""; return; }
+  con.hidden = false;
+  $("#espOut").textContent = "";
+  espPaintJob(job);
+  espPoll();
+}
+
+function espPaintJob(job) {
+  const out = $("#espOut");
+  const nearBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
+  if (job.lines && job.lines.length) {
+    out.textContent += job.lines.join("\n") + "\n";
+  }
+  espState.since = job.total || espState.since;
+  const words = { running: "running", succeeded: "finished", failed: "failed", stopped: "stopped" };
+  let title = `${job.label} — ${words[job.state] || job.state}`;
+  if (job.via === "home_assistant") title += " (through Home Assistant)";
+  $("#espConTitle").textContent = title;
+  $("#espConTitle").className = "espcontitle " + job.state;
+  if (job.state !== "running" && job.error) out.textContent += `\n${job.error}\n`;
+  $("#espStop").hidden = job.state !== "running";
+  if (nearBottom) out.scrollTop = out.scrollHeight;
+}
+
+async function espPoll() {
+  const job = espState.job;
+  if (!job || job.state !== "running") return;
+  espState.poll = setTimeout(async () => {
+    if (espState.job !== job) return;
+    if (!$("#espModal").classList.contains("open")) {
+      // A log stream holds the device's API connection open; nobody is
+      // reading it once the dialog is gone, however it was closed.
+      if (job.kind === "logs") {
+        espApi(`api/esphome/job/${job.id}/stop`, { method: "POST", body: "{}" });
+      }
+      return;
+    }
+    const r = await espApi(`api/esphome/job/${job.id}?since=${espState.since}`);
+    if (espState.job !== job) return;
+    if (r.job) {
+      espState.job = r.job;
+      espPaintJob(r.job);
+      if (r.job.state !== "running") { refreshEsphome(false); return; }
+    }
+    espPoll();
+  }, 1000);
+}
+
+async function espStart(configuration, action) {
+  const r = await espApi(`api/esphome/config/${espFile(configuration)}/${action}`,
+    { method: "POST", body: "{}" });
+  if (r.job && (r.ok || r.conflict)) {
+    espShowJob(r.job);
+    if (!r.ok) espNote(r.error);
+    refreshEsphome(false);
+    return true;
+  }
+  espNote(r.error || "Could not start it", true);
+  return false;
+}
+
+async function espRunFor(configuration, action) {
+  if (action === "install" && !window.confirm(
+    `Compile ${configuration} and install it on the device? It reboots when the new firmware is in.`)) return;
+  await openEsp(configuration);
+  if (action === "logs") $("#espEditor").hidden = true;
+  await espStart(configuration, action);
+}
+
+async function espDelete(dev) {
+  if (!window.confirm(`Move ${dev.configuration} into the archive folder? The device itself keeps running its firmware.`)) return;
+  const r = await espApi(`api/esphome/config/${espFile(dev.configuration)}/delete`,
+    { method: "POST", body: "{}" });
+  if (!r.ok) { toast(r.error || "Could not delete it"); return; }
+  toast(`Archived ${dev.configuration} to ${r.archived_to}`);
+  refreshEsphome(false);
+}
+
+$("#espRefresh").addEventListener("click", () => refreshEsphome(true));
+$("#espText").addEventListener("input", () => {
+  if (espState.open) {
+    espState.drafts[espState.open] = { base: espState.loaded, text: $("#espText").value };
+  }
+  espSyncDirty();
+});
+// Tab indents rather than leaving the box: YAML is indentation.
+$("#espText").addEventListener("keydown", (ev) => {
+  if (ev.key !== "Tab" || ev.shiftKey || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+  ev.preventDefault();
+  const t = ev.target;
+  const at = t.selectionStart;
+  t.setRangeText("  ", at, t.selectionEnd, "end");
+  t.dispatchEvent(new Event("input"));
+});
+$("#espSave").addEventListener("click", () => espSave());
+$("#espValidate").addEventListener("click", async () => {
+  if (espDirty() && !(await espSave())) return;
+  espStart(espState.open, "validate");
+});
+$("#espInstall").addEventListener("click", async () => {
+  if (!window.confirm(`Compile ${espState.open} and install it on the device? It reboots when the new firmware is in.`)) return;
+  if (espDirty() && !(await espSave())) return;
+  espStart(espState.open, "install");
+});
+$("#espLogs").addEventListener("click", () => espStart(espState.open, "logs"));
+$("#espStop").addEventListener("click", async () => {
+  const job = espState.job;
+  if (!job) return;
+  const r = await espApi(`api/esphome/job/${job.id}/stop`, { method: "POST", body: "{}" });
+  if (r.job) { espState.job = r.job; }
+});
+function espClose() {
+  espStopPoll();
+  closeBox("#espModal");
+}
+$("#espClose").addEventListener("click", espClose);
+$("#espModal").addEventListener("click", (ev) => {
+  if (ev.target === $("#espModal")) espClose();
+});
+
+$("#espNew").addEventListener("click", () => {
+  const plats = (espState.data || {}).platforms || [{ id: "esp32", label: "ESP32", board: "esp32dev" }];
+  const sel = $("#espNewPlatform");
+  sel.textContent = "";
+  for (const p of plats) {
+    const o = el("option", null, p.label);
+    o.value = p.id;
+    o.dataset.board = p.board;
+    sel.appendChild(o);
+  }
+  $("#espNewName").value = "";
+  $("#espNewFriendly").value = "";
+  $("#espNewBoard").value = plats[0].board;
+  $("#espNewErr").hidden = true;
+  openBox("#espNewModal");
+  $("#espNewName").focus();
+});
+$("#espNewPlatform").addEventListener("change", (ev) => {
+  const o = ev.target.selectedOptions[0];
+  if (o) $("#espNewBoard").value = o.dataset.board || "";
+});
+// The friendly name is what people type first; the hostname follows it
+// until somebody edits the hostname on purpose.
+$("#espNewFriendly").addEventListener("input", (ev) => {
+  const name = $("#espNewName");
+  if (name.dataset.touched) return;
+  name.value = ev.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "").slice(0, 31).replace(/-+$/, "");
+});
+$("#espNewName").addEventListener("input", (ev) => { ev.target.dataset.touched = "1"; });
+$("#espNewClose").addEventListener("click", () => closeBox("#espNewModal"));
+$("#espNewCreate").addEventListener("click", async () => {
+  const body = {
+    name: $("#espNewName").value.trim(),
+    friendly_name: $("#espNewFriendly").value.trim(),
+    platform: $("#espNewPlatform").value,
+    board: $("#espNewBoard").value.trim(),
+  };
+  const r = await espApi("api/esphome/create", { method: "POST", body: JSON.stringify(body) });
+  if (!r.ok) {
+    $("#espNewErr").hidden = false;
+    $("#espNewErr").textContent = r.error || "Could not create it";
+    return;
+  }
+  delete $("#espNewName").dataset.touched;
+  closeBox("#espNewModal");
+  await refreshEsphome(false);
+  await openEsp(r.configuration);
+  if (r.warning) espNote(r.warning, true);
+});
+
+function renderEspSecrets(keys) {
+  const list = $("#espSecList");
+  list.textContent = "";
+  if (!keys.length) { list.appendChild(el("p", "hint", "secrets.yaml is empty or missing.")); return; }
+  for (const k of keys) {
+    const b = el("button", "espseckey", k);
+    b.addEventListener("click", () => { $("#espSecKey").value = k; $("#espSecVal").focus(); });
+    list.appendChild(b);
+  }
+}
+$("#espSecrets").addEventListener("click", async () => {
+  $("#espSecErr").hidden = true;
+  $("#espSecKey").value = "";
+  $("#espSecVal").value = "";
+  renderEspSecrets((espState.data || {}).secret_keys || []);
+  openBox("#espSecModal");
+  const r = await espApi("api/esphome/secrets");
+  if (r.keys) renderEspSecrets(r.keys);
+});
+$("#espSecClose").addEventListener("click", () => closeBox("#espSecModal"));
+$("#espSecSave").addEventListener("click", async () => {
+  const key = $("#espSecKey").value.trim();
+  const r = await espApi(`api/esphome/secret/${encodeURIComponent(key)}`, {
+    method: "PUT", body: JSON.stringify({ value: $("#espSecVal").value }) });
+  if (!r.ok) {
+    $("#espSecErr").hidden = false;
+    $("#espSecErr").textContent = r.error || "Could not set it";
+    return;
+  }
+  $("#espSecVal").value = "";
+  $("#espSecErr").hidden = true;
+  toast(`${r.replaced ? "Replaced" : "Added"} ${key}`);
+  const again = await espApi("api/esphome/secrets");
+  if (again.keys) renderEspSecrets(again.keys);
 });
 
 (async function init() {
