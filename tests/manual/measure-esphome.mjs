@@ -136,7 +136,7 @@ const readList = (page) => page.evaluate(() => {
       buttons: [...r.querySelectorAll('.espacts > .btn, .espmore > summary')].map(size),
       right: r.getBoundingClientRect().right,
     })),
-    head: [...document.querySelectorAll('.espactions .btn')].map(size),
+    head: [...document.querySelectorAll('#viewEsphome .espactions .btn')].map(size),
     docWidth: document.documentElement.scrollWidth,
     viewport: window.innerWidth,
   };

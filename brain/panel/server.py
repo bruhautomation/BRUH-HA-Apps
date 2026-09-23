@@ -173,6 +173,7 @@ import knowledge_store
 import manual_ledger
 import milestones
 import model_plan
+import music_assistant
 import notify_router
 import override_ledger
 import onboarding
@@ -13053,6 +13054,8 @@ def make_app() -> web.Application:
     terminal_proxy.setup(app)
     # ESPHome devices: their YAML here, their builds on the dashboard.
     esphome.setup(app)
+    # Music Assistant: players, providers, queues and settings, over its API.
+    music_assistant.setup(app)
 
     async def on_startup(app: web.Application) -> None:
         # Startup is the one moment we know nothing is in flight, so it is

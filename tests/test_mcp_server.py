@@ -522,6 +522,11 @@ class TestMCPProtocol(unittest.TestCase):
             "esphome_delete_device", "esphome_validate", "esphome_compile",
             "esphome_install", "esphome_update_firmware", "esphome_clean",
             "esphome_logs", "esphome_job", "esphome_set_secret",
+            # 2.7: Music Assistant, through the panel
+            "music_assistant_status", "music_assistant_query",
+            "music_assistant_search", "music_assistant_command",
+            "music_assistant_player", "music_assistant_play",
+            "music_assistant_remove_players",
         }
         self.assertEqual(tool_names, expected_tools)
 

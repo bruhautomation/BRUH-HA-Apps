@@ -1328,6 +1328,101 @@ def esphome_set_secret(key, value):
         {"value": value})
 
 
+# ---------------------------------------------------------------------------
+# Music Assistant — through the panel, which finds the server, signs in with
+# Home Assistant's own Music Assistant token (or an admin's), and asks
+# protected_entities about every player. One request per tool, the ESPHome
+# arrangement, so there is one answer to "which server" and "may brAIn touch
+# this player".
+# ---------------------------------------------------------------------------
+
+MA_VOICE_REFUSAL = (
+    "Music Assistant administration is not available to voice. To play "
+    "something, call the music_assistant.play_media service (or a "
+    "media_player service) on an exposed media_player entity with "
+    "call_service; do not retry this tool."
+)
+
+
+def _ma_path(player_id):
+    return urllib.parse.quote(str(player_id or ""), safe="")
+
+
+def music_assistant_status():
+    """The Music Assistant server, its sign-in, every player (with what it is
+    playing), the players worth clearing out, and every provider."""
+    if EXPOSED_ONLY:
+        return {"error": MA_VOICE_REFUSAL}
+    return _panel_send("GET", "/api/music-assistant", timeout=90)
+
+
+def music_assistant_query(command, args=None):
+    """Run one read-only Music Assistant API command."""
+    if EXPOSED_ONLY:
+        return {"error": MA_VOICE_REFUSAL}
+    return _panel_send("POST", "/api/music-assistant/command",
+                       {"command": command, "args": args or {},
+                        "read_only": True}, timeout=150)
+
+
+def music_assistant_search(query, media_types=None, limit=10):
+    """Search Music Assistant's library and every music provider."""
+    if EXPOSED_ONLY:
+        return {"error": MA_VOICE_REFUSAL}
+    try:
+        limit = max(1, min(int(limit or 10), 50))
+    except (TypeError, ValueError):
+        limit = 10
+    args = {"search_query": str(query or ""), "limit": limit}
+    if media_types:
+        args["media_types"] = [str(t) for t in media_types] \
+            if isinstance(media_types, list) else [str(media_types)]
+    return _panel_send("POST", "/api/music-assistant/command",
+                       {"command": "music/search", "args": args,
+                        "read_only": True}, timeout=150)
+
+
+def music_assistant_command(command, args=None):
+    """Run any Music Assistant API command (players, queues, library,
+    providers, settings)."""
+    if EXPOSED_ONLY:
+        return {"error": MA_VOICE_REFUSAL}
+    return _panel_send("POST", "/api/music-assistant/command",
+                       {"command": command, "args": args or {}}, timeout=150)
+
+
+def music_assistant_player(player_id, action, value=None):
+    """One action on one Music Assistant player."""
+    if EXPOSED_ONLY:
+        return {"error": MA_VOICE_REFUSAL}
+    return _panel_send(
+        "POST", f"/api/music-assistant/player/{_ma_path(player_id)}/"
+                f"{urllib.parse.quote(str(action or ''), safe='')}",
+        {"value": value}, timeout=90)
+
+
+def music_assistant_play(player_id, media, option="", radio_mode=False):
+    """Play media on a Music Assistant player."""
+    if EXPOSED_ONLY:
+        return {"error": MA_VOICE_REFUSAL}
+    return _panel_send(
+        "POST", f"/api/music-assistant/player/{_ma_path(player_id)}/play",
+        {"media": media, "option": option or "", "radio_mode": bool(radio_mode)},
+        timeout=90)
+
+
+def music_assistant_remove_players(player_ids=None, provider="", stale_only=True,
+                                   dry_run=True, disable_if_held=False):
+    """Forget players Music Assistant should not have any more."""
+    if EXPOSED_ONLY:
+        return {"error": MA_VOICE_REFUSAL}
+    return _panel_send(
+        "POST", "/api/music-assistant/players/remove",
+        {"player_ids": player_ids or [], "provider": provider or "",
+         "stale_only": stale_only is not False, "dry_run": dry_run is not False,
+         "disable_if_held": bool(disable_if_held)}, timeout=150)
+
+
 def get_activity(hours=24, cause=None, limit=200):
     """What changed in the house recently, with a cause on every row.
 
@@ -2715,6 +2810,131 @@ def offer_resolutions(options):
 # ============================================================================
 
 TOOLS = [
+    # Music Assistant — its own API, through the panel.
+    {
+        "name": "music_assistant_status",
+        "description": (
+            "Music Assistant, whole: whether brAIn can reach the server and as "
+            "whom (role — 'service' can control and configure players; 'admin' "
+            "can also change providers and server settings), every player "
+            "(id, name, provider, available, state, volume, what it is playing, "
+            "group), the players worth clearing out (remembered but gone, or "
+            "unavailable — with why), and every provider with its last error. "
+            "Read-only. Start here before any other music_assistant tool."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "music_assistant_query",
+        "description": (
+            "Run one READ-ONLY Music Assistant API command and return its "
+            "result, e.g. players/all, player_queues/items {queue_id, limit}, "
+            "config/players/get {player_id}, config/providers, "
+            "config/providers/get_entries {provider_domain}, "
+            "music/tracks/library_items {limit, search}, music/browse {path}, "
+            "logging/get. Commands that change something are refused here; "
+            "use music_assistant_command."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "command": {"type": "string"},
+            "args": {"type": "object", "description": "The command's arguments."}},
+            "required": ["command"]},
+    },
+    {
+        "name": "music_assistant_search",
+        "description": (
+            "Search Music Assistant (the library and every music provider) for "
+            "tracks, albums, artists, playlists, radio stations, audiobooks or "
+            "podcasts. Each result carries a uri to play with "
+            "music_assistant_play. Read-only."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "query": {"type": "string"},
+            "media_types": {"type": "array", "items": {"type": "string", "enum": [
+                "artist", "album", "track", "playlist", "radio", "audiobook",
+                "podcast"]}},
+            "limit": {"type": "integer", "description": "Per type (default 10)."}},
+            "required": ["query"]},
+    },
+    {
+        "name": "music_assistant_command",
+        "description": (
+            "Run ANY Music Assistant API command — full control and "
+            "administration: players/cmd/* (play, pause, volume_set, "
+            "group_many, …), player_queues/* (play_media, shuffle, repeat, "
+            "move_item, transfer, …), config/players/save {player_id, values} "
+            "and config/players/remove {player_id}, "
+            "players/create_group_player, config/providers/save/remove/reload, "
+            "config/core/save, music/library/add_item, "
+            "music/playlists/create_playlist, music/sync, … Arguments are the "
+            "command's own, as in Music Assistant's API docs (its /api-docs "
+            "page). Refused for a player that is a protected entity. Settings "
+            "for providers and the server need an admin token "
+            "(music_assistant_token); the refusal says so."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "command": {"type": "string"},
+            "args": {"type": "object"}},
+            "required": ["command"]},
+    },
+    {
+        "name": "music_assistant_player",
+        "description": (
+            "One action on one Music Assistant player: play, pause, play_pause, "
+            "stop, next, previous, power (value true/false), volume (0-100), "
+            "volume_up, volume_down, mute (true/false), seek (seconds), group "
+            "(value: the player to join), ungroup, shuffle (true/false), repeat "
+            "(off/one/all), clear_queue, enable, disable, rename (value: the "
+            "new name). Refused for a protected entity."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "player_id": {"type": "string"},
+            "action": {"type": "string", "enum": [
+                "play", "pause", "play_pause", "stop", "next", "previous",
+                "power", "volume", "volume_up", "volume_down", "mute", "seek",
+                "group", "ungroup", "shuffle", "repeat", "clear_queue",
+                "enable", "disable", "rename"]},
+            "value": {"description": "The action's value, where it takes one."}},
+            "required": ["player_id", "action"]},
+    },
+    {
+        "name": "music_assistant_play",
+        "description": (
+            "Play media on a Music Assistant player: a uri from "
+            "music_assistant_search, a list of uris, or a name Music Assistant "
+            "searches for. option: play (default), replace, next, "
+            "replace_next or add. radio_mode keeps similar music going."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "player_id": {"type": "string"},
+            "media": {"description": "A uri, a list of uris, or a name."},
+            "option": {"type": "string",
+                       "enum": ["play", "replace", "next", "replace_next", "add"]},
+            "radio_mode": {"type": "boolean"}},
+            "required": ["player_id", "media"]},
+    },
+    {
+        "name": "music_assistant_remove_players",
+        "description": (
+            "Make Music Assistant forget players it should not have any more — "
+            "stale ones it remembers but has not seen, or ones left unavailable "
+            "(e.g. every AirCast/Chromecast bridge player from a provider you "
+            "removed). This is what clears a player Home Assistant's registry "
+            "tools cannot: the config lives in Music Assistant, and once it is "
+            "gone Home Assistant drops the entity too. DRY RUN by default — "
+            "lists what would go; call again with dry_run false to remove. "
+            "stale_only (default true) never sweeps up a working player. Filter "
+            "by player_ids and/or provider (instance id, domain or name). A "
+            "player whose provider cannot remove players is reported as held; "
+            "disable_if_held disables those instead."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "player_ids": {"type": "array", "items": {"type": "string"}},
+            "provider": {"type": "string"},
+            "stale_only": {"type": "boolean"},
+            "dry_run": {"type": "boolean"},
+            "disable_if_held": {"type": "boolean"}}},
+    },
     # ESPHome — files here, builds on the dashboard, all through the panel.
     {
         "name": "esphome_list_devices",
@@ -4170,6 +4390,14 @@ TOOL_IMPLEMENTATIONS = {
     "esphome_logs": "esphome_logs",
     "esphome_job": "esphome_job",
     "esphome_set_secret": "esphome_set_secret",
+    # Music Assistant
+    "music_assistant_status": "music_assistant_status",
+    "music_assistant_query": "music_assistant_query",
+    "music_assistant_search": "music_assistant_search",
+    "music_assistant_command": "music_assistant_command",
+    "music_assistant_player": "music_assistant_player",
+    "music_assistant_play": "music_assistant_play",
+    "music_assistant_remove_players": "music_assistant_remove_players",
 }
 
 

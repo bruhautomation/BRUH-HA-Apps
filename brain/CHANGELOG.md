@@ -2,6 +2,40 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.7.0
+
+**Music Assistant, run from brAIn.**
+
+- **House → Music Assistant** shows whether brAIn can reach Music Assistant
+  and as whom, every player with what it is playing, and every provider with
+  the last error it reported. Play/pause, skip, volume and power are on each
+  player; stop, clear the queue, rename and enable/disable are under **More**;
+  a provider showing an error can be **Reload**ed.
+- **Stale players can finally be cleared.** A player Music Assistant
+  remembers but has not seen since, such as every AirCast bridge or a
+  removed provider's speakers, is listed with why. **Remove** forgets one,
+  and **Remove all stale players** forgets them all after showing you the
+  list. Home Assistant's registry tools could not do this, because the
+  player's config lives in Music Assistant; once Music Assistant forgets it,
+  Home Assistant drops the entity by itself. A player still held by a
+  provider that cannot remove players is reported as held and can be
+  disabled instead.
+- **Seven new tools** give Claude everything Music Assistant's own interface
+  can do: an overview, a search, a player tool, a play tool, the clean-up
+  (a dry run unless told otherwise), a read-only query, and a tool that runs
+  **any** command in Music Assistant's API: players, queues, groups, the
+  library, playlists, providers and server settings. Scheduled runs may only
+  read, and voice keeps using `music_assistant.play_media` on exposed players.
+- **No setup.** brAIn connects where Home Assistant's Music Assistant
+  integration connects, with the sign-in Music Assistant gave Home
+  Assistant. That sign-in covers players and the library. Providers and
+  server settings need a Music Assistant admin, so the new
+  `music_assistant_token` option takes an admin's long-lived token. A refusal
+  for want of one says so. `music_assistant_url` names a server Home
+  Assistant is not connected to.
+- **Protected entities apply**: a player that is a protected Home Assistant
+  entity is not played, changed or removed.
+
 ## 2.6.1
 
 - **A finding brAIn decided not to bother you with stays off the Findings

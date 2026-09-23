@@ -115,6 +115,7 @@
   <button class="subtab" data-view="memory" data-group="house" role="tab">Knowledge</button>
   <button class="subtab" data-view="activity" data-group="house" role="tab">Activity</button>
   <button class="subtab" data-view="esphome" data-group="house" role="tab">ESPHome</button>
+  <button class="subtab" data-view="music" data-group="house" role="tab">Music Assistant</button>
   <button class="subtab" data-view="docs" data-group="help" role="tab">Docs</button>
 </nav>
 
@@ -551,6 +552,30 @@
     </div>
     <div id="espList" class="esplist"></div>
     <div id="espImport" class="espimport"></div>
+  </section>
+</div>
+
+<!-- Music Assistant, from brAIn's side: whether brAIn can reach it and as
+     whom, every player and what it is playing, the players it remembers
+     that are gone (which only Music Assistant can forget), and every
+     provider with its last error. The status line says which sign-in is in
+     use because what brAIn may change depends on it. -->
+<div id="viewMusic" class="view">
+  <section class="espwrap">
+    <div class="esphead">
+      <div>
+        <h2>Music Assistant</h2>
+        <p id="maStatus" class="sub">Looking for Music Assistant&hellip;</p>
+      </div>
+      <div class="espactions">
+        <button id="maRefresh" class="btn ghost">Refresh</button>
+      </div>
+    </div>
+    <div id="maStale" class="esplist"></div>
+    <h3 id="maPlayHead" class="masec" hidden>Players</h3>
+    <div id="maPlayers" class="esplist"></div>
+    <h3 id="maProvHead" class="masec" hidden>Providers</h3>
+    <div id="maProviders" class="esplist"></div>
   </section>
 </div>
 
