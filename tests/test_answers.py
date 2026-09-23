@@ -82,8 +82,8 @@ class TestTheSituationIsAClosedVocabulary(unittest.TestCase):
                          "automation")
 
 
-class TestThreeButtonsAndAWayToSayNo(unittest.TestCase):
-    def test_never_more_than_three_and_always_a_no(self):
+class TestOneRowAndAWayToSayNo(unittest.TestCase):
+    def test_never_more_than_the_row_and_always_a_no(self):
         for name, shape in SHAPES.items():
             got = answers.answers(shape)
             self.assertLessEqual(len(got), answers.MAX_VISIBLE, name)
@@ -95,6 +95,40 @@ class TestThreeButtonsAndAWayToSayNo(unittest.TestCase):
                 continue
             verbs = {a["verb"] for a in got}
             self.assertTrue(verbs & NO, f"{name} offers no way to say no: {verbs}")
+
+    def test_dismiss_is_on_every_answerable_card(self):
+        """"If I just want to ignore something and you may bring it up
+        later, how do I do that?" — Dismiss (`not_now`, the snooze) is a
+        visible press on every card a person answers, never behind the ⋯.
+        A plan waiting for consent, a change to read, a finished chore and
+        a held row are the four that are not answered that way."""
+        for name, shape in SHAPES.items():
+            got = answers.answers(shape)
+            verbs = [a["verb"] for a in got]
+            if name in ("planning", "fixing", "planned", "change",
+                        "chore_done", "watching", "chore"):
+                self.assertNotIn("not_now", verbs, name)
+                continue
+            self.assertIn("not_now", verbs, name)
+            dismiss = [a for a in got if a["verb"] == "not_now"][0]
+            self.assertEqual(dismiss["label"], "Dismiss")
+            self.assertEqual(dismiss["request"], "snooze")
+            self.assertFalse(dismiss["note"], "a snooze asks for no reason")
+
+    def test_every_problem_takes_the_same_row_in_the_same_order(self):
+        """The fixed row: Fix it where brAIn could act, then Add to list,
+        Dismiss, Not a problem — the same words in the same places on a
+        battery, a quiet device, a stuck sensor and a Resident's case, so a
+        row of buttons can be read without reading the words."""
+        tail = [("todo", "Add to list"), ("not_now", "Dismiss"),
+                ("wrong", "Not a problem")]
+        for name in ("battery", "unplugged", "stuck", "hands", "automation"):
+            got = [(a["verb"], a["label"]) for a in answers.answers(SHAPES[name])]
+            self.assertEqual(got, tail, name)
+        for shape in (SHAPES["generic"],
+                      case(source="check:auto.dead_ref", fixable=True)):
+            got = [(a["verb"], a["label"]) for a in answers.answers(shape)]
+            self.assertEqual(got, [("fix", "Fix it")] + tail)
 
     def test_nothing_is_called_do_it_and_every_press_has_a_route(self):
         for name, shape in SHAPES.items():
@@ -118,36 +152,48 @@ class TestTheButtonsThatFit(unittest.TestCase):
 
     def test_a_battery_leads_with_the_to_do_list_and_never_a_plan_run(self):
         got = answers.answers(SHAPES["battery"])
-        self.assertEqual([a["verb"] for a in got], ["todo", "done", "wrong"])
-        self.assertEqual(got[1]["label"], "Replaced it")
+        self.assertEqual([a["verb"] for a in got], ["todo", "not_now", "wrong"])
+        self.assertTrue(got[0]["primary"])
         self.assertNotIn("fix", self.verbs(SHAPES["battery"]))
+        # ...even when the row claims brAIn could act: a battery is hands
+        # whatever the producer wrote on it.
+        self.assertNotIn("fix", self.verbs(case(source="check:dev.battery_low",
+                                                fixable=True)))
 
     def test_hands_are_never_led_by_a_run(self):
-        self.assertEqual(self.verbs(SHAPES["hands"]), ["todo", "done", "wrong"])
-        self.assertEqual(self.verbs(SHAPES["generic"]), ["fix", "todo", "wrong"])
+        self.assertEqual(self.verbs(SHAPES["hands"]), ["todo", "not_now", "wrong"])
+        self.assertEqual(self.verbs(SHAPES["generic"]),
+                         ["fix", "todo", "not_now", "wrong"])
         # An automation brAIn could change leads with the plan; one it
         # could not leads with the list.
         self.assertEqual(self.verbs(case(source="check:auto.dead_ref",
-                                         fixable=True)), ["fix", "todo", "wrong"])
-        self.assertEqual(self.verbs(SHAPES["automation"]), ["todo", "done", "wrong"])
+                                         fixable=True)),
+                         ["fix", "todo", "not_now", "wrong"])
+        self.assertEqual(self.verbs(SHAPES["automation"]),
+                         ["todo", "not_now", "wrong"])
 
-    def test_a_quiet_device_can_be_off_on_purpose(self):
-        got = answers.answers(SHAPES["unplugged"])
-        self.assertEqual([a["verb"] for a in got], ["todo", "recheck", "wrong"])
-        self.assertEqual(got[1]["label"], "It's back")
-        self.assertEqual(got[2]["label"], "It's off on purpose")
-        self.assertTrue(got[2]["note"])
-        self.assertIn("on purpose", got[2]["prefill"])
+    def test_the_situation_decides_the_reason_and_never_the_buttons(self):
+        """A quiet device's "Not a problem" opens with "off on purpose"
+        already in the box and a stuck sensor's with "normal for this
+        sensor"; the button says the same thing on both, because a row
+        whose words changed from card to card had to be read every time."""
+        quiet = answers.answers(SHAPES["unplugged"])[-1]
+        stuck = answers.answers(SHAPES["stuck"])[-1]
+        plain = answers.answers(SHAPES["battery"])[-1]
+        for a in (quiet, stuck, plain):
+            self.assertEqual((a["verb"], a["label"]), ("wrong", "Not a problem"))
+            self.assertTrue(a["note"])
+        self.assertIn("on purpose", quiet["prefill"])
+        self.assertIn("normal for this sensor", stuck["prefill"])
+        self.assertEqual(plain["prefill"], "")
+        # "It's back" is Check again, behind the ⋯ now — the situation
+        # no longer puts a recheck on the row.
+        self.assertNotIn("recheck", self.verbs(SHAPES["unplugged"]))
 
-    def test_a_stuck_sensor_can_be_normal_here(self):
-        got = answers.answers(SHAPES["stuck"])
-        self.assertEqual([a["verb"] for a in got], ["todo", "recheck", "wrong"])
-        self.assertEqual(got[2]["label"], "It's normal here")
-
-    def test_a_question_is_yes_or_no(self):
+    def test_a_question_is_yes_or_no_and_can_be_put_off(self):
         got = answers.answers(SHAPES["question"])
         self.assertEqual([(a["verb"], a["label"]) for a in got],
-                         [("yes", "Yes"), ("no", "No")])
+                         [("yes", "Yes"), ("no", "No"), ("not_now", "Dismiss")])
         self.assertTrue(got[1]["note"])
         self.assertTrue(got[0]["route"].endswith("/do"))
         self.assertTrue(got[1]["route"].endswith("/wrong"))
@@ -165,34 +211,44 @@ class TestTheButtonsThatFit(unittest.TestCase):
 
     def test_the_rest(self):
         self.assertEqual(self.verbs(SHAPES["opportunity"]),
-                         ["accept", "trial", "decline"])
+                         ["accept", "trial", "not_now", "decline"])
         self.assertEqual(self.verbs(SHAPES["chore"]), ["complete", "drop"])
         self.assertEqual(self.verbs(SHAPES["chore_done"]), ["reopen"])
         self.assertEqual(self.verbs(SHAPES["watching"]), ["elevate", "wrong"])
+        # A chore check leads with Done — the work is minutes — and the
+        # list is one press further away.
         self.assertEqual(self.verbs(SHAPES["chore_check"]), ["done", "not_now", "wrong"])
+        got = answers.answers(SHAPES["chore_check"])
+        self.assertEqual(got[0]["label"], "Done")
 
 
 class TestWhatGoesBehindTheDots(unittest.TestCase):
-    def test_later_is_added_and_visible_verbs_are_dropped(self):
+    def test_visible_verbs_are_dropped_and_the_rest_ride_through(self):
         shape = SHAPES["hands"]
         visible = answers.answers(shape)
-        overflow = [{"verb": "done", "label": "I had already done it",
+        overflow = [{"verb": "done", "label": "I've already fixed it",
                      "route": "/api/finding/1/done", "method": "POST"},
                     {"verb": "discuss", "label": "Talk about it",
-                     "route": "/api/finding/1/discuss", "method": "POST"}]
+                     "route": "/api/finding/1/discuss", "method": "POST"},
+                    {"verb": "todo", "label": "dup", "route": "/x", "method": "POST"}]
         more = answers.more(shape, visible, overflow)
-        self.assertEqual([m["verb"] for m in more], ["not_now", "discuss"])
+        # Dismiss is already on the row, so it is not offered twice; the
+        # duplicate to-do is dropped for the same reason.
+        self.assertEqual([m["verb"] for m in more], ["done", "discuss"])
 
-    def test_no_later_where_later_makes_no_sense(self):
+    def test_the_row_press_a_card_leaves_off_is_behind_the_dots(self):
+        """A chore check leads with Done and shows no Add to list; the
+        list is still reachable, behind the ⋯. Nowhere else on a problem
+        is a press of the fixed row missing from both."""
+        shape = SHAPES["chore_check"]
+        more = answers.more(shape, answers.answers(shape), [])
+        self.assertEqual([(m["verb"], m["label"]) for m in more],
+                         [("todo", "Add to list")])
         for name in ("planned", "change", "chore_done", "watching"):
             shape = SHAPES[name]
             more = answers.more(shape, answers.answers(shape), [])
             self.assertNotIn("not_now", [m["verb"] for m in more], name)
-        # A chore check already shows Later on the row, so it is not
-        # offered twice.
-        shape = SHAPES["chore_check"]
-        more = answers.more(shape, answers.answers(shape), [])
-        self.assertEqual(more, [])
+            self.assertNotIn("todo", [m["verb"] for m in more], name)
 
 
 class TestWhatAPhoneCanCarry(unittest.TestCase):
@@ -214,8 +270,8 @@ class TestWhatAPhoneCanCarry(unittest.TestCase):
                                        "source": "check:dev.unavailable",
                                        "fixable": False})
         self.assertEqual([(g["action"], g["label"]) for g in got],
-                         [("todo", "Add to to-do"), ("wrong", "It's off on purpose"),
-                          ("snooze", "Later")])
+                         [("todo", "Add to list"), ("snooze", "Dismiss"),
+                          ("wrong", "Not a problem")])
 
     def test_a_change_is_got_it_alone_and_a_run_in_flight_is_nothing(self):
         self.assertEqual(answers.request_answers({"ts": 1, "status": "fixed"}),
@@ -234,13 +290,13 @@ class TestTheRealRowRoundTrip(StoresCase):
         mirror = json.loads(findings_store.STATE_FILE.read_text())
         mirrored = mirror["findings"][0]["answers"]
         self.assertEqual([m["action"] for m in mirrored],
-                         ["todo", "wrong", "snooze"])
-        self.assertEqual(mirrored[1]["label"], "It's off on purpose")
+                         ["todo", "snooze", "wrong"])
+        self.assertEqual(mirrored[1]["label"], "Dismiss")
         # The feed's own answers, on the same row, carry the same
         # wire actions in the same order plus the panel-only press.
         kase = cases.get(f"f:{row['ts']}")
         feed = [a["request"] for a in cases.answers(kase) if a["request"]]
-        self.assertEqual(feed, ["todo", "wrong"])
+        self.assertEqual(feed, ["todo", "snooze", "wrong"])
         self.assertEqual(kase["finding_status"], "open")
 
     def test_the_feed_payload_carries_answers_more_and_names(self):
@@ -252,8 +308,8 @@ class TestTheRealRowRoundTrip(StoresCase):
             payload = server._cases_payload()
         kase = [c for c in payload["cases"] if c["id"] == f"f:{row['ts']}"][0]
         self.assertEqual([a["verb"] for a in kase["answers"]],
-                         ["todo", "recheck", "wrong"])
-        self.assertEqual([m["verb"] for m in kase["more"]][0], "not_now")
+                         ["todo", "not_now", "wrong"])
+        self.assertEqual([m["verb"] for m in kase["more"]][0], "done")
         self.assertEqual(kase["situation"], "unplugged")
         self.assertEqual(kase["entity_name"], "Hall Motion")
         self.assertEqual(kase["area"], "Hall")

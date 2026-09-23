@@ -380,12 +380,11 @@
     <div class="findhead">
       <div>
         <h2>What's waiting on you</h2>
-        <p class="sub">Everything brAIn wants a decision about, in one list: problems
-          it found, changes it thinks would suit this house and guesses it wants
-          confirmed. Each card offers the two or three answers that fit it —
-          onto your to-do list, fixed, or not a problem — and one of them is
-          always a way to say no; say why, and the reason is the half brAIn
-          learns from. Work you have accepted lives on the To-do tab.</p>
+        <p class="sub">Everything brAIn wants a decision about, in one list. Every
+          card takes the same answers: <b>Fix it</b> where brAIn can make the
+          change, <b>Add to list</b>, <b>Dismiss</b> (it comes back later) and
+          <b>Not a problem</b> (it never does — say why, and brAIn learns).
+          Work you have accepted lives on the To-do tab.</p>
       </div>
       <!-- The house checks read Home Assistant directly and never call
            Claude, so the button is cheap to press and says so. It sits
@@ -603,8 +602,8 @@
       <div class="cfacts">
         <button id="chatFindingFix" class="btn small primary">✦  Fix it</button>
         <button id="chatFindingDone" class="btn small">✓  I fixed it</button>
-        <button id="chatFindingLater" class="btn small ghost">⏰  Later</button>
-        <button id="chatFindingWrong" class="btn small ghost">✕  Wrong</button>
+        <button id="chatFindingLater" class="btn small ghost">⏰  Dismiss</button>
+        <button id="chatFindingWrong" class="btn small ghost">✕  Not a problem</button>
       </div>
     </div>
     <!-- The CLI's own slash commands, as it advertises them over the stream.

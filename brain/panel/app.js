@@ -3770,7 +3770,7 @@ const FIND_FILTERS = [
     ["open", "planning", "planned", "fixing", "fixed", "failed",
      "needs_you"].includes(f.status)
     && !findings_isSnoozed(f) },
-  { id: "snoozed", label: "Later", match: (f) => findings_isSnoozed(f) },
+  { id: "snoozed", label: "Dismissed", match: (f) => findings_isSnoozed(f) },
   // What was brought up and looked at and is not worth your time. These
   // ARE rows — held rather than deleted, which is what keeps the next
   // checks pass deduping against them instead of filing them again — and
@@ -4414,7 +4414,7 @@ function makeFinding(f) {
     // fixed it" because it is the honest answer far more often \u2014 a flat
     // battery is a trip to a drawer, not a decision \u2014 and a list of
     // decisions that fills up with chores is a list nobody empties.
-    const accept = add(el("button", "btn small", "➕  To-do"));
+    const accept = add(el("button", "btn small", "Add to list"));
     tip(accept, "It's real and you'll do it. Off this list, onto your to-do "
       + "list \u2014 brAIn won't raise it again while it's there.");
     accept.addEventListener("click", () => findAction(
@@ -4733,15 +4733,21 @@ async function runAnswer(row, answer, btns, note) {
     });
     absorbAnswer(data);
     // A press changes a findings row, a proposal, a guess or a chore, so
-    // every list that renders one has to be told. They are separate
-    // fetches because they are separate stores; the feed is what the
-    // person is looking at, so it is the one repainted first.
-    await refreshCases();
+    // every list that renders one has to be told. The feed and the
+    // findings list are read TOGETHER before the tab is painted, because
+    // the tab renders both — every case, then any live finding no case
+    // covers — and painting the feed against a findings list from before
+    // the press drew the row that had just been moved as an old-style
+    // card, with different buttons, under the case that had just gone.
+    await Promise.all([refreshCases(), refreshFindings()]);
     renderFindings();
-    refreshFindings().then(() => renderFindings());
     refreshTodo().then(renderTodo);
     refreshProposals();
-    toast(answer.done || answer.label, data && data.undo);
+    // A dismissal says when it comes back, because "Dismissed" alone
+    // reads as gone and the whole point is that it is not.
+    const when = data && data.snoozed_until;
+    toast(when ? `${answer.done || answer.label} — back ${timeUntil(when)}`
+               : (answer.done || answer.label), data && data.undo);
   } catch (e) {
     toast(e.message || "that didn't work");
     btns.forEach((b) => { b.disabled = false; });
@@ -4819,9 +4825,11 @@ async function postCaseOverflow(row, item, btns, body) {
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
     absorbAnswer(data);
-    await refreshCases();
+    await Promise.all([refreshCases(), refreshFindings()]);
     renderFindings();
-    toast(item.done || `${item.label} — done`, data.undo);
+    const when = data && data.snoozed_until;
+    toast(when ? `Dismissed — back ${timeUntil(when)}`
+               : (item.done || `${item.label} — done`), data.undo);
   } catch (e) {
     toast(e.message || "that didn't work");
     btns.forEach((b) => { b.disabled = false; });
@@ -4977,7 +4985,8 @@ function makeCase(row) {
   answers.forEach((answer) => {
     const cls = answer.primary ? " primary"
       : (answer.verb === "wrong" || answer.verb === "no" || answer.verb === "decline"
-         || answer.verb === "drop" || answer.verb === "cancel") ? " ghost" : "";
+         || answer.verb === "drop" || answer.verb === "cancel"
+         || answer.verb === "not_now") ? " ghost" : "";
     const btn = add(el("button", `btn small${cls}`, answer.label));
     btn.dataset.verb = answer.verb;
     if (answer.hint) tip(btn, answer.hint);
@@ -5100,9 +5109,10 @@ function renderFindings() {
   chips.textContent = "";
   const counts = {};
   FIND_FILTERS.forEach((f) => { counts[f.id] = findCount(f); });
-  // "Needs you" is always offered because it is where the work is. "Later"
-  // appears only once something is actually waiting in it, so a home with
-  // nothing wrong is handed one chip rather than a row of empty ones.
+  // "Needs you" is always offered because it is where the work is.
+  // "Dismissed" appears only once something is actually waiting in it, so
+  // a home with nothing wrong is handed one chip rather than a row of
+  // empty ones.
   FIND_FILTERS.forEach((f) => {
     if (f.id !== "live" && !counts[f.id]) return;
     const chip = el("button", "fchip" + (state.findFilter === f.id ? " active" : ""),
@@ -5167,7 +5177,8 @@ function renderFindings() {
       list.appendChild(el("div", "findempty",
         "Nothing waiting on you. Problems brAIn finds, changes it thinks "
         + "would suit this house, and guesses it wants confirmed all land "
-        + "here — with the three answers on each one."));
+        + "here, each with the same row of answers: Fix it, Add to list, "
+        + "Dismiss, Not a problem."));
     } else {
       feed.forEach((c) => list.appendChild(makeCase(c)));
       looseClaims.forEach((h) => list.appendChild(makeHypothesis(h)));
@@ -5476,7 +5487,7 @@ function renderTodo() {
   if (!rows.length) {
     list.appendChild(el("div", "findempty", state.todoFilter === "done"
       ? "Nothing finished yet."
-      : "Nothing on your list. Accept a finding with \u2795 To-do, or add "
+      : "Nothing on your list. Press Add to list on a finding, or add "
         + "something yourself above."));
     return;
   }

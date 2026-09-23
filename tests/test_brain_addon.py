@@ -922,7 +922,7 @@ class TestChatTerminalPanel(unittest.TestCase):
                          "snoozing changed the finding's status")
         # It comes back, and it is findable while it waits.
         self.assertIn('if status == "snoozed"', store)
-        self.assertIn('{ id: "snoozed", label: "Later"', self.js)
+        self.assertIn('{ id: "snoozed", label: "Dismissed"', self.js)
 
     def test_the_palette_offers_the_brain_and_ha_commands_too(self):
         """They are not slash commands, so nothing announced them — and

@@ -824,6 +824,15 @@ class TestEachPressFiresOneExistingEnding(RouteCase):
         # put something on a list.
         self.assertEqual(self.memory_lines(), [])
         self.assertTrue(payload.get("undo"))
+        # The answer carries every list the press moved — the feed, the
+        # findings tab's list and the to-do counts — in ONE read. A feed
+        # that arrived without the findings list it is rendered beside
+        # left the row just moved to be drawn off the panel's stale copy,
+        # as an old-style card under the case that had just gone.
+        self.assertEqual(payload["cases"], [])
+        self.assertEqual(payload["findings"], [])
+        self.assertEqual(payload["todo"]["open"], 1)
+        self.assertEqual(payload["open"], 0)
 
     def test_wrong_on_a_problem_settles_it_and_teaches_the_reason(self):
         [row] = findings_store.add_many([{
