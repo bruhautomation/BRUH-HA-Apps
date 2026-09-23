@@ -468,7 +468,11 @@ on a list of decisions at all.
   light is in whichever state the later trigger happened to leave it — so
   the result is different from one day to the next depending on the order
   two triggers fired in, which is not something anybody designed. No trace
-  shows it, because nothing went wrong in either run.
+  shows it, because nothing went wrong in either run. A pair that always
+  goes the same way round — motion turns a light on, "no motion for two
+  minutes" turns it off — is two rules working together and is never
+  reported; it takes the pair undoing each other in both directions, or two
+  rules answering the same moment within a few seconds of each other.
 
 ## Something looks at it before you do
 

@@ -659,11 +659,18 @@ class TestTheConflictCheck(unittest.TestCase):
         self.auto = auto
 
     def conflict(self, entity="light.hall", first="automation.dusk",
-                 second="automation.away"):
+                 second="automation.away", after_s=30):
         return {"ts": NOW, "entity_id": entity, "name": entity,
                 "first": first, "first_name": "Dusk", "first_state": "on",
                 "second": second, "second_name": "Away",
-                "second_state": "off", "after_s": 30}
+                "second_state": "off", "after_s": after_s}
+
+    def fight(self, n, first="automation.dusk", second="automation.away"):
+        """``n`` undos between two rules, alternating which one went last —
+        the shape of an actual disagreement."""
+        return [self.conflict(first=first, second=second) if i % 2 == 0
+                else self.conflict(first=second, second=first)
+                for i in range(n)]
 
     def snap(self, conflicts):
         return {"actions": {"available": True, "conflicts": conflicts,
@@ -672,12 +679,34 @@ class TestTheConflictCheck(unittest.TestCase):
     def test_silent_below_the_floor(self):
         for n in range(self.auto.CONFLICT_MIN):
             self.assertEqual(
-                self.auto.conflicting(self.snap([self.conflict()] * n), NOW),
+                self.auto.conflicting(self.snap(self.fight(n)), NOW),
                 [], n)
+
+    def test_a_sequence_somebody_built_is_not_a_fight(self):
+        """Motion on, then "no motion for two minutes" off — every day,
+        the same way round, minutes apart. That is two rules working, and
+        it was most of what this check filed: marked Wrong 3 of 4 times."""
+        rows = [self.conflict(first="automation.hall_motion_on",
+                              second="automation.hall_motion_off",
+                              after_s=150)] * 12
+        self.assertEqual(self.auto.conflicting(self.snap(rows), NOW), [])
+
+    def test_the_same_both_ways_round_is_a_fight(self):
+        rows = self.fight(self.auto.CONFLICT_MIN)
+        self.assertEqual(len(self.auto.conflicting(self.snap(rows), NOW)), 1)
+
+    def test_a_race_on_one_trigger_is_a_fight_even_one_way_round(self):
+        """Two rules on the same sunset, the second landing a second after
+        the first: which wins is the order Core ran them in, which nobody
+        chose, even though it happens the same way round every day."""
+        rows = [self.conflict(after_s=1.0)] * self.auto.CONFLICT_MIN
+        self.assertEqual(len(self.auto.conflicting(self.snap(rows), NOW)), 1)
+        rows = [self.conflict(after_s=self.auto.RACE_S + 1)] * 5
+        self.assertEqual(self.auto.conflicting(self.snap(rows), NOW), [])
 
     def test_it_names_both_and_puts_the_numbers_in_the_detail(self):
         found = self.auto.conflicting(
-            self.snap([self.conflict()] * self.auto.CONFLICT_MIN), NOW)
+            self.snap(self.fight(self.auto.CONFLICT_MIN)), NOW)
         self.assertEqual(len(found), 1)
         self.assertIn("Dusk", found[0]["text"])
         self.assertIn("Away", found[0]["text"])
@@ -694,9 +723,9 @@ class TestTheConflictCheck(unittest.TestCase):
         self.assertEqual(len(found), 1)
 
     def test_two_different_pairs_are_two_findings(self):
-        rows = ([self.conflict()] * self.auto.CONFLICT_MIN
-                + [self.conflict(first="automation.x", second="automation.y")]
-                * self.auto.CONFLICT_MIN)
+        rows = (self.fight(self.auto.CONFLICT_MIN)
+                + self.fight(self.auto.CONFLICT_MIN, "automation.x",
+                             "automation.y"))
         self.assertEqual(len(self.auto.conflicting(self.snap(rows), NOW)), 2)
 
     def test_a_window_that_could_not_be_read_files_nothing(self):

@@ -580,6 +580,23 @@ def list_cases(status: str | None = None, kinds=None,
     return _sort(out)
 
 
+def on_feed(case: dict) -> bool:
+    """Whether the feed renders this case.
+
+    Everything `list_cases` answers for, less one thing: a finding triage
+    HELD. That is `watching` on this side of the wall, and it is a row
+    brAIn looked at and decided not to bother anybody with — which is the
+    Looked-at filter's whole list and the one place it belongs. On the
+    feed it sat under "Needs you" beside the rows that do, with a press
+    that put it on the list it was already on: the card stayed where it
+    was and grew the ordinary row, so "Show it anyway" read as doing
+    nothing. A trial is `watching` too and stays, being a thing brAIn is
+    doing that somebody asked for and can end.
+    """
+    return not ((case.get("origin") or {}).get("store") == "findings"
+                and case.get("status") == "watching")
+
+
 def open_count(now: float | None = None) -> int:
     """What a badge counts: cases waiting on a person, right now.
 

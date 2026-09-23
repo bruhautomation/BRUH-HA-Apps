@@ -320,5 +320,22 @@ class TestTheRealRowRoundTrip(StoresCase):
         self.assertFalse(shown & {m["verb"] for m in kase["more"]})
 
 
+    def test_a_held_finding_is_not_on_the_feed_until_it_is_shown(self):
+        """Triage held it, so it lives under Looked at and nowhere else.
+        On the feed it rendered under Needs you with Show it anyway, and
+        the press left the same card in place with the ordinary row on it
+        — a button that read as doing nothing. Elevating is what puts it
+        on the feed, and that is the one visible change the press makes."""
+        import server  # noqa: PLC0415 — imported here so the fixture is in place
+        row = self.file_problem()
+        findings_store.set_status(row["ts"], "held")
+        ids = [c["id"] for c in server._cases_payload()["cases"]]
+        self.assertNotIn(f"f:{row['ts']}", ids)
+        # Still a case — the Looked-at filter and a press by id reach it.
+        self.assertEqual(cases.get(f"f:{row['ts']}")["status"], "watching")
+        self.assertIsNotNone(findings_store.elevate(row["ts"]))
+        ids = [c["id"] for c in server._cases_payload()["cases"]]
+        self.assertIn(f"f:{row['ts']}", ids)
+
 if __name__ == "__main__":
     unittest.main()

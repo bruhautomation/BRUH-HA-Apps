@@ -8818,7 +8818,7 @@ def _cases_payload(now: float | None = None) -> dict:
     route rather than a verb.
     """
     now = time.time() if now is None else now
-    rows = cases.list_cases(now=now)
+    rows = [c for c in cases.list_cases(now=now) if cases.on_feed(c)]
     names: dict[str, dict] = {}
     for case in rows:
         # The presses, decided once (`answers.py`) and rendered as handed:

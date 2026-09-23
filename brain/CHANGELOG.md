@@ -2,6 +2,29 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.6.1
+
+- **A finding brAIn decided not to bother you with stays off the Findings
+  feed.** Triage holds back rows it looked into and judged not worth your
+  time, and they belong under **Looked at** — but the feed was listing them
+  under *Needs you* too, with a **Show it anyway** button. Pressing it put
+  the finding on a list it already appeared on, so the card stayed exactly
+  where it was and simply grew the ordinary row (Fix it, Add to list, …),
+  which read as the button doing nothing. Held findings now appear only
+  under **Looked at**; **Bring it to the front** there moves one onto the
+  feed, where it arrives with the full row of answers.
+
+- **Two automations that are meant to follow each other are no longer
+  reported as fighting.** *"'X' and 'Y' keep undoing each other"* fired on
+  every pair where one rule sets something and another changes it back
+  within fifteen minutes — which is exactly what a motion-on / no-motion-off
+  pair, sunset-on / bedtime-off, or a run-for-ten-minutes timer does, every
+  day, on purpose. It was marked Wrong three times out of four. It now
+  reports a pair only when they have undone each other **in both
+  directions**, or when the second lands within a few seconds of the first
+  (two rules answering the same trigger, where which one wins is down to
+  the order they happened to run).
+
 ## 2.6.0
 
 **ESPHome devices, managed from brAIn.**
