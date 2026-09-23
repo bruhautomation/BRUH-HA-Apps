@@ -642,8 +642,8 @@ async def _ingress_session(session: aiohttp.ClientSession) -> str:
         data = body.get("data") if isinstance(body, dict) else None
         if isinstance(data, dict) and data.get("session"):
             return str(data["session"])
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
-        pass
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):  # the fallback
+        pass  # failing too is the refusal below, which names Core's answer
     raise RuntimeError("Home Assistant would not open an ingress session "
                        f"({first.get('error') or 'no session in the answer'})")
 
@@ -1121,7 +1121,7 @@ async def wait(job_id: str, seconds: float) -> Job | None:
         return job
     try:
         await asyncio.wait_for(asyncio.shield(job.task), timeout=max(0.0, seconds))
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError:  # still running is an answer: the job says so
         pass
     except Exception:  # noqa: BLE001 — the job carries its own ending
         pass
@@ -1284,7 +1284,7 @@ async def h_job(request: web.Request) -> web.Response:
     if wait_s and job.state == "running":
         try:
             await wait(job.id, min(float(wait_s), 600.0))
-        except ValueError:
+        except ValueError:  # an unreadable wait is no wait, not a refusal
             pass
     return _json({"ok": True, "job": job.as_dict(since)})
 
