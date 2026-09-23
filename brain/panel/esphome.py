@@ -123,7 +123,7 @@ PLATFORM_KEYS = tuple(PLATFORMS) + ("ln882x", "nrf52", "host", "libretiny")
 
 # A configuration is a filename in one folder and it arrives off the wire, so
 # it is checked for shape here and for place in `config_path`.
-CONFIG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.ya?ml$")
+CONFIG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.ya?ml\Z")
 # ESPHome's own rule for a node name: it becomes a hostname.
 NODE_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?$")
 SECRET_KEY_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$")
@@ -1006,7 +1006,11 @@ async def _run_job(job: Job, route_: Route, spec: dict, port: str) -> None:
         job.finish("failed", error=f"the dashboard connection failed: {exc}")
     finally:
         job.finish("failed", error="the command ended without an exit code")
-        log.info("esphome %s %s: %s", job.kind, job.configuration, job.state)
+        # The file name passed `CONFIG_RE` already; flattened again here
+        # with literal replaces, `server.log_safe`'s barrier, because a
+        # log line is evidence only while every line in it is ours.
+        name = job.configuration.replace("\r", " ").replace("\n", " ")
+        log.info("esphome %s %s: %s", job.kind, name[:128], job.state)
 
 
 async def _run_update(job: Job, entity_id: str) -> None:

@@ -20,8 +20,8 @@ import sys
 import tempfile
 import threading
 import unittest
+import unittest.mock as mock
 from pathlib import Path
-from unittest import mock
 
 from aiohttp import web
 
@@ -131,7 +131,8 @@ class TestTheFileNameIsCheckedTwice(_Folder):
 
     def test_names_that_leave_the_folder_are_refused(self):
         for bad in ("../configuration.yaml", "a/b.yaml", ".hidden.yaml",
-                    "porch", "porch.txt", "", "..yaml", "/etc/passwd.yaml"):
+                    "porch", "porch.txt", "", "..yaml", "/etc/passwd.yaml",
+                    "por\nch.yaml"):
             self.assertIsNone(esphome.config_path(bad), bad)
 
     def test_an_ordinary_name_is_inside_the_folder(self):
