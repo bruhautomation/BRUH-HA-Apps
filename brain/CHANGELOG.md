@@ -2,6 +2,43 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.8.0
+
+**Insight cards: a heading that says what the card is about, Refine, and Share.**
+
+- **No more "CUSTOM".** A card you asked for is headed by what it is about
+  (its topics, e.g. "HVAC · Humidity"), or the name you gave it. The question
+  you typed is no longer repeated on the card; hover the heading or open
+  Refine to see it. The summary leads with the answer in bold, and asked
+  questions are now told to open with it ("Yes — dehumidify first.").
+- **✎ Refine** on every card: say what should change and brAIn regenerates
+  that card with the change, keeping what you did not ask to change. By
+  default the change is kept for every future run, so the next refresh does
+  not undo it; the dialog lists everything you have asked of the card, each
+  with a ✕. It replaces **⋯ → Give feedback** and works on cards you asked
+  for too. The version it replaces stays in the card's history, and asked
+  cards keep history now.
+- **↗ Share** on every card:
+  - **Copy picture / Download** the card's face (title, answer, numbers and
+    chart) as a PNG.
+  - **Add card** puts it on the dashboard and view you pick, either the
+    whole card or just the chart. It always shows the latest run. brAIn says
+    so when a dashboard is kept in YAML or still built automatically, and the
+    YAML for pasting it in by hand is still there. This replaces
+    **⋯ → Add to dashboard**.
+- **Regenerate on an asked card re-runs it in place.** It used to ask the
+  question again and leave a second copy of the card beside the first.
+- **Layout:**
+  - The numbers sit in even rows: four across, three for five or six, and
+    two on a narrow card.
+  - The chart sits straight on the card instead of in a box inside a box,
+    and new charts are asked to be fluid, stack side-by-side pairs on a
+    phone, and put the legend above the plot.
+  - On a phone the title gets a row of its own under the buttons.
+  - The foot shows one cost figure: the tokens, with the time taken in
+    its tooltip.
+  - Tags are edited from **⋯ → Edit tags**.
+
 ## 2.7.0
 
 **Music Assistant, run from brAIn.**

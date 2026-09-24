@@ -253,6 +253,11 @@ html, body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  /* The card's own width, not the window's, decides how its head and its
+     tiles lay out: the same card is 700px in a one-column grid and 460px
+     in a two-column one on the same screen. */
+  container-type: inline-size;
+  container-name: card;
 }
 @media (prefers-reduced-motion: no-preference) {
   .card { animation: rise 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
@@ -275,10 +280,8 @@ html, body {
 .card-head .cicon { font-size: 19px; flex: none; }
 .card-head .ctitles { min-width: 0; }
 .card-head .cat {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.8px;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--ink-3);
   /* one line, and it is the one that gives way */
   overflow: hidden;
@@ -287,17 +290,50 @@ html, body {
 }
 .card-head h3 {
   margin: 1px 0 0;
-  font-size: 15.5px;
+  font-size: 17px;
+  line-height: 1.25;
   font-weight: 700;
   /* wraps to two lines rather than truncating: the title is what the card
      is, and a card called "Upstair…" is not a card you can pick out */
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
   overflow-wrap: anywhere;
 }
 .card-head .actions { display: flex; gap: 5px; flex: none; align-self: start; }
+
+/* Refine and Share: a glyph and a word, 40px tall like the icon buttons
+   beside them. On a narrow card the word goes and the glyph stays — the
+   tooltip and aria-label still carry it — because the title is what the
+   row is for, and the measure in measure-cardhead holds it to that. */
+.card-head .cardact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 12px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+.card-head .cardact .caicon { font-size: 15px; line-height: 1; }
+@container card (max-width: 600px) {
+  .card-head .cardact { width: 40px; padding: 0; justify-content: center; }
+  .card-head .cardact .calabel { display: none; }
+}
+/* On a narrow card four buttons are ~170px of the row, and the
+   title — which is what the card IS — came out "Downstairs dries 15…". So
+   the eyebrow shares the row with the buttons and the title takes the
+   whole width under them. `display: contents` lets the two lines of
+   .ctitles sit in the head's own grid. */
+@container card (max-width: 600px) {
+  .card-head { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 4px; }
+  .card-head .ctitles { display: contents; }
+  .card-head .cicon { grid-row: 1; grid-column: 1; }
+  .card-head .cat { grid-row: 1; grid-column: 2; align-self: center; }
+  .card-head .actions { grid-row: 1; grid-column: 3; }
+  .card-head h3 { grid-row: 2; grid-column: 1 / -1; }
+}
 
 /* The card's ⋯ menu: each action with its name and what it does, which is
    what a row of unlabelled glyphs could never fit. */
@@ -323,44 +359,70 @@ html, body {
 .cardmenuitem .cmtext b { font-size: 13.5px; font-weight: 600; }
 .cardmenuitem .cmtext small { font-size: 11.5px; color: var(--ink-3); }
 
+/* The answer, first. The contract asks for a summary that opens with it,
+   and the panel sets that opening sentence in the card's ink. */
 .card .summary {
-  padding: 8px 16px 0;
+  padding: 10px 16px 0;
   color: var(--ink-2);
-  font-size: 13.5px;
+  font-size: 14.5px;
+  line-height: 1.5;
 }
+.card .summary .lead { color: var(--ink); font-weight: 650; }
+/* Only while a card is being made (or failed): the question it was asked
+   as, because there is nothing else yet to say what it is about. */
+.card .summary.asking { font-style: italic; color: var(--ink-3); }
 
+/* Tiles in even rows. It was a wrapping flex row, so each tile was as wide
+   as its own words and five of them came out as three wide ones over two
+   narrow ones — a layout that reads as a mistake. The count rides on the
+   markup (data-n) and picks the columns: four across, three for five or
+   six, and two on a narrow card. */
 .highlights {
-  display: flex;
-  flex-wrap: wrap;
+  --cols: 4;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
   gap: 8px;
-  padding: 11px 16px 3px;
+  padding: 12px 16px 0;
+}
+.highlights[data-n="1"] { --cols: 1; }
+.highlights[data-n="2"] { --cols: 2; }
+.highlights[data-n="3"] { --cols: 3; }
+.highlights[data-n="5"], .highlights[data-n="6"] { --cols: 3; }
+@container card (max-width: 520px) {
+  .highlights:not([data-n="1"]) { --cols: 2; }
+  /* an odd tile out takes the row rather than half of it */
+  .highlights .hl:last-child:nth-child(odd) { grid-column: 1 / -1; }
 }
 .hl {
-  border: 1px solid var(--hairline);
   background: var(--surface-2);
   border-radius: 10px;
-  padding: 6px 11px;
-  min-width: 86px;
+  padding: 9px 12px;
+  min-width: 0;
 }
-.hl .l { font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--ink-3); }
-.hl .v { font-size: 16px; font-weight: 750; margin-top: 1px; }
-.hl .d { font-size: 11px; color: var(--ink-3); margin-top: 1px; }
+.hl .l { font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.hl .v { font-size: 17px; font-weight: 700; line-height: 1.25; margin-top: 2px; overflow-wrap: anywhere; }
+.hl .d { font-size: 11.5px; color: var(--ink-2); margin-top: 2px; }
 .hl.status-good .v { color: var(--good); }
 .hl.status-warning .v { color: var(--warning); }
 .hl.status-serious .v { color: var(--serious); }
 .hl.status-critical .v { color: var(--critical); }
 
+/* The chart sits ON the card, edge to edge with the text above it. It was
+   a bordered box inside the card, and most charts then drew a panel of
+   their own inside that — three rectangles around one line graph, each
+   taking its padding out of the width the chart had to work with. A card
+   from before the contract said so still carries its own background, and
+   the rounded corner keeps that tidy. */
 .card .viz {
-  margin: 12px 12px 12px;
-  border-radius: 10px;
+  margin: 14px 16px 8px;
+  border-radius: 8px;
   overflow: hidden;
-  border: 1px solid var(--hairline);
-  background: var(--surface);
+  background: transparent;
 }
 .card .viz iframe {
   display: block;
   width: 100%;
-  height: 380px;
+  height: 320px;
   border: 0;
   background: transparent;
   transition: height 0.25s ease;
@@ -377,7 +439,9 @@ html, body {
   flex-wrap: wrap;
   gap: 8px;
   row-gap: 4px;
-  padding: 0 16px 12px;
+  margin-top: auto;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--hairline);
   color: var(--ink-3);
   font-size: 11.5px;
 }
@@ -4625,4 +4689,81 @@ body.term-classic #termMode .ico-out { display: block; }
   .espmore > summary { min-height: 44px; display: inline-flex; align-items: center; }
   .marow .btn, .mastale .espdevhead .btn { min-height: 44px; }
   .espseckey { min-height: 44px; }
+}
+
+/* ------------------------------------------------ refine and share */
+/* The frame a shared picture's chart is drawn in: on the page, because a
+   frame that is not rendered draws nothing, and far off it. */
+.snapframe {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  height: 600px;
+  border: 0;
+  pointer-events: none;
+}
+.refinechips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+.refinechip {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.refinechip:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); color: var(--ink); }
+.refinefrom b { color: var(--ink-2); }
+.sharehead { margin: 8px 0 6px; font-size: 14px; font-weight: 700; }
+.sharehead:first-child { margin-top: 0; }
+.shareshot {
+  display: grid;
+  place-items: center;
+  min-height: 120px;
+  max-height: 380px;
+  overflow: auto;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.shareshot img { display: block; width: 100%; height: auto; }
+.shareshot .hint { padding: 16px; text-align: center; }
+#shareDashWarn {
+  font-size: 13px;
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--warning) 16%, var(--surface));
+}
+.sharepick {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.sharepick select { width: 100%; }
+.shareyaml { margin-top: 6px; }
+.shareyaml summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+@media (pointer: coarse) {
+  .refinechip { min-height: 44px; }
+  /* The Settings dialog's reason, restated for these two: `.edit-body
+     .selin` and `.edit-body textarea` outrank the 16px text floor, and a
+     dropdown under 16px zooms an iPhone into the ingress frame for good. */
+  #shareModal .selin,
+  #refineModal textarea { font-size: 16px; }
+  .card-head .cardact { height: 44px; }
+  @container card (max-width: 600px) {
+    .card-head .cardact { width: 44px; }
+  }
 }

@@ -123,6 +123,7 @@ import platform
 import re
 import secrets
 import shutil
+import html as html_lib
 import subprocess
 import threading
 import time
@@ -1048,19 +1049,23 @@ def save_insight(insight: dict) -> None:
         except OSError:
             # Trimming is opportunistic; a file that will not delete is retried the
             # next time a card is saved.
-            pass
+            continue
+        # An asked card has history and refinements now, and a trimmed
+        # card's leftovers are data about a card nothing can open.
+        _unmirror_card(old.stem)
+        shutil.rmtree(_history_dir(old.stem), ignore_errors=True)
+        feedback_store.clear(old.stem)
     _write_history_copy(insight)
 
 
 def _write_history_copy(insight: dict) -> None:
     """Dated copy under history/<id>/<stamp>.json so past runs stay browsable.
 
-    Custom question cards are excluded, and load_insights() never sees the
-    history/ subdir (its glob is non-recursive). Setting either keep option
-    to 0 disables history entirely.
+    Asked cards keep history too: once a card can be refined, the version
+    it replaced is the one thing somebody may want back. load_insights()
+    never sees the history/ subdir (its glob is non-recursive). Setting
+    either keep option to 0 disables history entirely.
     """
-    if insight["id"].startswith("custom-"):
-        return
     if eff_keep_runs() <= 0 or eff_keep_days() <= 0:
         return
     stamp = str(insight.get("generated_at", "")).replace(":", "-")
@@ -2767,6 +2772,10 @@ def _because_of(job: dict, question: str | None) -> str:
     said = str((job or {}).get("because") or "").strip()
     if said:
         return said[:200]
+    refine = " ".join(str((job or {}).get("refine") or "").split())
+    if refine:
+        clipped = refine if len(refine) <= 80 else refine[:79].rstrip() + "…"
+        return f"you asked for a change: “{clipped}”"
     return "you asked" if question is not None else "you pressed Generate"
 
 
@@ -2795,13 +2804,19 @@ async def _generate(insight_id: str) -> None:
     try:
         _set_job(insight_id, state="collecting", error="")
 
-        feedback = [] if question is not None else [
-            f["text"] for f in feedback_store.list_feedback(insight_id)]
+        # Standing changes asked for on THIS card, whichever kind it is: an
+        # asked card that has been refined keeps what it was told on every
+        # later regenerate, exactly as a category card keeps its feedback.
+        feedback = [f["text"] for f in feedback_store.list_feedback(insight_id)]
+        # One press of Refine: the change this run exists to make.
+        refine = str(job.get("refine") or "").strip()[:feedback_store.MAX_CHARS]
         # Continuity: what the analyst already knows, and what this card
         # said last time — so runs build on each other instead of looping.
+        # An asked card has a last time too once it exists: regenerating or
+        # refining one revises it rather than starting from nothing.
         knowledge = knowledge_store.prompt_block()
         previous = None
-        if question is None:
+        if question is None or refine or _insight_path(insight_id).exists():
             try:
                 prev = json.loads(_insight_path(insight_id).read_text(encoding="utf-8"))
                 previous = {k: prev.get(k) for k in
@@ -2817,7 +2832,8 @@ async def _generate(insight_id: str) -> None:
                        # What brAIn measured. Its own budget (HOUSE_CHARS),
                        # taken from nothing else, and empty on a house
                        # where nothing is ready yet.
-                       house=await _house_prompt_block())
+                       house=await _house_prompt_block(),
+                       refine=refine or None)
 
         result = cost = sent = None
         if eff_gather_mode() == "search":
@@ -3703,6 +3719,12 @@ def _enqueue(job_id: str, question: str | None = None, **fields) -> bool:
     (``kind="fix"`` plus its ``finding_ts``); everything else is a card."""
     if _job_active(job_id):
         return False
+    # A job dict outlives the run it described (`_set_job` merges), so the
+    # per-run reasons are reset here: a refine note, or the scheduler's
+    # sentence, left over from last time would otherwise be told to the
+    # next plain Regenerate and written onto the card as why it happened.
+    fields.setdefault("refine", "")
+    fields.setdefault("because", "")
     _set_job(job_id, state="queued", error="", question=question,
              started_at=time.time(), kind=fields.pop("kind", "insight"), **fields)
     QUEUE.put_nowait(job_id)
@@ -4074,6 +4096,11 @@ async def h_insights(request: web.Request) -> web.Response:
         edits = card_tags.load_edits()
         for ins in insights:
             ins["tags"] = card_tags.effective_tags(ins, edits)
+            # The heading an asked card carries in place of "Custom". A
+            # category card is headed by its category, which the panel
+            # reads live off the definition so a rename shows at once.
+            if str(ins.get("id") or "").startswith("custom-"):
+                ins["eyebrow"] = card_tags.eyebrow(ins, ins["tags"])
         return insights
 
     return web.json_response({"insights": await asyncio.to_thread(listing)})
@@ -4175,11 +4202,71 @@ async def h_generate(request: web.Request) -> web.Response:
         insight_id = f"custom-{stamp}"
         _enqueue(insight_id, question=question)
         return web.json_response({"queued": [insight_id]})
+    # Regenerating an asked card in place. It used to be re-asked, which
+    # made a SECOND card and left the first where it was — two copies of
+    # one answer, and the refinements on the first one lost to the second.
+    card_id = str(body.get("id") or "")
+    if card_id.startswith("custom-"):
+        stored = await asyncio.to_thread(_read_json, _insight_path(card_id))
+        asked = (stored or {}).get("question") or " ".join(
+            str(body.get("question") or "").split())
+        if not asked:
+            raise web.HTTPNotFound(text="no such card")
+        started = _enqueue(card_id, question=str(asked)[:500])
+        return web.json_response({"queued": [card_id] if started else []})
     cat_id = body.get("category", "")
     if not resolve_category(cat_id) or prompt_store.is_hidden(cat_id):
         raise web.HTTPBadRequest(text="unknown category")
     started = _enqueue(cat_id)
     return web.json_response({"queued": [cat_id] if started else []})
+
+
+async def h_insight_refine(request: web.Request) -> web.Response:
+    """Regenerate one card with a change the homeowner asked for.
+
+    The whole of editing a card by saying what should be different: the
+    sentence goes to the run as the reason it exists, beside the card as
+    it stands, so what comes back is THAT card changed rather than a new
+    answer to the old question. `remember` (the default) also keeps it as
+    standing feedback on the card, so the next scheduled or pressed run
+    does not quietly undo it — one store for both kinds of card, because
+    "things I have told this card" is one list whoever made the card.
+    """
+    card_id = request.match_info["id"]
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text="expected an object")
+    note = " ".join(str(body.get("note") or "").split())
+    if not note:
+        raise web.HTTPBadRequest(text="say what should change")
+    if len(note) > feedback_store.MAX_CHARS:
+        raise web.HTTPBadRequest(
+            text=f"keep it under {feedback_store.MAX_CHARS} characters")
+    remember = body.get("remember", True) is not False
+    question = None
+    if card_id.startswith("custom-"):
+        stored = await asyncio.to_thread(_read_json, _insight_path(card_id))
+        if stored is None or not stored.get("question"):
+            raise web.HTTPNotFound(text="no such card")
+        question = str(stored["question"])[:500]
+    elif not resolve_category(card_id) or prompt_store.is_hidden(card_id):
+        raise web.HTTPNotFound(text="no such card")
+    if _job_active(card_id):
+        raise web.HTTPConflict(
+            text="This card is already being generated — refine it once "
+                 "that run has finished.")
+    card = _feedback_category(card_id)
+    if remember:
+        entry = await asyncio.to_thread(
+            feedback_store.add_feedback, card_id, note)
+        fact = (f'Homeowner feedback on the "{card["title"]}" insight card: '
+                f'{entry["text"]}')
+        knowledge_store.add_fact(fact, source="feedback", category=card_id)
+        await _submit_memory(fact)
+    _enqueue(card_id, question=question, refine=note)
+    return web.json_response({
+        "queued": [card_id], "remembered": remember,
+        "feedback": feedback_store.list_feedback(card_id)})
 
 
 async def h_delete_insight(request: web.Request) -> web.Response:
@@ -4652,10 +4739,34 @@ async def h_user_category_delete(request: web.Request) -> web.Response:
 # -- insight feedback ---------------------------------------------------------
 
 def _feedback_category(cat_id: str) -> dict:
+    """The card a piece of feedback is about, named the way a person would.
+
+    A recurring card is its category. An asked card has no category, and
+    since Refine it has standing changes all the same — so it answers with
+    the stored card's own label, which is what the memory line quotes.
+    """
     cat = get_category(cat_id) or user_categories.get(cat_id)
-    if not cat:
-        raise web.HTTPBadRequest(text="feedback works on recurring insights only")
-    return cat
+    if cat:
+        return cat
+    if cat_id.startswith("custom-"):
+        stored = _read_json(_insight_path(cat_id))
+        if stored is not None:
+            return {"id": cat_id,
+                    "title": _asked_card_name(stored),
+                    "icon": stored.get("icon") or "✨"}
+    raise web.HTTPBadRequest(text="no such card")
+
+
+def _asked_card_name(insight: dict) -> str:
+    """What an asked card is called: its hand-given label, else its title.
+
+    `category_title` is "Custom" on every asked card nobody renamed, which
+    is the word the card no longer shows anywhere.
+    """
+    named = str(insight.get("category_title") or "").strip()
+    if named and named != "Custom":
+        return named
+    return str(insight.get("title") or "an asked question")[:120]
 
 
 async def h_feedback_list(request: web.Request) -> web.Response:
@@ -4743,11 +4854,17 @@ WWW_CARD_DIR = Path(os.environ.get(
     "BRAIN_WWW_DIR", "/config/www/brain"))
 
 
-def _card_file_name(insight_id: str) -> str:
-    return f"{insight_id}-{get_card_token()}.html"
+def _card_file_name(insight_id: str, whole: bool = False) -> str:
+    """The chart-only mirror, or (`whole`) the card with its numbers.
+
+    Two files rather than a query string on one: the chart-only name is
+    what every dashboard card made before 2.8 points at, so it keeps
+    serving exactly what it always did.
+    """
+    return f"{insight_id}-{get_card_token()}{'.card' if whole else ''}.html"
 
 
-def _card_mirror_path(insight_id: str) -> Path | None:
+def _card_mirror_path(insight_id: str, whole: bool = False) -> Path | None:
     """Where one card's mirrored HTML lives, or None if the id isn't one.
 
     The mirror directory is under `/config/www`, which Home Assistant
@@ -4759,9 +4876,96 @@ def _card_mirror_path(insight_id: str) -> Path | None:
     if not _SAFE_ID.match(insight_id):
         return None
     try:
-        return _under(WWW_CARD_DIR, _card_file_name(insight_id))
+        return _under(WWW_CARD_DIR, _card_file_name(insight_id, whole))
     except web.HTTPBadRequest:
         return None
+
+
+def _card_eyebrow(insight: dict) -> str:
+    """The line over the title, for a page that has no category list."""
+    if str(insight.get("id") or "").startswith("custom-"):
+        return card_tags.eyebrow(insight)
+    return str(insight.get("category_title") or "")
+
+
+# The whole card as a page of its own, for a dashboard. It is the card's
+# face and nothing else — no menu, no history, no token count — with the
+# visualization in a sandboxed frame of its own exactly as the panel shows
+# it, because the visualization is model-authored script and must not run
+# with this page's origin (which is Home Assistant's).
+_WHOLE_CARD_CSS = """
+:root{color-scheme:light dark;--ink:#0a1622;--ink2:#33506a;--ink3:#5b7185;--tile:#eef4f9}
+@media (prefers-color-scheme: dark){:root{--ink:#ffffff;--ink2:#b9ccdd;--ink3:#8ea5b8;--tile:#15293f}}
+html,body{margin:0;background:transparent;color:var(--ink);
+font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.c{padding:14px 16px 12px;display:flex;flex-direction:column;gap:10px}
+.eb{font-size:12px;font-weight:600;color:var(--ink3);white-space:nowrap;
+overflow:hidden;text-overflow:ellipsis}
+h1{margin:2px 0 0;font-size:17px;line-height:1.25}
+.s{margin:0;font-size:14px;line-height:1.5;color:var(--ink2)}
+.s b{color:var(--ink)}
+.h{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.t{background:var(--tile);border-radius:10px;padding:8px 11px}
+.t .l{font-size:11.5px;color:var(--ink3)}
+.t .v{font-size:16px;font-weight:700;margin-top:2px}
+.t .d{font-size:11.5px;color:var(--ink2);margin-top:1px}
+iframe{display:block;width:100%;height:320px;border:0;background:transparent}
+.f{font-size:11px;color:var(--ink3)}
+"""
+
+_WHOLE_CARD_SIZE = (
+    '<script>(function(){var f=document.getElementById("v");'
+    'window.addEventListener("message",function(ev){var d=ev.data;'
+    'if(ev.source!==f.contentWindow||!d||d.type!=="bruh-size"||!d.h)return;'
+    'f.style.height=Math.min(Math.max(d.h,80),2000)+"px";});})();</script>'
+)
+
+_WHOLE_CARD_FRAME_SIZE = (
+    '<script>(function(){var last=0;function post(){var b=document.body;'
+    'if(!b)return;var h=Math.ceil(Math.max(b.offsetHeight,'
+    'b.getBoundingClientRect().height));if(h>0&&Math.abs(h-last)>2){last=h;'
+    'parent.postMessage({type:"bruh-size",h:h},"*");}}'
+    'try{new ResizeObserver(post).observe(document.body);}catch(e){}'
+    'window.addEventListener("load",post);setTimeout(post,400);'
+    'setTimeout(post,1200);})();</script>'
+)
+
+
+def _lead_split(summary: str) -> tuple[str, str]:
+    """The summary's first sentence and the rest, when there is a rest."""
+    match = re.match(r"^(.{3,160}?[.!?])\s+(\S.*)$", summary, re.DOTALL)
+    return (match.group(1), match.group(2)) if match else ("", summary)
+
+
+def _whole_card_page(insight: dict) -> str:
+    esc = html_lib.escape
+    lead, rest = _lead_split(str(insight.get("summary") or ""))
+    summary = (f"<b>{esc(lead)}</b> {esc(rest)}" if lead else esc(rest))
+    tiles = []
+    for h in insight.get("highlights") or []:
+        if not isinstance(h, dict) or not h.get("label"):
+            continue
+        delta = (f'<div class="d">{esc(str(h["delta"]))}</div>'
+                 if h.get("delta") else "")
+        tiles.append(
+            f'<div class="t"><div class="l">{esc(str(h["label"]))}</div>'
+            f'<div class="v">{esc(str(h.get("value", "—")))}</div>{delta}</div>')
+    when = str(insight.get("generated_at") or "").replace("T", " ")[:16]
+    viz = str(insight.get("html") or "") + _WHOLE_CARD_FRAME_SIZE
+    return (
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        f"<title>{esc(str(insight.get('title') or 'Insight'))}</title>"
+        f"<style>{_WHOLE_CARD_CSS}</style></head><body><div class=\"c\">"
+        f"<div><div class=\"eb\">{esc(_card_eyebrow(insight))}</div>"
+        f"<h1>{esc(str(insight.get('title') or ''))}</h1></div>"
+        f"<p class=\"s\">{summary}</p>"
+        + (f'<div class="h">{"".join(tiles)}</div>' if tiles else "")
+        + f'<iframe id="v" sandbox="allow-scripts" title="Visualization" '
+        f'srcdoc="{esc(viz, quote=True)}"></iframe>'
+        f'<div class="f">brAIn · analysed {esc(when)}</div>'
+        "</div>" + _WHOLE_CARD_SIZE + _CARD_RELOAD_SNIPPET + "</body></html>"
+    )
 
 
 def _mirror_card(insight: dict) -> None:
@@ -4771,10 +4975,12 @@ def _mirror_card(insight: dict) -> None:
     html = insight.get("html")
     insight_id = str(insight.get("id") or "")
     path = _card_mirror_path(insight_id)
-    if not isinstance(html, str) or not html or path is None:
+    whole = _card_mirror_path(insight_id, whole=True)
+    if not isinstance(html, str) or not html or path is None or whole is None:
         return
     try:
         atomic_write.write_text(path, html + _CARD_RELOAD_SNIPPET)
+        atomic_write.write_text(whole, _whole_card_page(insight))
     except OSError as exc:
         log.debug("card mirror write failed: %s", exc)
 
@@ -4782,15 +4988,16 @@ def _mirror_card(insight: dict) -> None:
 def _unmirror_card(insight_id: str) -> None:
     if not WWW_CARD_DIR.is_dir():
         return
-    path = _card_mirror_path(insight_id)
-    if path is None:
-        return
-    try:
-        path.unlink(missing_ok=True)
-    except OSError:
-        # Best effort: the mirror is a copy, and a card whose stale HTML
-        # outlives it shows up as a 404 on a dashboard, not as lost data.
-        pass
+    for whole in (False, True):
+        path = _card_mirror_path(insight_id, whole)
+        if path is None:
+            return
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            # Best effort: the mirror is a copy, and a card whose stale HTML
+            # outlives it shows up as a 404 on a dashboard, not as lost data.
+            pass
 
 
 def _sync_card_mirrors() -> bool:
@@ -4804,7 +5011,8 @@ def _sync_card_mirrors() -> bool:
         return False
     insights = [i for i in load_insights()
                 if isinstance(i.get("html"), str) and i["html"]]
-    keep = {_card_file_name(i["id"]) for i in insights}
+    keep = ({_card_file_name(i["id"]) for i in insights}
+            | {_card_file_name(i["id"], whole=True) for i in insights})
     try:
         for stale in WWW_CARD_DIR.glob("*.html"):
             if stale.name not in keep:
@@ -4824,6 +5032,181 @@ async def h_card_info(request: web.Request) -> web.Response:
         "local_dir": f"/local/{WWW_CARD_DIR.name}",
         "local_suffix": f"-{get_card_token()}.html",
     })
+
+
+# -- a card on a dashboard, put there by brAIn --------------------------------
+# The ▦ dialog used to end at "here is some YAML, go and paste it into the
+# card editor" — four steps in another app for something brAIn can do in
+# one. So it lists the dashboards and views Home Assistant has, and adds
+# the card to the one picked. Only a dashboard stored in the UI can be
+# written: a YAML-mode one is somebody's file, and an auto-generated one
+# has no config to add to until somebody takes control of it — both come
+# back with the sentence that says which, and the YAML stays offered for
+# them.
+
+def _view_rows(config) -> list[dict]:
+    views = (config or {}).get("views") if isinstance(config, dict) else None
+    out = []
+    for i, view in enumerate(views if isinstance(views, list) else []):
+        if not isinstance(view, dict):
+            continue
+        title = str(view.get("title") or view.get("path") or f"View {i + 1}")
+        out.append({"index": i, "title": title[:80],
+                    "sections": view.get("type") == "sections"})
+    return out
+
+
+def _unwritable_reason(row: dict, call: dict) -> str:
+    if str(row.get("mode") or "storage") == "yaml":
+        return "This dashboard is written in YAML — copy the YAML below into it."
+    if not call.get("ok"):
+        err = str(call.get("error") or "")
+        if "not found" in err.lower() or "no config" in err.lower():
+            return ("Home Assistant builds this dashboard automatically, so "
+                    "there is nothing to add a card to yet. Open it, choose "
+                    "⋮ → Edit dashboard → Take control, then try again.")
+        return f"Home Assistant would not read this dashboard ({err or 'no answer'})."
+    config = call.get("result")
+    if isinstance(config, dict) and config.get("strategy"):
+        return ("This dashboard is generated by a strategy. Take control of "
+                "it in Home Assistant first, then try again.")
+    return ""
+
+
+async def _dashboards() -> list[dict]:
+    import aiohttp  # noqa: PLC0415 — deferred, as every Core call here is
+    import ha_data  # noqa: PLC0415
+    async with aiohttp.ClientSession() as session:
+        listed = await ha_data._ws_calls(
+            session, [{"type": "lovelace/dashboards/list"}])
+        rows = listed[0]["result"] if listed and listed[0]["ok"] else []
+        dashboards = [{"url_path": None, "title": "Overview", "mode": "storage"}]
+        for row in rows if isinstance(rows, list) else []:
+            if isinstance(row, dict) and row.get("url_path"):
+                dashboards.append({"url_path": str(row["url_path"]),
+                                   "title": str(row.get("title")
+                                                or row["url_path"]),
+                                   "mode": str(row.get("mode") or "storage")})
+        calls = await ha_data._ws_calls(session, [
+            {"type": "lovelace/config", "url_path": d["url_path"]}
+            for d in dashboards])
+    out = []
+    for dash, call in zip(dashboards, calls):
+        reason = _unwritable_reason(dash, call)
+        out.append({
+            "url_path": dash["url_path"], "title": dash["title"][:80],
+            "editable": not reason, "reason": reason,
+            "views": _view_rows(call.get("result")) if not reason else []})
+    return out
+
+
+async def h_dashboards(request: web.Request) -> web.Response:
+    try:
+        rows = await _dashboards()
+    except Exception as exc:  # noqa: BLE001 — a listing, reported as such
+        log.info("could not list dashboards: %s", exc)
+        return web.json_response(
+            {"dashboards": [], "error": "brAIn could not reach Home Assistant "
+             "to list its dashboards."})
+    return web.json_response({"dashboards": rows})
+
+
+def _dashboard_card(insight: dict, whole: bool, aspect) -> dict:
+    """The Webpage card that shows one insight, as Home Assistant stores it."""
+    url = (f"/local/{WWW_CARD_DIR.name}/"
+           f"{_card_file_name(insight['id'], whole=whole)}")
+    try:
+        ratio = int(float(aspect))
+    except (TypeError, ValueError):
+        ratio = 90 if whole else 60
+    ratio = min(max(ratio, 25), 300)
+    title = " ".join(str(insight.get("title") or "Insight").split())[:80]
+    card = {"type": "iframe", "url": url, "aspect_ratio": f"{ratio}%"}
+    if not whole:
+        card["title"] = title
+    return card
+
+
+_VIEW_GONE = ("That view is no longer on the dashboard — reopen Share to "
+              "pick again.")
+
+
+def _place_card(config: dict, index: int, card: dict) -> str:
+    """Add `card` to view `index` of a stored dashboard config, in place.
+
+    A sections view holds its cards in sections, so the card arrives as a
+    section of its own rather than being dropped into somebody's grid
+    between two cards they arranged. A classic view takes it at the end.
+    Answers with the view's title.
+    """
+    views = config.get("views")
+    if not isinstance(views, list) or not (0 <= index < len(views)) \
+            or not isinstance(views[index], dict):
+        raise ValueError(_VIEW_GONE)
+    view = views[index]
+    if view.get("type") == "sections":
+        sections = view.get("sections")
+        if not isinstance(sections, list):
+            sections = view["sections"] = []
+        sections.append({"type": "grid", "cards": [card]})
+    else:
+        cards = view.get("cards")
+        if not isinstance(cards, list):
+            cards = view["cards"] = []
+        cards.append(card)
+    return str(view.get("title") or view.get("path") or f"View {index + 1}")
+
+
+async def h_card_to_dashboard(request: web.Request) -> web.Response:
+    insight_id = request.match_info["id"]
+    insight = await asyncio.to_thread(_read_json, _insight_path(insight_id))
+    if insight is None or not insight.get("html"):
+        raise web.HTTPNotFound(text="no such card")
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text="expected an object")
+    url_path = body.get("url_path") or None
+    if url_path is not None and not re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$",
+                                             str(url_path)):
+        raise web.HTTPBadRequest(text="bad dashboard")
+    try:
+        index = int(body.get("view", 0))
+    except (TypeError, ValueError):
+        raise web.HTTPBadRequest(text="bad view")
+    whole = body.get("show", "card") != "chart"
+    if not await asyncio.to_thread(_sync_card_mirrors):
+        raise web.HTTPConflict(
+            text="brAIn could not write to /config/www, so Home Assistant has "
+                 "nothing to show on a dashboard. Check the /config mount.")
+    card = _dashboard_card(insight, whole, body.get("aspect"))
+    import aiohttp  # noqa: PLC0415 — deferred, as every Core call here is
+    import ha_data  # noqa: PLC0415
+    async with aiohttp.ClientSession() as session:
+        got = (await ha_data._ws_calls(
+            session, [{"type": "lovelace/config", "url_path": url_path}]))[0]
+        reason = _unwritable_reason({"mode": "storage"}, got)
+        if reason:
+            raise web.HTTPConflict(text=reason)
+        config = got["result"]
+        try:
+            view_title = _place_card(config, index, card)
+        except ValueError:
+            raise web.HTTPConflict(text=_VIEW_GONE)
+        saved = (await ha_data._ws_calls(session, [
+            {"type": "lovelace/config/save", "url_path": url_path,
+             "config": config}]))[0]
+    if not saved["ok"]:
+        raise web.HTTPConflict(
+            text=f"Home Assistant would not save the dashboard "
+                 f"({saved['error'] or 'no answer'}).")
+    # Three strings that arrived from outside this process — a route
+    # parameter, a request body and somebody's dashboard config — each
+    # flattened to one line before it reaches the log.
+    log.info("card %s added to dashboard %s, view %s",
+             *(str(v).replace("\r", " ").replace("\n", " ")[:80]
+               for v in (insight_id, url_path or "(default)", view_title)))
+    return web.json_response({"added": True, "view": view_title,
+                              "url_path": url_path, "card": card})
 
 
 # -- findings: what's broken, and what brAIn did about it -------------------
@@ -12891,6 +13274,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/generate", h_generate)
     app.router.add_delete("/api/insight/{id}", h_delete_insight)
     app.router.add_put("/api/insight/{id}", h_rename_insight)
+    app.router.add_post("/api/insight/{id}/refine", h_insight_refine)
     app.router.add_delete("/api/card/{id}", h_delete_card)
     app.router.add_put("/api/card/{id}/tags", h_card_tags_put)
     app.router.add_get("/api/findings", h_findings)
@@ -12993,6 +13377,8 @@ def make_app() -> web.Application:
     app.router.add_post("/api/insight/{id}/feedback", h_feedback_add)
     app.router.add_delete("/api/insight/{id}/feedback/{ts}", h_feedback_delete)
     app.router.add_get("/api/card_info", h_card_info)
+    app.router.add_get("/api/dashboards", h_dashboards)
+    app.router.add_post("/api/card/{id}/dashboard", h_card_to_dashboard)
     app.router.add_get("/api/onboarding", h_onboarding)
     app.router.add_get("/api/onboarding/notify", h_onboarding_notify)
     app.router.add_post("/api/onboarding/notify", h_onboarding_notify_save)

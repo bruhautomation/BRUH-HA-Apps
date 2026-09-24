@@ -44,6 +44,8 @@ const page_html = `
         <h3>${TITLE}</h3>
       </div>
       <div class="actions">
+        <button class="btn cardact"><span class="caicon">✎</span><span class="calabel">Refine</span></button>
+        <button class="btn cardact"><span class="caicon">↗</span><span class="calabel">Share</span></button>
         <button class="btn icon">⤢</button>
         <button class="btn icon">⋯</button>
       </div>
@@ -84,6 +86,8 @@ for (const width of WIDTHS) {
       titleLines: lineHeight(h3),
       titleScrollW: h3.scrollWidth,
       titleClientW: h3.clientWidth,
+      titleScrollH: h3.scrollHeight,
+      titleClientH: h3.clientHeight,
       catLines: lineHeight(cat),
       docWidth: document.documentElement.scrollWidth,
       targets: [...head.querySelectorAll('button')].map((b) => {
@@ -98,6 +102,13 @@ for (const width of WIDTHS) {
   // room to USE them — a one-line title cut off mid-word is the old bug.
   if (m.titleLines < 2 && m.titleScrollW > m.titleClientW + 1) {
     problems.push(`title truncated on one line (${m.titleScrollW}px into ${m.titleClientW}px)`);
+  }
+  // And it is never clamped at all. Refine and Share joined the head in
+  // 2.8, four buttons are ~170px of a phone's row, and the first cut came
+  // out "Downstairs dries 15…" — which is why a narrow card gives the title
+  // a row of its own under the buttons.
+  if (m.titleScrollH > m.titleClientH + 1) {
+    problems.push(`title clamped (${m.titleScrollH}px of text in ${m.titleClientH}px)`);
   }
   if (m.catLines !== 1) problems.push(`category ran to ${m.catLines} lines`);
   if (m.headRight > m.cardRight + 0.5) problems.push('head overflows the card');

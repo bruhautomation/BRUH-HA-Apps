@@ -1301,9 +1301,15 @@ function makeCard(catInfo, insight, fallbackId) {
   head.appendChild(el("span", "cicon",
     (catInfo && catInfo.icon) || (insight && insight.icon) || (shown && shown.icon) || "✨"));
   const titles = el("div", "ctitles");
+  // The line over the title says what the card is ABOUT. An asked card
+  // used to say CUSTOM there — where it came from, which nobody needs
+  // telling — so it is headed by its topics now (`eyebrow`, derived once
+  // on the server), and the question it was asked as lives in Refine.
   const catName = catInfo ? catInfo.title
-    : ((insight && insight.category_title) || "Custom");
+    : ((insight && insight.eyebrow) || "Your question");
   const catRow = el("div", "cat", catName);
+  const asked = (shown && shown.question) || (insight && insight.question);
+  if (!catInfo && asked) tip(catRow, `You asked: “${asked}”`);
   if (catInfo && catInfo.focus_overridden) {
     catRow.appendChild(el("span", "badge", "custom prompt"));
   }
@@ -1330,7 +1336,20 @@ function makeCard(catInfo, insight, fallbackId) {
   // `flex: none`, so every one of them was taken out of the words you read the
   // card by. Expand earns the visible slot because it is the only one that
   // does something to what is on screen rather than to the card's definition.
+  // Refine and Share are the two things people want from a card they are
+  // looking at, so they are named buttons rather than rows in ⋯: one
+  // changes the card by saying what should be different, the other takes
+  // it somewhere else. Their words give way to their icons on a narrow
+  // card (a container query), never the other way round.
+  if (shown && !view && !active && (catInfo || insight)) {
+    actions.appendChild(cardActionButton("✎", "Refine",
+      "Refine — say what should change and brAIn regenerates the card",
+      () => openRefine(id, catInfo, insight)));
+  }
   if (shown) {
+    actions.appendChild(cardActionButton("↗", "Share",
+      "Share — copy it as an image, or put it on a dashboard",
+      () => openShare(shown)));
     const expand = el("button", "btn icon", "⤢");
     tip(expand, "Expand");
     expand.addEventListener("click", () => openModal(shown, !view));
@@ -1340,7 +1359,7 @@ function makeCard(catInfo, insight, fallbackId) {
   const menu = [];
   if (!active && !view) {
     menu.push(["↻", "Regenerate", "Run this card again now",
-      () => generate(id, (insight && insight.question) || job.question)]);
+      () => generate(id, (insight && insight.question) || job.question, true)]);
   }
   // ✎ edits every card: a category card opens its full editor, an ad-hoc
   // Ask card (no definition behind it) gets the name/icon dialog
@@ -1355,13 +1374,9 @@ function makeCard(catInfo, insight, fallbackId) {
         else openEdit(catInfo);
       }]);
   }
-  if (catInfo) {
-    menu.push(["💬", "Give feedback", "Remembered for every future run",
-      () => openFeedback(catInfo)]);
-  }
-  if (shown) {
-    menu.push(["▦", "Add to dashboard", "Copy this card into Home Assistant",
-      () => openCardModal(shown)]);
+  if (insight) {
+    menu.push(["#", "Edit tags", "What this card can be filtered by",
+      () => { state.editingTags = id; render(); }]);
   }
   // ✕ deletes every card — including one whose only trace is a job, so a
   // failed Ask can be cleared away instead of sitting there forever.
@@ -1385,8 +1400,14 @@ function makeCard(catInfo, insight, fallbackId) {
 
   // the question shows while the answer is still generating too, so an
   // in-flight "Ask" card says what it's working on
+  // An answered card does not repeat its question: the title and the
+  // answer are what it is for, and the question is one press away in
+  // Refine. A card still working, or one that failed, has nothing else to
+  // say what it is about, so it shows the question until it does.
   const question = (shown && shown.question) || job.question;
-  if (question) card.appendChild(el("div", "summary", `“${question}”`));
+  if (question && (active || !shown)) {
+    card.appendChild(el("div", "summary asking", `“${question}”`));
+  }
 
   // body
   if (active) {
@@ -1398,11 +1419,16 @@ function makeCard(catInfo, insight, fallbackId) {
     card.appendChild(phase);
     card.appendChild(el("div", "viz-skel"));
   } else if (shown) {
-    if (shown.summary) card.appendChild(el("div", "summary", shown.summary));
+    if (shown.summary) card.appendChild(summaryNode(shown.summary));
     if (shown.highlights && shown.highlights.length) {
       const prevData = view ? view.prev : state.prevLatest[id];
       const prevHls = (prevData && prevData.highlights) || [];
       const hls = el("div", "highlights");
+      // Tiles in even rows: four across, three for five or six (a row of
+      // four over a lone fifth is the ragged shape this replaced), and two
+      // on a narrow card. The count is the markup's; the widths are CSS's.
+      const n = shown.highlights.filter((h) => h && h.label).length;
+      hls.dataset.n = String(Math.min(n, 6));
       shown.highlights.forEach((h) => {
         if (!h || !h.label) return;
         const box = el("div", "hl" + (h.status ? ` status-${h.status}` : ""));
@@ -1425,7 +1451,10 @@ function makeCard(catInfo, insight, fallbackId) {
     card.appendChild(makeFrame(shown, !view));
     // Tags belong to the card, not to the run being viewed — editing them
     // while pinned to March's run must still change the card's tags.
-    if (insight) {
+    // Tags head the card (an asked card's eyebrow IS its topic tags) and
+    // filter from the bar above the grid, so the chip row under every card
+    // said them a second time. It is back while you edit them.
+    if (insight && state.editingTags === id) {
       const tagRow = makeTagRow(insight);
       if (tagRow) card.appendChild(tagRow);
     }
@@ -1499,24 +1528,26 @@ function makeCard(catInfo, insight, fallbackId) {
       foot.appendChild(when);
     }
     foot.appendChild(el("span", "spacer"));
-    if (shown.meta && shown.meta.duration_ms) {
-      foot.appendChild(el("span", null, `${(shown.meta.duration_ms / 1000).toFixed(0)}s`));
-    }
     // What this run cost, on the run it cost it. The number was already in
     // the stored card and only the stopwatch was ever rendered — so the
     // expensive card and the cheap one looked identical, and the only
     // evidence either way was a percentage in the top bar attributable to
-    // nothing. Seconds and tokens are not the same reading: a fast card
-    // over the whole home outspends a slow one over eight thermostats.
+    // nothing. One figure on the card, the tokens, and the stopwatch and
+    // the split behind it: two numbers side by side read as two costs.
     const cost = shown.meta && shown.meta.cost;
+    const secs = shown.meta && shown.meta.duration_ms
+      ? `${(shown.meta.duration_ms / 1000).toFixed(0)}s` : "";
     if (cost && cost.total) {
-      const span = el("span", null, `${fmtTokens(cost.total)} tokens`);
-      tip(span, `${fmtTokens(cost.input)} in · ${fmtTokens(cost.output)} out`
+      const span = el("span", "cost", `${fmtTokens(cost.total)} tokens`);
+      tip(span, (secs ? `Took ${secs}. ` : "")
+        + `${fmtTokens(cost.input)} in · ${fmtTokens(cost.output)} out`
         + (cost.cached ? ` · ${fmtTokens(cost.cached)} read from cache (free)` : "")
         + ". Counted against your 5-hour session window.");
       foot.appendChild(span);
+    } else if (secs) {
+      foot.appendChild(el("span", "cost", secs));
     }
-    if (insight && catInfo) {
+    if (insight && (catInfo || String(id).startsWith("custom-"))) {
       foot.appendChild(makeHistoryControls(id, insight, view));
     }
     if (!view && insight && insight.category === "custom" && insight.question) {
@@ -1538,7 +1569,7 @@ function makeCard(catInfo, insight, fallbackId) {
     box.appendChild(code);
     const retry = el("button", "btn small", "Try again");
     retry.style.marginTop = "10px";
-    retry.addEventListener("click", () => generate(id, question));
+    retry.addEventListener("click", () => generate(id, question, true));
     box.appendChild(retry);
     card.appendChild(box);
   } else {
@@ -1552,6 +1583,43 @@ function makeCard(catInfo, insight, fallbackId) {
     card.appendChild(box);
   }
   return card;
+}
+
+// A named button on a card's head: an icon and a word, and on a narrow
+// card the icon alone (the word is hidden by a container query, and the
+// tooltip and aria-label still carry it).
+function cardActionButton(icon, label, hint, run) {
+  const btn = el("button", "btn cardact");
+  btn.type = "button";
+  const glyph = el("span", "caicon", icon);
+  glyph.setAttribute("aria-hidden", "true");
+  btn.appendChild(glyph);
+  btn.appendChild(el("span", "calabel", label));
+  tip(btn, hint);
+  btn.addEventListener("click", run);
+  return btn;
+}
+
+// The summary opens with the answer ("Yes — dehumidify first.") and the
+// contract asks for exactly that, so the first sentence is set in the
+// card's ink and the reason after it in the quieter colour. A summary
+// that is one sentence is left as it is: bolding the whole of it says
+// nothing. The server splits it the same way for the dashboard page.
+function splitLead(text) {
+  const m = String(text || "").match(/^(.{3,160}?[.!?])\s+(\S[\s\S]*)$/);
+  return m ? [m[1], m[2]] : ["", String(text || "")];
+}
+
+function summaryNode(text) {
+  const node = el("div", "summary");
+  const [lead, rest] = splitLead(text);
+  if (lead) {
+    node.appendChild(el("strong", "lead", lead));
+    node.appendChild(document.createTextNode(` ${rest}`));
+  } else {
+    node.textContent = rest;
+  }
+  return node;
 }
 
 // Tags a card can be found under: the model's content tags, the card's own
@@ -1822,14 +1890,18 @@ function renderIfChanged() {
 
 // ------------------------------------------------------------------ actions
 
-async function generate(categoryOrId, question) {
+// `inPlace` regenerates an asked card as itself. Without it, handing a
+// question over is asking it afresh — which is what the ask bar means,
+// and what Regenerate used to do by accident: a second card with the
+// same answer, the first left where it was.
+async function generate(categoryOrId, question, inPlace = false) {
   try {
-    const body = question
-      ? { question }
-      : (categoryOrId && categoryOrId.startsWith("custom-")
-        ? null // regenerating a custom card without its question isn't possible
-        : { category: categoryOrId });
-    if (!body) return;
+    const custom = !!(categoryOrId && categoryOrId.startsWith("custom-"));
+    const body = custom && (inPlace || !question)
+      ? { id: categoryOrId, question: question || "" }
+      : question
+        ? { question }
+        : { category: categoryOrId };
     const res = await api("api/generate", { method: "POST", body: JSON.stringify(body) });
     // "learn about the boiler" isn't a card — the server routed it to a study
     // session instead, and there is nothing on the dashboard to wait for.
@@ -3635,9 +3707,27 @@ $("#setModal").addEventListener("click", (ev) => {
   if (ev.target === $("#setModal")) closeBox("#setModal");
 });
 
-// -------------------------------------------------------- feedback modal
+// ------------------------------------------------------------ refine modal
+// Editing a card by saying what should be different. A card is a Claude run
+// rendered once, so the only honest edit is another run — told the change,
+// shown the card as it stands, and asked to keep everything else. What it
+// was told stays on the card as standing feedback (the box is ticked by
+// default), which is what stops the next scheduled run quietly undoing it;
+// the list under the box is those, each with a ✕. This replaced "Give
+// feedback", which was the same store behind a second dialog and only for
+// recurring cards.
 
-let fbCatId = null;
+const refineState = { id: null, catInfo: null, insight: null };
+
+// A few changes people actually ask for, one press into the box. They add
+// to what is there rather than replacing it, so two can be combined.
+const REFINE_IDEAS = [
+  "Compare with last week",
+  "Look further back",
+  "Fewer numbers",
+  "Just the chart",
+  "Explain it more simply",
+];
 
 function fmtWhen(ts) {
   const d = new Date(ts * 1000);
@@ -3645,27 +3735,31 @@ function fmtWhen(ts) {
     d.toLocaleString([], { month: "short", day: "numeric" });
 }
 
-async function renderFbList() {
-  const wrapEl = $("#fbListWrap");
-  const list = $("#fbList");
-  list.textContent = "";
+async function renderRefineKept() {
+  const wrapEl = $("#refineKeptWrap");
+  const list = $("#refineKept");
+  const id = refineState.id;
   let entries = [];
   try {
-    entries = (await api(`api/insight/${fbCatId}/feedback`)).feedback || [];
-  } catch (e) { /* list stays hidden */ }
+    entries = (await api(`api/insight/${id}/feedback`)).feedback || [];
+  } catch (e) {
+    entries = [];
+  }
+  if (refineState.id !== id) return;
+  list.textContent = "";
   wrapEl.classList.toggle("hidden", !entries.length);
   entries.slice().reverse().forEach((f) => {
-    const row = el("div", "fbitem");
-    const txt = el("div", "txt");
+    const row = el("div", "fbrow");
+    const txt = el("div", "fbtext");
     txt.appendChild(el("div", null, f.text));
     txt.appendChild(el("div", "when", fmtWhen(f.ts)));
     row.appendChild(txt);
     const del = el("button", "btn icon", "✕");
-    tip(del, "Remove — stop applying this feedback");
+    tip(del, "Stop asking this of the card on future runs");
     del.addEventListener("click", async () => {
       try {
-        await api(`api/insight/${fbCatId}/feedback/${f.ts}`, { method: "DELETE" });
-        renderFbList();
+        await api(`api/insight/${id}/feedback/${f.ts}`, { method: "DELETE" });
+        renderRefineKept();
       } catch (e) {
         toast(e.message);
       }
@@ -3675,41 +3769,78 @@ async function renderFbList() {
   });
 }
 
-function openFeedback(cat) {
-  fbCatId = cat.id;
-  $("#fbIcon").textContent = cat.icon || "💬";
-  $("#fbTitle").textContent = `${cat.title} — feedback`;
-  $("#fbText").value = "";
-  $("#fbListWrap").classList.add("hidden");
-  openBox("#fbModal");
-  renderFbList();
+function openRefine(id, catInfo, insight) {
+  refineState.id = id;
+  refineState.catInfo = catInfo;
+  refineState.insight = insight;
+  const name = catInfo ? catInfo.title
+    : ((insight && insight.title) || "this card");
+  $("#refineTitle").textContent = `Refine — ${name}`;
+  $("#refineText").value = "";
+  $("#refineKeep").checked = true;
+  const chips = $("#refineChips");
+  chips.textContent = "";
+  REFINE_IDEAS.forEach((idea) => {
+    const chip = el("button", "refinechip", `＋ ${idea}`);
+    chip.type = "button";
+    chip.addEventListener("click", () => {
+      const box = $("#refineText");
+      const now = box.value.trim().replace(/[.;,]$/, "");
+      box.value = now ? `${now}; ${idea.toLowerCase()}` : idea;
+      box.focus();
+    });
+    chips.appendChild(chip);
+  });
+  // What the card was built from, so "what should change" has something
+  // to be a change TO — the question for an asked card, the focus for a
+  // recurring one. This is the one place an asked card's question is shown.
+  const from = $("#refineFrom");
+  from.textContent = "";
+  const basis = insight && insight.question
+    ? `“${insight.question}”`
+    : (catInfo && catInfo.focus ? catInfo.focus : "");
+  if (basis) {
+    from.appendChild(el("b", null, insight && insight.question
+      ? "You asked: " : "What it looks at: "));
+    from.appendChild(document.createTextNode(basis));
+  }
+  from.classList.toggle("hidden", !basis);
+  $("#refineKeptWrap").classList.add("hidden");
+  openBox("#refineModal");
+  setTimeout(() => $("#refineText").focus(), 50);
+  renderRefineKept();
 }
 
-async function sendFeedback(regen) {
-  const text = $("#fbText").value.trim();
-  if (!text) { toast("Write the feedback first"); return; }
+async function sendRefine() {
+  const note = $("#refineText").value.trim();
+  if (!note) { toast("Say what should change first"); return; }
+  const btn = $("#refineGo");
+  btn.disabled = true;
   try {
-    await api(`api/insight/${fbCatId}/feedback`, {
-      method: "POST", body: JSON.stringify({ feedback: text }) });
-    $("#fbText").value = "";
-    if (regen) {
-      closeBox("#fbModal");
-      toast("Feedback saved — regenerating with it now");
-      generate(fbCatId);
-    } else {
-      toast("Feedback saved — applied on every future run");
-      renderFbList();
-    }
+    await api(`api/insight/${refineState.id}/refine`, {
+      method: "POST",
+      body: JSON.stringify({ note, remember: $("#refineKeep").checked }),
+    });
+    closeBox("#refineModal");
+    toast("Regenerating with your change — the old version stays in the "
+      + "card's history");
+    await refreshStatus();
+    fastPoll();
   } catch (e) {
     toast(e.message);
+  } finally {
+    btn.disabled = false;
   }
 }
 
-$("#fbSave").addEventListener("click", () => sendFeedback(false));
-$("#fbSaveRegen").addEventListener("click", () => sendFeedback(true));
-$("#fbClose").addEventListener("click", () => closeBox("#fbModal"));
-$("#fbModal").addEventListener("click", (ev) => {
-  if (ev.target === $("#fbModal")) closeBox("#fbModal");
+$("#refineGo").addEventListener("click", sendRefine);
+$("#refineText").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) sendRefine();
+});
+$("#refineCancel").addEventListener("click", () => closeBox("#refineModal"));
+$("#refineClose").addEventListener("click", () => closeBox("#refineModal"));
+$("#refineModal").addEventListener("click", (ev) => {
+  if (ev.target === $("#refineModal")) closeBox("#refineModal");
 });
 
 // ---------------------------------------------------------------- findings
@@ -11167,7 +11298,6 @@ window.addEventListener("message", (ev) => {
 
 // -------------------------------------------------- dashboard card modal
 
-let cardInfoCache = null;
 
 function copyFallback(text) {
   const ta = document.createElement("textarea");
@@ -11189,58 +11319,549 @@ function copyText(text) {
   return Promise.resolve(copyFallback(text));
 }
 
-async function openCardModal(insight) {
-  openBox("#cardModal");
-  const pre = $("#cardYaml");
-  const warn = $("#cardWarn");
-  const hint = $("#cardHint");
-  warn.classList.add("hidden");
-  pre.textContent = "Loading…";
+// ------------------------------------------------------------ share modal
+// Taking a card somewhere else, two ways. As a picture: the card's face —
+// title, answer, numbers and chart, no menus and no token count — drawn to
+// a PNG you can paste into a message. On a dashboard: brAIn adds a Webpage
+// card to the dashboard and view you pick, which is what used to be a
+// block of YAML and four steps in another app. The YAML is still here for
+// the one case brAIn cannot write, a dashboard kept in YAML.
+//
+// The chart is model-authored script in a sandboxed frame with no origin
+// of its own, so nothing out here can read it. The frame draws ITSELF
+// (`snapInFrame`, injected into its srcdoc) and posts back a PNG; this side
+// only ever sees pixels. It is a fresh frame at one fixed width rather than
+// the one on screen, so a card shared from a phone is the same picture as
+// one shared from a desktop.
+
+let cardInfoCache = null;
+const shareState = {
+  insight: null, blob: null, url: null, dashboards: [], seq: 0, info: null,
+};
+const SHARE_WIDTH = 720;
+const SNAP_FRAME_WIDTH = 664;
+
+// Runs INSIDE the chart's frame, as source text: nothing here may close
+// over anything from the panel. It clones the page, inlines the few
+// computed styles an animation leaves behind (a line drawn in with a dash
+// offset is invisible without them once animations are switched off), and
+// draws the clone through an SVG foreignObject onto a canvas.
+function snapInFrame(ID) {
+  function styles() {
+    var out = [];
+    var tags = document.querySelectorAll("style");
+    for (var i = 0; i < tags.length; i++) out.push(tags[i].textContent);
+    return out.join("\n");
+  }
+  function snap(scale) {
+    return new Promise(function (resolve, reject) {
+      var body = document.body;
+      var w = Math.ceil(document.documentElement.clientWidth || body.scrollWidth);
+      var h = Math.ceil(Math.max(body.scrollHeight, body.getBoundingClientRect().height));
+      var clone = body.cloneNode(true);
+      var src = body.getElementsByTagName("*");
+      var dst = clone.getElementsByTagName("*");
+      var keep = ["opacity", "transform", "transform-origin", "stroke-dasharray",
+        "stroke-dashoffset", "fill-opacity", "stroke-opacity", "visibility", "clip-path"];
+      for (var i = 0; i < src.length && i < dst.length; i++) {
+        var node = src[i];
+        if (node.tagName && node.tagName.toLowerCase() === "canvas") {
+          try {
+            var pic = document.createElement("img");
+            pic.src = node.toDataURL();
+            pic.setAttribute("style", "width:" + node.clientWidth + "px;height:" + node.clientHeight + "px");
+            dst[i].parentNode.replaceChild(pic, dst[i]);
+          } catch (e) { /* a tainted canvas is left out of the picture */ }
+          continue;
+        }
+        var anims = node.getAnimations ? node.getAnimations() : [];
+        if (!anims.length) continue;
+        var cs = getComputedStyle(node);
+        var inline = "";
+        for (var j = 0; j < keep.length; j++) {
+          var v = cs.getPropertyValue(keep[j]);
+          if (v) inline += keep[j] + ":" + v + " !important;";
+        }
+        dst[i].setAttribute("style", (dst[i].getAttribute("style") || "") + ";" + inline);
+      }
+      var scripts = clone.getElementsByTagName("script");
+      for (var k = scripts.length - 1; k >= 0; k--) scripts[k].parentNode.removeChild(scripts[k]);
+      var text = styles();
+      var css = text.replace(/(^|[\s,}>])(?::root|html|body)(?=[\s,{:.#\[>])/g, "$1.brsnap");
+      var names = text.match(/--[\w-]+/g) || [];
+      var rootStyle = getComputedStyle(document.documentElement);
+      var vars = "";
+      var seen = {};
+      for (var n = 0; n < names.length; n++) {
+        if (seen[names[n]]) continue;
+        seen[names[n]] = 1;
+        var val = rootStyle.getPropertyValue(names[n]);
+        if (val) vars += names[n] + ":" + val.trim() + ";";
+      }
+      var bs = getComputedStyle(body);
+      var wrap = document.createElement("div");
+      wrap.className = "brsnap";
+      wrap.setAttribute("style", vars + "width:" + w + "px;margin:0;font-family:" + bs.fontFamily
+        + ";color:" + bs.color + ";font-size:" + bs.fontSize + ";line-height:" + bs.lineHeight + ";");
+      var sheet = document.createElement("style");
+      sheet.textContent = css + "\n*{animation:none !important;transition:none !important}";
+      wrap.appendChild(sheet);
+      while (clone.firstChild) wrap.appendChild(clone.firstChild);
+      var xml = new XMLSerializer().serializeToString(wrap);
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h
+        + '"><foreignObject x="0" y="0" width="100%" height="100%">' + xml + "</foreignObject></svg>";
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var canvas = document.createElement("canvas");
+          canvas.width = w * scale;
+          canvas.height = h * scale;
+          var ctx = canvas.getContext("2d");
+          ctx.scale(scale, scale);
+          ctx.drawImage(img, 0, 0);
+          resolve({ png: canvas.toDataURL("image/png"), w: w, h: h });
+        } catch (e) { reject(e); }
+      };
+      img.onerror = function () { reject(new Error("the chart could not be drawn")); };
+      img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    });
+  }
+  window.addEventListener("message", function (ev) {
+    var d = ev.data;
+    if (!d || d.type !== "bruh-snap" || d.id !== ID || ev.source !== parent) return;
+    snap(d.scale || 2).then(function (r) {
+      parent.postMessage({ type: "bruh-snapped", id: ID, png: r.png, w: r.w, h: r.h }, "*");
+    }, function (e) {
+      parent.postMessage({ type: "bruh-snapped", id: ID, error: String((e && e.message) || e) }, "*");
+    });
+  });
+}
+
+const SNAP_SNIPPET = (id) =>
+  `<script>(${snapInFrame.toString()})(${jsonInScript(id)});<\/script>`;
+
+function askSnap(frame, frameId) {
+  return new Promise((resolve, reject) => {
+    let timer = null;
+    const onMsg = (ev) => {
+      const d = ev.data;
+      if (!d || d.type !== "bruh-snapped" || d.id !== frameId) return;
+      if (ev.source !== frame.contentWindow) return;
+      done();
+      if (d.error || !d.png) reject(new Error(d.error || "no picture"));
+      else resolve(d);
+    };
+    const done = () => {
+      clearTimeout(timer);
+      window.removeEventListener("message", onMsg);
+    };
+    timer = setTimeout(() => { done(); reject(new Error("the chart did not answer")); }, 8000);
+    window.addEventListener("message", onMsg);
+    frame.contentWindow.postMessage({ type: "bruh-snap", id: frameId, scale: 2 }, "*");
+  });
+}
+
+async function snapChart(insight) {
+  if (!insight.html) return null;
+  const frame = document.createElement("iframe");
+  frame.setAttribute("sandbox", "allow-scripts");
+  frame.setAttribute("aria-hidden", "true");
+  frame.setAttribute("tabindex", "-1");
+  frame.className = "snapframe";
+  frame.style.width = `${SNAP_FRAME_WIDTH}px`;
+  const frameId = `snap-${state.frameSeq++}`;
+  frame.dataset.frame = frameId;
+  frame.srcdoc = insight.html + SIZE_SNIPPET(frameId) + SNAP_SNIPPET(frameId);
+  document.body.appendChild(frame);
   try {
-    if (!cardInfoCache) cardInfoCache = await api("api/card_info");
+    await new Promise((res) => {
+      frame.addEventListener("load", res, { once: true });
+      setTimeout(res, 5000);
+    });
+    // The contract allows a draw-in of up to 800ms; a picture taken during
+    // it is a chart half drawn.
+    await new Promise((res) => setTimeout(res, 1100));
+    return await askSnap(frame, frameId);
+  } finally {
+    frame.remove();
+  }
+}
+
+// A PNG the chart's frame sent, as pixels. Only a base64 PNG data URL is
+// accepted, it is decoded here rather than loaded, and anything else is no
+// chart at all.
+async function chartBitmap(png) {
+  const m = typeof png === "string"
+    && png.match(/^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/);
+  if (!m) return null;
+  try {
+    const raw = atob(m[1]);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+    return await createImageBitmap(new Blob([bytes], { type: "image/png" }));
   } catch (e) {
-    pre.textContent = "Could not load card info: " + e.message;
+    return null;
+  }
+}
+
+function shareEyebrow(insight) {
+  if (insight.eyebrow) return insight.eyebrow;
+  const named = insight.category_title;
+  if (named && named !== "Custom") return named;
+  const cats = (state.status && state.status.categories) || [];
+  const cat = cats.find((c) => c.id === insight.category);
+  return cat ? cat.title : "";
+}
+
+// The card's face, laid out in the panel's own colours and drawn to a PNG.
+async function composeCardImage(insight, chart) {
+  const root = getComputedStyle(document.documentElement);
+  const v = (name, fallback) => root.getPropertyValue(name).trim() || fallback;
+  const surface = v("--surface", "#ffffff");
+  const ink = v("--ink", "#0a1622");
+  const ink2 = v("--ink-2", "#33506a");
+  const ink3 = v("--ink-3", "#7e96aa");
+  const tile = v("--surface-2", "#e8f1f8");
+  const line = v("--hairline", "rgba(10,22,34,0.1)");
+  const font = 'system-ui,-apple-system,"Segoe UI",sans-serif';
+  const add = (parent, tag, style, text) => {
+    const node = document.createElement(tag);
+    node.setAttribute("style", style);
+    if (text != null) node.textContent = text;
+    if (parent) parent.appendChild(node);
+    return node;
+  };
+  const box = add(null, "div", `width:${SHARE_WIDTH}px;box-sizing:border-box;`
+    + `padding:26px 28px 20px;background:${surface};color:${ink};font-family:${font};`
+    + "display:flex;flex-direction:column;gap:14px");
+  const head = add(box, "div", "display:flex;flex-direction:column;gap:3px");
+  const eyebrow = shareEyebrow(insight);
+  if (eyebrow) add(head, "div", `font-size:13px;font-weight:600;color:${ink3}`, eyebrow);
+  add(head, "div", "font-size:22px;font-weight:700;line-height:1.25", insight.title || "");
+  if (insight.summary) {
+    const [lead, rest] = splitLead(insight.summary);
+    const sum = add(box, "div", `font-size:15px;line-height:1.55;color:${ink2}`);
+    if (lead) add(sum, "strong", `color:${ink}`, lead);
+    sum.appendChild(document.createTextNode(lead ? ` ${rest}` : rest));
+  }
+  const hls = (insight.highlights || []).filter((h) => h && h.label).slice(0, 6);
+  if (hls.length) {
+    const cols = hls.length <= 4 ? hls.length : 3;
+    const grid = add(box, "div", "display:grid;gap:8px;"
+      + `grid-template-columns:repeat(${cols},minmax(0,1fr))`);
+    hls.forEach((h) => {
+      const t = add(grid, "div", `background:${tile};border-radius:10px;padding:10px 12px;`
+        + "display:flex;flex-direction:column;gap:3px");
+      add(t, "div", `font-size:12px;color:${ink3}`, String(h.label));
+      add(t, "div", "font-size:18px;font-weight:700;line-height:1.2",
+        String(h.value != null ? h.value : "—"));
+      if (h.delta) add(t, "div", `font-size:12px;color:${ink2}`, String(h.delta));
+    });
+  }
+  // The chart is NOT an <img> in the markup. Its PNG arrives in a message
+  // from a frame running model-authored script, so nothing it sends is
+  // ever used as a URL: the bytes are decoded into a bitmap, a spacer of
+  // the right height holds its place in the layout, and the bitmap is
+  // painted onto the canvas at the spacer's position afterwards.
+  const bitmap = chart ? await chartBitmap(chart.png) : null;
+  let spacer = null;
+  if (bitmap) {
+    const inner = SHARE_WIDTH - 56;
+    spacer = add(box, "div", `width:${inner}px;`
+      + `height:${Math.round(inner * bitmap.height / bitmap.width)}px`);
+  }
+  const foot = add(box, "div", `display:flex;justify-content:space-between;`
+    + `padding-top:10px;border-top:1px solid ${line};font-size:12px;color:${ink3}`);
+  add(foot, "span", "font-weight:700", "brAIn");
+  const when = insight.generated_at ? new Date(insight.generated_at) : null;
+  add(foot, "span", "", when && !isNaN(when.getTime())
+    ? `Analysed ${when.toLocaleString([], {
+      month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
+    : "");
+
+  const holder = add(document.body, "div", "position:fixed;left:-20000px;top:0");
+  holder.appendChild(box);
+  try {
+    const height = Math.ceil(box.getBoundingClientRect().height);
+    const slot = spacer ? {
+      x: spacer.offsetLeft, y: spacer.offsetTop,
+      w: spacer.offsetWidth, h: spacer.offsetHeight,
+    } : null;
+    const xml = new XMLSerializer().serializeToString(box);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${SHARE_WIDTH}" `
+      + `height="${height}"><foreignObject x="0" y="0" width="100%" height="100%">`
+      + `${xml}</foreignObject></svg>`;
+    const img = new Image();
+    await new Promise((res, rej) => {
+      img.onload = res;
+      img.onerror = () => rej(new Error("the card could not be drawn"));
+      img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    });
+    const scale = 2;
+    const canvas = document.createElement("canvas");
+    canvas.width = SHARE_WIDTH * scale;
+    canvas.height = height * scale;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = surface;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(scale, scale);
+    ctx.drawImage(img, 0, 0);
+    if (bitmap && slot) ctx.drawImage(bitmap, slot.x, slot.y, slot.w, slot.h);
+    return await new Promise((res, rej) => canvas.toBlob(
+      (b) => (b ? res(b) : rej(new Error("no image"))), "image/png"));
+  } finally {
+    holder.remove();
+  }
+}
+
+async function drawShare(seq) {
+  const shot = $("#shareShot");
+  const note = $("#shareShotNote");
+  const insight = shareState.insight;
+  let chart = null;
+  let chartErr = "";
+  try {
+    chart = await snapChart(insight);
+  } catch (e) {
+    chartErr = e.message;
+  }
+  if (seq !== shareState.seq) return;
+  let blob = null;
+  try {
+    blob = await composeCardImage(insight, chart);
+  } catch (e) {
+    if (seq !== shareState.seq) return;
+    shot.textContent = "";
+    shot.appendChild(el("span", "hint",
+      `This browser would not draw the card as a picture (${e.message}). `
+      + "Adding it to a dashboard below still works."));
     return;
   }
-  const info = cardInfoCache;
-  if (!info.www_cards) {
-    pre.textContent = "Dashboard cards are unavailable: the add-on could not write to "
-      + "/config/www. Check that the /config mount is writable and restart the add-on.";
-    return;
-  }
-  // HA itself serves the mirrored HTML at /local/… — same origin as every
-  // dashboard, so the card works over HTTP, HTTPS, and Nabu Casa alike.
-  const localUrl = `${info.local_dir}/${insight.id}${info.local_suffix}`;
-  pre.textContent = [
-    "type: iframe",
-    `url: ${localUrl}`,
-    `title: ${(insight.title || "Insight").replace(/[:#"\n]/g, " ").trim()}`,
-    "aspect_ratio: 90%",
-  ].join("\n");
-  hint.textContent = "Home Assistant serves this file itself, so the card works on any "
-    + "dashboard — local, HTTPS, and Nabu Casa remote alike. The file name contains this "
-    + "add-on's private card token — anyone with the exact link can view the insight, "
-    + "nothing else.";
+  if (seq !== shareState.seq) return;
+  if (shareState.url) URL.revokeObjectURL(shareState.url);
+  shareState.blob = blob;
+  shareState.url = URL.createObjectURL(blob);
+  shot.textContent = "";
+  const img = el("img");
+  img.src = shareState.url;
+  img.alt = `Picture of the card “${insight.title || ""}”`;
+  shot.appendChild(img);
+  $("#shareCopy").disabled = false;
+  $("#shareDownload").disabled = false;
+  // Said, never silent: a picture with the chart missing looks like a
+  // card that never had one.
+  note.textContent = chartErr
+    ? `The chart could not be included (${chartErr}) — the picture has the `
+      + "answer and the numbers."
+    : "";
+  note.classList.toggle("hidden", !chartErr);
+}
+
+async function copyShareImage() {
+  const blob = shareState.blob;
+  if (!blob) return;
   try {
-    // the panel shares HA's origin (ingress), so we can verify /local works
-    const probe = await fetch(localUrl, { cache: "no-store" });
-    if (!probe.ok) throw new Error(String(probe.status));
+    if (!navigator.clipboard || !window.ClipboardItem || !window.isSecureContext) {
+      throw new Error("no clipboard");
+    }
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+    toast("Copied — paste the picture anywhere");
   } catch (e) {
-    warn.textContent = "Home Assistant isn't serving this file yet — its www folder was "
-      + "just created. Restart Home Assistant once (Settings → System → ⋮ → Restart "
-      + "Home Assistant), then the card will load.";
+    // Home Assistant's ingress frame and several phones refuse an image on
+    // the clipboard outright, with no way to ask first. The picture is on
+    // screen, which is the fallback: right-click or long-press it.
+    toast("This browser won't let brAIn copy a picture — right-click or "
+      + "long-press the picture above to copy it, or use Download");
+  }
+}
+
+function downloadShareImage() {
+  if (!shareState.url) return;
+  const title = (shareState.insight && shareState.insight.title) || "brain-card";
+  const name = title.toLowerCase().replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "").slice(0, 60) || "brain-card";
+  const a = document.createElement("a");
+  a.href = shareState.url;
+  a.download = `${name}.png`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+// How tall the dashboard card should be, as Home Assistant's Webpage card
+// wants it: a percentage of its width. Read off the card as it is drawn
+// here, because that is the best guess anybody has of how tall the page
+// will be; a card that is not on screen gets an ordinary shape.
+function shareAspect(show) {
+  const id = shareState.insight && shareState.insight.id;
+  const card = id && document.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
+  const target = card && (show === "chart" ? card.querySelector(".viz iframe") : card);
+  if (!target) return show === "chart" ? 60 : 90;
+  const r = target.getBoundingClientRect();
+  if (!r.width || !r.height) return show === "chart" ? 60 : 90;
+  const pad = show === "chart" ? 0 : -40;   // no head buttons, no foot
+  return Math.round(Math.min(Math.max((r.height + pad) / r.width * 100, 25), 300));
+}
+
+function shareUrl(show) {
+  const info = shareState.info;
+  if (!info || !shareState.insight) return "";
+  const url = `${info.local_dir}/${shareState.insight.id}${info.local_suffix}`;
+  return show === "chart" ? url : url.replace(/\.html$/, ".card.html");
+}
+
+function fillShareYaml() {
+  const show = $("#shareShow").value;
+  const url = shareUrl(show);
+  if (!url) return;
+  const lines = ["type: iframe", `url: ${url}`, `aspect_ratio: ${shareAspect(show)}%`];
+  if (show === "chart") {
+    lines.push(`title: ${(shareState.insight.title || "Insight")
+      .replace(/[:#"\n]/g, " ").trim()}`);
+  }
+  $("#cardYaml").textContent = lines.join("\n");
+}
+
+function onShareDash() {
+  const d = shareState.dashboards[Number($("#shareDash").value)];
+  const views = $("#shareView");
+  views.textContent = "";
+  const warn = $("#shareDashWarn");
+  const reason = d ? d.reason : "";
+  warn.textContent = reason;
+  warn.classList.toggle("hidden", !reason);
+  (d && d.views ? d.views : []).forEach((view) => {
+    const opt = el("option", null, view.title);
+    opt.value = String(view.index);
+    views.appendChild(opt);
+  });
+  views.disabled = !(d && d.views && d.views.length);
+  $("#shareAdd").disabled = !(d && d.editable && d.views && d.views.length);
+  if (d && d.editable && !(d.views || []).length) {
+    warn.textContent = "This dashboard has no views yet — add one in Home Assistant first.";
     warn.classList.remove("hidden");
   }
 }
 
+async function loadShareDashboards(seq) {
+  const sel = $("#shareDash");
+  sel.textContent = "";
+  sel.appendChild(el("option", null, "Loading…"));
+  sel.disabled = true;
+  $("#shareView").textContent = "";
+  $("#shareAdd").disabled = true;
+  let res = null;
+  try {
+    res = await api("api/dashboards");
+  } catch (e) {
+    res = { dashboards: [], error: e.message };
+  }
+  if (seq !== shareState.seq) return;
+  shareState.dashboards = res.dashboards || [];
+  sel.textContent = "";
+  shareState.dashboards.forEach((d, i) => {
+    const opt = el("option", null, d.editable ? d.title : `${d.title} (can't add here)`);
+    opt.value = String(i);
+    sel.appendChild(opt);
+  });
+  sel.disabled = !shareState.dashboards.length;
+  const first = shareState.dashboards.findIndex((d) => d.editable);
+  if (first >= 0) sel.value = String(first);
+  if (res.error && !shareState.dashboards.length) {
+    const warn = $("#shareDashWarn");
+    warn.textContent = res.error;
+    warn.classList.remove("hidden");
+    return;
+  }
+  onShareDash();
+}
+
+async function addShareToDashboard() {
+  const d = shareState.dashboards[Number($("#shareDash").value)];
+  if (!d || !shareState.insight) return;
+  const show = $("#shareShow").value;
+  const btn = $("#shareAdd");
+  btn.disabled = true;
+  const note = $("#shareDashNote");
+  try {
+    const res = await api(`api/card/${shareState.insight.id}/dashboard`, {
+      method: "POST",
+      body: JSON.stringify({
+        url_path: d.url_path, view: Number($("#shareView").value),
+        show, aspect: shareAspect(show),
+      }),
+    });
+    note.textContent = `Added to ${d.title} → ${res.view}. It shows the latest `
+      + "run and changes whenever brAIn refreshes this card.";
+    toast(`Added to ${d.title} → ${res.view}`);
+  } catch (e) {
+    note.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function openShare(insight) {
+  shareState.seq += 1;
+  const seq = shareState.seq;
+  shareState.insight = insight;
+  shareState.blob = null;
+  $("#shareTitle").textContent = `Share — ${insight.title || "card"}`;
+  const shot = $("#shareShot");
+  shot.textContent = "";
+  shot.appendChild(el("span", "hint", "Drawing the card…"));
+  $("#shareShotNote").classList.add("hidden");
+  $("#shareCopy").disabled = true;
+  $("#shareDownload").disabled = true;
+  $("#shareDashWarn").classList.add("hidden");
+  $("#shareDashNote").textContent = "";
+  $("#cardYaml").textContent = "Loading…";
+  openBox("#shareModal");
+  drawShare(seq);
+  loadShareDashboards(seq);
+  try {
+    if (!cardInfoCache) cardInfoCache = await api("api/card_info");
+  } catch (e) {
+    $("#cardYaml").textContent = "Could not load card info: " + e.message;
+    return;
+  }
+  if (seq !== shareState.seq) return;
+  shareState.info = cardInfoCache;
+  if (!cardInfoCache.www_cards) {
+    $("#cardYaml").textContent = "Dashboard cards are unavailable: the add-on could "
+      + "not write to /config/www. Check that the /config mount is writable and "
+      + "restart the add-on.";
+    return;
+  }
+  fillShareYaml();
+  // The panel shares Home Assistant's origin (ingress), so it can check
+  // that /local is really being served before promising a card will load.
+  try {
+    const probe = await fetch(shareUrl("card"), { cache: "no-store" });
+    if (!probe.ok) throw new Error(String(probe.status));
+  } catch (e) {
+    if (seq !== shareState.seq) return;
+    const warn = $("#shareDashWarn");
+    warn.textContent = "Home Assistant isn't serving brAIn's cards yet — its www "
+      + "folder was just created. Restart Home Assistant once (Settings → System → "
+      + "⋮ → Restart Home Assistant), then the card will load.";
+    warn.classList.remove("hidden");
+  }
+}
+
+$("#shareCopy").addEventListener("click", copyShareImage);
+$("#shareDownload").addEventListener("click", downloadShareImage);
+$("#shareDash").addEventListener("change", onShareDash);
+$("#shareShow").addEventListener("change", fillShareYaml);
+$("#shareAdd").addEventListener("click", addShareToDashboard);
 $("#cardCopy").addEventListener("click", () => {
   copyText($("#cardYaml").textContent).then((ok) =>
     toast(ok ? "YAML copied — paste it into a dashboard card" :
       "Copy failed — select the YAML and copy manually"));
 });
-$("#cardClose").addEventListener("click", () => closeBox("#cardModal"));
-$("#cardModal").addEventListener("click", (ev) => {
-  if (ev.target === $("#cardModal")) closeBox("#cardModal");
+$("#shareClose").addEventListener("click", () => closeBox("#shareModal"));
+$("#shareModal").addEventListener("click", (ev) => {
+  if (ev.target === $("#shareModal")) closeBox("#shareModal");
 });
 
 // ------------------------------------------------------------------ boot

@@ -1010,7 +1010,8 @@
     </header>
     <div class="edit-body">
       <p class="hint">This card came from a question you asked, so it has no recurring prompt to
-        edit — just the label and icon it shows on the dashboard.</p>
+        edit — just the heading over its title and its icon. To change what the card says, press
+        <b>✎ Refine</b> on it.</p>
       <div class="row nowrap">
         <div class="grow">
           <label for="nameName">Name</label>
@@ -1450,52 +1451,86 @@
   </div>
 </div>
 
-<div id="fbModal" class="modal" role="dialog" aria-modal="true">
+<div id="refineModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="refineTitle">
   <div class="box edit">
     <header>
-      <span id="fbIcon">💬</span>
-      <span id="fbTitle">Feedback</span>
+      <span aria-hidden="true">✎</span>
+      <span id="refineTitle">Refine card</span>
       <div class="spacer"></div>
-      <button id="fbClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
+      <button id="refineClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
     <div class="edit-body">
-      <p class="hint">Tell Claude what to do differently — it's remembered and applied every time
-        this insight regenerates (e.g. “ignore the guest room sensor”, “show costs in dollars”,
-        “less text, bigger chart”).</p>
-      <label for="fbText">Your feedback</label>
-      <textarea id="fbText" maxlength="500" rows="3" spellcheck="true"
-        placeholder="What should be different next time?"></textarea>
+      <label for="refineText">What should change?</label>
+      <textarea id="refineText" maxlength="500" rows="3" spellcheck="true"
+        placeholder="e.g. Compare it with upstairs, and use the last 7 days"></textarea>
+      <div id="refineChips" class="refinechips"></div>
+      <label class="check"><input id="refineKeep" type="checkbox" checked>
+        Keep asking this on every future run of the card</label>
+      <p id="refineFrom" class="hint refinefrom hidden"></p>
       <div class="row">
-        <button id="fbSave" class="btn primary">Send feedback</button>
-        <button id="fbSaveRegen" class="btn">Send &amp; regenerate</button>
+        <button id="refineGo" class="btn primary">Regenerate with changes</button>
+        <button id="refineCancel" class="btn ghost">Cancel</button>
       </div>
-      <div id="fbListWrap" class="hidden">
-        <label>Active feedback on this insight</label>
-        <div id="fbList" class="fblist"></div>
+      <p class="hint">The version on screen stays in the card's history, so you can page back to it.</p>
+      <div id="refineKeptWrap" class="hidden">
+        <label>Already asked of this card</label>
+        <div id="refineKept" class="fblist"></div>
       </div>
     </div>
   </div>
 </div>
 
-<div id="cardModal" class="modal" role="dialog" aria-modal="true">
+<div id="shareModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
   <div class="box edit">
     <header>
-      <span>▦</span>
-      <span id="cardTitle">Add to dashboard</span>
+      <span aria-hidden="true">↗</span>
+      <span id="shareTitle">Share card</span>
       <div class="spacer"></div>
-      <button id="cardClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
+      <button id="shareClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
     <div class="edit-body">
-      <p class="hint">Embed this insight on any Home Assistant dashboard as a live card. It always
-        shows the latest run. On your dashboard choose <b>Add card → Webpage</b>, or paste this
-        YAML in the card editor:</p>
-      <div id="cardWarn" class="flowerr hidden"></div>
-      <pre id="cardYaml" class="yamlbox"></pre>
+      <h4 class="sharehead">As a picture</h4>
+      <div id="shareShot" class="shareshot"></div>
+      <p id="shareShotNote" class="hint hidden"></p>
       <div class="row">
-        <button id="cardCopy" class="btn primary">Copy YAML</button>
+        <button id="shareCopy" class="btn primary" disabled>Copy picture</button>
+        <button id="shareDownload" class="btn" disabled>Download</button>
       </div>
-      <p class="hint" id="cardHint">The URL contains this add-on's private card token — anyone with
-        the link on your network can view the insight, nothing else.</p>
+
+      <h4 class="sharehead">On a dashboard</h4>
+      <p class="hint">A card that always shows this card's latest run, and changes whenever
+        brAIn refreshes it.</p>
+      <div id="shareDashWarn" class="flowerr hidden"></div>
+      <div class="sharepick">
+        <div>
+          <label for="shareDash">Dashboard</label>
+          <select id="shareDash" class="selin"></select>
+        </div>
+        <div>
+          <label for="shareView">View</label>
+          <select id="shareView" class="selin"></select>
+        </div>
+        <div>
+          <label for="shareShow">Show</label>
+          <select id="shareShow" class="selin">
+            <option value="card">The whole card</option>
+            <option value="chart">Just the chart</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <button id="shareAdd" class="btn primary" disabled>Add card</button>
+      </div>
+      <p id="shareDashNote" class="hint" aria-live="polite"></p>
+      <details class="shareyaml">
+        <summary>YAML, for a dashboard kept in YAML</summary>
+        <pre id="cardYaml" class="yamlbox"></pre>
+        <div class="row">
+          <button id="cardCopy" class="btn">Copy YAML</button>
+        </div>
+        <p class="hint">The address contains this add-on's private card token — anyone with
+          the exact link can view the insight, nothing else.</p>
+      </details>
     </div>
   </div>
 </div>

@@ -2209,19 +2209,42 @@ an install whose CLI is behind is visible in ⚙ → Diagnostics.
 
 ### What's on a card
 
-One control sits on the card and the rest are behind **⋯**, because on a phone six
-icon buttons in the card's head are what squeezes the title out.
+A card leads with the answer. The small line over the title says what the card is
+**about** — its category for a recurring card, its topics for one you asked ("HVAC ·
+Humidity") — and the question you typed is not repeated on it: hover the heading, or
+open **Refine**, to see it. The first sentence of the summary is the answer, then the
+reason; the numbers sit in even rows of tiles; the chart sits straight on the card.
 
-- **⤢ Expand** — the only one on the card itself, because it is the only one that
-  acts on what is on screen rather than on the card's definition.
-- **⋯ → Regenerate** — run this card again now.
+Four controls are on the card, the rest are behind **⋯**:
+
+- **✎ Refine** — say what should change ("compare it with upstairs", "use the last 7
+  days", "just the chart") and brAIn regenerates the card with that change, keeping
+  what you did not ask to change. Leave **Keep asking this on every future run**
+  ticked and it sticks, so the next scheduled run does not quietly undo it; the list
+  under the box is everything you have asked of the card, each with a ✕. The version
+  it replaces stays in the card's history (`‹ ›` in the foot) — cards you asked for
+  keep history too now.
+- **↗ Share** — two ways to take a card somewhere else:
+  - **As a picture**: the card's face (title, answer, numbers and chart, no buttons)
+    drawn to a PNG. **Copy picture** puts it on the clipboard; where the browser will
+    not allow that (Home Assistant's own frame often will not), right-click or
+    long-press the picture, or use **Download**.
+  - **On a dashboard**: pick a dashboard and a view and press **Add card** — brAIn
+    adds a Webpage card that always shows this card's latest run, either the whole
+    card or just the chart. A dashboard kept in YAML, or one Home Assistant still
+    builds automatically, cannot be written to; the dialog says which, and the YAML
+    for pasting in by hand is underneath.
+- **⤢ Expand** — the chart at full size.
+- **⋯ → Regenerate** — run this card again now. On a card you asked for, it re-runs
+  that card in place.
 - **⋯ → Edit** — name, icon, prompt and schedule. Fixed daily times ("07:00, 19:00")
-  use far fewer tokens than a short interval.
-- **⋯ → Give feedback** — tell Claude what to do differently next time ("ignore the
-  guest room sensor", "show costs in dollars"). It sticks, for every future run.
-- **⋯ → Add to dashboard** — YAML for a Webpage card, so an insight lives on your own
-  Home Assistant dashboard.
+  use far fewer tokens than a short interval. On a card you asked for, **⋯ → Rename**
+  changes the heading and icon.
+- **⋯ → Edit tags** — what the card can be filtered by.
 - **⋯ → Delete** — the card and its history.
+
+On a narrow card Refine and Share shrink to their icons, and on a phone the title gets
+a row of its own under the buttons.
 
 There is no "refresh everything" button. It used to sit in the top bar, where it was
 a circular arrow that read like a page reload and in fact queued a Claude run for
