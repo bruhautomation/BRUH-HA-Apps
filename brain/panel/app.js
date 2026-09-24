@@ -11487,6 +11487,23 @@ async function snapChart(insight) {
   }
 }
 
+// A PNG the chart's frame sent, as pixels. Only a base64 PNG data URL is
+// accepted, it is decoded here rather than loaded, and anything else is no
+// chart at all.
+async function chartBitmap(png) {
+  const m = typeof png === "string"
+    && png.match(/^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/);
+  if (!m) return null;
+  try {
+    const raw = atob(m[1]);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+    return await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+  } catch (e) {
+    return null;
+  }
+}
+
 function shareEyebrow(insight) {
   if (insight.eyebrow) return insight.eyebrow;
   const named = insight.category_title;
@@ -11541,11 +11558,17 @@ async function composeCardImage(insight, chart) {
       if (h.delta) add(t, "div", `font-size:12px;color:${ink2}`, String(h.delta));
     });
   }
-  let pic = null;
-  if (chart && chart.png) {
-    pic = add(box, "img", "display:block;width:100%;height:auto");
-    pic.setAttribute("alt", "");
-    pic.src = chart.png;
+  // The chart is NOT an <img> in the markup. Its PNG arrives in a message
+  // from a frame running model-authored script, so nothing it sends is
+  // ever used as a URL: the bytes are decoded into a bitmap, a spacer of
+  // the right height holds its place in the layout, and the bitmap is
+  // painted onto the canvas at the spacer's position afterwards.
+  const bitmap = chart ? await chartBitmap(chart.png) : null;
+  let spacer = null;
+  if (bitmap) {
+    const inner = SHARE_WIDTH - 56;
+    spacer = add(box, "div", `width:${inner}px;`
+      + `height:${Math.round(inner * bitmap.height / bitmap.width)}px`);
   }
   const foot = add(box, "div", `display:flex;justify-content:space-between;`
     + `padding-top:10px;border-top:1px solid ${line};font-size:12px;color:${ink3}`);
@@ -11559,8 +11582,11 @@ async function composeCardImage(insight, chart) {
   const holder = add(document.body, "div", "position:fixed;left:-20000px;top:0");
   holder.appendChild(box);
   try {
-    if (pic) await pic.decode().catch(() => {});
     const height = Math.ceil(box.getBoundingClientRect().height);
+    const slot = spacer ? {
+      x: spacer.offsetLeft, y: spacer.offsetTop,
+      w: spacer.offsetWidth, h: spacer.offsetHeight,
+    } : null;
     const xml = new XMLSerializer().serializeToString(box);
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${SHARE_WIDTH}" `
       + `height="${height}"><foreignObject x="0" y="0" width="100%" height="100%">`
@@ -11580,6 +11606,7 @@ async function composeCardImage(insight, chart) {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.scale(scale, scale);
     ctx.drawImage(img, 0, 0);
+    if (bitmap && slot) ctx.drawImage(bitmap, slot.x, slot.y, slot.w, slot.h);
     return await new Promise((res, rej) => canvas.toBlob(
       (b) => (b ? res(b) : rej(new Error("no image"))), "image/png"));
   } finally {
