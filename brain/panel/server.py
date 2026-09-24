@@ -5127,6 +5127,10 @@ def _dashboard_card(insight: dict, whole: bool, aspect) -> dict:
     return card
 
 
+_VIEW_GONE = ("That view is no longer on the dashboard — reopen Share to "
+              "pick again.")
+
+
 def _place_card(config: dict, index: int, card: dict) -> str:
     """Add `card` to view `index` of a stored dashboard config, in place.
 
@@ -5138,8 +5142,7 @@ def _place_card(config: dict, index: int, card: dict) -> str:
     views = config.get("views")
     if not isinstance(views, list) or not (0 <= index < len(views)) \
             or not isinstance(views[index], dict):
-        raise ValueError("That view is no longer on the dashboard — "
-                         "reopen Share to pick again.")
+        raise ValueError(_VIEW_GONE)
     view = views[index]
     if view.get("type") == "sections":
         sections = view.get("sections")
@@ -5187,8 +5190,8 @@ async def h_card_to_dashboard(request: web.Request) -> web.Response:
         config = got["result"]
         try:
             view_title = _place_card(config, index, card)
-        except ValueError as exc:
-            raise web.HTTPConflict(text=str(exc))
+        except ValueError:
+            raise web.HTTPConflict(text=_VIEW_GONE)
         saved = (await ha_data._ws_calls(session, [
             {"type": "lovelace/config/save", "url_path": url_path,
              "config": config}]))[0]
@@ -5196,8 +5199,12 @@ async def h_card_to_dashboard(request: web.Request) -> web.Response:
         raise web.HTTPConflict(
             text=f"Home Assistant would not save the dashboard "
                  f"({saved['error'] or 'no answer'}).")
-    log.info("card %s added to dashboard %s, view %s", insight_id,
-             url_path or "(default)", view_title)
+    # Three strings that arrived from outside this process — a route
+    # parameter, a request body and somebody's dashboard config — each
+    # flattened to one line before it reaches the log.
+    log.info("card %s added to dashboard %s, view %s",
+             *(str(v).replace("\r", " ").replace("\n", " ")[:80]
+               for v in (insight_id, url_path or "(default)", view_title)))
     return web.json_response({"added": True, "view": view_title,
                               "url_path": url_path, "card": card})
 
