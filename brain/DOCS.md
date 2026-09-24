@@ -236,7 +236,7 @@ brAIn files findings on its own, from scheduled analysis and from study sessions
 Each one is judged by the Resident's first look before you see it, and reaches you
 as a **problem** case on the **Findings** tab with a severity, a plain-English
 explanation and what to do about it. The buttons on the card are the ones that fit
-that finding (see *Cases, and the buttons that fit them* above); everything below
+that finding (see *Cases, and one row of answers* above); everything below
 is what sits behind the **⋯** beside them, and every one of them is still exactly
 the press it was.
 
@@ -299,12 +299,12 @@ the press it was.
   date it comes back — brAIn picks the date from how much it matters. It teaches
   the analyst nothing, which is the whole difference between this and Not a
   problem.
-- **Wrong** — brAIn has misread your house, and the box asks why. That reason is the
+- **Not a problem** — brAIn has misread your house, and the box asks why. That reason is the
   half that teaches: it goes verbatim under the finding in every future analysis and
   into memory as a correction, so the same non-problem is never raised at you twice
   in new words. The garage fridge that runs 24/7 gets flagged once.
 
-- **＋ To-do** — it is real, and you are going to do it. The row leaves this list
+- **Add to list** — it is real, and you are going to do it. The row leaves this list
   and arrives on the **To-do** tab carrying everything the card held; the key is
   settled, so brAIn will not raise it again while it waits there. This is the one
   ending that writes **no** memory line, because nothing is true yet — the battery
@@ -335,7 +335,7 @@ that is real, and I will do it*. Without somewhere for that to go, a flat batter
 sat on the Findings feed as an open question for as long as it took to get round
 to, and a list of decisions filled up with chores.
 
-Press **＋ To-do** on a finding and it moves: the card goes, the key is settled so
+Press **Add to list** on a finding and it moves: the card goes, the key is settled so
 nothing re-raises it while it waits, and an item appears here carrying the text,
 the evidence, the suggested fix, the entity and who found it. The card it came
 from no longer exists, which is why every word of it is copied rather than
@@ -353,7 +353,7 @@ Two presses on a chore, and they are different claims:
   again. If it really is over, nothing comes back. A chore you added yourself has
   no report behind it and releases nothing.
 
-Both hand back an **Undo** on the toast, and so does ＋ To-do — one press reverses
+Both hand back an **Undo** on the toast, and so does Add to list — one press reverses
 every half of it, because the row back with the item still there is the same chore
 twice.
 
@@ -2170,7 +2170,7 @@ Five sections, and you only open the ones you need.
   Claude subscription, the share of each 5-hour session Insights may spend,
   the meter showing where that session is now, and whether a card fetches what
   it needs or is handed the whole home.
-* **Terminal & chat** — which face the Terminal tab shows (chat or the full
+* **Terminal & chat** — which face the Ask tab shows (chat or the full
   terminal), and how many conversations keep a live Claude Code process.
 * **Generation defaults** — refresh interval, when a card actually refreshes,
   days of history, timeout, model, and how many past runs are kept. These are
@@ -2543,7 +2543,7 @@ there, and names the command that removes it.
 
 **If something was left behind, one press takes it out.** ⚙ → Diagnostics grows a
 **Clear up what was left** button while there is anything to clear, and
-`brain doctor --sweep` does the same from the Terminal tab. It creates nothing,
+`brain doctor --sweep` does the same from the terminal. It creates nothing,
 asks no model and spends nothing — it only ever removes what is already named
 `brain_test_*`. Until it existed, the only way out of a failed cleanup was to run
 another whole rehearsal (which writes two automations into your
@@ -2773,13 +2773,13 @@ the rest of your options.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `enable_terminal` | bool | `true` | Run the ttyd terminal and expose the Terminal tab. Turn off for a dashboard-only install with no shell. |
+| `enable_terminal` | bool | `true` | Run the ttyd terminal and show the classic terminal under **Ask**. Turn off for a dashboard-only install with no shell. |
 | `enable_insights` | bool | `true` | Run the card scheduler and show the **Insights** and **Proposals** tabs. Off stops every scheduled Claude run; **Home stays**, because the house checks cost nothing and still file there. |
 
 ### Terminal
 
 The **Chat / Classic** choice is not here — it lives in the panel's ⚙ Settings (and on
-the Terminal tab itself), because it changes nothing about how the add-on runs.
+the Ask tab itself), because it changes nothing about how the add-on runs.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |

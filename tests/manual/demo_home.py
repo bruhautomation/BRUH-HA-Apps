@@ -126,21 +126,114 @@ ASK_HTML = VIZ_HEAD + """
 says so — so the light comes back at whatever it was last set to.</p>
 """ + VIZ_FOOT
 
+
+
+def _cycle_chart(title, lo, hi, ticks, series, note=None):
+    """One small line chart of three cooling cycles, drawn to the 2.8 card
+    contract: no panel of its own, a viewBox so it scales, text at 11px."""
+    w, h, left, top, right, bottom = 320, 200, 34, 10, 8, 26
+    x = lambda m: left + m / 80 * (w - left - right)          # noqa: E731
+    y = lambda v: top + (hi - v) / (hi - lo) * (h - top - bottom)  # noqa: E731
+    out = [f'<figure><figcaption class="ct">{title}</figcaption>'
+           f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="{title}">'
+           f'<rect x="{left}" y="{top}" width="{x(15) - left:.1f}" '
+           f'height="{h - top - bottom}" fill="var(--band)"/>'
+           f'<text x="{x(15) + 4:.1f}" y="{top + 12}" class="ax">first 15 min</text>']
+    for t in ticks:
+        out.append(f'<line x1="{left}" x2="{w - right}" y1="{y(t):.1f}" y2="{y(t):.1f}" '
+                   f'stroke="var(--grid)"/><text x="{left - 5}" y="{y(t) + 4:.1f}" '
+                   f'class="ax" text-anchor="end">{t}</text>')
+    for m in (0, 20, 40, 60, 80):
+        out.append(f'<text x="{x(m):.1f}" y="{h - 8}" class="ax" '
+                   f'text-anchor="middle">{m}</text>')
+    for colour, pts in series:
+        d = " ".join(f"{x(a):.1f},{y(b):.1f}" for a, b in pts)
+        out.append(f'<polyline class="draw" fill="none" stroke="var({colour})" '
+                   f'stroke-width="2" stroke-linejoin="round" points="{d}"/>')
+    if note:
+        out.append(f'<text x="{x(note[0]):.1f}" y="{y(note[1]) + 14:.1f}" class="ax" '
+                   f'text-anchor="middle" font-weight="600">{note[2]}</text>')
+    out.append("</svg></figure>")
+    return "".join(out)
+
+
+HUMIDITY_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  :root{--ink:#0b0b0b;--ink2:#52514e;--grid:#e1e0d9;--band:#eef1f4;
+        --c1:#2a78d6;--c2:#008300;--c3:#e87ba4}
+  @media (prefers-color-scheme: dark){:root{--ink:#fff;--ink2:#c3c2b7;
+        --grid:#2c2c2a;--band:#1d2b3b;--c1:#3987e5;--c2:#1f9a1f;--c3:#d55181}}
+  html,body{margin:0;background:transparent;color:var(--ink);
+       font:14px/1.45 system-ui,-apple-system,sans-serif}
+  .lg{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink2);margin:0 0 8px}
+  .lg i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:6px;
+        vertical-align:middle}
+  .g{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+  figure{margin:0}.ct{font-size:13px;font-weight:700;margin:0 0 4px}
+  .ax{fill:var(--ink2);font-size:11px}
+  .foot{font-size:12px;color:var(--ink2);text-align:center;margin-top:2px}
+  @media (prefers-reduced-motion: no-preference){
+    .draw{stroke-dasharray:600;stroke-dashoffset:600;animation:d .8s ease-out forwards}
+    @keyframes d{to{stroke-dashoffset:0}}}
+</style></head><body>
+<div class="lg"><span><i style="background:var(--c1)"></i>12:01 PM cycle</span>
+<span><i style="background:var(--c2)"></i>3:12 PM cycle</span>
+<span><i style="background:var(--c3)"></i>7:45 PM cycle</span></div>
+<div class="g">""" + _cycle_chart(
+    "Relative humidity (%)", 47, 61, (48, 52, 56, 60),
+    [("--c1", [(0, 60), (8, 59), (20, 56), (40, 52), (50, 51), (60, 50), (75, 51), (80, 48.5)]),
+     ("--c2", [(0, 58.5), (5, 58), (15, 55), (30, 52), (50, 49), (60, 49), (80, 49)]),
+     ("--c3", [(0, 58.5), (10, 57), (20, 54), (35, 53), (50, 52), (70, 53), (80, 53)])],
+    (55, 49, "flat for 30 min")) + _cycle_chart(
+    "Air temperature (°F)", 70.8, 73, (71, 72, 73),
+    [("--c1", [(0, 72.4), (15, 72.5), (40, 72), (55, 71.4), (70, 71.2), (80, 71.0)]),
+     ("--c2", [(0, 72.6), (3, 72.7), (20, 72.2), (40, 71.6), (55, 71.1), (65, 71.2),
+               (75, 71.05), (80, 71.1)]),
+     ("--c3", [(0, 72.35), (12, 72.5), (25, 72.0), (45, 71.4), (60, 71.2), (80, 70.95)])]) + """
+</div><div class="foot">minutes into the cooling cycle · Tue 15 Sep</div></body></html>"""
+
 CARDS = [
     {
         "id": "custom-1722", "category": "custom",
         "title": "Why did the hallway light come on at 3 am?",
         "question": "Why did the hallway light come on at 3am?",
-        "summary": "automation.night_bathroom_run fired on landing motion and turned "
-                   "the light on at 100% — it never sets a brightness, so it restored "
-                   "the evening value.",
+        "summary": "Night bathroom run fired on landing motion and turned the light "
+                   "on at 100% — it never sets a brightness, so it restored the "
+                   "evening value.",
         "highlights": [
             {"label": "Fired at", "value": "03:04:22"},
             {"label": "Triggered by", "value": "Landing motion"},
             {"label": "Brightness", "value": "100%",
              "delta": "night scene is 15%", "status": "warning"},
         ],
-        "html": ASK_HTML, "minutes_ago": 14, "tags": ["asked", "answered"],
+        "html": ASK_HTML, "minutes_ago": 14,
+        "tags": ["asked", "lighting", "automations"],
+    },
+    # The card the 2.8 docs are built around: an asked question, answered
+    # with the answer first, five tiles and a pair of charts that stack on
+    # a phone. Its `question` is shown only in Refine, as on a real card.
+    {
+        "id": "custom-1723", "category": "custom",
+        "title": "Downstairs dries 15 min before it cools",
+        "question": "How quickly does the downstairs humidity drop when the AC "
+                    "turns on? Can I dehumidify before making it super cold?",
+        "summary": "Yes — the drying comes first and nearly free. Downstairs sheds "
+                   "~10 RH points per hour of compressor but only 1.5 °F per "
+                   "80-minute cycle, and the air doesn't start cooling for the "
+                   "first 15 minutes.",
+        "highlights": [
+            {"label": "Drying rate, compressor on", "value": "−10 RH pts/hr",
+             "delta": "vs only −1.1 °F/hr of cooling"},
+            {"label": "Lag before the air cools", "value": "14–16 min",
+             "delta": "RH already down 3–4 pts by then"},
+            {"label": "Cost of the dry", "value": "≈7 RH points per °F",
+             "delta": "80-min cycle: −11 RH, −1.5 °F"},
+            {"label": "Drying stops early", "value": "Flat at 49%",
+             "delta": "for the last 30 min of a cycle"},
+            {"label": "Downstairs right now", "value": "66% RH",
+             "delta": "no cooling yet today", "status": "warning"},
+        ],
+        "html": HUMIDITY_HTML, "minutes_ago": 60 * 24 * 8,
+        "tags": ["asked", "hvac", "humidity", "cooling"],
     },
     {
         "id": "energy", "category": "energy",
@@ -189,14 +282,14 @@ CARDS = [
 
 # --------------------------------------------------------------- findings
 FINDINGS = [
-    {"text": "automation.evening_lights fires at 3 pm on Wi-Fi presence flaps",
+    {"text": "Evening lights fires at 3 pm on Wi-Fi presence flaps",
      "detail": "device_tracker.bens_phone reports home for under 90 seconds while the "
                "phone is on the office network. The presence trigger has no duration "
                "guard, so the hallway light came on on four afternoons this week.",
      "fix": "Add `for: 00:02:00` to the presence trigger in automation.evening_lights.",
      "severity": "warning", "fixable": True,
      "entity_id": "automation.evening_lights"},
-    {"text": "sensor.back_door_battery has reported nothing since 26 July",
+    {"text": "Back door battery has reported nothing since 26 July",
      "detail": "Last reading 8% on 26 July at 04:11, then silence. The door sensor "
                "itself still reports state, so this is the battery entity only — but "
                "the low-battery automation can no longer see it.",

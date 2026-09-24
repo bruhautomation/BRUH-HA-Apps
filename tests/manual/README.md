@@ -130,6 +130,21 @@ tooltip open, and a tooltip in a docs screenshot reads as chrome.
 to webp at ~1440px for the site (`public/images/brain/`) and copy the three the
 add-on README uses into `docs/images/`.
 
+`shoot-docs.mjs` is the fuller set the website's brAIn pages use: every pane
+under Home, Ask and House, light and dark, plus the humidity insight card, its
+Refine and Share dialogs, the picture Share produces, and two phone shots.
+The panes that need a real Home Assistant (ESPHome, Music Assistant,
+Activity, Ideas, the Share dialog's dashboard list) are answered with the
+fixtures their own measure scripts use, read out of those files. Convert to
+webp at 1600px (780px for the phone shots) for the site's
+`apps/brain/images/`, and copy the ones `brain/README.md` shows into
+`docs/images/`.
+
+```bash
+python3 tests/manual/demo_panel.py /tmp/brain-demo
+SHOT_DIR=shots node tests/manual/shoot-docs.mjs
+```
+
 ### The house is meant to survive being checked
 
 Every number in `demo_home.py` should hold up to a reader doing the

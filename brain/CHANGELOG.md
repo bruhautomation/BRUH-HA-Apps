@@ -2,6 +2,20 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.8.1
+
+**The documentation catches up.** No behaviour changes.
+
+- The in-panel **Help** tab and the Documentation tab describe the four tabs
+  (Home, Ask, House, Help) and the answers every card now takes (Fix it, Add to
+  list, Dismiss, Not a problem), where a few sections still named the older
+  buttons.
+- [bruhautomation.com/brain](https://bruhautomation.com/brain/) is rewritten for
+  2.8: new pages for Ideas, ESPHome and Music Assistant, a rewritten Insights page
+  covering Refine and Share, a rewritten Findings page, fresh screenshots
+  throughout, and the changelog brought up to date from 1.47.
+- The add-on README shows the new card, the Share dialog and the Findings feed.
+
 ## 2.8.0
 
 **Insight cards: a heading that says what the card is about, Refine, and Share.**
