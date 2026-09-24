@@ -185,7 +185,7 @@ class TestCategories(unittest.TestCase):
     def test_system_prompt_contract(self):
         sp = categories.SYSTEM_PROMPT
         for needle in ('"title"', '"summary"', '"highlights"', '"html"',
-                       "#2a78d6", "#1a1a19", "prefers-color-scheme",
+                       "#2a78d6", "#0e1e30", "prefers-color-scheme",
                        "prefers-reduced-motion", "ONE y-axis"):
             self.assertIn(needle, sp)
 
@@ -1869,9 +1869,11 @@ class TestInsightHistory(InsightsServerCase):
         loaded = self.server.load_insights()
         self.assertEqual([i["id"] for i in loaded], ["energy"])
 
-    def test_custom_cards_excluded_from_history(self):
+    def test_asked_cards_keep_history_too(self):
+        """An asked card can be refined, so the version a refine replaced is
+        the one thing somebody may want back — it used to be excluded."""
         self._save("custom-1234", f"{FRESH_DAY}T10:00:00", category="custom")
-        self.assertFalse((Path(self.tmp.name) / "history" / "custom-1234").exists())
+        self.assertTrue((Path(self.tmp.name) / "history" / "custom-1234").exists())
 
     def test_bad_stamp_skipped(self):
         self._save("energy", "garbage")
@@ -3698,3 +3700,260 @@ class TestSeeingTheWholePrompt(InsightsServerCase):
     def test_a_mode_that_is_not_one_is_refused(self):
         status, _ = self._preview(query="?mode=telepathy")
         self.assertEqual(status, 400)
+
+
+# ---------------------------------------------------------------------------
+# Refine, the asked card's heading, and Share
+# ---------------------------------------------------------------------------
+
+class TestAskedCardHeading(unittest.TestCase):
+    """An asked card used to say CUSTOM over its title — where it came from,
+    which nobody needs telling. It says what it is about now."""
+
+    def test_topics_are_spelled_as_words(self):
+        card = {"id": "custom-1", "category": "custom", "category_title": "Custom"}
+        self.assertEqual(card_tags.eyebrow(card, ["asked", "hvac", "humidity", "co2"]),
+                         "HVAC · Humidity · CO₂")
+
+    def test_a_label_given_by_hand_wins(self):
+        card = {"id": "custom-1", "category_title": "Basement damp"}
+        self.assertEqual(card_tags.eyebrow(card, ["hvac"]), "Basement damp")
+
+    def test_the_word_custom_is_never_the_heading(self):
+        card = {"id": "custom-1", "category_title": "Custom"}
+        self.assertEqual(card_tags.eyebrow(card, ["asked"]), "Your question")
+
+    def test_at_most_three_topics(self):
+        card = {"id": "custom-1"}
+        self.assertEqual(card_tags.eyebrow(card, ["a", "b", "c", "d"]), "A · B · C")
+
+
+class TestRefineFraming(unittest.TestCase):
+    def test_the_change_is_the_task_and_the_old_card_is_what_is_revised(self):
+        prompt = categories.build_prompt(
+            categories.CATEGORIES[0], {"entities": []},
+            previous={"title": "Old title", "summary": "Old."},
+            refine="use the last 7 days")
+        self.assertIn("CHANGE: use the last 7 days", prompt)
+        self.assertIn("THE CARD AS IT STANDS", prompt)
+        self.assertNotIn("do NOT repeat it", prompt)
+
+    def test_a_remembered_change_is_not_said_twice(self):
+        prompt = categories.build_prompt(
+            categories.CATEGORIES[0], {"entities": []},
+            feedback=["use the last 7 days", "show costs"],
+            refine="use the last 7 days")
+        self.assertEqual(prompt.count("use the last 7 days"), 1)
+        self.assertIn("- show costs", prompt)
+
+    def test_an_ordinary_run_still_moves_the_story_on(self):
+        prompt = categories.build_prompt(
+            categories.CATEGORIES[0], {"entities": []},
+            previous={"title": "Old title"})
+        self.assertIn("do NOT repeat it", prompt)
+        self.assertNotIn("CHANGE:", prompt)
+
+    def test_an_asked_card_opens_with_the_answer(self):
+        prompt = categories.build_prompt(
+            categories.CATEGORIES[0], {"entities": []}, question="Is it damp?")
+        self.assertIn("OPEN with the direct answer", prompt)
+
+
+class TestRefineRoute(InsightsServerCase):
+    def _asked(self, card_id="custom-50"):
+        insight = {"id": card_id, "category": "custom", "category_title": "Custom",
+                   "question": "Is the basement damp?", "title": "Basement is damp",
+                   "summary": "Yes.", "highlights": [], "html": "<p>x</p>",
+                   "generated_at": "2026-09-01T10:00:00"}
+        (Path(self.tmp.name) / f"{card_id}.json").write_text(json.dumps(insight))
+        return insight
+
+    def _post(self, path, body):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        async def run():
+            self.server.QUEUE = asyncio.Queue()
+            client = TestClient(TestServer(self.server.make_app()))
+            await client.start_server()
+            try:
+                resp = await client.post(path, json=body)
+                text = await resp.text()
+                return resp.status, (json.loads(text) if resp.status == 200 else text)
+            finally:
+                await client.close()
+        return asyncio.run(run())
+
+    def test_refining_an_asked_card_regenerates_it_in_place(self):
+        self._asked()
+        status, body = self._post("/api/insight/custom-50/refine",
+                                  {"note": "compare with the garage"})
+        self.assertEqual(status, 200, body)
+        job = self.server.JOBS["custom-50"]
+        self.assertEqual(job["refine"], "compare with the garage")
+        self.assertEqual(job["question"], "Is the basement damp?")
+        # remembered by default, so the next regenerate keeps it
+        self.assertEqual([f["text"] for f in body["feedback"]],
+                         ["compare with the garage"])
+
+    def test_a_one_off_change_is_not_remembered(self):
+        self._asked()
+        status, body = self._post("/api/insight/custom-50/refine",
+                                  {"note": "bigger chart", "remember": False})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["feedback"], [])
+        self.assertEqual(self.server.JOBS["custom-50"]["refine"], "bigger chart")
+
+    def test_refining_a_category_card(self):
+        status, body = self._post("/api/insight/energy/refine",
+                                  {"note": "show costs in dollars"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.server.JOBS["energy"]["refine"], "show costs in dollars")
+        self.assertIsNone(self.server.JOBS["energy"]["question"])
+
+    def test_refusals(self):
+        self._asked()
+        self.assertEqual(self._post("/api/insight/custom-50/refine", {"note": "  "})[0], 400)
+        self.assertEqual(self._post("/api/insight/custom-99/refine", {"note": "x"})[0], 404)
+        self.assertEqual(self._post("/api/insight/nope/refine", {"note": "x"})[0], 404)
+        self.server.JOBS["custom-50"] = {"state": "collecting"}
+        self.assertEqual(self._post("/api/insight/custom-50/refine", {"note": "x"})[0], 409)
+
+    def test_a_later_plain_regenerate_is_not_told_the_old_change(self):
+        """A job dict outlives its run, so a refine note left on it would be
+        told to the next Regenerate and written on the card as its reason."""
+        self._asked()
+        self._post("/api/insight/custom-50/refine", {"note": "x", "remember": False})
+        self.server.JOBS["custom-50"]["state"] = "done"
+        status, body = self._post("/api/generate", {"id": "custom-50"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["queued"], ["custom-50"])
+        self.assertEqual(self.server.JOBS["custom-50"]["refine"], "")
+        self.assertEqual(self.server.JOBS["custom-50"]["question"],
+                         "Is the basement damp?")
+
+    def test_regenerate_does_not_make_a_second_card(self):
+        self._asked()
+        status, body = self._post("/api/generate", {"id": "custom-50"})
+        self.assertEqual(body["queued"], ["custom-50"])
+        self.assertEqual(list(self.server.JOBS), ["custom-50"])
+
+    def test_the_reason_names_the_change(self):
+        because = self.server._because_of({"refine": "use the last 7 days"},
+                                          "q")
+        self.assertIn("use the last 7 days", because)
+
+
+class TestRefineReachesTheRun(TestGenerateFlow):
+    def test_the_run_is_told_the_change_and_shown_the_card(self):
+        (Path(self.tmp.name) / "custom-7.json").write_text(json.dumps({
+            "id": "custom-7", "category": "custom", "question": "q?",
+            "title": "The old title", "summary": "Old.", "highlights": []}))
+        feedback_store.add_feedback("custom-7", "keep it in Celsius")
+        prompts = []
+
+        def run(prompt, *a, **k):
+            prompts.append(prompt)
+            return {"ok": True, "text": json.dumps(self.reply), "error": "",
+                    "meta": {"duration_ms": 5}}
+        engine.run_claude = run
+        self.server.settings_store.save({"onboarded": True, "gather_mode": "snapshot"})
+        self.server.JOBS["custom-7"] = {"state": "queued", "question": "q?",
+                                        "refine": "just the chart"}
+        asyncio.run(self.server._generate("custom-7"))
+        prompt = prompts[-1]
+        self.assertIn("CHANGE: just the chart", prompt)
+        self.assertIn("The old title", prompt)
+        self.assertIn("keep it in Celsius", prompt)
+        self.assertIn("just the chart", self._stored("custom-7")["made_because"])
+
+
+class TestShareToDashboard(InsightsServerCase):
+    def test_a_sections_view_gets_a_section_of_its_own(self):
+        config = {"views": [{"title": "Home", "type": "sections",
+                             "sections": [{"type": "grid", "cards": [{"type": "x"}]}]}]}
+        title = self.server._place_card(config, 0, {"type": "iframe"})
+        self.assertEqual(title, "Home")
+        self.assertEqual(config["views"][0]["sections"][-1],
+                         {"type": "grid", "cards": [{"type": "iframe"}]})
+        self.assertEqual(config["views"][0]["sections"][0]["cards"], [{"type": "x"}])
+
+    def test_a_classic_view_takes_it_at_the_end(self):
+        config = {"views": [{"path": "climate", "cards": [{"type": "x"}]}]}
+        self.assertEqual(self.server._place_card(config, 0, {"type": "iframe"}), "climate")
+        self.assertEqual(config["views"][0]["cards"][-1], {"type": "iframe"})
+
+    def test_a_view_that_went_away_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.server._place_card({"views": []}, 0, {"type": "iframe"})
+
+    def test_what_cannot_be_written_says_why(self):
+        reason = self.server._unwritable_reason
+        self.assertIn("YAML", reason({"mode": "yaml"}, {"ok": True, "result": {}}))
+        self.assertIn("Take control", reason(
+            {"mode": "storage"}, {"ok": False, "error": "No config found."}))
+        self.assertIn("strategy", reason(
+            {"mode": "storage"}, {"ok": True, "result": {"strategy": {"type": "x"}}}))
+        self.assertEqual(reason({"mode": "storage"},
+                                {"ok": True, "result": {"views": []}}), "")
+
+    def test_the_whole_card_is_mirrored_beside_the_chart(self):
+        www = self.server.WWW_CARD_DIR
+        www.mkdir(parents=True)
+        self.server._mirror_card({
+            "id": "custom-3", "category": "custom", "category_title": "Custom",
+            "tags": ["hvac"], "title": "Dry & cool", "summary": "Yes — first. Then.",
+            "highlights": [{"label": "Rate", "value": "<b>10</b>"}],
+            "html": "<p>chart</p>", "generated_at": "2026-09-01T10:00:00"})
+        chart = www / self.server._card_file_name("custom-3")
+        whole = www / self.server._card_file_name("custom-3", whole=True)
+        self.assertTrue(chart.read_text().startswith("<p>chart</p>"))
+        page = whole.read_text()
+        self.assertIn("Dry &amp; cool", page)
+        self.assertIn("<b>Yes — first.</b>", page)
+        self.assertIn("&lt;b&gt;10&lt;/b&gt;", page)   # escaped, never markup
+        self.assertIn('sandbox="allow-scripts"', page)
+        self.assertIn("HVAC", page)
+        self.server._unmirror_card("custom-3")
+        self.assertFalse(chart.exists())
+        self.assertFalse(whole.exists())
+
+    def test_adding_to_a_dashboard_saves_the_config_with_the_card(self):
+        from unittest.mock import patch
+        from aiohttp.test_utils import TestClient, TestServer
+        (Path(self.tmp.name) / "custom-4.json").write_text(json.dumps({
+            "id": "custom-4", "category": "custom", "title": "T", "html": "<p>x</p>",
+            "question": "q"}))
+        saved = []
+
+        async def ws_calls(session, commands):
+            out = []
+            for cmd in commands:
+                if cmd["type"] == "lovelace/config":
+                    out.append({"ok": True, "error": "", "result": {
+                        "views": [{"title": "Climate", "cards": []}]}})
+                else:
+                    saved.append(cmd)
+                    out.append({"ok": True, "error": "", "result": None})
+            return out
+
+        async def run():
+            self.server.QUEUE = asyncio.Queue()
+            client = TestClient(TestServer(self.server.make_app()))
+            await client.start_server()
+            try:
+                with patch.object(self.ha_data, "_ws_calls", ws_calls):
+                    resp = await client.post("/api/card/custom-4/dashboard", json={
+                        "url_path": "home-dash", "view": 0, "show": "card",
+                        "aspect": 120})
+                    return resp.status, await resp.json()
+            finally:
+                await client.close()
+
+        status, body = asyncio.run(run())
+        self.assertEqual(status, 200)
+        self.assertEqual(body["view"], "Climate")
+        self.assertEqual(saved[0]["url_path"], "home-dash")
+        card = saved[0]["config"]["views"][0]["cards"][0]
+        self.assertEqual(card["type"], "iframe")
+        self.assertTrue(card["url"].endswith(".card.html"))
+        self.assertEqual(card["aspect_ratio"], "120%")

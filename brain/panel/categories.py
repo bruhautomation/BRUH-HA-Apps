@@ -339,13 +339,13 @@ def memory_excerpt(text: str | None, limit: int = MEMORY_EXCERPT_CHARS) -> str:
 # dashboard mirror, a card kept in history) while the model is told only
 # the variable names. A card from before 2.0 carries its own colours and
 # is left exactly as it was.
-CARD_STYLES = """:root{--bg:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;
+CARD_STYLES = """:root{--bg:#ffffff;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;
 --c1:#2a78d6;--c2:#008300;--c3:#e87ba4;--c4:#eda100;--c5:#1baf7a;--c6:#eb6834;--c7:#4a3aa7;--c8:#e34948;--other:#898781;
 --seq-lo:#cde2fb;--seq-hi:#0d366b;--div-mid:#f0efec;
 --good:#0ca30c;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;color-scheme:light dark}
-@media (prefers-color-scheme: dark){:root{--bg:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--muted:#898781;--grid:#2c2c2a;--axis:#383835;
+@media (prefers-color-scheme: dark){:root{--bg:#0e1e30;--ink:#ffffff;--ink2:#c3c2b7;--muted:#898781;--grid:#2c2c2a;--axis:#383835;
 --c1:#3987e5;--c2:#008300;--c3:#d55181;--c4:#c98500;--c5:#199e70;--c6:#d95926;--c7:#9085e9;--c8:#e66767;--div-mid:#383835}}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,sans-serif}
+html,body{margin:0;padding:0;background:transparent;color:var(--ink);font-family:system-ui,sans-serif}
 .tabular{font-variant-numeric:tabular-nums}
 @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
 """
@@ -441,10 +441,11 @@ live: max 12 entity_ids whose CURRENT state the visualization should keep up to 
 
 THE HTML DOCUMENT:
 - ONE focused visual that carries the story — a single chart, timeline or state map. No stat-tile rows duplicating the highlights, no second chart unless the story needs a pair, no prose inside the HTML.
-- Self-contained: inline CSS and JS only, no external resources. It renders in a sandboxed iframe with scripts enabled. Fill 100% width, height to content (~220-420px), no horizontal scrolling. Inline SVG (or CSS grid for state maps); no canvas libraries.
+- It sits directly on the card, under the highlights, so it is NOT a card of its own: no outer border, box, panel, background fill, shadow or padding around the whole thing (the page background is transparent on purpose), and no big heading repeating the card's title — at most one short chart title line (13-14px, bold) with the legend beside or under it.
+- Self-contained: inline CSS and JS only, no external resources. It renders in a sandboxed iframe with scripts enabled. It is shown anywhere from 300px (a phone) to 900px wide, so it must be fluid: fill 100% width, height to content (~220-420px), never a fixed pixel width, no horizontal scrolling. SVG gets a viewBox with width="100%" and its text at 11px or more. A pair of charts sits in a CSS grid of `repeat(auto-fit, minmax(260px, 1fr))` so it stacks on a phone. Legends go ABOVE the plot, never under it. Inline SVG (or CSS grid for state maps); no canvas libraries.
 - Interactive: hover tooltips on every mark, hit targets larger than the mark; everything must also read fine without hovering. Tasteful draw-in on load (≤800ms) inside @media (prefers-reduced-motion: no-preference).
 
-DESIGN SYSTEM: brAIn prepends a stylesheet to your document, so use its variables and never hard-code a colour — both light and dark mode (prefers-color-scheme) then come for free. Surfaces and text: var(--bg), var(--ink), var(--ink2), var(--muted); gridlines var(--grid), axis var(--axis). Series colours in this fixed order: var(--c1) (blue, #2a78d6 in light) … var(--c8); past six series fold the rest into var(--other). Sequential: one hue from var(--seq-lo) to var(--seq-hi); diverging: --c1 ↔ --c8 through var(--div-mid); never rainbow. Status: var(--good), var(--warning), var(--serious), var(--critical) — reserved, never used as series, always paired with a label. Dark surface is #1a1a19. Marks: 2px lines; bars flat at the baseline with 4px rounded tops; ≥8px hover markers; a 2px surface gap between stacked segments. ONE y-axis per chart (two scales → two small charts). Legend when ≥2 series, direct labels when ≤4, label selectively; text is always ink-coloured. Bars start at zero. No chart junk, no drop shadows. Use class "tabular" for aligned numbers.
+DESIGN SYSTEM: brAIn prepends a stylesheet to your document, so use its variables and never hard-code a colour — both light and dark mode (prefers-color-scheme) then come for free. Surfaces and text: var(--bg), var(--ink), var(--ink2), var(--muted); gridlines var(--grid), axis var(--axis). Series colours in this fixed order: var(--c1) (blue, #2a78d6 in light) … var(--c8); past six series fold the rest into var(--other). Sequential: one hue from var(--seq-lo) to var(--seq-hi); diverging: --c1 ↔ --c8 through var(--div-mid); never rainbow. Status: var(--good), var(--warning), var(--serious), var(--critical) — reserved, never used as series, always paired with a label. Dark surface is #0e1e30. Marks: 2px lines; bars flat at the baseline with 4px rounded tops; ≥8px hover markers; a 2px surface gap between stacked segments. ONE y-axis per chart (two scales → two small charts). Legend when ≥2 series, direct labels when ≤4, label selectively; text is always ink-coloured. Bars start at zero. No chart junk, no drop shadows. Use class "tabular" for aligned numbers.
 
 ANALYSIS RULES:
 - RUTHLESSLY CONCISE. Every sentence carries a number, a name or a time; delete any that doesn't. No hedging, no methodology, no restating a highlight. Depth goes into WHICH data points you surface, never into word count.
@@ -488,13 +489,24 @@ When you have what you need, respond with a single JSON object and absolutely no
 # Prompt assembly
 # ---------------------------------------------------------------------------
 
-def _previous_block(previous: dict) -> str:
-    """Compact rendering of the last run of this card for the prompt."""
+def _previous_block(previous: dict, revising: bool = False) -> str:
+    """Compact rendering of the last run of this card for the prompt.
+
+    ``revising`` is a refine run: the homeowner asked for a change to THIS
+    card, so the previous version is the thing being edited rather than a
+    headline to avoid repeating.
+    """
+    stamp = (f" (generated {previous['generated_at']})"
+             if previous.get("generated_at") else "")
     lines = [
-        "YOUR PREVIOUS ANALYSIS of this card"
-        + (f" (generated {previous['generated_at']})" if previous.get("generated_at") else "")
-        + " — do NOT repeat it. Lead with what changed since then; where nothing "
-        "changed, dig one level deeper instead of restating:",
+        ("THE CARD AS IT STANDS" + stamp + " — this is what you are revising. "
+         "Keep what the homeowner did not ask to change (the angle, the numbers "
+         "that are still true, the kind of chart unless they asked for another); "
+         "change what they did:")
+        if revising else
+        ("YOUR PREVIOUS ANALYSIS of this card" + stamp
+         + " — do NOT repeat it. Lead with what changed since then; where nothing "
+         "changed, dig one level deeper instead of restating:"),
     ]
     if previous.get("title"):
         lines.append(f"- Title: {previous['title']}")
@@ -522,6 +534,7 @@ def _framing(
     hypothesis_budget: int,
     previous: dict | None,
     house: str | None = None,
+    refine: str | None = None,
 ) -> list[str]:
     """Everything the analyst is told before it is told about the data.
 
@@ -541,13 +554,29 @@ def _framing(
         parts.append(
             "Choose the most fitting visualization for the answer. If the question is not really "
             "about the smart home data, answer briefly and honestly in the summary and keep the "
-            "visualization minimal."
+            "visualization minimal. The question itself is never shown on the card, so the title "
+            "must name the finding rather than echo the question, and the summary must OPEN with "
+            "the direct answer in a few words (\"Yes — dehumidify first.\", \"About 40 minutes.\") "
+            "and then give the reason with its number."
         )
     else:
         parts.append(f"INSIGHT CATEGORY: {category['title']}")
         parts.append(f"ANALYSIS FOCUS: {category['focus']}")
 
-    cleaned_feedback = [f.strip() for f in (feedback or []) if f and f.strip()]
+    refine = (refine or "").strip()
+    if refine:
+        # One press of Refine: the reason this run exists. It goes before
+        # the standing feedback because it is the newest word on the card,
+        # and it is phrased as the task rather than as one more instruction
+        # among many — a refine that came back looking like the card it was
+        # meant to change is the failure this block is written against.
+        parts.append(
+            "\nTHE HOMEOWNER ASKED FOR THIS CHANGE TO THE CARD — making it is the "
+            f"point of this run:\nCHANGE: {refine}"
+        )
+
+    cleaned_feedback = [f.strip() for f in (feedback or [])
+                        if f and f.strip() and f.strip() != refine]
     if cleaned_feedback:
         parts.append(
             "\nHOMEOWNER FEEDBACK on earlier versions of this card — standing "
@@ -585,7 +614,7 @@ def _framing(
         )
 
     if previous:
-        parts.append("\n" + _previous_block(previous))
+        parts.append("\n" + _previous_block(previous, revising=bool(refine)))
 
     return parts
 
@@ -600,6 +629,7 @@ def build_prompt(
     hypothesis_budget: int = 0,
     findings: str | None = None,
     house: str | None = None,
+    refine: str | None = None,
 ) -> str:
     """Assemble the user prompt: analysis focus + the data bundle.
 
@@ -616,7 +646,7 @@ def build_prompt(
     list, and what the homeowner dismissed as not a problem here.
     """
     parts = _framing(category, question, feedback, knowledge, findings,
-                     hypothesis_budget, previous, house)
+                     hypothesis_budget, previous, house, refine)
     parts.append(
         "\nHOME DATA SNAPSHOT (JSON). Sections: meta (now, timezone, location name), areas, "
         "entities (e=entity_id, s=state, n=friendly name — ABSENT when it is just the "
@@ -646,6 +676,7 @@ def build_orientation_prompt(
     hypothesis_budget: int = 0,
     findings: str | None = None,
     house: str | None = None,
+    refine: str | None = None,
 ) -> str:
     """The searching path's prompt: the map, not the territory.
 
@@ -656,7 +687,7 @@ def build_orientation_prompt(
     instruction to go and get what answering it needs.
     """
     parts = _framing(category, question, feedback, knowledge, findings,
-                     hypothesis_budget, previous, house)
+                     hypothesis_budget, previous, house, refine)
     parts.append(
         "\nMAP OF THIS HOME (JSON). NOT the data — the shape of it. Sections: meta (now, "
         "timezone, location name), entity_count (how many entities exist in total), "

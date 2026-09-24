@@ -134,3 +134,47 @@ def forget(card_id: str) -> None:
     cards = _load()
     if cards.pop(card_id, None) is not None:
         _write(cards)
+
+
+# How a tag reads when it is a heading rather than a filter chip. Tags are
+# stored lowercase so "HVAC" and "hvac" are one tag; a heading that said
+# "Hvac" would read as a typo, so the handful of initialisms a house is
+# made of are spelled the way people spell them.
+_SPELLED = {
+    "ac": "AC", "hvac": "HVAC", "co2": "CO₂", "ev": "EV", "tv": "TV",
+    "ups": "UPS", "nas": "NAS", "led": "LED", "uv": "UV", "voc": "VOC",
+    "pm25": "PM2.5", "wifi": "Wi-Fi", "zha": "ZHA", "zwave": "Z-Wave",
+    "esphome": "ESPHome", "ha": "Home Assistant", "diy": "DIY",
+}
+
+# Tags that say where a card came from rather than what it is about. They
+# are fine on the filter bar and say nothing as a heading: "Asked" over a
+# card is the "Custom" label it replaced, in a different word.
+_NOT_A_TOPIC = {"asked", "custom"}
+
+
+def spell(tag: str) -> str:
+    tag = clean_tag(tag)
+    if tag in _SPELLED:
+        return _SPELLED[tag]
+    return tag.replace("-", " ").replace("_", " ").capitalize()
+
+
+def eyebrow(insight: dict, tags: list[str] | None = None,
+            limit: int = 3) -> str:
+    """The small line over an ASKED card's title: what the card is about.
+
+    Every asked card used to say CUSTOM there, which is where it came from
+    and the one thing about it nobody needs telling. A label somebody gave
+    it by hand wins; after that its topic tags, spelled as words; and only
+    a card with neither falls back to saying it was asked.
+    """
+    named = str(insight.get("category_title") or "").strip()
+    if named and named != "Custom":
+        return named
+    if tags is None:
+        tags = effective_tags(insight)
+    topics = [spell(t) for t in tags if t and t not in _NOT_A_TOPIC]
+    if topics:
+        return " · ".join(topics[:limit])
+    return "Your question"

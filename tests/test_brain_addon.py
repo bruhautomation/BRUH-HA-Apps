@@ -1016,8 +1016,10 @@ class TestDocsTab(unittest.TestCase):
         self.assertNotIn("refreshAll", self.html)
         self.assertIn("⋯ → Regenerate", self.docs)
         self.assertIn("⋯ → Delete", self.docs)
-        self.assertIn("⋯ → Give feedback", self.docs)
-        self.assertIn("⋯ → Add to dashboard", self.docs)
+        self.assertIn("✎ Refine", self.docs)
+        self.assertIn("↗ Share", self.docs)
+        self.assertNotIn("⋯ → Give feedback", self.docs)
+        self.assertNotIn("⋯ → Add to dashboard", self.docs)
 
     def test_no_form_control_can_trigger_the_ios_zoom_trap(self):
         """iOS Safari zooms the page in when a text control's font is under
