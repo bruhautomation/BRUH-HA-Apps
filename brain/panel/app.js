@@ -5905,12 +5905,37 @@ function factSubjectLabel(subject) {
   return s;
 }
 
+// The subject as a person reads it: the entity's friendly name where the
+// last checks pass knew one (with the id kept in the tooltip, because the
+// id is what a check and a tool name), an area's word, a person's name.
+function factSubjectText(f) {
+  const name = String(f.subject_name || "").trim();
+  const s = String(f.subject || "house");
+  if (name && !s.startsWith("area:")) return name;
+  return name || factSubjectLabel(s);
+}
+
+const FACT_KIND_WORDS = {
+  "": "All", house: "The house", area: "Rooms", entity: "Devices",
+  person: "People", rule: "Rules you set",
+};
+const FACT_KIND_HINTS = {
+  house: "Facts about the home as a whole — preferences, routines",
+  area: "Facts about a room",
+  entity: "Facts about one device or sensor",
+  person: "Facts about somebody in the household",
+  rule: "Checks you told brAIn to stop raising (from “Not a problem”)",
+};
+
 function makeFactRow(f) {
   const row = el("div", "fbitem kfact");
   const txt = el("div", "txt");
   txt.appendChild(el("div", null, f.text));
   const meta = el("div", "when");
-  meta.appendChild(el("span", "kfactsubj", factSubjectLabel(f.subject)));
+  const named = factSubjectText(f) !== String(f.subject || "");
+  const subj = el("span", "kfactsubj" + (named ? " named" : ""), factSubjectText(f));
+  if (f.subject && factSubjectText(f) !== f.subject) tip(subj, f.subject);
+  meta.appendChild(subj);
   meta.appendChild(document.createTextNode(" · " + kSourceLabel(f.source)));
   if (f.observed) meta.appendChild(document.createTextNode(" · " + f.observed));
   if (f.predicate && String(f.predicate).startsWith("exception:")) {
@@ -5933,9 +5958,12 @@ function makeFactRow(f) {
   del.addEventListener("click", async () => {
     del.disabled = true;
     try {
-      const res = await api(`api/fact/${encodeURIComponent(f.id)}/forget`,
-                            { method: "POST" });
-      takeFacts(res.facts, res.summary);
+      await api(`api/fact/${encodeURIComponent(f.id)}/forget`,
+                { method: "POST" });
+      factsView.rows = factsView.rows.filter((r) => r.id !== f.id);
+      factsView.total = Math.max(0, factsView.total - 1);
+      factsView.all = Math.max(0, factsView.all - 1);
+      paintFacts();
       toast("Forgotten");
     } catch (e) {
       toast(e.message);
@@ -5946,25 +5974,161 @@ function makeFactRow(f) {
   return row;
 }
 
-function takeFacts(facts, summary) {
+// The browser's state. One request per change of search, filter or sort,
+// and "Show more" appends the next page rather than refetching the ones
+// already on screen.
+const FACTS_PAGE = 50;
+const factsView = {
+  q: "", kind: "", source: "", sort: "newest",
+  rows: [], total: 0, all: 0, facets: null, seq: 0, error: "",
+};
+
+async function loadFacts(reset = true) {
+  if (!$("#kKnown")) return;
+  const seq = ++factsView.seq;
+  const params = new URLSearchParams({
+    q: factsView.q, kind: factsView.kind, source: factsView.source,
+    sort: factsView.sort, limit: String(FACTS_PAGE),
+    offset: String(reset ? 0 : factsView.rows.length),
+  });
+  let data;
+  try {
+    data = await api("api/facts/browse?" + params.toString());
+  } catch (e) {
+    if (seq !== factsView.seq) return;
+    factsView.error = "Could not read the facts: " + e.message;
+    paintFacts();
+    return;
+  }
+  // A slow answer to an older search must not paint over a newer one.
+  if (seq !== factsView.seq) return;
+  factsView.error = "";
+  factsView.rows = reset ? (data.facts || [])
+    : factsView.rows.concat(data.facts || []);
+  factsView.total = Number(data.total) || 0;
+  factsView.all = Number(data.all) || 0;
+  factsView.facets = data.facets || null;
+  paintFacts();
+}
+
+function paintFactChips() {
+  const host = $("#kKnownKinds");
+  if (!host) return;
+  host.textContent = "";
+  const kinds = (factsView.facets || {}).kinds || {};
+  const total = Object.values(kinds).reduce((a, b) => a + (Number(b) || 0), 0);
+  ["", "house", "area", "entity", "person", "rule"].forEach((k) => {
+    const n = k ? Number(kinds[k]) || 0 : total;
+    // A kind with nothing in it is a chip that can only ever answer
+    // "none" — hidden, unless it is the one somebody has selected.
+    if (k && !n && factsView.kind !== k) return;
+    const chip = el("button", "fchip" + (factsView.kind === k ? " active" : ""),
+      `${FACT_KIND_WORDS[k]} · ${n}`);
+    chip.type = "button";
+    chip.setAttribute("aria-pressed", factsView.kind === k ? "true" : "false");
+    if (FACT_KIND_HINTS[k]) tip(chip, FACT_KIND_HINTS[k]);
+    chip.addEventListener("click", () => {
+      factsView.kind = factsView.kind === k ? "" : k;
+      loadFacts(true);
+    });
+    host.appendChild(chip);
+  });
+  const sel = $("#kKnownSource");
+  if (sel) {
+    const sources = (factsView.facets || {}).sources || {};
+    const keep = factsView.source;
+    sel.textContent = "";
+    const any = el("option", null, "Anyone taught it");
+    any.value = "";
+    sel.appendChild(any);
+    const names = Object.keys(sources);
+    if (keep && !names.includes(keep)) names.unshift(keep);
+    names.forEach((src) => {
+      const opt = el("option", null,
+        `${kSourceLabel(src) || "unknown"} (${Number(sources[src]) || 0})`);
+      opt.value = src;
+      sel.appendChild(opt);
+    });
+    sel.value = keep;
+  }
+}
+
+function paintFacts() {
   const host = $("#kKnown");
   if (!host) return;
   host.textContent = "";
-  const rows = facts || [];
-  if (!rows.length) {
-    host.appendChild(el("div", "kempty",
-      "Nothing filed as a fact yet — corrections, study sessions, voice, " +
-      "the chat and the terminal all teach it."));
+  const count = $("#kKnownCount");
+  if (count) count.textContent = factsView.all ? String(factsView.all) : "";
+  paintFactChips();
+  const more = $("#kKnownMore");
+  if (factsView.error) {
+    host.appendChild(el("div", "kempty", factsView.error));
+    if (more) more.classList.add("hidden");
     return;
   }
-  rows.forEach((f) => host.appendChild(makeFactRow(f)));
-  const total = Number((summary || {}).count) || 0;
-  const hidden = Math.max(0, total - rows.length);
+  const rows = factsView.rows;
+  const filtered = factsView.q || factsView.kind || factsView.source;
+  if (!rows.length) {
+    host.appendChild(el("div", "kempty", filtered
+      ? "No facts match. Clear the search or pick another kind."
+      : "Nothing filed as a fact yet — corrections, study sessions, voice, "
+        + "the chat and the terminal all teach it."));
+    if (more) more.classList.add("hidden");
+    return;
+  }
+  if (filtered || factsView.total !== factsView.all) {
+    host.appendChild(el("div", "kfsum",
+      `${factsView.total} of ${factsView.all} facts`));
+  }
+  // Grouped by subject when sorted that way: the server sorts by the
+  // subject's name, so a group is a run of consecutive rows.
+  let group = null;
+  rows.forEach((f) => {
+    if (factsView.sort === "subject") {
+      const key = String(f.subject || "house");
+      if (key !== group) {
+        group = key;
+        const head = el("div", "kfgroup", factSubjectText(f));
+        if (factSubjectText(f) !== key) tip(head, key);
+        host.appendChild(head);
+      }
+    }
+    host.appendChild(makeFactRow(f));
+  });
+  const hidden = Math.max(0, factsView.total - rows.length);
   if (hidden) {
-    host.appendChild(el("div", "kmore",
-      `…and ${hidden} more. Ask brAIn to recall one by subject.`));
+    host.appendChild(el("div", "kmore", `…and ${hidden} more.`));
+  }
+  if (more) {
+    more.classList.toggle("hidden", !hidden);
+    more.textContent = `Show ${Math.min(FACTS_PAGE, hidden)} more`;
   }
 }
+
+(function wireFactsBrowser() {
+  const search = $("#kKnownSearch");
+  if (!search) return;
+  let timer = 0;
+  search.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      factsView.q = search.value.trim();
+      loadFacts(true);
+    }, 250);
+  });
+  const sort = $("#kKnownSort");
+  if (sort) sort.addEventListener("change", () => {
+    factsView.sort = sort.value;
+    loadFacts(true);
+  });
+  const source = $("#kKnownSource");
+  if (source) source.addEventListener("change", () => {
+    factsView.source = source.value;
+    loadFacts(true);
+  });
+  const more = $("#kKnownMore");
+  if (more) more.addEventListener("click", () => loadFacts(false));
+})();
 
 // The list and its count, drawn from the one payload that carries both.
 function takeQueue(inbox, pending) {
@@ -6022,7 +6186,7 @@ async function renderKnowledge() {
   // right, which is the whole point of filing them.
   memState.lastState = data.memory_state;
   takeQueue(data.inbox, data.inbox_pending);
-  takeFacts(data.facts, data.facts_summary);
+  loadFacts(true);
 
   // "Answered questions" is gone with the model it belonged to: a
   // confirmed guess becomes a plain memory line and its record is

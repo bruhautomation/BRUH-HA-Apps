@@ -287,6 +287,31 @@ window.fetch = async (url, opts) => {
                   trend: { per_day: 0.31 } },
     });
   }
+  if (p.includes('api/facts/browse')) {
+    // The shape \`server._facts_browse_payload\` sends, filtered the way
+    // \`facts_store.browse\` filters: every word of q, and one kind.
+    const u = new URL(p, 'http://panel.invalid/');
+    const q = (u.searchParams.get('q') || '').toLowerCase();
+    const kind = u.searchParams.get('kind') || '';
+    const kindOf = (f) => (f.predicate || '').startsWith('exception:') ? 'rule'
+      : f.subject.startsWith('area:') ? 'area'
+      : f.subject === 'house' ? 'house' : 'entity';
+    const names = { 'sensor.garage_fridge_power': 'Garage fridge power' };
+    const all = window.__facts || [];
+    const rows = all.filter((f) => (!q || (f.text + ' ' + f.subject + ' '
+      + (names[f.subject] || '')).toLowerCase().includes(q))
+      && (!kind || kindOf(f) === kind));
+    const kinds = { house: 0, area: 0, entity: 0, person: 0, rule: 0 };
+    all.forEach((f) => { kinds[kindOf(f)] += 1; });
+    const filtered = q || kind;
+    return answer({
+      facts: rows.map((f) => Object.assign({}, f, {
+        kind: kindOf(f), subject_name: names[f.subject] || '' })),
+      total: filtered ? rows.length : (window.__factsCount || 0),
+      all: window.__factsCount || 0,
+      facets: { kinds, sources: { correction: 2, study: 1 } },
+    });
+  }
   if (p.includes('api/fact/') && p.includes('/forget')) {
     const id = p.split('api/fact/')[1].split('/')[0];
     window.__facts = window.__facts.filter((f) => f.id !== id);
@@ -471,8 +496,9 @@ for (const width of WIDTHS) {
   }
   // Four sections, in order.
   const order = ['This morning', 'What brAIn has measured',
-                 'What it remembers', 'Waiting to be filed', 'What brAIn knows'];
-  const found = order.map((h) => m.sections.indexOf(h));
+                 "How brAIn's memory works", 'Memory document',
+                 'Waiting to be filed', 'Facts brAIn has learned'];
+  const found = order.map((h) => m.sections.findIndex((t) => t.startsWith(h)));
   found.forEach((at, i) => {
     if (at < 0) note(`${width}px`, `section "${order[i]}" is missing`);
   });
@@ -735,12 +761,16 @@ for (const width of WIDTHS) {
     }
     if (row.right > f.hostRight + 0.5) note(at, `row ${i} overflows its host`);
   });
-  // The subject chip is the entity's own id for an entity — the one key
-  // a check, a tool and a person can all name — and a WORD for an area,
-  // which nobody thinks of as `area:garage`.
+  // The subject chip is what a person calls the thing — the friendly name
+  // the last checks pass knew, with the id in its tooltip — and a WORD for
+  // an area, which nobody thinks of as `area:garage`. An entity nothing
+  // has named yet shows its id, which is honest.
   const subjects = f.rows.map((r) => r.subject);
-  if (subjects[0] !== 'sensor.garage_fridge_power') {
-    note(at, `an entity subject renders as "${subjects[0]}"`);
+  if (subjects[0] !== 'Garage fridge power') {
+    note(at, `a named entity subject renders as "${subjects[0]}"`);
+  }
+  if (subjects[1] !== 'binary_sensor.porch_contact') {
+    note(at, `an unnamed entity subject renders as "${subjects[1]}"`);
   }
   if (subjects[2] !== 'garage') {
     note(at, `an area subject renders as "${subjects[2]}", not the room's word`);
@@ -751,6 +781,34 @@ for (const width of WIDTHS) {
   }
   if (f.docWidth > width + 0.5) {
     note(at, `page scrolls sideways (${f.docWidth}px)`);
+  }
+
+  // Search narrows the list on the server, and a kind chip does too.
+  await page.fill('#kKnownSearch', 'porch');
+  await page.waitForFunction(
+    () => document.querySelectorAll('#kKnown .kfact').length === 1,
+    null, { timeout: 5000 })
+    .catch(() => note(at, 'searching "porch" did not narrow the list to one fact'));
+  await page.fill('#kKnownSearch', '');
+  await page.waitForFunction(
+    (n) => document.querySelectorAll('#kKnown .kfact').length === n,
+    FACTS.length, { timeout: 5000 })
+    .catch(() => note(at, 'clearing the search did not bring every fact back'));
+  const ruleChip = await page.$('#kKnownKinds .fchip:has-text("Rules you set")');
+  if (!ruleChip) {
+    note(at, 'no "Rules you set" chip for a store holding an exception');
+  } else {
+    await ruleChip.click();
+    await page.waitForFunction(
+      () => document.querySelectorAll('#kKnown .kfact').length === 1,
+      null, { timeout: 5000 })
+      .catch(() => note(at, 'the rules chip did not narrow to the one rule'));
+    // The chips are rebuilt on every paint, so press the new one.
+    await page.click('#kKnownKinds .fchip:has-text("All")');
+    await page.waitForFunction(
+      (n) => document.querySelectorAll('#kKnown .kfact').length === n,
+      FACTS.length, { timeout: 5000 })
+      .catch(() => note(at, 'the All chip did not bring every fact back'));
   }
 
   // ✕ forgets, the list repaints from the answer, and the count follows.

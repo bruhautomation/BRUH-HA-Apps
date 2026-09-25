@@ -372,7 +372,8 @@ async def _ws_commands(session: aiohttp.ClientSession, commands: list[dict]) -> 
 
 
 async def _ws_calls(session: aiohttp.ClientSession,
-                    commands: list[dict]) -> list[dict]:
+                    commands: list[dict], *, url: str | None = None,
+                    token: str | None = None) -> list[dict]:
     """The same round trip, with success reported rather than inferred.
 
     ``[{"ok": bool, "result": Any, "error": str}, ...]``, in order.
@@ -388,18 +389,27 @@ async def _ws_calls(session: aiohttp.ClientSession,
 
     One implementation, with `_ws_commands` layered on it, because two
     round trips would be two chances to disagree about what Core said.
+
+    `url` and `token` default to the Supervisor's proxy and this add-on's
+    own token. They exist for the one caller that must NOT go through the
+    proxy: the Supervisor refuses every `supervisor/*` and `hassio/*`
+    command an add-on sends that way, so minting an ingress session needs
+    Core's own socket and a person's token (`esphome._ingress_session`).
     """
     # outer wait_for instead of ws timeout kwargs: the kwarg's type changed
     # across aiohttp versions and the base image's py3-aiohttp varies
-    return await asyncio.wait_for(_ws_commands_inner(session, commands), timeout=90)
+    return await asyncio.wait_for(
+        _ws_commands_inner(session, commands, url=url, token=token), timeout=90)
 
 
 async def _ws_commands_inner(session: aiohttp.ClientSession,
-                             commands: list[dict]) -> list[dict]:
+                             commands: list[dict], *, url: str | None = None,
+                             token: str | None = None) -> list[dict]:
     results: list[dict] = [
         {"ok": False, "result": None, "error": "no answer from Home Assistant"}
         for _ in commands]
-    async with session.ws_connect(CORE_WS, heartbeat=20) as ws:
+    access_token = SUPERVISOR_TOKEN if token is None else token
+    async with session.ws_connect(url or CORE_WS, heartbeat=20) as ws:
         authed = False
         pending: dict[int, int] = {}
         # auth handshake
@@ -409,7 +419,7 @@ async def _ws_commands_inner(session: aiohttp.ClientSession,
             data = msg.json()
             mtype = data.get("type")
             if mtype == "auth_required":
-                await ws.send_json({"type": "auth", "access_token": SUPERVISOR_TOKEN})
+                await ws.send_json({"type": "auth", "access_token": access_token})
             elif mtype == "auth_invalid":
                 raise RuntimeError("WebSocket auth rejected by HA Core")
             elif mtype == "auth_ok":

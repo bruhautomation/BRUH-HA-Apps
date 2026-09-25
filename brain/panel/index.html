@@ -1550,10 +1550,38 @@
            nothing about which was which — and in the tab there is no
            `.kwide` ancestor, so the two-column rule never applies and this
            is simply the order down the page. -->
+      <!-- What the three parts ARE, said once, above them. The document,
+           the facts and the queue all hold "things brAIn has learned", and
+           for a year the page said so three times in three places without
+           once saying how they differ — so the facts list read as a second,
+           unsorted copy of the document. They are one pipeline: everything
+           learned is queued, the queue is filed into the document (prose,
+           the one you edit) and kept as individual facts (tagged and
+           searchable, what a run looks up about the thing it is working on). -->
+      <section class="ksec kguide" aria-label="How brAIn's memory works">
+        <h2>How brAIn's memory works</h2>
+        <ol class="kguidelist">
+          <li><b>Waiting to be filed</b> — anything brAIn learns (from you, a
+            correction, voice, the chat, a study session) lands here first.
+            Each line becomes a fact straight away, and once a day the queue
+            is written into the document.</li>
+          <li><b>Memory document</b> — a short written summary of your home,
+            in brAIn's words. Every run reads the top of it and voice reads a
+            condensed copy. It is yours to edit: fix anything wrong here and
+            brAIn stops saying it.</li>
+          <li><b>Facts brAIn has learned</b> — the same knowledge kept one fact
+            at a time, each tagged with the device, room or person it is
+            about, who taught it and when. When brAIn works on one device it
+            looks up that device's facts. Search it, and forget anything
+            wrong; rules you set with <i>Not a problem</i> live here too.</li>
+        </ol>
+      </section>
+
       <div id="kMemWrap" class="kcol kmemcol">
-        <label>What it remembers</label>
-        <p class="hint tight">Everything brAIn knows about the house. Insight runs, voice
-          and the terminal all read this.</p>
+        <section class="ksec">
+        <h2>Memory document</h2>
+        <p class="hint tight">brAIn's written summary of your home. Edit it to
+          correct anything; teach it something new with the box below.</p>
         <form id="kAddForm" class="kadd">
           <input id="kAddInput" type="text" maxlength="500" autocomplete="off"
                  placeholder="Teach it something — “The garage fridge is supposed to run 24/7”">
@@ -1592,49 +1620,56 @@
           or press “Edit markdown” to start one.</div>
         <textarea id="kMemTa" class="kmemedit hidden" rows="14" maxlength="100000"
                   spellcheck="false"></textarea>
+        </section>
       </div>
 
-      <!-- This column is a queue, so it reads like one: one heading, one
-           list, one button. Every paragraph that explained the model rather
-           than the list under it is in the Docs tab instead — the list is
-           short and self-evident, and the prose was longer than the content
-           it introduced.
-
-           It used to open with "Waiting on you" — guesses brAIn wanted
-           confirmed, with yes/no beside each. Those are decisions and they
-           are on the Findings tab now, with the problems, because both are
-           the same job and splitting it across two tabs meant neither list
-           ever emptied. Nothing on this tab is waiting on a person any more:
-           the queue below files itself on a timer, and the document above
-           it is there to read. -->
-      <div class="kcol">
-        <label>Waiting to be filed</label>
-        <!-- Consolidation is normally daily (or early past 20 pending facts).
-             That is the right cadence for a background daemon and the wrong
-             one for someone who has just taught it something and wants to see
-             it land. Same pass, same checks — pressed by hand. -->
+      <!-- The queue: one heading, one list, one button. -->
+      <div class="kcol kqueuecol">
+        <section class="ksec">
+        <h2>Waiting to be filed</h2>
+        <p class="hint tight">Learned, not merged yet. Filed automatically once a
+          day (sooner past 20); press the button to do it now.</p>
         <div class="row kmemrow">
           <button id="kConsolidate" class="btn small"
                   title="Merge everything queued into the memory document — a few seconds, and one small Claude call">⇪ File into memory now</button>
           <span id="kPending" class="kpending"></span>
         </div>
         <div id="kFacts" class="klist"></div>
-        <!-- Filed discoveries are not shown at all. Once something is in the
-             document it IS the document, and a second copy of it under
-             "already in memory" made a drained queue look like it had never
-             emptied. The ledger still holds them so nothing is re-announced;
-             it just isn't a list anyone has to read. -->
+        </section>
+      </div>
 
-        <!-- What brAIn holds as FACTS — 2.2's store under the document. Not
-             the queue above (those are waiting) and not the document (that
-             is prose): each row is one tagged fact with who taught it and
-             when, which is the provenance the document cannot carry. A fact
-             with a run behind it links to that run, so "why do you think
-             that?" has an answer. ✕ forgets the fact and touches nothing
-             else — a line already in the document is edited there. -->
-        <label class="kfactslabel">What brAIn knows</label>
-        <p class="hint tight" id="kKnownHint">Facts brAIn holds about this house — each with who taught it and when. Press one's source to see the run that learned it.</p>
+      <!-- Every fact, for a person rather than a prompt: searched, filtered
+           and sorted on the server (`facts_store.browse`), paged, and
+           grouped by what it is about when sorted that way. The old list
+           was `recall()` — ranked for a model, three rows per subject — so
+           most of the store was never on screen and what was had no order
+           anybody could name. -->
+      <div id="kKnownWrap" class="kcol kknowncol">
+        <section class="ksec">
+        <h2>Facts brAIn has learned <span id="kKnownCount" class="kcount"></span></h2>
+        <p class="hint tight" id="kKnownHint">One fact per row, with what it is
+          about, who taught it and when. Search for a device or a room, or
+          narrow by kind. ✕ forgets a fact; the memory document is not touched.</p>
+        <div class="kfbar">
+          <input id="kKnownSearch" type="search" autocomplete="off" spellcheck="false"
+                 placeholder="Search facts — a device, a room, a word…"
+                 aria-label="Search facts">
+          <select id="kKnownSort" aria-label="Sort facts">
+            <option value="newest">Newest first</option>
+            <option value="subject">Grouped by what it is about</option>
+            <option value="oldest">Oldest first</option>
+            <option value="certain">Most certain first</option>
+          </select>
+          <select id="kKnownSource" aria-label="Who taught it">
+            <option value="">Anyone taught it</option>
+          </select>
+        </div>
+        <div id="kKnownKinds" class="kfchips" role="group" aria-label="What the fact is about"></div>
         <div id="kKnown" class="klist"></div>
+        <div class="kfmore">
+          <button id="kKnownMore" class="btn small hidden" type="button">Show more</button>
+        </div>
+        </section>
       </div>
     </div>
   </div>

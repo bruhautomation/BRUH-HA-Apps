@@ -743,9 +743,32 @@ Assistants and talk to it from any Assist pipeline, satellite or the app.
 - **It knows your house.** The same memory, spliced into every voice prompt. "Turn on
   the beacon" works if you once told it what the beacon is.
 - **It follows a conversation.** Follow-up turns resume the same session.
-- **Its reach is yours to set.** By default voice can only touch Home Assistant —
-  states, services, the registries. One setting widens it to the full toolset, shell
-  and file edits included.
+- **Each agent has its own reach.** Add as many agents as you like (Settings →
+  Devices & services → brAIn → **Add service**), and each one chooses **What this
+  agent can reach** — on creation, and later under **Configure**:
+
+  | Level | Sees | Can use |
+  | --- | --- | --- |
+  | **Voice assistant** (new agents) | Only what you expose to Assist | Home Assistant tools only |
+  | **Whole house** | Every entity | Home Assistant tools only |
+  | **Full admin** | Every entity | Everything the brAIn chat can: shell, file edits, config, the web |
+  | **Follow the add-on** (agents made before 2.9) | \`assist_exposure\` | \`assist_tool_access\` |
+
+  So the kitchen speaker anybody can talk to stays a voice assistant while the agent
+  you use from your own phone is full admin. Each agent's **Blocked services** list
+  still applies on top, and \`protected_entities\` is refused at every level. Full
+  admin can edit your configuration from a misheard sentence — give it only to an
+  agent you alone talk to.
+
+  Each agent is also **told** its level in its instructions: a voice-level agent
+  knows an unexposed entity is off-limits and says where to change that rather than
+  hunting for another way in; a whole-house agent knows it can reach every entity
+  and never asks you to expose one; a full-admin agent knows it can use the shell,
+  the \`brain\`/\`ha\` CLIs and edit your configuration without being told how. The
+  voice-level limit is also enforced, not just described: templates, the logbook,
+  brAIn's own reads (what is normal, why something changed, habits) and the room
+  list only reach exposed entities, and house-wide reads (activity, findings, the
+  registries) are refused for that agent.
 - **It sees what you expose.** Home Assistant's own switch — Settings → Voice
   assistants → **Expose** — decides what voice can see and act on, exactly as it
   does for Assist: an entity you have not exposed is not on the map voice is given,
@@ -753,7 +776,8 @@ Assistants and talk to it from any Assist pipeline, satellite or the app.
   the switch is. That is Home Assistant's default list (lights, switches, covers,
   climate and the rest; never a lock unless you expose one), so a house that has
   never touched the switch gets the same answer Assist gives. \`assist_exposure: all\`
-  gives voice the whole house, which is what every release before 2.3 did. When
+  gives voice the whole house, which is what every release before 2.3 did (for
+  agents set to **Follow the add-on**; every other agent's own level decides). When
   the exposure list cannot be read, voice sees nothing rather than everything, and
   the log says so.
 `,
@@ -1132,11 +1156,23 @@ Turn on **Send a morning brief** and brAIn sends one short message a day to
 your notify service, at the hour your home actually starts moving.
 
 The part that matters is when it **doesn't**. The decision to send is made
-before Claude is asked anything, out of things already counted: findings filed
-since the last brief, brAIn itself not working, an odd night. A quiet morning
-costs nothing and sends nothing — "all quiet" every day is the message people
-mute, and each one that **is** sent costs a Claude turn, which is why this is
-off by default.
+before Claude is asked anything, and every reason names a specific thing:
+
+- a problem found since the last brief (warning or worse), with its details and
+  what to do about it;
+- a critical or serious problem still waiting on you after a day;
+- something brAIn fixed overnight;
+- a door or window open right now that is normally shut at this hour;
+- a light left on all night by hand — one an automation, scene or script turned
+  on is on on purpose and is not mentioned, and one that has been on for days is
+  one you keep on;
+- brAIn itself not working.
+
+It never reports how busy the night was: counts of changes and changes with no
+recorded cause are the logbook read aloud, and nobody can act on them. A quiet
+morning costs nothing and sends nothing — "all quiet" every day is the message
+people mute, and each one that **is** sent costs a Claude turn, which is why this
+is off by default.
 
 What Claude is for is the sentence: under eighty words, one paragraph, no
 greeting and no headings, because this is read on a lock screen. It can look
@@ -1921,13 +1957,24 @@ where the parser stopped.
 
 **Building needs the ESPHome dashboard.** brAIn edits files itself, but the
 toolchains ESPHome compiles with do not run inside brAIn's container, so
-validate, compile, install and logs go to the dashboard. With the ESPHome
-add-on installed and started, brAIn finds it on its own and reaches it through
-Home Assistant's ingress — nothing to configure, no port to open. A dashboard
-somewhere else (a container on another machine) is named with the
-\`esphome_dashboard_url\` option. When neither can be reached the tab says
-exactly why, file editing keeps working, and a device with a firmware update
-waiting can still be updated **through Home Assistant**'s own update entity.
+validate, compile, install and logs go to the dashboard. brAIn finds the ESPHome
+add-on on its own and can reach its dashboard three ways:
+
+1. **Through Home Assistant's ingress**, the way your browser opens it. Current
+   Supervisor versions no longer let one add-on open another's dashboard with its
+   own credentials, so this needs \`esphome_ha_token\`: a long-lived access token from
+   a Home Assistant administrator (your profile → **Security** → **Long-lived access
+   tokens**). brAIn uses it only to ask Home Assistant for an ingress session.
+2. **The ESPHome add-on's own port**, if you gave it one under the add-on's
+   **Network** settings — used automatically, but only answers without a password
+   when that add-on's \`leave_front_door_open\` is on, which leaves the dashboard open
+   to your whole network.
+3. **\`esphome_dashboard_url\`**, for a dashboard somewhere else (a container on
+   another machine).
+
+When none can be reached the tab says exactly why and which setting ends it, file
+editing keeps working, and a device with a firmware update waiting can still be
+updated **through Home Assistant**'s own update entity.
 
 **Protected entities apply.** Installing new firmware on a device is acting on
 every entity it carries, so a device holding anything on your
@@ -2627,11 +2674,25 @@ day you install this six of the seven have not started. Nothing on this list cos
 Claude run: it is all built overnight from what Home Assistant already records.
 Press a row to open the numbers behind it.
 
-**What it remembers.** The memory document, editable in place.
+**How brAIn's memory works.** Three short lines saying what the next three sections
+are, because all three hold "things brAIn has learned" and they are different:
 
-**What is waiting to be filed.** The inbox queue: facts that have been learned and
-not yet folded into the document. It drains itself; **File into memory now** runs
+**Memory document.** brAIn's written summary of your home, editable in place. Every
+run reads the top of it and voice reads a condensed copy; correcting it here is how
+you stop brAIn saying something.
+
+**Waiting to be filed.** The inbox queue: things that have been learned and not yet
+folded into the document. It drains itself once a day; **File into memory now** runs
 the same consolidator by hand.
+
+**Facts brAIn has learned.** The same knowledge one fact at a time, each tagged with
+the device, room or person it is about, who taught it and when — the index a run
+looks things up in when it is working on one device. It shows **every** fact: search
+it (a device's friendly name works), narrow it with the chips (the house, rooms,
+devices, people, and **Rules you set** — the checks you told brAIn to stop raising),
+filter by who taught it, sort it newest first, oldest first, most certain first or
+grouped by what it is about, and page through with **Show more**. ✕ forgets a fact
+without touching the document.
 
 There is no badge on this tab. Everything on it is a queue that files itself and
 things you read — nothing is waiting on a person, and a badge counting work nobody
@@ -3050,8 +3111,8 @@ the Ask tab itself), because it changes nothing about how the add-on runs.
 | \`enable_assist_integration\` | bool | \`true\` | Register brAIn as a conversation agent for Assist. |
 | \`enable_automation_integration\` | bool | \`true\` | Watch for task requests from automations. |
 | \`assist_fast_mode\` | bool | \`true\` | Serve voice from a pool of pre-warmed persistent workers instead of spawning a CLI per request. |
-| \`assist_tool_access\` | \`mcp_only\` \\| \`full\` | \`mcp_only\` | Whether voice can only touch HA, or also run Bash and edit files. |
-| \`assist_exposure\` | \`exposed\` \\| \`all\` | \`exposed\` | Whether voice sees only what Home Assistant exposes to Assist (Settings → Voice assistants → Expose), or the whole house. |
+| \`assist_tool_access\` | \`mcp_only\` \\| \`full\` | \`mcp_only\` | Whether voice can only touch HA, or also run Bash and edit files — for agents set to **Follow the add-on**. Every other agent chooses its own reach. |
+| \`assist_exposure\` | \`exposed\` \\| \`all\` | \`exposed\` | Whether voice sees only what Home Assistant exposes to Assist (Settings → Voice assistants → Expose), or the whole house — for agents set to **Follow the add-on**. |
 
 ## Memory and learning
 
@@ -3074,6 +3135,7 @@ the Ask tab itself), because it changes nothing about how the add-on runs.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
+| \`esphome_ha_token\` | password | **(empty)** | A Home Assistant administrator's long-lived access token, used only to open the ESPHome add-on's dashboard through ingress — which current Supervisor versions no longer let an add-on do on its own. Needed to validate, compile and install through the add-on unless its own port is open or \`esphome_dashboard_url\` is set. |
 | \`esphome_dashboard_url\` | string | **(empty)** | Where your ESPHome dashboard is, when it is not the ESPHome add-on (which brAIn finds by itself) — e.g. \`http://192.168.1.20:6052\`. Editing device files never needs it; validating, compiling, installing and logs do. |
 
 ## Music Assistant
@@ -3215,8 +3277,8 @@ edges.
 - **No emergency playbook unlocks a door or disarms an alarm**, whatever the
   emergency. And brAIn never runs a playbook itself — it writes one, you accept
   it, and Home Assistant runs it.
-- **Voice is limited to Home Assistant by default.** Widening it to Bash and file
-  editing is a setting you turn on deliberately.
+- **Voice is limited to Home Assistant by default.** Widening one agent to Bash and
+  file editing (**Full admin**) is a choice you make deliberately, per agent.
 - **The registry services are admin-gated**, and destructive sweeps (orphan cleanup)
   are dry-run by default.
 - **It is not affiliated with Anthropic or the Open Home Foundation.** It runs the

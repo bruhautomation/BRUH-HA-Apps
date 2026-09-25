@@ -520,6 +520,114 @@ def recall(query: str = "", subject: str = "", subjects=(), limit: int = 20,
     return out
 
 
+# The Knowledge tab's browser. `recall` is the wrong reader for a person:
+# it ranks for a model, caps three rows per subject so one busy sensor
+# cannot fill a prompt, and drops anything with no word in common with the
+# query — right for a prompt and the reason the tab could show a couple of
+# hundred rows of a store holding two thousand, in an order nobody could
+# name. A person wants every row, searchable, in an order they chose.
+BROWSE_SORTS = ("newest", "oldest", "subject", "certain")
+BROWSE_KINDS = ("house", "area", "entity", "person", "rule")
+BROWSE_MAX = 200
+
+
+def _kind_of(row: dict) -> str:
+    """What a row is about, as the browser's filter chips name it.
+
+    A rule somebody set by pressing Wrong is its own kind whatever entity
+    it is about: those are the rows that change what brAIn does, and the
+    ones a person most needs to be able to find and undo.
+    """
+    if str(row.get("predicate") or "").startswith(EXCEPTION_PREFIX):
+        return "rule"
+    kind = subject_kind(str(row.get("subject") or "house"))
+    return "area" if kind == "check" else kind
+
+
+def browse(*, query: str = "", kind: str = "", source: str = "",
+           subject: str = "", sort: str = "newest", offset: int = 0,
+           limit: int = 50, names: dict | None = None,
+           now: float | None = None) -> dict:
+    """Every live fact, filtered, searched and sorted for a person.
+
+    ``names`` maps a subject to what a person calls it (an entity's
+    friendly name, an area's name) so a search for "freezer" finds the
+    facts about ``sensor.garage_chest_2_temp`` and the list can show the
+    name rather than the id. Every word of the query must appear in the
+    text, the subject or that name — a filter, not a ranking, because a
+    person typing two words wants the rows with both.
+
+    ``facets`` counts each kind and source over the rows the OTHER
+    filters leave, so the chips say how many a press would show.
+    """
+    now = time.time() if now is None else float(now)
+    names = names or {}
+    sort = sort if sort in BROWSE_SORTS else "newest"
+    words = [w for w in normalize(query).split() if w]
+    live = [r for r in _load() if not _expired(r, now)]
+
+    def label(subj: str) -> str:
+        return str(names.get(subj) or "")
+
+    def matches_query(row: dict) -> bool:
+        if not words:
+            return True
+        subjects = _subjects_of(row)
+        hay = " ".join([normalize(row.get("text", ""))]
+                       + [normalize(s.replace(".", " ").replace(":", " "))
+                          for s in subjects]
+                       + [normalize(label(s)) for s in subjects])
+        return all(w in hay for w in words)
+
+    def matches_subject(row: dict) -> bool:
+        return not subject or subject in _subjects_of(row)
+
+    base = [r for r in live if matches_query(r) and matches_subject(r)]
+    kinds: dict[str, int] = {k: 0 for k in BROWSE_KINDS}
+    sources: dict[str, int] = {}
+    for row in base:
+        if not source or str(row.get("source") or "") == source:
+            k = _kind_of(row)
+            kinds[k] = kinds.get(k, 0) + 1
+        if not kind or _kind_of(row) == kind:
+            src = str(row.get("source") or "")
+            sources[src] = sources.get(src, 0) + 1
+    rows = [r for r in base
+            if (not kind or _kind_of(r) == kind)
+            and (not source or str(r.get("source") or "") == source)]
+
+    def subject_key(row: dict):
+        subj = str(row.get("subject") or "house")
+        return ((label(subj) or subj).lower(), -int(row.get("ts") or 0),
+                str(row.get("id") or ""))
+
+    if sort == "oldest":
+        rows.sort(key=lambda r: (int(r.get("first_seen") or r.get("ts") or 0),
+                                 str(r.get("id") or "")))
+    elif sort == "subject":
+        rows.sort(key=subject_key)
+    elif sort == "certain":
+        rows.sort(key=lambda r: (-_score(r, now), -int(r.get("ts") or 0),
+                                 str(r.get("id") or "")))
+    else:
+        rows.sort(key=lambda r: (-int(r.get("ts") or 0), str(r.get("id") or "")))
+
+    offset = max(0, int(offset or 0))
+    limit = max(1, min(int(limit or 50), BROWSE_MAX))
+    page = []
+    for row in rows[offset:offset + limit]:
+        out = dict(row)
+        out["kind"] = _kind_of(row)
+        subj = str(row.get("subject") or "house")
+        out["subject_name"] = label(subj)
+        page.append(out)
+    return {"facts": page, "total": len(rows), "all": len(live),
+            "offset": offset, "limit": limit, "sort": sort,
+            "facets": {"kinds": kinds,
+                       "sources": dict(sorted(sources.items(),
+                                              key=lambda kv: (-kv[1], kv[0])))}}
+
+
 def exceptions(entity_id: str, check_id: str, now: float | None = None) -> list[dict]:
     """What the homeowner has said about this rule and this entity.
 

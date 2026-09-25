@@ -261,6 +261,75 @@ class TestTheGateInTheServer(GateCase):
         self.assertEqual(len(ha_mcp_server.get_all_states()), 1)
 
 
+class TestTheWaysRoundTheGateAreClosed(GateCase):
+    """"Use brAIn" used to reach an unexposed sensor: a template, the
+    logbook, activity and brAIn's own read tools were never asked. Driven
+    through `handle_tool_call`, the dispatcher every tool call passes."""
+
+    def call(self, name, **args):
+        return ha_mcp_server.handle_tool_call(name, args)
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_a_template_naming_an_unexposed_entity_is_refused(self, api):
+        api.return_value = "on"
+        got = self.call("render_template",
+                        template="{{ states('lock.front_door') }}")
+        self.assertIn("not exposed", got["error"])
+        self.assertIn("raised in the brAIn agent's settings", got["error"])
+        api.assert_not_called()
+        self.assertEqual(self.call("render_template",
+                                   template="{{ states('light.kitchen') }}"), "on")
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_a_template_that_reaches_entities_without_naming_them_is_refused(self, api):
+        for template in ("{{ states.lock | list }}", "{{ states | count }}",
+                         "{{ expand('group.all') }}", "{{ area_entities('hall') }}",
+                         "{% set x = 'lock.front_door' %}{{ states(x) }}",
+                         "{{ states.lock }}"):
+            got = self.call("render_template", template=template)
+            self.assertIn("error", got, template)
+        api.assert_not_called()
+
+    @patch("ha_mcp_server._panel_get")
+    @patch("ha_mcp_server.ha_api_request")
+    def test_brain_reads_about_one_entity_need_it_exposed(self, api, panel):
+        for tool in ("what_is_normal", "explain_change", "habits",
+                     "get_camera_snapshot", "get_logbook", "get_baseline"):
+            got = self.call(tool, entity_id="lock.front_door")
+            self.assertIn("not exposed", got["error"], tool)
+        got = self.call("get_logbook")
+        self.assertIn("reads the whole house", got["error"])
+        api.assert_not_called()
+        panel.assert_not_called()
+
+    @patch("ha_mcp_server._panel_get")
+    @patch("ha_mcp_server.ha_api_request")
+    def test_house_wide_reads_are_refused(self, api, panel):
+        for tool in ("get_activity", "get_findings", "get_registry",
+                     "get_house_model", "esphome_list_devices"):
+            if tool not in ha_mcp_server.TOOL_IMPLEMENTATIONS:
+                continue
+            spec = ha_mcp_server._TOOL_SPECS[tool][1]
+            got = self.call(tool, **{k: "x" for k in spec})
+            self.assertIn("whole house", got["error"], tool)
+        api.assert_not_called()
+        panel.assert_not_called()
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_the_rooms_list_only_exposed_entities(self, api):
+        api.return_value = [{"area_id": "hall", "name": "Hall",
+                             "entities": ["light.kitchen", "lock.front_door"]}]
+        got = ha_mcp_server.get_areas()
+        self.assertEqual(got["areas"][0]["entities"], ["light.kitchen"])
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_off_the_voice_channel_none_of_it_applies(self, api):
+        ha_mcp_server.EXPOSED_ONLY = False
+        api.return_value = "locked"
+        self.assertEqual(self.call("render_template",
+                                   template="{{ states.lock | list }}"), "locked")
+
+
 class TestTheTwoWritersAgreeWithTheReader(unittest.TestCase):
     """`BRAIN_EXPOSED_ONLY` is a wire between three processes: spelled in
     the pool, the listener and the server, and read by one of them."""
@@ -366,6 +435,109 @@ class TestThePoolAppliesIt(unittest.TestCase):
             self.assertTrue(envs)
             self.assertEqual(envs[-1], "ENV BRAIN_EXPOSED_ONLY=1")
 
+
+
+class TestEachAgentChoosesItsOwnReach(unittest.TestCase):
+    """The integration's per-agent `access`, driven into a real spawn.
+
+    Three levels and a fallback: `voice` is the exposure gate plus the
+    Bash/file deny-list, `house` drops the gate, `admin` drops both — and
+    an agent that never chose, or names a word nobody knows, must not end
+    up wider than it was. What reaches the process is what is asserted,
+    because "the level reached the table" and "the level reached the CLI"
+    are different claims."""
+
+    def spawn(self, access):
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.dict(os.environ, pool_env(tmp, {})):
+            mod = load_pool(tmp, {})
+            Path(mod.ASSIST_SETTINGS_FILE).write_text("{}")
+            pool = mod.Pool()
+            req = {"id": uuid.uuid4().hex, "conversation_id": "c",
+                   "text": "turn on the lab lights", "type": "conversation",
+                   "ts": 0, "timeout": 30}
+            if access is not None:
+                req["access"] = access
+            try:
+                pool.handle(req)
+            finally:
+                for worker in list(pool.workers.values()):
+                    worker.kill()
+                if pool.spare is not None:
+                    pool.spare.kill()
+            lines = Path(tmp, "argv.log").read_text().splitlines()
+            envs = [l for l in lines if l.startswith("ENV BRAIN_EXPOSED_ONLY=")]
+            argvs = [l for l in lines if not l.startswith("ENV ")]
+            return envs[-1], argvs[-1]
+
+    def test_voice_is_gated_and_scoped(self):
+        env, argv = self.spawn("voice")
+        self.assertEqual(env, "ENV BRAIN_EXPOSED_ONLY=1")
+        self.assertIn("--settings", argv)
+        # ...and is TOLD so, including that the gate is not a puzzle to solve.
+        self.assertIn("off-limits to this agent", argv)
+        self.assertIn("do NOT try to", argv)
+
+    def test_house_sees_everything_and_is_still_scoped(self):
+        env, argv = self.spawn("house")
+        self.assertEqual(env, "ENV BRAIN_EXPOSED_ONLY=0")
+        self.assertIn("--settings", argv)
+        self.assertIn("Never tell the user an entity has to be exposed", argv)
+        self.assertIn("no shell", argv)
+
+    def test_admin_is_the_chats_reach(self):
+        env, argv = self.spawn("admin")
+        self.assertEqual(env, "ENV BRAIN_EXPOSED_ONLY=0")
+        self.assertNotIn("--settings", argv)
+        self.assertIn("FULL ADMIN", argv)
+
+    def test_an_unknown_word_is_the_narrowest(self):
+        env, argv = self.spawn("superuser")
+        self.assertEqual(env, "ENV BRAIN_EXPOSED_ONLY=1")
+        self.assertIn("--settings", argv)
+
+    def test_an_agent_that_never_chose_follows_the_addon(self):
+        env, argv = self.spawn(None)
+        self.assertEqual(env, "ENV BRAIN_EXPOSED_ONLY=1")
+        self.assertIn("--settings", argv)
+
+    def test_the_classic_listener_reads_the_same_words(self):
+        # Lifted out of the real script and driven, not grepped.
+        text = (ADDON / "integrations" / "assist-listener.sh").read_text()
+        body = re.search(r"^resolve_agent_access\(\) \{.*?^\}", text,
+                         re.S | re.M).group(0)
+        for word, env, want in (("voice", {}, "1 1"), ("house", {}, "1 0"),
+                                ("admin", {}, "0 0"), ("nonsense", {}, "1 1"),
+                                ("addon", {"BRAIN_ASSIST_EXPOSURE": "all"}, "1 0"),
+                                ("", {"BRAIN_ASSIST_TOOL_ACCESS": "full"}, "0 1")):
+            out = subprocess.run(
+                ["bash", "-c", body + f'\nresolve_agent_access "{word}"; '
+                 'echo "$AGENT_MCP_ONLY $AGENT_EXPOSED"'],
+                capture_output=True, text=True, check=True,
+                env={"PATH": os.environ["PATH"], **env}).stdout.strip()
+            self.assertEqual(out, want, word)
+
+    def test_every_level_is_told_its_reach_and_the_listener_says_the_same(self):
+        script = ADDON / "scripts" / "brain_exposed.py"
+        for exposed in (True, False):
+            for mcp in (True, False):
+                want = brain_exposed.capabilities(exposed, mcp)
+                self.assertTrue(want.strip())
+                got = subprocess.run(
+                    [sys.executable, str(script), "capabilities",
+                     "1" if exposed else "0", "1" if mcp else "0"],
+                    capture_output=True, text=True, check=True).stdout
+                self.assertEqual(got, want)
+        listener = (ADDON / "integrations" / "assist-listener.sh").read_text()
+        self.assertIn('brain_exposed.py" \\\n            capabilities', listener)
+
+    def test_the_integration_and_the_pool_name_the_same_levels(self):
+        const = (REPO / "brain/custom_components/brain/const.py").read_text()
+        with tempfile.TemporaryDirectory() as tmp:
+            mod = load_pool(tmp, {})
+        for level in mod.ACCESS_LEVELS:
+            self.assertIn(f'= "{level}"', const)
+        self.assertIn('ACCESS_ADDON = "addon"', const)
 
 if __name__ == "__main__":
     unittest.main()

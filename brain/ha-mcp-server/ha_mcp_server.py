@@ -1017,6 +1017,11 @@ def recall(query="", subject="", limit=10):
              ("text", "subject", "subjects", "source", "observed",
               "confidence", "run_id", "predicate")}
             for row in (result or {}).get("facts") or [] if isinstance(row, dict)]
+    if EXPOSED_ONLY:
+        # A fact about an entity voice cannot see is a read of that entity.
+        rows = [r for r in rows
+                if all(":" in str(s) or "." not in str(s) or _entity_exposed(s)
+                       for s in (r.get("subjects") or [r.get("subject")]) if s)]
     if not rows:
         return {"facts": [], "note": (
             "nothing remembered about that yet. Facts arrive from the "
@@ -2301,7 +2306,22 @@ def get_areas():
     # `ha_api_request` auto-parses JSON, so a `| tojson` array usually comes
     # back already decoded as a list. Handle list, raw-string, and the
     # error-dict passthrough cases explicitly.
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            return {
+                "error": "Could not parse areas from template output",
+                "raw": result[:500],
+            }
     if isinstance(result, list):
+        if EXPOSED_ONLY:
+            # The voice channel is shown each room's exposed entities only,
+            # which is the same list the area map in its prompt carries.
+            for area in result:
+                if isinstance(area, dict):
+                    area["entities"] = [e for e in area.get("entities") or []
+                                        if _entity_exposed(e)]
         return {"area_count": len(result), "areas": result}
     if isinstance(result, str):
         try:
@@ -4412,6 +4432,93 @@ _TOOL_SPECS = {
 }
 
 
+# The voice channel's second half. The per-tool checks above
+# (`_entity_exposed` in get_entity_state, get_history, get_statistics,
+# call_service, get_all_states) cover the tools voice uses every day; they
+# did not cover the tools that reach the same entities some other way — a
+# template can read any state, the logbook and activity list the whole
+# house, and brAIn's own read tools (what is normal, why did this change,
+# habits, findings) answer about any entity named. So a voice agent told
+# "that sensor is not exposed" could be talked round it with "use brAIn".
+# One gate, at the dispatcher, so a tool added later is covered by being a
+# tool: refused outright if it reads house-wide, allowed only for exposed
+# entities if it is about one, and a template only when every entity it
+# names is exposed and it names them literally.
+VOICE_REFUSED_TOOLS = frozenset({
+    "get_registry", "get_device_registry", "list_dashboards", "get_dashboard",
+    "get_automations", "get_automation_trace", "get_activity",
+    "get_house_model", "room_physics", "simulate_automation", "get_findings",
+    "get_health", "get_error_log", "fire_event", "get_supervisor_info",
+    "reload_config", "offer_resolutions",
+})
+VOICE_REFUSED_PREFIXES = ("esphome_",)
+# Tools about ONE entity: allowed only when it is named and exposed.
+VOICE_ENTITY_TOOLS = frozenset({
+    "get_baseline", "explain_change", "what_is_normal", "appliance_status",
+    "door_habits", "habits", "get_camera_snapshot", "get_weather_forecast",
+    "get_logbook",
+})
+VOICE_WIDER = (" This voice agent only reaches what Home Assistant exposes to "
+               "Assist; its access can be raised in the brAIn agent's settings. "
+               "Tell the user that; do not try another way.")
+_TEMPLATE_ID_RE = re.compile(r"\b([a-z_]+\.[a-z0-9_]+)\b")
+# A template that reaches entities without naming them: enumerating a
+# domain or the whole state machine, expanding a group, walking an area,
+# device, label, floor or integration, or looking an id up from a variable.
+_TEMPLATE_DYNAMIC_RE = re.compile(
+    r"states\s*(\||\[|\(\s*\)|\.\s*[a-z_]+\s*(?![.\w]))"
+    r"|\bexpand\s*\("
+    r"|\b(area|device|label|floor|integration)_entities\s*\("
+    r"|\b(states|is_state|state_attr|is_state_attr|has_value|state_translated)"
+    r"\s*\(\s*[^'\"\s)]")
+
+
+def _template_refusal(template):
+    text = str(template or "")
+    if _TEMPLATE_DYNAMIC_RE.search(text):
+        return ("this template reaches entities without naming them, and "
+                "voice may only read the entities exposed to it — name each "
+                "entity id in quotes")
+    if _exposure() is None:
+        return ("Home Assistant's exposure settings could not be read, and "
+                "voice may only read what is exposed to it")
+    for eid in _TEMPLATE_ID_RE.findall(text):
+        domain = eid.split(".", 1)[0]
+        if domain in _TEMPLATE_NOT_ENTITY:
+            continue
+        if not _entity_exposed(eid):
+            return UNEXPOSED_READ.format(eid=eid)
+    return None
+
+
+# Dotted names in a template that are not entity ids: filters, attribute
+# access on loop variables and the like never start with these.
+_TEMPLATE_NOT_ENTITY = frozenset({
+    "states", "state", "trigger", "this", "now", "ns", "loop", "self",
+    "value", "value_json", "item", "x", "e", "s", "a", "attr", "attributes",
+})
+
+
+def _voice_refusal(name, kwargs):
+    """Why a voice agent limited to exposed entities may not make this call."""
+    if not EXPOSED_ONLY:
+        return None
+    if name in VOICE_REFUSED_TOOLS or name.startswith(VOICE_REFUSED_PREFIXES):
+        return (f"{name} reads across the whole house, including entities not "
+                "exposed to voice assistants." + VOICE_WIDER)
+    if name == "render_template":
+        why = _template_refusal(kwargs.get("template"))
+        return (why + "." + VOICE_WIDER) if why else None
+    if name in VOICE_ENTITY_TOOLS:
+        eid = str(kwargs.get("entity_id") or "").strip()
+        if not eid:
+            return (f"{name} without an entity id reads the whole house; "
+                    "name an exposed entity." + VOICE_WIDER)
+        if not _entity_exposed(eid):
+            return UNEXPOSED_READ.format(eid=eid) + VOICE_WIDER
+    return None
+
+
 def handle_tool_call(name, arguments):
     """Dispatch a tool call.
 
@@ -4428,6 +4535,9 @@ def handle_tool_call(name, arguments):
     missing = [p for p in required if p not in kwargs]
     if missing:
         return {"error": f"Missing required argument(s) for {name}: {', '.join(missing)}"}
+    refused = _voice_refusal(name, kwargs)
+    if refused:
+        return {"error": refused}
     try:
         return globals()[fn_name](**kwargs)
     except Exception as e:

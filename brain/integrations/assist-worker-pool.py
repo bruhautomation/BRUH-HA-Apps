@@ -52,6 +52,12 @@ SESSIONS_DIR = os.path.join(SHARED_DIR, "sessions")
 CACHE_DIR = os.path.join(SHARED_DIR, "cache")
 LOG_DIR = os.path.join(SHARED_DIR, "logs")
 AREA_MAP_FILE = os.path.join(CACHE_DIR, "area_map.txt")
+# The same map twice more, because the access level is per AGENT and the
+# add-on-wide map above is filtered by the add-on-wide option: an agent set
+# to the whole house needs every entity, and one set to voice needs only
+# the exposed ones whatever the add-on option says.
+AREA_MAP_FULL_FILE = os.path.join(CACHE_DIR, "area_map_full.txt")
+AREA_MAP_EXPOSED_FILE = os.path.join(CACHE_DIR, "area_map_exposed.txt")
 
 WORK_DIR = os.environ.get("BRAIN_ASSIST_WORKDIR", "/config")
 
@@ -176,6 +182,39 @@ ASSIST_SETTINGS_FILE = os.path.join(SHARED_DIR, "assist_settings.json")
 EXPOSURE = os.environ.get("BRAIN_ASSIST_EXPOSURE", "exposed")
 EXPOSED_ONLY = EXPOSURE != "all"
 EXPOSED_CACHE_FILE = os.path.join(CACHE_DIR, "exposed_entities.json")
+
+# What one AGENT may reach — the integration's per-agent `access` field
+# (`custom_components/brain/const.ACCESS_LEVELS`), carried on each request.
+# Two switches, the same two the add-on options set for every agent at
+# once: whether the Bash/file/web deny-list applies (`mcp_only`) and
+# whether only what Home Assistant exposes to Assist is visible
+# (`exposed_only`). `addon` — and a request that names nothing, which is
+# every agent made before this existed — is the add-on's own options, so
+# nobody's voice changes on update. A word this does not know is `voice`,
+# the narrowest, because a typo must never widen what a speaker can do.
+# `protected_entities` is not here on purpose: it is enforced in the MCP
+# server for every channel, and no access level lifts it.
+ACCESS_LEVELS = {
+    "voice": {"mcp_only": True, "exposed_only": True},
+    "house": {"mcp_only": True, "exposed_only": False},
+    "admin": {"mcp_only": False, "exposed_only": False},
+}
+
+
+def _map_for(access: dict) -> bool | None:
+    """Which cached map an agent reads: `addon` shares the add-on-wide one."""
+    return None if access.get("level") == "addon" else access["exposed_only"]
+
+
+def resolve_access(value) -> dict:
+    """The two switches for this request's agent, and the level's name."""
+    level = str(value or "").strip().lower() or "addon"
+    if level == "addon":
+        return {"level": "addon", "mcp_only": TOOL_ACCESS == "mcp_only",
+                "exposed_only": EXPOSED_ONLY}
+    if level not in ACCESS_LEVELS:
+        level = "voice"
+    return {"level": level, **ACCESS_LEVELS[level]}
 
 # --include-partial-messages gives token-level deltas for streaming TTS.
 # Disabled automatically if the installed CLI predates the flag.
@@ -362,11 +401,14 @@ def resolve_claude_cmd() -> list[str]:
     return ["claude"]
 
 
-def scoping_args() -> list:
+def scoping_args(mcp_only: bool | None = None) -> list:
     """Per-channel tool scoping: in mcp_only mode workers load a deny-list
     settings file (written by run.sh) that blocks Bash/file/web tools while
-    the project allowlist keeps every MCP tool available."""
-    if TOOL_ACCESS == "mcp_only" and os.path.isfile(ASSIST_SETTINGS_FILE):
+    the project allowlist keeps every MCP tool available. `mcp_only` is
+    the agent's own answer (`resolve_access`); None is the add-on option."""
+    if mcp_only is None:
+        mcp_only = TOOL_ACCESS == "mcp_only"
+    if mcp_only and os.path.isfile(ASSIST_SETTINGS_FILE):
         return ["--settings", ASSIST_SETTINGS_FILE]
     return []
 
@@ -406,12 +448,15 @@ def refresh_area_map() -> bool:
             f"{AREA_MAP_MAX_BYTES} (some areas omitted)"
         ])
         rendered = _truncate_at_line(rendered, AREA_MAP_MAX_BYTES)
-    rendered = apply_exposure(rendered)
+    exposed = apply_exposure(rendered, force=True)
     os.makedirs(CACHE_DIR, exist_ok=True)
-    tmp = AREA_MAP_FILE + ".tmp"
-    with open(tmp, "w") as fh:
-        fh.write(rendered)
-    os.replace(tmp, AREA_MAP_FILE)
+    for path, text in ((AREA_MAP_FULL_FILE, rendered),
+                       (AREA_MAP_EXPOSED_FILE, exposed),
+                       (AREA_MAP_FILE, exposed if EXPOSED_ONLY else rendered)):
+        tmp = path + ".tmp"
+        with open(tmp, "w") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
     return True
 
 
@@ -425,7 +470,7 @@ def _exposure_module():
     return brain_exposed
 
 
-def apply_exposure(rendered: str) -> str:
+def apply_exposure(rendered: str, force: bool = False) -> str:
     """The map with every unexposed entity taken out, when the channel is gated.
 
     A snapshot that could not be read EMPTIES the map and says so in the
@@ -433,7 +478,7 @@ def apply_exposure(rendered: str) -> str:
     will then refuse sends the model to try them, where an empty one sends
     it to say it cannot see them, and `assist_exposure: all` is the switch.
     """
-    if not EXPOSED_ONLY:
+    if not EXPOSED_ONLY and not force:
         return rendered
     try:
         mod = _exposure_module()
@@ -456,19 +501,25 @@ def _truncate_at_line(text: str, cap: int) -> str:
     return cut[: cut.rfind("\n") + 1]
 
 
-def get_area_map() -> str:
-    """Cached map with stale-while-revalidate, like the classic listener."""
+def get_area_map(exposed_only: bool | None = None) -> str:
+    """Cached map with stale-while-revalidate, like the classic listener.
+
+    `exposed_only` is the agent's answer: True the exposed map, False the
+    whole house, None the add-on-wide one the classic listener shares.
+    """
+    path = (AREA_MAP_FILE if exposed_only is None else
+            AREA_MAP_EXPOSED_FILE if exposed_only else AREA_MAP_FULL_FILE)
     try:
-        age = time.time() - os.path.getmtime(AREA_MAP_FILE)
+        age = time.time() - os.path.getmtime(path)
         if age > AREA_MAP_TTL:
             threading.Thread(target=refresh_area_map, daemon=True).start()
-        with open(AREA_MAP_FILE) as fh:
+        with open(path) as fh:
             return fh.read()
     except OSError:
         with _area_lock:
             refresh_area_map()
         try:
-            with open(AREA_MAP_FILE) as fh:
+            with open(path) as fh:
                 return fh.read()
         except OSError:
             return ""
@@ -565,7 +616,23 @@ def local_time_line() -> str:
         return ""
 
 
-def build_system_prompt(custom: str) -> str:
+def capabilities_prompt(access: dict) -> str:
+    """What this agent is told about its own reach (`brain_exposed.capabilities`).
+
+    Every level gets one, `addon` included: an agent that was never told
+    what it can do meets the exposure gate as a dead end and then walks
+    round it the first time somebody says "use brAIn".
+    """
+    try:
+        return _exposure_module().capabilities(access["exposed_only"],
+                                               access["mcp_only"])
+    except Exception as exc:  # noqa: BLE001 — a prompt without it still works
+        debug_log([f"[{{ts}}] CAPABILITIES could not be composed: {exc}"])
+        return ""
+
+
+def build_system_prompt(custom: str, access: dict | None = None) -> str:
+    access = access or resolve_access("addon")
     if custom:
         prompt = PERSONALITY_FRAME.format(custom=custom) + "\n\n" + OPERATIONAL_PROMPT
     else:
@@ -577,7 +644,7 @@ def build_system_prompt(custom: str) -> str:
             "the current local time — ALWAYS answer times in that local "
             "timezone, never UTC."
         )
-    area_map = get_area_map()
+    area_map = get_area_map(_map_for(access))
     if area_map.strip():
         prompt += MAP_PROMPT.format(area_map=area_map.rstrip())
     else:
@@ -586,17 +653,20 @@ def build_system_prompt(custom: str) -> str:
         memory = get_memory()
         if memory.strip():
             prompt += "\n\nKnown about this household (learned):\n" + memory.rstrip()
+    prompt += capabilities_prompt(access)
     return prompt
 
 
-def save_last_profile(custom: str, model: str, denied_csv: str = "") -> None:
+def save_last_profile(custom: str, model: str, denied_csv: str = "",
+                      access: str = "addon") -> None:
     """Remember the agent profile so the next pool start pre-warms with it."""
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
         tmp = LAST_PROFILE_FILE + ".tmp"
         with open(tmp, "w") as fh:
             json.dump(
-                {"system_prompt": custom, "model": model, "denied": denied_csv}, fh
+                {"system_prompt": custom, "model": model, "denied": denied_csv,
+                 "access": access}, fh
             )
         os.replace(tmp, LAST_PROFILE_FILE)
     except OSError:
@@ -621,18 +691,21 @@ def normalize_denied(value) -> str:
 def prewarm_spare(pool: "Pool") -> None:
     """Spawn the spare at startup from the last-used agent profile, so even
     the first voice command after an add-on restart skips the cold start."""
-    custom, model, denied = "", "default", ""
+    custom, model, denied, level = "", "default", "", "addon"
     try:
         with open(LAST_PROFILE_FILE) as fh:
             data = json.load(fh)
         custom = data.get("system_prompt") or ""
         model = data.get("model") or "default"
         denied = data.get("denied") or ""
+        level = data.get("access") or "addon"
     except (OSError, json.JSONDecodeError, AttributeError):
         # An absent or corrupt cache warms the spare on defaults, which is
         # what a first run does anyway.
         pass
-    pool._spawn_spare((build_system_prompt(custom), model, denied))
+    access = resolve_access(level)
+    pool._spawn_spare((build_system_prompt(custom, access), model, denied,
+                       access["level"]))
 
 
 # ---------------------------------------------------------------------------
@@ -764,7 +837,10 @@ def maybe_reflect(worker: "Worker") -> None:
 
 class Worker:
     def __init__(self, profile: tuple, resume: str | None = None):
-        self.profile = profile  # (system_prompt, model, denied_services_csv)
+        # (system_prompt, model, denied_services_csv, access level). The
+        # level is part of the key: a spare warmed for a voice agent must
+        # never be handed to an admin one, or the other way round.
+        self.profile = profile
         self.created = time.time()
         self.last_used = self.created
         self.session_id: str | None = None
@@ -774,7 +850,9 @@ class Worker:
         # (see _record_exchange / maybe_reflect).
         self.transcript: list = []
 
-        system_prompt, model, denied_csv = profile
+        system_prompt, model, denied_csv = profile[:3]
+        access = resolve_access(profile[3] if len(profile) > 3 else "addon")
+        self.access = access["level"]
         cmd = resolve_claude_cmd() + [
             "-p",
             "--verbose",
@@ -791,7 +869,7 @@ class Worker:
         self.partial = partial_messages_ok()
         if self.partial:
             cmd += ["--include-partial-messages"]
-        cmd += scoping_args()
+        cmd += scoping_args(access["mcp_only"])
         if model and model != "default":
             cmd += ["--model", model]
         if resume:
@@ -802,7 +880,8 @@ class Worker:
         # via claude's environment). Per-worker, so it is per-agent.
         env = dict(os.environ)
         env["BRAIN_DENIED_SERVICES"] = denied_csv
-        env["BRAIN_EXPOSED_ONLY"] = "1" if EXPOSED_ONLY else "0"
+        env["BRAIN_EXPOSED_ONLY"] = "1" if access["exposed_only"] else "0"
+        env["BRAIN_ASSIST_ACCESS"] = access["level"]
         self.proc = subprocess.Popen(
             cmd,
             cwd=WORK_DIR,
@@ -909,7 +988,7 @@ class Pool:
 
     # -- worker lifecycle ---------------------------------------------------
 
-    def _spawn_spare(self, profile: tuple[str, str]) -> None:
+    def _spawn_spare(self, profile: tuple) -> None:
         def _do() -> None:
             try:
                 worker = Worker(profile)
@@ -923,7 +1002,7 @@ class Pool:
         threading.Thread(target=_do, daemon=True).start()
 
     def _take_worker(
-        self, conv_id: str, profile: tuple[str, str]
+        self, conv_id: str, profile: tuple
     ) -> tuple[Worker, str]:
         """Return (worker, mode) where mode is warm|spare|cold."""
         # Looked up before the spare is considered: a conversation with a
@@ -1067,9 +1146,10 @@ class Pool:
         custom_prompt = req.get("system_prompt") or ""
         model = req.get("model") or "default"
         denied_csv = normalize_denied(req.get("denied_services"))
-        system_prompt = build_system_prompt(custom_prompt)
-        profile = (system_prompt, model, denied_csv)
-        save_last_profile(custom_prompt, model, denied_csv)
+        access = resolve_access(req.get("access"))
+        system_prompt = build_system_prompt(custom_prompt, access)
+        profile = (system_prompt, model, denied_csv, access["level"])
+        save_last_profile(custom_prompt, model, denied_csv, access["level"])
 
         debug_log([
             "================================================================",
@@ -1077,7 +1157,8 @@ class Pool:
             "  Channel:  conversation_agent (fast mode)",
             f"  Text:     {text}",
             f"  Model:    {model}",
-            f"  AreaMap:  {len(get_area_map())} chars",
+            f"  Access:   {access['level']}",
+            f"  AreaMap:  {len(get_area_map(_map_for(access)))} chars",
         ])
 
         start = time.time()
@@ -1120,11 +1201,13 @@ class Pool:
                     # to a one-shot invocation within the remaining budget.
                     self._drop_worker(conv_id, worker)
                     mode += "+fallback"
-                    response = self._oneshot(req, system_prompt, model, deadline, denied_csv)
+                    response = self._oneshot(req, system_prompt, model, deadline, denied_csv,
+                                             access)
             except Exception as exc:  # noqa: BLE001 — never drop a request
                 log(f"worker path failed for {req_id}: {exc}")
                 mode = "error+fallback"
-                response = self._oneshot(req, system_prompt, model, deadline, denied_csv)
+                response = self._oneshot(req, system_prompt, model, deadline, denied_csv,
+                                             access)
 
         duration = time.time() - start
         if response and AUTH_ERROR_RE.search(response):
@@ -1163,7 +1246,7 @@ class Pool:
     @staticmethod
     def _oneshot(
         req: dict, system_prompt: str, model: str, deadline: float,
-        denied_csv: str = "",
+        denied_csv: str = "", access: dict | None = None,
     ) -> str | None:
         """Classic spawn-per-request fallback — identical to the bash path."""
         remaining = int(deadline - time.time())
@@ -1180,12 +1263,15 @@ class Pool:
             "-p", "--verbose",
             "--max-turns", str(MAX_TURNS),
             "--system-prompt", system_prompt,
-        ] + scoping_args()
+        ]
+        access = access or resolve_access("addon")
+        cmd += scoping_args(access["mcp_only"])
         if model and model != "default":
             cmd += ["--model", model]
         env = dict(os.environ)
         env["BRAIN_DENIED_SERVICES"] = denied_csv
-        env["BRAIN_EXPOSED_ONLY"] = "1" if EXPOSED_ONLY else "0"
+        env["BRAIN_EXPOSED_ONLY"] = "1" if access["exposed_only"] else "0"
+        env["BRAIN_ASSIST_ACCESS"] = access["level"]
         # The stream path claims its session off the CLI's own events; this
         # path spawns fresh and has no events to read, so it claims a minted
         # id up front like the bash listener does — unclaimed, every

@@ -418,6 +418,12 @@ MEMORYMD
     local esphome_dashboard_url
     esphome_dashboard_url=$(bashio::config 'esphome_dashboard_url' '')
     export BRAIN_ESPHOME_DASHBOARD_URL="$esphome_dashboard_url"
+    # A person's Home Assistant token, for the one call the Supervisor now
+    # refuses an add-on: opening the ESPHome add-on's ingress. Panel only,
+    # and like the Music Assistant token it is never written to .brain_env.
+    local esphome_ha_token
+    esphome_ha_token=$(bashio::config 'esphome_ha_token' '')
+    export BRAIN_ESPHOME_HA_TOKEN="$esphome_ha_token"
     # Music Assistant: the panel finds it through Home Assistant's own
     # music_assistant config entry (its url and the token Music Assistant
     # gave Home Assistant). These two are for a server elsewhere and for an
