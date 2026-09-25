@@ -294,6 +294,9 @@ def dashboard_app(*, require_cookie=None, script=None, seen=None):
 
     async def command(request):
         gate(request)
+        if request.match_info["cmd"] == "ws":
+            # The old dashboard has no /ws: Device Builder is the one that does.
+            raise web.HTTPNotFound()
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         msg = await ws.receive_json()
@@ -405,6 +408,211 @@ class TestTheDashboardProtocol(_Served):
         self.assertTrue(dev["online"])
         self.assertEqual(dev["address"], "porch-light.local")
         self.assertEqual(data["importable"][0]["name"], "athom-plug")
+
+
+# ---------------------------------------------------------------------------
+# ESPHome Device Builder (2026.9+): one /ws, a job queue
+# ---------------------------------------------------------------------------
+
+def builder_app(*, seen, compile_status="completed", upload_status="completed",
+                requires_auth=False, deferred=False, legacy_html=True):
+    """Device Builder's `/ws` as esphome-device-builder 1.15.0 speaks it:
+    a hello first, `{command, message_id, args}` in, result / error / event
+    frames out, firmware work as jobs followed with `firmware/follow_job`.
+    The old command paths answer with the web page, which is what broke
+    brAIn's installs."""
+    jobs = {}
+
+    async def page(request):
+        return web.Response(text="<!doctype html><title>ESPHome Device Builder</title>",
+                            content_type="text/html")
+
+    async def ws_route(request):
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        await ws.send_json({"server_version": "1.15.0", "esphome_version": "2026.9.0",
+                            "requires_auth": requires_auth, "ha_addon": True})
+        async for msg in ws:
+            data = json.loads(msg.data)
+            seen.append((data["command"], data.get("args", {})))
+            mid, cmd, args = data["message_id"], data["command"], data.get("args", {})
+            if cmd == "devices/validate":
+                await ws.send_json({"message_id": mid, "event": "output",
+                                    "data": "INFO Configuration is valid!\n"})
+                await ws.send_json({"message_id": mid, "event": "result",
+                                    "data": {"success": True, "code": 0}})
+                await ws.send_json({"message_id": mid, "result": None})
+            elif cmd == "devices/logs":
+                await ws.send_json({"message_id": mid, "event": "output",
+                                    "data": "[D][sensor]: 21.0\n"})
+            elif cmd == "devices/stop_stream":
+                await ws.send_json({"message_id": mid, "result": {"cancelled": True}})
+            elif cmd in ("firmware/install", "firmware/compile", "firmware/clean"):
+                jid = f"c{len(jobs):011d}"
+                jobs[jid] = {"job_id": jid, "configuration": args["configuration"],
+                             "job_type": "compile", "status": compile_status,
+                             "is_deferred_install": deferred}
+                if cmd == "firmware/install" and not deferred:
+                    uid = f"u{len(jobs):011d}"
+                    jobs[uid] = {"job_id": uid, "configuration": args["configuration"],
+                                 "job_type": "upload", "status": upload_status,
+                                 "depends_on": jid, "port": args.get("port")}
+                await ws.send_json({"message_id": mid, "result": jobs[jid]})
+            elif cmd == "firmware/get_jobs":
+                rows = [j for j in jobs.values()
+                        if j["configuration"] == args.get("configuration")]
+                await ws.send_json({"message_id": mid, "result": rows[::-1]})
+            elif cmd == "firmware/follow_job":
+                job = jobs.get(args["job_id"])
+                if job is None:
+                    await ws.send_json({"message_id": mid, "error_code": "internal_error",
+                                        "details": "Command failed: firmware/follow_job"})
+                    continue
+                if job["job_type"] == "upload":
+                    await ws.send_json({"message_id": mid, "event": "output",
+                                        "data": "Uploading: [==   ] 40%\r"})
+                    await ws.send_json({"message_id": mid, "event": "output",
+                                        "data": "Uploading: [=====] 100%\r"})
+                    await ws.send_json({"message_id": mid, "event": "output",
+                                        "data": "OTA successful\n"})
+                else:
+                    await ws.send_json({"message_id": mid, "event": "output",
+                                        "data": "Compiling .pioenvs/porch\n"})
+                code = 0 if job["status"] == "completed" else 1
+                await ws.send_json({"message_id": mid, "event": "result",
+                                    "data": {"status": job["status"], "exit_code": code,
+                                             "error": None if code == 0 else "build failed"}})
+                await ws.send_json({"message_id": mid, "result": None})
+            elif cmd == "firmware/cancel":
+                await ws.send_json({"message_id": mid, "result": {"cancelled": True}})
+            else:
+                await ws.send_json({"message_id": mid, "error_code": "unknown_command",
+                                    "details": cmd})
+        return ws
+
+    async def version(request):
+        return web.json_response({"version": "2026.9.0"})
+
+    async def devices(request):
+        return web.json_response({"configured": [], "importable": []})
+
+    app = web.Application()
+    app.router.add_get("/ws", ws_route)
+    app.router.add_get("/version", version)
+    app.router.add_get("/devices", devices)
+    if legacy_html:
+        app.router.add_get("/{cmd}", page)
+    return app
+
+
+class TestTheDeviceBuilder(_Served):
+    """ESPHome 2026.9's Device Builder: every build command over one /ws."""
+
+    def setUp(self):
+        super().setUp()
+        self.write("porch.yaml", WIZARD_FILE)
+        self.seen = []
+
+    def use(self, **kw):
+        url = self.serve(builder_app(seen=self.seen, **kw))
+        env = mock.patch.dict(os.environ, {"BRAIN_ESPHOME_DASHBOARD_URL": url})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def run_job(self, kind):
+        with mock.patch.object(esphome, "protected_refusal", mock.AsyncMock(return_value="")):
+            started = self.go(esphome.start(kind, "porch.yaml"))
+        self.assertTrue(started["ok"], started)
+        return self.follow(started["job"]["id"], 10)
+
+    def test_validate_streams_on_the_commands_own_id(self):
+        self.use()
+        job = self.run_job("validate")
+        self.assertEqual(job.state, "succeeded", job.error)
+        self.assertIn("INFO Configuration is valid!", list(job.lines))
+        self.assertEqual(self.seen[0], ("devices/validate", {"configuration": "porch.yaml"}))
+
+    def test_install_follows_the_compile_and_then_the_upload(self):
+        self.use()
+        job = self.run_job("install")
+        self.assertEqual(job.state, "succeeded", job.error)
+        lines = list(job.lines)
+        self.assertIn("Compiling .pioenvs/porch", lines)
+        self.assertIn("OTA successful", lines)
+        # A \r progress line is overwritten, not piled up.
+        self.assertEqual([ln for ln in lines if ln.startswith("Uploading:")],
+                         ["Uploading: [=====] 100%"])
+        self.assertEqual(self.seen[0], ("firmware/install",
+                                        {"configuration": "porch.yaml", "port": "OTA"}))
+        follows = [a["job_id"][0] for c, a in self.seen if c == "firmware/follow_job"]
+        self.assertEqual(follows, ["c", "u"])
+
+    def test_a_failed_upload_is_a_failed_install(self):
+        self.use(upload_status="failed")
+        job = self.run_job("install")
+        self.assertEqual(job.state, "failed")
+        self.assertIn("The upload failed", job.error)
+
+    def test_a_failed_compile_never_waits_for_an_upload(self):
+        self.use(compile_status="failed")
+        job = self.run_job("install")
+        self.assertEqual(job.state, "failed")
+        self.assertIn("The compile failed", job.error)
+        self.assertNotIn("firmware/get_jobs", [c for c, _ in self.seen])
+
+    def test_an_offline_device_is_compiled_now_and_flashed_later(self):
+        self.use(deferred=True)
+        job = self.run_job("install")
+        self.assertEqual(job.state, "succeeded", job.error)
+        self.assertTrue(any("next time it comes online" in ln for ln in job.lines))
+
+    def test_logs_stop_with_stop_stream(self):
+        self.use()
+        with mock.patch.object(esphome, "protected_refusal", mock.AsyncMock(return_value="")):
+            started = self.go(esphome.start("logs", "porch.yaml"))
+        job_id = started["job"]["id"]
+        self.follow(job_id, 1.0)
+        esphome.stop(job_id)
+        job = self.follow(job_id, 5)
+        self.assertEqual(job.state, "stopped")
+        self.assertIn("[D][sensor]: 21.0", list(job.lines))
+        self.assertIn("devices/stop_stream", [c for c, _ in self.seen])
+
+    def test_a_password_protected_builder_says_so(self):
+        self.use(requires_auth=True)
+        job = self.run_job("validate")
+        self.assertEqual(job.state, "failed")
+        self.assertIn("password", job.error)
+
+    def test_the_protocol_is_remembered_on_the_route(self):
+        self.use()
+        self.run_job("validate")
+        found, _ = self.go(self._route())
+        self.assertEqual(found.protocol, "builder")
+
+    def _route(self):
+        async def go():
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                return await esphome.route(session)
+        return go()
+
+
+class TestTheOldDashboardStillWorks(TestTheDashboardProtocol):
+    """The fallback: no /ws means the per-command sockets, and the route
+    remembers it so the probe is paid once."""
+
+    def test_the_route_learns_it_is_legacy(self):
+        self.go(esphome.start("validate", "porch.yaml"))
+        esphome_job = next(iter(esphome.JOBS.values()))
+        self.follow(esphome_job.id)
+
+        async def go():
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                return await esphome.route(session)
+        found, _ = self.go(go())
+        self.assertEqual(found.protocol, "legacy")
 
 
 class TestTheIngressRoute(_Served):

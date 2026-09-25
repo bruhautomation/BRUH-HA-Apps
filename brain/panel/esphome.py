@@ -14,9 +14,13 @@ different way:
 * **The builds** — validate, compile, install over the air, clean, logs — are
   the ESPHome *dashboard's* job. brAIn's image is Alpine, and the toolchains
   PlatformIO downloads are glibc binaries, so compiling here is not a thing
-  that can be made to work; what the dashboard offers is a WebSocket per
-  command (`{"type": "spawn", "configuration": …}` in, `{"event": "line"}`
-  and `{"event": "exit", "code": n}` out), and that is what this drives.
+  that can be made to work. Two dashboards answer to that name and they
+  take commands differently: **Device Builder** (ESPHome 2026.9's rewrite)
+  takes every command over one `/ws` socket as `{command, message_id,
+  args}` with firmware work in a persistent job queue, and the **old
+  dashboard** took a WebSocket per command (`{"type": "spawn", …}` in,
+  `{"event": "line"}` … `{"event": "exit"}` out). Both are driven; which one
+  is there is learned from the Builder's own hello (see `_run_builder`).
 
 * **The devices in Home Assistant** — which HA device a file is, what area it
   is in, whether its firmware `update` entity says an update is waiting — come
@@ -566,6 +570,10 @@ class Route:
         self.cookies = cookies or {}
         self.addon = addon or {}
         self.made = time.time()
+        # "builder" or "legacy" once a command has found out; None until then.
+        # Kept on the route because the route is what is cached, and a
+        # dashboard does not change protocol without changing route.
+        self.protocol: str | None = None
 
     def url(self, path: str) -> str:
         return f"{self.base}/{path.lstrip('/')}"
@@ -1005,6 +1013,8 @@ class Job:
         self.task: asyncio.Task | None = None
         self.stop_requested = False
         self.heard = time.monotonic()
+        # The last line added was a `\r` progress line the next one overwrites.
+        self.progress_line = False
 
     def add(self, text: str) -> None:
         for line in ANSI_RE.sub("", str(text)).replace("\r\n", "\n").split("\n"):
@@ -1113,9 +1123,313 @@ async def _run_ws(job: Job, route_: Route, spec: dict, port: str) -> None:
                     return
 
 
+
+# ---------------------------------------------------------------------------
+# ESPHome Device Builder (2026.9+): one socket, a job queue
+# ---------------------------------------------------------------------------
+# Device Builder replaced the per-command sockets with one `/ws` that takes
+# `{"command", "message_id", "args"}` and answers `{"message_id", "result"}`,
+# `{"message_id", "error_code", "details"}` or a stream of
+# `{"message_id", "event", "data"}`. Read off esphome-device-builder 1.15.0
+# (`api/ws.py`, `controllers/devices`, `controllers/firmware`) rather than
+# guessed — the old addresses (`/run`, `/validate`, `/logs`, `/clean`) now
+# fall through to the Builder's web page, and a WebSocket handshake against
+# a web page is what reached people as "the dashboard closed the connection"
+# a few milliseconds into every install.
+#
+# Validate and logs STREAM on the command's own message id and die with the
+# socket. Compile, install, upload and clean are firmware JOBS: the command
+# answers with a job, output has to be subscribed to with
+# `firmware/follow_job`, and the job outlives the socket. An install answers
+# with its COMPILE job only; the flash is a second upload job whose
+# `depends_on` is the compile, found with `firmware/get_jobs` and followed in
+# turn — following the compile alone would report an install as done when
+# nothing had been flashed yet.
+BUILDER_STREAMS = {"validate": "devices/validate", "logs": "devices/logs"}
+BUILDER_JOBS = {"compile": "firmware/compile", "install": "firmware/install",
+                "upload": "firmware/upload", "clean": "firmware/clean"}
+BUILDER_HELLO_S = 8.0
+# How long an install waits for its upload job to appear once the compile
+# has finished; the Builder queues it at the same moment as the compile, so
+# this only has to outlast a slow get_jobs round trip.
+BUILDER_UPLOAD_WAIT_S = 20.0
+
+
+class NotBuilder(RuntimeError):
+    """The dashboard at this route is not Device Builder (no `/ws` hello)."""
+
+
+class BuilderRefused(RuntimeError):
+    """The Builder answered a command with an error frame."""
+
+
+async def _builder_hello(ws) -> dict:
+    """The Builder's first frame, which it sends before anything is asked."""
+    try:
+        msg = await asyncio.wait_for(ws.receive(), timeout=BUILDER_HELLO_S)
+    except asyncio.TimeoutError as exc:
+        raise NotBuilder("no hello on /ws") from exc
+    if msg.type != aiohttp.WSMsgType.TEXT:
+        raise NotBuilder("no hello on /ws")
+    try:
+        hello = json.loads(msg.data)
+    except ValueError as exc:
+        raise NotBuilder("the first frame on /ws was not JSON") from exc
+    if not isinstance(hello, dict) or "server_version" not in hello:
+        raise NotBuilder("the first frame on /ws was not the Builder's hello")
+    return hello
+
+
+def _builder_add(job: Job, data: Any) -> None:
+    """One output chunk. A chunk ending in a bare `\r` is a progress line the
+    terminal would overwrite, so it replaces the previous progress line
+    rather than adding four hundred `Uploading: [==   ]` rows."""
+    text = ANSI_RE.sub("", str(data or ""))
+    progress = text.endswith("\r") and not text.endswith("\r\n")
+    if progress and job.progress_line and job.lines:
+        job.lines[-1] = text.strip("\r\n")
+    else:
+        job.add(text.rstrip("\n").rstrip("\r"))
+    job.progress_line = progress
+
+
+class _Wire:
+    """One Builder socket: sends commands, and hands back frames by id."""
+
+    def __init__(self, ws):
+        self.ws = ws
+
+    async def send(self, command: str, args: dict) -> str:
+        mid = uuid.uuid4().hex
+        await self.ws.send_json({"command": command, "message_id": mid, "args": args})
+        return mid
+
+    async def frame(self, timeout: float = 1.0) -> dict | None:
+        """The next JSON frame; None on a quiet second; raises when closed."""
+        try:
+            msg = await asyncio.wait_for(self.ws.receive(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return None
+        if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE,
+                        aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.ERROR):
+            raise ConnectionResetError("the Device Builder closed the connection")
+        if msg.type != aiohttp.WSMsgType.TEXT:
+            return {}
+        try:
+            data = json.loads(msg.data)
+        except ValueError:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    async def call(self, command: str, args: dict, timeout: float = 60.0) -> Any:
+        """A command whose answer is one result frame."""
+        mid = await self.send(command, args)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            frame = await self.frame()
+            if not frame or frame.get("message_id") != mid:
+                continue
+            if "error_code" in frame:
+                raise BuilderRefused(str(frame.get("details") or frame["error_code"]))
+            if "event" not in frame:
+                return frame.get("result")
+        raise BuilderRefused(f"the Device Builder did not answer {command}")
+
+
+async def _builder_stream(wire: _Wire, job: Job, command: str, args: dict) -> None:
+    """Validate or logs: output on the command's own id, then a result event."""
+    mid = await wire.send(command, args)
+    deadline = time.monotonic() + LOGS_MAX_S if job.kind == "logs" else None
+    while True:
+        if job.stop_requested or (deadline is not None and time.monotonic() >= deadline):
+            try:
+                await wire.send("devices/stop_stream", {"stream_id": mid})
+            except (ConnectionError, RuntimeError):
+                pass  # the socket closing below ends the stream anyway
+            job.add("— stopped by request —" if job.stop_requested else
+                    f"— log stream closed after {LOGS_MAX_S // 60} minutes —")
+            job.finish("stopped")
+            return
+        try:
+            frame = await wire.frame()
+        except ConnectionResetError:
+            if job.kind == "logs":
+                job.finish("stopped")
+            else:
+                job.finish("failed", error="the Device Builder closed the "
+                           "connection before the command finished")
+            return
+        if frame is None:
+            if time.monotonic() - job.heard > QUIET_LIMIT_S:
+                job.finish("failed", error="the Device Builder went quiet for "
+                           f"{QUIET_LIMIT_S // 60} minutes")
+                return
+            continue
+        if frame.get("message_id") != mid:
+            continue
+        job.heard = time.monotonic()
+        if "error_code" in frame:
+            job.finish("failed", error=f"the Device Builder refused "
+                       f"{COMMANDS[job.kind]['label'].lower()}: "
+                       f"{frame.get('details') or frame['error_code']}")
+            return
+        event = frame.get("event")
+        if event == "output":
+            _builder_add(job, frame.get("data"))
+        elif event == "result":
+            data = frame.get("data") or {}
+            code = data.get("code")
+            code = int(code) if isinstance(code, (int, float)) else None
+            ok = bool(data.get("success")) if "success" in data else code == 0
+            job.finish("succeeded" if ok else "failed", code, "" if ok else
+                       f"{COMMANDS[job.kind]['label']} ended with exit code {code}")
+            return
+        elif "event" not in frame:
+            # The final result with no result event before it: the stream
+            # ended without saying how, which is not a success.
+            job.finish("failed", error="the command ended without an exit code")
+            return
+
+
+async def _builder_follow(wire: _Wire, job: Job, remote_id: str) -> dict | None:
+    """Stream one firmware job's output until it ends; its result, or None
+    when the job was stopped here."""
+    fid = await wire.send("firmware/follow_job", {"job_id": remote_id})
+    while True:
+        if job.stop_requested:
+            try:
+                await wire.call("firmware/cancel", {"job_id": remote_id}, timeout=15)
+            except (BuilderRefused, ConnectionError):
+                pass  # already finished, or the socket went: say stopped regardless
+            job.add("— stopped by request —")
+            job.finish("stopped")
+            return None
+        frame = await wire.frame()
+        if frame is None:
+            if time.monotonic() - job.heard > QUIET_LIMIT_S:
+                job.finish("failed", error="the Device Builder went quiet for "
+                           f"{QUIET_LIMIT_S // 60} minutes")
+                return None
+            continue
+        if frame.get("message_id") != fid:
+            continue
+        job.heard = time.monotonic()
+        if "error_code" in frame:
+            raise BuilderRefused(str(frame.get("details") or frame["error_code"]))
+        event = frame.get("event")
+        if event == "output":
+            _builder_add(job, frame.get("data"))
+        elif event == "result":
+            return frame.get("data") or {}
+        elif "event" not in frame:
+            return {}
+
+
+async def _builder_upload_for(wire: _Wire, configuration: str, compile_id: str) -> dict | None:
+    """The upload job an install queued behind its compile, if there is one."""
+    deadline = time.monotonic() + BUILDER_UPLOAD_WAIT_S
+    while time.monotonic() < deadline:
+        jobs = await wire.call("firmware/get_jobs", {"configuration": configuration})
+        for row in jobs if isinstance(jobs, list) else []:
+            if isinstance(row, dict) and row.get("depends_on") == compile_id:
+                return row
+        await asyncio.sleep(1.0)
+    return None
+
+
+def _finish_from(job: Job, result: dict, what: str) -> None:
+    status = str(result.get("status") or "")
+    code = result.get("exit_code")
+    code = int(code) if isinstance(code, (int, float)) else None
+    if status == "completed":
+        job.finish("succeeded", 0 if code is None else code)
+    elif status == "cancelled":
+        job.finish("stopped", code, f"{what} was cancelled in the Device Builder")
+    else:
+        detail = result.get("error") or (f"exit code {code}" if code is not None
+                                         else status or "no status")
+        job.finish("failed", code, f"{what} failed: {detail}")
+
+
+async def _builder_firmware(wire: _Wire, job: Job, command: str, args: dict) -> None:
+    """Queue a firmware job, follow it, and follow an install's upload too."""
+    try:
+        head = await wire.call(command, args)
+    except BuilderRefused as exc:
+        job.finish("failed", error=f"the Device Builder refused "
+                   f"{COMMANDS[job.kind]['label'].lower()}: {exc}")
+        return
+    if not isinstance(head, dict) or not head.get("job_id"):
+        job.finish("failed", error="the Device Builder did not hand back a job")
+        return
+    deferred = bool(head.get("is_deferred_install"))
+    if deferred:
+        job.add("The device is offline, so the Device Builder compiles now and "
+                "flashes it the next time it comes online.")
+    what = "The compile" if job.kind == "install" else COMMANDS[job.kind]["label"]
+    result = await _builder_follow(wire, job, head["job_id"])
+    if result is None:
+        return
+    if job.kind != "install" or deferred or result.get("status") != "completed":
+        _finish_from(job, result, what)
+        return
+    upload = await _builder_upload_for(wire, job.configuration, head["job_id"])
+    if upload is None:
+        job.finish("failed", error="the compile finished but the Device Builder "
+                   "queued no upload — see the Builder's own job list")
+        return
+    job.add(f"— uploading ({upload.get('port') or 'OTA'}) —")
+    result = await _builder_follow(wire, job, upload["job_id"])
+    if result is not None:
+        _finish_from(job, result, "The upload")
+
+
+async def _run_builder(job: Job, route_: Route, port: str) -> None:
+    """Drive one command through Device Builder's `/ws`, or raise NotBuilder."""
+    args: dict = {"configuration": job.configuration}
+    if COMMANDS[job.kind]["port"]:
+        args["port"] = port or "OTA"
+    async with aiohttp.ClientSession() as session:
+        try:
+            ws = await session.ws_connect(route_.ws_url("ws"), headers=route_.headers(),
+                                          heartbeat=30)
+        except (aiohttp.WSServerHandshakeError, aiohttp.ClientResponseError) as exc:
+            raise NotBuilder(f"no /ws ({exc})") from exc
+        async with ws:
+            hello = await _builder_hello(ws)
+            route_.protocol = "builder"
+            if hello.get("requires_auth"):
+                job.finish("failed", error=(
+                    "the ESPHome Device Builder has a password set and brAIn "
+                    "has none to give it — through Home Assistant's ingress it "
+                    "needs none, so point brAIn at the add-on (clear "
+                    "esphome_dashboard_url) or remove the Builder's password"))
+                return
+            wire = _Wire(ws)
+            try:
+                if job.kind in BUILDER_STREAMS:
+                    await _builder_stream(wire, job, BUILDER_STREAMS[job.kind], args)
+                else:
+                    await _builder_firmware(wire, job, BUILDER_JOBS[job.kind], args)
+            except ConnectionResetError:
+                job.finish("failed", error=(
+                    "the Device Builder closed the connection — a firmware job "
+                    "goes on in the Builder; its own job list has the rest"))
+            except BuilderRefused as exc:
+                job.finish("failed", error=f"the Device Builder refused: {exc}")
+
+
 async def _run_job(job: Job, route_: Route, spec: dict, port: str) -> None:
     job.heard = time.monotonic()
     try:
+        if route_.protocol != "legacy":
+            try:
+                await _run_builder(job, route_, port)
+                return
+            except NotBuilder:
+                # An older dashboard: it has no `/ws`, and remembering that
+                # spares every later command the probe.
+                route_.protocol = "legacy"
         await _run_ws(job, route_, spec, port)
     except asyncio.CancelledError:
         job.finish("stopped")

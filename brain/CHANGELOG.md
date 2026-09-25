@@ -29,6 +29,18 @@ stay.**
   the add-on" is no longer offered. **An agent that was following the add-on is
   now a Voice assistant**, the narrowest level — if you had set either option
   wider, open that agent's Configure and pick Whole house or Full admin.
+- **ESPHome installs work again on Device Builder (ESPHome 2026.9).** The
+  rewrite takes every command over one `/ws` socket with a job queue, and the
+  old per-command addresses brAIn used (`/run`, `/validate`, `/logs`,
+  `/clean`) now answer with the Builder's web page — so every validate,
+  compile and install failed a few milliseconds in with "the dashboard closed
+  the connection", while listing devices (plain HTTP) went on working. brAIn
+  now speaks the Builder's protocol, read off its own source: validate and
+  logs stream on the command, compile/install/clean are jobs it follows, and
+  an install follows the compile and then the upload it queues, so "done"
+  means flashed. A device that is offline is compiled now and flashed by the
+  Builder when it comes back, and brAIn says so. An older dashboard (no `/ws`)
+  still gets the old per-command sockets.
 - **No ESPHome or Music Assistant tabs.** Both have their own screens, and a
   second copy inside brAIn was clutter. Everything they did is still one sentence
   away in the chat or the terminal — edit, validate, install and read logs for an
