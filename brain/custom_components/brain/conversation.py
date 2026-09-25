@@ -30,7 +30,17 @@ except (ImportError, AttributeError):
     # doesn't exist yet (where the flag is simply ignored).
     SUPPORTS_CONTROL = 1
 
-from .const import CONF_DENIED_SERVICES, CONF_MODEL, CONF_NAME, CONF_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_NAME, DOMAIN
+from .const import (
+    ACCESS_ADDON,
+    CONF_ACCESS,
+    CONF_DENIED_SERVICES,
+    CONF_MODEL,
+    CONF_NAME,
+    CONF_SYSTEM_PROMPT,
+    DEFAULT_MODEL,
+    DEFAULT_NAME,
+    DOMAIN,
+)
 
 # Chat-log streaming (HA 2025.x): when available and the add-on publishes
 # its HTTP API, deltas stream into the chat log so TTS can start speaking at
@@ -76,6 +86,9 @@ class BruhClaudeConversationEntity(ConversationEntity):
         self._system_prompt = opts.get(CONF_SYSTEM_PROMPT, "")
         self._model = opts.get(CONF_MODEL, DEFAULT_MODEL)
         self._denied_services = opts.get(CONF_DENIED_SERVICES) or []
+        # What this agent may reach. Missing means it never chose, which is
+        # the add-on's own Assist settings — exactly what it had before.
+        self._access = opts.get(CONF_ACCESS) or ACCESS_ADDON
         name = config_entry.data.get(CONF_NAME, DEFAULT_NAME)
         self._attr_name = "Agent"  # Short — the device name provides context
         self._attr_unique_id = f"{config_entry.entry_id}_conversation"
@@ -140,6 +153,7 @@ class BruhClaudeConversationEntity(ConversationEntity):
                     model=self._model if self._model != "default" else None,
                     delta_listener=on_delta,
                     denied_services=self._denied_services or None,
+                    access=self._access,
                 )
             )
             task.add_done_callback(lambda _t: queue.put_nowait(done))
@@ -218,6 +232,7 @@ class BruhClaudeConversationEntity(ConversationEntity):
                 system_prompt=self._system_prompt or None,
                 model=self._model if self._model != "default" else None,
                 denied_services=self._denied_services or None,
+                access=self._access,
             )
         except TimeoutError:
             response_text = (

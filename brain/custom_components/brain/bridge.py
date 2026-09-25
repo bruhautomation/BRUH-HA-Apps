@@ -106,6 +106,7 @@ class ClaudeBridge:
         system_prompt: str | None = None,
         model: str | None = None,
         denied_services: list | None = None,
+        access: str | None = None,
     ) -> str:
         """Send a conversation request and wait for the response."""
         conv_id = conversation_id or uuid.uuid4().hex
@@ -132,6 +133,8 @@ class ClaudeBridge:
             request["model"] = model
         if denied_services:
             request["denied_services"] = denied_services
+        if access:
+            request["access"] = access
 
         req_file = os.path.join(self.requests_dir, f"{request_id}.json")
         resp_file = os.path.join(self.responses_dir, f"{request_id}.json")
@@ -211,6 +214,7 @@ class ClaudeBridge:
         model: str | None = None,
         delta_listener=None,
         denied_services: list | None = None,
+        access: str | None = None,
     ) -> str:
         """Send a conversation over HTTP/SSE when available (deltas pushed to
         delta_listener as they arrive), else fall back to the file protocol."""
@@ -219,7 +223,7 @@ class ClaudeBridge:
             try:
                 return await self._http_conversation(
                     api, text, conversation_id, timeout, system_prompt, model,
-                    delta_listener, denied_services,
+                    delta_listener, denied_services, access,
                 )
             except _StreamBrokenError as exc:
                 # The pool ACCEPTED the request before the stream broke — it
@@ -241,11 +245,12 @@ class ClaudeBridge:
             system_prompt=system_prompt,
             model=model,
             denied_services=denied_services,
+            access=access,
         )
 
     async def _http_conversation(
         self, api, text, conversation_id, timeout, system_prompt, model,
-        delta_listener, denied_services=None,
+        delta_listener, denied_services=None, access=None,
     ) -> str:
         import aiohttp
         from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -268,6 +273,8 @@ class ClaudeBridge:
             request["model"] = model
         if denied_services:
             request["denied_services"] = denied_services
+        if access:
+            request["access"] = access
 
         session = async_get_clientsession(self._hass)
         result_text: str | None = None

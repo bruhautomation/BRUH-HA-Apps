@@ -2695,11 +2695,11 @@ class TestKnowledgeTab(unittest.TestCase):
         remembers, what is queued. The document used to sit beside the queue
         in two columns, which said nothing about which was which."""
         order = ["This morning", "What brAIn has measured",
-                 "What it remembers", "Waiting to be filed"]
+                 "How brAIn's memory works", "Memory document",
+                 "Waiting to be filed", "Facts brAIn has learned"]
         # The headings, not the prose: a comment can say any of these words
         # in any order, and the thing being asserted is the page.
-        marks = [f">{h}</h2>" for h in order[:2]] \
-            + [f"<label>{h}</label>" for h in order[2:]]
+        marks = [f"<h2>{h}" for h in order]
         at = [self.html.index(m) for m in marks]
         self.assertEqual(at, sorted(at), f"sections are out of order: {order}")
 

@@ -3193,7 +3193,7 @@ class TestBriefReadsTheHealthVerdict(unittest.TestCase):
             async def overnight(now):
                 return {}
             server._brief_overnight = overnight
-            server.findings_store.list_all = lambda: []
+            server.findings_store.list_all = lambda *a, **k: []
 
             def worth(state):
                 seen.update(state)

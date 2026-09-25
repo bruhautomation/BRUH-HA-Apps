@@ -921,6 +921,34 @@ body.modal-open {
   padding: 1px 6px; border-radius: 999px; background: var(--bg-3, rgba(127,127,127,.15));
   color: var(--ink-2); }
 .kfactrun { margin-left: 4px; }
+/* How the three parts differ, said once above them: a numbered list
+   rather than three cards, because it is read once and then skimmed past. */
+.kguide { max-width: 900px; }
+.kguidelist { margin: 4px 0 0; padding-left: 20px; color: var(--ink-2);
+  font-size: 13.5px; line-height: 1.5; }
+.kguidelist li { margin: 0 0 6px; }
+.kguidelist b { color: var(--ink); font-weight: 600; }
+.kcount { color: var(--ink-3); font-weight: 500; font-size: 14px; margin-left: 6px; }
+/* The facts browser. The bar wraps rather than shrinking: a search box
+   squeezed to a sliver beside two selects is the failure a measure can see.
+   Neither control sets a font-size — the coarse block's 16px floor has to
+   win on a phone, or iOS zooms the ingress iframe on focus. */
+.kfbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.kfbar input[type="search"] { flex: 1 1 240px; min-width: 0; min-height: 40px;
+  padding: 8px 11px; font-family: inherit; color: var(--ink); background: var(--plane);
+  border: 1px solid var(--hairline); border-radius: 9px; outline: none; }
+.kfbar input[type="search"]:focus { border-color: var(--accent); }
+.kfbar select { flex: 0 1 auto; max-width: 100%; min-height: 40px;
+  padding: 6px 10px; font-family: inherit; color: var(--ink);
+  background: var(--plane); border: 1px solid var(--hairline); border-radius: 9px; }
+/* A subject with a name reads as a name; only a bare id stays monospace. */
+.kfactsubj.named { font-family: inherit; font-size: 11.5px; }
+.kfchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.kfsum { font-size: 12.5px; color: var(--ink-3); padding: 2px 2px 0; }
+.kfgroup { font-size: 12px; font-weight: 700; letter-spacing: .02em;
+  color: var(--ink-2); margin: 10px 2px 0; overflow-wrap: anywhere; }
+.kfgroup:first-child { margin-top: 0; }
+.kfmore { margin-top: 8px; }
 .kadd { display: flex; gap: 7px; margin: 4px 0 8px; }
 .kadd input {
   flex: 1;

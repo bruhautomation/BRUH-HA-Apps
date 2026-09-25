@@ -47,6 +47,64 @@ class StoreCase(unittest.TestCase):
         self.tmp.cleanup()
 
 
+class TestBrowsingForAPerson(StoreCase):
+    """`browse` is the Knowledge tab's reader, and it must show EVERY row.
+
+    The tab used to list `recall()` — ranked for a prompt, three rows per
+    subject — so a busy sensor's fourth fact was never on screen at all."""
+
+    def fill(self):
+        for i in range(6):
+            facts_store.add(f"Freezer fact number {i}",
+                            subject="sensor.garage_freezer_temp",
+                            source="study", ts=NOW - 1000 + i)
+        facts_store.add("We call the utility room the boot room",
+                        subject="area:utility", source="chat", ts=NOW - 5000)
+        facts_store.add("Stop flagging this as frozen",
+                        subject="sensor.porch_contact", source="correction",
+                        predicate="exception:dev.frozen", ts=NOW - 3000)
+
+    def test_no_per_subject_cap_and_newest_first(self):
+        self.fill()
+        got = facts_store.browse(now=NOW)
+        self.assertEqual(got["total"], 8)
+        self.assertEqual(len([f for f in got["facts"]
+                              if f["subject"] == "sensor.garage_freezer_temp"]), 6)
+        stamps = [f["ts"] for f in got["facts"]]
+        self.assertEqual(stamps, sorted(stamps, reverse=True))
+
+    def test_search_reads_the_friendly_name_and_every_word_must_match(self):
+        self.fill()
+        names = {"sensor.garage_freezer_temp": "Chest freezer"}
+        got = facts_store.browse(query="chest", names=names, now=NOW)
+        self.assertEqual(got["total"], 6)
+        self.assertEqual(got["facts"][0]["subject_name"], "Chest freezer")
+        got = facts_store.browse(query="chest boot", names=names, now=NOW)
+        self.assertEqual(got["total"], 0)
+
+    def test_a_rule_is_its_own_kind_and_facets_count_it(self):
+        self.fill()
+        got = facts_store.browse(kind="rule", now=NOW)
+        self.assertEqual([f["text"] for f in got["facts"]],
+                         ["Stop flagging this as frozen"])
+        self.assertEqual(got["facets"]["kinds"]["rule"], 1)
+        self.assertEqual(got["facets"]["kinds"]["entity"], 6)
+        self.assertEqual(got["facets"]["kinds"]["area"], 1)
+
+    def test_grouped_by_subject_and_paged(self):
+        self.fill()
+        names = {"area:utility": "Utility"}
+        got = facts_store.browse(sort="subject", names=names, now=NOW, limit=3)
+        self.assertEqual(got["total"], 8)
+        self.assertEqual(len(got["facts"]), 3)
+        rest = facts_store.browse(sort="subject", names=names, now=NOW,
+                                  offset=3, limit=50)
+        subjects = [f["subject"] for f in got["facts"] + rest["facts"]]
+        # One run per subject: a group is consecutive rows.
+        runs = [s for i, s in enumerate(subjects) if i == 0 or s != subjects[i - 1]]
+        self.assertEqual(len(runs), len(set(subjects)))
+
+
 class TestAddAndRecall(StoreCase):
     def test_a_fact_is_filed_once_and_a_re_add_refreshes_it(self):
         row, created = facts_store.add(

@@ -2,6 +2,38 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.9.0
+
+**A morning brief worth reading, a reach per voice agent, ESPHome builds on a
+current Supervisor, and a Knowledge tab you can find things in.**
+
+- **The morning brief names things.** It no longer counts the night ("40 changes,
+  31 with no recorded cause") — that was the logbook read aloud and nobody could act
+  on it. A brief goes out only for something specific: a problem found since the
+  last one (with its details and what to do), a serious one still waiting after a
+  day, something fixed overnight, a door or window open that is normally shut at
+  that hour, or a light left on all night by hand (one an automation turned on is
+  on on purpose and is left out). Findings triage held back and `info` notes are
+  never read aloud.
+- **Each voice agent chooses its own reach.** When you add an agent — and later
+  under **Configure** — pick *Voice assistant* (only what you expose to Assist,
+  Home Assistant tools only), *Whole house* (every entity, still Home Assistant
+  tools only) or *Full admin* (everything the brAIn chat can do: shell, file edits,
+  config, the web). Existing agents keep following the add-on's
+  `assist_tool_access`/`assist_exposure` until you choose. `protected_entities`
+  and each agent's blocked services still apply at every level.
+- **ESPHome: "Home Assistant would not open an ingress session (Unauthorized)".**
+  The Supervisor now refuses add-ons the call brAIn used to open the ESPHome
+  dashboard. A new option, `esphome_ha_token` (a long-lived token from a Home
+  Assistant administrator), opens it the way your browser does; the ESPHome
+  add-on's own port is also tried when you have set one. The message now says
+  which of these to set.
+- **Knowledge tab.** A short explanation of how the memory document, the queue and
+  the facts differ, and a real facts browser: every fact (not the few per device
+  the old list showed), searchable by device name, filterable by kind and by who
+  taught it, sortable, grouped by subject, paged. *Rules you set* lists the checks
+  you told brAIn to stop raising.
+
 ## 2.8.1
 
 **The documentation catches up.** No behaviour changes.

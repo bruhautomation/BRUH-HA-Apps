@@ -37,6 +37,21 @@ as authenticated. A dashboard that is not the add-on (a container on another
 machine) is named by the `esphome_dashboard_url` option instead, and that is
 tried first because a person who typed a URL meant it.
 
+**The Supervisor closed the door this used to walk through.** Its WebSocket
+proxy now answers every `supervisor/*` and `hassio/*` command an add-on sends
+with `unauthorized` — deliberately, because Core runs those by calling back
+into the Supervisor with its own full-privilege token, which made the proxy a
+confused deputy. So a session can no longer be minted with this add-on's own
+token at all. What still works is what the frontend does: Core's own socket
+(`ws://homeassistant:8123/api/websocket`), authenticated as a PERSON, asked
+for `/ingress/session` — which is what `esphome_ha_token` (a long-lived token
+from a Home Assistant administrator) is for. The session it mints is that
+person's, and nothing else is done with the token. Two other routes need no
+token: `esphome_dashboard_url`, and the ESPHome add-on's own port when one is
+set under its Network settings (reachable only with its
+`leave_front_door_open` on, because otherwise it asks for a password brAIn
+does not have). Each refusal names which of the three would end it.
+
 **Nothing that fails here fails silently.** A dashboard that cannot be reached
 is a sentence naming what was tried; a file whose YAML does not parse is saved
 (it is somebody's file, and a half-edited one is still worth keeping) with the
@@ -584,6 +599,31 @@ def dashboard_url_option() -> str:
     return os.environ.get("BRAIN_ESPHOME_DASHBOARD_URL", "").strip()
 
 
+def ha_token_option() -> str:
+    """A Home Assistant admin's long-lived token, for minting ingress sessions."""
+    return os.environ.get("BRAIN_ESPHOME_HA_TOKEN", "").strip()
+
+
+# Core's own WebSocket, not the Supervisor's proxy of it: the proxy refuses
+# `supervisor/api` from an add-on, Core does not refuse it from a person.
+CORE_DIRECT_WS = os.environ.get("BRAIN_CORE_DIRECT_WS",
+                                "ws://homeassistant:8123/api/websocket")
+# Where a host-network add-on's published port is, seen from this container:
+# the hassio network's gateway is the host.
+HOST_GATEWAY = os.environ.get("BRAIN_HOST_GATEWAY", "172.30.32.1")
+# What the Supervisor's proxy answers a `supervisor/*` command with, which is
+# the one refusal that means "this route is closed", not "try again".
+PROXY_REFUSAL = "unauthorized"
+
+
+class IngressRefused(RuntimeError):
+    """No ingress session, with whether the Supervisor's proxy is what said no."""
+
+    def __init__(self, message: str, *, proxy_blocked: bool = False):
+        super().__init__(message)
+        self.proxy_blocked = proxy_blocked
+
+
 async def _supervisor_get(session: aiohttp.ClientSession, path: str) -> Any:
     async with session.get(
             f"{SUPERVISOR_API}{path}",
@@ -618,21 +658,51 @@ def pick_addon(addons: list) -> dict | None:
     return rows[0][3] if rows else None
 
 
-async def _ingress_session(session: aiohttp.ClientSession) -> str:
-    """An ingress session, minted the way Home Assistant's frontend does.
-
-    The Supervisor only creates sessions for Home Assistant, so the request
-    goes through Core's `supervisor/api` WebSocket command, which the
-    Supervisor user is admin enough to call. The direct Supervisor call is
-    tried second, for a Supervisor that has started accepting add-ons there.
-    """
-    calls = await ha_data._ws_calls(session, [{
-        "type": "supervisor/api", "endpoint": "/ingress/session",
-        "method": "post"}])
+def _session_from(calls: list) -> tuple[str, str]:
     first = calls[0] if calls else {}
     result = first.get("result") if first.get("ok") else None
     if isinstance(result, dict) and result.get("session"):
-        return str(result["session"])
+        return str(result["session"]), ""
+    return "", str(first.get("error") or "no session in the answer")
+
+
+async def _ingress_session(session: aiohttp.ClientSession) -> str:
+    """An ingress session, minted the way Home Assistant's frontend does.
+
+    With `esphome_ha_token` set, over Core's own socket as the person that
+    token belongs to — the route that works on a current Supervisor. Then
+    the Supervisor's proxy with this add-on's token, which an older
+    Supervisor still allows, and the direct Supervisor call, which only
+    Home Assistant may make but costs nothing to ask. A refusal says which
+    of them said no, so the sentence can name the switch that ends it.
+    """
+    command = [{"type": "supervisor/api", "endpoint": "/ingress/session",
+                "method": "post"}]
+    errors: list[str] = []
+    token = ha_token_option()
+    if token:
+        try:
+            got, err = _session_from(await ha_data._ws_calls(
+                session, command, url=CORE_DIRECT_WS, token=token))
+        except Exception as exc:  # noqa: BLE001 — every failure is a sentence
+            got, err = "", str(exc) or type(exc).__name__
+        if got:
+            return got
+        errors.append(f"with esphome_ha_token: {err}")
+
+    proxy_blocked = False
+    try:
+        got, err = _session_from(await ha_data._ws_calls(session, command))
+    except Exception as exc:  # noqa: BLE001
+        got, err = "", str(exc) or type(exc).__name__
+    if got:
+        return got
+    if err.strip().lower() == PROXY_REFUSAL:
+        proxy_blocked = True
+        errors.append("the Supervisor no longer lets add-ons ask Home "
+                      "Assistant for one")
+    else:
+        errors.append(f"through the Supervisor: {err}")
     try:
         async with session.post(
                 f"{SUPERVISOR_API}/ingress/session",
@@ -644,8 +714,24 @@ async def _ingress_session(session: aiohttp.ClientSession) -> str:
             return str(data["session"])
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):  # the fallback
         pass  # failing too is the refusal below, which names Core's answer
-    raise RuntimeError("Home Assistant would not open an ingress session "
-                       f"({first.get('error') or 'no session in the answer'})")
+    raise IngressRefused("Home Assistant would not open an ingress session ("
+                         + "; ".join(errors) + ")", proxy_blocked=proxy_blocked)
+
+
+def _published_port(info: dict) -> int | None:
+    """The ESPHome add-on's dashboard port, when somebody has given it one."""
+    network = info.get("network") if isinstance(info, dict) else None
+    if not isinstance(network, dict):
+        return None
+    for key in ("6052/tcp", "6052"):
+        value = network.get(key)
+        try:
+            port = int(value)
+        except (TypeError, ValueError):
+            continue
+        if 0 < port < 65536:
+            return port
+    return None
 
 
 async def _probe(session: aiohttp.ClientSession, route: Route) -> str:
@@ -690,6 +776,7 @@ async def discover(session: aiohttp.ClientSession) -> tuple[Route | None, dict]:
             tried.append(f"{option} (the esphome_dashboard_url option): {exc}")
 
     addon = None
+    blocked = False
     if ha_data.SUPERVISOR_TOKEN:
         try:
             listing = await _supervisor_get(session, "/addons")
@@ -713,19 +800,36 @@ async def discover(session: aiohttp.ClientSession) -> tuple[Route | None, dict]:
         if described["state"] != "started":
             tried.append(f"the {described['name']} add-on is "
                          f"{described['state'] or 'not running'} — start it")
-        elif not token:
-            tried.append(f"the {described['name']} add-on has no ingress entry")
         else:
-            try:
-                ingress = await _ingress_session(session)
-                route = Route(f"{SUPERVISOR_API}/ingress/{token}", "ingress",
-                              {"ingress_session": ingress}, described)
-                version = await _probe(session, route)
-                return route, {"reachable": True, "via": "ingress",
-                               "addon": described, "version": version}
-            except Exception as exc:  # noqa: BLE001
-                tried.append(f"the {described['name']} add-on through "
-                             f"Home Assistant ingress: {exc}")
+            port = _published_port(info)
+            if port:
+                host = str(info.get("ip_address") or "") or HOST_GATEWAY
+                direct = Route(f"http://{host}:{port}", "port", None, described)
+                try:
+                    version = await _probe(session, direct)
+                    return direct, {"reachable": True, "via": "port",
+                                    "addon": described, "version": version,
+                                    "url": direct.base}
+                except Exception as exc:  # noqa: BLE001
+                    tried.append(f"the {described['name']} add-on's own port "
+                                 f"{port}: {exc}")
+            if not token:
+                tried.append(f"the {described['name']} add-on has no ingress entry")
+            else:
+                try:
+                    ingress = await _ingress_session(session)
+                    route = Route(f"{SUPERVISOR_API}/ingress/{token}", "ingress",
+                                  {"ingress_session": ingress}, described)
+                    version = await _probe(session, route)
+                    return route, {"reachable": True, "via": "ingress",
+                                   "addon": described, "version": version}
+                except IngressRefused as exc:
+                    blocked = exc.proxy_blocked and not ha_token_option()
+                    tried.append(f"the {described['name']} add-on through "
+                                 f"Home Assistant ingress: {exc}")
+                except Exception as exc:  # noqa: BLE001
+                    tried.append(f"the {described['name']} add-on through "
+                                 f"Home Assistant ingress: {exc}")
         status = {"reachable": False, "addon": described}
     else:
         status = {"reachable": False, "addon": None}
@@ -733,11 +837,26 @@ async def discover(session: aiohttp.ClientSession) -> tuple[Route | None, dict]:
             tried.append("no ESPHome add-on is installed")
     if not ha_data.SUPERVISOR_TOKEN and not option:
         tried.append("there is no Supervisor to ask (not running as an add-on)")
+    if blocked:
+        # The one case with a specific remedy, and the commonest one on a
+        # current Supervisor: the add-on is there and running, and the only
+        # thing missing is somebody's permission to open its dashboard.
+        remedy = ("To let brAIn build and install, add a long-lived access "
+                  "token from a Home Assistant administrator (your profile → "
+                  "Security → Long-lived access tokens) as esphome_ha_token "
+                  "in brAIn's configuration. Or give the ESPHome add-on a "
+                  "port under its Network settings with "
+                  "leave_front_door_open on (that dashboard then has no "
+                  "password on your network), or set esphome_dashboard_url.")
+    else:
+        remedy = ("Building and installing needs the dashboard — install and "
+                  "start the ESPHome add-on (and set esphome_ha_token if "
+                  "brAIn cannot open its ingress), or set "
+                  "esphome_dashboard_url to a dashboard on your network.")
+    status["needs_token"] = blocked
     status["reason"] = ("brAIn could not reach an ESPHome dashboard: "
-                        + "; ".join(tried) + ". Editing files still works; "
-                        "building and installing needs the dashboard — install "
-                        "and start the ESPHome add-on, or set "
-                        "esphome_dashboard_url to a dashboard on your network.")
+                        + "; ".join(tried) + ". Editing files still works. "
+                        + remedy)
     return None, status
 
 

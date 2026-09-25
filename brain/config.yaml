@@ -1,7 +1,7 @@
 ---
 name: "brAIn"
 description: "Give your smart home a mind — Claude with full run of Home Assistant: every entity, device, area, dashboard and automation, plus insights, findings, memory, voice and a terminal"
-version: "2.8.1"
+version: "2.9.0"
 slug: "brain"
 init: false
 
@@ -136,6 +136,7 @@ options:
   checks_interval_hours: 6
   ask_why: true
   esphome_dashboard_url: ""
+  esphome_ha_token: ""
   music_assistant_url: ""
   music_assistant_token: ""
   self_healing: false
@@ -184,6 +185,7 @@ schema:
   checks_interval_hours: "int(0,168)?"
   ask_why: bool?
   esphome_dashboard_url: "str?"
+  esphome_ha_token: "password?"
   music_assistant_url: "str?"
   music_assistant_token: "password?"
   self_healing: bool?

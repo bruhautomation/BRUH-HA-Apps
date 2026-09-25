@@ -1455,30 +1455,66 @@ def _brief_enabled() -> tuple[bool, int]:
 
 
 async def _brief_overnight(now: float) -> dict:
-    """What the night looked like, as counts. One logbook fetch, once a day."""
-    import aiohttp
+    """The night's attributed changes and the house's states this morning.
 
+    One logbook fetch and one states fetch, once a day. Neither is ever
+    reported as a count — "31 changes with no recorded cause" is the
+    logbook read aloud and nobody can act on it. The actions are read for
+    one thing (whether a light still on was switched on by an automation,
+    which means it is on on purpose) and the states are what
+    `brief.morning_facts` reads for a door open at an odd hour or a light
+    left on all night.
+    """
+    import aiohttp
+    import ha_data  # noqa: PLC0415 — deferred, as every route that needs it
+
+    out: dict = {}
     try:
         async with aiohttp.ClientSession() as session:
-            mined = await actions.collect(
-                session, now - BRIEF_NIGHT_HOURS * 3600, now,
-                await checks.snapshot._users(session))
-    except Exception as exc:  # noqa: BLE001 — a brief without the night is
-        # still a brief; a brief that failed because of it is not.
-        log.info("brief could not read the night: %s", exc)
-        return {}
-    if not mined.get("available"):
-        return {}
-    counts = mined.get("counts") or {}
-    out = {"counts": counts}
-    # "More than usual" needs a usual. Without one this says nothing
-    # rather than picking a number, which is the same rule the baselines
-    # and the override pattern carry.
-    unattributed = int(counts.get("unattributed") or 0)
-    total = sum(int(v or 0) for v in counts.values())
-    if total >= 20 and unattributed > total * 0.6:
-        out["unattributed_spike"] = unattributed
+            try:
+                mined = await actions.collect(
+                    session, now - BRIEF_NIGHT_HOURS * 3600, now,
+                    await checks.snapshot._users(session))
+                if mined.get("available"):
+                    out["actions"] = mined.get("actions") or []
+            except Exception as exc:  # noqa: BLE001 — a brief without the
+                # night is still a brief; one that failed because of it is not.
+                log.info("brief could not read the night: %s", exc)
+            try:
+                states = await ha_data._rest_get(session, "/states")
+                if isinstance(states, list):
+                    out["states"] = states
+            except Exception as exc:  # noqa: BLE001 — same reason
+                log.info("brief could not read the states: %s", exc)
+    except Exception as exc:  # noqa: BLE001
+        log.info("brief could not reach Home Assistant: %s", exc)
     return out
+
+
+def _brief_morning(now: float, night: dict) -> dict:
+    """`brief.morning_facts` over what `_brief_overnight` fetched."""
+    if not night.get("states"):
+        return {}
+    try:
+        tz, _name = baselines.house_timezone()
+        bucket = baselines.hour_of_week(now, tz)
+    except Exception:  # noqa: BLE001 — no clock is no closures answer
+        tz, bucket = None, None
+    try:
+        store = closures.load()
+    except Exception:  # noqa: BLE001 — an unreadable store answers nothing
+        store = {}
+
+    def clock(ts: float) -> str:
+        return _local_now(ts).strftime("%H:%M")
+
+    try:
+        return brief.morning_facts(
+            night.get("states") or [], night.get("actions") or [], now,
+            closures_store=store, bucket=bucket, clock=clock)
+    except Exception as exc:  # noqa: BLE001 — a reason lost, not the brief
+        log.info("brief could not read this morning: %s", exc)
+        return {}
 
 
 async def _send_brief(now: float) -> str:
@@ -1493,9 +1529,10 @@ async def _send_brief(now: float) -> str:
 
     night = await _brief_overnight(now)
     state = brief.state_from(
-        await asyncio.to_thread(findings_store.list_all),
-        verdict, night, BRIEF_STATE["last_sent"] or (now - 86400),
-        await asyncio.to_thread(_healing_brief_lines))
+        await asyncio.to_thread(findings_store.list_all, "live"),
+        verdict, {}, BRIEF_STATE["last_sent"] or (now - 86400),
+        await asyncio.to_thread(_healing_brief_lines),
+        morning=_brief_morning(now, night), now=now)
 
     reasons = brief.worth_saying(state)
     BRIEF_STATE["last_reasons"] = reasons
@@ -11976,6 +12013,50 @@ async def h_facts(request: web.Request) -> web.Response:
         str(q.get("subject") or "")[:255], limit))
 
 
+def _fact_subject_names() -> dict:
+    """What a person calls each subject a fact can be about.
+
+    Off the last checks pass's registry (`_NAMES`, `_FACTS_CTX`), never a
+    fetch of its own: the browser is asked on every keystroke of a search,
+    and a subject nobody has named yet is shown as its id, which is honest.
+    """
+    names = {eid: str(row.get("name") or "")
+             for eid, row in _NAMES.items() if isinstance(row, dict)}
+    for area_id, name in (_FACTS_CTX.get("areas") or {}).items():
+        names[f"area:{area_id}"] = str(name or area_id)
+    return names
+
+
+def _facts_browse_payload(q) -> dict:
+    def num(key, default):
+        try:
+            return int(q.get(key) or default)
+        except (TypeError, ValueError):
+            return default
+
+    got = facts_store.browse(
+        query=str(q.get("q") or q.get("query") or "")[:200],
+        kind=str(q.get("kind") or "")[:16],
+        source=str(q.get("source") or "")[:32],
+        subject=str(q.get("subject") or "")[:255],
+        sort=str(q.get("sort") or "newest")[:16],
+        offset=num("offset", 0), limit=num("limit", 50),
+        names=_fact_subject_names())
+    known = run_sources.lookup([r.get("run_id") for r in got["facts"]
+                                if r.get("run_id")])
+    for row in got["facts"]:
+        row["run_source"] = known.get(row.get("run_id") or "", "")
+    return got
+
+
+async def h_facts_browse(request: web.Request) -> web.Response:
+    """Every fact brAIn holds, searchable and sortable — the Knowledge tab."""
+    if request.query.get("ingest"):
+        await asyncio.to_thread(_ingest_facts)
+    return web.json_response(await asyncio.to_thread(
+        _facts_browse_payload, request.query))
+
+
 async def h_fact_forget(request: web.Request) -> web.Response:
     """Drop one fact. The document is not touched — a line already in
     memory.md is edited out of memory.md, beside the queue."""
@@ -13393,6 +13474,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/idea/{idea_id}/dismiss", h_idea_dismiss)
     app.router.add_get("/api/knowledge", h_knowledge)
     app.router.add_get("/api/facts", h_facts)
+    app.router.add_get("/api/facts/browse", h_facts_browse)
     app.router.add_post("/api/fact/{id}/forget", h_fact_forget)
     app.router.add_get("/api/habits", h_habits)
     app.router.add_post("/api/simulate", h_simulate)

@@ -19,6 +19,7 @@
           "model": "Claude model",
           "system_prompt": "System prompt (personality)",
           "timeout": "Response timeout (seconds)",
+          "access": "What this agent can reach",
           "denied_services": "Blocked services"
         },
         "data_description": {
@@ -26,6 +27,7 @@
           "model": "Which Claude model this agent uses. Sonnet is fast and balanced, Opus is the most capable, Haiku is the fastest and cheapest.",
           "system_prompt": "Defines who this agent is: identity, tone, and verbosity. It takes precedence over the built-in style — device control, tools, and the area map are appended automatically and stay out of its way. Include a length rule (e.g. keep spoken replies short) if your persona tends to ramble.",
           "timeout": "Maximum time in seconds to wait for Claude to respond.",
+          "access": "Per agent. Voice assistant sees only what you expose to Assist (Settings → Voice assistants → Expose) and uses Home Assistant tools only. Whole house sees every entity, still Home Assistant tools only. Full admin can do everything the brAIn chat can — run shell commands, edit your configuration, use the web — so give it only to an agent you alone talk to. Protected entities (the add-on option) are refused at every level.",
           "denied_services": "Services this agent may NOT call, even by voice — enforced in the MCP server, so it covers every device tool. Pick common risky ones or type your own: exact like lock.unlock, or a whole domain like lock.* . Leave empty to allow everything."
         }
       },
@@ -82,6 +84,7 @@
           "model": "Claude model",
           "system_prompt": "System prompt (personality)",
           "timeout": "Response timeout (seconds)",
+          "access": "What this agent can reach",
           "denied_services": "Blocked services"
         },
         "data_description": {
@@ -90,6 +93,7 @@
           "model": "Which Claude model this agent uses. Sonnet is fast and balanced, Opus is the most capable, Haiku is the fastest and cheapest.",
           "system_prompt": "Defines who this agent is: identity, tone, and verbosity. It takes precedence over the built-in style — device control, tools, and the area map are appended automatically and stay out of its way. Include a length rule (e.g. keep spoken replies short) if your persona tends to ramble.",
           "timeout": "Maximum time in seconds to wait for Claude to respond.",
+          "access": "Per agent. Voice assistant sees only what you expose to Assist (Settings → Voice assistants → Expose) and uses Home Assistant tools only. Whole house sees every entity, still Home Assistant tools only. Full admin can do everything the brAIn chat can — run shell commands, edit your configuration, use the web — so give it only to an agent you alone talk to. Protected entities (the add-on option) are refused at every level.",
           "denied_services": "Services this agent may NOT call, even by voice — enforced in the MCP server, so it covers every device tool. Pick common risky ones or type your own: exact like lock.unlock, or a whole domain like lock.* . Leave empty to allow everything."
         }
       },

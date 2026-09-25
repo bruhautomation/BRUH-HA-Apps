@@ -67,13 +67,19 @@ configuration:
       "Home Assistant only" limits voice to entities, services and the
       registry. "Full" also gives it the shell and your files — more
       capable, and a much larger blast radius for a misheard sentence.
+      This is only the fallback: each brAIn agent picks its own reach in
+      Settings → Devices & services → brAIn → the agent → Configure
+      ("What this agent can reach"), and only an agent set to "Follow the
+      add-on" uses this.
   assist_exposure:
     name: What voice can see
     description: >-
       "Exposed" honours Home Assistant's own list — Settings → Voice
       assistants → Expose — so an entity you have not exposed is invisible
       to voice and cannot be acted on by it. "All" gives voice the whole
-      house, which is what every release before 2.3 did.
+      house, which is what every release before 2.3 did. Like the option
+      above, this only applies to agents set to "Follow the add-on"; every
+      other agent's own access level decides.
   study_timeout_minutes:
     name: Study session timeout
     description: How long a study session may run before it is stopped.
@@ -197,6 +203,17 @@ configuration:
       http://192.168.1.20:6052. Editing device files works without it;
       validating, compiling, installing and reading logs need a dashboard
       brAIn can reach.
+  esphome_ha_token:
+    name: Home Assistant token for ESPHome
+    description: >-
+      Needed to build and install through the ESPHome add-on on a current
+      Home Assistant: the Supervisor no longer lets an add-on open another
+      add-on's dashboard on its own. Paste a long-lived access token from a
+      Home Assistant administrator (your profile → Security → Long-lived
+      access tokens). brAIn uses it for one thing — asking Home Assistant
+      to open the ESPHome dashboard, the way your browser does — and it is
+      stored like every add-on option, so it is in your backups. Not
+      needed if you set the dashboard address above.
   music_assistant_url:
     name: Music Assistant address
     description: >-

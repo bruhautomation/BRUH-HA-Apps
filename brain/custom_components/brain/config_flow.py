@@ -31,7 +31,10 @@ except ImportError:
         HassioServiceInfo = None  # type: ignore[assignment,misc]
 
 from .const import (
+    ACCESS_ADDON,
+    ACCESS_LEVELS,
     AVAILABLE_MODELS,
+    CONF_ACCESS,
     CONF_ENABLE_CONVERSATION,
     CONF_ENABLE_SENSORS,
     CONF_ENTRY_TYPE,
@@ -45,6 +48,7 @@ from .const import (
     CONF_NAME,
     CONF_SYSTEM_PROMPT,
     CONF_TIMEOUT,
+    DEFAULT_ACCESS,
     DEFAULT_INSIGHT_TIMEOUT,
     DEFAULT_MODEL,
     DEFAULT_NAME,
@@ -83,11 +87,13 @@ try:
 
     TEMPLATE_FIELD = _select(TEMPLATE_LABELS)
     MODEL_FIELD = _select(AVAILABLE_MODELS)
+    ACCESS_FIELD = _select(ACCESS_LEVELS)
     MULTILINE_FIELD = TextSelector(TextSelectorConfig(multiline=True))
     _HAS_SELECTORS = True
 except ImportError:  # very old HA — plain widgets still work
     TEMPLATE_FIELD = vol.In(list(INSIGHT_TEMPLATES) + ["custom"])
     MODEL_FIELD = vol.In(AVAILABLE_MODELS)
+    ACCESS_FIELD = vol.In(ACCESS_LEVELS)
     MULTILINE_FIELD = str
     _HAS_SELECTORS = False
 
@@ -335,6 +341,7 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_SYSTEM_PROMPT: user_input.get(
                             CONF_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT
                         ),
+                        CONF_ACCESS: user_input.get(CONF_ACCESS, DEFAULT_ACCESS),
                         CONF_DENIED_SERVICES: user_input.get(CONF_DENIED_SERVICES, []),
                         CONF_TIMEOUT: user_input.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
                     },
@@ -352,6 +359,9 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Optional(
                         CONF_SYSTEM_PROMPT, default=DEFAULT_SYSTEM_PROMPT
                     ): MULTILINE_FIELD,
+                    vol.Optional(
+                        CONF_ACCESS, default=DEFAULT_ACCESS
+                    ): ACCESS_FIELD,
                     deny_key: deny_field,
                     vol.Optional(
                         CONF_TIMEOUT, default=DEFAULT_TIMEOUT
@@ -476,6 +486,13 @@ class BruhClaudeOptionsFlowHandler(OptionsFlow):
             CONF_SYSTEM_PROMPT,
             default=current.get(CONF_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT),
         )] = MULTILINE_FIELD
+
+        # An agent created before access levels existed never chose one,
+        # and shows (and keeps) "follow the add-on" until somebody picks.
+        schema_fields[vol.Optional(
+            CONF_ACCESS,
+            default=current.get(CONF_ACCESS, ACCESS_ADDON),
+        )] = ACCESS_FIELD
 
         deny_key, deny_field = denied_services_field(
             self.hass, current.get(CONF_DENIED_SERVICES, [])

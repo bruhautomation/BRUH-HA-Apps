@@ -451,6 +451,84 @@ class TestTheIngressRoute(_Served):
         self.assertEqual(calls[0][0]["type"], "supervisor/api")
         self.assertEqual(calls[0][0]["endpoint"], "/ingress/session")
 
+    def _supervisor(self, info_extra=None, dash=None):
+        async def addons(request):
+            return web.json_response({"data": {"addons": [
+                {"slug": "5c53de3b_esphome", "name": "ESPHome", "state": "started"}]}})
+
+        async def info(request):
+            return web.json_response({"data": {
+                "state": "started", "version": "2026.9.0",
+                "ingress_entry": "/api/hassio_ingress/TOKEN123",
+                **(info_extra or {})}})
+
+        sup = web.Application()
+        sup.router.add_get("/addons", addons)
+        sup.router.add_get("/addons/5c53de3b_esphome/info", info)
+        if dash is not None:
+            sup.add_subapp("/ingress/TOKEN123/", dash)
+        return self.serve(sup)
+
+    def _discover(self, base, ws_calls, env):
+        import aiohttp
+
+        with mock.patch.object(esphome, "SUPERVISOR_API", base), \
+                mock.patch.object(ha_data, "SUPERVISOR_TOKEN", "tok"), \
+                mock.patch.object(ha_data, "_ws_calls", ws_calls), \
+                mock.patch.dict(os.environ, {"BRAIN_ESPHOME_DASHBOARD_URL": "",
+                                             "BRAIN_ESPHOME_HA_TOKEN": "",
+                                             **env}):
+            async def go():
+                async with aiohttp.ClientSession() as s:
+                    return await esphome.discover(s)
+            return self.go(go())
+
+    def test_the_supervisor_refusing_the_proxy_names_the_token(self):
+        # What the Supervisor's proxy answers every `supervisor/*` command
+        # an add-on sends, copied from its source: code and message both.
+        base = self._supervisor()
+
+        async def ws_calls(session, commands, **kw):
+            return [{"ok": False, "result": None, "error": "Unauthorized"}]
+
+        found, status = self._discover(base, ws_calls, {})
+        self.assertIsNone(found)
+        self.assertTrue(status["needs_token"])
+        self.assertIn("no longer lets add-ons", status["reason"])
+        self.assertIn("esphome_ha_token", status["reason"])
+
+    def test_a_token_mints_the_session_over_cores_own_socket(self):
+        dash = dashboard_app(require_cookie="sess-9")
+        base = self._supervisor(dash=dash)
+        seen = []
+
+        async def ws_calls(session, commands, **kw):
+            seen.append(kw)
+            if kw.get("token") == "person-token":
+                return [{"ok": True, "result": {"session": "sess-9"}, "error": ""}]
+            return [{"ok": False, "result": None, "error": "Unauthorized"}]
+
+        found, status = self._discover(
+            base, ws_calls, {"BRAIN_ESPHOME_HA_TOKEN": "person-token"})
+        self.assertTrue(status["reachable"], status)
+        self.assertEqual(status["via"], "ingress")
+        self.assertEqual(seen[0]["url"], esphome.CORE_DIRECT_WS)
+        self.assertNotIn("supervisor/core", seen[0]["url"])
+
+    def test_the_addons_own_port_is_tried_when_it_has_one(self):
+        dash = self.serve(dashboard_app())
+        port = int(dash.rsplit(":", 1)[1])
+        base = self._supervisor({"network": {"6052/tcp": port},
+                                 "ip_address": "127.0.0.1"})
+
+        async def ws_calls(session, commands, **kw):
+            raise AssertionError("an open port needs no session")
+
+        found, status = self._discover(base, ws_calls, {})
+        self.assertTrue(status["reachable"], status)
+        self.assertEqual(status["via"], "port")
+        self.assertEqual(found.base, f"http://127.0.0.1:{port}")
+
     def test_a_stopped_addon_is_a_sentence_naming_it(self):
         async def addons(request):
             return web.json_response({"data": {"addons": [

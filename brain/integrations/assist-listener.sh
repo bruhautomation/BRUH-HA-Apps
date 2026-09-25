@@ -66,6 +66,9 @@ SESSION_FLAGS_MARKER="$CACHE_DIR/session_flags_unsupported"
 # Claude can act on "turn off the kitchen lights" without a get_areas
 # round-trip (saves a whole model turn on most voice commands).
 AREA_MAP_FILE="$CACHE_DIR/area_map.txt"
+# The unfiltered map, for an agent whose own access level is the whole house
+# (the integration's per-agent `access`) on an add-on gated to exposed.
+AREA_MAP_FULL_FILE="$CACHE_DIR/area_map_full.txt"
 AREA_MAP_TTL=300        # seconds before a background refresh is triggered
 AREA_MAP_MAX_BYTES=16000
 
@@ -260,6 +263,10 @@ JINJA
         return 1
     }
 
+    # The whole-house copy first, before anything is filtered out of it.
+    printf '%s\n' "$rendered" | head -c "$AREA_MAP_MAX_BYTES" > "${AREA_MAP_FULL_FILE}.tmp" \
+        && mv "${AREA_MAP_FULL_FILE}.tmp" "$AREA_MAP_FULL_FILE"
+
     # What voice may see (assist_exposure: exposed, the default): the map is
     # filtered to what Home Assistant exposes to Assist, through the one
     # module the worker pool and the MCP server read. An exposure that
@@ -307,7 +314,43 @@ get_area_map() {
         # First request pays the one-time render (~100-300ms)
         refresh_area_map >/dev/null 2>&1 || true
     fi
+    # An agent that chose the whole house reads the unfiltered copy; every
+    # other agent reads the add-on-wide map, exactly as before.
+    if [ "${AGENT_EXPOSED:-}" = "0" ] && [ "${AGENT_ACCESS:-addon}" != "addon" ] \
+            && [ -f "$AREA_MAP_FULL_FILE" ]; then
+        cat "$AREA_MAP_FULL_FILE" 2>/dev/null || true
+        return
+    fi
     cat "$AREA_MAP_FILE" 2>/dev/null || true
+}
+
+# The integration's per-agent `access`, read off the request into two
+# switches — the same two the worker pool's ACCESS_LEVELS holds, and the
+# same words (`voice`, `house`, `admin`, `addon`). `addon`, or no field at
+# all, is the add-on's own options; a word this does not know is `voice`,
+# the narrowest, because a typo must never widen what a speaker can do.
+# protected_entities is enforced in the MCP server and no level lifts it.
+resolve_agent_access() {
+    AGENT_ACCESS="${1:-addon}"
+    case "$AGENT_ACCESS" in
+        voice) AGENT_MCP_ONLY=1; AGENT_EXPOSED=1 ;;
+        house) AGENT_MCP_ONLY=1; AGENT_EXPOSED=0 ;;
+        admin) AGENT_MCP_ONLY=0; AGENT_EXPOSED=0 ;;
+        ""|addon)
+            AGENT_ACCESS=addon
+            if [ "${BRAIN_ASSIST_TOOL_ACCESS:-mcp_only}" = "mcp_only" ]; then
+                AGENT_MCP_ONLY=1
+            else
+                AGENT_MCP_ONLY=0
+            fi
+            if [ "${BRAIN_ASSIST_EXPOSURE:-exposed}" = "all" ]; then
+                AGENT_EXPOSED=0
+            else
+                AGENT_EXPOSED=1
+            fi
+            ;;
+        *) AGENT_ACCESS=voice; AGENT_MCP_ONLY=1; AGENT_EXPOSED=1 ;;
+    esac
 }
 
 # ---------------------------------------------------------------------------
@@ -381,6 +424,7 @@ log_request_debug() {
         echo "  Prompt:   $prompt_chars chars"
         echo "  AreaMap:  ${area_map_chars:-0} chars"
         echo "  MaxTurns: $MAX_TURNS"
+        echo "  Access:   ${AGENT_ACCESS:-addon}"
     } >> "$log_file"
 }
 
@@ -425,11 +469,14 @@ log_response_debug() {
 # server launched for the turn reads it (BRAIN_EXPOSED_ONLY) and refuses to
 # read or act on anything else. Matches the pool's EXPOSED_ONLY.
 exposed_only_flag() {
-    if [ "${BRAIN_ASSIST_EXPOSURE:-exposed}" = "all" ]; then
-        echo 0
-    else
-        echo 1
-    fi
+    [ -n "${AGENT_EXPOSED:-}" ] || resolve_agent_access addon
+    echo "$AGENT_EXPOSED"
+}
+
+# "1" while this agent's Bash/file/web deny-list applies.
+mcp_only_flag() {
+    [ -n "${AGENT_MCP_ONLY:-}" ] || resolve_agent_access addon
+    echo "$AGENT_MCP_ONLY"
 }
 
 invoke_claude() {
@@ -442,7 +489,7 @@ invoke_claude() {
 
     # Voice tool scoping (assist_tool_access: mcp_only) — deny-list settings
     local scope_args=()
-    if [ "${BRAIN_ASSIST_TOOL_ACCESS:-mcp_only}" = "mcp_only" ] && [ -f "$SHARED_DIR/assist_settings.json" ]; then
+    if [ "$(mcp_only_flag)" = "1" ] && [ -f "$SHARED_DIR/assist_settings.json" ]; then
         scope_args=(--settings "$SHARED_DIR/assist_settings.json")
     fi
 
@@ -468,7 +515,7 @@ invoke_claude() {
 land_claude() {
     local sid="$1" limit="$2"
     local scope_args=()
-    if [ "${BRAIN_ASSIST_TOOL_ACCESS:-mcp_only}" = "mcp_only" ] && [ -f "$SHARED_DIR/assist_settings.json" ]; then
+    if [ "$(mcp_only_flag)" = "1" ] && [ -f "$SHARED_DIR/assist_settings.json" ]; then
         scope_args=(--settings "$SHARED_DIR/assist_settings.json")
     fi
     # Into a scratch file, moved over only on success: a landing refused
@@ -508,6 +555,7 @@ process_request() {
     # Per-agent service deny-list -> exported to the MCP server (see
     # invoke_claude). Comma-joined "domain.service" / "domain.*" patterns.
     DENIED_SERVICES_CSV=$(jq -r '(.denied_services // []) | join(",")' "$work_file" 2>/dev/null)
+    resolve_agent_access "$(jq -r '.access // "addon"' "$work_file" 2>/dev/null | tr -cd 'a-z')"
     # Older integrations used the conversation id as the request id
     conv_id=$(jq -r '.conversation_id // .id // empty' "$work_file" 2>/dev/null | tr -cd 'A-Za-z0-9_-')
     req_ts=$(jq -r '.ts // empty' "$work_file" 2>/dev/null)
@@ -602,6 +650,12 @@ Only for entities not listed anywhere above, search with get_all_states (domain 
         base_system_prompt="${base_system_prompt}
 For room/area requests (e.g. 'turn off the bedroom lights') call get_areas to resolve the room to entity_ids first.
 If unsure of an entity_id, call get_all_states with a domain filter first."
+    fi
+
+    if [ "$(mcp_only_flag)" = "0" ] && [ "${AGENT_ACCESS:-addon}" = "admin" ]; then
+        base_system_prompt="${base_system_prompt}
+
+This agent has FULL ADMIN access, the same as the brAIn chat: besides the Home Assistant tools you may run shell commands, read and edit files under /config (automations, scripts, YAML), and use the web. Use them when the request needs them; say briefly what you changed. Spoken replies stay short."
     fi
 
     # Splice in the learned household memory (voice distillate, 2 KB cap) —

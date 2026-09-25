@@ -367,5 +367,89 @@ class TestThePoolAppliesIt(unittest.TestCase):
             self.assertEqual(envs[-1], "ENV BRAIN_EXPOSED_ONLY=1")
 
 
+
+class TestEachAgentChoosesItsOwnReach(unittest.TestCase):
+    """The integration's per-agent `access`, driven into a real spawn.
+
+    Three levels and a fallback: `voice` is the exposure gate plus the
+    Bash/file deny-list, `house` drops the gate, `admin` drops both — and
+    an agent that never chose, or names a word nobody knows, must not end
+    up wider than it was. What reaches the process is what is asserted,
+    because "the level reached the table" and "the level reached the CLI"
+    are different claims."""
+
+    def spawn(self, access):
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.dict(os.environ, pool_env(tmp, {})):
+            mod = load_pool(tmp, {})
+            Path(mod.ASSIST_SETTINGS_FILE).write_text("{}")
+            pool = mod.Pool()
+            req = {"id": uuid.uuid4().hex, "conversation_id": "c",
+                   "text": "turn on the lab lights", "type": "conversation",
+                   "ts": 0, "timeout": 30}
+            if access is not None:
+                req["access"] = access
+            try:
+                pool.handle(req)
+            finally:
+                for worker in list(pool.workers.values()):
+                    worker.kill()
+                if pool.spare is not None:
+                    pool.spare.kill()
+            lines = Path(tmp, "argv.log").read_text().splitlines()
+            envs = [l for l in lines if l.startswith("ENV BRAIN_EXPOSED_ONLY=")]
+            argvs = [l for l in lines if not l.startswith("ENV ")]
+            return envs[-1], argvs[-1]
+
+    def test_voice_is_gated_and_scoped(self):
+        env, argv = self.spawn("voice")
+        self.assertEqual(env, "ENV BRAIN_EXPOSED_ONLY=1")
+        self.assertIn("--settings", argv)
+
+    def test_house_sees_everything_and_is_still_scoped(self):
+        env, argv = self.spawn("house")
+        self.assertEqual(env, "ENV BRAIN_EXPOSED_ONLY=0")
+        self.assertIn("--settings", argv)
+
+    def test_admin_is_the_chats_reach(self):
+        env, argv = self.spawn("admin")
+        self.assertEqual(env, "ENV BRAIN_EXPOSED_ONLY=0")
+        self.assertNotIn("--settings", argv)
+        self.assertIn("FULL ADMIN", argv)
+
+    def test_an_unknown_word_is_the_narrowest(self):
+        env, argv = self.spawn("superuser")
+        self.assertEqual(env, "ENV BRAIN_EXPOSED_ONLY=1")
+        self.assertIn("--settings", argv)
+
+    def test_an_agent_that_never_chose_follows_the_addon(self):
+        env, argv = self.spawn(None)
+        self.assertEqual(env, "ENV BRAIN_EXPOSED_ONLY=1")
+        self.assertIn("--settings", argv)
+
+    def test_the_classic_listener_reads_the_same_words(self):
+        # Lifted out of the real script and driven, not grepped.
+        text = (ADDON / "integrations" / "assist-listener.sh").read_text()
+        body = re.search(r"^resolve_agent_access\(\) \{.*?^\}", text,
+                         re.S | re.M).group(0)
+        for word, env, want in (("voice", {}, "1 1"), ("house", {}, "1 0"),
+                                ("admin", {}, "0 0"), ("nonsense", {}, "1 1"),
+                                ("addon", {"BRAIN_ASSIST_EXPOSURE": "all"}, "1 0"),
+                                ("", {"BRAIN_ASSIST_TOOL_ACCESS": "full"}, "0 1")):
+            out = subprocess.run(
+                ["bash", "-c", body + f'\nresolve_agent_access "{word}"; '
+                 'echo "$AGENT_MCP_ONLY $AGENT_EXPOSED"'],
+                capture_output=True, text=True, check=True,
+                env={"PATH": os.environ["PATH"], **env}).stdout.strip()
+            self.assertEqual(out, want, word)
+
+    def test_the_integration_and_the_pool_name_the_same_levels(self):
+        const = (REPO / "brain/custom_components/brain/const.py").read_text()
+        with tempfile.TemporaryDirectory() as tmp:
+            mod = load_pool(tmp, {})
+        for level in mod.ACCESS_LEVELS:
+            self.assertIn(f'= "{level}"', const)
+        self.assertIn('ACCESS_ADDON = "addon"', const)
+
 if __name__ == "__main__":
     unittest.main()

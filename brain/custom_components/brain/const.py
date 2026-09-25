@@ -7,6 +7,25 @@ CONF_NAME = "name"
 CONF_SYSTEM_PROMPT = "system_prompt"
 CONF_MODEL = "model"
 CONF_DENIED_SERVICES = "denied_services"
+# What one conversation agent may reach. Per agent, because the question is
+# per agent: the kitchen speaker anybody can talk to and the agent the owner
+# uses from their phone are not the same trust. `addon` is what an agent that
+# never chose gets — the add-on's own assist_tool_access / assist_exposure —
+# so an existing agent does not change behaviour on update. The add-on reads
+# the same four words (`assist-worker-pool.ACCESS_LEVELS`), and a word it
+# does not know falls back to `voice`, the narrowest.
+CONF_ACCESS = "access"
+ACCESS_ADDON = "addon"
+ACCESS_VOICE = "voice"
+ACCESS_HOUSE = "house"
+ACCESS_ADMIN = "admin"
+ACCESS_LEVELS = {
+    ACCESS_VOICE: "Voice assistant — only what you expose to Assist, Home Assistant tools only",
+    ACCESS_HOUSE: "Whole house — every entity, Home Assistant tools only (no shell, no file edits)",
+    ACCESS_ADMIN: "Full admin — everything the brAIn chat can do: shell, file edits, config, web",
+    ACCESS_ADDON: "Follow the add-on's Assist settings (assist_tool_access / assist_exposure)",
+}
+DEFAULT_ACCESS = ACCESS_VOICE
 CONF_ENABLE_CONVERSATION = "enable_conversation"
 CONF_ENABLE_SENSORS = "enable_sensors"
 DEFAULT_TIMEOUT = 120

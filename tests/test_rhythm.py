@@ -16,6 +16,7 @@ import statistics
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -244,10 +245,105 @@ class TestWhetherToSendOneAtAll(unittest.TestCase):
             self.assertTrue(reasons, state_name)
             self.assertIn("listener died", reasons[0])
 
-    def test_a_quiet_night_is_not_a_spike(self):
-        state = brief.state_from([], {"state": "ok"},
-                                 {"counts": {"person": 4}}, since=50.0)
+    def test_a_night_of_uncaused_changes_is_not_a_reason(self):
+        # "31 changes overnight with no recorded cause" is the logbook
+        # read aloud: nobody can act on it, and it was most of what the
+        # first cut sent.
+        state = brief.state_from(
+            [], {"state": "ok"},
+            {"counts": {"unattributed": 90, "person": 4},
+             "unattributed_spike": 90}, since=50.0)
         self.assertEqual(brief.worth_saying(state), [])
+
+    def test_an_info_finding_is_not_news(self):
+        state = brief.state_from([self.finding("a note", "info", 100.0)],
+                                 {"state": "ok"}, {}, since=50.0)
+        self.assertEqual(brief.worth_saying(state), [])
+
+    def test_a_reason_carries_the_specifics_and_the_fix(self):
+        f = dict(self.finding("Freezer is warming", "serious", 100.0),
+                 detail="Garage freezer at -9°C, usually -18°C",
+                 fix="Check the door is shut")
+        reasons = brief.worth_saying(
+            brief.state_from([f], {"state": "ok"}, {}, since=50.0))
+        self.assertIn("-9°C", reasons[0])
+        self.assertIn("Check the door is shut", reasons[0])
+
+    def test_a_held_finding_is_never_read_aloud(self):
+        f = dict(self.finding("held", "critical", 100.0), status="held")
+        state = brief.state_from([f], {"state": "ok"}, {}, since=50.0)
+        self.assertEqual(brief.worth_saying(state), [])
+
+    def test_a_critical_row_still_unanswered_is_mentioned_again(self):
+        now = 10 * 86400.0
+        old = self.finding("Water leak under the sink", "critical", ts=now - 3 * 86400)
+        state = brief.state_from([old], {"state": "ok"}, {},
+                                 since=now - 86400, now=now)
+        reasons = brief.worth_saying(state)
+        self.assertTrue(reasons)
+        self.assertIn("3 day", reasons[0])
+        # ...where a warning from before the last brief is not.
+        warn = self.finding("Battery low", "warning", ts=now - 3 * 86400)
+        self.assertEqual(brief.worth_saying(brief.state_from(
+            [warn], {"state": "ok"}, {}, since=now - 86400, now=now)), [])
+
+
+class TestWhatIsTrueThisMorning(unittest.TestCase):
+    """`morning_facts`: the two specific things a brief reads off the states."""
+
+    NOW = 1_700_000_000.0
+
+    def light(self, eid, hours_on, name=None, **attrs):
+        import datetime
+        since = datetime.datetime.fromtimestamp(
+            self.NOW - hours_on * 3600, datetime.timezone.utc).isoformat()
+        attrs.setdefault("friendly_name", name or eid)
+        return {"entity_id": eid, "state": "on", "last_changed": since,
+                "attributes": attrs}
+
+    def test_a_light_left_on_by_hand_is_news(self):
+        got = brief.morning_facts(
+            [self.light("light.kitchen", 9, "Kitchen")],
+            [{"entity_id": "light.kitchen", "state": "on", "ts": self.NOW - 9 * 3600,
+              "cause": "unattributed"}], self.NOW)
+        self.assertEqual([r["name"] for r in got["left_on"]], ["Kitchen"])
+        reasons = brief.worth_saying({"morning": got})
+        self.assertIn("Kitchen", reasons[0])
+
+    def test_a_light_an_automation_turned_on_is_on_purpose(self):
+        got = brief.morning_facts(
+            [self.light("light.porch", 9)],
+            [{"entity_id": "light.porch", "state": "on", "ts": self.NOW - 9 * 3600,
+              "cause": "automation"}], self.NOW)
+        self.assertEqual(got["left_on"], [])
+
+    def test_a_light_kept_on_for_days_is_not_left_on(self):
+        got = brief.morning_facts([self.light("light.tank", 80)], [], self.NOW)
+        self.assertEqual(got["left_on"], [])
+
+    def test_a_recent_light_and_a_group_are_not_news(self):
+        got = brief.morning_facts(
+            [self.light("light.hall", 1),
+             self.light("light.group", 9, entity_id=["light.a", "light.b"])],
+            [], self.NOW)
+        self.assertEqual(got["left_on"], [])
+
+    def test_a_door_open_that_is_normally_shut(self):
+        door = {"entity_id": "binary_sensor.back_door", "state": "on",
+                "attributes": {"friendly_name": "Back door"}}
+        with unittest.mock.patch("closures.usual_open", return_value=0.0):
+            got = brief.morning_facts([door], [], self.NOW,
+                                      closures_store={"entities": {
+                                          "binary_sensor.back_door": {}}},
+                                      bucket=5)
+        self.assertEqual(got["open_unusual"], ["Back door"])
+        with unittest.mock.patch("closures.usual_open", return_value=None):
+            got = brief.morning_facts([door], [], self.NOW,
+                                      closures_store={"entities": {
+                                          "binary_sensor.back_door": {}}},
+                                      bucket=5)
+        # Not watched at this hour is not "never open".
+        self.assertEqual(got["open_unusual"], [])
 
 
 class TestTheMessageItself(unittest.TestCase):
@@ -273,7 +369,8 @@ class TestTheMessageItself(unittest.TestCase):
                              "woke_at": "07:05"})
         self.assertIn("the freezer is at -12", frame)
         self.assertIn("07:05", frame)
-        self.assertIn("person: 3", frame)
+        # The night's counts are not material: nobody acts on them.
+        self.assertNotIn("person: 3", frame)
 
 
 class TestWhenItGoesOut(unittest.TestCase):
