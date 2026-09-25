@@ -759,6 +759,12 @@ Assistants and talk to it from any Assist pipeline, satellite or the app.
   still applies on top, and \`protected_entities\` is refused at every level. Full
   admin can edit your configuration from a misheard sentence — give it only to an
   agent you alone talk to.
+
+  Each agent is also **told** its level in its instructions: a voice-level agent
+  knows an unexposed entity is off-limits and says where to change that rather than
+  hunting for another way in; a whole-house agent knows it can reach every entity
+  and never asks you to expose one; a full-admin agent knows it can use the shell,
+  the \`brain\`/\`ha\` CLIs and edit your configuration without being told how.
 - **It sees what you expose.** Home Assistant's own switch — Settings → Voice
   assistants → **Expose** — decides what voice can see and act on, exactly as it
   does for Assist: an entity you have not exposed is not on the map voice is given,

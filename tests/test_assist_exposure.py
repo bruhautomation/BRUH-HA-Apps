@@ -405,11 +405,16 @@ class TestEachAgentChoosesItsOwnReach(unittest.TestCase):
         env, argv = self.spawn("voice")
         self.assertEqual(env, "ENV BRAIN_EXPOSED_ONLY=1")
         self.assertIn("--settings", argv)
+        # ...and is TOLD so, including that the gate is not a puzzle to solve.
+        self.assertIn("off-limits to this agent", argv)
+        self.assertIn("do NOT try to", argv)
 
     def test_house_sees_everything_and_is_still_scoped(self):
         env, argv = self.spawn("house")
         self.assertEqual(env, "ENV BRAIN_EXPOSED_ONLY=0")
         self.assertIn("--settings", argv)
+        self.assertIn("Never tell the user an entity has to be exposed", argv)
+        self.assertIn("no shell", argv)
 
     def test_admin_is_the_chats_reach(self):
         env, argv = self.spawn("admin")
@@ -442,6 +447,20 @@ class TestEachAgentChoosesItsOwnReach(unittest.TestCase):
                 capture_output=True, text=True, check=True,
                 env={"PATH": os.environ["PATH"], **env}).stdout.strip()
             self.assertEqual(out, want, word)
+
+    def test_every_level_is_told_its_reach_and_the_listener_says_the_same(self):
+        script = ADDON / "scripts" / "brain_exposed.py"
+        for exposed in (True, False):
+            for mcp in (True, False):
+                want = brain_exposed.capabilities(exposed, mcp)
+                self.assertTrue(want.strip())
+                got = subprocess.run(
+                    [sys.executable, str(script), "capabilities",
+                     "1" if exposed else "0", "1" if mcp else "0"],
+                    capture_output=True, text=True, check=True).stdout
+                self.assertEqual(got, want)
+        listener = (ADDON / "integrations" / "assist-listener.sh").read_text()
+        self.assertIn('brain_exposed.py" \\\n            capabilities', listener)
 
     def test_the_integration_and_the_pool_name_the_same_levels(self):
         const = (REPO / "brain/custom_components/brain/const.py").read_text()

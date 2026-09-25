@@ -21,7 +21,10 @@ current Supervisor, and a Knowledge tab you can find things in.**
   tools only) or *Full admin* (everything the brAIn chat can do: shell, file edits,
   config, the web). Existing agents keep following the add-on's
   `assist_tool_access`/`assist_exposure` until you choose. `protected_entities`
-  and each agent's blocked services still apply at every level.
+  and each agent's blocked services still apply at every level. Every agent is
+  told its level in its instructions, so it knows what it can reach without
+  being walked through it, and a voice-level agent does not go looking for a
+  way round an unexposed entity.
 - **ESPHome: "Home Assistant would not open an ingress session (Unauthorized)".**
   The Supervisor now refuses add-ons the call brAIn used to open the ESPHome
   dashboard. A new option, `esphome_ha_token` (a long-lived token from a Home

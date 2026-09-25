@@ -616,9 +616,19 @@ def local_time_line() -> str:
         return ""
 
 
-ADMIN_PROMPT = """
+def capabilities_prompt(access: dict) -> str:
+    """What this agent is told about its own reach (`brain_exposed.capabilities`).
 
-This agent has FULL ADMIN access, the same as the brAIn chat: besides the Home Assistant tools you may run shell commands, read and edit files under /config (automations, scripts, YAML), and use the web. Use them when the request needs them; say briefly what you changed. Spoken replies stay short."""
+    Every level gets one, `addon` included: an agent that was never told
+    what it can do meets the exposure gate as a dead end and then walks
+    round it the first time somebody says "use brAIn".
+    """
+    try:
+        return _exposure_module().capabilities(access["exposed_only"],
+                                               access["mcp_only"])
+    except Exception as exc:  # noqa: BLE001 — a prompt without it still works
+        debug_log([f"[{{ts}}] CAPABILITIES could not be composed: {exc}"])
+        return ""
 
 
 def build_system_prompt(custom: str, access: dict | None = None) -> str:
@@ -643,8 +653,7 @@ def build_system_prompt(custom: str, access: dict | None = None) -> str:
         memory = get_memory()
         if memory.strip():
             prompt += "\n\nKnown about this household (learned):\n" + memory.rstrip()
-    if not access["mcp_only"]:
-        prompt += ADMIN_PROMPT
+    prompt += capabilities_prompt(access)
     return prompt
 
 

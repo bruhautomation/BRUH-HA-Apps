@@ -652,10 +652,13 @@ For room/area requests (e.g. 'turn off the bedroom lights') call get_areas to re
 If unsure of an entity_id, call get_all_states with a domain filter first."
     fi
 
-    if [ "$(mcp_only_flag)" = "0" ] && [ "${AGENT_ACCESS:-addon}" = "admin" ]; then
-        base_system_prompt="${base_system_prompt}
-
-This agent has FULL ADMIN access, the same as the brAIn chat: besides the Home Assistant tools you may run shell commands, read and edit files under /config (automations, scripts, YAML), and use the web. Use them when the request needs them; say briefly what you changed. Spoken replies stay short."
+    # What this agent can reach, in the words the worker pool uses — from
+    # the one module both read, so the two voice paths cannot describe the
+    # same agent differently.
+    local capabilities
+    if capabilities=$(python3 "${BRAIN_SCRIPTS_DIR:-/opt/scripts}/brain_exposed.py" \
+            capabilities "$(exposed_only_flag)" "$(mcp_only_flag)" 2>/dev/null); then
+        base_system_prompt="${base_system_prompt}${capabilities}"
     fi
 
     # Splice in the learned household memory (voice distillate, 2 KB cap) —

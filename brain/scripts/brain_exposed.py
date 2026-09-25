@@ -245,6 +245,50 @@ def _default_ws():
     return ha_mcp_server._ws_command
 
 
+# What an agent is told about its own reach. A voice agent that was never
+# told meets the exposure gate as a dead end ("I can't access that sensor")
+# and then finds its way round it the moment somebody says "use brAIn" —
+# so it neither knew what it could do nor what it must not. One sentence
+# per switch, composed from the same two switches the gate and the tool
+# scoping read, and written HERE because this is the module the worker
+# pool, the classic listener and the MCP server already share: a second
+# copy of these words in the listener is the drift that copy would become.
+REACH_EXPOSED = (
+    "WHAT YOU CAN SEE: only the entities Home Assistant exposes to voice "
+    "assistants — the list above is the whole of it. An entity that is not "
+    "exposed is off-limits to this agent by the owner's choice: say so in "
+    "one sentence (it can be exposed under Settings → Voice assistants, or "
+    "this agent's access raised in its brAIn settings) and do NOT try to "
+    "reach it another way — not through its area, history, a script, a "
+    "brAIn tool or a shell command.")
+REACH_HOUSE = (
+    "WHAT YOU CAN SEE: every entity in the house, exposed to Assist or not. "
+    "Never tell the user an entity has to be exposed. The map above lists "
+    "what is controllable by room; anything else, find with get_all_states "
+    "(domain and name_filter) and use it directly.")
+TOOLS_HA = (
+    "WHAT YOU CAN DO: every Home Assistant tool you have — read states, "
+    "history and statistics, call services, run scenes and scripts — plus "
+    "brAIn's own tools: what it remembers (recall, remember_fact), open "
+    "findings, what is normal for a device, activity and why something "
+    "changed. You have no shell and cannot edit files: for a change to "
+    "automations or configuration YAML, say it needs the brAIn chat or an "
+    "agent with full admin access.")
+TOOLS_ADMIN = (
+    "WHAT YOU CAN DO: this agent has FULL ADMIN access, the same as the "
+    "brAIn chat — every Home Assistant tool and brAIn tool, plus shell "
+    "commands (including the `brain` and `ha` CLIs), reading and editing "
+    "files under /config (automations, scripts, YAML) and the web. Use them "
+    "when the request needs them, without being asked how; say briefly what "
+    "you changed. Spoken replies stay short.")
+
+
+def capabilities(exposed_only: bool, mcp_only: bool) -> str:
+    """The block an agent is told about its own reach, for its two switches."""
+    return ("\n\n" + (REACH_EXPOSED if exposed_only else REACH_HOUSE)
+            + "\n" + (TOOLS_HA if mcp_only else TOOLS_ADMIN))
+
+
 def main(argv: list[str]) -> int:
     """`refresh` writes the cache; `filter` filters a map on stdin."""
     verb = argv[1] if len(argv) > 1 else ""
@@ -267,7 +311,16 @@ def main(argv: list[str]) -> int:
                 snap = None
         sys.stdout.write(filter_map(sys.stdin.read(), snap))
         return 0 if snap is not None else 1
-    print("usage: brain_exposed.py refresh|filter [cache-path]", file=sys.stderr)
+    if verb == "capabilities":
+        # `capabilities <exposed 0|1> <mcp_only 0|1>`, for the shell listener.
+        flags = [a == "1" for a in argv[2:4]]
+        if len(flags) != 2:
+            print("usage: brain_exposed.py capabilities 0|1 0|1", file=sys.stderr)
+            return 2
+        sys.stdout.write(capabilities(*flags))
+        return 0
+    print("usage: brain_exposed.py refresh|filter|capabilities [cache-path]",
+          file=sys.stderr)
     return 2
 
 
