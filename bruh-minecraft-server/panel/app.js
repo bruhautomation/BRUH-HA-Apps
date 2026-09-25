@@ -35,6 +35,7 @@
       $(`#tab-${tab.dataset.tab}`).classList.add('active');
       if (tab.dataset.tab === 'properties') loadProperties();
       if (tab.dataset.tab === 'plugins')    loadPlugins();
+      if (tab.dataset.tab === 'addons')     loadAddons();
       if (tab.dataset.tab === 'backups')    loadBackups();
       if (tab.dataset.tab === 'worlds')     { loadWorlds(); loadCuratedWorlds(); }
       if (tab.dataset.tab === 'resource-packs') loadPacks();
@@ -1276,4 +1277,150 @@
       reply.textContent = `Upload failed: ${out.error || resp.status}`;
     }
   });
+
+  // ------------------------------------------------------------------
+  // Add-on browser (Modrinth, server-side only). The server decides which
+  // kinds are offered; every card says whether a Bedrock/iPad player gets it.
+  // ------------------------------------------------------------------
+  const addonState = { kind: null, q: '', offset: 0, info: null };
+
+  const fmtCount = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
+
+  function addonCard(item, installedView) {
+    const card = document.createElement('article');
+    card.className = 'addon-card';
+    const icon = item.icon
+      ? `<img class="addon-icon" src="${esc(item.icon)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+      : '<div class="addon-icon addon-icon-blank" aria-hidden="true"></div>';
+    const meta = installedView
+      ? `${esc(item.version || '')}${item.required_by ? ` · needed by ${esc(item.required_by)}` : ''}${item.present === false ? ' · <strong>file missing</strong>' : ''}`
+      : `${esc(item.author || '')}${item.downloads ? ` · ${fmtCount(item.downloads)} downloads` : ''}`;
+    let action;
+    if (installedView) {
+      action = `<button class="btn" data-addon-update="${esc(item.id)}" data-kind="${esc(item.kind)}">Update</button>
+        <button class="btn btn-danger" data-addon-remove="${esc(item.id)}">Remove</button>`;
+    } else if (item.installed) {
+      action = '<span class="addon-added">Added ✓</span>';
+    } else {
+      action = `<button class="btn btn-primary" data-addon-add="${esc(item.id)}" data-kind="${esc(item.kind)}">Add to world</button>`;
+    }
+    card.innerHTML = `
+      <div class="addon-head">${icon}
+        <div class="addon-title"><strong>${esc(item.title)}</strong>
+          <span class="muted">${meta}</span></div></div>
+      ${item.description ? `<p class="addon-desc">${esc(item.description)}</p>` : ''}
+      <div class="addon-actions">${action}</div>
+      <div class="addon-note" aria-live="polite"></div>`;
+    return card;
+  }
+
+  async function addonInstall(btn) {
+    const card = btn.closest('.addon-card');
+    const note = card.querySelector('.addon-note');
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = 'Adding…';
+    note.textContent = '';
+    const resp = await api('api/addons/install', {
+      method: 'POST', body: JSON.stringify({ id: btn.dataset.addonAdd || btn.dataset.addonUpdate, kind: btn.dataset.kind }),
+    });
+    if (resp.ok) {
+      const names = (resp.installed || []).map((r) => `${r.title} ${r.version || ''}`.trim()).join(', ');
+      note.textContent = `Added ${names}. ${(resp.notes || []).join(' ')}`;
+      btn.textContent = 'Added ✓';
+      loadAddonsInstalled();
+    } else {
+      note.textContent = resp.error || 'That did not install.';
+      note.classList.add('bad');
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
+
+  function bindAddonButtons(root) {
+    root.querySelectorAll('button[data-addon-add], button[data-addon-update]').forEach((b) => {
+      b.addEventListener('click', () => addonInstall(b));
+    });
+    root.querySelectorAll('button[data-addon-remove]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const card = b.closest('.addon-card');
+        const title = card.querySelector('.addon-title strong').textContent;
+        if (!confirm(`Remove ${title} from this world?`)) return;
+        const resp = await api(`api/addons/${encodeURIComponent(b.dataset.addonRemove)}`, { method: 'DELETE' });
+        if (resp.ok) {
+          loadAddonsInstalled();
+        } else {
+          const note = card.querySelector('.addon-note');
+          note.textContent = resp.error || 'That did not remove.';
+          note.classList.add('bad');
+        }
+      });
+    });
+  }
+
+  function renderAddonKinds() {
+    const bar = $('#addon-kinds');
+    bar.innerHTML = '';
+    (addonState.info.kinds || []).forEach((k) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `chip${k.kind === addonState.kind ? ' active' : ''}`;
+      b.textContent = k.label;
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', k.kind === addonState.kind ? 'true' : 'false');
+      b.addEventListener('click', () => { addonState.kind = k.kind; addonState.offset = 0; renderAddonKinds(); searchAddons(false); });
+      bar.appendChild(b);
+    });
+    const k = (addonState.info.kinds || []).find((x) => x.kind === addonState.kind);
+    $('#addon-reach').textContent = k ? k.reach : '';
+  }
+
+  async function loadAddonsInstalled() {
+    const info = await api('api/addons');
+    if (info.error) return;
+    addonState.info = info;
+    const box = $('#addon-installed');
+    box.innerHTML = '';
+    (info.installed || []).forEach((item) => box.appendChild(addonCard(item, true)));
+    $('#addon-installed-empty').hidden = (info.installed || []).length > 0;
+    bindAddonButtons(box);
+  }
+
+  async function searchAddons(append) {
+    const box = $('#addon-results');
+    if (!append) box.innerHTML = '<p class="muted">Searching…</p>';
+    const q = encodeURIComponent(addonState.q);
+    const data = await api(`api/addons/search?kind=${encodeURIComponent(addonState.kind)}&q=${q}&offset=${addonState.offset}`);
+    if (!append) box.innerHTML = '';
+    if (data.error) {
+      box.innerHTML = `<p class="muted bad">${esc(data.error)}</p>`;
+      $('#addon-more').hidden = true;
+      return;
+    }
+    (data.hits || []).forEach((h) => box.appendChild(addonCard(h, false)));
+    if (!box.children.length) box.innerHTML = '<p class="muted">Nothing matches for this server’s version.</p>';
+    bindAddonButtons(box);
+    addonState.offset = (data.offset || 0) + (data.hits || []).length;
+    $('#addon-more').hidden = addonState.offset >= (data.total || 0);
+  }
+
+  async function loadAddons() {
+    await loadAddonsInstalled();
+    if (!addonState.info) return;
+    const kinds = addonState.info.kinds || [];
+    if (!kinds.find((k) => k.kind === addonState.kind)) addonState.kind = kinds.length ? kinds[0].kind : null;
+    const v = addonState.info.game_version;
+    $('#addons-lede').textContent = `Everything here runs on the server, so every player gets it — iPads, phones and consoles through Geyser included — with nothing to install on a device. Showing what works on ${addonState.info.server_type}${v ? ` ${v}` : ''}, added to the active world only.`;
+    renderAddonKinds();
+    addonState.offset = 0;
+    searchAddons(false);
+  }
+
+  $('#f-addon-search')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    addonState.q = $('#addon-q').value.trim();
+    addonState.offset = 0;
+    searchAddons(false);
+  });
+  $('#addon-more')?.addEventListener('click', () => searchAddons(true));
 })();

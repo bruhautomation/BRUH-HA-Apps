@@ -319,26 +319,17 @@ MEMORYMD
     # the token from the s6 environment for any reason.
     #
     # NOTE: BRAIN_CLAUDE_PERMS_FLAG is used by the interactive terminal only.
-    local assist_tool_access
-    assist_tool_access=$(bashio::config 'assist_tool_access' 'mcp_only')
-    # Exported as well as written to the env file: the bash listeners
-    # re-source /data/.brain_env, but the worker pool — the *default*
-    # assist path — is plain python3 launched from this script and reads
-    # os.environ only. Without this export assist_tool_access was a dead
-    # option in fast mode.
-    #
     # There is no turn cap here any more. `assist_max_turns`,
     # `automation_max_turns` and `study_max_turns` were options whose
     # only effect was to TRUNCATE a run that needed one more step — the
     # work paid for and thrown away — so each face carries a large
     # runaway guard of its own now and no option feeds it.
-    export BRAIN_ASSIST_TOOL_ACCESS="$assist_tool_access"
-    # What voice may see: Home Assistant's own exposure list (the default)
-    # or the whole house. Exported for the pool and written to the env
-    # file for the classic listener, exactly as assist_tool_access is.
-    local assist_exposure
-    assist_exposure=$(bashio::config 'assist_exposure' 'exposed')
-    export BRAIN_ASSIST_EXPOSURE="$assist_exposure"
+    #
+    # Nor is there an add-on-wide voice reach. `assist_tool_access` and
+    # `assist_exposure` went in 2.10: what a voice agent may reach and see
+    # is set on the agent itself (Settings → Devices & services → brAIn →
+    # the agent → Configure), and an agent that never chose is the
+    # narrowest level, `voice`.
 
     # Memory / learning options — exported here too (not just written to the
     # env file) so the worker pool and listeners launched by this script
@@ -452,8 +443,6 @@ export SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
 export HA_TOKEN="${SUPERVISOR_TOKEN}"
 export HA_BASE_URL="http://supervisor/core/api"
 export SUPERVISOR_API_URL="http://supervisor"
-export BRAIN_ASSIST_TOOL_ACCESS="${assist_tool_access}"
-export BRAIN_ASSIST_EXPOSURE="${assist_exposure}"
 export BRAIN_ASSIST_LEARNING="${assist_learning}"
 export BRAIN_MEMORY_INJECTION="${memory_injection}"
 export BRAIN_MEMORY_MAX_KB="${memory_max_kb}"
@@ -1263,7 +1252,8 @@ setup_mcp_server() {
 }
 
 # Voice tool scoping: the assist channel loads this deny-list via --settings
-# when assist_tool_access is mcp_only (default). Deny wins over the project
+# for every agent below Full admin (its own level decides; see the worker
+# pool's resolve_access). Deny wins over the project
 # allowlist, so voice keeps every MCP device tool but can't run shell
 # commands, edit files, or reach the web. Automations keep full access.
 setup_assist_scoping() {
@@ -1292,7 +1282,7 @@ setup_assist_scoping() {
 SCOPE
     chown claude:claude /config/.brain/assist_settings.json 2>/dev/null || true
     chmod 644 /config/.brain/assist_settings.json
-    bashio::log.info "Assist tool scoping file written (mode: $(bashio::config 'assist_tool_access' 'mcp_only'))"
+    bashio::log.info "Assist tool scoping file written (each voice agent's own level decides whether it applies)"
 }
 
 setup_claude_settings() {

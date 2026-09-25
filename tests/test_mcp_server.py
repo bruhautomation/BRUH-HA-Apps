@@ -527,6 +527,11 @@ class TestMCPProtocol(unittest.TestCase):
             "music_assistant_search", "music_assistant_command",
             "music_assistant_player", "music_assistant_play",
             "music_assistant_remove_players",
+            # 2.10: the BRUH add-ons, through their integrations' services
+            "minecraft_status", "minecraft_teleport", "minecraft_player",
+            "minecraft_world", "minecraft_command", "minecraft_server",
+            "minecraft_addons", "label_printer_status", "print_label",
+            "bright_status", "bright_show",
         }
         self.assertEqual(tool_names, expected_tools)
 

@@ -168,19 +168,24 @@ API_TOKEN_FILE = os.path.join(SHARED_DIR, "api_token")
 API_ENDPOINT_FILE = os.path.join(SHARED_DIR, "api_endpoint.json")
 POOL_STATUS_FILE = os.path.join(CACHE_DIR, "pool_status.json")
 
-# Voice tool scoping: with mcp_only (default), workers get a deny-list
-# settings file so voice can control the house but not run Bash/edit files.
-TOOL_ACCESS = os.environ.get("BRAIN_ASSIST_TOOL_ACCESS", "mcp_only")
+# Voice tool scoping. There is no add-on-wide switch any more: what a
+# voice agent may reach is chosen on the agent itself (Settings → Devices &
+# services → brAIn → the agent → Configure), and `resolve_access` below is
+# the only thing that decides. These two are the answer for a request that
+# names no level — an agent made before 2.9, or a caller that is not an
+# agent at all — and they are the narrowest there is, because a request
+# that did not say must never be read as permission. `assist_tool_access`
+# and `assist_exposure` were the add-on-wide versions until 2.10.
+TOOL_ACCESS = "mcp_only"
 ASSIST_SETTINGS_FILE = os.path.join(SHARED_DIR, "assist_settings.json")
 
-# What voice may see: `exposed` (the default) is what Home Assistant exposes
-# to Assist under Settings → Voice assistants, applied to the area map here
-# and to every read and act in the MCP server through `BRAIN_EXPOSED_ONLY`;
-# `all` is the whole house, which is what every release before 2.3 gave
-# voice whatever the person had un-exposed. The rule is one module,
-# `scripts/brain_exposed.py`, read by the map filter and the gate alike.
-EXPOSURE = os.environ.get("BRAIN_ASSIST_EXPOSURE", "exposed")
-EXPOSED_ONLY = EXPOSURE != "all"
+# What voice may see: what Home Assistant exposes to Assist under Settings
+# → Voice assistants, applied to the area map here and to every read and
+# act in the MCP server through `BRAIN_EXPOSED_ONLY`. An agent set to
+# "Whole house" or "Full admin" reads the unfiltered copy. The rule is one
+# module, `scripts/brain_exposed.py`, read by the map filter and the gate
+# alike.
+EXPOSED_ONLY = True
 EXPOSED_CACHE_FILE = os.path.join(CACHE_DIR, "exposed_entities.json")
 
 # What one AGENT may reach — the integration's per-agent `access` field
@@ -189,9 +194,10 @@ EXPOSED_CACHE_FILE = os.path.join(CACHE_DIR, "exposed_entities.json")
 # once: whether the Bash/file/web deny-list applies (`mcp_only`) and
 # whether only what Home Assistant exposes to Assist is visible
 # (`exposed_only`). `addon` — and a request that names nothing, which is
-# every agent made before this existed — is the add-on's own options, so
-# nobody's voice changes on update. A word this does not know is `voice`,
-# the narrowest, because a typo must never widen what a speaker can do.
+# every agent made before 2.9 — is `voice`: the add-on-wide options it used
+# to follow are gone, and the narrowest level is the only honest reading
+# of an agent that never chose. A word this does not know is `voice` too,
+# because a typo must never widen what a speaker can do.
 # `protected_entities` is not here on purpose: it is enforced in the MCP
 # server for every channel, and no access level lifts it.
 ACCESS_LEVELS = {
@@ -202,16 +208,13 @@ ACCESS_LEVELS = {
 
 
 def _map_for(access: dict) -> bool | None:
-    """Which cached map an agent reads: `addon` shares the add-on-wide one."""
-    return None if access.get("level") == "addon" else access["exposed_only"]
+    """Which cached map an agent reads: the exposed one unless it chose more."""
+    return access["exposed_only"]
 
 
 def resolve_access(value) -> dict:
     """The two switches for this request's agent, and the level's name."""
-    level = str(value or "").strip().lower() or "addon"
-    if level == "addon":
-        return {"level": "addon", "mcp_only": TOOL_ACCESS == "mcp_only",
-                "exposed_only": EXPOSED_ONLY}
+    level = str(value or "").strip().lower()
     if level not in ACCESS_LEVELS:
         level = "voice"
     return {"level": level, **ACCESS_LEVELS[level]}
@@ -405,7 +408,7 @@ def scoping_args(mcp_only: bool | None = None) -> list:
     """Per-channel tool scoping: in mcp_only mode workers load a deny-list
     settings file (written by run.sh) that blocks Bash/file/web tools while
     the project allowlist keeps every MCP tool available. `mcp_only` is
-    the agent's own answer (`resolve_access`); None is the add-on option."""
+    the agent's own answer (`resolve_access`); None is the narrowest."""
     if mcp_only is None:
         mcp_only = TOOL_ACCESS == "mcp_only"
     if mcp_only and os.path.isfile(ASSIST_SETTINGS_FILE):
@@ -476,7 +479,7 @@ def apply_exposure(rendered: str, force: bool = False) -> str:
     A snapshot that could not be read EMPTIES the map and says so in the
     log — fail closed, `brain_exposed`'s rule: a map of things the gate
     will then refuse sends the model to try them, where an empty one sends
-    it to say it cannot see them, and `assist_exposure: all` is the switch.
+    it to say it cannot see them; an agent set to Whole house skips it.
     """
     if not EXPOSED_ONLY and not force:
         return rendered
@@ -488,7 +491,7 @@ def apply_exposure(rendered: str, force: bool = False) -> str:
         snap = None
     if snap is None:
         debug_log(["[{ts}] AREA-MAP emptied: Home Assistant's exposure settings "
-                   "could not be read (assist_exposure: all lifts the gate)"])
+                   "could not be read (an agent set to Whole house is not gated)"])
         return ""
     return mod.filter_map(rendered, snap)
 
@@ -504,11 +507,11 @@ def _truncate_at_line(text: str, cap: int) -> str:
 def get_area_map(exposed_only: bool | None = None) -> str:
     """Cached map with stale-while-revalidate, like the classic listener.
 
-    `exposed_only` is the agent's answer: True the exposed map, False the
-    whole house, None the add-on-wide one the classic listener shares.
+    `exposed_only` is the agent's answer: False the whole house, anything
+    else the exposed map the classic listener shares — which is what the
+    add-on-wide map always is, now that there is no add-on-wide switch.
     """
-    path = (AREA_MAP_FILE if exposed_only is None else
-            AREA_MAP_EXPOSED_FILE if exposed_only else AREA_MAP_FULL_FILE)
+    path = AREA_MAP_FULL_FILE if exposed_only is False else AREA_MAP_FILE
     try:
         age = time.time() - os.path.getmtime(path)
         if age > AREA_MAP_TTL:
@@ -632,7 +635,7 @@ def capabilities_prompt(access: dict) -> str:
 
 
 def build_system_prompt(custom: str, access: dict | None = None) -> str:
-    access = access or resolve_access("addon")
+    access = access or resolve_access("voice")
     if custom:
         prompt = PERSONALITY_FRAME.format(custom=custom) + "\n\n" + OPERATIONAL_PROMPT
     else:
@@ -658,7 +661,7 @@ def build_system_prompt(custom: str, access: dict | None = None) -> str:
 
 
 def save_last_profile(custom: str, model: str, denied_csv: str = "",
-                      access: str = "addon") -> None:
+                      access: str = "voice") -> None:
     """Remember the agent profile so the next pool start pre-warms with it."""
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
@@ -691,14 +694,14 @@ def normalize_denied(value) -> str:
 def prewarm_spare(pool: "Pool") -> None:
     """Spawn the spare at startup from the last-used agent profile, so even
     the first voice command after an add-on restart skips the cold start."""
-    custom, model, denied, level = "", "default", "", "addon"
+    custom, model, denied, level = "", "default", "", "voice"
     try:
         with open(LAST_PROFILE_FILE) as fh:
             data = json.load(fh)
         custom = data.get("system_prompt") or ""
         model = data.get("model") or "default"
         denied = data.get("denied") or ""
-        level = data.get("access") or "addon"
+        level = data.get("access") or "voice"
     except (OSError, json.JSONDecodeError, AttributeError):
         # An absent or corrupt cache warms the spare on defaults, which is
         # what a first run does anyway.
@@ -851,7 +854,7 @@ class Worker:
         self.transcript: list = []
 
         system_prompt, model, denied_csv = profile[:3]
-        access = resolve_access(profile[3] if len(profile) > 3 else "addon")
+        access = resolve_access(profile[3] if len(profile) > 3 else "voice")
         self.access = access["level"]
         cmd = resolve_claude_cmd() + [
             "-p",
@@ -1264,7 +1267,7 @@ class Pool:
             "--max-turns", str(MAX_TURNS),
             "--system-prompt", system_prompt,
         ]
-        access = access or resolve_access("addon")
+        access = access or resolve_access("voice")
         cmd += scoping_args(access["mcp_only"])
         if model and model != "default":
             cmd += ["--model", model]

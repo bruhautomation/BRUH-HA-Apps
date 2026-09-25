@@ -31,8 +31,9 @@ except (ImportError, AttributeError):
     SUPPORTS_CONTROL = 1
 
 from .const import (
-    ACCESS_ADDON,
+    ACCESS_LEVELS,
     CONF_ACCESS,
+    DEFAULT_ACCESS,
     CONF_DENIED_SERVICES,
     CONF_MODEL,
     CONF_NAME,
@@ -86,9 +87,10 @@ class BruhClaudeConversationEntity(ConversationEntity):
         self._system_prompt = opts.get(CONF_SYSTEM_PROMPT, "")
         self._model = opts.get(CONF_MODEL, DEFAULT_MODEL)
         self._denied_services = opts.get(CONF_DENIED_SERVICES) or []
-        # What this agent may reach. Missing means it never chose, which is
-        # the add-on's own Assist settings — exactly what it had before.
-        self._access = opts.get(CONF_ACCESS) or ACCESS_ADDON
+        # What this agent may reach. Missing (or the retired "follow the
+        # add-on") means it never chose, which is the narrowest level.
+        access = opts.get(CONF_ACCESS)
+        self._access = access if access in ACCESS_LEVELS else DEFAULT_ACCESS
         name = config_entry.data.get(CONF_NAME, DEFAULT_NAME)
         self._attr_name = "Agent"  # Short — the device name provides context
         self._attr_unique_id = f"{config_entry.entry_id}_conversation"

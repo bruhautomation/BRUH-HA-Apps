@@ -61,25 +61,6 @@ configuration:
     description: >-
       Keep warm Claude processes ready so voice commands answer in about
       a second instead of waiting for a cold start. Uses more memory.
-  assist_tool_access:
-    name: What voice can reach
-    description: >-
-      "Home Assistant only" limits voice to entities, services and the
-      registry. "Full" also gives it the shell and your files — more
-      capable, and a much larger blast radius for a misheard sentence.
-      This is only the fallback: each brAIn agent picks its own reach in
-      Settings → Devices & services → brAIn → the agent → Configure
-      ("What this agent can reach"), and only an agent set to "Follow the
-      add-on" uses this.
-  assist_exposure:
-    name: What voice can see
-    description: >-
-      "Exposed" honours Home Assistant's own list — Settings → Voice
-      assistants → Expose — so an entity you have not exposed is invisible
-      to voice and cannot be acted on by it. "All" gives voice the whole
-      house, which is what every release before 2.3 did. Like the option
-      above, this only applies to agents set to "Follow the add-on"; every
-      other agent's own access level decides.
   study_timeout_minutes:
     name: Study session timeout
     description: How long a study session may run before it is stopped.

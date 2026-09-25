@@ -63,7 +63,7 @@ subscription — or your own API key.
 
 Most AI integrations can turn on a light. brAIn administers the installation.
 
-It reaches Home Assistant three ways at once — a **native MCP server** (71 tools) for
+It reaches Home Assistant three ways at once — a **native MCP server** (82 tools) for
 reading and controlling, **65 registry-management services** for the parts of Home
 Assistant that normally only exist behind the Settings UI, and a **real shell** in
 `/config` for everything that is still a YAML file.
@@ -706,7 +706,6 @@ Assistants and talk to it from any Assist pipeline, satellite or the app.
   | **Voice assistant** (new agents) | Only what you expose to Assist | Home Assistant tools only |
   | **Whole house** | Every entity | Home Assistant tools only |
   | **Full admin** | Every entity | Everything the brAIn chat can: shell, file edits, config, the web |
-  | **Follow the add-on** (agents made before 2.9) | `assist_exposure` | `assist_tool_access` |
 
   So the kitchen speaker anybody can talk to stays a voice assistant while the agent
   you use from your own phone is full admin. Each agent's **Blocked services** list
@@ -729,9 +728,10 @@ Assistants and talk to it from any Assist pipeline, satellite or the app.
   cannot be read by it, and cannot be acted on by it, and the refusal says where
   the switch is. That is Home Assistant's default list (lights, switches, covers,
   climate and the rest; never a lock unless you expose one), so a house that has
-  never touched the switch gets the same answer Assist gives. `assist_exposure: all`
-  gives voice the whole house, which is what every release before 2.3 did (for
-  agents set to *Follow the add-on*; every other agent's own level decides). When
+  never touched the switch gets the same answer Assist gives. An agent set to
+  **Whole house** or **Full admin** is not held to it — there is no add-on-wide
+  switch any more (`assist_exposure` was removed in 2.10); each agent's own level
+  decides. When
   the exposure list cannot be read, voice sees nothing rather than everything, and
   the log says so.
 
@@ -1744,32 +1744,32 @@ answer waits for it rather than being lost.
 
 ### It manages your ESPHome devices
 
-**House → ESPHome** lists every device file in `/config/esphome` — the folder the
-ESPHome add-on keeps them in — with what each one is: its name, the chip and
-board, whether it is online, the firmware it is running against the version the
-dashboard would build now, and which Home Assistant device it is. From there you
-can:
+Ask brAIn — in the chat, the terminal or a voice agent set to **Whole house** —
+and it works on every device file in `/config/esphome`, the folder the ESPHome
+add-on keeps them in. There is no ESPHome screen in brAIn's panel: the ESPHome
+dashboard already is one, and a second copy of it was clutter. What brAIn has
+is the tools, so anything you would do there you can ask for instead:
 
-- **Edit** a device's YAML in the panel, with the output of whatever you run for
-  it underneath: edit, **Validate**, read ESPHome's own error, edit again.
-- **Install** — compile and flash it over the air — and watch the build scroll
-  past; **Logs** streams the device's own log live; **Compile only** and
-  **Clean build files** are behind **More**.
-- **＋ New device** writes the file the dashboard's wizard would, with a fresh
-  API encryption key, OTA password and fallback hotspot for that device and
-  Wi-Fi from your secrets. The first install onto a brand-new board has to be
-  over USB from the ESPHome dashboard itself; every one after that can be from
-  here.
-- **Wi-Fi & secrets** lists the names in `secrets.yaml` and sets one without
-  ever showing its value.
-- **Delete** moves the file into `archive/`, exactly as the dashboard does. The
-  device goes on running its firmware.
+- "What ESPHome devices do I have, and which need a firmware update?" — every
+  device with its chip and board, whether it is online, the firmware it is
+  running against the version the dashboard would build now, and which Home
+  Assistant device it is.
+- "Add a DHT22 on GPIO4 to the garage sensor and install it" — it edits the
+  YAML, validates it, reads ESPHome's own error if there is one, fixes it, and
+  compiles and flashes over the air.
+- "Why does the porch light keep dropping off Wi-Fi?" — it streams the device's
+  own log and reads it.
+- "Make a new ESPHome device for an ESP32 called porch-light" — it writes the
+  file the dashboard's wizard would, with a fresh API encryption key, OTA
+  password and fallback hotspot, and Wi-Fi from your secrets. The first install
+  onto a brand-new board has to be over USB from the ESPHome dashboard itself;
+  every one after that can be asked for.
+- "Change the Wi-Fi password in my ESPHome secrets" — it sets a secret without
+  ever reading one back. Deleting a device moves its file into `archive/`,
+  exactly as the dashboard does.
 
-Claude can do all of it too, from the chat, the terminal or voice — "add a
-DHT22 on GPIO4 to the garage sensor and install it", "why does the porch light
-keep dropping off Wi-Fi?" (it reads the logs). Scheduled runs may read device
-files, validate them and read logs; writing, compiling and installing only ever
-happen when somebody asked.
+Scheduled runs may read device files, validate them and read logs; writing,
+compiling and installing only ever happen when somebody asked.
 
 **Every save is undoable.** The file is snapshotted into the same edit journal
 `brain undo` reads before it is written, and a file that has been saved from the
@@ -1794,7 +1794,7 @@ add-on on its own and can reach its dashboard three ways:
 3. **`esphome_dashboard_url`**, for a dashboard somewhere else (a container on
    another machine).
 
-When none can be reached the tab says exactly why and which setting ends it, file
+When none can be reached brAIn says exactly why and which setting ends it, file
 editing keeps working, and a device with a firmware update waiting can still be
 updated **through Home Assistant**'s own update entity.
 
@@ -1804,34 +1804,27 @@ every entity it carries, so a device holding anything on your
 
 ### It runs Music Assistant
 
-**House → Music Assistant** is Music Assistant from brAIn's side: whether brAIn
-can reach it and as whom, every player with what it is playing, every music and
-player provider with the last error it reported, and the players worth clearing
-out. From there you can:
+Ask brAIn and it does anything Music Assistant's own interface can, from the
+chat or the terminal: "group the kitchen and the lounge and play my Discover
+Weekly", "why is the Sonos provider erroring?", "remove every AirCast player",
+"turn on crossfade for the office", "make a playlist of what we played on
+Saturday". There is no Music Assistant screen in brAIn's panel — Music
+Assistant has one — only the tools: an overview, a search, a player tool, a
+play tool, the clean-up, and one that runs **any** command in Music Assistant's
+API — players, queues, the library, playlists, providers and server settings.
+Scheduled runs may only read; voice uses Home Assistant's own
+`music_assistant.play_media` on the media players you have exposed, not these
+tools.
 
-- **Play/pause, skip, set the volume and switch a player on or off** without
-  opening Music Assistant.
-- **Clear out stale players.** A player Music Assistant remembers and has not
-  seen since — every speaker a removed provider or an AirCast bridge left
-  behind — is listed with why. **Remove** forgets one; **Remove all stale
-  players** forgets every one of them, after showing you the list. This is the
-  part Home Assistant's own registry tools cannot do: the player's config lives
-  in Music Assistant, so deleting the Home Assistant entity only lasts until
-  Music Assistant announces it again. Once Music Assistant forgets it, Home
-  Assistant drops the entity by itself. A player still registered by a
-  provider that cannot remove players is reported as held, and can be
-  **disabled** instead.
-- **Reload a provider** that is showing an error.
-
-Claude can do everything Music Assistant's own interface can, from the chat or
-the terminal: "group the kitchen and the lounge and play my Discover Weekly",
-"why is the Sonos provider erroring?", "remove every AirCast player", "turn on
-crossfade for the office", "make a playlist of what we played on Saturday". It
-has an overview tool, a search, a player tool, a play tool, the clean-up, and a
-tool that runs **any** command in Music Assistant's API — players, queues, the
-library, playlists, providers and server settings. Scheduled runs may only
-read; voice uses Home Assistant's own `music_assistant.play_media` on the media
-players you have exposed, not these tools.
+**Stale players are the part only brAIn can clear.** A player Music Assistant
+remembers and has not seen since — every speaker a removed provider or an
+AirCast bridge left behind — is one Home Assistant's own registry tools cannot
+remove: the player's config lives in Music Assistant, so deleting the Home
+Assistant entity only lasts until Music Assistant announces it again. Ask brAIn
+to clear them out and it lists them first, then has Music Assistant forget
+them, after which Home Assistant drops the entities by itself. A player still
+registered by a provider that cannot remove players is reported as held, and
+can be disabled instead.
 
 **No setup.** brAIn connects where Home Assistant's Music Assistant integration
 connects, with the same sign-in Music Assistant gave Home Assistant. That
@@ -1846,6 +1839,36 @@ Assistant server Home Assistant is not connected to is named with
 **Protected entities apply.** A Music Assistant player that is a Home Assistant
 entity on your `protected_entities` list is not played, changed or removed, and
 the refusal names it.
+
+### It runs your other BRUH add-ons
+
+If **BRUH Minecraft**, **BRight** or **BRUH Print** is installed with its Home
+Assistant integration, brAIn can drive it — from the chat, the terminal, an
+automation task or a voice agent. It goes through each add-on's own Home
+Assistant services, so there is nothing to set up and nothing new on brAIn's
+panel; each add-on keeps its own.
+
+- **Minecraft.** "Teleport Emma to Dad", "put Steve in creative", "give me 32
+  torches", "make it day", "stop the rain", "tell everyone dinner's ready", "who's
+  on?" Names are matched against who is online the way you would say them — case,
+  spaces and the `.` a Bedrock/iPad player carries are ignored, and a unique
+  partial name counts — so "Emma" finds `.EmmaPlays`. A name that could be two
+  people is asked about, never guessed. Administering needs an agent set to
+  **Whole house** or **Full admin**: op, ban, kick, the whitelist, any console
+  command, backing up, restarting or stopping the server, and installing server
+  add-ons from Modrinth ("add a sit-anywhere plugin to the family world").
+- **Labels.** "Print a label that says chili", "print three freezer-bag labels
+  for bolognese" — brAIn looks at what is loaded and which templates you have
+  first, so it names a stock and a template that exist. A voice agent prints at
+  most 10 copies at once, because a misheard "two hundred" is a roll.
+- **Light shows.** "Start the Friday party on the den speaker", "play the show
+  for Mr. Brightside", "stop the lights and put the bedtime scene on". A speaker
+  or scene named for a voice agent has to be one it can see, and anything on
+  `protected_entities` is refused as it is everywhere else.
+
+Every one of these goes through the same checks as any other service call: an
+agent's **Blocked services** list applies, so you can take `bruh_minecraft.teleport`
+away from the kitchen speaker if you want to.
 
 ### It knows what happened, and what caused it
 
@@ -2857,8 +2880,6 @@ the Ask tab itself), because it changes nothing about how the add-on runs.
 | `enable_assist_integration` | bool | `true` | Register brAIn as a conversation agent for Assist. |
 | `enable_automation_integration` | bool | `true` | Watch for task requests from automations. |
 | `assist_fast_mode` | bool | `true` | Serve voice from a pool of pre-warmed persistent workers instead of spawning a CLI per request. |
-| `assist_tool_access` | `mcp_only` \| `full` | `mcp_only` | Whether voice can only touch HA, or also run Bash and edit files — for agents set to *Follow the add-on*. Every other agent chooses its own reach. |
-| `assist_exposure` | `exposed` \| `all` | `exposed` | Whether voice sees only what Home Assistant exposes to Assist (Settings → Voice assistants → Expose), or the whole house — for agents set to *Follow the add-on*. |
 
 ### Memory and learning
 

@@ -38,6 +38,7 @@
       <button class="tab" data-tab="console" role="tab">Console</button>
       <button class="tab" data-tab="players" role="tab">Players</button>
       <button class="tab" data-tab="properties" role="tab">Server Properties</button>
+      <button class="tab" data-tab="addons" role="tab">Add-ons</button>
       <button class="tab" data-tab="plugins" role="tab">Plugins</button>
       <button class="tab" data-tab="backups" role="tab">Backups</button>
       <button class="tab" data-tab="worlds" role="tab">Worlds</button>
@@ -607,6 +608,27 @@
         <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
+    </section>
+
+    <!-- Add-on browser: server-side content from Modrinth -->
+    <section id="tab-addons" class="tab-panel">
+      <h2>Add-ons</h2>
+      <p class="muted" id="addons-lede">
+        Everything here runs on the server, so every player gets it — iPads,
+        phones and consoles through Geyser included — with nothing to install
+        on a device. Added to the <strong>active world</strong> only.
+      </p>
+      <div class="addon-kinds" id="addon-kinds" role="tablist"></div>
+      <form id="f-addon-search" class="inline-form addon-search">
+        <input id="addon-q" type="search" placeholder="Search Modrinth — e.g. chairs, trees, backpacks" autocomplete="off" />
+        <button class="btn btn-primary">Search</button>
+      </form>
+      <p class="muted addon-reach" id="addon-reach"></p>
+      <div class="addon-grid" id="addon-results"></div>
+      <div class="addon-more"><button class="btn" id="addon-more" hidden>More results</button></div>
+      <h2>In this world</h2>
+      <div class="addon-grid" id="addon-installed"></div>
+      <p class="muted" id="addon-installed-empty" hidden>Nothing added from the browser yet.</p>
     </section>
 
     <!-- Plugins -->

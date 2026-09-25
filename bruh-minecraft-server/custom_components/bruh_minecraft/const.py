@@ -37,3 +37,21 @@ SERVICE_KICK = "kick_player"
 SERVICE_BAN = "ban_player"
 SERVICE_WHITELIST_ADD = "whitelist_add"
 SERVICE_WHITELIST_REMOVE = "whitelist_remove"
+SERVICE_PARDON = "pardon_player"
+SERVICE_TELEPORT = "teleport"
+SERVICE_GAMEMODE = "set_gamemode"
+SERVICE_STATUS = "get_status"
+
+GAMEMODES = ("survival", "creative", "adventure", "spectator")
+
+# A player argument is a name the server knows, or one of the selectors a
+# person would say out loud ("everyone", "the nearest player"). Java names
+# are 3–16 of [A-Za-z0-9_]; a Bedrock player through Floodgate carries a
+# one-character prefix (`.` by default), so 17 is the real ceiling. `*` is
+# in the class because some Floodgate configs use it as the prefix.
+PLAYER_PATTERN = r"^(@[aprs]|[A-Za-z0-9_.*]{1,17})$"
+SERVICE_ADDONS = "list_addons"
+SERVICE_ADDON_SEARCH = "search_addons"
+SERVICE_ADDON_INSTALL = "install_addon"
+SERVICE_ADDON_REMOVE = "remove_addon"
+ADDON_KINDS = ("plugin", "datapack", "mod", "resourcepack")

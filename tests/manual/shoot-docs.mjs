@@ -6,7 +6,7 @@
 // Then:                   SHOT_DIR=shots node tests/manual/shoot-docs.mjs
 //
 // The demo has no Home Assistant behind it, so the panes that read one —
-// ESPHome, Music Assistant, Activity, Ideas and the Share dialog's dashboard
+// Activity, Ideas and the Share dialog's dashboard
 // list — are answered here with the SAME fixtures their measure scripts drive
 // the real renderers with, read out of those files rather than copied, so a
 // docs screenshot can never show a shape the panel does not render.
@@ -41,15 +41,6 @@ function fixture(file, name, close) {
   return new Function('ep', 'NOW', `return (${m[1]});`)(ep, NOW);
 }
 
-const ESP = {
-  dir: '/config/esphome', dir_exists: true,
-  dashboard: { reachable: true, via: 'ingress', version: '2026.9.0',
-    addon: { name: 'ESPHome Device Builder' } },
-  devices: fixture('measure-esphome.mjs', 'DEVICES', '\\]'),
-  importable: [], ha_registry_ok: true, secret_keys: ['wifi_ssid', 'wifi_password'],
-  platforms: [{ id: 'esp32', label: 'ESP32', board: 'esp32dev' }], jobs: [],
-};
-const MA = fixture('measure-music.mjs', 'OVERVIEW', '\\}');
 const IDEAS = {
   ideas: fixture('measure-ideas.mjs', 'IDEAS', '\\]'), open: 2, running: false,
   last_run: NOW - 86400, last_error: '', last_count: 2, runs: 3, answered: 4,
@@ -77,8 +68,6 @@ async function stubs(page) {
   await page.route('**/local/brain/**', (r) => r.fulfill({ status: 200, body: 'ok' }));
   await page.route('**/api/scenes/areas', (r) => r.fulfill(json({ areas: [
     { area: 'Living room', lights: 6 }, { area: 'Kitchen', lights: 4 }] })));
-  await page.route(/api\/esphome(\?.*)?$/, (r) => r.fulfill(json(ESP)));
-  await page.route(/api\/music-assistant(\?.*)?$/, (r) => r.fulfill(json(MA)));
   await page.route(/api\/activity(\?.*)?$/, (r) => r.fulfill(json(ACTIVITY)));
 }
 
@@ -86,7 +75,6 @@ const VIEWS = [
   ['findings', 'panel-findings'], ['insights', 'panel-insights'], ['ideas', 'panel-ideas'],
   ['todo', 'panel-todo'], ['proposals', 'panel-proposals'], ['terminal', 'panel-chat'],
   ['memory', 'panel-knowledge'], ['activity', 'panel-activity'],
-  ['esphome', 'panel-esphome'], ['music', 'panel-music'],
 ];
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });

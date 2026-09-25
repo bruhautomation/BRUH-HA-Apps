@@ -5,6 +5,42 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.16.0
+
+### Added
+
+- **An add-on browser** (the new **Add-ons** tab). Search Modrinth for plugins,
+  data packs, server-side mods and resource packs this server can actually run —
+  the server type and Minecraft version decide what is offered — and add one to
+  the active world with one press. Everything it offers runs on the server, so
+  **every player gets it, iPads and consoles through Geyser included, with
+  nothing to install on a device** — the closest a Java server gets to Realms
+  add-ons (a Realms add-on is a Bedrock behavior pack, which no Java server can
+  run). Each card says what the iPad will see; resource packs are offered to Java
+  players on join and pushed to Bedrock players as a converted copy (flat
+  textures only). Required dependencies come with what you pick and are recorded
+  as such, a download must come from Modrinth's CDN and match the SHA-512 it
+  published, data packs reload live, and the list is per world.
+- **Services that say what happened.** `rcon_command`, `say`, `give`, the weather,
+  time and every player action now return the server's reply as response data,
+  and a refusal or an add-on that did not answer is an error with the add-on's
+  sentence rather than a green tick. New: `teleport` (to a player or to x/y/z,
+  relative coordinates included), `set_gamemode`, `pardon_player`, `get_status`
+  (who is online right now), and `list_addons`/`search_addons`/`install_addon`/
+  `remove_addon` for the browser. brAIn uses all of them — "teleport Emma to Dad"
+  works from a brAIn voice assistant.
+
+### Fixed
+
+- The integration's shipped translation (`translations/en.json`) had drifted
+  from `strings.json` to the point of carrying no entity or service names at
+  all, so Home Assistant showed raw keys. It is the strings file now, and a test
+  holds them together.
+- A player name with a newline in it can no longer reach the console as a second
+  command, and `give` sends one item id rather than whatever followed a space.
+- Applying a resource pack wrote `server.properties` through a fixed scratch
+  name, which two writers can collide on; it uses a unique one now.
+
 ## 1.15.3
 
 ### Changed

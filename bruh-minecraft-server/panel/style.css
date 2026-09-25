@@ -228,6 +228,7 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
 }
 .inline-form input[type="text"],
 .inline-form input[type="url"],
+.inline-form input[type="search"],
 .inline-form select {
   flex: 1;
   min-width: 140px;
@@ -383,6 +384,7 @@ footer {
   .inline-form { flex-direction: column; align-items: stretch; }
   .inline-form input[type="text"],
   .inline-form input[type="url"],
+  .inline-form input[type="search"],
   .inline-form select {
     width: 100%;
     min-width: 0;
@@ -798,3 +800,42 @@ footer {
 .curated-status-running { color: var(--accent); }
 .curated-status-done { color: var(--accent); }
 .curated-status-error { color: var(--warn, #e05252); }
+
+/* ---------------------------------------------------------------------
+   Add-on browser
+   --------------------------------------------------------------------- */
+.addon-kinds { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+.addon-kinds .chip {
+  min-height: 40px; padding: 0 14px; border-radius: 20px;
+  border: 1px solid var(--border); background: var(--bg-raise); color: var(--fg);
+  font: inherit; cursor: pointer;
+}
+.addon-kinds .chip.active { border-color: var(--accent); color: var(--accent); }
+.addon-search input[type="search"] { flex: 1 1 220px; min-width: 0; font-size: 16px; }
+.addon-reach { margin: 4px 0 12px; }
+.addon-grid {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  margin-bottom: 16px;
+}
+.addon-card {
+  display: flex; flex-direction: column; gap: 8px; min-width: 0;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+}
+.addon-head { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.addon-icon { width: 40px; height: 40px; border-radius: 8px; flex: none; object-fit: cover; }
+.addon-icon-blank { background: var(--bg-raise); }
+.addon-title { display: flex; flex-direction: column; min-width: 0; }
+.addon-title strong, .addon-title .muted { overflow-wrap: anywhere; }
+.addon-title .muted { font-size: 12px; }
+.addon-desc { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.addon-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+.addon-actions .btn { min-height: 40px; }
+.addon-added { color: var(--accent); font-weight: 600; align-self: center; }
+.addon-note { font-size: 12px; color: var(--muted); }
+.addon-note:empty { display: none; }
+.addon-note.bad, .bad { color: var(--danger); }
+.addon-more { text-align: center; margin-bottom: 16px; }
+@media (pointer: coarse) {
+  .addon-kinds .chip, .addon-actions .btn { min-height: 44px; }
+}

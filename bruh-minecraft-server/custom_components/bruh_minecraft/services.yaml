@@ -105,3 +105,109 @@ whitelist_remove:
   name: Whitelist remove
   fields:
     player: { name: Player, required: true, selector: { text: {} } }
+
+pardon_player:
+  name: Unban player
+  fields:
+    player: { name: Player, required: true, selector: { text: {} } }
+
+teleport:
+  name: Teleport player
+  description: Move a player to another player, or to x/y/z coordinates.
+  fields:
+    player:
+      name: Player
+      description: Who to move — a player name, or @a for everyone.
+      required: true
+      example: "Steve"
+      selector:
+        text: {}
+    to_player:
+      name: To player
+      description: The player to move them to. Leave empty to use x/y/z.
+      example: "Alex"
+      selector:
+        text: {}
+    x:
+      name: X
+      description: A number, or ~ / ~5 relative to where they are.
+      selector:
+        text: {}
+    y:
+      name: Y
+      selector:
+        text: {}
+    z:
+      name: Z
+      selector:
+        text: {}
+
+set_gamemode:
+  name: Set game mode
+  description: Change one player's game mode.
+  fields:
+    player:
+      name: Player
+      required: true
+      selector:
+        text: {}
+    gamemode:
+      name: Game mode
+      required: true
+      selector:
+        select:
+          options: [survival, creative, adventure, spectator]
+
+get_status:
+  name: Get status
+  description: Who is online right now, beside the last collected server stats. Returns response data.
+
+list_addons:
+  name: List add-ons
+  description: What the add-on browser can offer this server, and what is installed in the active world. Returns response data.
+
+search_addons:
+  name: Search add-ons
+  description: Search Modrinth for server-side add-ons this server can run (every player gets them, Bedrock/iPad included). Returns response data.
+  fields:
+    kind:
+      name: Kind
+      selector:
+        select:
+          options: [plugin, datapack, mod, resourcepack]
+    query:
+      name: Search
+      example: "chairs"
+      selector:
+        text: {}
+    offset:
+      name: Offset
+      selector:
+        number: { min: 0, max: 10000, step: 20 }
+
+install_addon:
+  name: Install add-on
+  description: Add a Modrinth project (and anything it requires) to the active world.
+  fields:
+    id:
+      name: Project id
+      description: The Modrinth project id from search_addons.
+      required: true
+      selector:
+        text: {}
+    kind:
+      name: Kind
+      required: true
+      selector:
+        select:
+          options: [plugin, datapack, mod, resourcepack]
+
+remove_addon:
+  name: Remove add-on
+  description: Take an add-on installed by the browser out of the active world.
+  fields:
+    id:
+      name: Project id
+      required: true
+      selector:
+        text: {}

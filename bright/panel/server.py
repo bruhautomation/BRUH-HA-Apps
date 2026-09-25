@@ -1185,6 +1185,31 @@ async def h_party_list_for_bridge(request: web.Request) -> web.Response:
                               "parties": [p["name"] for p in parties_store.load()]})
 
 
+async def h_status_for_bridge(request: web.Request) -> web.Response:
+    """What BRight is doing and what it could do — for Home Assistant and brAIn.
+
+    The show state, the saved sets by name, and the tracks with a show
+    ready to run. Trimmed to what a caller choosing a party or a track
+    needs: a track's path is what `start_show` takes, its name is what a
+    person says, and whether a show exists is the difference between it
+    starting now and it being compiled first.
+    """
+    folders = _music_folders()
+    tracks = await asyncio.to_thread(library.scan_all, folders)
+    state = dict(_conductor().state or {})
+    return web.json_response({
+        "ok": True,
+        "state": {k: state.get(k) for k in
+                  ("status", "active", "lights_busy", "title", "party", "media_player")
+                  if k in state},
+        "parties": [p["name"] for p in parties_store.load()],
+        "tracks": [{"name": t.get("name"), "file": t.get("file"),
+                    "analyzed": bool(t.get("analyzed")), "has_show": bool(t.get("show"))}
+                   for t in tracks][:200],
+        "track_count": len(tracks),
+    })
+
+
 def _publish_parties() -> None:
     """Mirror the party names where Home Assistant can see them.
 
@@ -3028,6 +3053,7 @@ def build_app() -> web.Application:
     # automation asks for a party, not for a mode.
     app.router.add_post("/api/show/start_party", h_show_party)
     app.router.add_post("/api/show/list_parties", h_party_list_for_bridge)
+    app.router.add_post("/api/show/get_status", h_status_for_bridge)
     app.router.add_get("/api/show/state", h_show_state)
     app.router.add_get("/api/show/{hash}/versions", h_show_versions)
     app.router.add_post("/api/show/{hash}/versions/{id}/activate",

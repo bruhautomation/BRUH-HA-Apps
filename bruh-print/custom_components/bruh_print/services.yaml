@@ -160,3 +160,9 @@ print_test:
       name: Label stock
       selector:
         text:
+
+get_status:
+  name: Get status
+  description: >-
+    Which printer is attached, what is loaded in each roll and which
+    templates exist. Returns response data; prints nothing.

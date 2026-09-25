@@ -43,7 +43,7 @@ POLL_INTERVAL = 0.5
 MIRROR_INTERVAL = 5
 
 KNOWN_KINDS = ("party_mode", "start_party", "start_show", "stop_show",
-               "list_parties")
+               "list_parties", "get_status")
 
 
 def _log(msg: str) -> None:

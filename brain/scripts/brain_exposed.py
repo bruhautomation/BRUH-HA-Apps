@@ -26,7 +26,7 @@ nothing has settled yet is answered the way Core would answer it. An
 explicit setting always wins over the default.
 
 **A snapshot that could not be read fails closed.** The map is emptied
-and the log says why, acting is refused, and `assist_exposure: all` is
+and the log says why, acting is refused, and an agent set to Whole house is
 the switch that ends it — a voice command refused with a sentence is
 better than one that reaches an unexposed lock because a WebSocket was
 down at the moment it was asked.

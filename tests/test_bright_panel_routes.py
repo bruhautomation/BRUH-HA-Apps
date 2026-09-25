@@ -1005,3 +1005,17 @@ class TestTheManualSocket(PanelCase):
         self.assertEqual([], state["clips"])
         self.assertIn("transport", state)
         await self.post("/api/live/stop", {})
+
+
+class TestTheStatusHomeAssistantAsksFor(PanelCase):
+    """`bright.get_status` — what brAIn reads before naming a set or a track."""
+
+    async def test_it_names_the_state_the_sets_and_the_tracks(self):
+        await self.post("/api/parties", {"name": "Friday", "media_player": "media_player.den"})
+        status, body = await self.post("/api/show/get_status")
+        self.assertEqual(status, 200, body)
+        self.assertTrue(body["ok"])
+        self.assertIn("Friday", body["parties"])
+        self.assertIn("status", body["state"])
+        self.assertIsInstance(body["tracks"], list)
+        self.assertEqual(body["track_count"], len(body["tracks"]))

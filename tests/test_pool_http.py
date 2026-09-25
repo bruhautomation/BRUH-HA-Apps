@@ -185,10 +185,10 @@ def test_process_delta_cb_direct(tmp_path, monkeypatch):
         shutdown(pool)
 
 
-def test_mcp_only_scoping_adds_settings_flag(tmp_path, monkeypatch):
-    mod = load_pool_module(
-        tmp_path, monkeypatch, BRAIN_ASSIST_TOOL_ACCESS="mcp_only"
-    )
+def test_an_agent_that_never_chose_is_scoped(tmp_path, monkeypatch):
+    # No access on the request is the narrowest level: there is no
+    # add-on-wide option to fall back to any more.
+    mod = load_pool_module(tmp_path, monkeypatch)
     with open(mod.ASSIST_SETTINGS_FILE, "w") as fh:
         json.dump({"permissions": {"deny": ["Bash"]}}, fh)
     pool = mod.Pool()
@@ -204,15 +204,13 @@ def test_mcp_only_scoping_adds_settings_flag(tmp_path, monkeypatch):
         shutdown(pool)
 
 
-def test_full_access_skips_settings_flag(tmp_path, monkeypatch):
-    mod = load_pool_module(
-        tmp_path, monkeypatch, BRAIN_ASSIST_TOOL_ACCESS="full"
-    )
+def test_full_admin_agent_skips_settings_flag(tmp_path, monkeypatch):
+    mod = load_pool_module(tmp_path, monkeypatch)
     with open(mod.ASSIST_SETTINGS_FILE, "w") as fh:
         json.dump({"permissions": {"deny": ["Bash"]}}, fh)
     pool = mod.Pool()
     try:
-        pool.handle(make_request("unscoped"))
+        pool.handle(make_request("unscoped", access="admin"))
         spawns = [json.loads(line) for line in
                   (tmp_path / "argv.log").read_text().splitlines()
                   if not line.startswith("ENV ")]

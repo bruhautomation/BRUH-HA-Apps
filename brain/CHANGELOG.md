@@ -2,6 +2,39 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.10.0
+
+**brAIn runs your other BRUH add-ons, voice reach is set on the agent and
+nowhere else, and the ESPHome and Music Assistant screens are gone — the tools
+stay.**
+
+- **Minecraft, labels and light shows, by asking.** Eleven new tools drive BRUH
+  Minecraft, BRUH Print and BRight through their own Home Assistant services:
+  "teleport Emma to Dad", "put Steve in creative", "make it day", "who's on?",
+  "print a label that says chili", "start the Friday party on the den speaker".
+  Spoken names are matched against who is online — case, spaces and a Bedrock
+  player's `.` ignored, a unique partial name counts — and a name that could be
+  two people is asked about rather than guessed. A voice agent set to **Voice
+  assistant** may play but not administer: op, ban, kick, the whitelist, a raw
+  console command, stopping the server and installing server add-ons need an
+  agent set to **Whole house** or **Full admin**, and that holds through
+  `call_service` too, not only through the tools. Voice prints at most 10 labels
+  at once. Every call goes through `call_service`, so an agent's Blocked services
+  list and `protected_entities` apply as they do everywhere else. Scheduled runs
+  may read the three status tools and nothing else.
+- **The add-on-wide voice options are gone.** `assist_tool_access` and
+  `assist_exposure` were a fallback for agents set to "Follow the add-on"; each
+  voice agent's own **What this agent can reach** (Settings → Devices & services
+  → brAIn → the agent → Configure) is now the only place it is set, and "Follow
+  the add-on" is no longer offered. **An agent that was following the add-on is
+  now a Voice assistant**, the narrowest level — if you had set either option
+  wider, open that agent's Configure and pick Whole house or Full admin.
+- **No ESPHome or Music Assistant tabs.** Both have their own screens, and a
+  second copy inside brAIn was clutter. Everything they did is still one sentence
+  away in the chat or the terminal — edit, validate, install and read logs for an
+  ESPHome device; play, group, configure and clear stale players in Music
+  Assistant — through the same tools, which are unchanged.
+
 ## 2.9.0
 
 **A morning brief worth reading, a reach per voice agent, ESPHome builds on a

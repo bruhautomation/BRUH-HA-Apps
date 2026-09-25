@@ -5,6 +5,15 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.23.0
+
+### Added
+
+- **`bright.get_status`** — what BRight is doing, the saved sets by name and the
+  tracks with a show ready, as response data. brAIn reads it before starting a
+  party or a track, so "start the Friday party" names a set that exists; it is
+  also how an automation or a dashboard can ask.
+
 ## 0.22.2
 
 ### Fixed

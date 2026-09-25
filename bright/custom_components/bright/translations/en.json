@@ -22,6 +22,10 @@
     }
   },
   "services": {
+    "get_status": {
+      "name": "Get status",
+      "description": "What BRight is doing now, the saved sets by name, and the tracks with a show ready to run. Returns response data; changes nothing."
+    },
     "party_mode": {
       "name": "Start party mode",
       "description": "Play the configured (or given) music folder on a media player and run each track's compiled light show in sync.",

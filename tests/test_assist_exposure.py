@@ -342,20 +342,25 @@ class TestTheTwoWritersAgreeWithTheReader(unittest.TestCase):
             self.assertIn("BRAIN_EXPOSED_ONLY", text)
         self.assertEqual(server.count('os.environ.get("BRAIN_EXPOSED_ONLY"'), 1)
 
-    def test_the_option_reaches_every_half(self):
+    def test_there_is_no_add_on_wide_switch(self):
+        # What a voice agent may reach and see is set on the agent and
+        # nowhere else. The two add-on options it used to fall back to are
+        # gone from every half, so nothing can quietly widen an agent that
+        # never chose.
         import yaml
         config = yaml.safe_load((ADDON / "config.yaml").read_text())
-        self.assertEqual(config["options"]["assist_exposure"], "exposed")
-        self.assertEqual(config["schema"]["assist_exposure"], "list(exposed|all)?")
-        run = (ADDON / "run.sh").read_text()
-        self.assertIn("bashio::config 'assist_exposure' 'exposed'", run)
-        self.assertIn('export BRAIN_ASSIST_EXPOSURE="${assist_exposure}"', run)
-        # The two fallbacks agree with the shipped default: a fallback that
-        # disagrees is a second answer that wins when nobody is looking.
-        pool = (ADDON / "integrations" / "assist-worker-pool.py").read_text()
-        listener = (ADDON / "integrations" / "assist-listener.sh").read_text()
-        self.assertIn('os.environ.get("BRAIN_ASSIST_EXPOSURE", "exposed")', pool)
-        self.assertEqual(len(re.findall(r"\$\{BRAIN_ASSIST_EXPOSURE:-exposed\}", listener)), 2)
+        translations = yaml.safe_load((ADDON / "translations" / "en.yaml").read_text())
+        for key in ("assist_exposure", "assist_tool_access"):
+            self.assertNotIn(key, config["options"])
+            self.assertNotIn(key, config["schema"])
+            self.assertNotIn(key, translations["configuration"])
+        for rel in ("run.sh", "integrations/assist-worker-pool.py",
+                    "integrations/assist-listener.sh"):
+            text = (ADDON / rel).read_text()
+            self.assertNotIn("BRAIN_ASSIST_EXPOSURE", text, rel)
+            self.assertNotIn("BRAIN_ASSIST_TOOL_ACCESS", text, rel)
+            self.assertNotIn("bashio::config 'assist_exposure'", text, rel)
+            self.assertNotIn("bashio::config 'assist_tool_access'", text, rel)
 
 
 POOL_PATH = ADDON / "integrations" / "assist-worker-pool.py"
@@ -385,14 +390,13 @@ def load_pool(tmp: str, env: dict) -> object:
 
 
 class TestThePoolAppliesIt(unittest.TestCase):
-    def test_the_default_gates_and_all_lifts_it(self):
+    def test_the_default_gates_and_the_old_switch_does_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
             mod = load_pool(tmp, {})
             self.assertTrue(mod.EXPOSED_ONLY)
             mod = load_pool(tmp, {"BRAIN_ASSIST_EXPOSURE": "all"})
-            self.assertFalse(mod.EXPOSED_ONLY)
-            self.assertEqual(mod.apply_exposure("Kitchen: lock.front_door\n"),
-                             "Kitchen: lock.front_door\n")
+            self.assertTrue(mod.EXPOSED_ONLY)
+            self.assertTrue(mod.resolve_access(None)["exposed_only"])
 
     def test_the_map_is_filtered_through_the_one_module(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -412,7 +416,7 @@ class TestThePoolAppliesIt(unittest.TestCase):
             self.assertEqual(got, "")
             logs = "".join(p.read_text() for p in Path(mod.LOG_DIR).glob("assist-*.log"))
             self.assertIn("AREA-MAP emptied", logs)
-            self.assertIn("assist_exposure: all", logs)
+            self.assertIn("Whole house", logs)
 
     def test_every_worker_is_told_which_channel_it_is(self):
         # The spawn reads the environment at spawn time, so the fake CLI
@@ -496,7 +500,7 @@ class TestEachAgentChoosesItsOwnReach(unittest.TestCase):
         self.assertEqual(env, "ENV BRAIN_EXPOSED_ONLY=1")
         self.assertIn("--settings", argv)
 
-    def test_an_agent_that_never_chose_follows_the_addon(self):
+    def test_an_agent_that_never_chose_is_the_narrowest(self):
         env, argv = self.spawn(None)
         self.assertEqual(env, "ENV BRAIN_EXPOSED_ONLY=1")
         self.assertIn("--settings", argv)
@@ -508,8 +512,8 @@ class TestEachAgentChoosesItsOwnReach(unittest.TestCase):
                          re.S | re.M).group(0)
         for word, env, want in (("voice", {}, "1 1"), ("house", {}, "1 0"),
                                 ("admin", {}, "0 0"), ("nonsense", {}, "1 1"),
-                                ("addon", {"BRAIN_ASSIST_EXPOSURE": "all"}, "1 0"),
-                                ("", {"BRAIN_ASSIST_TOOL_ACCESS": "full"}, "0 1")):
+                                ("addon", {"BRAIN_ASSIST_EXPOSURE": "all"}, "1 1"),
+                                ("", {"BRAIN_ASSIST_TOOL_ACCESS": "full"}, "1 1")):
             out = subprocess.run(
                 ["bash", "-c", body + f'\nresolve_agent_access "{word}"; '
                  'echo "$AGENT_MCP_ONLY $AGENT_EXPOSED"'],
@@ -537,7 +541,12 @@ class TestEachAgentChoosesItsOwnReach(unittest.TestCase):
             mod = load_pool(tmp, {})
         for level in mod.ACCESS_LEVELS:
             self.assertIn(f'= "{level}"', const)
+        # The retired word is still readable (agents made before 2.9 carry
+        # it) and is no longer offered.
         self.assertIn('ACCESS_ADDON = "addon"', const)
+        self.assertNotIn("ACCESS_ADDON:", const)
+        for level in ("addon", "", None):
+            self.assertEqual(mod.resolve_access(level)["level"], "voice")
 
 if __name__ == "__main__":
     unittest.main()

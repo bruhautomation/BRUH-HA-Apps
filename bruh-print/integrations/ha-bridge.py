@@ -56,6 +56,11 @@ ROUTES: dict[str, Any] = {
     # worse failure than a service whose name is one release behind
     # what it prints.
     "print_test": lambda p: ("POST", "/api/printer/check"),
+    # The one read: what is loaded, what can be printed on it, and which
+    # templates exist — so a voice request ("print a freezer label that
+    # says chili") can name a stock and a template that are really there
+    # instead of guessing and meeting the stock refusal.
+    "get_status": lambda p: ("GET", "/api/state"),
 }
 
 # A print job can take a while — a run of 200 labels is 200 form feeds and
@@ -85,8 +90,38 @@ def _write_response(request_id: str, payload: dict) -> None:
     tmp.replace(RES_DIR / f"{request_id}.json")
 
 
+def summarise_state(state: dict) -> dict:
+    """The panel's state trimmed to what a caller deciding what to print needs.
+
+    The full payload carries the font catalog, the element catalog and
+    thirty history rows; handed to a model or an automation that is a page
+    of JSON to read past for three facts.
+    """
+    printer = state.get("printer") or {}
+    stocks = state.get("stocks") or []
+    return {
+        "ok": True,
+        "printer": printer.get("name") or printer.get("model") or "",
+        "printer_error": state.get("printer_error") or "",
+        "rolls": [{"side": r.get("side"), "stock": r.get("stock"),
+                   "remaining": r.get("remaining")}
+                  for r in state.get("rolls") or [] if isinstance(r, dict)],
+        "loaded_stocks": [{"id": s.get("id"), "name": s.get("name"),
+                           "side": s.get("loaded_side")}
+                          for s in stocks if isinstance(s, dict) and s.get("loaded")],
+        "templates": [{"name": t.get("name"),
+                       "fields": [f.get("key") for f in t.get("fields") or []
+                                  if isinstance(f, dict)],
+                       "stock": t.get("stock")}
+                      for t in state.get("templates") or [] if isinstance(t, dict)],
+        "recent": [{"id": h.get("id"), "title": h.get("title") or "",
+                    "stock": h.get("stock"), "at": h.get("at")}
+                   for h in (state.get("history") or [])[:5] if isinstance(h, dict)],
+    }
+
+
 def _forward(method: str, path: str, payload: dict) -> dict:
-    body = json.dumps(payload).encode()
+    body = json.dumps(payload).encode() if method != "GET" else None
     request = urllib.request.Request(
         f"{PANEL_URL}{path}", data=body, method=method,
         headers={"Content-Type": "application/json"})
@@ -121,6 +156,9 @@ async def handle(request: dict) -> dict:
                 "error": f"BRUH Print does not know how to do {kind!r}. "
                          f"Known: {', '.join(sorted(ROUTES))}."}
     method, path = route(payload)
+    if kind == "get_status":
+        answer = await asyncio.to_thread(_forward, method, path, {})
+        return answer if answer.get("ok") is False else summarise_state(answer)
     # Every service call is a print somebody asked for out loud, so it is
     # tagged as such: the history's `source` column is how you tell a label
     # you printed from one an automation printed at 3am.

@@ -457,7 +457,7 @@ def test_handle_persists_last_profile(tmp_path, monkeypatch):
         with open(mod.LAST_PROFILE_FILE) as fh:
             data = json.load(fh)
         assert data == {"system_prompt": "Butler mode.", "model": "sonnet", "denied": "",
-                        "access": "addon"}
+                        "access": "voice"}
     finally:
         shutdown(pool)
 

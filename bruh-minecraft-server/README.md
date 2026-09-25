@@ -25,7 +25,8 @@
 | **Multiple independent worlds** | Per-world `server.properties`; one click switches active world. |
 | **Backups you can actually trust** | Incremental git snapshots every hour, restore any commit from the UI. |
 | **No "I broke it" terror** | Crash auto-restart (rate-limited), graceful saves on shutdown, one-shot in-UI rollback. |
-| **It just works on Home Assistant** | Native ingress panel + auto-discovered HA integration with sensors and services. |
+| **Add-ons for every device** | Browse Modrinth for plugins, data packs and resource packs and add them in one press — they run on the server, so iPads and consoles get them too. |
+| **It just works on Home Assistant** | Native ingress panel + auto-discovered HA integration with sensors and services — and with brAIn, "teleport Emma to Dad" from a voice assistant. |
 
 ---
 
@@ -76,7 +77,7 @@ An auto-discovered `bruh_minecraft` integration ships sensors and services:
 | **Sensors** | online players, max players, TPS (1m/5m/15m), latency, uptime, version, MOTD, difficulty, gamemode, server type |
 | **Binary sensors** | server online, RCON reachable |
 | **Buttons** | Backup, Restart, Stop, Save |
-| **Services** | `rcon_command`, `say`, `give`, `set_weather`, `set_time`, `backup_now`, `restart_server`, `stop_server`, `op_player`, `deop_player`, `kick_player`, `ban_player`, `pardon_player`, `whitelist_add`, `whitelist_remove` |
+| **Services** | `rcon_command`, `say`, `give`, `teleport`, `set_gamemode`, `set_weather`, `set_time`, `get_status`, `backup_now`, `restart_server`, `stop_server`, `op_player`, `deop_player`, `kick_player`, `ban_player`, `pardon_player`, `whitelist_add`, `whitelist_remove`, and the add-on browser (`list_addons`, `search_addons`, `install_addon`, `remove_addon`) — each returns the server's reply |
 
 ### ♻️ Safety & operations
 - Crash auto-restart with rate limiting (5 restarts per 5 minutes before bailing).
