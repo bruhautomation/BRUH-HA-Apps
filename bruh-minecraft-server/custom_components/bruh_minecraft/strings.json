@@ -16,44 +16,222 @@
   },
   "entity": {
     "sensor": {
-      "players_online": { "name": "Players online" },
-      "players_max":    { "name": "Max players" },
-      "tps_1m":         { "name": "TPS (1m)" },
-      "tps_5m":         { "name": "TPS (5m)" },
-      "tps_15m":        { "name": "TPS (15m)" },
-      "latency_ms":     { "name": "Latency" },
-      "uptime":         { "name": "Uptime" },
-      "version":        { "name": "Version" },
-      "server_type":    { "name": "Server type" },
-      "motd":           { "name": "MOTD" },
-      "difficulty":     { "name": "Difficulty" },
-      "gamemode":       { "name": "Default gamemode" }
+      "players_online": {
+        "name": "Players online"
+      },
+      "players_max": {
+        "name": "Max players"
+      },
+      "tps_1m": {
+        "name": "TPS (1m)"
+      },
+      "tps_5m": {
+        "name": "TPS (5m)"
+      },
+      "tps_15m": {
+        "name": "TPS (15m)"
+      },
+      "latency_ms": {
+        "name": "Latency"
+      },
+      "uptime": {
+        "name": "Uptime"
+      },
+      "version": {
+        "name": "Version"
+      },
+      "server_type": {
+        "name": "Server type"
+      },
+      "motd": {
+        "name": "MOTD"
+      },
+      "difficulty": {
+        "name": "Difficulty"
+      },
+      "gamemode": {
+        "name": "Default gamemode"
+      }
     },
     "binary_sensor": {
-      "reachable": { "name": "Online" },
-      "rcon_ok":   { "name": "RCON reachable" }
+      "reachable": {
+        "name": "Online"
+      },
+      "rcon_ok": {
+        "name": "RCON reachable"
+      }
     },
     "button": {
-      "backup_now":     { "name": "Backup world" },
-      "restart_server": { "name": "Restart server" },
-      "stop_server":    { "name": "Stop server" },
-      "save_all":       { "name": "Save world" }
+      "backup_now": {
+        "name": "Backup world"
+      },
+      "restart_server": {
+        "name": "Restart server"
+      },
+      "stop_server": {
+        "name": "Stop server"
+      },
+      "save_all": {
+        "name": "Save world"
+      }
     }
   },
   "services": {
-    "rcon_command":     { "name": "Run RCON command",      "description": "Execute an arbitrary server command (no leading slash)." },
-    "say":              { "name": "Broadcast chat",        "description": "Send a chat message to all players." },
-    "give":             { "name": "Give item",             "description": "Give an item to a specific player." },
-    "set_weather":      { "name": "Set weather",           "description": "Set the world weather." },
-    "set_time":         { "name": "Set time",              "description": "Set the world time." },
-    "backup_now":       { "name": "Back up world",         "description": "Trigger a world backup immediately." },
-    "restart_server":   { "name": "Restart server",        "description": "Save worlds and restart the Minecraft server." },
-    "stop_server":      { "name": "Stop server",           "description": "Stop the Minecraft server (add-on stays running)." },
-    "op_player":        { "name": "Op player",             "description": "Grant operator permissions." },
-    "deop_player":      { "name": "De-op player",          "description": "Remove operator permissions." },
-    "kick_player":      { "name": "Kick player",           "description": "Kick a player from the server." },
-    "ban_player":       { "name": "Ban player",            "description": "Ban a player from the server." },
-    "whitelist_add":    { "name": "Whitelist add",         "description": "Add a player to the whitelist." },
-    "whitelist_remove": { "name": "Whitelist remove",      "description": "Remove a player from the whitelist." }
+    "rcon_command": {
+      "name": "Run RCON command",
+      "description": "Execute an arbitrary server command (no leading slash)."
+    },
+    "say": {
+      "name": "Broadcast chat",
+      "description": "Send a chat message to all players."
+    },
+    "give": {
+      "name": "Give item",
+      "description": "Give an item to a specific player."
+    },
+    "set_weather": {
+      "name": "Set weather",
+      "description": "Set the world weather."
+    },
+    "set_time": {
+      "name": "Set time",
+      "description": "Set the world time."
+    },
+    "backup_now": {
+      "name": "Back up world",
+      "description": "Trigger a world backup immediately."
+    },
+    "restart_server": {
+      "name": "Restart server",
+      "description": "Save worlds and restart the Minecraft server."
+    },
+    "stop_server": {
+      "name": "Stop server",
+      "description": "Stop the Minecraft server (add-on stays running)."
+    },
+    "op_player": {
+      "name": "Op player",
+      "description": "Grant operator permissions."
+    },
+    "deop_player": {
+      "name": "De-op player",
+      "description": "Remove operator permissions."
+    },
+    "kick_player": {
+      "name": "Kick player",
+      "description": "Kick a player from the server."
+    },
+    "ban_player": {
+      "name": "Ban player",
+      "description": "Ban a player from the server."
+    },
+    "whitelist_add": {
+      "name": "Whitelist add",
+      "description": "Add a player to the whitelist."
+    },
+    "whitelist_remove": {
+      "name": "Whitelist remove",
+      "description": "Remove a player from the whitelist."
+    },
+    "pardon_player": {
+      "name": "Unban player",
+      "description": "Lift a ban on a player.",
+      "fields": {
+        "player": {
+          "name": "Player",
+          "description": "The player's name."
+        }
+      }
+    },
+    "teleport": {
+      "name": "Teleport player",
+      "description": "Move a player to another player, or to x/y/z coordinates.",
+      "fields": {
+        "player": {
+          "name": "Player",
+          "description": "Who to move — a player name, or @a for everyone."
+        },
+        "to_player": {
+          "name": "To player",
+          "description": "The player to move them to. Leave empty to use x/y/z."
+        },
+        "x": {
+          "name": "X",
+          "description": "A number, or ~ / ~5 relative to where they are."
+        },
+        "y": {
+          "name": "Y",
+          "description": "A number, or ~ / ~5 relative to where they are."
+        },
+        "z": {
+          "name": "Z",
+          "description": "A number, or ~ / ~5 relative to where they are."
+        }
+      }
+    },
+    "set_gamemode": {
+      "name": "Set game mode",
+      "description": "Change one player's game mode.",
+      "fields": {
+        "player": {
+          "name": "Player",
+          "description": "The player's name."
+        },
+        "gamemode": {
+          "name": "Game mode",
+          "description": "survival, creative, adventure or spectator."
+        }
+      }
+    },
+    "get_status": {
+      "name": "Get status",
+      "description": "Who is online right now, beside the last collected server stats. Returns response data."
+    },
+    "list_addons": {
+      "name": "List add-ons",
+      "description": "What the add-on browser can offer this server, and what is installed in the active world. Returns response data."
+    },
+    "search_addons": {
+      "name": "Search add-ons",
+      "description": "Search Modrinth for server-side add-ons this server can run (every player gets them, Bedrock/iPad included). Returns response data.",
+      "fields": {
+        "kind": {
+          "name": "Kind",
+          "description": "plugin, datapack, mod or resourcepack."
+        },
+        "query": {
+          "name": "Search",
+          "description": "What to look for."
+        },
+        "offset": {
+          "name": "Offset",
+          "description": "Skip this many results (pages of 20)."
+        }
+      }
+    },
+    "install_addon": {
+      "name": "Install add-on",
+      "description": "Add a Modrinth project (and anything it requires) to the active world.",
+      "fields": {
+        "id": {
+          "name": "Project id",
+          "description": "The Modrinth project id from search_addons."
+        },
+        "kind": {
+          "name": "Kind",
+          "description": "plugin, datapack, mod or resourcepack."
+        }
+      }
+    },
+    "remove_addon": {
+      "name": "Remove add-on",
+      "description": "Take an add-on installed by the browser out of the active world.",
+      "fields": {
+        "id": {
+          "name": "Project id",
+          "description": "The Modrinth project id."
+        }
+      }
+    }
   }
 }

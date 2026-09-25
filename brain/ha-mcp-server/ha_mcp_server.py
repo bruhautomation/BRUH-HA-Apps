@@ -319,7 +319,7 @@ def _protected_target(payload, empty_is_all=False):
 
 # What Home Assistant exposes to Assist, applied to the voice channel.
 # `BRAIN_EXPOSED_ONLY=1` is set by the worker pool and the classic listener
-# on every voice process when `assist_exposure` is `exposed` (the default),
+# on every voice process whose agent's level is `voice` (the default),
 # and by nothing else: the terminal, the chat, the fixer and the automation
 # listener see the whole house, exactly as before. Where DENIED_SERVICES
 # restricts a channel by SERVICE and PROTECTED_ENTITIES restricts every
@@ -592,6 +592,8 @@ def call_service(domain, service, data=None, return_response=False):
             "brAIn does may act on it. Tell the user; do not retry or "
             "look for another route."
         )}
+    if EXPOSED_ONLY and (domain.lower(), service.lower()) in VOICE_ADMIN_SERVICES:
+        return {"error": ADDON_VOICE_REFUSAL.format(what=f"{domain}.{service}")}
     unexposed = _exposure_refusal(data)
     if unexposed:
         return {"error": (
@@ -1426,6 +1428,385 @@ def music_assistant_remove_players(player_ids=None, provider="", stale_only=True
         {"player_ids": player_ids or [], "provider": provider or "",
          "stale_only": stale_only is not False, "dry_run": dry_run is not False,
          "disable_if_held": bool(disable_if_held)}, timeout=150)
+
+
+# ---------------------------------------------------------------------------
+# The BRUH add-ons — Minecraft, BRight and BRUH Print — through their own
+# Home Assistant integrations' services. Every call goes through
+# `call_service`, so an agent's blocked-services list and the deny-list
+# apply here exactly as they do to any other service; the services answer
+# with response data, which is how a tool reports what the server said
+# rather than a bare "done". The add-ons themselves hold the one
+# implementation of each action (the Minecraft bridge, BRight's conductor,
+# BRUH Print's printer lock); nothing here talks to them another way.
+#
+# Voice: a voice-level agent (BRAIN_EXPOSED_ONLY=1) may play — teleport,
+# give, game mode, time, weather, chat, start a show, print a label — and
+# may not administer: op, ban, kick, the whitelist, a raw console command,
+# stopping the server or installing add-ons all need an agent set to Whole
+# house or Full admin. A misheard sentence that bans a child from the family
+# server is the case this is for.
+# ---------------------------------------------------------------------------
+
+ADDON_VOICE_REFUSAL = (
+    "{what} is an administration action, and this voice agent is set to "
+    "'Voice assistant'. Tell the user it needs an agent set to 'Whole house' "
+    "or 'Full admin' (Settings → Devices & services → brAIn → the agent → "
+    "Configure); do not retry or use call_service to get round it."
+)
+
+# The same split, held at the chokepoint: without it a voice agent refused
+# `minecraft_player(ban)` could call `bruh_minecraft.ban_player` through
+# call_service and get the same result by the side door.
+VOICE_ADMIN_SERVICES = frozenset({
+    ("bruh_minecraft", s) for s in (
+        "rcon_command", "op_player", "deop_player", "kick_player", "ban_player",
+        "pardon_player", "whitelist_add", "whitelist_remove", "restart_server",
+        "stop_server", "install_addon", "remove_addon")
+})
+
+ADDON_NAMES = {
+    "bruh_minecraft": ("BRUH Minecraft", "BRUH Minecraft"),
+    "bright": ("BRight", "BRight"),
+    "bruh_print": ("BRUH Print", "BRUH Print"),
+}
+
+
+def _addon_call(domain, service, data=None):
+    """One service call with response data, its failure said in words."""
+    result = call_service(domain, service, data or {}, return_response=True)
+    if isinstance(result, dict) and result.get("error"):
+        text = str(result["error"])
+        if "not found" in text.lower() and "service" in text.lower():
+            name = ADDON_NAMES.get(domain, (domain,))[0]
+            return {"error": (
+                f"{name}'s Home Assistant integration is not set up, or is older "
+                f"than this action ({domain}.{service}). Tell the user to install "
+                f"or update the {name} add-on and add its integration.")}
+        return {"error": text}
+    response = result.get("response") if isinstance(result, dict) else None
+    return response if isinstance(response, dict) else {}
+
+
+def _voice_admin_refusal(what):
+    return {"error": ADDON_VOICE_REFUSAL.format(what=what)} if EXPOSED_ONLY else None
+
+
+# -- Minecraft ---------------------------------------------------------------
+
+MC_SELECTORS = {"everyone": "@a", "everybody": "@a", "all": "@a", "all players": "@a",
+                "@a": "@a", "@p": "@p", "@r": "@r", "@s": "@s",
+                "nearest": "@p", "random": "@r"}
+
+
+def _mc_bare(name):
+    """A name as a person would say it: no Bedrock prefix, no case, no spaces."""
+    return re.sub(r"[\s_.*]", "", str(name or "")).lower()
+
+
+def _mc_resolve(name, online):
+    """The online player a spoken name means, or (None, why).
+
+    Voice hears "teleport Emma to Dad" and the server knows `.EmmaPlays`
+    and `DadCraft42`. Exact (ignoring case and a Bedrock prefix) wins, then
+    one online name containing it; two candidates is a question to ask,
+    not a guess to make, because teleporting the wrong child is the whole
+    failure. With no online list to check against the name goes through
+    as given and the server's own reply says whether it knew it.
+    """
+    raw = str(name or "").strip()
+    if not raw:
+        return None, "No player was named."
+    selector = MC_SELECTORS.get(raw.lower())
+    if selector:
+        return selector, ""
+    if online is None:
+        return raw, ""
+    want = _mc_bare(raw)
+    exact = [p for p in online if _mc_bare(p) == want]
+    if len(exact) == 1:
+        return exact[0], ""
+    partial = [p for p in online if want and want in _mc_bare(p)]
+    if len(partial) == 1:
+        return partial[0], ""
+    who = ", ".join(online) if online else "nobody"
+    if len(partial) > 1:
+        return None, (f"'{raw}' could be any of {', '.join(partial)} — ask which "
+                      "one they meant.")
+    return None, f"No player called '{raw}' is online. Online now: {who}."
+
+
+def _mc_online():
+    status = _addon_call("bruh_minecraft", "get_status")
+    if status.get("error") or not status.get("reachable", True):
+        return None
+    return [str(p) for p in status.get("players") or []]
+
+
+def minecraft_status():
+    """Who is on the Minecraft server, and how it is doing."""
+    status = _addon_call("bruh_minecraft", "get_status")
+    if status.get("error"):
+        return status
+    stats = status.get("stats") or {}
+    state = status.get("state") or {}
+    return {
+        "reachable": status.get("reachable"),
+        "online": status.get("online"),
+        "max": status.get("max"),
+        "players": status.get("players") or [],
+        "world": state.get("active_world") or state.get("world"),
+        "server_type": state.get("server_type") or stats.get("server_type"),
+        "version": stats.get("version"),
+        "tps": stats.get("tps_1m"),
+        "note": status.get("note", ""),
+    }
+
+
+def minecraft_teleport(player, to_player=None, x=None, y=None, z=None):
+    """Move a player to another player, or to coordinates."""
+    online = _mc_online()
+    who, why = _mc_resolve(player, online)
+    if who is None:
+        return {"error": why}
+    data = {"player": who}
+    if to_player:
+        target, why = _mc_resolve(to_player, online)
+        if target is None:
+            return {"error": why}
+        data["to_player"] = target
+    else:
+        for key, value in (("x", x), ("y", y), ("z", z)):
+            if value is not None and str(value).strip() != "":
+                data[key] = str(value)
+    result = _addon_call("bruh_minecraft", "teleport", data)
+    if result.get("error"):
+        return result
+    return {"done": True, **data, "server_reply": result.get("reply", "")}
+
+
+MC_ADMIN_ACTIONS = {"op": "op_player", "deop": "deop_player", "kick": "kick_player",
+                    "ban": "ban_player", "pardon": "pardon_player",
+                    "whitelist_add": "whitelist_add",
+                    "whitelist_remove": "whitelist_remove"}
+
+
+def minecraft_player(player, action, value=None, amount=None):
+    """One thing done to one player: a game mode, an item, or an admin action."""
+    action = str(action or "").strip().lower()
+    if action in MC_ADMIN_ACTIONS:
+        refusal = _voice_admin_refusal(f"Minecraft '{action}'")
+        if refusal:
+            return refusal
+    # An admin action on somebody offline is ordinary (whitelisting a friend
+    # before they join); only resolve against who is on when that is the
+    # only sensible reading.
+    needs_online = action in ("gamemode", "give", "kick")
+    who, why = _mc_resolve(player, _mc_online() if needs_online else None)
+    if who is None:
+        return {"error": why}
+    if action == "gamemode":
+        mode = str(value or "").strip().lower()
+        if mode not in ("survival", "creative", "adventure", "spectator"):
+            return {"error": "Game mode must be survival, creative, adventure or spectator."}
+        result = _addon_call("bruh_minecraft", "set_gamemode", {"player": who, "gamemode": mode})
+    elif action == "give":
+        item = str(value or "").strip().lower().replace(" ", "_")
+        if not item:
+            return {"error": "Name the item to give, e.g. diamond or minecraft:oak_log."}
+        data = {"player": who, "item": item if ":" in item else f"minecraft:{item}"}
+        if amount:
+            try:
+                data["amount"] = max(1, min(int(amount), 64))
+            except (TypeError, ValueError):  # an unreadable amount gives the default one
+                pass
+        result = _addon_call("bruh_minecraft", "give", data)
+    elif action in MC_ADMIN_ACTIONS:
+        result = _addon_call("bruh_minecraft", MC_ADMIN_ACTIONS[action], {"player": who})
+    else:
+        return {"error": ("Unknown action. Use gamemode, give, op, deop, kick, ban, "
+                          "pardon, whitelist_add or whitelist_remove.")}
+    if result.get("error"):
+        return result
+    return {"done": True, "player": who, "action": action,
+            "server_reply": result.get("reply", "")}
+
+
+def minecraft_world(action, value=None):
+    """The world everyone is in: time of day, weather, or a chat message."""
+    action = str(action or "").strip().lower()
+    value = "" if value is None else str(value).strip()
+    if action == "time":
+        spoken = {"morning": "day", "sunrise": "day", "evening": "night",
+                  "sunset": "night", "dusk": "night", "dawn": "day"}
+        value = spoken.get(value.lower(), value.lower())
+        result = _addon_call("bruh_minecraft", "set_time", {"time": value})
+    elif action == "weather":
+        spoken = {"sunny": "clear", "sun": "clear", "storm": "thunder",
+                  "thunderstorm": "thunder", "raining": "rain"}
+        result = _addon_call("bruh_minecraft", "set_weather",
+                             {"weather": spoken.get(value.lower(), value.lower())})
+    elif action == "say":
+        if not value:
+            return {"error": "Nothing to say."}
+        result = _addon_call("bruh_minecraft", "say", {"message": value[:256]})
+    else:
+        return {"error": "Use time (day/night/noon/midnight or ticks), weather (clear/rain/thunder) or say."}
+    if result.get("error"):
+        return result
+    return {"done": True, "action": action, "value": value,
+            "server_reply": result.get("reply", "")}
+
+
+def minecraft_command(command):
+    """Any server console command, and what the server replied."""
+    refusal = _voice_admin_refusal("A raw Minecraft console command")
+    if refusal:
+        return refusal
+    command = str(command or "").strip().lstrip("/")
+    if not command:
+        return {"error": "No command given."}
+    result = _addon_call("bruh_minecraft", "rcon_command", {"command": command})
+    if result.get("error"):
+        return result
+    return {"command": command, "server_reply": result.get("reply", "")}
+
+
+def minecraft_server(action):
+    """Back up, restart or stop the Minecraft server."""
+    action = str(action or "").strip().lower()
+    service = {"backup": "backup_now", "restart": "restart_server",
+               "stop": "stop_server"}.get(action)
+    if not service:
+        return {"error": "Use backup, restart or stop."}
+    refusal = _voice_admin_refusal(f"Minecraft server {action}")
+    if refusal:
+        return refusal
+    result = _addon_call("bruh_minecraft", service)
+    if result.get("error"):
+        return result
+    return {"done": True, "action": action, **({"output": result["output"]}
+                                               if result.get("output") else {})}
+
+
+def minecraft_addons(action, query="", kind="", project_id=""):
+    """The Minecraft add-on browser: list, search, install or remove."""
+    action = str(action or "").strip().lower()
+    if action == "list":
+        return _addon_call("bruh_minecraft", "list_addons")
+    if action == "search":
+        data = {"query": str(query or "")}
+        if kind:
+            data["kind"] = str(kind)
+        return _addon_call("bruh_minecraft", "search_addons", data)
+    if action in ("install", "remove"):
+        refusal = _voice_admin_refusal(f"Installing or removing a Minecraft add-on ({action})")
+        if refusal:
+            return refusal
+        if not project_id:
+            return {"error": "Give the project_id from a search."}
+        if action == "install":
+            if not kind:
+                return {"error": "Give the kind (plugin, datapack, mod or resourcepack) from the search."}
+            return _addon_call("bruh_minecraft", "install_addon",
+                               {"id": str(project_id), "kind": str(kind)})
+        return _addon_call("bruh_minecraft", "remove_addon", {"id": str(project_id)})
+    return {"error": "Use list, search, install or remove."}
+
+
+# -- BRUH Print --------------------------------------------------------------
+
+PRINT_VOICE_MAX_COPIES = 10
+
+
+def label_printer_status():
+    """What is loaded in the label printer and which templates exist."""
+    return _addon_call("bruh_print", "get_status")
+
+
+def print_label(text="", template="", fields=None, stock="", copies=1):
+    """Print a label: text fitted as large as it will go, or a saved template."""
+    try:
+        copies = max(1, int(copies or 1))
+    except (TypeError, ValueError):
+        copies = 1
+    if EXPOSED_ONLY and copies > PRINT_VOICE_MAX_COPIES:
+        return {"error": (f"Voice prints at most {PRINT_VOICE_MAX_COPIES} copies at once — "
+                          "a misheard 'two hundred' is a roll of labels. Ask the user to "
+                          "confirm a smaller number.")}
+    copies = min(copies, 500)
+    if template:
+        data = {"template": str(template), "copies": copies}
+        if isinstance(fields, dict) and fields:
+            data["fields"] = {str(k): str(v) for k, v in fields.items()}
+        result = _addon_call("bruh_print", "print_template", data)
+    elif str(text or "").strip():
+        data = {"text": str(text).strip(), "copies": copies}
+        if stock:
+            data["stock"] = str(stock)
+        result = _addon_call("bruh_print", "print_text", data)
+    else:
+        return {"error": "Give the text to print, or a template name from label_printer_status."}
+    if result.get("error"):
+        return result
+    return {"printed": result.get("printed", 0), "roll": result.get("side", ""),
+            "notes": result.get("notes") or []}
+
+
+# -- BRight -------------------------------------------------------------------
+
+def bright_status():
+    """What BRight is doing, its saved sets, and the tracks with a show."""
+    return _addon_call("bright", "get_status")
+
+
+def _entity_arg_refusal(entity_id):
+    """An entity named in a field other than entity_id still has to be allowed."""
+    if not entity_id:
+        return None
+    if _entity_protected(entity_id):
+        return {"error": f"{entity_id} is on brAIn's protected list; nothing brAIn does may act on it."}
+    if not _entity_exposed(entity_id):
+        return {"error": UNEXPOSED_READ.format(eid=entity_id)}
+    return None
+
+
+def bright_show(action, party="", track="", media_player="", scene=""):
+    """Start a saved set, play one track's show, run party mode, or stop."""
+    action = str(action or "").strip().lower()
+    for eid in (media_player, scene):
+        refusal = _entity_arg_refusal(str(eid or "").strip())
+        if refusal:
+            return refusal
+    data = {}
+    if media_player:
+        data["media_player"] = str(media_player)
+    if action == "stop":
+        if scene:
+            data = {"scene": str(scene)}
+        else:
+            data = {}
+        result = _addon_call("bright", "stop_show", data)
+    elif action == "party":
+        if party:
+            data["party"] = str(party)
+            if scene:
+                data["end_scene"] = str(scene)
+            result = _addon_call("bright", "start_party", data)
+        else:
+            if scene:
+                data["end_scene"] = str(scene)
+            result = _addon_call("bright", "party_mode", data)
+    elif action == "track":
+        if not track:
+            return {"error": "Give the track's file path from bright_status."}
+        data["track"] = str(track)
+        result = _addon_call("bright", "start_show", data)
+    else:
+        return {"error": "Use party (with a saved set's name, or none for party mode), track, or stop."}
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    return {"done": True, "action": action}
 
 
 def get_activity(hours=24, cause=None, limit=200):
@@ -2830,6 +3211,154 @@ def offer_resolutions(options):
 # ============================================================================
 
 TOOLS = [
+    # The BRUH add-ons, through their own integrations' services.
+    {
+        "name": "minecraft_status",
+        "description": (
+            "The BRUH Minecraft server: whether it is answering, who is online "
+            "right now (exact names — Bedrock/iPad players carry a '.' prefix), "
+            "the world, server type, version and TPS. Read-only. Call it before "
+            "acting on a player so you use the name the server knows."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "minecraft_teleport",
+        "description": (
+            "Teleport a Minecraft player to another player, or to x/y/z. Names "
+            "are matched against who is online (case, spaces and the Bedrock "
+            "prefix ignored; a unique partial match counts), 'everyone' means "
+            "all players. An ambiguous or offline name comes back as a question "
+            "to ask, never a guess. Returns the server's reply."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "player": {"type": "string", "description": "Who to move, or 'everyone'."},
+            "to_player": {"type": "string", "description": "Who to move them to."},
+            "x": {"type": "string"}, "y": {"type": "string"}, "z": {"type": "string"}},
+            "required": ["player"]},
+    },
+    {
+        "name": "minecraft_player",
+        "description": (
+            "Do one thing to one Minecraft player: gamemode (value: survival, "
+            "creative, adventure, spectator), give (value: item like 'diamond' "
+            "or 'minecraft:oak_log', amount up to 64), or the admin actions op, "
+            "deop, kick, ban, pardon, whitelist_add, whitelist_remove (not "
+            "available to a voice-level agent). Returns the server's reply."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "player": {"type": "string"},
+            "action": {"type": "string", "enum": [
+                "gamemode", "give", "op", "deop", "kick", "ban", "pardon",
+                "whitelist_add", "whitelist_remove"]},
+            "value": {"type": "string"},
+            "amount": {"type": "integer"}},
+            "required": ["player", "action"]},
+    },
+    {
+        "name": "minecraft_world",
+        "description": (
+            "The Minecraft world everyone shares: set the time (day, night, "
+            "noon, midnight or ticks), the weather (clear, rain, thunder), or "
+            "say a message in chat to every player."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["time", "weather", "say"]},
+            "value": {"type": "string"}},
+            "required": ["action", "value"]},
+    },
+    {
+        "name": "minecraft_command",
+        "description": (
+            "Run any Minecraft server console command (no leading slash) and "
+            "return the server's reply — for anything the other minecraft_ "
+            "tools do not cover (effects, difficulty, gamerules, spawnpoints, "
+            "plugin commands). Not available to a voice-level agent."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "command": {"type": "string"}}, "required": ["command"]},
+    },
+    {
+        "name": "minecraft_server",
+        "description": (
+            "Back up the Minecraft world now, or restart or stop the server "
+            "(the add-on keeps running). Not available to a voice-level agent."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["backup", "restart", "stop"]}},
+            "required": ["action"]},
+    },
+    {
+        "name": "minecraft_addons",
+        "description": (
+            "BRUH Minecraft's add-on browser (Modrinth, server-side only, so "
+            "every player gets them — iPads through Geyser included). list: "
+            "what kinds this server can load and what is installed in the "
+            "active world. search: query plus optional kind (plugin, datapack, "
+            "mod, resourcepack) — results carry a project id. install: "
+            "project_id and kind, brings required dependencies, says whether a "
+            "restart is needed. remove: project_id. Install and remove are not "
+            "available to a voice-level agent."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["list", "search", "install", "remove"]},
+            "query": {"type": "string"},
+            "kind": {"type": "string", "enum": ["plugin", "datapack", "mod", "resourcepack"]},
+            "project_id": {"type": "string"}},
+            "required": ["action"]},
+    },
+    {
+        "name": "label_printer_status",
+        "description": (
+            "BRUH Print's label printer: which printer is attached, what stock "
+            "is loaded in each roll (with the stock ids), the saved templates "
+            "and the fields each one needs, and the last few labels. Read-only. "
+            "Call it before print_label to name a template or stock that exists."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "print_label",
+        "description": (
+            "Print a label on BRUH Print. Either text (fitted as large as it "
+            "will go; a line break starts a new line) with an optional stock id, "
+            "or a saved template by name with its fields (date and time fill "
+            "themselves in). copies defaults to 1; a voice-level agent prints "
+            "at most 10. Returns how many printed and on which roll."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "text": {"type": "string"},
+            "template": {"type": "string"},
+            "fields": {"type": "object"},
+            "stock": {"type": "string"},
+            "copies": {"type": "integer"}}},
+    },
+    {
+        "name": "bright_status",
+        "description": (
+            "BRight, the music light-show director: what it is doing now, the "
+            "saved sets (parties) by name, and the tracks with a show ready "
+            "(file path, whether analyzed). Read-only."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "bright_show",
+        "description": (
+            "Run BRight. action party: a saved set by name (party), or party "
+            "mode over the music folder with no name. action track: one track's "
+            "show (track = file path from bright_status). action stop: stop "
+            "and put the room back, or call scene instead. media_player "
+            "overrides the speaker; scene is the end scene."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["party", "track", "stop"]},
+            "party": {"type": "string"},
+            "track": {"type": "string"},
+            "media_player": {"type": "string"},
+            "scene": {"type": "string"}},
+            "required": ["action"]},
+    },
     # Music Assistant — its own API, through the panel.
     {
         "name": "music_assistant_status",
@@ -4418,6 +4947,17 @@ TOOL_IMPLEMENTATIONS = {
     "music_assistant_player": "music_assistant_player",
     "music_assistant_play": "music_assistant_play",
     "music_assistant_remove_players": "music_assistant_remove_players",
+    "minecraft_status": "minecraft_status",
+    "minecraft_teleport": "minecraft_teleport",
+    "minecraft_player": "minecraft_player",
+    "minecraft_world": "minecraft_world",
+    "minecraft_command": "minecraft_command",
+    "minecraft_server": "minecraft_server",
+    "minecraft_addons": "minecraft_addons",
+    "label_printer_status": "label_printer_status",
+    "print_label": "print_label",
+    "bright_status": "bright_status",
+    "bright_show": "bright_show",
 }
 
 

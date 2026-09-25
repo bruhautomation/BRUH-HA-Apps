@@ -36,6 +36,7 @@ from .const import (
     SERVICE_PRINT_TEXT,
     SERVICE_REPRINT,
     SERVICE_SET_ROLL,
+    SERVICE_STATUS,
     card_url,
 )
 from .coordinator import BruhPrintCoordinator
@@ -327,6 +328,17 @@ def _register_services(hass: HomeAssistant) -> None:
                 "status": result.get("status", ""),
             }
         return handler
+
+    async def handle_status(_: ServiceCall) -> dict:
+        # What is loaded and which templates exist, so a caller — brAIn
+        # answering "print a freezer label" — names things that are there.
+        result = await _forward(SERVICE_STATUS, {})
+        return {k: v for k, v in result.items() if k != "ok"}
+
+    if not hass.services.has_service(DOMAIN, SERVICE_STATUS):
+        hass.services.async_register(
+            DOMAIN, SERVICE_STATUS, handle_status, schema=vol.Schema({}),
+            supports_response=SupportsResponse.ONLY)
 
     for name, schema in SERVICES.items():
         if hass.services.has_service(DOMAIN, name):

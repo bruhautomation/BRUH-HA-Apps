@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.14.0
+
+**`bruh_print.get_status`, so something asking to print can see what is
+loaded first.** Which printer is attached, the stock in each roll, the saved
+templates with the fields each needs, and the last few labels — as response
+data, printing nothing. brAIn reads it before "print a freezer label that says
+chili", so it names a template and a stock that are really there instead of
+guessing and meeting the stock refusal.
+
 ## 0.13.1
 
 **You pick a roll by its name, and the size is underneath it.** The picker

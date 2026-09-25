@@ -24,7 +24,9 @@ A bird's-eye view so you can skim to the sections that matter to you:
 - **Offline mode done right.** Set a world's `online-mode: false` (panel → Server Properties) and the add-on silently forces `enforce-secure-profile: false`, switches Geyser to `auth-type: offline`, uninstalls Floodgate, and sets `validate-bedrock-login: false` — the full chain of changes Microsoft / Mojang's and GeyserMC's defaults gate behind one flag.
 - **Per-world settings.** Each world has its own `server.properties` — one world can be creative, another survival; switching loads each world's own gamemode, difficulty, world-gen, whitelist, etc.
 - **World safety.** Incremental git-backed snapshots or tar.gz archive backups on a configurable schedule, with one-click restore from either format.
-- **Home Assistant integration** — sensors (players, TPS, MOTD, difficulty, gamemode, …), binary sensors (online, RCON), buttons (Backup / Restart / Stop / Save), and 13 services (`rcon_command`, `say`, `give`, `set_weather`, `set_time`, `backup_now`, lifecycle, player management).
+- **Home Assistant integration** — sensors (players, TPS, MOTD, difficulty, gamemode, …), binary sensors (online, RCON), buttons (Backup / Restart / Stop / Save), and 21 services (`rcon_command`, `say`, `give`, `teleport`, `set_gamemode`, `set_weather`, `set_time`, `get_status`, `backup_now`, lifecycle, player management, and the add-on browser) that answer with the server's reply.
+- **Add-on browser** — search Modrinth for plugins, data packs, server-side mods and resource packs this server can run and add them to a world in one press. They run on the server, so every player gets them — iPads and consoles through Geyser included — with nothing to install on a device.
+- **brAIn** — with brAIn installed you can just ask: "teleport Emma to Dad", "make it day", "who's on?", "add a sit-anywhere plugin".
 - **Self-healing.** Ghost-session auto-kicker clears stuck Bedrock handshakes; RCON client is thread-safe; bad plugin URLs log a warning instead of tanking startup; crash banner surfaces the last error lines on the dashboard.
 - **Zero-dependency architecture.** Everything runs inside the one add-on container — no separate proxy jars, no VPS, no external broker.
 
@@ -429,6 +431,32 @@ The panel is reachable from the **Minecraft** entry in HA's sidebar (or directly
 - Keys marked **editable** (MOTD, difficulty, gamemode, PVP, whitelist, world-gen, …) are written to **this world's** `server.properties` — the per-world source of truth, so the change persists and is scoped to this world. Difficulty/gamemode/whitelist apply live via RCON; the rest take effect on the next restart.
 - Infra keys (RCON/query/ports) are read-only — the add-on manages them.
 
+### Add-ons
+
+The closest a Java server gets to Realms add-ons, and for a house full of iPads
+arguably better. A Realms "add-on" is a Bedrock *behavior pack*, which a Java
+server cannot run; what it can run is anything that lives on the **server**,
+and that reaches every player whatever they play on, because Geyser translates
+the result and nothing is installed on the device.
+
+- **Plugins** (Paper / Purpur / Folia) and **data packs** — every Java and
+  Bedrock player gets them. Data packs reload live; plugins load on the next
+  restart.
+- **Server mods** (Fabric / Forge) — only the ones Modrinth marks as needing
+  nothing on the client, because a mod every client must also have is a mod an
+  iPad can never join with.
+- **Resource packs** — Java players are offered the pack when they join;
+  Bedrock players are pushed a converted copy by Geyser. The conversion is
+  best-effort: flat block and item textures convert, custom 3D models and
+  sounds do not.
+
+What is offered is decided by the running server — its type and Minecraft
+version — so a result on the tab is one this server can load. Anything an
+add-on requires is installed with it and removing a library something still
+needs is refused. Downloads come only from Modrinth's CDN and must match the
+SHA-512 Modrinth published. Add-ons are per world (`.bruh-addons.json` in the
+world folder), like everything else in `plugins/`.
+
 ### Plugins
 
 - Lists every `.jar` under `/config/minecraft/plugins/` with size and last-modified time.
@@ -492,7 +520,18 @@ All entities live under a single device **BRUH Minecraft**. Default entities:
 | `bruh_minecraft.backup_now` | — |
 | `bruh_minecraft.restart_server` | — |
 | `bruh_minecraft.stop_server` | — |
-| `bruh_minecraft.op_player` / `deop_player` / `kick_player` / `ban_player` / `whitelist_add` / `whitelist_remove` | `player` |
+| `bruh_minecraft.op_player` / `deop_player` / `kick_player` / `ban_player` / `pardon_player` / `whitelist_add` / `whitelist_remove` | `player` |
+| `bruh_minecraft.teleport` | `player`, then `to_player` **or** `x`, `y`, `z` (numbers or `~`-relative) |
+| `bruh_minecraft.set_gamemode` | `player`, `gamemode` (survival/creative/adventure/spectator) |
+| `bruh_minecraft.get_status` | — (response only: who is online now, plus the last stats) |
+| `bruh_minecraft.list_addons` / `search_addons` | `kind`, `query` (response only) |
+| `bruh_minecraft.install_addon` | `id`, `kind` from a search |
+| `bruh_minecraft.remove_addon` | `id` |
+
+A player may be a name or `@a` (everyone), `@p`, `@r`. Every service that has
+something to say returns the server's reply as response data (`response_variable`
+in a script), and a refusal — or an add-on that did not answer — fails the call
+with the reason, so it shows in the automation trace.
 
 All services are routed through a file-based IPC bridge at `/config/.bruh_minecraft/`. HA Core drops a JSON request; the add-on watches that folder, handles the request via RCON, and writes a response file back.
 
@@ -607,7 +646,15 @@ action: bruh_minecraft.stop_server
 
 # Player management (all take `player: "<name>"`):
 # bruh_minecraft.op_player, deop_player, kick_player, ban_player,
-# whitelist_add, whitelist_remove.
+# pardon_player, whitelist_add, whitelist_remove.
+
+# Teleport a player to another, or everyone to coordinates.
+action: bruh_minecraft.teleport
+data: { player: "Steve", to_player: "Alex" }
+
+# Who is on right now (response data).
+action: bruh_minecraft.get_status
+response_variable: server
 ```
 
 ## 4.2 More automation examples

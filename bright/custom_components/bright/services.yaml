@@ -99,3 +99,9 @@ stop_show:
       selector:
         entity:
           domain: scene
+
+get_status:
+  name: Get status
+  description: >-
+    What BRight is doing now, the saved sets by name, and the tracks with a
+    show ready to run. Returns response data; changes nothing.

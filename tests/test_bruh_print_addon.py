@@ -206,6 +206,33 @@ class TestIntegration(unittest.TestCase):
                          "services.yaml and the bridge's routing table "
                          "disagree about what this integration can do")
 
+    def test_status_is_a_read_trimmed_to_what_a_caller_needs(self):
+        """`get_status` is the one GET: what is loaded and which templates
+        exist, with the font and element catalogs left out, so brAIn
+        choosing a stock or a template names ones that are really there."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "bruh_print_bridge_status", ADDON / "integrations" / "ha-bridge.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        got = mod.summarise_state({
+            "printer": {"name": "LabelWriter 450 Twin Turbo"},
+            "rolls": [{"side": "left", "stock": "s1", "remaining": 120}],
+            "stocks": [{"id": "s1", "name": "Freezer labels", "loaded": True,
+                        "loaded_side": "left"},
+                       {"id": "s2", "name": "Unused", "loaded": False}],
+            "templates": [{"name": "Freezer bag", "stock": "s1",
+                           "fields": [{"key": "contents"}, {"key": "date"}]}],
+            "fonts": ["a"] * 50, "catalog": {"big": True},
+            "history": [{"id": "h1", "title": "Chili", "stock": "s1", "at": 1}],
+        })
+        self.assertEqual(got["loaded_stocks"], [{"id": "s1", "name": "Freezer labels",
+                                                  "side": "left"}])
+        self.assertEqual(got["templates"][0]["fields"], ["contents", "date"])
+        self.assertEqual(got["recent"][0]["title"], "Chili")
+        self.assertNotIn("fonts", got)
+        self.assertNotIn("catalog", got)
+
     def test_the_test_print_is_the_check_label_now(self):
         """The ruler is gone and `print_test` is not. A service id vanishing
         turns an automation written last week into a validation error, which

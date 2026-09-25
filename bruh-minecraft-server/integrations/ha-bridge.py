@@ -11,10 +11,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import signal
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +36,11 @@ SHARED = Path("/config/.bruh_minecraft")
 REQ_DIR = SHARED / "requests"
 RES_DIR = SHARED / "responses"
 SCRIPTS_DIR = Path("/opt/bruh-mc/scripts")
+
+# The add-on browser lives in the panel, and the bridge asks it over
+# loopback — which the panel's LAN gate lets through — rather than holding a
+# second copy of Modrinth search, the hash check and the per-world record.
+PANEL_URL = os.environ.get("BRUH_MC_PANEL_URL", "http://127.0.0.1:8099")
 
 RCON_HOST = "127.0.0.1"
 RCON_PORT = 25575
@@ -69,13 +78,110 @@ async def _rcon(command: str) -> str:
     return await asyncio.to_thread(_exec)
 
 
+_LIST_RE = re.compile(
+    r"There are (?P<online>\d+) of a max(?: of)? (?P<max>\d+) players online:? ?(?P<players>.*)"
+)
+
+
+def parse_list(reply: str) -> dict[str, Any] | None:
+    """`minecraft:list`'s answer as numbers and names, or None if unreadable.
+
+    The same pattern the stats collector reads; `§` colour codes are
+    stripped first, because a plugin that colours names would otherwise
+    hand a caller `§aSteve` as a player it can never target.
+    """
+    plain = re.sub(r"§.", "", reply or "")
+    m = _LIST_RE.search(plain)
+    if not m:
+        return None
+    return {
+        "online": int(m.group("online")),
+        "max": int(m.group("max")),
+        "players": [p.strip() for p in m.group("players").split(",") if p.strip()],
+    }
+
+
+def _read_json(name: str) -> dict[str, Any]:
+    try:
+        data = json.loads((PANEL_STATE / name).read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+async def status() -> dict[str, Any]:
+    """Who is on, asked of the server now, beside the last collected stats.
+
+    A server that is not answering is still an answer — `reachable: false`
+    with the last state the collector wrote — because "the server is down"
+    is exactly what somebody asking is trying to find out, and an error
+    would hide it.
+    """
+    out: dict[str, Any] = {"ok": True, "state": _read_json("state.json"),
+                           "stats": _read_json("stats.json")}
+    try:
+        parsed = parse_list(await _rcon("minecraft:list"))
+    except Exception as exc:  # noqa: BLE001 — offline is a state, not a failure
+        parsed = None
+        out["note"] = f"The server did not answer RCON: {exc}"
+    out["reachable"] = parsed is not None
+    out.update(parsed or {"online": 0, "max": 0, "players": []})
+    return out
+
+
+def _panel(method: str, path: str, body: dict | None = None, timeout: float = 150) -> dict:
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(
+        PANEL_URL + path, data=data, method=method,
+        headers={"Content-Type": "application/json", "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            answer = json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as exc:
+        try:
+            answer = json.loads(exc.read().decode() or "{}")
+        except ValueError:
+            answer = {}
+        return {"ok": False, "error": answer.get("error") or f"The panel answered HTTP {exc.code}."}
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "error": f"The panel did not answer: {exc}"}
+    if isinstance(answer, dict) and answer.get("error"):
+        return {"ok": False, "error": answer["error"]}
+    return {"ok": True, **(answer if isinstance(answer, dict) else {"result": answer})}
+
+
+async def addons(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if kind == "addon_list":
+        return await asyncio.to_thread(_panel, "GET", "/api/addons")
+    if kind == "addon_search":
+        query = urllib.parse.urlencode({
+            "kind": str(payload.get("kind") or ""), "q": str(payload.get("query") or ""),
+            "offset": str(int(payload.get("offset") or 0))})
+        return await asyncio.to_thread(_panel, "GET", f"/api/addons/search?{query}")
+    if kind == "addon_install":
+        return await asyncio.to_thread(_panel, "POST", "/api/addons/install",
+                                       {"id": str(payload.get("id") or ""),
+                                        "kind": str(payload.get("kind") or "")})
+    pid = urllib.parse.quote(str(payload.get("id") or ""), safe="")
+    return await asyncio.to_thread(_panel, "DELETE", f"/api/addons/{pid}")
+
+
 async def handle(request: dict[str, Any]) -> dict[str, Any]:
     kind = request.get("kind", "")
     payload = request.get("payload", {}) or {}
     try:
         if kind == "command":
-            reply = await _rcon(str(payload.get("command", "")).strip())
+            command = str(payload.get("command", "")).strip().lstrip("/")
+            if not command:
+                return {"ok": False, "error": "No command given."}
+            reply = await _rcon(command.replace("\n", " "))
             return {"ok": True, "reply": reply}
+
+        if kind == "status":
+            return await status()
+
+        if kind in ("addon_list", "addon_search", "addon_install", "addon_remove"):
+            return await addons(kind, payload)
 
         if kind == "say":
             msg = str(payload.get("message", "")).strip().replace("\n", " ")[:256]

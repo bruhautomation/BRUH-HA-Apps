@@ -72,6 +72,23 @@ for _candidate in (_SCRIPTS_DIR, str(Path(__file__).resolve().parent.parent / "s
         sys.path.insert(0, _candidate)
 from rcon_client import Rcon  # noqa: E402
 
+# panel/addons.py sits beside this file. It is loaded by path under its own
+# name rather than by putting this directory on sys.path: every panel in the
+# repository has a `server.py`, and a directory pushed to the front of the
+# path makes the next `import server` anywhere in the same process answer
+# with this one.
+def _load_addons():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "bruh_mc_addons", Path(__file__).resolve().parent / "addons.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["bruh_mc_addons"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+addons = _load_addons()
+
 # ---------------------------------------------------------------------------
 # Paths / constants
 # ---------------------------------------------------------------------------
@@ -1909,6 +1926,46 @@ async def api_resource_pack_delete(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+def _write_properties(props: dict[str, str], note: str) -> None:
+    lines = [
+        "# server.properties — active world is the source of truth.",
+        f"# {note}: {time.strftime('%Y-%m-%dT%H:%M:%S%z')}",
+    ]
+    lines.extend(f"{k}={v}" for k, v in sorted(props.items()))
+    # A scratch name of its own, never `server.properties.tmp`: two writers
+    # sharing one scratch name lose one write silently (brAIn's atomic_write
+    # bullet), and the add-on browser and this tab can both write here.
+    fd, tmp = tempfile.mkstemp(dir=str(MC_SERVER_DIR), prefix=".server.properties.",
+                               suffix=".tmp")
+    target = MC_SERVER_DIR / "server.properties"
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+        # The file keeps the mode it had: mkstemp creates 0600, and a mode
+        # invented here is a second answer to who may read it. The panel and
+        # the JVM run as the same `minecraft` user, so a brand-new file at
+        # 0600 is one the server can still read.
+        try:
+            os.chmod(tmp, target.stat().st_mode & 0o7777)
+        except FileNotFoundError:
+            pass  # no file yet: mkstemp's owner-only mode is the right default
+        os.replace(tmp, target)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def _apply_resource_pack(pack: Path, host: str, port) -> tuple[str, str]:
+    """Point the active world's server.properties at a pack; its URL and SHA-1."""
+    sha1 = _pack_sha1(pack)
+    url = f"http://{host}:{port}/pack/{pack.name}"
+    props = _read_properties()
+    props["resource-pack"] = url
+    props["resource-pack-sha1"] = sha1
+    _write_properties(props, "Resource pack staged via panel")
+    return url, sha1
+
+
 async def api_resource_pack_apply(request: web.Request) -> web.Response:
     """Write the pack's URL + SHA-1 into the active world's server.properties.
     The URL is built from the request's host header so the user doesn't have
@@ -1920,29 +1977,178 @@ async def api_resource_pack_apply(request: web.Request) -> web.Response:
     pack = _under(MC_RESOURCE_PACKS, name)
     if not pack.is_file():
         return web.json_response({"error": "not found"}, status=404)
-    sha1 = _pack_sha1(pack)
     # The host header tells us how Minecraft clients reach this box. If we
     # ever sit behind ingress (no direct port), the user has to override the
     # host — but host_network: true on this add-on means the panel's port is
     # directly reachable on the LAN.
     body = await request.json() if request.body_exists else {}
     host = (body.get("host") or request.host).split(":", 1)[0]
-    port = body.get("port") or 8099
-    url = f"http://{host}:{port}/pack/{name}"
-
-    props = _read_properties()
-    props["resource-pack"] = url
-    props["resource-pack-sha1"] = sha1
-    lines = [
-        "# server.properties — active world is the source of truth.",
-        f"# Resource pack staged via panel: {time.strftime('%Y-%m-%dT%H:%M:%S%z')}",
-    ]
-    lines.extend(f"{k}={v}" for k, v in sorted(props.items()))
-    tmp = MC_SERVER_DIR / "server.properties.tmp"
-    tmp.write_text("\n".join(lines) + "\n")
-    tmp.replace(MC_SERVER_DIR / "server.properties")
-
+    url, sha1 = _apply_resource_pack(pack, host, body.get("port") or 8099)
     return web.json_response({"ok": True, "url": url, "sha1": sha1})
+
+
+# ---------------------------------------------------------------------------
+# Routes: API — the add-on browser (Modrinth, server-side content only)
+# ---------------------------------------------------------------------------
+GEYSER_PACKS = "plugins/Geyser-Spigot/packs"
+CONVERTER = SCRIPTS_DIR / "convert-java-pack-to-bedrock.py"
+
+
+def _server_type() -> str:
+    meta = _read_json(MC_SERVER_DIR / ".server-meta.json", {})
+    if meta.get("server_type"):
+        return str(meta["server_type"]).lower()
+    try:
+        with open(os.environ.get("MC_OPTIONS_FILE", "/data/options.json")) as f:
+            return str(json.load(f).get("server_type") or "paper").lower()
+    except (OSError, ValueError):
+        return "paper"
+
+
+def _addon_context() -> addons.Context:
+    return addons.Context(
+        server_type=_server_type(),
+        version=addons.game_version(_read_json(MC_SERVER_DIR / ".server-meta.json", {}),
+                                    _read_json(MC_PANEL_STATE / "stats.json", {})),
+        server_dir=MC_SERVER_DIR,
+        level_name=_read_properties().get("level-name", "world") or "world",
+        packs_dir=MC_RESOURCE_PACKS,
+    )
+
+
+def _lan_address() -> str:
+    """This host's address on the LAN, which is what a player's client fetches
+    a resource pack from. Asked of the routing table (a UDP socket that
+    sends nothing), because the request that installed the pack may have come
+    over loopback — from Home Assistant or brAIn — and `127.0.0.1` is the
+    one address no player can reach."""
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("192.0.2.1", 9))  # TEST-NET-1: routed, never sent to
+        return sock.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        sock.close()
+
+
+def _modrinth_session():
+    import aiohttp
+    return aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120))
+
+
+async def api_addons(_: web.Request) -> web.Response:
+    ctx = _addon_context()
+    kinds = addons.kinds_for(ctx.server_type)
+    return web.json_response({
+        "server_type": ctx.server_type,
+        "game_version": ctx.version,
+        "kinds": [{"kind": k, "label": addons.KIND_LABELS[k], "reach": addons.REACH[k]}
+                  for k in kinds],
+        "installed": addons.installed(ctx),
+        "geyser": (MC_SERVER_DIR / "plugins" / "Geyser-Spigot").is_dir(),
+    })
+
+
+async def api_addons_search(request: web.Request) -> web.Response:
+    ctx = _addon_context()
+    kind = request.query.get("kind") or (addons.kinds_for(ctx.server_type) or ["datapack"])[0]
+    try:
+        offset = int(request.query.get("offset") or 0)
+    except ValueError:
+        offset = 0
+    try:
+        async with _modrinth_session() as session:
+            result = await addons.search(addons.Modrinth(session), ctx, kind,
+                                         request.query.get("q", ""), offset)
+    except addons.AddonError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    except Exception as exc:  # noqa: BLE001 — offline, DNS, a timeout
+        return web.json_response(
+            {"error": f"Modrinth could not be reached ({type(exc).__name__})."}, status=502)
+    return web.json_response(result)
+
+
+async def _after_install(kind: str, rows: list[dict], ctx: addons.Context) -> dict:
+    """What an install still needs: a reload, a restart, a pack pointed at."""
+    notes: list[str] = []
+    restart = kind in ("plugin", "mod")
+    if kind == "datapack":
+        try:
+            await _rcon_command("minecraft:reload")
+            notes.append("Data packs reloaded — it is live for everyone now.")
+        except Exception:  # noqa: BLE001 — the server may simply be stopped
+            notes.append("It takes effect the next time the server starts.")
+    if kind == "resourcepack" and rows:
+        pack = _under(MC_RESOURCE_PACKS, rows[-1]["file"])
+        url, _ = _apply_resource_pack(pack, _lan_address(), 8099)
+        notes.append(f"Java players are offered it on join, from {url}.")
+        restart = True
+        geyser = MC_SERVER_DIR / GEYSER_PACKS
+        if geyser.parent.is_dir():
+            geyser.mkdir(parents=True, exist_ok=True)
+            out = geyser / (Path(pack.name).stem + ".mcpack")
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, str(CONVERTER), str(pack), str(out), rows[-1]["title"],
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            await proc.communicate()
+            notes.append("Bedrock and iPad players get a converted copy through Geyser."
+                         if proc.returncode == 0 else
+                         "The Bedrock conversion failed, so Bedrock players will see "
+                         "default textures.")
+        else:
+            notes.append("Geyser is not installed, so Bedrock players are not sent it.")
+    if restart:
+        notes.append("Restart the server for it to load.")
+    return {"restart_needed": restart, "notes": notes}
+
+
+async def api_addons_install(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    project_id = str(body.get("id") or "").strip()
+    kind = str(body.get("kind") or "").strip()
+    ctx = _addon_context()
+    try:
+        async with _modrinth_session() as session:
+            rows = await addons.install(addons.Modrinth(session), ctx, project_id, kind)
+    except addons.AddonError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    except Exception as exc:  # noqa: BLE001
+        return web.json_response(
+            {"error": f"The install did not finish ({type(exc).__name__}: {exc})."}, status=502)
+    after = await _after_install(kind, rows, ctx)
+    return web.json_response({"ok": True, "installed": rows, **after})
+
+
+async def api_addons_remove(request: web.Request) -> web.Response:
+    ctx = _addon_context()
+    project_id = request.match_info["id"]
+    try:
+        row = addons.remove(ctx, project_id, force=request.query.get("force") == "1")
+    except addons.AddonError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    notes = []
+    if row["kind"] == "resourcepack":
+        props = _read_properties()
+        if props.get("resource-pack", "").endswith("/pack/" + row["file"]):
+            props["resource-pack"] = ""
+            props["resource-pack-sha1"] = ""
+            _write_properties(props, "Resource pack removed via add-on browser")
+            notes.append("It is no longer offered to players.")
+        mcpack = MC_SERVER_DIR / GEYSER_PACKS / (Path(row["file"]).stem + ".mcpack")
+        mcpack.unlink(missing_ok=True)
+    if row["kind"] == "datapack":
+        try:
+            await _rcon_command("minecraft:reload")
+        except Exception:  # noqa: BLE001
+            pass
+    else:
+        notes.append("Restart the server for it to unload.")
+    return web.json_response({"ok": True, "removed": row, "notes": notes})
 
 
 async def api_health(_: web.Request) -> web.Response:
@@ -2337,6 +2543,12 @@ def build_app() -> web.Application:
     app.router.add_delete("/api/resource-packs/{name}", api_resource_pack_delete)
     app.router.add_post("/api/resource-packs/{name}/apply", api_resource_pack_apply)
     app.router.add_get("/pack/{name}", serve_pack)
+
+    # Add-on browser
+    app.router.add_get("/api/addons", api_addons)
+    app.router.add_get("/api/addons/search", api_addons_search)
+    app.router.add_post("/api/addons/install", api_addons_install)
+    app.router.add_delete("/api/addons/{id}", api_addons_remove)
     return app
 
 

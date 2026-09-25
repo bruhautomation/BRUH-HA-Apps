@@ -91,7 +91,18 @@ def argv_log(tmp_path: Path) -> list[list[str]]:
         lines = (tmp_path / "argv.log").read_text().splitlines()
     except FileNotFoundError:
         return []
-    return [json.loads(line) for line in lines if not line.startswith("ENV ")]
+    # The pre-warmed spare may still be appending its own line while this
+    # reads, so a last line that is not yet whole is not an entry yet.
+    out = []
+    for i, line in enumerate(lines):
+        if line.startswith("ENV "):
+            continue
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            if i != len(lines) - 1:
+                raise
+    return out
 
 
 def test_cold_then_warm_reuses_process(tmp_path, monkeypatch):
@@ -457,7 +468,7 @@ def test_handle_persists_last_profile(tmp_path, monkeypatch):
         with open(mod.LAST_PROFILE_FILE) as fh:
             data = json.load(fh)
         assert data == {"system_prompt": "Butler mode.", "model": "sonnet", "denied": "",
-                        "access": "addon"}
+                        "access": "voice"}
     finally:
         shutdown(pool)
 

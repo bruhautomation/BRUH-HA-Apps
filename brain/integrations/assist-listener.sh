@@ -267,23 +267,21 @@ JINJA
     printf '%s\n' "$rendered" | head -c "$AREA_MAP_MAX_BYTES" > "${AREA_MAP_FULL_FILE}.tmp" \
         && mv "${AREA_MAP_FULL_FILE}.tmp" "$AREA_MAP_FULL_FILE"
 
-    # What voice may see (assist_exposure: exposed, the default): the map is
-    # filtered to what Home Assistant exposes to Assist, through the one
-    # module the worker pool and the MCP server read. An exposure that
-    # cannot be read EMPTIES the map, with the reason in the log — fail
-    # closed, and `assist_exposure: all` is the switch that lifts it.
-    if [ "${BRAIN_ASSIST_EXPOSURE:-exposed}" != "all" ]; then
-        local filtered
-        if filtered=$(printf '%s\n' "$rendered" | python3 \
-                "${BRAIN_SCRIPTS_DIR:-/opt/scripts}/brain_exposed.py" filter \
-                "$CACHE_DIR/exposed_entities.json" \
-                2>> "$LOG_DIR/assist-$(date +%Y%m%d).log"); then
-            rendered="$filtered"
-        else
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] AREA-MAP emptied: Home Assistant's exposure settings could not be read (assist_exposure: all lifts the gate)" \
-                >> "$LOG_DIR/assist-$(date +%Y%m%d).log"
-            rendered=""
-        fi
+    # What voice may see: the map is filtered to what Home Assistant
+    # exposes to Assist, through the one module the worker pool and the MCP
+    # server read. An exposure that cannot be read EMPTIES the map, with the
+    # reason in the log — fail closed. An agent set to Whole house or Full
+    # admin reads the unfiltered copy written above.
+    local filtered
+    if filtered=$(printf '%s\n' "$rendered" | python3 \
+            "${BRAIN_SCRIPTS_DIR:-/opt/scripts}/brain_exposed.py" filter \
+            "$CACHE_DIR/exposed_entities.json" \
+            2>> "$LOG_DIR/assist-$(date +%Y%m%d).log"); then
+        rendered="$filtered"
+    else
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] AREA-MAP emptied: Home Assistant's exposure settings could not be read (an agent set to Whole house is not gated)" \
+            >> "$LOG_DIR/assist-$(date +%Y%m%d).log"
+        rendered=""
     fi
 
     # Truncate oversized maps on a line boundary (a cut-off entity_id would
@@ -315,8 +313,8 @@ get_area_map() {
         refresh_area_map >/dev/null 2>&1 || true
     fi
     # An agent that chose the whole house reads the unfiltered copy; every
-    # other agent reads the add-on-wide map, exactly as before.
-    if [ "${AGENT_EXPOSED:-}" = "0" ] && [ "${AGENT_ACCESS:-addon}" != "addon" ] \
+    # other agent reads the exposed map.
+    if [ "${AGENT_EXPOSED:-}" = "0" ] \
             && [ -f "$AREA_MAP_FULL_FILE" ]; then
         cat "$AREA_MAP_FULL_FILE" 2>/dev/null || true
         return
@@ -326,29 +324,18 @@ get_area_map() {
 
 # The integration's per-agent `access`, read off the request into two
 # switches — the same two the worker pool's ACCESS_LEVELS holds, and the
-# same words (`voice`, `house`, `admin`, `addon`). `addon`, or no field at
-# all, is the add-on's own options; a word this does not know is `voice`,
-# the narrowest, because a typo must never widen what a speaker can do.
+# same words (`voice`, `house`, `admin`). `addon` — what an agent made
+# before 2.9 carries — and no field at all are `voice`: the add-on-wide
+# options they used to follow are gone. A word this does not know is
+# `voice` too, the narrowest, because a typo must never widen what a
+# speaker can do.
 # protected_entities is enforced in the MCP server and no level lifts it.
 resolve_agent_access() {
-    AGENT_ACCESS="${1:-addon}"
+    AGENT_ACCESS="${1:-voice}"
     case "$AGENT_ACCESS" in
         voice) AGENT_MCP_ONLY=1; AGENT_EXPOSED=1 ;;
         house) AGENT_MCP_ONLY=1; AGENT_EXPOSED=0 ;;
         admin) AGENT_MCP_ONLY=0; AGENT_EXPOSED=0 ;;
-        ""|addon)
-            AGENT_ACCESS=addon
-            if [ "${BRAIN_ASSIST_TOOL_ACCESS:-mcp_only}" = "mcp_only" ]; then
-                AGENT_MCP_ONLY=1
-            else
-                AGENT_MCP_ONLY=0
-            fi
-            if [ "${BRAIN_ASSIST_EXPOSURE:-exposed}" = "all" ]; then
-                AGENT_EXPOSED=0
-            else
-                AGENT_EXPOSED=1
-            fi
-            ;;
         *) AGENT_ACCESS=voice; AGENT_MCP_ONLY=1; AGENT_EXPOSED=1 ;;
     esac
 }
@@ -424,7 +411,7 @@ log_request_debug() {
         echo "  Prompt:   $prompt_chars chars"
         echo "  AreaMap:  ${area_map_chars:-0} chars"
         echo "  MaxTurns: $MAX_TURNS"
-        echo "  Access:   ${AGENT_ACCESS:-addon}"
+        echo "  Access:   ${AGENT_ACCESS:-voice}"
     } >> "$log_file"
 }
 
@@ -469,13 +456,13 @@ log_response_debug() {
 # server launched for the turn reads it (BRAIN_EXPOSED_ONLY) and refuses to
 # read or act on anything else. Matches the pool's EXPOSED_ONLY.
 exposed_only_flag() {
-    [ -n "${AGENT_EXPOSED:-}" ] || resolve_agent_access addon
+    [ -n "${AGENT_EXPOSED:-}" ] || resolve_agent_access voice
     echo "$AGENT_EXPOSED"
 }
 
 # "1" while this agent's Bash/file/web deny-list applies.
 mcp_only_flag() {
-    [ -n "${AGENT_MCP_ONLY:-}" ] || resolve_agent_access addon
+    [ -n "${AGENT_MCP_ONLY:-}" ] || resolve_agent_access voice
     echo "$AGENT_MCP_ONLY"
 }
 
@@ -487,7 +474,7 @@ invoke_claude() {
         new:*)    session_args=(--session-id "${session_spec#new:}") ;;
     esac
 
-    # Voice tool scoping (assist_tool_access: mcp_only) — deny-list settings
+    # Voice tool scoping (the agent's level, mcp_only) — deny-list settings
     local scope_args=()
     if [ "$(mcp_only_flag)" = "1" ] && [ -f "$SHARED_DIR/assist_settings.json" ]; then
         scope_args=(--settings "$SHARED_DIR/assist_settings.json")
@@ -555,7 +542,7 @@ process_request() {
     # Per-agent service deny-list -> exported to the MCP server (see
     # invoke_claude). Comma-joined "domain.service" / "domain.*" patterns.
     DENIED_SERVICES_CSV=$(jq -r '(.denied_services // []) | join(",")' "$work_file" 2>/dev/null)
-    resolve_agent_access "$(jq -r '.access // "addon"' "$work_file" 2>/dev/null | tr -cd 'a-z')"
+    resolve_agent_access "$(jq -r '.access // "voice"' "$work_file" 2>/dev/null | tr -cd 'a-z')"
     # Older integrations used the conversation id as the request id
     conv_id=$(jq -r '.conversation_id // .id // empty' "$work_file" 2>/dev/null | tr -cd 'A-Za-z0-9_-')
     req_ts=$(jq -r '.ts // empty' "$work_file" 2>/dev/null)

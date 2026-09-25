@@ -11,7 +11,7 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
@@ -21,6 +21,7 @@ from .const import (
     SERVICE_PARTY_MODE,
     SERVICE_START_PARTY,
     SERVICE_START_SHOW,
+    SERVICE_STATUS,
     SERVICE_STOP_SHOW,
 )
 from .coordinator import BrightCoordinator
@@ -153,4 +154,16 @@ def _register_services(hass: HomeAssistant) -> None:
     )
     hass.services.async_register(
         DOMAIN, SERVICE_STOP_SHOW, handle_stop_show, schema=STOP_SHOW_SCHEMA
+    )
+
+    async def handle_status(_: ServiceCall) -> dict:
+        # What is playing, which saved sets exist and which tracks have a
+        # show — so a caller (brAIn, asked for "the Friday party") names a
+        # set or a track that is really there.
+        result = await _forward(SERVICE_STATUS, {})
+        return {k: v for k, v in result.items() if k != "ok"}
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_STATUS, handle_status, schema=vol.Schema({}),
+        supports_response=SupportsResponse.ONLY,
     )

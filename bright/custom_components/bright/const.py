@@ -21,6 +21,7 @@ SERVICE_PARTY_MODE = "party_mode"
 SERVICE_START_PARTY = "start_party"
 SERVICE_START_SHOW = "start_show"
 SERVICE_STOP_SHOW = "stop_show"
+SERVICE_STATUS = "get_status"
 
 # The add-on mirrors the names of the saved parties here, because /data is
 # invisible to Core and "which parties exist" is a question a dashboard

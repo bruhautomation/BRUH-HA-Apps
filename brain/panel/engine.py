@@ -755,6 +755,11 @@ ANALYST_TOOLS = [
     f"{MCP}music_assistant_status",
     f"{MCP}music_assistant_query",
     f"{MCP}music_assistant_search",
+    # The BRUH add-ons, the reading half: who is on the Minecraft server,
+    # what the label printer holds, what BRight is doing.
+    f"{MCP}minecraft_status",
+    f"{MCP}label_printer_status",
+    f"{MCP}bright_status",
 ]
 # Named explicitly rather than left to the allow-list, because `--allowedTools`
 # governs what runs WITHOUT a prompt, and a headless run cannot be prompted:
@@ -785,6 +790,13 @@ ANALYST_DENIED = [
     # something on a server a family listens to.
     f"{MCP}music_assistant_command", f"{MCP}music_assistant_player",
     f"{MCP}music_assistant_play", f"{MCP}music_assistant_remove_players",
+    # The BRUH add-ons, the acting half: every one moves a player, changes
+    # a world, installs server code, prints on paper or turns the lights
+    # into a show — none of it an unattended card's business.
+    f"{MCP}minecraft_teleport", f"{MCP}minecraft_player",
+    f"{MCP}minecraft_world", f"{MCP}minecraft_command",
+    f"{MCP}minecraft_server", f"{MCP}minecraft_addons",
+    f"{MCP}print_label", f"{MCP}bright_show",
 ]
 
 

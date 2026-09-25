@@ -256,6 +256,14 @@ const said = new Map();
 for (const [name, over, want] of SILENCES) {
   const { context, page } = await open(1200, false, payload(over));
   await page.waitForSelector('#ideasList .findempty');
+  // The tab paints once from what it has before the stubbed fetch lands, and
+  // on a slow runner that first paint is the one a bare waitForSelector
+  // reads — "never asked" for every case. Wait for the wording this case
+  // should reach; a timeout is noted by the check below, never thrown.
+  await page.waitForFunction(
+    (src) => new RegExp(src, 'i').test(
+      document.querySelector('#ideasList .findempty')?.textContent || ''),
+    want.source, { timeout: 5000 }).catch(() => {});
   const view = await read(page, IDS);
   if (!want.test(view.empty)) {
     note(name, `the empty page says "${view.empty.trim()}", not ${want}`);

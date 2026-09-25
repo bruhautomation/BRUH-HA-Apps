@@ -1239,3 +1239,27 @@ class TestCuratedWorlds(PanelTestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestServerPropertiesKeepsItsMode(unittest.TestCase):
+    """A rewrite of server.properties keeps the file's own mode.
+
+    The scratch file comes from mkstemp at 0600; a fixed chmod after it was
+    both a CodeQL finding (world-readable) and a second answer to who may
+    read the file. Carrying the old mode over is neither.
+    """
+
+    def test_the_old_mode_survives_a_rewrite(self):
+        import stat
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for d in ("server", "backups", "state"):
+                (root / d).mkdir()
+            srv = _load_panel_module(root / "server", root / "backups", root / "state")
+            target = root / "server" / "server.properties"
+            target.write_text("motd=hi\n")
+            target.chmod(0o640)
+            srv._write_properties({"motd": "hello"}, "test")
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o640)
+            self.assertIn("motd=hello", target.read_text())
+            self.assertEqual([p.name for p in (root / "server").iterdir()], ["server.properties"])

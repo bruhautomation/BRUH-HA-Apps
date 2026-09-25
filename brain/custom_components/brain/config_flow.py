@@ -31,7 +31,6 @@ except ImportError:
         HassioServiceInfo = None  # type: ignore[assignment,misc]
 
 from .const import (
-    ACCESS_ADDON,
     ACCESS_LEVELS,
     AVAILABLE_MODELS,
     CONF_ACCESS,
@@ -487,12 +486,13 @@ class BruhClaudeOptionsFlowHandler(OptionsFlow):
             default=current.get(CONF_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT),
         )] = MULTILINE_FIELD
 
-        # An agent created before access levels existed never chose one,
-        # and shows (and keeps) "follow the add-on" until somebody picks.
-        schema_fields[vol.Optional(
-            CONF_ACCESS,
-            default=current.get(CONF_ACCESS, ACCESS_ADDON),
-        )] = ACCESS_FIELD
+        # An agent created before access levels existed never chose one, and
+        # one made before 2.10 may still say "follow the add-on", which is no
+        # longer a level: both are read — and shown — as the narrowest.
+        access = current.get(CONF_ACCESS)
+        if access not in ACCESS_LEVELS:
+            access = DEFAULT_ACCESS
+        schema_fields[vol.Optional(CONF_ACCESS, default=access)] = ACCESS_FIELD
 
         deny_key, deny_field = denied_services_field(
             self.hass, current.get(CONF_DENIED_SERVICES, [])

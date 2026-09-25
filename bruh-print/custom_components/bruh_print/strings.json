@@ -78,6 +78,10 @@
         "stock": {"name": "Label stock", "description": "Which stock to check."},
         "side": {"name": "Roll", "description": "Which roll to print it on."}
       }
+    },
+    "get_status": {
+      "name": "Get status",
+      "description": "Which printer is attached, what is loaded in each roll and which templates exist. Returns response data; prints nothing."
     }
   },
   "entity": {

@@ -9,11 +9,12 @@ CONF_MODEL = "model"
 CONF_DENIED_SERVICES = "denied_services"
 # What one conversation agent may reach. Per agent, because the question is
 # per agent: the kitchen speaker anybody can talk to and the agent the owner
-# uses from their phone are not the same trust. `addon` is what an agent that
-# never chose gets — the add-on's own assist_tool_access / assist_exposure —
-# so an existing agent does not change behaviour on update. The add-on reads
-# the same four words (`assist-worker-pool.ACCESS_LEVELS`), and a word it
-# does not know falls back to `voice`, the narrowest.
+# uses from their phone are not the same trust. The agent is the ONLY place
+# this is set: the add-on-wide `assist_tool_access` / `assist_exposure` it
+# used to fall back to were removed in 2.10. `addon` is still the word an
+# agent made before 2.9 carries, so it stays readable here, but it is no
+# longer offered and the add-on reads it as `voice`, the narrowest — as it
+# does any word it does not know (`assist-worker-pool.ACCESS_LEVELS`).
 CONF_ACCESS = "access"
 ACCESS_ADDON = "addon"
 ACCESS_VOICE = "voice"
@@ -23,7 +24,6 @@ ACCESS_LEVELS = {
     ACCESS_VOICE: "Voice assistant — only what you expose to Assist, Home Assistant tools only",
     ACCESS_HOUSE: "Whole house — every entity, Home Assistant tools only (no shell, no file edits)",
     ACCESS_ADMIN: "Full admin — everything the brAIn chat can do: shell, file edits, config, web",
-    ACCESS_ADDON: "Follow the add-on's Assist settings (assist_tool_access / assist_exposure)",
 }
 DEFAULT_ACCESS = ACCESS_VOICE
 CONF_ENABLE_CONVERSATION = "enable_conversation"
