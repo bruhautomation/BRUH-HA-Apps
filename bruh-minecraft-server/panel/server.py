@@ -1937,11 +1937,19 @@ def _write_properties(props: dict[str, str], note: str) -> None:
     # bullet), and the add-on browser and this tab can both write here.
     fd, tmp = tempfile.mkstemp(dir=str(MC_SERVER_DIR), prefix=".server.properties.",
                                suffix=".tmp")
+    target = MC_SERVER_DIR / "server.properties"
     try:
         with os.fdopen(fd, "w") as fh:
             fh.write("\n".join(lines) + "\n")
-        os.chmod(tmp, 0o644)
-        os.replace(tmp, MC_SERVER_DIR / "server.properties")
+        # The file keeps the mode it had: mkstemp creates 0600, and a mode
+        # invented here is a second answer to who may read it. The panel and
+        # the JVM run as the same `minecraft` user, so a brand-new file at
+        # 0600 is one the server can still read.
+        try:
+            os.chmod(tmp, target.stat().st_mode & 0o7777)
+        except FileNotFoundError:
+            pass  # no file yet: mkstemp's owner-only mode is the right default
+        os.replace(tmp, target)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
