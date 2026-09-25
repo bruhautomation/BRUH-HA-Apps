@@ -764,7 +764,11 @@ Assistants and talk to it from any Assist pipeline, satellite or the app.
   knows an unexposed entity is off-limits and says where to change that rather than
   hunting for another way in; a whole-house agent knows it can reach every entity
   and never asks you to expose one; a full-admin agent knows it can use the shell,
-  the \`brain\`/\`ha\` CLIs and edit your configuration without being told how.
+  the \`brain\`/\`ha\` CLIs and edit your configuration without being told how. The
+  voice-level limit is also enforced, not just described: templates, the logbook,
+  brAIn's own reads (what is normal, why something changed, habits) and the room
+  list only reach exposed entities, and house-wide reads (activity, findings, the
+  registries) are refused for that agent.
 - **It sees what you expose.** Home Assistant's own switch — Settings → Voice
   assistants → **Expose** — decides what voice can see and act on, exactly as it
   does for Assist: an entity you have not exposed is not on the map voice is given,

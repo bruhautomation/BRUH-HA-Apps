@@ -261,6 +261,75 @@ class TestTheGateInTheServer(GateCase):
         self.assertEqual(len(ha_mcp_server.get_all_states()), 1)
 
 
+class TestTheWaysRoundTheGateAreClosed(GateCase):
+    """"Use brAIn" used to reach an unexposed sensor: a template, the
+    logbook, activity and brAIn's own read tools were never asked. Driven
+    through `handle_tool_call`, the dispatcher every tool call passes."""
+
+    def call(self, name, **args):
+        return ha_mcp_server.handle_tool_call(name, args)
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_a_template_naming_an_unexposed_entity_is_refused(self, api):
+        api.return_value = "on"
+        got = self.call("render_template",
+                        template="{{ states('lock.front_door') }}")
+        self.assertIn("not exposed", got["error"])
+        self.assertIn("raised in the brAIn agent's settings", got["error"])
+        api.assert_not_called()
+        self.assertEqual(self.call("render_template",
+                                   template="{{ states('light.kitchen') }}"), "on")
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_a_template_that_reaches_entities_without_naming_them_is_refused(self, api):
+        for template in ("{{ states.lock | list }}", "{{ states | count }}",
+                         "{{ expand('group.all') }}", "{{ area_entities('hall') }}",
+                         "{% set x = 'lock.front_door' %}{{ states(x) }}",
+                         "{{ states.lock }}"):
+            got = self.call("render_template", template=template)
+            self.assertIn("error", got, template)
+        api.assert_not_called()
+
+    @patch("ha_mcp_server._panel_get")
+    @patch("ha_mcp_server.ha_api_request")
+    def test_brain_reads_about_one_entity_need_it_exposed(self, api, panel):
+        for tool in ("what_is_normal", "explain_change", "habits",
+                     "get_camera_snapshot", "get_logbook", "get_baseline"):
+            got = self.call(tool, entity_id="lock.front_door")
+            self.assertIn("not exposed", got["error"], tool)
+        got = self.call("get_logbook")
+        self.assertIn("reads the whole house", got["error"])
+        api.assert_not_called()
+        panel.assert_not_called()
+
+    @patch("ha_mcp_server._panel_get")
+    @patch("ha_mcp_server.ha_api_request")
+    def test_house_wide_reads_are_refused(self, api, panel):
+        for tool in ("get_activity", "get_findings", "get_registry",
+                     "get_house_model", "esphome_list_devices"):
+            if tool not in ha_mcp_server.TOOL_IMPLEMENTATIONS:
+                continue
+            spec = ha_mcp_server._TOOL_SPECS[tool][1]
+            got = self.call(tool, **{k: "x" for k in spec})
+            self.assertIn("whole house", got["error"], tool)
+        api.assert_not_called()
+        panel.assert_not_called()
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_the_rooms_list_only_exposed_entities(self, api):
+        api.return_value = [{"area_id": "hall", "name": "Hall",
+                             "entities": ["light.kitchen", "lock.front_door"]}]
+        got = ha_mcp_server.get_areas()
+        self.assertEqual(got["areas"][0]["entities"], ["light.kitchen"])
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_off_the_voice_channel_none_of_it_applies(self, api):
+        ha_mcp_server.EXPOSED_ONLY = False
+        api.return_value = "locked"
+        self.assertEqual(self.call("render_template",
+                                   template="{{ states.lock | list }}"), "locked")
+
+
 class TestTheTwoWritersAgreeWithTheReader(unittest.TestCase):
     """`BRAIN_EXPOSED_ONLY` is a wire between three processes: spelled in
     the pool, the listener and the server, and read by one of them."""

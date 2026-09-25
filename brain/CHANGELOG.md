@@ -24,7 +24,10 @@ current Supervisor, and a Knowledge tab you can find things in.**
   and each agent's blocked services still apply at every level. Every agent is
   told its level in its instructions, so it knows what it can reach without
   being walked through it, and a voice-level agent does not go looking for a
-  way round an unexposed entity.
+  way round an unexposed entity. The way round is closed too: for a voice-level agent,
+  templates, the logbook, the room list and brAIn's own read tools only reach
+  exposed entities, and house-wide reads (activity, findings, registries) are
+  refused — one gate at the MCP server's tool dispatcher.
 - **ESPHome: "Home Assistant would not open an ingress session (Unauthorized)".**
   The Supervisor now refuses add-ons the call brAIn used to open the ESPHome
   dashboard. A new option, `esphome_ha_token` (a long-lived token from a Home
