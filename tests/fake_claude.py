@@ -34,11 +34,14 @@ import time
 argv = sys.argv[1:]
 log_path = os.environ.get("FAKE_CLAUDE_LOG")
 if log_path:
+    # One write per invocation: the pool pre-warms a spare in the background,
+    # so two fake CLIs can append at once, and three writes interleave with
+    # a reader into a half-written JSON line.
     with open(log_path, "a") as fh:
-        fh.write(json.dumps(argv) + "\n")
-        fh.write("ENV BRAIN_DENIED_SERVICES="
-                 + os.environ.get("BRAIN_DENIED_SERVICES", "") + "\n")
-        fh.write("ENV BRAIN_EXPOSED_ONLY="
+        fh.write(json.dumps(argv) + "\n"
+                 + "ENV BRAIN_DENIED_SERVICES="
+                 + os.environ.get("BRAIN_DENIED_SERVICES", "") + "\n"
+                 + "ENV BRAIN_EXPOSED_ONLY="
                  + os.environ.get("BRAIN_EXPOSED_ONLY", "") + "\n")
 
 mode = os.environ.get("FAKE_MODE", "ok")
