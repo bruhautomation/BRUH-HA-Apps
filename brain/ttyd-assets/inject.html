@@ -454,6 +454,173 @@
   }
 
   // ===================================================================
+  // 1b. Paste — the toolbar button and the box it falls back to.
+  //
+  //    Three things stood between a phone and a paste, and all three
+  //    failed silently:
+  //
+  //    * The button read the clipboard from `pointerdown`, which is
+  //      not a user activation for a finger, so `readText()` was
+  //      refused on phones and the refusal went to an empty catch.
+  //      It runs from `click` now (section 4).
+  //    * Where the browser refuses anyway — Safari inside two iframes,
+  //      the HA Companion WebView, a permission somebody said no to —
+  //      there was nowhere else to go: the body is `touch-action:
+  //      none` so a swipe cannot scroll Home Assistant, and xterm's
+  //      input is an off-screen textarea iOS will not offer a Paste
+  //      bubble on. So a refusal opens a real, visible text box you
+  //      can long-press and Paste into, and Send puts it in the
+  //      terminal. That box is also the answer on a WebView with no
+  //      Clipboard API at all.
+  //    * The text went straight down the socket, so a multi-line paste
+  //      arrived as keystrokes and every newline was an Enter — the
+  //      first line of a pasted prompt submitted on its own. It goes
+  //      through xterm's own paste path now (bracketed paste, newlines
+  //      as the terminal expects them), with a hand-rolled bracketed
+  //      paste as the floor for a build that does not expose one.
+  // ===================================================================
+  function xtermTextarea() {
+    return document.querySelector('.xterm-helper-textarea');
+  }
+
+  function pasteText(text) {
+    if (!text) return;
+    // 1. ttyd publishes its Terminal as `window.term`; xterm's paste()
+    //    does exactly what a native paste does.
+    var term = window.term;
+    if (term && typeof term.paste === 'function') {
+      try { term.paste(text); return; } catch (_e) { /* fall through */ }
+    }
+    // 2. A synthetic paste event on xterm's textarea runs the same
+    //    handler a real one would; xterm cancels an event it handled,
+    //    which is how we know it did.
+    var ta = xtermTextarea();
+    if (ta && typeof DataTransfer === 'function' && typeof ClipboardEvent === 'function') {
+      try {
+        var dt = new DataTransfer();
+        dt.setData('text/plain', text);
+        var ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+        if (ev.clipboardData && ev.clipboardData.getData('text/plain') === text) {
+          ta.dispatchEvent(ev);
+          if (ev.defaultPrevented) return;
+        }
+      } catch (_e2) { /* fall through */ }
+    }
+    // 3. Bracketed paste by hand. Safe under tmux, which is always in
+    //    front of this PTY: tmux reads the markers from its outer
+    //    terminal and forwards them only to a pane that asked for
+    //    bracketed paste, so a shell that did not never sees them.
+    sendInput('\x1b[200~' + text.replace(/\r?\n/g, '\r') + '\x1b[201~');
+  }
+
+  function pasteFromClipboard() {
+    if (!navigator.clipboard || typeof navigator.clipboard.readText !== 'function') {
+      openPasteSheet('This browser will not let the terminal read the clipboard.');
+      return;
+    }
+    var p;
+    try { p = navigator.clipboard.readText(); } catch (_e) { p = null; }
+    if (!p || typeof p.then !== 'function') {
+      openPasteSheet('This browser will not let the terminal read the clipboard.');
+      return;
+    }
+    p.then(function (t) {
+      if (t) pasteText(t);
+      else showCopyToast('The clipboard is empty', '', false);
+    }, function () {
+      openPasteSheet('The browser would not share the clipboard with the terminal.');
+    });
+  }
+
+  var PASTE_SHEET_CSS = [
+    'position:fixed',
+    'top:calc(env(safe-area-inset-top, 0px) + 8px)',
+    'left:8px',
+    'right:8px',
+    'z-index:2147483646',
+    'background:#241d18',
+    'color:#e8ddd4',
+    'border:1px solid #3a2e25',
+    'border-radius:8px',
+    'padding:10px',
+    'box-shadow:0 4px 18px rgba(0,0,0,0.5)',
+    'font:500 14px/1.35 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif',
+    'touch-action:manipulation'
+  ].join(';');
+
+  function openPasteSheet(why) {
+    var ta = xtermTextarea();
+    var hadFocus = !!ta && document.activeElement === ta;
+    var sheet = document.getElementById('bruh-paste');
+    if (!sheet) {
+      sheet = document.createElement('div');
+      sheet.id = 'bruh-paste';
+      sheet.setAttribute('role', 'dialog');
+      sheet.setAttribute('aria-label', 'Paste into the terminal');
+      sheet.style.cssText = PASTE_SHEET_CSS;
+      var msg = document.createElement('div');
+      msg.id = 'bruh-paste-why';
+      msg.style.cssText = 'margin:0 0 8px';
+      var box = document.createElement('textarea');
+      box.id = 'bruh-paste-box';
+      box.setAttribute('rows', '4');
+      box.setAttribute('placeholder', 'Long-press here and choose Paste');
+      box.setAttribute('autocorrect', 'off');
+      box.setAttribute('autocapitalize', 'off');
+      box.setAttribute('spellcheck', 'false');
+      // 16px, or iOS zooms the page in on focus and never back out.
+      box.style.cssText = 'display:block;width:100%;box-sizing:border-box;'
+        + 'font:16px/1.3 SF Mono,Menlo,Consolas,monospace;'
+        + 'background:#1a1613;color:#e8ddd4;border:1px solid #3a2e25;'
+        + 'border-radius:6px;padding:8px;resize:vertical;'
+        + 'touch-action:auto;-webkit-user-select:text;user-select:text;';
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:8px';
+      var cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.id = 'bruh-paste-cancel';
+      cancel.textContent = 'Cancel';
+      var send = document.createElement('button');
+      send.type = 'button';
+      send.id = 'bruh-paste-send';
+      send.textContent = 'Paste into terminal';
+      [cancel, send].forEach(function (b, i) {
+        b.style.cssText = 'min-height:44px;padding:0 14px;border-radius:6px;'
+          + 'font:600 14px -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;'
+          + (i ? 'background:#a85638;color:#fff;border:1px solid #d97757;'
+               : 'background:#1a1613;color:#e8ddd4;border:1px solid #3a2e25;');
+      });
+      row.appendChild(cancel);
+      row.appendChild(send);
+      sheet.appendChild(msg);
+      sheet.appendChild(box);
+      sheet.appendChild(row);
+      document.body.appendChild(sheet);
+      cancel.addEventListener('click', function () { closePasteSheet(false); });
+      send.addEventListener('click', function () { closePasteSheet(true); });
+    }
+    sheet._hadFocus = hadFocus;
+    document.getElementById('bruh-paste-why').textContent =
+      why + ' Paste it here instead:';
+    var input = document.getElementById('bruh-paste-box');
+    input.value = '';
+    sheet.style.display = 'block';
+    try { input.focus(); } catch (_e) { /* no-op */ }
+  }
+
+  function closePasteSheet(send) {
+    var sheet = document.getElementById('bruh-paste');
+    if (!sheet) return;
+    var text = document.getElementById('bruh-paste-box').value;
+    sheet.style.display = 'none';
+    if (send && text) pasteText(text);
+    var ta = xtermTextarea();
+    if (ta && (sheet._hadFocus || send)) {
+      try { ta.focus(); } catch (_e) { /* no-op */ }
+    }
+  }
+
+  // ===================================================================
   // 2. iOS dictation duplicate-text fix — the actual reason voice
   //    input was broken.  WebKit bug 261764: on iOS Safari / WKWebView
   //    voice dictation NEVER fires composition events.  Instead, each
@@ -480,22 +647,72 @@
   //    keydown nor an active composition, so this reliably tells
   //    "actual voice/IME input that needs our help" apart from
   //    "ordinary typing xterm already handled".
+  //
+  //    What "no recent keydown" still let through, and the fix:
+  //
+  //    The diff was taken against `lastValue` — the text THIS handler
+  //    last sent — not against what the textarea actually held. Every
+  //    ordinary keystroke, backspace and Enter goes through xterm and
+  //    moves the textarea without telling us, so by the time an
+  //    autocorrect, a predictive-text tap or a swipe-typed word
+  //    arrived (none of which fire a keydown), the baseline was wrong
+  //    and the diff re-sent text, sent stray backspaces or dropped
+  //    the change. That is most of "the keyboard is really weird".
+  //    `lastValue` now follows the textarea: it is re-read after every
+  //    event this handler leaves alone and after every keydown, so a
+  //    diff is always "what the keyboard just changed in the box".
+  //
+  //    And only text-editing input types are diffed. A paste or a drop
+  //    is xterm's (it has a paste path with bracketed paste; a diff
+  //    would type it out line by line), and composition is the IME's.
   // ===================================================================
   var lastValue = '';
   var lastKeyDownAt = 0;
   var inComposition = false;
 
+  // The input types a soft keyboard produces without a keydown:
+  // dictation and swipe typing (insertText), autocorrect and predictive
+  // suggestions (insertReplacementText), and the deletions a
+  // replacement is sometimes delivered as. Anything else — paste, drop,
+  // undo, composition — is left to xterm.
+  var DIFFED_INPUT_TYPES = {
+    '': true,                         // WebKit dictation sends none
+    'insertText': true,
+    'insertReplacementText': true,
+    'insertFromDictation': true,      // proposed name, harmless if absent
+    'deleteContentBackward': true,
+    'deleteWordBackward': true,
+    'deleteContent': true
+  };
+
+  function resyncBaseline(ta) {
+    // Next tick: xterm (and the browser's default action) have finished
+    // with the event by then, so this is the value the NEXT diff must
+    // be taken against.
+    setTimeout(function () {
+      if (ta && document.contains(ta)) lastValue = ta.value || '';
+    }, 0);
+  }
+
   // Track keydown so we know which input events to ignore. Capture
   // phase + document-level matches our input listener so timing is
   // tight (no event bubbling latency between the two).
-  document.addEventListener('keydown', function () {
+  document.addEventListener('keydown', function (e) {
     lastKeyDownAt = Date.now();
+    var t = e.target;
+    if (t && t.classList && t.classList.contains('xterm-helper-textarea')) resyncBaseline(t);
   }, true);
   document.addEventListener('compositionstart', function () {
     inComposition = true;
   }, true);
-  document.addEventListener('compositionend', function () {
+  document.addEventListener('compositionend', function (e) {
     inComposition = false;
+    var t = e.target;
+    if (t && t.classList && t.classList.contains('xterm-helper-textarea')) resyncBaseline(t);
+  }, true);
+  document.addEventListener('focusin', function (e) {
+    var t = e.target;
+    if (t && t.classList && t.classList.contains('xterm-helper-textarea')) lastValue = t.value || '';
   }, true);
 
   function diffAndSend(newValue) {
@@ -519,25 +736,31 @@
     // generous enough for slow event loops but tight enough not to
     // swallow genuine voice/IME input that happens to follow a
     // recent keypress.
-    if (Date.now() - lastKeyDownAt < 100) return;
+    // IME composition (Japanese/Chinese/Korean, and Android keyboards,
+    // which compose every word): xterm handles these via
+    // compositionend. Skip during composition and let xterm do its job.
+    // A paste or anything else that is not plain text editing: xterm's.
+    var type = e.inputType || '';
+    if (Date.now() - lastKeyDownAt < 100 || inComposition || e.isComposing
+        || !DIFFED_INPUT_TYPES[type]) {
+      resyncBaseline(t);
+      return;
+    }
 
-    // IME composition (Japanese/Chinese/Korean keyboards on desktop):
-    // xterm handles these via compositionend. Skip during composition
-    // and let xterm do its job.
-    if (inComposition) return;
-
-    // What's left: voice dictation on iOS (or any other input event
-    // that fires without a paired keydown). Diff against last value
-    // and send the delta.
+    // What's left: dictation, autocorrect, a predictive-text tap,
+    // swipe typing — input with no keydown behind it. Diff against the
+    // box as it was and send the delta.
     diffAndSend(t.value || '');
     e.stopImmediatePropagation();
 
     // Keep the textarea from growing unbounded — iOS dictation will
     // otherwise keep re-delivering an ever-longer transcript.  Clear on
     // the next tick so we don't interrupt the current event dispatch.
+    // Only while nothing is mid-composition, and the baseline goes
+    // with it, so the two cannot disagree.
     var ta = t;
     setTimeout(function () {
-      if (ta.value && ta.value.length > 64) {
+      if (!inComposition && ta.value && ta.value.length > 64) {
         ta.value = '';
         lastValue = '';
       }
@@ -873,9 +1096,22 @@
     function orientationKey() {
       return window.innerHeight >= window.innerWidth ? 'portrait' : 'landscape';
     }
+    //
+    //     With nothing focused there is no software keyboard on any
+    //     platform, so the height then IS the natural one and is taken
+    //     as-is, down as well as up. That matters because this frame is
+    //     not the only thing that resizes it: the brAIn panel folds its
+    //     own top bar away while the keyboard is up (reportKeyboard,
+    //     below), which makes this frame TALLER. Grow-only took that
+    //     folded height as the baseline, so the moment the bar came back
+    //     the frame read as "the WebView shrank for a keyboard" — which
+    //     folded the bar, which grew the frame, which unfolded it: a
+    //     loop that flapped the panel's bar in and out on its own, many
+    //     times a second, on a WebView that resizes for the keyboard
+    //     (tests/manual/measure-terminal-mobile.mjs drives it).
     function captureBaseline() {
       var k = orientationKey();
-      if (window.innerHeight > stableHeights[k]) {
+      if (!taFocused || window.innerHeight > stableHeights[k]) {
         stableHeights[k] = window.innerHeight;
       }
     }
@@ -981,8 +1217,33 @@
       } catch (_e) { /* cross-origin parent — nothing to tell */ }
     }
 
-    function syncBarToKeyboard() {
+    // The bar moves on every sample, because moving it is a transform
+    // and costs nothing. What does NOT happen on every sample is the
+    // terminal resizing: `syncHeight` changes the body's height, which
+    // refits xterm, which resizes the PTY, which makes tmux and Claude
+    // Code redraw the whole screen — and a keyboard sliding in reports
+    // a dozen intermediate heights on its way up, on top of the two
+    // delayed samples focusin schedules. Each of those was a full
+    // redraw, and the panel folding its bar was one more. So the
+    // resize and the report to the panel are committed together, once,
+    // after the samples have stopped changing for SETTLE_MS: one
+    // reflow for the keyboard opening and one for it closing.
+    var SETTLE_MS = 180;
+    var settleTimer = null;
+    var pendingGap = 0;
+    function commitKeyboard() {
+      settleTimer = null;
       var gap = computeGap();
+      pendingGap = gap;
+      placeBar(gap);
+      syncHeight(gap);
+      // A gap is proof of a keyboard; so is a WebView that shrank itself
+      // for one (that path reports gap 0 by design — the layout is already
+      // correct — so asking `gap > 0` alone would miss the HA Companion
+      // app entirely). Both need the textarea focused to count.
+      reportKeyboard(taFocused && (gap > 0 || viewportShrunkForKeyboard()));
+    }
+    function placeBar(gap) {
       if (gap > 0) {
         // Keyboard is up: drop the safe-area inset (keyboard replaces
         // the home-indicator area) and stick the bar right above the keys.
@@ -992,14 +1253,20 @@
         bar.style.transform = '';
         bar.style.paddingBottom = '';
       }
-      syncHeight(gap);
-      // A gap is proof of a keyboard; so is a WebView that shrank itself
-      // for one (that path reports gap 0 by design — the layout is already
-      // correct — so asking `gap > 0` alone would miss the HA Companion
-      // app entirely). Both need the textarea focused to count.
-      reportKeyboard(taFocused && (gap > 0 || viewportShrunkForKeyboard()));
     }
-    syncBarToKeyboard();
+    function syncBarToKeyboard() {
+      var gap = computeGap();
+      placeBar(gap);
+      var kb = taFocused && (gap > 0 || viewportShrunkForKeyboard());
+      // Nothing moved and the panel already knows: nothing to commit.
+      // (syncHeight's own resize event lands here, so this is also what
+      // stops a commit from scheduling another.)
+      if (gap === pendingGap && kb === lastKbSent && !settleTimer) return;
+      pendingGap = gap;
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(commitKeyboard, SETTLE_MS);
+    }
+    commitKeyboard();
     window.addEventListener('resize', syncBarToKeyboard);
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', syncBarToKeyboard);
@@ -1048,11 +1315,7 @@
         return;
       }
       if (keyName === 'paste') {
-        if (navigator.clipboard && navigator.clipboard.readText) {
-          navigator.clipboard.readText()
-            .then(function (t) { if (t) sendInput(t); })
-            .catch(function () { /* permission denied — silent */ });
-        }
+        pasteFromClipboard();
         return;
       }
       var str = KEYS[keyName];
@@ -1073,19 +1336,47 @@
       el.classList.add('bruh-pressed');
       setTimeout(function () { el.classList.remove('bruh-pressed'); }, 120);
       var keyName = el.dataset.bruhKey;
+      // Paste is the one key that is NOT sent here. Reading the
+      // clipboard needs a user activation, and for a finger a
+      // pointerdown is not one — only pointerup / touchend / click
+      // are (HTML's "activation triggering input event" list). Read
+      // from pointerdown, `readText()` is refused on every phone,
+      // which is what "I can't paste" was. onClick below sends it.
+      if (keyName === 'paste') return;
+      var ta = document.querySelector('.xterm-helper-textarea');
+      var wasFocused = !!ta && document.activeElement === ta;
       handleKey(keyName);
-      // Restore focus to the xterm helper-textarea after every tap so
-      // typing continues — *except* for the close-keyboard button,
-      // which just called blur() and would otherwise be instantly
-      // undone by this re-focus.
-      if (keyName !== 'kbdown') {
-        var ta = document.querySelector('.xterm-helper-textarea');
-        if (ta) ta.focus();
-      }
+      // Keep typing going after a tap — but only if the keyboard was
+      // up to begin with. Focusing the textarea when it was NOT focused
+      // is what popped the keyboard open on every ESC or arrow
+      // somebody pressed with the keyboard deliberately down.
+      refocusAfterTap = wasFocused && keyName !== 'kbdown';
+      if (refocusAfterTap && document.activeElement !== ta) ta.focus();
+    }
+    // Whether the tap now in progress should leave the keyboard up. It is
+    // asked again on click, because some browsers move focus off the
+    // textarea after pointerdown whatever preventDefault said, and a
+    // focus given back at pointerdown is taken away again by then.
+    var refocusAfterTap = false;
+    function onClick(e) {
+      var el = e.target.closest && e.target.closest('.bruh-key');
+      if (!el) return;
+      if (el.dataset.bruhKey === 'paste') { handleKey('paste'); return; }
+      var ta = document.querySelector('.xterm-helper-textarea');
+      if (refocusAfterTap && ta && document.activeElement !== ta) ta.focus();
+      refocusAfterTap = false;
     }
     bar.addEventListener('pointerdown', onPointerDown);
+    bar.addEventListener('click', onClick);
     if (!window.PointerEvent) {
+      // A cancelled touchstart suppresses the click that would follow
+      // it, so on this (old-WebView) path paste rides touchend, which
+      // is an activation-triggering event in its own right.
       bar.addEventListener('touchstart', onPointerDown, { passive: false });
+      bar.addEventListener('touchend', function (e) {
+        var el = e.target.closest && e.target.closest('.bruh-key');
+        if (el && el.dataset.bruhKey === 'paste') { e.preventDefault(); handleKey('paste'); }
+      }, { passive: false });
       bar.addEventListener('mousedown', onPointerDown);
     }
   }

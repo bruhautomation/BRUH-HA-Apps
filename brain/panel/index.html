@@ -643,7 +643,14 @@
     </div>
   </section>
 
-  <iframe id="termFrame" title="Terminal" src="about:blank"></iframe>
+  <!-- `allow` delegates the clipboard to the terminal: its Paste button
+       reads it and Claude Code's copy (OSC 52) writes it, and a browser
+       that applies Permissions Policy to a nested frame refuses both
+       without it. Home Assistant's own ingress frame sits above this one
+       and is not ours to change, so the terminal still falls back to a
+       paste box when the answer is no. -->
+  <iframe id="termFrame" title="Terminal" src="about:blank"
+          allow="clipboard-read; clipboard-write"></iframe>
 
   <!-- Two buttons, not five. These float over somebody's output, and a
        column of five translucent squares sitting on top of the text is

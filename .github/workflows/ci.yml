@@ -92,6 +92,9 @@ jobs:
       - name: Measure the chat meta line
         run: node tests/manual/measure-chatmeta.mjs
 
+      - name: Measure the terminal on a phone
+        run: node tests/manual/measure-terminal-mobile.mjs
+
       - name: Measure the tooltips
         run: node tests/manual/measure-tooltips.mjs
 

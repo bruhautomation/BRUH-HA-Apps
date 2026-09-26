@@ -2,6 +2,33 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.10.1
+
+**The classic terminal on a phone: Paste works, the keyboard stops fighting you.**
+
+- **Paste works.** The toolbar's Paste button asked for the clipboard at the
+  wrong moment of a tap — the start of it, which a phone does not count as you
+  asking — so it was refused, and the refusal was thrown away without a word.
+  It asks at the end of the tap now. Where the browser still says no (Safari two
+  frames deep, the Home Assistant app), a box opens that you can long-press and
+  Paste into, and **Paste into terminal** sends it.
+- **A multi-line paste stays one paste.** It used to arrive as keystrokes, so
+  the first newline pressed Enter and sent half a prompt. Pasted text now goes
+  through the terminal's own paste, as one block.
+- **Autocorrect and predictive text stop mangling what you type.** The fix for
+  iOS dictation compared each change against the last thing it had sent rather
+  than what was actually in the box, so a correction after ordinary typing
+  re-sent the whole word ("teh" became "tehthe"). It compares against the box
+  now, and leaves pastes and other-language keyboards to the terminal.
+- **The keyboard opening is one redraw, not a dozen.** Every step of the
+  keyboard sliding in resized the terminal, and each resize redraws the whole
+  screen. It resizes once, when the keyboard has finished moving.
+- **The top bar no longer flaps.** In the Home Assistant app, closing the
+  keyboard could leave brAIn's top bar folding and unfolding on its own, over
+  and over.
+- **Toolbar keys don't pop the keyboard open.** Tapping ESC or an arrow with
+  the keyboard down used to bring it back up; it only stays up if it was up.
+
 ## 2.10.0
 
 **brAIn runs your other BRUH add-ons, voice reach is set on the agent and

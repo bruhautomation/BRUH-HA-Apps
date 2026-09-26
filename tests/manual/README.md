@@ -161,3 +161,22 @@ editing it:
 - **The house is one house.** It is a 1930s British semi, so it has a loft, a
   garage and a utility room, and does not have a basement. Devices, tariff and
   household in `MEMORY_MD` are what the cards are describing.
+
+## `measure-terminal-mobile.mjs`
+
+Drives the classic terminal's mobile layer (`brain/ttyd-assets/inject.html`)
+on an emulated touch phone, inside an iframe the way the panel embeds it, with
+a fake socket and a fake xterm standing in for ttyd.
+
+```bash
+node tests/manual/measure-terminal-mobile.mjs
+INJECT_PATH=/path/to/other/inject.html node tests/manual/measure-terminal-mobile.mjs
+```
+
+It fails when the Paste button reads the clipboard outside a tap, when a
+refused read does not open the paste box, when a multi-line paste reaches the
+PTY as anything but one bracketed paste, when autocorrect or dictation sends
+text the keyboard did not change, when a keyboard sliding in resizes the
+terminal more than once, when the panel's bar flaps after a keyboard closes,
+and when a toolbar key opens a keyboard that was down. Run against the script
+before 2.10.1 it fails fourteen ways.
