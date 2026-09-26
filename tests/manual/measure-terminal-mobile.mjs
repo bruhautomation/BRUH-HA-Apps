@@ -168,7 +168,7 @@ async function pasteChecks(browser) {
   //    grants a read on a permission alone, so success says nothing about
   //    whether a phone would have refused it.
   {
-    const { context, page, frame, errors } = await openPanel(browser, { mode: 'term', viewport });
+    const { context, frame, errors } = await openPanel(browser, { mode: 'term', viewport });
     await frame.evaluate((t) => {
       window.__readCalls = [];
       navigator.clipboard.readText = function () {
