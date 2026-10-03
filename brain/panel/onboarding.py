@@ -55,7 +55,17 @@ STATE_FILE = Path(os.environ.get("BRAIN_ONBOARDING_STATE", "/data/onboarding.jso
 FIRST_TOPICS = ("naming", "presence", "energy", "climate", "devices")
 
 MAX_RECOMMENDATIONS = 8
-MIN_MEMORY_CHARS = 200
+# What "something has been learned" means: at least this many FACT lines,
+# in the document or still waiting in the inbox. It used to be 200
+# characters of the document, and the template run.sh seeds is 311 of
+# headings and comments — so the Recommend step opened the moment the fifth
+# topic was recorded, on a document with nothing in it.
+MIN_MEMORY_LINES = 1
+# How long a finished syllabus waits for anything to land before the step
+# opens anyway. Five sessions that found nothing is an answer too, and a
+# screen that waited for ever on it would be the flow dead-ending.
+READY_AFTER_S = 15 * 60
+INBOX_DIR = MEMORY_DIR / "inbox"
 
 # The one card that exists before anything has been studied. It runs from
 # the orientation map in search mode, so it costs a small prompt and a
@@ -310,22 +320,77 @@ def request_study(topic: str = "", tag: str = "ask",
     return topic
 
 
-def learning_progress() -> dict:
+def pending_facts(limit: int = 200) -> list[str]:
+    """The facts still waiting in the memory inbox, oldest file first.
+
+    What the five study sessions found, before any consolidation pass has
+    filed it — which is most of the time at the moment this flow asks: a
+    pass runs when twenty lines are waiting or once a day, and the
+    syllabus is five sessions of whatever each one found.
+    """
+    out: list[str] = []
+    try:
+        paths = sorted(INBOX_DIR.glob("*.jsonl"))
+    except OSError:
+        return out
+    for path in paths:
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in raw.splitlines():
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            fact = str((obj or {}).get("fact") or "").strip() \
+                if isinstance(obj, dict) else ""
+            if fact and not fact.upper().startswith("FORGET:") \
+                    and fact not in out:
+                out.append(fact)
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def _studied_at() -> int:
+    """When the last opening topic was recorded, or 0."""
+    try:
+        data = json.loads(CURRICULUM_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    if not isinstance(data, dict):
+        return 0
+    stamps = [int(v.get("ts") or 0) for k, v in data.items()
+              if k in FIRST_TOPICS and isinstance(v, dict)]
+    return max(stamps) if stamps else 0
+
+
+def learning_progress(now: float | None = None) -> dict:
+    now = time.time() if now is None else now
     studied = _studied_topics()
     done = [t for t in FIRST_TOPICS if t in studied]
     try:
-        memory_chars = len(MEMORY_FILE.read_text(encoding="utf-8"))
+        document = MEMORY_FILE.read_text(encoding="utf-8")
     except OSError:
-        memory_chars = 0
+        document = ""
+    lines = len(shipped_categories.document_lines(document))
+    pending = len(pending_facts())
+    complete = len(done) == len(FIRST_TOPICS)
+    waited = complete and now - _studied_at() >= READY_AFTER_S
     return {
         "topics": list(FIRST_TOPICS),
         "done": done,
         "remaining": [t for t in FIRST_TOPICS if t not in studied],
-        "complete": len(done) == len(FIRST_TOPICS),
-        "memory_chars": memory_chars,
-        # Facts reach the document only at consolidation, so a finished
-        # syllabus with an empty document means "wait", not "nothing found".
-        "memory_ready": memory_chars >= MIN_MEMORY_CHARS,
+        "complete": complete,
+        "memory_chars": len(document),
+        "memory_lines": lines,
+        "pending_facts": pending,
+        # Something learned, wherever it is: filed in the document or
+        # still in the inbox — the recommend pass reads both
+        # (`_shared_blocks`). A finished syllabus that has found nothing
+        # yet means "wait", and past READY_AFTER_S it means "go on".
+        "memory_ready": (lines + pending) >= MIN_MEMORY_LINES or waited,
     }
 
 
@@ -345,14 +410,41 @@ def shipped_choices() -> list[dict]:
             for c in shipped_categories.CATEGORIES]
 
 
-def _shared_blocks(memory: str) -> list[str]:
+# What the waiting facts may cost the recommend prompt. The document has
+# its own cap (`memory_max_kb`); this is the inbox beside it.
+PENDING_CHARS = 6_000
+
+
+def _shared_blocks(memory: str, pending=None) -> list[str]:
     """Everything the two recommend prompts say before the data.
 
     Shared rather than written twice for `_CARD_CONTRACT`'s reason: a second
     copy of what this home has learned, which cards ship, and what the
     homeowner has already rejected is a second copy that drifts.
+
+    ``pending`` is what the study sessions found that no consolidation
+    pass has filed yet — read from the inbox when not handed in. The
+    document alone was usually the empty template at this moment, so the
+    card set the five paid-for studies existed to ground was proposed from
+    a quick tool search instead.
     """
-    parts = ["WHAT HAS BEEN LEARNED ABOUT THIS HOME:", memory.strip() or "(nothing yet)"]
+    if pending is None:
+        pending = pending_facts()
+    filed = "\n".join(shipped_categories.document_lines(memory))
+    parts = ["WHAT HAS BEEN LEARNED ABOUT THIS HOME:",
+             memory.strip() if filed else "(nothing filed into memory yet)"]
+    waiting: list[str] = []
+    used = 0
+    for fact in pending or []:
+        line = f"- {fact}"
+        if used + len(line) + 1 > PENDING_CHARS:
+            break
+        waiting.append(line)
+        used += len(line) + 1
+    if waiting:
+        parts.append("\nWHAT THE STUDY SESSIONS FOUND, NOT YET FILED INTO "
+                     "MEMORY — just as true, read it the same way:")
+        parts += waiting
     parts.append("\nGENERAL CARDS THAT SHIP WITH THE ADD-ON — pick the few "
                  "that fit this home, by id:")
     parts += [f"- {c['id']}: {c['title']} — {c['description']}"

@@ -64,6 +64,10 @@ def battery_runway(snap: dict, now: float) -> list[dict]:
             continue
         if st.get("state") in ("unavailable", "unknown"):
             continue
+        # A battery somebody charges is not one to have a replacement
+        # ready for — `dev.battery_low`'s rule, through the same helper.
+        if devices.rechargeable(house, eid):
+            continue
         points = []
         for r in rows if isinstance(rows, list) else []:
             if not isinstance(r, dict):
@@ -98,12 +102,8 @@ def battery_runway(snap: dict, now: float) -> list[dict]:
                       f"current rate: {level:g}% now, losing "
                       f"{-slope:.1f}% a day over the last {round(span)} "
                       f"days{house.where(eid)}.",
-            "fix": (("Charge it soon; it will run flat before the "
-                     "automations that depend on it notice.")
-                    if devices.battery_kind(house, eid) == "rechargeable"
-                    else ("Have a replacement ready; it will need changing "
-                          "before the automations that depend on it "
-                          "notice.")),
+            "fix": "Have a replacement ready; it will need changing before "
+                   "the automations that depend on it notice.",
             "severity": "warning",
             "fixable": False,
             "entity_id": eid,
@@ -144,7 +144,10 @@ def decline(snap: dict, now: float) -> list[dict]:
         # they end up disagreeing about which box a battery is in.
         if not st or not baseline_check.eligible(house, eid, st):
             continue
-        if abs(moved.get("move") or 0.0) < DECLINE_MIN_MOVE:
+        unit = baseline.get("unit") or (st.get("attributes") or {}).get(
+            "unit_of_measurement")
+        if abs(moved.get("move") or 0.0) < baseline_check.min_move(
+                unit, DECLINE_MIN_MOVE):
             continue
         attrs = st.get("attributes") or {}
         hits.append((abs(moved["spreads"]), eid, moved,

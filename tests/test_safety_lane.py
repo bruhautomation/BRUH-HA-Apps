@@ -394,7 +394,7 @@ class TestResidentCasesCanBeAnswered(LoopCase):
         row = self.file()
         facts = []
 
-        async def submit(fact, source="homeowner"):
+        async def submit(fact, source="homeowner", **about):
             facts.append((fact, source))
 
         saved = self.server._submit_memory

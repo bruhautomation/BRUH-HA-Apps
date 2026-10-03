@@ -130,6 +130,10 @@ class TestTheShellHalfReadsTheSameTable(TestCase):
             "scripts/brain-learn.sh": "BRAIN_MODEL_STUDY",
             "integrations/automation-listener.sh": "BRAIN_MODEL_TASK",
             "integrations/assist-listener.sh": "BRAIN_MODEL_VOICE",
+            # The fast pool is the DEFAULT voice implementation, and it is
+            # the reader this list missed: it passed no --model for an
+            # agent set to Default, so voice ran on the CLI's own default.
+            "integrations/assist-worker-pool.py": "BRAIN_MODEL_VOICE",
         }
         for rel, var in readers.items():
             self.assertIn(var, (self.ADDON / rel).read_text(), rel)

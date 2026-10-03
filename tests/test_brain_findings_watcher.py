@@ -28,6 +28,7 @@ import importlib
 import json
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
@@ -251,15 +252,29 @@ class TestFindingsWatcher(WatcherCase):
         self.assertEqual(len(self.hass.bus.fired), 1)
 
     def test_a_restart_does_not_replay_endings_either(self):
-        """The roster is taken on the first poll after a prime, so a row
-        that left while Home Assistant was down is not announced as
-        having closed now."""
+        """The roster is what the mirror held when the watcher started, so
+        a row that left while Home Assistant was down is not announced as
+        having closed now — it was never on the roster to leave it."""
+        self._write([{"ts": 2, "text": "Still open", "severity": "warning"}])
+        watcher = findings.FindingsWatcher(self.hass)
+        watcher.prime()
+        self._poll(watcher)
+        self.assertEqual(self.hass.bus.fired, [])
+
+    def test_an_ending_after_the_prime_is_news(self):
+        """The prime reads the mirror as it stands at setup, so a row that
+        leaves after it left while Home Assistant was watching. That used
+        to pass silently, because only the id watermark was primed and the
+        roster an ending is diffed against was not taken until the first
+        poll — the half of the snapshot that also let every `fixed` row
+        re-fire `brain_change` on each restart."""
         self._write([{"ts": 1, "text": "Old", "severity": "warning"}])
         watcher = findings.FindingsWatcher(self.hass)
         watcher.prime()
         self._write([])
         self._poll(watcher)
-        self.assertEqual(self.hass.bus.fired, [])
+        self.assertEqual([e for e, _d in self.hass.bus.fired],
+                         ["brain_case_ended"])
 
     def test_a_settled_finding_leaves_the_watermark_quietly(self):
         """Ids leave the mirror when settled; the watcher forgets them
@@ -546,6 +561,159 @@ class TestFindingsBecomeRepairs(MirrorCase):
         REGISTRY.reset()
         watcher.clear_issues()
         self.assertEqual(REGISTRY.deleted, [f"finding_{entry['ts']}"])
+
+
+class TestARestartIsNotNews(MirrorCase):
+    """A row brAIn already fixed stays on the mirror until somebody presses
+    Got it, and `brain_change` is the moment it MOVED there. A watcher
+    that remembered only which ids it had seen took every `fixed` row as
+    having just moved, every restart and every reload."""
+
+    def test_a_restart_does_not_replay_brain_change(self):
+        self.file("Porch light stuck on", status="fixed")
+        first = findings.FindingsWatcher(self.hass)
+        first.prime()
+        self._poll(first)
+        self.hass.bus.fired.clear()
+
+        second = findings.FindingsWatcher(self.hass)
+        second.prime()
+        self._poll(second)
+        self.assertEqual(self.hass.bus.fired, [])
+
+    def test_the_old_prime_did_replay_it(self):
+        """The failure, shown rather than described: a prime that seeds the
+        ids and not the statuses fires `brain_change` on the first poll."""
+        self.file("Porch light stuck on", status="fixed")
+        watcher = findings.FindingsWatcher(self.hass)
+        watcher.prime()
+        watcher._last = None                 # what prime() used to leave
+        self._poll(watcher)
+        self.assertEqual([e for e, _d in self.hass.bus.fired],
+                         ["brain_change"])
+
+    def test_a_fix_landing_after_the_restart_still_fires(self):
+        entry = self.file("Porch light stuck on")
+        watcher = findings.FindingsWatcher(self.hass)
+        watcher.prime()
+        self._poll(watcher)
+        findings_store.set_status(entry["ts"], "fixed")
+        self._poll(watcher)
+        self.assertEqual([e for e, _d in self.hass.bus.fired],
+                         ["brain_change"])
+
+
+class TestDismissIsNotAnEnding(MirrorCase):
+    """Dismiss is the commonest press on a card and it means "not now".
+
+    It took the row out of the mirror, so the watcher fired
+    `brain_case_ended` for it — and when the snooze ran out, `brain_case`
+    and `brain_finding` again, as a problem nobody had seen. Measured on
+    the real store before the mirror carried snoozed rows:
+    ['brain_case_ended', 'brain_case', 'brain_finding'].
+    """
+
+    def _cycle(self, watcher, entry):
+        findings_store.snooze(entry["ts"], int(time.time()) + 3600)
+        self._poll(watcher)
+        findings_store.snooze(entry["ts"], 0)      # back now
+        self._poll(watcher)
+
+    def test_a_snooze_and_its_return_fire_nothing(self):
+        entry = self.file("Front door battery is low")
+        watcher = findings.FindingsWatcher(self.hass)
+        watcher.prime()
+        self._poll(watcher)
+        self._cycle(watcher, entry)
+        self.assertEqual(self.hass.bus.fired, [])
+
+    def test_a_restart_while_snoozed_does_not_announce_the_return(self):
+        entry = self.file("Front door battery is low")
+        findings_store.snooze(entry["ts"], int(time.time()) + 3600)
+        watcher = findings.FindingsWatcher(self.hass)
+        watcher.prime()
+        self._poll(watcher)
+        findings_store.snooze(entry["ts"], 0)
+        self._poll(watcher)
+        self.assertEqual(self.hass.bus.fired, [])
+
+    def test_settled_while_snoozed_is_one_ending_with_its_claim(self):
+        entry = self.file("Front door battery is low")
+        watcher = findings.FindingsWatcher(self.hass)
+        watcher.prime()
+        self._poll(watcher)
+        findings_store.snooze(entry["ts"], int(time.time()) + 3600)
+        self._poll(watcher)
+        findings_store.settle_and_clear(entry["ts"], "fixed")
+        self._poll(watcher)
+        fired = self.hass.bus.fired
+        self.assertEqual([e for e, _d in fired], ["brain_case_ended"])
+        self.assertEqual(fired[0][1]["claim"], "Front door battery is low")
+        self.assertEqual(fired[0][1]["case_id"], f"f:{entry['ts']}")
+
+    def test_a_snoozed_row_is_counted_nowhere_and_raises_no_repair(self):
+        """The mirror's `findings` is what the open count, the to-do list
+        and Repairs read, and a Dismissed row belongs in none of them."""
+        entry = self.file("Front door battery is low")
+        findings_store.snooze(entry["ts"], int(time.time()) + 3600)
+        state = findings.read_findings_state(self.hass)
+        self.assertEqual(state["findings"], [])
+        self.assertEqual(state["open"], 0)
+        self.assertEqual([r["ts"] for r in state["snoozed"]], [entry["ts"]])
+        self.assertGreater(state["snoozed"][0]["snoozed_until"], time.time())
+        watcher = findings.FindingsWatcher(self.hass)
+        watcher.prime()
+        self._poll(watcher)
+        self.assertEqual(REGISTRY.created, [])
+
+    def test_a_mirror_from_before_the_key_reads_as_none_snoozed(self):
+        self._write([{"ts": 1, "text": "Old", "severity": "warning"}])
+        self.assertEqual(findings.read_findings_state(self.hass)["snoozed"], [])
+
+
+class TestTheWholeListIsMirrored(MirrorCase):
+    """The mirror was the newest fifty rows. Repairs raises the OLDEST rows
+    waiting on somebody, so on a busy house it could never see them, and a
+    row that fell off the cut read to the watcher as a case that had
+    ended — then opened again when something newer was settled."""
+
+    def test_past_fifty_rows_every_row_is_on_the_mirror(self):
+        rows = [self.file(f"Problem {n:02d}") for n in range(60)]
+        state = findings.read_findings_state(self.hass)
+        self.assertEqual({f["ts"] for f in state["findings"]},
+                         {r["ts"] for r in rows})
+
+    def test_repairs_gets_the_oldest_on_a_busy_house(self):
+        rows = [self.file(f"Problem {n:02d}") for n in range(60)]
+        watcher = findings.FindingsWatcher(self.hass)
+        watcher.prime()
+        self._poll(watcher)
+        oldest = sorted(r["ts"] for r in rows)[:findings.MAX_REPAIR_ISSUES]
+        self.assertEqual({r["issue_id"] for r in REGISTRY.created},
+                         {f"finding_{ts}" for ts in oldest})
+
+    def test_settling_a_new_row_does_not_reopen_an_old_one(self):
+        rows = [self.file(f"Problem {n:02d}") for n in range(55)]
+        watcher = findings.FindingsWatcher(self.hass)
+        watcher.prime()
+        self._poll(watcher)
+        findings_store.settle_and_clear(rows[-1]["ts"], "fixed")
+        self._poll(watcher)
+        self.assertEqual([e for e, _d in self.hass.bus.fired],
+                         ["brain_case_ended"])
+
+    def test_a_full_store_fits_the_reader(self):
+        """The store's own cap, every prose field at its cut, is still a
+        file the integration will read rather than one it refuses as
+        corrupt — which would read as a mirror that was never written."""
+        long = "x" * 600
+        for n in range(findings_store.MAX_FINDINGS):
+            self.file(f"Problem {n:03d} " + "y" * 150, detail=long, fix=long,
+                      entity_id=f"sensor.thing_{n:03d}")
+        path = Path(findings.findings_state_path(self.hass))
+        self.assertLess(path.stat().st_size, findings.MAX_STATE_BYTES)
+        state = findings.read_findings_state(self.hass)
+        self.assertEqual(len(state["findings"]), findings_store.MAX_FINDINGS)
 
 
 if __name__ == "__main__":

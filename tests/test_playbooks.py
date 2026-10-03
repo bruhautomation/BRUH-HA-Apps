@@ -490,7 +490,21 @@ class TestTheOptionalClaudeRun(unittest.IsolatedAsyncioTestCase):
                      self.server.proposals.knows,
                      self.server.proposals.add,
                      self.server._findings_notify_target,
-                     self.server.automation_writer.protected_patterns)
+                     self.server.automation_writer.protected_patterns,
+                     self.server.engine.get_auth,
+                     self.server.settings_store.load,
+                     self.server.usage_store.budget_state)
+        # The paragraph is a scheduled Claude run, so it answers to the
+        # three gates (`_offer_milestones`' rule). Open here: these cases
+        # are about what the run writes; the gate has its own below.
+        self.gates = {"auth": True, "auto": True, "blocked": False}
+        self.server.engine.get_auth = (
+            lambda: {"type": "oauth", "value": "x"} if self.gates["auth"]
+            else None)
+        self.server.settings_store.load = (
+            lambda: {"auto_enabled": self.gates["auto"]})
+        self.server.usage_store.budget_state = (
+            lambda *a, **k: {"blocked": self.gates["blocked"]})
         self.server.engine.run_claude = run_claude
         self.server.proposals.knows = lambda obj: self.known
         self.server.proposals.add = lambda obj: (self.added.append(obj) or obj)
@@ -501,7 +515,9 @@ class TestTheOptionalClaudeRun(unittest.IsolatedAsyncioTestCase):
     def _restore(self):
         (self.server.engine.run_claude, self.server.proposals.knows,
          self.server.proposals.add, self.server._findings_notify_target,
-         self.server.automation_writer.protected_patterns) = self._old
+         self.server.automation_writer.protected_patterns,
+         self.server.engine.get_auth, self.server.settings_store.load,
+         self.server.usage_store.budget_state) = self._old
 
     async def test_a_known_playbook_costs_no_claude_run(self):
         # The mutation: describe first, ask the store after. A house whose
@@ -511,6 +527,24 @@ class TestTheOptionalClaudeRun(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.server._offer_playbooks(house(), NOW), 0)
         self.assertEqual(self.runs, [])
         self.assertEqual(self.added, [])
+
+    async def test_a_paused_house_spends_nothing_and_is_still_offered(self):
+        """The paragraph is optional and the card is not: closed gates
+        cost no run and leave the deterministic sentence, exactly what a
+        failed run leaves. Each gate on its own, because a check that
+        forgot one is a paused house still paying on a timer."""
+        for gate, value in (("auth", False), ("auto", False),
+                            ("blocked", True)):
+            with self.subTest(gate):
+                self.runs.clear()
+                self.added.clear()
+                self.gates = {"auth": True, "auto": True, "blocked": False,
+                              gate: value}
+                self.assertEqual(
+                    await self.server._offer_playbooks(house(), NOW), 3)
+                self.assertEqual(self.runs, [])
+                smoke = by_class(self.added)["smoke"]
+                self.assertNotIn("every light comes on at full", smoke["why"])
 
     async def test_the_paragraph_replaces_the_deterministic_sentence(self):
         offered = await self.server._offer_playbooks(house(), NOW)

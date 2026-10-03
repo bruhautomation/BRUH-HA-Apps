@@ -26,6 +26,24 @@ reads exactly like a right one, and it is the number somebody would
 decide on. So an automation carrying *any* unsupported trigger is refused
 whole, in as many words, naming the kind.
 
+**Home Assistant 2026.7's purpose-specific triggers are state triggers
+with a name**, and they are replayed as the transitions Core documents for
+them. `trigger: light.turned_on` with `target: {entity_id: …}` is what the
+automation editor writes by default now, and every one of them in
+`PURPOSE_TRIGGERS` is built in Core out of `make_entity_target_state_
+trigger` / `make_entity_transition_trigger` (or the cover pair) — "the
+tracked value became one of these, from something that was not" — over
+states the recorder keeps. Refusing them as unrecorded was a sentence that
+was not true, and it cost every automation built in the new editor its
+replay, its trial and its condition card. The table is copied off Core's
+own `<domain>/trigger.py` and `condition.py` rather than inferred from the
+names. A target that is an area, a floor, a label or a device is refused
+for the reason `would_do` will not expand one: the registry as it was at
+the time is not something this has. And a kind brAIn simply does not
+have in the table is refused as **not known**, never as **not recorded**
+— the second is a claim about Home Assistant and is only true of an
+event, a webhook, an MQTT message and the like.
+
 **A template is only replayed when every entity it reads can be
 reconstructed.** A template trigger is a Jinja expression over the whole
 state machine, and this has a state machine only for the entities it
@@ -55,6 +73,119 @@ import re
 
 # The four the recorder can answer for. Everything else is refused whole.
 REPLAYABLE = frozenset({"time", "state", "numeric_state", "template"})
+
+# The kinds whose firing really is not in the recorder: a message, an
+# event, a request. Only these may be refused with that sentence; any
+# other kind brAIn cannot replay is one it does not KNOW, which is a
+# claim about brAIn rather than about Home Assistant.
+NOT_RECORDED = frozenset({"webhook", "mqtt", "event", "tag", "conversation",
+                          "persistent_notification", "homeassistant"})
+
+# Core's own names for the states these read.
+_UNAVAILABLE = frozenset({"unavailable", "unknown"})
+_HVAC_ON = frozenset({"auto", "cool", "dry", "fan_only", "heat", "heat_cool"})
+_ARMED = frozenset({"armed_away", "armed_custom_bypass", "armed_home",
+                    "armed_night", "armed_vacation"})
+_MEDIA_ON = frozenset({"buffering", "idle", "on", "paused", "playing"})
+_COVER_KINDS = ("awning", "blind", "curtain", "shade", "shutter")
+
+
+def _on_off(domain: str) -> dict:
+    return {f"{domain}.turned_on": {"to": {"on"}},
+            f"{domain}.turned_off": {"to": {"off"}}}
+
+
+# HA 2026.7's purpose-specific triggers, as the transition each one is
+# built from in Core (`homeassistant/components/<domain>/trigger.py`).
+#   to      — the tracked value it fires on reaching
+#   from    — when present, the value it has to come FROM
+#             (`make_entity_transition_trigger`); absent, it may come from
+#             anything that is not already in `to`
+#             (`make_entity_target_state_trigger`)
+#   attr    — the tracked value is this attribute rather than the state
+#   cover   — a cover entity is read as `open`/`closed` (Core reads its
+#             `is_closed` attribute); a binary sensor as `on`/`off`
+PURPOSE_TRIGGERS: dict[str, dict] = {
+    **_on_off("light"), **_on_off("switch"), **_on_off("fan"),
+    "occupancy.detected": {"to": {"on"}},
+    "occupancy.cleared": {"to": {"off"}},
+    "motion.detected": {"to": {"on"}},
+    "motion.cleared": {"to": {"off"}},
+    "lock.locked": {"to": {"locked"}},
+    "lock.unlocked": {"to": {"unlocked"}},
+    "lock.jammed": {"to": {"jammed"}},
+    "lock.opened": {"to": {"open"}},
+    "door.opened": {"to": {"on", "open"}, "cover": True},
+    "door.closed": {"to": {"off", "closed"}, "cover": True},
+    "window.opened": {"to": {"on", "open"}, "cover": True},
+    "window.closed": {"to": {"off", "closed"}, "cover": True},
+    **{f"cover.{k}_opened": {"to": {"open"}, "cover": True}
+       for k in _COVER_KINDS},
+    **{f"cover.{k}_closed": {"to": {"closed"}, "cover": True}
+       for k in _COVER_KINDS},
+    "climate.turned_off": {"to": {"off"}},
+    "climate.turned_on": {"from": {"off"}, "to": set(_HVAC_ON)},
+    "climate.started_heating": {"to": {"heating"}, "attr": "hvac_action"},
+    "climate.started_cooling": {"to": {"cooling"}, "attr": "hvac_action"},
+    "climate.started_drying": {"to": {"drying"}, "attr": "hvac_action"},
+    "media_player.started_playing": {
+        "from": {"idle", "off", "on", "paused"}, "to": {"buffering", "playing"}},
+    "media_player.stopped_playing": {
+        "from": {"buffering", "paused", "playing"}, "to": {"idle", "off", "on"}},
+    "media_player.paused_playing": {
+        "from": {"buffering", "playing"}, "to": {"paused"}},
+    "media_player.turned_off": {"from": set(_MEDIA_ON), "to": {"off"}},
+    "media_player.turned_on": {"from": {"off"}, "to": set(_MEDIA_ON)},
+    "alarm_control_panel.armed": {
+        "from": {"arming", "disarmed", "disarming", "pending", "triggered"},
+        "to": set(_ARMED)},
+    **{f"alarm_control_panel.{s}": {"to": {s}} for s in (
+        "armed_away", "armed_home", "armed_night", "armed_vacation",
+        "disarmed", "triggered")},
+}
+
+# And the conditions (`<domain>/condition.py`): `make_entity_state_condition`
+# — the tracked value is one of these — with `behavior` any/all over the
+# targeted entities that are not unavailable.
+PURPOSE_CONDITIONS: dict[str, dict] = {
+    **{f"{d}.is_on": {"states": {"on"}} for d in ("light", "switch", "fan")},
+    **{f"{d}.is_off": {"states": {"off"}} for d in ("light", "switch", "fan")},
+    "occupancy.is_detected": {"states": {"on"}},
+    "occupancy.is_not_detected": {"states": {"off"}},
+    "motion.is_detected": {"states": {"on"}},
+    "motion.is_not_detected": {"states": {"off"}},
+    "lock.is_locked": {"states": {"locked"}},
+    "lock.is_unlocked": {"states": {"unlocked"}},
+    "lock.is_jammed": {"states": {"jammed"}},
+    "lock.is_open": {"states": {"open"}},
+    "door.is_open": {"states": {"on", "open"}, "cover": True},
+    "door.is_closed": {"states": {"off", "closed"}, "cover": True},
+    "window.is_open": {"states": {"on", "open"}, "cover": True},
+    "window.is_closed": {"states": {"off", "closed"}, "cover": True},
+    **{f"cover.{k}_is_open": {"states": {"open"}, "cover": True}
+       for k in _COVER_KINDS},
+    **{f"cover.{k}_is_closed": {"states": {"closed"}, "cover": True}
+       for k in _COVER_KINDS},
+    "climate.is_off": {"states": {"off"}},
+    "climate.is_on": {"states": set(_HVAC_ON)},
+    "climate.is_heating": {"states": {"heating"}, "attr": "hvac_action"},
+    "climate.is_cooling": {"states": {"cooling"}, "attr": "hvac_action"},
+    "climate.is_drying": {"states": {"drying"}, "attr": "hvac_action"},
+    "media_player.is_on": {"states": set(_MEDIA_ON)},
+    "media_player.is_off": {"states": {"off"}},
+    "media_player.is_playing": {"states": {"playing"}},
+    "media_player.is_paused": {"states": {"paused"}},
+    "media_player.is_not_playing": {
+        "states": {"buffering", "idle", "off", "on", "paused"}},
+    "alarm_control_panel.is_armed": {"states": set(_ARMED)},
+    **{f"alarm_control_panel.is_{s}": {"states": {s}} for s in (
+        "armed_away", "armed_home", "armed_night", "armed_vacation",
+        "disarmed", "triggered")},
+}
+
+# Core renamed two `behavior` words and still reads the old ones
+# (`helpers/trigger/entity_trigger.py`, `_backwards_compatible_behavior`).
+_BEHAVIOR_ALIASES = {"any": "each", "last": "all"}
 
 # What a template may call. A template that reaches past these is refused
 # by name: rendering it against a state machine holding only the entities
@@ -129,13 +260,51 @@ def check_replayable(config: dict) -> list[dict]:
         kind = kind_of(block)
         if not kind:
             raise Refused("a trigger block does not say what kind it is")
-        if kind not in REPLAYABLE:
+        if kind in PURPOSE_TRIGGERS:
+            target_entities(block, f"a `{kind}` trigger")
+            continue
+        if kind in REPLAYABLE:
+            continue
+        if kind in NOT_RECORDED:
             raise Refused(
                 f"a `{kind}` trigger cannot be replayed — the recorder does "
                 "not keep what it fires on, so brAIn would be guessing at "
                 "how often it fired. Replay covers time, state, "
                 "numeric_state and template triggers.")
+        raise Refused(
+            f"brAIn does not know how to replay a `{kind}` trigger yet, so "
+            "it would be guessing at how often it fired. Replay covers "
+            "time, state, numeric_state and template triggers, and Home "
+            "Assistant's own state triggers such as `light.turned_on`.")
     return blocks
+
+
+def target_entities(block: dict, what: str) -> list[str]:
+    """The entity ids a purpose-specific trigger or condition targets.
+
+    `Refused` for an area, a floor, a label or a device under `target:`:
+    which entities those were at the time is a question for the registry
+    as it was then, and a guess is a wrong count that reads like a right
+    one — `would_do`'s reason for not expanding one, and `automation_
+    writer`'s for refusing one. A target naming nothing is refused too,
+    because "it never fired" about a trigger watching nothing is a
+    confident zero about nothing.
+    """
+    target = block.get("target")
+    target = target if isinstance(target, dict) else {}
+    for scope in ("area_id", "floor_id", "label_id", "device_id"):
+        if target.get(scope):
+            raise Refused(
+                f"{what} watches a whole {scope[:-3]} — which entities that "
+                "was at the time is the registry's to say, and brAIn would "
+                "be guessing. Name the entities in the target to replay it.")
+    raw = target.get("entity_id")
+    ids = [raw] if isinstance(raw, str) else list(raw or [])
+    ids = [str(e).strip() for e in ids if isinstance(e, str) and e.strip()]
+    if not ids:
+        raise Refused(f"{what} names no entity, so there is nothing in "
+                      "history to replay it against")
+    return ids
 
 
 def template_entities(text: str) -> set[str]:
@@ -171,9 +340,23 @@ def entities_watched(config: dict) -> set[str]:
                     out.add(eid)
         elif kind == "template":
             out |= template_entities(block.get("value_template"))
+        elif kind in PURPOSE_TRIGGERS:
+            out |= set(_target_ids(block))
     for cond in _conditions_of(config):
         out |= _condition_entities(cond)
     return out
+
+
+def _target_ids(block: dict) -> list[str]:
+    """`target: {entity_id}` as a list, refusing nothing — the fetch half.
+
+    `entities_watched` runs before `check_replayable` and must not raise,
+    so this reads what is there and leaves the refusals to the replay.
+    """
+    target = block.get("target")
+    raw = target.get("entity_id") if isinstance(target, dict) else None
+    ids = [raw] if isinstance(raw, str) else list(raw or [])
+    return [str(e).strip() for e in ids if isinstance(e, str) and e.strip()]
 
 
 def _ensure_list(raw) -> list[dict]:
@@ -206,6 +389,7 @@ def _condition_entities(cond: dict) -> set[str]:
             out.add(eid)
     if cond.get("value_template"):
         out |= template_entities(cond["value_template"])
+    out |= set(_target_ids(cond))
     for key in ("conditions", "condition"):
         nested = cond.get(key)
         if isinstance(nested, (list, dict)):
@@ -333,16 +517,34 @@ def _match(spec, value: str) -> bool:
     return value in [str(s) for s in spec]
 
 
-def _held_for(points, index: int, seconds: float, until: float) -> bool:
+def _held_for(points, index: int, seconds: float, until: float,
+              still=None) -> bool:
     """Whether the state at `index` then lasted `seconds`.
 
     A `for:` is a promise about a stretch, so it is answered from the
-    *next* sample rather than this one — and a stretch still running when
-    the window ends counts only if it has already been long enough, never
-    on the assumption that it continued.
+    samples AFTER this one rather than from this one — and a stretch still
+    running when the window ends counts only if it has already been long
+    enough, never on the assumption that it continued.
+
+    The stretch ends at the first later sample that breaks it, which is
+    `still(state, attrs)` going false — by default, the state no longer
+    being the one it changed to. NOT simply the next sample: the recorder
+    keeps a row for an attribute-only update (a light's brightness, a
+    thermostat's action), and Home Assistant does not cancel a `for:`
+    over one, so ending the stretch there reported a light that stayed on
+    for an hour as one that stayed on for the half hour before somebody
+    dimmed it. A `numeric_state` stretch is "still inside the range",
+    which a sensor reporting every minute crosses no boundary of.
     """
-    started = points[index][0]
-    ends = points[index + 1][0] if index + 1 < len(points) else until
+    started, held = points[index][0], points[index][1]
+    if still is None:
+        def still(state, _attrs):
+            return state == held
+    ends = until
+    for ts, state, attrs in points[index + 1:]:
+        if not still(state, attrs):
+            ends = ts
+            break
     return (ends - started) >= seconds
 
 
@@ -424,7 +626,110 @@ def _numeric_firings(block: dict, timeline: dict, start: float,
                 continue
             if not inside(_num(state)) or inside(_num(points[i - 1][1])):
                 continue
-            if hold and not _held_for(points, i, hold, end):
+            if hold and not _held_for(points, i, hold, end,
+                                      lambda st, _a: inside(_num(st))):
+                continue
+            out.append(ts + hold)
+    return out
+
+
+def _tracked(spec: dict, entity_id: str, state: str, attrs: dict):
+    """The value a purpose-specific trigger or condition reads.
+
+    The state itself, an attribute (`hvac_action` for `climate.started_
+    heating`), or — for a cover under a door, window or cover kind —
+    `open`/`closed`, which Core reads off `is_closed` and which an older
+    history row without that attribute still says through its state.
+    """
+    if spec.get("attr"):
+        return (attrs or {}).get(spec["attr"])
+    if spec.get("cover") and entity_id.startswith("cover."):
+        closed = (attrs or {}).get("is_closed")
+        if isinstance(closed, bool):
+            return "closed" if closed else "open"
+        if state == "closed":
+            return "closed"
+        if state in ("open", "opening", "closing"):
+            return "open"
+        return None
+    return state
+
+
+def _behavior(block: dict) -> tuple[str, float]:
+    options = block.get("options")
+    options = options if isinstance(options, dict) else {}
+    behavior = str(options.get("behavior") or "each").lower()
+    behavior = _BEHAVIOR_ALIASES.get(behavior, behavior)
+    hold = _seconds(options.get("for", block.get("for")))
+    return behavior, hold
+
+
+def _purpose_firings(block: dict, timeline: dict, start: float,
+                     end: float) -> list[float]:
+    """Instants a purpose-specific trigger would have fired.
+
+    Core's own rule (`EntityTargetStateTriggerBase` and its transition
+    sibling): neither end of the change may be `unavailable`/`unknown`,
+    the tracked value must reach one of `to`, and it must come from a
+    value that is not already there — or, where the trigger names a
+    `from`, from one of those. `behavior: each` fires per entity; `first`
+    fires when exactly one targeted entity has got there and `all` when
+    every one that is reporting has, which is read off the timeline at
+    the instant of the change.
+    """
+    kind = kind_of(block)
+    spec = PURPOSE_TRIGGERS[kind]
+    ids = target_entities(block, f"a `{kind}` trigger")
+    behavior, hold = _behavior(block)
+    if behavior not in ("each", "first", "all"):
+        raise Refused(f"`behavior: {behavior}` is not one brAIn knows how "
+                      "to replay")
+    if behavior != "each" and hold and len(ids) > 1:
+        # Core keeps one timer for the whole target there, cancelled the
+        # moment the combined state stops holding — a stretch about every
+        # entity at once, which a per-entity hold would not answer.
+        raise Refused(f"`behavior: {behavior}` with `for:` over several "
+                      "entities is a stretch about all of them at once, "
+                      "which brAIn does not replay yet")
+    for eid in ids:
+        _require_history(timeline, eid, f"this `{kind}` trigger watches")
+
+    def valid(eid: str, state: str, attrs: dict) -> bool:
+        return _tracked(spec, eid, state, attrs) in spec["to"]
+
+    out = []
+    for eid in ids:
+        points = timeline.get(eid) or []
+        for i, (ts, state, attrs) in enumerate(points):
+            if not (start <= ts <= end) or i == 0:
+                continue
+            was, was_attrs = points[i - 1][1], points[i - 1][2]
+            if state in _UNAVAILABLE or was in _UNAVAILABLE:
+                continue
+            if not valid(eid, state, attrs):
+                continue
+            before = _tracked(spec, eid, was, was_attrs)
+            if before is None or before == _tracked(spec, eid, state, attrs):
+                continue
+            if "from" in spec:
+                if before not in spec["from"]:
+                    continue
+            elif before in spec["to"]:
+                continue
+            if behavior != "each":
+                world = [state_at(timeline, other, ts) for other in ids]
+                reporting = [(o, st, at) for o, (st, at) in zip(ids, world)
+                             if st not in _UNAVAILABLE and st != ""]
+                matches = sum(1 for o, st, at in reporting
+                              if valid(o, st, at))
+                if behavior == "first" and matches != 1:
+                    continue
+                if behavior == "all" and matches != len(reporting):
+                    continue
+            if hold and not _held_for(
+                    points, i, hold, end,
+                    lambda st, at, e=eid: (st not in _UNAVAILABLE
+                                           and valid(e, st, at))):
                 continue
             out.append(ts + hold)
     return out
@@ -670,10 +975,43 @@ def passes(cond: dict, timeline: dict, when: float, tz) -> bool:
             if names[local.weekday()] not in [str(w)[:3].lower() for w in want]:
                 return False
         return True
+    if kind in PURPOSE_CONDITIONS:
+        return _purpose_passes(kind, cond, timeline, when)
     raise Refused(
         f"a `{kind or 'nameless'}` condition cannot be replayed — brAIn "
         "would have to guess whether it held, and a guessed condition "
         "silently changes the count")
+
+
+def _purpose_passes(kind: str, cond: dict, timeline: dict,
+                    when: float) -> bool:
+    """A purpose-specific condition at an instant (`EntityConditionBase`).
+
+    `behavior: any` (the default) or `all` over the targeted entities
+    that are reporting — Core leaves an `unavailable`/`unknown` one out of
+    both counts rather than reading it as a no. A `for:` is refused: it
+    is a stretch Core measures from when the value last became valid,
+    which is an answer about history before the instant rather than at it.
+    """
+    spec = PURPOSE_CONDITIONS[kind]
+    ids = target_entities(cond, f"a `{kind}` condition")
+    options = cond.get("options")
+    options = options if isinstance(options, dict) else {}
+    behavior = str(options.get("behavior") or "any").lower()
+    if behavior not in ("any", "all"):
+        raise Refused(f"`behavior: {behavior}` is not one brAIn knows how "
+                      "to replay")
+    if _seconds(options.get("for", cond.get("for"))):
+        raise Refused(f"a `{kind}` condition with `for:` is a stretch of "
+                      "history, which brAIn does not replay yet")
+    seen = []
+    for eid in ids:
+        _require_history(timeline, eid, "this condition reads")
+        state, attrs = state_at(timeline, eid, when)
+        if state in _UNAVAILABLE or state == "":
+            continue
+        seen.append(_tracked(spec, eid, state, attrs) in spec["states"])
+    return all(seen) if behavior == "all" else any(seen)
 
 
 # ---------------------------------------------------------------------------
@@ -817,6 +1155,8 @@ def replay(config: dict, history: dict, start: float, end: float,
             fired += _time_firings(block, start, end, tz)
         elif kind == "template":
             fired += _template_firings(block, timeline, start, end)
+        elif kind in PURPOSE_TRIGGERS:
+            fired += _purpose_firings(block, timeline, start, end)
 
     fired = sorted(t for t in set(fired) if start <= t <= end)
     if len(fired) > MAX_FIRINGS:
@@ -845,10 +1185,12 @@ def replay(config: dict, history: dict, start: float, end: float,
 
 
 __all__ = [
-    "MAX_ENTITIES", "MAX_FIRINGS", "MAX_WINDOW_DAYS", "REPLAYABLE",
+    "MAX_ENTITIES", "MAX_FIRINGS", "MAX_WINDOW_DAYS", "NOT_RECORDED",
+    "PURPOSE_CONDITIONS", "PURPOSE_TRIGGERS", "REPLAYABLE",
     "TEMPLATE_ALLOWED", "Refused", "build_timeline", "check_replayable",
     "check_template", "entities_watched", "fetch_history", "kind_of",
     "passes",
-    "render_template", "replay", "state_at", "template_entities",
+    "render_template", "replay", "state_at", "target_entities",
+    "template_entities",
     "triggers_of", "would_do",
 ]

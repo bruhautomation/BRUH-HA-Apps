@@ -2384,10 +2384,33 @@ def _audit_payload(data: Any) -> str:
     return text
 
 
+async def async_require_admin(hass: HomeAssistant, context) -> None:
+    """Raise unless the caller may use an admin service.
+
+    The same check Home Assistant applies to `async_register_admin_service`,
+    replicated because that registration cannot return response data. A
+    context with no user is the system — an automation, a script started by
+    one, the integration itself — and passes, which is HA's own rule: only
+    an admin can write an automation in the first place, so an automation
+    calling this is an admin's decision. Lifted out of `_admin_gated` so
+    the core services that reach a shell or durable memory (`run_task`,
+    `ask`, `add_memory`, …) ask the SAME question, rather than a second
+    copy of it drifting from this one.
+    """
+    user_id = getattr(context, "user_id", None)
+    if not user_id:
+        return
+    user = await hass.auth.async_get_user(user_id)
+    if user is None:
+        raise UnknownUser(context=context)
+    if not user.is_admin:
+        raise Unauthorized(context=context)
+
+
 def _admin_gated(hass: HomeAssistant, tool: PowerTool):
     """Wrap a handler with the same admin check HA applies to admin
     services (async_register_admin_service doesn't support response data,
-    so the gate is replicated here).
+    so the gate is replicated here — see `async_require_admin`).
 
     Also the audit chokepoint: every power-tool call — these services
     rename entities, delete areas, disable integrations, delete users —
@@ -2396,12 +2419,7 @@ def _admin_gated(hass: HomeAssistant, tool: PowerTool):
     traced or undone."""
 
     async def wrapped(call: ServiceCall):
-        if call.context.user_id:
-            user = await hass.auth.async_get_user(call.context.user_id)
-            if user is None:
-                raise UnknownUser(context=call.context)
-            if not user.is_admin:
-                raise Unauthorized(context=call.context)
+        await async_require_admin(hass, call.context)
         _LOGGER.info(
             "BRUH audit: %s.%s called (user_id=%s) data=%s",
             DOMAIN, tool.service, call.context.user_id or "-",

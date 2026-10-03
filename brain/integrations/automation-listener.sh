@@ -9,8 +9,19 @@
 #
 # Request format:  {"id": "<uuid>", "prompt": "...", "notify": true,
 #                   "notify_entity": "notify.mobile_app", "ts": <epoch>,
-#                   "timeout": <secs>}
-# Response format: {"id": "<uuid>", "result": "claude output", "status": "completed"}
+#                   "timeout": <secs>}  (+ optional model, tools, schema,
+#                   memory, scheduled)
+# Response format: {"id": "<uuid>", "result": "claude output",
+#                   "status": "completed" | "failed", "error": "<code>"}
+#
+# `status` is the half of the result that says whether `result` is an
+# ANSWER. Until it could say "failed", every task was "completed" — an
+# expired login, a timeout and a run that produced nothing included — and
+# the sentence about the failure was handed back as if Claude had said it.
+# `error` is a closed word beside a failure (refused, paused, budget, auth,
+# timeout, permission, max_turns, empty, error), and the text is still the
+# sentence a person reads; BRight's director already raised on any status
+# but "completed", and the integration's bridge raises on it now too.
 #
 # The integration sends the window it will wait ("timeout") with each task;
 # the listener keeps the claude process comfortably inside that window so a
@@ -40,6 +51,13 @@ if [ -r /data/.brain_env ]; then
     # shellcheck disable=SC1091
     source /data/.brain_env
 fi
+
+# Which door a Claude run came through, for the MCP server every task
+# launches (it inherits this environment): a task is not a voice turn and
+# not a person at the terminal, and the server's per-channel rules key on
+# the word. Exported here, once, so every invocation below carries it —
+# the run, its landing and its post-cleanup retry are one task.
+export BRAIN_CHANNEL=task
 
 SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}"
 SHARED_DIR="/config/.brain"
@@ -284,6 +302,14 @@ except Exception:
 allow, deny = list(engine.ANALYST_TOOLS), list(engine.ANALYST_DENIED)
 if not allow or not deny:
     raise SystemExit(1)
+# The analyst runs from CLAUDE_HOME with no --add-dir and no project
+# settings, so it cannot reach a file in /config by construction. A task
+# runs IN /config with settings.local.json pre-approving Read, so the same
+# pair would hand a read-only task secrets.yaml. What the analyst never had
+# is denied here by name, for both narrow scopes.
+for tool in ("Read", "Glob", "Grep", "LS", "NotebookRead"):
+    if tool not in deny:
+        deny.append(tool)
 seen, house_allow = set(), []
 for tool in allow + deny:
     if tool.startswith("mcp__") and tool not in seen:
@@ -317,15 +343,26 @@ PYTOOLS
 # The one place a task's answer is written. A refusal owes the bridge a
 # result file exactly as a finished run does — a task dropped in silence is
 # a service call that times out with nothing to read.
+#
+# Args: id, text, [data], [error code]. An error code makes the status
+# `failed`; without one it is `completed`, and the file is byte-for-byte
+# what a completed task always wrote, so a reader that predates the field
+# reads every answer exactly as before.
 write_task_result() {
-    local task_id="$1" text="$2" data="${3:-}"
+    local task_id="$1" text="$2" data="${3:-}" error="${4:-}"
     local result_file="$RESULTS_DIR/${task_id}.json"
     local tmp_file="${result_file}.tmp"
-    # `data` is the object the CLI validated against the task's schema,
-    # as compact JSON, or empty. Written beside the text and never instead
-    # of it: the bridge reads `.result` as it always has, and `.data` is
-    # what `brain.ask` hands back as structured output.
-    if [ -n "$data" ]; then
+    if [ -n "$error" ]; then
+        # A failure carries no data: the validated object is an answer's,
+        # and a failed run has none however it ended.
+        jq -n --arg id "$task_id" --arg result "$text" --arg status "failed" \
+            --arg error "$error" \
+            '{"id": $id, "result": $result, "status": $status, "error": $error}' > "$tmp_file"
+    elif [ -n "$data" ]; then
+        # `data` is the object the CLI validated against the task's schema,
+        # as compact JSON. Written beside the text and never instead of it:
+        # the bridge reads `.result` as it always has, and `.data` is what
+        # `brain.ask` hands back as structured output.
         jq -n --arg id "$task_id" --arg result "$text" --arg status "completed" \
             --argjson data "$data" \
             '{"id": $id, "result": $result, "status": $status, "data": $data}' > "$tmp_file"
@@ -334,6 +371,110 @@ write_task_result() {
             '{"id": $id, "result": $result, "status": $status}' > "$tmp_file"
     fi
     mv "$tmp_file" "$result_file"
+}
+
+# What a person does about a credential that will not work. The panel's
+# button and never `/login` in a terminal: `enable_terminal` can remove the
+# Terminal tab, and its default face is a chat with no shell in it, so a
+# remedy that names a shell command is one somebody may have no way to do.
+AUTH_REMEDY="Open brAIn from the sidebar and press ⚙ → Claude account → Sign in again — background tasks and insights pick up the fresh sign-in automatically."
+
+# Whether a run nobody pressed may happen now, by the panel's own two
+# switches: the pause (`auto_enabled`) and the usage budget. Prints nothing
+# and succeeds when it may; prints `<code>` then a sentence and fails when
+# it may not. `scheduled` on a task is the integration saying nobody
+# pressed anything — an insight job's timer — and every other unattended
+# Claude run in the add-on answers to these same two gates.
+#
+# Read off the panel's own modules rather than a copy of their rules, for
+# `task_tool_flags`' reason. A panel that cannot be read lets the run go:
+# the gate is a budget, not a safety scope, and "I could not read the
+# settings" must not silently stop every scheduled report a house has.
+task_gate() {
+    local panel_dir="${BRAIN_PANEL_DIR:-/opt/panel}"
+    BRAIN_PANEL_DIR="$panel_dir" python3 - <<'PYGATE' 2>/dev/null || true
+import os
+import sys
+sys.path.insert(0, os.environ.get("BRAIN_PANEL_DIR", "/opt/panel"))
+try:
+    import settings_store
+    import usage_store
+    settings = settings_store.load()
+except Exception:
+    raise SystemExit(0)
+if not settings.get("auto_enabled", True):
+    print("paused")
+    print("brAIn's automatic runs are paused (⚙ → Insights → Automatic "
+          "insights in the panel), so this scheduled run was skipped. Running "
+          "it by hand (brain.run_insight) always runs.")
+    raise SystemExit(0)
+try:
+    budget = usage_store.budget_state(settings)
+except Exception:
+    raise SystemExit(0)
+if budget.get("blocked"):
+    print("budget")
+    print("The session's usage ({:.0f}%) has reached the budget brAIn keeps "
+          "for automatic runs ({}%), so this scheduled run was skipped until "
+          "the window resets. Running it by hand (brain.run_insight) always "
+          "runs.".format(float(budget.get("used_percent") or 0),
+                         budget.get("budget_percent")))
+PYGATE
+}
+
+# What brAIn knows about the house, for a task that asked for it (`memory`
+# on the task: an insight job). The panel's own retrieval — the core facts,
+# the facts about any entity the prompt names, the head of memory.md, and
+# the whole document where there are no facts yet — through the function
+# every card's bundle uses, rather than the first 2 KB of memory.md cut
+# mid-fact by the integration. Empty when the panel cannot be read: memory
+# is context and not a gate, so a run without it is the run there was
+# before this existed. Arg: a file holding the prompt (a heredoc is stdin).
+task_memory_block() {
+    local prompt_file="$1"
+    local panel_dir="${BRAIN_PANEL_DIR:-/opt/panel}"
+    BRAIN_PANEL_DIR="$panel_dir" python3 - "$prompt_file" <<'PYMEM' 2>/dev/null || true
+import os
+import re
+import sys
+sys.path.insert(0, os.environ.get("BRAIN_PANEL_DIR", "/opt/panel"))
+try:
+    import ha_data
+    with open(sys.argv[1], encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+except Exception:
+    raise SystemExit(0)
+ids = sorted({m for m in re.findall(r"\b[a-z_]+\.[a-z0-9_]+\b", text)
+              if ha_data.ENTITY_ID_RE.match(m)})[:50]
+try:
+    block = ha_data._memory_for(entities=ids)
+except Exception:
+    raise SystemExit(0)
+if block and block.strip():
+    # The heading the integration's own byte-cut used, so a prompt that
+    # was written against it reads the same.
+    print("Known about this home:\n" + block.strip())
+PYMEM
+}
+
+# One journal row for a task, through the panel's own journal (and the
+# usage nudge, when a model ran) — brain_run_journal.py says why that is
+# one module and not a copy. In the background and after the result is
+# written: accounting may cost the run nothing, least of all time the
+# bridge is waiting on. Args: outcome, duration, envelope file (or ""),
+# model, error text, scheduled flag.
+journal_task() {
+    local outcome="$1" duration="$2" envelope="$3" model="$4" error="$5" scheduled="$6"
+    local journal_py="${BRAIN_SCRIPTS_DIR:-/opt/scripts}/brain_run_journal.py"
+    [ -r "$journal_py" ] || { [ -n "$envelope" ] && rm -f "$envelope"; return 0; }
+    local extra=()
+    [ "$scheduled" = "true" ] && extra=(--extra scheduled=1)
+    (
+        python3 "$journal_py" record task "$outcome" --duration "$duration" \
+            ${envelope:+--envelope "$envelope"} --model "$model" \
+            --error "$error" "${extra[@]}" > /dev/null 2>&1 || true
+        [ -n "$envelope" ] && rm -f "$envelope"
+    ) &
 }
 
 # The validated object out of a `--json-schema` run's envelope, compact,
@@ -354,7 +495,7 @@ process_task() {
     mv "$task_file" "$work_file" 2>/dev/null || return 0
 
     local task_id prompt notify notify_entity task_ts task_timeout task_model
-    local task_tools task_schema
+    local task_tools task_schema task_memory task_scheduled
 
     task_id=$(jq -r '.id // empty' "$work_file" 2>/dev/null)
     prompt=$(jq -r '.prompt // empty' "$work_file" 2>/dev/null)
@@ -368,6 +509,11 @@ process_task() {
     # one argv entry; empty when the task carries none, and then no flag
     # is passed — a flag the CLI may not know is only ever asked for.
     task_schema=$(jq -c 'if (.schema | type) == "object" then .schema else empty end' "$work_file" 2>/dev/null)
+    # Two flags an insight job sets (see task_gate / task_memory_block);
+    # read as the literal `true` and nothing else, so a task that does not
+    # carry them — BRight's, every older one — runs exactly as before.
+    task_memory=$(jq -r 'if .memory == true then "true" else "" end' "$work_file" 2>/dev/null)
+    task_scheduled=$(jq -r 'if .scheduled == true then "true" else "" end' "$work_file" 2>/dev/null)
 
     # A task that names no model takes the plan's tier for a task
     # (`BRAIN_MODEL_TASK`, off panel/model_plan.py via /data/.brain_env);
@@ -422,11 +568,41 @@ process_task() {
     fi
     if ! tool_flags_out=$(task_tool_flags "$task_tools"); then
         bashio::log.error "Task [$task_id] asked for tools='${task_tools}' and it could not be honoured"
-        write_task_result "$task_id" "brAIn refused this task: tools='${task_tools}' is not one of full, house or read_only, or the analyst's tool lists could not be read from the panel. A task that cannot be scoped is not run with the full grant."
+        write_task_result "$task_id" "brAIn refused this task: tools='${task_tools}' is not one of full, house or read_only, or the analyst's tool lists could not be read from the panel. A task that cannot be scoped is not run with the full grant." "" refused
+        journal_task error 0 "" "${task_model:-}" "tools scope could not be honoured" "$task_scheduled"
         return
     fi
     if [ -n "$tool_flags_out" ]; then
         mapfile -t tool_flags <<< "$tool_flags_out"
+    fi
+
+    # A scheduled run answers to the panel's pause and budget before it
+    # spends anything. A skip is a failure to the caller — the insight
+    # sensor shows the sentence rather than a report — and is NOT a fault:
+    # nothing ran, so nothing is journaled, which is a refusal doing its job.
+    if [ "$task_scheduled" = "true" ]; then
+        local gate_out gate_code
+        gate_out=$(task_gate)
+        if [ -n "$gate_out" ]; then
+            gate_code=$(printf '%s\n' "$gate_out" | sed -n '1p')
+            bashio::log.info "Scheduled task [$task_id] skipped: ${gate_code}"
+            write_task_result "$task_id" "$(printf '%s\n' "$gate_out" | sed -n '2,$p')" "" "$gate_code"
+            return
+        fi
+    fi
+
+    # What brAIn knows, in front of the prompt, for a task that asked.
+    if [ "$task_memory" = "true" ]; then
+        local prompt_file memory_block
+        prompt_file=$(mktemp)
+        printf '%s' "$prompt" > "$prompt_file"
+        memory_block=$(task_memory_block "$prompt_file")
+        rm -f "$prompt_file"
+        if [ -n "$memory_block" ]; then
+            prompt="${memory_block}
+
+${prompt}"
+        fi
     fi
 
     cleanup_stale_files
@@ -507,7 +683,11 @@ process_task() {
     task_data=$(extract_claude_data "$output_file")
     claim_task_session "$output_file"
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
-    rm -f "$output_file" "$stderr_file"
+    # The envelope is kept until the journal has read it (journal_task
+    # removes it); everything else goes now.
+    local envelope_file="${output_file}.envelope"
+    mv -f "$output_file" "$envelope_file" 2>/dev/null || envelope_file=""
+    rm -f "$stderr_file"
 
     # Check for /api/mcp auth errors in stderr — deep-clean configs and retry
     # within the remaining time budget.
@@ -530,21 +710,55 @@ process_task() {
             task_data=$(extract_claude_data "$output_file")
             claim_task_session "$output_file"
             stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
-            rm -f "$output_file" "$stderr_file"
+            # The retry's envelope is the one that answers the task.
+            [ -n "$envelope_file" ] && rm -f "$envelope_file"
+            envelope_file="${output_file}.envelope"
+            mv -f "$output_file" "$envelope_file" 2>/dev/null || envelope_file=""
+            rm -f "$stderr_file"
             bashio::log.info "Retried task [$task_id] after /api/mcp cleanup"
         else
             bashio::log.warning "No time budget left to retry task [$task_id] (${remaining}s remaining)"
         fi
     fi
 
+    # Whether this run FAILED, as a closed word, decided here once and
+    # carried to the result file, the event and the journal alike. Empty
+    # means it answered.
+    local fail_code=""
+
+    # The CLI's own verdict on its envelope, read before any words are:
+    # an `is_error` result is a failure whatever its text says ("API Error:
+    # 529 Overloaded" is not an answer), and a turn cap that the landing
+    # could not rescue is that and not a mystery.
+    if [ -n "$envelope_file" ] && [ -n "$result" ]; then
+        local env_error env_subtype
+        env_error=$(jq -r 'if type == "object" then (.is_error // false) else false end' "$envelope_file" 2>/dev/null)
+        env_subtype=$(jq -r 'if type == "object" then (.subtype // "") else "" end' "$envelope_file" 2>/dev/null)
+        if [ "$env_error" = "true" ]; then
+            fail_code="error"
+            [ "$env_subtype" = "error_max_turns" ] && fail_code="max_turns"
+            # An error envelope with no text of its own reaches here as the
+            # raw JSON (extract_claude_result's fallback), which is nobody's
+            # sentence — say what happened instead.
+            if [ -z "$(jq -r 'if type == "object" then (.result // "") else "" end' "$envelope_file" 2>/dev/null)" ]; then
+                if [ "$fail_code" = "max_turns" ]; then
+                    result="The task ran out of room before it could answer: it reached its turn limit and could not be wrapped up in the time left. Ask for less in one go, or give it a longer timeout."
+                else
+                    result="Claude's run ended with an error (${env_subtype:-unknown}) and no answer. Check the brAIn add-on logs."
+                fi
+            fi
+        fi
+    fi
+
     # Auth failures come back as the result text in -p mode ("Failed to
     # authenticate: OAuth session expired and could not be refreshed").
     # Replace the raw CLI error with something the user can act on — the
-    # fix is a one-time /login in the interactive terminal, which every
-    # background channel picks up automatically on its next spawn.
+    # panel's own sign-in, which every background channel picks up
+    # automatically on its next spawn.
     if printf '%s' "$result" | grep -qiE "OAuth session expired|OAuth token (refresh failed|revoked)|failed to authenticate|please run /login|invalid api key"; then
         bashio::log.error "Claude auth failure in task [$task_id]: ${result:0:200}"
-        result="Claude's saved login has expired and could not be refreshed automatically. Open the brAIn add-on from the sidebar and run /login once — background tasks and insights pick up the fresh login automatically."
+        result="Claude's saved login has expired and could not be refreshed automatically. ${AUTH_REMEDY}"
+        fail_code="auth"
     fi
 
     # If result is empty, something went wrong — check stderr for clues
@@ -554,12 +768,16 @@ process_task() {
         if [ "$duration" -ge "$((claude_limit - 5))" ] 2>/dev/null; then
             result="Claude task timed out after ${duration}s. This may be caused by a broken MCP server connection. Try restarting the brAIn add-on."
             bashio::log.error "Claude process timed out (limit=${claude_limit}s)"
+            fail_code="timeout"
         elif echo "$stderr_output" | grep -qi "not logged in\|please log in\|authentication"; then
-            result="Claude is not logged in. Please open the brAIn sidebar and complete the OAuth login first."
+            result="Claude is not signed in. ${AUTH_REMEDY}"
+            fail_code="auth"
         elif echo "$stderr_output" | grep -qi "permission\|not allowed\|denied"; then
             result="Claude encountered a permission error. Check the add-on logs for details."
+            fail_code="permission"
         else
             result="Task failed — Claude didn't produce a result. Check the brAIn add-on logs."
+            fail_code="empty"
         fi
     fi
 
@@ -584,14 +802,30 @@ process_task() {
 
     # Check for auth errors in the result text
     if echo "$result" | grep -qi "not logged in\|please log in\|authentication required"; then
-        result="Claude is not logged in. Please open the brAIn sidebar and complete the OAuth login first."
-        bashio::log.error "Claude auth error - user needs to log in via the terminal"
+        result="Claude is not signed in. ${AUTH_REMEDY}"
+        fail_code="auth"
+        bashio::log.error "Claude auth error - user needs to sign in from the panel"
     fi
 
     # Write result file (atomic via tmp + rename)
-    write_task_result "$task_id" "$result" "${task_data:-}"
+    write_task_result "$task_id" "$result" "${task_data:-}" "$fail_code"
 
-    bashio::log.info "Task completed [$task_id]"
+    if [ -n "$fail_code" ]; then
+        bashio::log.warning "Task failed [$task_id]: ${fail_code}"
+    else
+        bashio::log.info "Task completed [$task_id]"
+    fi
+
+    # The journal's word for how it ended (journal.OUTCOMES), and the row.
+    local outcome="ok"
+    case "$fail_code" in
+        '') outcome="ok" ;;
+        auth|timeout|max_turns) outcome="$fail_code" ;;
+        permission) outcome="denied" ;;
+        *) outcome="error" ;;
+    esac
+    journal_task "$outcome" "$duration" "$envelope_file" "${task_model:-}" \
+        "$([ -n "$fail_code" ] && printf '%s' "${result:0:200}")" "$task_scheduled"
 
     # Send notification if requested. notify_entity names the notify
     # *service* ("notify.mobile_app_phone" or "mobile_app_phone"), so the
@@ -603,8 +837,10 @@ process_task() {
         local message notify_service notify_payload
         message=$(echo "$result" | head -10 | tr '\n' ' ')
         notify_service="${notify_entity#notify.}"
+        local verb="completed"
+        [ -n "$fail_code" ] && verb="failed"
         notify_payload=$(jq -n \
-            --arg msg "Claude task completed: ${message}" \
+            --arg msg "Claude task ${verb}: ${message}" \
             '{"message": $msg}')
         curl -s -X POST \
             -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
@@ -613,12 +849,16 @@ process_task() {
             "http://supervisor/core/api/services/notify/${notify_service}" 2>/dev/null || true
     fi
 
-    # Fire completion event on the HA event bus
-    local event_payload
+    # Fire completion event on the HA event bus — with the same status the
+    # result file carries, so an automation listening for the event can
+    # tell a failed task from an answered one.
+    local event_payload event_status="completed"
+    [ -n "$fail_code" ] && event_status="failed"
     event_payload=$(jq -n \
         --arg id "$task_id" \
-        --arg status "completed" \
-        '{"task_id": $id, "status": $status}')
+        --arg status "$event_status" \
+        --arg error "$fail_code" \
+        '{"task_id": $id, "status": $status} + (if $error != "" then {"error": $error} else {} end)')
     curl -s -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \

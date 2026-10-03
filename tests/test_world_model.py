@@ -372,12 +372,61 @@ class TestADutchHouse(unittest.TestCase):
         self.assertEqual(thermal.pick_outdoor(snap["states"], areas)[0],
                          "sensor.buiten_dauwpunt")
         world = read_house(snap, DUTCH_ANSWERS)
-        self.assertEqual(thermal.pick_outdoor(snap["states"], areas, world)[0],
-                         "sensor.buiten_temperatuur")
+        self.assertEqual(
+            thermal.pick_outdoor(snap["states"], areas, world=world)[0],
+            "sensor.buiten_temperatuur")
+        # The ranking says WHY, and the dew point is not even a candidate.
+        chosen = thermal.choose_outdoor(snap["states"], areas,
+                                        snap["entities"], world=world)
+        self.assertIn("read by brAIn as measuring the outdoor air",
+                      chosen["why"])
+        self.assertNotIn("sensor.buiten_dauwpunt",
+                         [c["entity_id"] for c in chosen["candidates"]])
         rooms = thermal.room_candidates(snap["states"],
                                         "sensor.buiten_temperatuur", "°C",
                                         areas, world)
         self.assertEqual(rooms, ["sensor.woonkamer_temperatuur"])
+
+    def test_a_reading_replaces_the_names_evidence_in_the_ranking(self):
+        """A heat pump's outdoor unit, named in Dutch and in no area, sorts
+        first and says nothing to the word lists — so without a reading it
+        ties with the real thermometer and wins on the alphabet. Read as a
+        machine, it drops below zero and is listed with the reason."""
+        import thermal
+        snap = dutch_house()
+        snap["states"]["sensor.aa_warmtepomp_buitenunit"] = st(
+            "14.0", device_class="temperature", unit_of_measurement="°C",
+            state_class="measurement", friendly_name="Warmtepomp buitenunit")
+        snap["entities"].append({"entity_id": "sensor.aa_warmtepomp_buitenunit",
+                                 "platform": "daikin"})
+        areas = thermal.area_map({"areas": snap["areas"],
+                                  "entities": snap["entities"],
+                                  "devices": snap["devices"]})
+        self.assertEqual(
+            thermal.pick_outdoor(snap["states"], areas, snap["entities"])[0],
+            "sensor.aa_warmtepomp_buitenunit")
+        answers = {**DUTCH_ANSWERS, "sensor.aa_warmtepomp_buitenunit": {
+            "measures": "heater", "confidence": 0.9}}
+        world = read_house(snap, answers)
+        chosen = thermal.choose_outdoor(snap["states"], areas,
+                                        snap["entities"], world=world)
+        self.assertEqual(chosen["entity_id"], "sensor.buiten_temperatuur")
+        pump = next(c for c in chosen["candidates"]
+                    if c["entity_id"] == "sensor.aa_warmtepomp_buitenunit")
+        self.assertFalse(pump["eligible"])
+        self.assertTrue(any("read by brAIn as a reading of a machine" in r
+                            for r in pump["reasons"]))
+        # Below the floor the reading is no answer, and the old tie stands.
+        unsure = {**answers, "sensor.aa_warmtepomp_buitenunit": {
+            "measures": "heater", "confidence": 0.3},
+            "sensor.buiten_temperatuur": {"measures": "outdoor",
+                                          "confidence": 0.3},
+            "sensor.buiten_dauwpunt": {"measures": "derived_index",
+                                       "confidence": 0.3}}
+        self.assertEqual(thermal.pick_outdoor(
+            snap["states"], areas, snap["entities"],
+            world=read_house(snap, unsure))[0],
+            "sensor.aa_warmtepomp_buitenunit")
 
     def test_thermal_build_reads_the_store_itself(self):
         """`build` with no world handed in reads the store, matched against
@@ -440,18 +489,36 @@ class TestADutchHouse(unittest.TestCase):
         self.assertEqual(night["entities"]["light.nachtlampje"]["state"], "on")
         self.assertEqual(night["entities"]["light.plafond"]["state"], "off")
 
-    def test_a_phone_is_charged_not_replaced(self):
+    def test_a_battery_the_integration_cannot_name_is_read_not_guessed(self):
         snap = dutch_house()
-        rows = devices.battery_low(snap, NOW)
-        # The fallback list reads the device's maker and model, so a Pixel
-        # is a phone with no reading at all.
-        self.assertEqual(rows[0]["fix"], "Charge it.")
-        snap["devices"][1].update(manufacturer="Ikea", model="Sensor",
-                                  name="Sensor")
-        self.assertEqual(devices.battery_low(snap, NOW)[0]["fix"],
-                         "Replace the battery.")
-        self.assertEqual(devices.battery_low(with_world(snap), NOW)[0]["fix"],
-                         "Charge it.")
+        # The companion app's battery is charged by construction, which the
+        # integration says and no reading is needed for.
+        self.assertEqual(devices.battery_low(snap, NOW), [])
+        # The same battery on an integration that is not on that list, on a
+        # device named in Dutch: nothing deterministic can tell, and the
+        # name is NOT read — "never by the name" — so it stays a battery
+        # somebody has to change.
+        row = next(e for e in snap["entities"]
+                   if e["entity_id"] == "sensor.telefoon_batterij")
+        row["platform"] = "oralb"
+        snap["devices"][1].update(name="Tandenborstel", manufacturer="Oral-B",
+                                  model="iO Series 9")
+        self.assertEqual([r["fix"] for r in devices.battery_low(snap, NOW)],
+                         ["Replace the battery."])
+        # A confident reading says it is charged: not a row at all.
+        self.assertEqual(devices.battery_low(with_world(snap), NOW), [])
+        # Below the floor the reading is no answer, and the row stands.
+        unsure = {**DUTCH_ANSWERS, "sensor.telefoon_batterij": {
+            "battery_kind": "rechargeable", "confidence": 0.3}}
+        self.assertEqual(len(devices.battery_low(with_world(snap, unsure),
+                                                 NOW)), 1)
+        # And a reading comes LAST: a confident "replaceable" cannot put the
+        # companion app's battery back on the list.
+        row["platform"] = "mobile_app"
+        replaceable = {**DUTCH_ANSWERS, "sensor.telefoon_batterij": {
+            "battery_kind": "replaceable", "confidence": 1.0}}
+        self.assertEqual(devices.battery_low(with_world(snap, replaceable),
+                                             NOW), [])
 
 
 class TestSafetyMayBeAddedAndNeverRemoved(unittest.TestCase):

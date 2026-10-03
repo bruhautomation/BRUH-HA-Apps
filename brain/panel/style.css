@@ -4691,6 +4691,13 @@ body.term-classic #termMode .ico-out { display: block; }
   }
 }
 
+/* The thermal drill-down's outdoor reference: which one, why, and a picker.
+   No font-size on the select, so the 16px touch floor above still holds. */
+.kref { margin-top: 8px; }
+.kref .kreflabel { display: block; margin-top: 6px; color: var(--ink-2); font-size: 12px; }
+.kref select { display: block; max-width: 100%; margin-top: 4px; min-height: 36px; }
+@media (pointer: coarse) { .kref select { min-height: 44px; } }
+
 /* ------------------------------------------------------------ the house now
    One quiet line above the Findings feed (`renderHouseNow` in app.js): the
    mode as a word, the sentence, what is coming up. Small on purpose — it is
