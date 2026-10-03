@@ -964,7 +964,10 @@ async def collect_orientation(question: str | None = None, *,
 
     hidden = registries["hidden"]
     ent_area = registries["entity_area"]
-    domains: dict[str, int] = {}
+    # Not `domains`: that name is the card's, and shadowing it handed
+    # retrieval every domain in the house — a Climate card was told the
+    # lights' facts, and the argument did nothing.
+    counts: dict[str, int] = {}
     per_area: dict[str, int] = {}
     unavailable = 0
     anchors: list[dict] = []
@@ -973,7 +976,7 @@ async def collect_orientation(question: str | None = None, *,
         if not eid or eid in hidden:
             continue
         domain = eid.split(".")[0]
-        domains[domain] = domains.get(domain, 0) + 1
+        counts[domain] = counts.get(domain, 0) + 1
         area = ent_area.get(eid)
         if area:
             per_area[area] = per_area.get(area, 0) + 1
@@ -982,7 +985,7 @@ async def collect_orientation(question: str | None = None, *,
         if domain in ANCHOR_DOMAINS and len(anchors) < MAX_ANCHORS:
             anchors.append(slim_state(st, area, now))
 
-    ranked_domains = dict(sorted(domains.items(), key=lambda kv: -kv[1])
+    ranked_domains = dict(sorted(counts.items(), key=lambda kv: -kv[1])
                           [:MAX_ORIENTATION_DOMAINS])
     ranked_areas = dict(sorted(per_area.items(), key=lambda kv: -kv[1])
                         [:MAX_ORIENTATION_AREAS])
@@ -993,7 +996,7 @@ async def collect_orientation(question: str | None = None, *,
             "location": config.get("location_name"),
             "ha_version": config.get("version"),
         },
-        "entity_count": sum(domains.values()),
+        "entity_count": sum(counts.values()),
         "unavailable_count": unavailable,
         "domains": ranked_domains,
         "areas": ranked_areas,
