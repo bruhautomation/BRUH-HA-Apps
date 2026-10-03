@@ -90,7 +90,18 @@ Rules, and each of them is something brAIn will refuse the answer over:
   not add an action that switches the automation off — brAIn writes that
   itself.
 * `condition` may be omitted or empty.
-* Do not set `id`, `alias`, `mode` or `description`.
+* `mode` is `single` (the default) or `restart`, and nothing else. Use
+  `restart` when the automation WAITS — a `delay`, `wait_for_trigger` or
+  `wait_template` — and a new trigger during the wait should start it
+  again: "turn the light off five minutes after the motion stops" means
+  five minutes after the LAST motion, and under `single` every trigger
+  while it waits is dropped, so the light goes off five minutes after the
+  first one with somebody still in the room. Better still, write a timeout
+  as a second `state` trigger with `for:` ("off for 5 minutes") and a
+  `choose` on the trigger's `id`, which needs no wait at all. Never
+  `parallel` or `queued`: two copies of one rule running at once over one
+  door opening is two lights arguing.
+* Do not set `id`, `alias` or `description`.
 * If nothing in the house matches what they named, answer
   {"once": false, "error": "<what you looked for and did not find>"}.
 
@@ -98,7 +109,11 @@ Be literal. A sentence you half-understood, written as an automation,
 is a thing that happens in somebody's house — every evening, for a
 standing rule."""
 
-# The answer's shape is the one-off's: `once`, `plain`, the three lists.
+# The two modes in which a rule never has two copies running at once.
+ALLOWED_MODES = ("single", "restart")
+
+# The answer's shape is the one-off's: `once`, `plain`, the three lists —
+# and `mode`, which only a standing rule reads (a one-off is `single`).
 SCHEMA = intents.SCHEMA
 prompt = intents.prompt
 parse_answer = intents.parse_answer
@@ -147,15 +162,29 @@ def build(sentence: str, answer: dict, ts: int,
                           "use — there was no trigger or no action in it.")
         return out
 
+    # The model's to choose between the two modes that never run a rule
+    # twice at once, and refused beyond them. It used to be forced to
+    # `single` with "two porch lights arguing" as the reason — which is an
+    # argument against `parallel` and `queued`, not against `restart`, and
+    # `restart` is what the commonest rule anybody asks for needs: on with
+    # motion, off N minutes later, where `single` drops every re-trigger
+    # during the wait and the light goes off on somebody still there. The
+    # replay cannot show the difference (it models neither mode nor
+    # delays), so this is decided here and not on the card.
+    mode = str(answer.get("mode") or "single").strip().lower()
+    if mode not in ALLOWED_MODES:
+        out["refused"] = (
+            f"brAIn will not write a `{mode[:20]}` rule: it would run more "
+            "than one copy at once over a single trigger. Ask again and it "
+            "will write one that runs once, or restarts.")
+        return out
     config = {
         "id": f"{ID_PREFIX}{int(ts)}",
         "trigger": triggers,
         "condition": intents._listify(answer.get("condition")
                                       or answer.get("conditions")),
         "action": list(steps),
-        # Not the model's to choose: a rule that could run twice at once
-        # over one door opening is two porch lights arguing.
-        "mode": "single",
+        "mode": mode,
     }
 
     try:

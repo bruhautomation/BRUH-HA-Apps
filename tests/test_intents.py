@@ -212,12 +212,16 @@ class TestTheTwoAdditions(IntentCase):
         self.assertNotIn("refused", row)
         last = row["config"]["action"][-1]
         self.assertEqual(last["service"], "automation.turn_off")
-        self.assertEqual(last["target"]["entity_id"], row["entity_id"])
+        # Itself, by `this` — never an id worked out in advance, which is
+        # a guess at a slug somebody else (a restored orphan of the same
+        # sentence) may already hold.
+        self.assertEqual(last["target"]["entity_id"], "{{ this.entity_id }}")
         self.assertEqual(len(row["config"]["action"]), 2)
 
-    def test_it_disarms_the_entity_the_writer_will_actually_create(self):
-        """The alias becomes the object id, so the two have to be derived the
-        same way — one implementation, `automation_writer.slugify`."""
+    def test_the_card_s_first_guess_is_the_writer_s_slug(self):
+        """Until Core's registry says otherwise (`_registry_entity_id`),
+        the entity a card names is the writer's own slug of the alias —
+        one implementation, `automation_writer.slugify`."""
         import automation_writer
 
         row = self.build()
