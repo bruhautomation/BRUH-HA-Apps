@@ -2276,6 +2276,12 @@ def _appliance_summary() -> dict:
         # profiled sensors and no chores means nothing here is named
         # like a machine somebody has to empty.
         "chore_capable": named,
+        # And what the nightly cap left unread, by count and by a sample of
+        # names: a washer the pass never read is a silence nothing else
+        # on any surface could explain.
+        "eligible": store.get("eligible", store.get("asked", 0)),
+        "cut": store.get("cut_count", 0),
+        "cut_sample": list(store.get("cut") or []),
     }
 
 
@@ -7927,9 +7933,26 @@ async def build_baselines(reason: str = "schedule") -> dict:
             states = await ha_data._rest_get(session, "/states", timeout=60)
             by_id = {s["entity_id"]: s for s in (states or [])
                      if isinstance(s, dict) and s.get("entity_id")}
+            # The registries, once, before any builder: the baselines read
+            # the entity registry to keep diagnostic and config sensors off
+            # the cap, and thermal needs all three. A registry that did not
+            # answer costs the baselines that one filter and costs thermal
+            # its whole pass — see thermal's block below.
+            areas = devices = ents = None
+            registry_error = ""
             try:
-                payload = _done("baselines",
-                                await baselines.build(session, by_id, started))
+                areas, devices, ents = await ha_data._ws_commands(session, [
+                    {"type": "config/area_registry/list"},
+                    {"type": "config/device_registry/list"},
+                    {"type": "config/entity_registry/list"}])
+            except Exception as exc:  # noqa: BLE001 — a fetch, not the pass
+                registry_error = str(exc)[:200]
+                log.info("baseline pass: the registries did not answer: %s",
+                         exc)
+            try:
+                payload = _done("baselines", await baselines.build(
+                    session, by_id, started,
+                    entities=ents if isinstance(ents, list) else None))
             except Exception as exc:  # noqa: BLE001 — one builder, not the pass
                 _failed("baselines", exc)
             # The same pass, because it is the same claim about the same
@@ -7959,14 +7982,11 @@ async def build_baselines(reason: str = "schedule") -> dict:
             # every room is unnameable and the store would be written as
             # a house with no rooms in it.
             try:
-                areas, devices, ents = await ha_data._ws_commands(session, [
-                    {"type": "config/area_registry/list"},
-                    {"type": "config/device_registry/list"},
-                    {"type": "config/entity_registry/list"}])
                 if ents is None or areas is None:
                     raise RuntimeError(
                         "the registries did not answer — the thermal store "
-                        "was left as it was")
+                        "was left as it was"
+                        + (f" ({registry_error})" if registry_error else ""))
                 rooms = _done("thermal", await thermal.build(
                     session, by_id,
                     {"areas": areas, "devices": devices or [],
@@ -8029,6 +8049,9 @@ async def h_baselines(request: web.Request) -> web.Response:
         "tz": store.get("tz", ""),
         "days": store.get("days", baselines.HISTORY_DAYS),
         "measured": len(store.get("entities") or {}),
+        "asked": store.get("asked", 0),
+        "cut": store.get("cut_count", 0),
+        "cut_sample": list(store.get("cut") or []),
         "stale": baselines.is_stale(store) if store.get("built_at") else True,
         "running": _baselines_busy(),
         "last": BASELINE_STATE["last"],
@@ -8369,8 +8392,21 @@ def _thermal_payload(store: dict) -> dict:
             "coolest": entry.get("coolest"),
             "hours_to_warm": None if warm is None else round(warm, 1),
         })
+    # The reference every `k` above was measured against, why it was the
+    # one, and what else could have been — so the tab can say it and the
+    # person who knows better can change it (`thermal_outdoor`). The
+    # choice is read live: it takes effect at the next nightly pass, and
+    # the tab has to be able to say a choice is waiting for one.
+    try:
+        chosen = settings_store.load().get("thermal_outdoor")
+    except Exception:  # noqa: BLE001 — a setting nobody could read is unset
+        chosen = None
     return {"outdoor": store.get("outdoor") or "",
             "unit": store.get("unit") or "",
+            "outdoor_source": store.get("outdoor_source") or "",
+            "outdoor_why": store.get("outdoor_why") or "",
+            "outdoor_candidates": list(store.get("outdoor_candidates") or []),
+            "outdoor_choice": chosen,
             "rooms": rooms}
 
 
@@ -9262,6 +9298,16 @@ def _diagnostics_payload() -> dict:
         "baselines": {
             "built_at": _baseline_store.get("built_at", 0),
             "measured": len(_baseline_store.get("entities") or {}),
+            "asked": _baseline_store.get("asked", 0),
+            # What the nightly cap left out, and how many were never
+            # candidates (no mean to bucket, or a settings-page sensor):
+            # a sensor past the cap is one every reader is blind to.
+            "eligible": _baseline_store.get(
+                "eligible", _baseline_store.get("asked", 0)),
+            "cut": _baseline_store.get("cut_count", 0),
+            "cut_sample": list(_baseline_store.get("cut") or []),
+            "skipped": dict(_baseline_store.get("skipped") or {}),
+            "categories_read": _baseline_store.get("categories_read"),
             "tz": _baseline_store.get("tz", ""),
             "stale": (baselines.is_stale(_baseline_store)
                       if _baseline_store.get("built_at") else True),
@@ -9325,6 +9371,11 @@ def _diagnostics_payload() -> dict:
             "measured": len(_thermal_store.get("rooms") or {}),
             "asked": _thermal_store.get("asked", 0),
             "outdoor": _thermal_store.get("outdoor", ""),
+            # Why that sensor, and whether a person chose it: every room's
+            # model is measured against it, and a reference nobody can
+            # check is one nobody can correct.
+            "outdoor_source": _thermal_store.get("outdoor_source", ""),
+            "outdoor_why": _thermal_store.get("outdoor_why", ""),
             "coldest": _thermal_store.get("coldest"),
             "reason": _thermal_store.get("reason", ""),
         },
