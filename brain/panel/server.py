@@ -2244,6 +2244,13 @@ async def _one_intent(req: dict, now: float) -> dict | None:
         builder, sentence, answer, int(now * 1000), protected)
     if obj.get("refused"):
         return await asyncio.to_thread(intents.note, obj, now)
+    # Who said it rides with what was said, so the automation's own
+    # description can quote a person as a person and a card as a card
+    # (`automation_writer.description_for`). Never part of the config, so
+    # never part of what `proposals.key_for` hashes.
+    for said in (obj.get("spoken"), obj.get("intent")):
+        if isinstance(said, dict):
+            said["via"] = str(req.get("via") or "")[:32]
 
     import aiohttp  # noqa: PLC0415 — as `_offer_routines` does
 
