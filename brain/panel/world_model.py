@@ -525,6 +525,22 @@ def parse(obj, rows: list[dict], areas: list[str], *, run_id: str = "",
     return out
 
 
+def unanswered(desc: dict, *, run_id: str = "",
+               now: float | None = None) -> dict:
+    """A row a reply that DID parse said nothing about.
+
+    Stored at confidence 0, which every reader treats as no reading — so
+    the word list answers — and keyed on the fingerprint, so the same
+    unanswerable row is not paid for again every hour. It is asked again
+    the moment the entity changes, which is when there is something new
+    to say about it.
+    """
+    now = time.time() if now is None else float(now)
+    return {"fp": fingerprint(desc), "roles": dict(DEFAULTS), "space": "",
+            "priority": 0.0, "confidence": 0.0, "read_at": int(now),
+            "run_id": str(run_id or "")[:64], "skipped": True}
+
+
 def batches(store: dict, cands: dict[str, dict],
             limit: int = MAX_BATCHES_PER_PASS) -> tuple[list[list[dict]], int]:
     """The batches one pass reads, and how many entities are left after it."""

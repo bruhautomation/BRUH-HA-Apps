@@ -203,6 +203,11 @@ import unfix
 import usage_store
 import user_categories
 import weekly
+# Understanding the house: what each entity is, what it is doing now, and
+# what is coming up.
+import occasions
+import situation
+import world_model
 # `_CARD_CONTRACT` and `_previous_block` are reached into deliberately, by
 # the prompt preview, which reports the size of every block a run is sent:
 # a second copy of the contract or of the previous-run renderer here would
@@ -6044,7 +6049,7 @@ def _known_entity_ids() -> frozenset[str]:
     """
     now = time.time()
     if now - float(_KNOWN_ENTITIES["at"]) < eventbus.CTX_REFRESH_S:
-        return _KNOWN_ENTITIES["ids"]
+        return _KNOWN_ENTITIES["ids"] | _world_known_ids()
     text = ""
     try:
         text = _read_shared_memory()
@@ -6056,10 +6061,13 @@ def _known_entity_ids() -> frozenset[str]:
     except Exception as exc:  # noqa: BLE001
         log.debug("could not read the facts ledger: %s", exc)
     if not text.strip():
-        return _KNOWN_ENTITIES["ids"]
+        return _KNOWN_ENTITIES["ids"] | _world_known_ids()
     _KNOWN_ENTITIES["ids"] = frozenset(_MEMORY_ENTITY_RE.findall(text.lower()))
     _KNOWN_ENTITIES["at"] = now
-    return _KNOWN_ENTITIES["ids"]
+    # And the entities a confident `world_model` reading ranked as worth
+    # watching: a water valve nobody has written a fact about yet is still
+    # the thing a leak night is about.
+    return _KNOWN_ENTITIES["ids"] | _world_known_ids()
 
 
 def _signal_context() -> signals.RegistryContext:
@@ -6082,7 +6090,8 @@ def _signal_context() -> signals.RegistryContext:
         log.debug("could not read the protected list: %s", exc)
         return _SIGNAL_CTX["ctx"]
     _SIGNAL_CTX["ctx"] = signals.RegistryContext(
-        patterns, _known_entity_ids(), built_at=now)
+        patterns, _known_entity_ids(), built_at=now,
+        added_safety=_world_safety_roles())
     _SIGNAL_CTX["at"] = now
     return _SIGNAL_CTX["ctx"]
 
@@ -6144,6 +6153,7 @@ def _note_registry(snapshot: dict) -> None:
         _NAMES.update(names)
     except Exception as exc:  # noqa: BLE001
         log.debug("names note failed: %s", exc)
+    _note_world(snapshot)
 
 
 def _entity_names_in(*texts: str) -> dict[str, dict]:
@@ -6447,7 +6457,8 @@ async def _resident_look(now: float, settings: dict, thinking: str,
             _memory_block,
             entities=[sig.get("subject") for sig in batch if sig.get("subject")]),
         await asyncio.to_thread(_open_case_rows),
-        now_line=_now_line(now), watch_notes=notes)
+        now_line=_now_line(now), watch_notes=notes,
+        situation_line=await asyncio.to_thread(_situation_line, now))
     TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
     RESIDENT_STATE["last_look_at"] = now
     try:
@@ -6753,7 +6764,8 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
         await _house_prompt_block(now),
         await asyncio.to_thread(_open_case_rows, exclude=exclude),
         signal_row=rows[0] if rows else "", why=why, refining=refining,
-        now_line=_now_line(now))
+        now_line=_now_line(now),
+        situation_line=await asyncio.to_thread(_situation_line, now))
     result = await asyncio.to_thread(
         engine.run_analyst, prompt, resident.INVESTIGATE_SYSTEM, eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
@@ -6897,7 +6909,8 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
             await _house_prompt_block(now),
             await asyncio.to_thread(_open_case_rows, exclude=exclude),
             signal_row=rows[0] if rows else "", why=why, refining=refining,
-            prior_case=case, now_line=_now_line(now)),
+            prior_case=case, now_line=_now_line(now),
+            situation_line=await asyncio.to_thread(_situation_line, now)),
         resident.INVESTIGATE_SYSTEM, eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
         "resident", job=ESCALATE_JOB, schema=resident.CASE_SCHEMA)
@@ -8017,7 +8030,561 @@ async def _baseline_loop() -> None:
                 await build_baselines("schedule")
         except Exception as exc:  # noqa: BLE001
             log.debug("baseline loop: %s", exc)
+        # The nightly readers that understand the house rather than measure
+        # it (`_understanding_tick`). Their own try: a reading that fell over
+        # must not take the baselines' clock with it.
+        try:
+            await _understanding_tick(time.time())
+        except Exception as exc:  # noqa: BLE001
+            log.debug("understanding tick: %s", exc)
         await asyncio.sleep(3600)
+
+
+# ---------------------------------------------------------------------------
+# Understanding the house — what each entity IS (`world_model`), what the
+# house is doing NOW (`situation`) and what is COMING UP (`occasions`)
+# ---------------------------------------------------------------------------
+#
+# Three readers with one shape: code builds what can be checked, and a
+# cheap model fills in only what needs judgement, out of closed
+# vocabularies that each module's `parse` validates before anything keeps
+# it. Every scheduled turn answers to the three gates every scheduled
+# Claude run answers to (`_resident_gate`); a press needs only a
+# credential, `h_ideas_run`'s rule. All three claim the `resident` source:
+# they are the attention loop's understanding of the house, and a probe
+# rather than a conversation anybody had.
+
+# The readings the last checks pass matched against its own registry —
+# `_FACTS_CTX`'s rule: refreshed from the snapshot that pass fetched, never
+# a registry read for this block's own sake. The bus's known set and its
+# added safety classes read this.
+WORLD_VIEW: dict = {"world": {}, "at": 0.0}
+WORLD_STATE: dict = {"running": False, "starting": False, "last": None,
+                     "held": "", "error": ""}
+SITUATION_STATE: dict = {"running": False, "refreshed_at": 0.0,
+                         "last_error": "", "published": False}
+OCCASIONS_STATE: dict = {"running": False, "starting": False, "last": None,
+                         "error": ""}
+# The frame waits for the panel to settle, like every other loop here.
+SITUATION_FIRST_DELAY_S = 90
+
+
+def _note_world(snapshot: dict) -> None:
+    world = snapshot.get("world") if isinstance(snapshot, dict) else None
+    if isinstance(world, dict):
+        WORLD_VIEW.update(world=world, at=time.time())
+
+
+def _world_known_ids() -> frozenset:
+    try:
+        return world_model.important_ids(WORLD_VIEW["world"])
+    except Exception:  # noqa: BLE001 — a reading is optional; the bus is not
+        return frozenset()
+
+
+def _world_safety_roles() -> dict:
+    try:
+        return world_model.added_safety(WORLD_VIEW["world"])
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _understanding_gate(settings: dict, pressed: bool) -> str:
+    """Why no turn may be spent, or "". A press skips the budget and the
+    automatic switch — asking by hand always runs — and still needs a
+    credential, because there is nothing to run without one."""
+    if pressed:
+        return "" if engine.get_auth() else "there is no Claude credential"
+    return _resident_gate(settings)
+
+
+async def _house_snapshot() -> dict:
+    """States and the three registries, in the checks snapshot's shape.
+
+    A registry that did not answer RAISES rather than reading as empty:
+    with no registry every entity would be read with no area and no
+    device, which is a reading of a different house.
+    """
+    import aiohttp
+
+    import ha_data  # deferred so the module loads without aiohttp in tests
+    async with aiohttp.ClientSession() as session:
+        states = await ha_data._rest_get(session, "/states", timeout=60)
+        areas, devices, ents = await ha_data._ws_commands(session, [
+            {"type": "config/area_registry/list"},
+            {"type": "config/device_registry/list"},
+            {"type": "config/entity_registry/list"}])
+    if not isinstance(states, list) or ents is None or areas is None:
+        raise RuntimeError("Home Assistant did not answer for its states "
+                           "and registries")
+    return {"states": {s["entity_id"]: s for s in states
+                       if isinstance(s, dict) and s.get("entity_id")},
+            "entities": ents, "devices": devices or [], "areas": areas}
+
+
+async def _world_model_pass(reason: str = "schedule", *, pressed: bool = False,
+                            snap: dict | None = None,
+                            now: float | None = None) -> dict:
+    """Read what each changed entity IS. Returns what it did, for a test.
+
+    Guarded synchronously before the first await (`start_auth_check`'s
+    rule): two passes would pay twice for the same rows.
+    """
+    if WORLD_STATE["running"]:
+        return {"skipped": "a reading is already running"}
+    WORLD_STATE["running"] = True
+    try:
+        return await _world_model_read(reason, pressed, snap, now)
+    except Exception as exc:  # noqa: BLE001 — a reading is optional; the
+        # loop that asked for one is not.
+        WORLD_STATE["error"] = str(exc)[:200]
+        log.warning("the entity reading failed: %s", exc)
+        return {"error": str(exc)[:200]}
+    finally:
+        WORLD_STATE["running"] = False
+        WORLD_STATE["starting"] = False
+
+
+async def _world_model_read(reason: str, pressed: bool, snap: dict | None,
+                            now: float | None) -> dict:
+    now = time.time() if now is None else float(now)
+    store = await asyncio.to_thread(world_model.load)
+    if snap is None:
+        snap = await _house_snapshot()
+    cands = world_model.candidates(snap)
+    pending = world_model.needs_reading(store, cands)
+    if pressed and not pending:
+        why = "every entity has a current reading"
+        WORLD_STATE["held"] = why
+        return {"held": why, "pending": 0}
+    if not pressed:
+        ok, why = world_model.due(store, now, len(pending))
+        if not ok:
+            WORLD_STATE["held"] = why
+            return {"held": why, "pending": len(pending)}
+    settings = await asyncio.to_thread(settings_store.load)
+    excuse = _understanding_gate(settings, pressed)
+    if excuse:
+        WORLD_STATE["held"] = excuse
+        return {"held": excuse, "pending": len(pending)}
+    WORLD_STATE["held"] = ""
+
+    world_model.prune(store, cands)
+    batches, _rest = world_model.batches(store, cands)
+    areas = world_model.area_names(snap)
+    read = skipped = ran = 0
+    error = ""
+    for rows in batches:
+        ran += 1
+        try:
+            result = await asyncio.to_thread(
+                engine.run_claude, world_model.frame(rows, areas),
+                world_model.SYSTEM, "", world_model.TIMEOUT_S, 2, "resident",
+                job=world_model.JOB, schema=world_model.SCHEMA)
+        except Exception as exc:  # noqa: BLE001
+            result = {"ok": False, "error": str(exc), "meta": {}}
+        await asyncio.to_thread(_record_usage, result, "world-model")
+        if not result.get("ok"):
+            # A failed run is not a verdict about any row: nothing is
+            # stored and the rest of the batches wait for the next pass,
+            # because a cause that failed one call fails the next.
+            error = str(result.get("error") or "the reading failed")[:200]
+            break
+        run_id = str((result.get("meta") or {}).get("session_id") or "")
+        got = world_model.parse(_answer(result), rows, areas,
+                                run_id=run_id, now=now)
+        if not got:
+            error = "the reply could not be read"
+            break
+        for desc in rows:
+            if desc["entity_id"] not in got:
+                got[desc["entity_id"]] = world_model.unanswered(
+                    desc, run_id=run_id, now=now)
+                skipped += 1
+        store.setdefault("entities", {}).update(got)
+        read += len(got) - skipped
+        # Saved per batch, so a panel that dies mid-pass keeps what it paid
+        # for — `healing`'s write-after-every-attempt rule.
+        await asyncio.to_thread(world_model.save, store)
+    remaining = len(world_model.needs_reading(store, cands))
+    store["last_pass"] = {"at": int(now), "reason": reason, "batches": ran,
+                          "read": read, "skipped": skipped,
+                          "remaining": remaining, "error": error}
+    store["failures"] = int(store.get("failures") or 0) + 1 if error else 0
+    await asyncio.to_thread(world_model.save, store)
+    WORLD_STATE["last"] = dict(store["last_pass"])
+    WORLD_STATE["error"] = error
+    WORLD_VIEW.update(world=world_model.view(store, cands), at=time.time())
+    if error:
+        log.warning("the entity reading stopped after %d batch(es): %s",
+                    ran, error)
+    else:
+        log.info("read %d entit%s (%d said nothing about); %d still to read",
+                 read, "y" if read == 1 else "ies", skipped, remaining)
+    return dict(store["last_pass"])
+
+
+def _start_world_model() -> bool:
+    """Start a pressed reading. Flipped synchronously, `h_baselines_run`'s
+    rule: `create_task` only schedules."""
+    if WORLD_STATE["running"] or WORLD_STATE["starting"]:
+        return False
+    WORLD_STATE["starting"] = True
+    try:
+        asyncio.get_running_loop().create_task(
+            _world_model_pass("manual", pressed=True))
+    except RuntimeError:
+        WORLD_STATE["starting"] = False
+        raise
+    return True
+
+
+async def _understanding_tick(now: float) -> None:
+    """The nightly readers, from the baseline loop's hourly tick. Each
+    decides for itself whether it is due."""
+    await _world_model_pass("schedule", now=now)
+    await _occasions_pass("schedule", now=now)
+
+
+def _house_date(now: float) -> str:
+    """Today's date on the house's own clock, as `YYYY-MM-DD`."""
+    return f"{_local_now(now):%Y-%m-%d}"
+
+
+async def _occasions_pass(reason: str = "schedule", *, pressed: bool = False,
+                          now: float | None = None) -> dict:
+    """Read the next three days. Guarded like the entity reading."""
+    if OCCASIONS_STATE["running"]:
+        return {"skipped": "a read is already running"}
+    OCCASIONS_STATE["running"] = True
+    try:
+        return await _occasions_read(reason, pressed, now)
+    except Exception as exc:  # noqa: BLE001
+        OCCASIONS_STATE["error"] = str(exc)[:200]
+        log.warning("reading what is coming up failed: %s", exc)
+        return {"error": str(exc)[:200]}
+    finally:
+        OCCASIONS_STATE["running"] = False
+        OCCASIONS_STATE["starting"] = False
+
+
+async def _occasions_fetch(calendars: list[str], now: float):
+    """`(weather_id, unit, daily, hourly, calendar_response, errors)`."""
+    import aiohttp
+
+    import ha_data
+    errors: dict[str, str] = {}
+    async with aiohttp.ClientSession() as session:
+        states = await ha_data._rest_get(session, "/states", timeout=60)
+        weather = next((s for s in states or [] if isinstance(s, dict)
+                        and str(s.get("entity_id") or "").startswith("weather.")),
+                       None)
+        weather_id = str((weather or {}).get("entity_id") or "")
+        unit = str(((weather or {}).get("attributes") or {})
+                   .get("temperature_unit") or "°C")
+        if not weather_id:
+            errors["weather"] = "this house has no weather entity"
+        cmds = occasions.commands(weather_id, calendars, now)
+        answers = await ha_data._ws_calls(session, cmds) if cmds else []
+    daily = hourly = None
+    cal: dict = {}
+    for cmd, answer in zip(cmds, answers):
+        if not answer.get("ok"):
+            what = ("calendar" if cmd["domain"] == "calendar"
+                    else "weather")
+            errors[what] = (f"Home Assistant would not answer "
+                            f"{cmd['domain']}.{cmd['service']}: "
+                            f"{answer.get('error') or 'refused'}")[:200]
+            continue
+        body = occasions._response(answer.get("result"))
+        if cmd["domain"] == "weather":
+            rows = (body.get(weather_id) or {}).get("forecast")
+            if cmd["service_data"]["type"] == "daily":
+                daily = rows
+            else:
+                hourly = rows
+        else:
+            cal = body
+    if weather_id and daily is None and hourly is None \
+            and "weather" not in errors:
+        errors["weather"] = "the forecast came back empty"
+    return weather_id, unit, daily, hourly, cal, errors
+
+
+async def _occasions_read(reason: str, pressed: bool,
+                          now: float | None) -> dict:
+    now = time.time() if now is None else float(now)
+    store = await asyncio.to_thread(occasions.load)
+    if not pressed and not occasions.due(store, now):
+        return {"held": "read recently"}
+    settings = await asyncio.to_thread(settings_store.load)
+    calendars = list(settings.get("occasion_calendars") or [])
+    tz, _name = baselines.house_timezone()
+    today = _house_date(now)
+    weather_id, unit, daily, hourly, cal, errors = await _occasions_fetch(
+        calendars, now)
+    days = occasions.forecast_days(daily, hourly, now=now, tz=tz, unit=unit)
+    rows = occasions.notable_weather(days)
+
+    events = occasions.calendar_events(cal, now=now, tz=tz) if calendars else []
+    judged: list[dict] | None = None
+    run_id = ""
+    if events:
+        excuse = _understanding_gate(settings, pressed)
+        if excuse:
+            errors["calendar"] = ("the calendar was read and not judged: "
+                                  + excuse)
+        else:
+            try:
+                result = await asyncio.to_thread(
+                    engine.run_claude, occasions.prompt(events, today),
+                    occasions.SYSTEM, "", occasions.TIMEOUT_S, 2, "resident",
+                    job=occasions.JOB, schema=occasions.SCHEMA)
+            except Exception as exc:  # noqa: BLE001
+                result = {"ok": False, "error": str(exc), "meta": {}}
+            await asyncio.to_thread(_record_usage, result, "occasions")
+            if result.get("ok"):
+                run_id = str((result.get("meta") or {}).get("session_id") or "")
+                judged = occasions.parse(_answer(result), events, today=today)
+            else:
+                errors["calendar"] = ("the calendar could not be judged: "
+                                      + str(result.get("error") or "")[:160])
+    if judged is None:
+        # Not judged this time is not "nothing on the calendar": what an
+        # earlier read found stands until it ends.
+        judged = [o for o in occasions.current(store, today)
+                  if o.get("kind") != "weather"] if calendars else []
+    found = (rows + judged)[:occasions.MAX_OCCASIONS]
+    filed = await asyncio.to_thread(occasions.file_facts, found, run_id=run_id)
+    new_store = {"built_at": int(now), "reason": reason,
+                 "occasions": found, "weather": weather_id,
+                 "calendars": calendars, "events": len(events),
+                 "filed": filed, "errors": errors}
+    await asyncio.to_thread(occasions.save, new_store)
+    OCCASIONS_STATE["last"] = {k: new_store[k] for k in
+                               ("built_at", "reason", "weather", "events",
+                                "filed", "errors")}
+    OCCASIONS_STATE["error"] = "; ".join(errors.values())[:300]
+    return {"occasions": found, "errors": errors, "filed": filed}
+
+
+def _start_occasions() -> bool:
+    if OCCASIONS_STATE["running"] or OCCASIONS_STATE["starting"]:
+        return False
+    OCCASIONS_STATE["starting"] = True
+    try:
+        asyncio.get_running_loop().create_task(
+            _occasions_pass("manual", pressed=True))
+    except RuntimeError:
+        OCCASIONS_STATE["starting"] = False
+        raise
+    return True
+
+
+async def _fetch_states_once() -> list:
+    import aiohttp
+
+    import ha_data
+    async with aiohttp.ClientSession() as session:
+        states = await ha_data._rest_get(session, "/states", timeout=30)
+    if not isinstance(states, list):
+        raise RuntimeError("Home Assistant did not answer for its states")
+    return states
+
+
+async def _situation_refresh(now: float | None = None, *, states=None,
+                             run_model: bool = True) -> dict:
+    """Rebuild the frame, describe it if it moved, publish the reading.
+
+    One `/states` read; everything else is a store brAIn already wrote.
+    Returns the public reading.
+    """
+    if SITUATION_STATE["running"]:
+        return situation.reading(situation.load(), now)
+    SITUATION_STATE["running"] = True
+    try:
+        return await _situation_pass(now, states, run_model)
+    finally:
+        SITUATION_STATE["running"] = False
+
+
+async def _situation_pass(now: float | None, states, run_model: bool) -> dict:
+    now = time.time() if now is None else float(now)
+    store = await asyncio.to_thread(situation.load)
+    settings = await asyncio.to_thread(settings_store.load)
+    tz, tz_name = baselines.house_timezone()
+    try:
+        if states is None:
+            states = await _fetch_states_once()
+        upcoming = occasions.lines(await asyncio.to_thread(occasions.load),
+                                   _house_date(now))
+        frame = situation.build_frame(
+            states, now=now, tz=tz, tz_name=tz_name,
+            areas=dict(_NAMES), names=dict(_NAMES),
+            closures_store=await asyncio.to_thread(closures.load),
+            appliances_store=await asyncio.to_thread(appliances.load),
+            calendars=settings.get("occasion_calendars") or [],
+            occasions=upcoming, world=WORLD_VIEW["world"])
+    except Exception as exc:  # noqa: BLE001 — a frame that could not be
+        # built is a frame that says so; it reads `unknown`, never `away`.
+        frame = situation.failed_frame(now, str(exc))
+    store["frame"] = frame
+    due, why = situation.due(store, frame, now)
+    if due and run_model:
+        if situation.runs_today(store, now, tz) >= situation.MAX_RUNS_PER_DAY:
+            why = "the day's readings are spent"
+        else:
+            why = _understanding_gate(settings, False)
+        if not why:
+            local = _local_now(now)
+            day = f"{local:%Y-%m-%d}"
+            store["runs"] = situation.runs_today(store, now, tz) + 1
+            store["day"] = day
+            store["last_run_at"] = now
+            try:
+                result = await asyncio.to_thread(
+                    engine.run_claude,
+                    situation.prompt(frame, store.get("answer")),
+                    situation.SYSTEM, "", situation.TIMEOUT_S, 2, "resident",
+                    job=situation.JOB, schema=situation.SCHEMA)
+            except Exception as exc:  # noqa: BLE001
+                result = {"ok": False, "error": str(exc), "meta": {}}
+            await asyncio.to_thread(_record_usage, result, "situation")
+            if result.get("ok"):
+                store["answer"] = situation.parse(
+                    _answer(result), frame, store.get("answer"), now=now,
+                    run_id=str((result.get("meta") or {}).get("session_id")
+                               or ""))
+                SITUATION_STATE["last_error"] = ""
+            else:
+                why = ("the last reading failed: "
+                       + str(result.get("error") or "")[:120])
+                SITUATION_STATE["last_error"] = why
+    store["held"] = why
+    await asyncio.to_thread(situation.save, store)
+    read = situation.reading(store, now)
+    SITUATION_STATE["refreshed_at"] = now
+    SITUATION_STATE["published"] = await asyncio.to_thread(
+        situation.publish, read)
+    return read
+
+
+async def _situation_loop() -> None:
+    await asyncio.sleep(SITUATION_FIRST_DELAY_S)
+    while True:
+        try:
+            await _situation_refresh()
+        except Exception as exc:  # noqa: BLE001 — never let this kill the loop
+            SITUATION_STATE["last_error"] = str(exc)[:200]
+            log.debug("situation loop: %s", exc)
+        await asyncio.sleep(situation.REFRESH_S)
+
+
+def _situation_line(now: float) -> str:
+    """The compact line every first look carries — read off the store, so a
+    look never waits on a frame being built."""
+    try:
+        return situation.prompt_line(situation.reading(situation.load(), now))
+    except Exception:  # noqa: BLE001 — context is optional; the look is not
+        return ""
+
+
+def _understanding_diagnostics() -> dict:
+    """Counts and verdicts, never the readings or the frame themselves."""
+    out: dict = {}
+    try:
+        store = world_model.load()
+        out["world"] = {**world_model.summary(store),
+                        "running": WORLD_STATE["running"],
+                        "held": WORLD_STATE["held"],
+                        "error": WORLD_STATE["error"],
+                        "in_use": len(WORLD_VIEW["world"]),
+                        "important": len(_world_known_ids()),
+                        "added_safety": len(_world_safety_roles())}
+    except Exception as exc:  # noqa: BLE001
+        out["world"] = {"error": str(exc)[:200]}
+    try:
+        read = situation.reading(situation.load())
+        out["situation"] = {
+            "house_mode": read["house_mode"], "source": read["source"],
+            "reason": read["reason"], "frame_at": read["frame_at"],
+            "generated_at": read["generated_at"],
+            "sentence_stale": read["sentence_stale"],
+            "published": SITUATION_STATE["published"],
+            "last_error": SITUATION_STATE["last_error"]}
+    except Exception as exc:  # noqa: BLE001
+        out["situation"] = {"error": str(exc)[:200]}
+    try:
+        store = occasions.load()
+        out["occasions"] = {
+            "built_at": store.get("built_at"),
+            "count": len(store.get("occasions") or []),
+            "calendars": len(store.get("calendars") or []),
+            "weather": bool(store.get("weather")),
+            "errors": store.get("errors") or {}}
+    except Exception as exc:  # noqa: BLE001
+        out["occasions"] = {"error": str(exc)[:200]}
+    return out
+
+
+async def h_world(request: web.Request) -> web.Response:
+    """The entity readings: the summary, and one entity's on request."""
+    store = await asyncio.to_thread(world_model.load)
+    payload: dict = {**world_model.summary(store),
+                     "running": WORLD_STATE["running"] or WORLD_STATE["starting"],
+                     "held": WORLD_STATE["held"]}
+    eid = (request.query.get("entity_id") or "").strip()
+    if eid:
+        if not ha_data_is_entity_id(eid):
+            raise web.HTTPBadRequest(text="not an entity id")
+        payload["entity"] = (store.get("entities") or {}).get(eid)
+    return web.json_response(payload)
+
+
+def ha_data_is_entity_id(value: str) -> bool:
+    import ha_data  # noqa: PLC0415
+    return ha_data.is_entity_id(value)
+
+
+async def h_world_run(request: web.Request) -> web.Response:
+    """Read the entities that changed, now. Skips the budget."""
+    if not engine.get_auth():
+        raise web.HTTPBadRequest(text="connect your Claude account first")
+    if not _start_world_model():
+        raise web.HTTPConflict(text="already reading the house")
+    return web.json_response({"started": True})
+
+
+async def h_situation(request: web.Request) -> web.Response:
+    """What the house is doing now, and the frame that says so."""
+    store = await asyncio.to_thread(situation.load)
+    read = situation.reading(store)
+    return web.json_response({**read, "frame": store.get("frame") or {}})
+
+
+async def h_occasions(request: web.Request) -> web.Response:
+    """What is coming up, which calendars brAIn may read, and which exist."""
+    store = await asyncio.to_thread(occasions.load)
+    settings = await asyncio.to_thread(settings_store.load)
+    now = time.time()
+    available = sorted(eid for eid in _NAMES if eid.startswith("calendar."))
+    return web.json_response({
+        "occasions": occasions.current(store, _house_date(now)),
+        "lines": occasions.lines(store, _house_date(now)),
+        "built_at": store.get("built_at"),
+        "errors": store.get("errors") or {},
+        "calendars": list(settings.get("occasion_calendars") or []),
+        "available": [{"entity_id": eid,
+                       "name": (_NAMES.get(eid) or {}).get("name") or eid}
+                      for eid in available],
+        "running": OCCASIONS_STATE["running"] or OCCASIONS_STATE["starting"]})
+
+
+async def h_occasions_run(request: web.Request) -> web.Response:
+    """Read the next three days now. Skips the budget."""
+    if not _start_occasions():
+        raise web.HTTPConflict(text="already reading what is coming up")
+    return web.json_response({"started": True})
 
 
 async def h_baselines(request: web.Request) -> web.Response:
@@ -9356,6 +9923,11 @@ def _diagnostics_payload() -> dict:
         "eventbus": (EVENT_BUS.stats() if EVENT_BUS else
                      {"connected": False,
                       "idle_reason": "the event bus has not been started"}),
+        # What brAIn understands about the house: the entity readings, the
+        # situation and what is coming up. Each can stop quietly — a read
+        # held by a gate, a frame nobody rebuilt, a calendar that would
+        # not answer — and each says which here.
+        "understanding": _understanding_diagnostics(),
         "daemons": _daemon_rollcall(),
         "usage": {
             **{k: usage.get(k) for k in ("source", "used_percent", "limits")},
@@ -13830,6 +14402,11 @@ def make_app() -> web.Application:
     app.router.add_post("/api/capture/{run_id}/export", h_capture_export)
     app.router.add_delete("/api/capture/{run_id}", h_capture_delete)
     app.router.add_get("/api/baselines", h_baselines)
+    app.router.add_get("/api/world", h_world)
+    app.router.add_post("/api/world/run", h_world_run)
+    app.router.add_get("/api/situation", h_situation)
+    app.router.add_get("/api/occasions", h_occasions)
+    app.router.add_post("/api/occasions/run", h_occasions_run)
     app.router.add_post("/api/baselines/run", h_baselines_run)
     app.router.add_get("/api/curiosity", h_curiosity)
     app.router.add_post("/api/curiosity/ask", h_curiosity_ask)
@@ -14056,9 +14633,16 @@ def make_app() -> web.Application:
             # hour against the house's local night window, so on a house
             # in New York a person moving at 20:00 was "the small hours"
             # and one at 03:00 was not.
-            tz=baselines.house_timezone()[0])
+            tz=baselines.house_timezone()[0],
+            # Binary sensors a confident entity reading made safety
+            # sensors. It can only add: a device class wins whatever this
+            # says (`signals.RegistryContext.safety_class_of`).
+            safety_roles=_world_safety_roles)
         await EVENT_BUS.start()
         app["resident"] = asyncio.create_task(_resident_loop())
+        # What the house is doing now: a frame every few minutes, a cheap
+        # sentence only when it moved.
+        app["situation"] = asyncio.create_task(_situation_loop())
         if addon_options.available():
             app["options"] = asyncio.create_task(_options_poller())
         if engine.get_auth():
