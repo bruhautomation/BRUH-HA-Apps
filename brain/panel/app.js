@@ -5566,9 +5566,9 @@ function makeIdea(idea) {
     idea, "accept", "Added — it's on Insights now", btns));
 
   const no = add(el("button", "btn small ghost", "✕  Not for this house"));
-  tip(no, "Take it off the list. brAIn won't suggest it again.");
-  no.addEventListener("click", () => ideaAction(
-    idea, "dismiss", "Won't suggest that again", btns));
+  tip(no, "Take it off the list, and say why if you like — brAIn won't "
+    + "suggest it again, and the reason reaches every later look.");
+  no.addEventListener("click", () => ideaReasonBox(idea, card, actions));
 
   card.appendChild(actions);
   return card;
@@ -12243,3 +12243,55 @@ document.addEventListener("visibilitychange", () => {
     if (["starting", "awaiting_code", "working"].includes(st.phase)) pollSetup();
   } catch (e) { /* ignore */ }
 })();
+
+
+// ---------------------------------------------- ideas: the reason a no
+//
+// "Not for this house" took nothing but the title, so the next pass was
+// told only that ONE wording had been turned down and could offer the
+// same kind of card under another — "we don't care about standby power"
+// is a sentence that rules out a family of ideas, and nothing on the page
+// could carry it. The route always took a reason (`ideas.dismiss`); this
+// is the box. It opens IN PLACE of the buttons, inside the card, for the
+// reason every other reason box in the panel does — you are explaining
+// this card and it has to stay on screen while you write — and it is never
+// required: an empty box is a plain dismissal, because a mandatory field
+// fills with "no".
+function ideaReasonBox(idea, card, actions) {
+  if (card.querySelector(".propnote")) return;
+  actions.classList.add("hidden");
+  const box = el("div", "propnote ideanote");
+  const area = el("textarea");
+  area.placeholder = "Why not? (optional — it rules out cards like this one, "
+    + "not just this title)";
+  area.rows = 2;
+  area.maxLength = 200;
+  box.appendChild(area);
+  const row = el("div", "propbtns");
+  const send = el("button", "btn small", "Not for this house");
+  const back = el("button", "btn small ghost", "Cancel");
+  send.addEventListener("click", async () => {
+    send.disabled = true;
+    back.disabled = true;
+    const reason = area.value.trim();
+    try {
+      takeIdeas(await api(`api/idea/${idea.id}/dismiss`, {
+        method: "POST", body: JSON.stringify({ reason }) }));
+      renderIdeas();
+      toast(reason ? "Won't suggest that, or anything like it"
+        : "Won't suggest that again");
+    } catch (err) {
+      send.disabled = false;
+      back.disabled = false;
+      toast(err.message || "that didn't work");
+    }
+  });
+  back.addEventListener("click", () => {
+    box.remove();
+    actions.classList.remove("hidden");
+  });
+  row.append(send, back);
+  box.appendChild(row);
+  card.appendChild(box);
+  area.focus();
+}
