@@ -44,7 +44,10 @@ import scoring  # noqa: E402
 # What the structural validator requires. Asserted against schema.json's
 # own `required` lists below, so the two cannot drift.
 REQUIRED = ("schema", "kind", "id", "captured_at", "labels")
-KINDS = ("checks", "analyst")
+KINDS = ("checks", "analyst", "first_look")
+# The first look's verdicts, read off the module that owns them so a
+# label naming one it does not know is refused here too.
+LOOK_VERDICTS = ("ignore", "watch", "investigate", "act")
 VERBS = ("done", "wrong", "got_it", "accepted")
 ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\-]{0,127}")
 CHECK_RE = re.compile(r"[a-z]+\.[a-z_]+")
@@ -107,6 +110,34 @@ def validate(entry: dict) -> list[str]:
             if label.get("verb") not in VERBS:
                 bad.append(f"label {i}: verb must be one of "
                            f"{', '.join(VERBS)}")
+    elif kind == "first_look":
+        batch = entry.get("batch")
+        if not isinstance(batch, list) or not batch:
+            bad.append("a first_look entry carries the batch it judged")
+            batch = []
+        for i, sig in enumerate(batch, 1):
+            if not isinstance(sig, dict) or not sig.get("kind") \
+                    or not sig.get("subject"):
+                bad.append(f"signal {i} needs a kind and a subject")
+        if not isinstance(entry.get("now"), (int, float)):
+            bad.append("a first_look entry needs a `now` — the ages in the "
+                       "batch are rendered against it")
+        if not labels:
+            bad.append("a first_look entry with no labels cannot be scored")
+        for i, label in enumerate(labels):
+            if not isinstance(label, dict):
+                bad.append(f"label {i} is not an object")
+                continue
+            idx = label.get("signal")
+            if not isinstance(idx, int) or not 1 <= idx <= len(batch):
+                bad.append(f"label {i}: `signal` must index the batch")
+            bounds = [label.get(k) for k in ("floor", "ceiling")
+                      if label.get(k) is not None]
+            if not bounds:
+                bad.append(f"label {i}: needs a floor or a ceiling")
+            if any(b not in LOOK_VERDICTS for b in bounds):
+                bad.append(f"label {i}: a bound must be one of "
+                           f"{', '.join(LOOK_VERDICTS)}")
     return bad
 
 

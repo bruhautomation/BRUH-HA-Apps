@@ -62,12 +62,21 @@ STALE_HOURS = 14.0
 MAX_ROWS = 3
 
 
-def kind_of(name: str) -> str:
+def kind_of(name: str, world=None, entity_id: str = "") -> str:
     """Which of the three machines this name is, or "".
 
     Longest phrase first, so "washing machine" is not read as a dryer by
     a name that happens to contain both words.
+
+    With `world` and the entity id, a confident `world_model` reading
+    answers first — `Wasmachine` is a washer in any language — and the
+    phrase match below is the fallback it always was.
     """
+    if world and entity_id:
+        import world_model  # noqa: PLC0415
+
+        return world_model.chore_machine(
+            world, entity_id, lambda: kind_of(name))
     text = str(name or "").lower()
     best, longest = "", 0
     for kind, words in WAITING_KINDS.items():
@@ -92,7 +101,8 @@ def waiting(snap: dict, now: float) -> list[dict]:
     for eid, shape in shapes.items():
         if not house.enabled(eid):
             continue
-        kind = kind_of(shape.get("name") or house.name(eid) or eid)
+        kind = kind_of(shape.get("name") or house.name(eid) or eid,
+                       house.world, eid)
         if not kind:
             continue
         if house.excepted(eid, "chore.waiting"):

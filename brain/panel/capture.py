@@ -79,11 +79,14 @@ CAPTURE_MAX_FILES = 50
 # if only one of them moves.
 SCHEMA = 1
 
-# The two kinds of corpus entry. A `checks` entry carries a house snapshot
+# The kinds of corpus entry. A `checks` entry carries a house snapshot
 # and the check ids that should fire on it, and is replayed with no model
 # at all; an `analyst` entry carries a prompt bundle and a model's reply,
-# and needs one. Capture only ever writes the second.
-KINDS = ("analyst", "checks")
+# and needs one; a `first_look` entry carries one batch of signals the
+# Resident judged, what its prompt was built from and what it answered,
+# and is labelled per signal by what the household did next
+# (`outcomes.look_labels`). Capture writes the second and the third.
+KINDS = ("analyst", "checks", "first_look")
 
 MAX_LABELS = 20
 MAX_NOTE = 400
@@ -235,6 +238,114 @@ def record(run_id: str, *, source: str, category: str = "",
     return path
 
 
+def record_first_look(run_id: str, *, batch, inputs=None, reply=None,
+                      model: str = "", tokens=None, now: float | None = None):
+    """Write one first look. Returns its path, or None. Never raises.
+
+    The decision made up to two hundred times a day, and until this the one
+    no test had ever graded: the batch as the look saw it, the INPUTS its
+    prompt was built from (so a replay rebuilds it with whatever builder is
+    current, rather than replaying this release's text), and the verdicts.
+    The labels come later, from the nightly outcomes join, one per signal
+    the household's endings say something about. Same redaction on the way
+    in, same cap, same filename barrier as an analyst capture — it is the
+    same kind of file about the same house.
+    """
+    path = path_for(run_id)
+    if path is None:
+        return None
+    stamp = time.time() if now is None else now
+    entry = {
+        "schema": SCHEMA,
+        "kind": "first_look",
+        "id": run_id,
+        "captured_at": int(stamp),
+        "run_id": run_id,
+        "source": "resident",
+        "model": str(model or "")[:64],
+        # The instant every age in the rendered rows is relative to, so a
+        # replay a month later renders the batch exactly as it was seen.
+        "now": float(stamp),
+        "batch": redact([b for b in (batch or []) if isinstance(b, dict)]),
+        "inputs": redact(inputs if isinstance(inputs, dict) else {}),
+        "reply": redact(reply if isinstance(reply, dict) else {}),
+        "tokens": tokens or {},
+        "labels": [],
+    }
+    try:
+        CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+        atomic_write.write_json(path, entry)
+        prune()
+    except (OSError, TypeError, ValueError) as exc:
+        log.warning("could not write the first-look capture %s: %s", run_id,
+                    exc)
+        return None
+    return path
+
+
+def label_first_look(run_id: str, labels: list[dict]) -> bool:
+    """Replace a first-look capture's labels with the join's current ones.
+
+    Replaced rather than appended, because a label here is derived — the
+    nightly join recomputes what the household's endings say about each
+    signal, and an ending that changed (an Undo, a row put back) has to
+    change the label with it. Never raises; a capture that is not a first
+    look, or that has been pruned, has nothing to label.
+    """
+    path = path_for(run_id)
+    if path is None:
+        return False
+    try:
+        entry = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(entry, dict) or entry.get("kind") != "first_look":
+        return False
+    clean = []
+    for row in labels or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            idx = int(row.get("signal"))
+        except (TypeError, ValueError):
+            continue
+        out = {"signal": idx, "outcome": str(row.get("outcome") or "")[:16]}
+        for key in ("floor", "ceiling"):
+            if row.get(key):
+                out[key] = str(row[key])[:16]
+        clean.append(out)
+    if entry.get("labels") == clean:
+        return True
+    entry["labels"] = clean[:200]
+    try:
+        atomic_write.write_json(path, entry)
+    except OSError as exc:
+        log.debug("could not label the first-look capture %s: %s", run_id, exc)
+        return False
+    return True
+
+
+def first_looks(since: float = 0.0) -> list[dict]:
+    """Every first-look capture captured at or after ``since``, oldest
+    first, whole. What `brain eval first_look` replays."""
+    out: list[dict] = []
+    try:
+        files = list(CAPTURE_DIR.glob("*.json"))
+    except OSError:
+        return out
+    for path in files:
+        try:
+            entry = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (isinstance(entry, dict) and entry.get("kind") == "first_look"
+                and int(entry.get("captured_at") or 0) >= since):
+            out.append(entry)
+    out.sort(key=lambda e: (int(e.get("captured_at") or 0),
+                            str(e.get("run_id") or "")))
+    return out
+
+
 def prune(keep: int | None = None) -> int:
     """Drop the oldest captures past the cap. Returns how many went.
 
@@ -321,6 +432,8 @@ def _summary(path: Path, entry: dict) -> dict:
         size = 0
     return {
         "run_id": str(entry.get("run_id") or path.stem),
+        "kind": str(entry.get("kind") or "analyst"),
+        "signals": len(entry.get("batch") or []),
         "captured_at": int(entry.get("captured_at") or 0),
         "source": str(entry.get("source") or ""),
         "category": str(entry.get("category") or ""),

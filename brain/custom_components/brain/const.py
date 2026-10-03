@@ -101,7 +101,6 @@ MEMORY_FILE = "memory.md"
 # Study requests: the integration drops one here, the add-on's watcher
 # runs `brain learn` and files whatever it finds through the inbox.
 STUDY_REQUESTS_DIR = "study_requests"
-QUESTIONS_FILE = "questions.jsonl"
 
 # Findings mirror the add-on republishes on every change (see the add-on's
 # findings_store._publish_state): {ts, open, by_severity, findings[]}.

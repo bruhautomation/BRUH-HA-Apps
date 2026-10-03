@@ -79,6 +79,21 @@ BATCH = 50
 # rows: the fetch is nightly and local, but a house with two thousand
 # numeric sensors should not turn it into a five-minute pass.
 MAX_ENTITIES = 400
+# What a slot under that cap may be spent on, decided BEFORE the cap.
+# `measurement` is the one state class whose statistics carry a `mean` —
+# a `total`/`total_increasing` meter has a `sum` and nothing to bucket,
+# so asking about one comes back empty — and the only one any reader
+# judges (`checks/baseline.eligible`). Diagnostic and config entities are
+# the settings pages' signal strengths and uptimes, which every reader
+# skips too. Capping first and filtering after spent the slots
+# alphabetically on rows that could never be measured or read, so on a
+# big house `sensor.upstairs_*` and `sensor.water_*` were never asked
+# about at all and nothing said so.
+BASELINE_STATE_CLASSES = frozenset({"measurement"})
+BACKGROUND_CATEGORIES = frozenset({"diagnostic", "config"})
+# How many of the ids the cap cut ride in the store, for diagnostics: the
+# count is the claim and a sample is what lets somebody recognise theirs.
+CUT_SAMPLE = 20
 
 HOURS_PER_WEEK = 168
 
@@ -402,25 +417,50 @@ def save(payload: dict, path: str | None = None) -> None:
 # The one thing here that touches the network
 # ---------------------------------------------------------------------------
 
-def candidates(states: dict) -> list[str]:
-    """Numeric entities worth a baseline, in a stable order.
+def select(states: dict, entities: list | None = None) -> dict:
+    """Which entities tonight's pass asks about, and what the cap cut.
 
-    Anything with a `state_class` is what the recorder keeps long-term
-    statistics for, so asking about anything else is asking for rows that
-    do not exist. Sorted so the cap takes the same entities every night
-    rather than a different arbitrary set each time.
+    `{"ids", "eligible", "cut", "skipped", "categories_read"}`. Every
+    filter runs before the cap, so a slot is only ever spent on a sensor
+    that can come back with a baseline something reads. Sorted so the cap
+    takes the same entities every night rather than a different arbitrary
+    set each time. `entities` is the entity registry; without it the
+    category filter cannot be applied and `categories_read` says so —
+    the state class still is, because it rides on the state.
     """
-    out = []
+    registry = {str(e["entity_id"]): e for e in (entities or [])
+                if isinstance(e, dict) and e.get("entity_id")}
+    eligible: list[str] = []
+    skipped = {"not_measurement": 0, "background": 0}
     for eid, st in (states or {}).items():
         if not isinstance(st, dict):
             continue
         attrs = st.get("attributes") or {}
-        if not attrs.get("state_class"):
+        state_class = str(attrs.get("state_class") or "")
+        # Anything with no `state_class` is not something the recorder
+        # keeps long-term statistics for, so it is not a candidate at all
+        # rather than a skipped one.
+        if not state_class:
             continue
         if st.get("state") in ("unavailable", "unknown", None):
             continue
-        out.append(eid)
-    return sorted(out)[:MAX_ENTITIES]
+        if state_class not in BASELINE_STATE_CLASSES:
+            skipped["not_measurement"] += 1
+            continue
+        category = str((registry.get(eid) or {}).get("entity_category") or "")
+        if category in BACKGROUND_CATEGORIES:
+            skipped["background"] += 1
+            continue
+        eligible.append(eid)
+    eligible.sort()
+    return {"ids": eligible[:MAX_ENTITIES], "eligible": len(eligible),
+            "cut": eligible[MAX_ENTITIES:], "skipped": skipped,
+            "categories_read": entities is not None}
+
+
+def candidates(states: dict, entities: list | None = None) -> list[str]:
+    """Numeric entities worth a baseline, in a stable order. See `select`."""
+    return select(states, entities)["ids"]
 
 
 async def fetch_hourly(session, ids: list[str], now: float,
@@ -504,8 +544,14 @@ def progress(payload: dict | None = None, path: str | None = None,
         if entry.get("trend"):
             trends += 1
     built = int(payload.get("built_at") or 0) or None
+    cut = int(payload.get("cut_count") or 0)
     detail = {"measured": len(entities), "with_buckets": with_buckets,
-              "flat": flat, "trends": trends}
+              "flat": flat, "trends": trends, "cut": cut}
+    # Said wherever the store is described, because a sensor past the
+    # cap is one every reader is silently blind to.
+    past_cap = (f" {house.plural(cut, 'more sensor')} "
+                f"{'was' if cut == 1 else 'were'} past the nightly cap of "
+                f"{MAX_ENTITIES} and not measured." if cut else "")
     common = {"unit": "entities", "need": 1, "have": with_buckets,
               "detail": detail, "updated_at": built,
               "per_unit_s": PROGRESS_UNIT_S, "now": now}
@@ -537,7 +583,7 @@ def progress(payload: dict | None = None, path: str | None = None,
             state=house.READY,
             summary=(f"{house.plural(len(entities), 'sensor')} measured · "
                      f"{with_buckets} with a picture for every hour of the "
-                     "week."),
+                     f"week.{past_cap}"),
             **common)
     return house.progress(
         state=house.COLLECTING,
@@ -545,7 +591,7 @@ def progress(payload: dict | None = None, path: str | None = None,
                 "readings in one hour of the week yet"),
         summary=(f"{house.plural(len(entities), 'sensor')} read, none with "
                  f"enough history yet — a bucket needs {MIN_SAMPLES} readings "
-                 "at the same hour of the week."),
+                 f"at the same hour of the week.{past_cap}"),
         **common)
 
 
@@ -568,18 +614,31 @@ def refused(kind: str, prev: dict, reason: str) -> dict:
 
 
 async def build(session, states: dict, now: float | None = None,
-                path: str | None = None) -> dict:
+                path: str | None = None,
+                entities: list | None = None) -> dict:
     """Measure the house and write the store. Returns the payload.
 
     A fetch the recorder refused writes nothing: see `refused`. A house
     with no candidates still writes, because a fresh install with no
-    sensors must not keep a stale store forever.
+    sensors must not keep a stale store forever. `entities` is the entity
+    registry, for `select`'s category filter; a pass whose registry did
+    not answer measures without it rather than not at all.
     """
     now = time.time() if now is None else now
     tz, tz_name = house_timezone()
-    ids = candidates(states)
+    chosen = select(states, entities)
+    ids = chosen["ids"]
     payload = {"built_at": int(now), "tz": tz_name, "days": HISTORY_DAYS,
-               "asked": len(ids), "entities": {}}
+               "asked": len(ids), "eligible": chosen["eligible"],
+               "cut_count": len(chosen["cut"]),
+               "cut": chosen["cut"][:CUT_SAMPLE],
+               "skipped": chosen["skipped"],
+               "categories_read": chosen["categories_read"],
+               "entities": {}}
+    if chosen["cut"]:
+        log.info("baselines: %d eligible sensors, %d past the cap of %d "
+                 "(first cut: %s)", chosen["eligible"], len(chosen["cut"]),
+                 MAX_ENTITIES, ", ".join(chosen["cut"][:5]))
     if not ids:
         save(payload, path)
         return payload

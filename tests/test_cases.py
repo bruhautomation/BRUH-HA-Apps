@@ -412,7 +412,10 @@ class TestNotNowEndsNothing(StoresCase):
             self.assertEqual(out["snoozed_until"],
                              int(now + cases.SNOOZE_BY_STAKES[stakes]))
 
-    def test_the_three_stores_with_nowhere_to_put_one_use_the_sidecar(self):
+    def test_the_two_stores_with_nowhere_to_put_one_use_the_sidecar(self):
+        """A proposal and a chore. A question used to be the third, and it
+        is the queue's own field now (`hypotheses.snooze`), because only
+        the queue can stop a sleeping guess holding one of its slots."""
         made = self.one_of_each()
         now = 1_760_000_000.0
         for ident in (f"p:{made['opportunity']['ts']}",
@@ -420,21 +423,34 @@ class TestNotNowEndsNothing(StoresCase):
                       f"t:{made['chore']['id']}"):
             self.press(ident, now)
         stored = json.loads(cases.SNOOZE_FILE.read_text())["snoozed"]
-        self.assertEqual(len(stored), 3)
+        self.assertEqual(sorted(stored), sorted(
+            [f"p:{made['opportunity']['ts']}", f"t:{made['chore']['id']}"]))
+        [guess] = hypotheses.list_all("open")
+        self.assertEqual(guess["snoozed_until"],
+                         int(now + cases.SNOOZE_BY_STAKES["low"]))
 
-    def test_a_question_goes_quiet_until_the_queue_retires_it(self):
+    def test_a_question_comes_back_on_the_stakes_table_not_at_its_expiry(self):
+        """It used to go quiet until the queue retired it — "back in 13
+        days" on a toast, and gone on the thirteenth. A question's stakes
+        are low, so it is a week, and the queue keeps it alive across it."""
         guess = self.file_question()
         now = float(guess["ts"])
         out, _ = self.press(f"h:{guess['ts']}", now)
         self.assertEqual(out["snoozed_until"],
-                         guess["ts"] + hypotheses.TTL_DAYS * 86400)
+                         int(now + cases.SNOOZE_BY_STAKES["low"]))
 
     def test_a_press_always_buys_at_least_a_day_of_quiet(self):
-        """A question already past its expiry would otherwise come
-        straight back, which reads as the button doing nothing."""
+        """Whatever the table says, a press buys a day — so a stakes
+        table somebody shortens cannot make the button read as doing
+        nothing."""
         guess = self.file_question()
-        later = guess["ts"] + hypotheses.TTL_DAYS * 86400 + 5
-        out, _ = self.press(f"h:{guess['ts']}", later)
+        old = cases.SNOOZE_BY_STAKES["low"]
+        cases.SNOOZE_BY_STAKES["low"] = 60
+        try:
+            later = guess["ts"] + 5
+            out, _ = self.press(f"h:{guess['ts']}", later)
+        finally:
+            cases.SNOOZE_BY_STAKES["low"] = old
         self.assertEqual(out["snoozed_until"],
                          int(later + cases.MIN_SNOOZE_S))
 

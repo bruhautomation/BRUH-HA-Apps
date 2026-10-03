@@ -322,6 +322,9 @@ SCHEMA = {
         "trigger": {"type": "array", "items": {"type": "object"}},
         "condition": {"type": "array", "items": {"type": "object"}},
         "action": {"type": "array", "items": {"type": "object"}},
+        # A standing rule's own (`authoring.ALLOWED_MODES`); a one-off
+        # ignores it, because it disarms itself after one run whatever.
+        "mode": {"type": "string"},
     },
     "required": ["once"],
     "additionalProperties": True,
@@ -365,13 +368,24 @@ def title_for(sentence: str) -> str:
     return text[:1].upper() + text[1:] if text else "A one-off from brAIn"
 
 
-def disarm(entity_id: str) -> dict:
+# The automation running the action, as Home Assistant renders it. What
+# the disarm targets, and the one template `_protected_refusal` allows.
+SELF_TARGET = "{{ this.entity_id }}"
+
+
+def disarm(entity_id: str = SELF_TARGET) -> dict:
     """The action brAIn adds and the model is told not to.
 
     Written by code rather than asked for, because it is the whole
     difference between a one-off and a rule somebody has to remember to
     delete — and a model that forgot it once would leave a standing
     automation behind under a card that says it fired.
+
+    It targets ITSELF, by `this`, rather than an entity id worked out in
+    advance. The id worked out in advance was a guess at Core's slug, and
+    a slug can be taken: a restored orphan of the same sentence accepted
+    last month holds it, so the new automation registered as `_2`, its
+    disarm switched the orphan off, and the one-off kept firing for ever.
     """
     return {"service": "automation.turn_off",
             "target": {"entity_id": entity_id},
@@ -431,7 +445,7 @@ def build(sentence: str, answer: dict, ts: int,
         "trigger": triggers,
         "condition": _listify(answer.get("condition")
                               or answer.get("conditions")),
-        "action": list(steps) + [disarm(entity_id)],
+        "action": list(steps) + [disarm()],
         # Not the model's to choose. A one-off that could run twice at
         # once is a one-off that is not one.
         "mode": "single",
@@ -673,6 +687,7 @@ __all__ = [
     "MAX_QUEUED", "MAX_REFUSED", "MAX_ROWS", "MAX_SENTENCE",
     "REQUEST_DIR", "STATUSES",
     "STORE", "SYSTEM", "TIMEOUT_S", "MAX_TURNS", "arm", "armed_count",
+    "SELF_TARGET",
     "build", "collect", "disarm", "drop", "expired", "fired_from_state",
     "get", "listing", "mark_fired", "note", "parse_answer",
     "parse_request",

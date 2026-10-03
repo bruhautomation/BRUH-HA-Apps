@@ -153,6 +153,17 @@ REFLECTION_PROMPT = (
     'line: {"fact": ..., "confidence": "high|medium|low"} or the single '
     "word NONE."
 )
+# Added when Home Assistant said who was speaking (`context.person`): the
+# one fact a voice turn can supply that nothing else in the house records,
+# and the reason a preference stated by voice used to be filed with no
+# owner and applied to everybody. The model decides which facts are the
+# speaker's own, because "we call the lounge lamp the big light" is the
+# house's and "I like the bedroom at 19" is theirs.
+REFLECTION_SPEAKER = (
+    " The person speaking is {name}. Add \"about\": \"speaker\" to a fact "
+    "that is their own preference or habit, and \"about\": \"house\" to "
+    "one that is true of the household whoever is asking."
+)
 
 # HA's configured timezone (written by run.sh at startup; refreshed here as
 # a fallback). Voice answers must use local time, never the container UTC.
@@ -219,6 +230,175 @@ def resolve_access(value) -> dict:
         level = "voice"
     return {"level": level, **ACCESS_LEVELS[level]}
 
+# The model plan (panel/model_plan.py) reaches the shell half through
+# /data/.brain_env, which run.sh writes at boot. The pool is started by
+# run.sh directly and never sources that file, so a plan value is read off
+# the environment first and the file second — the extractor's arrangement
+# (`brain-memory-extract.py`), for the same reason.
+BRAIN_ENV_FILE = os.environ.get("BRAIN_ENV_FILE", "/data/.brain_env")
+
+
+def plan_value(name: str) -> str:
+    """One `BRAIN_*` export, from the environment or /data/.brain_env."""
+    value = os.environ.get(name)
+    if value is not None:
+        return value.strip()
+    try:
+        with open(BRAIN_ENV_FILE, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith("export "):
+                    line = line[7:]
+                if line.startswith(name + "="):
+                    return line.split("=", 1)[1].strip().strip("\"'")
+    except OSError:
+        # No file is no plan: the request's own model, or the CLI's.
+        pass
+    return ""
+
+
+def voice_model(model: str | None) -> tuple[str, bool]:
+    """`(model, planned)` for a request: an agent set to Default takes the
+    plan's voice tier, exactly as the classic listener has always done.
+
+    The fast pool used to pass no `--model` at all for one, so "Default"
+    meant the CLI's own account default here and Sonnet there — two models
+    for one job depending on `assist_fast_mode`. `planned` says the model
+    came from the plan, which is when the plan's effort applies too
+    (`engine._run_cli`'s rule: an explicit model carries no planned effort).
+    """
+    model = str(model or "").strip()
+    if model and model != "default":
+        return model, False
+    planned = plan_value("BRAIN_MODEL_VOICE")
+    return (planned, True) if planned else ("default", False)
+
+
+# Two flags a CLI a version behind may not know. Each is optional and the
+# voice turn is not, so whether the installed CLI takes them is asked ONCE,
+# off its own `--help`, and a flag it does not list is simply not sent — a
+# worker spawned with an unknown flag dies before it says anything, and a
+# voice turn is not the place to find that out by retrying.
+#   --effort                      the plan's depth for the voice job
+#   --system-prompt-snapshot off  a RESUMED voice session otherwise keeps
+#                                 the system prompt of its first turn —
+#                                 yesterday's area map, a profile the agent
+#                                 has since changed, a capability sentence
+#                                 for a level it no longer has
+_CLI_FLAGS: dict = {"probed": False, "text": ""}
+_cli_flags_lock = threading.Lock()
+
+
+def cli_supports(flag: str) -> bool:
+    """Whether the installed CLI lists `flag` in its help. Never raises."""
+    with _cli_flags_lock:
+        if not _CLI_FLAGS["probed"]:
+            text = ""
+            try:
+                proc = subprocess.run(
+                    resolve_claude_cmd() + ["--help"], capture_output=True,
+                    text=True, timeout=20, stdin=subprocess.DEVNULL,
+                    cwd=WORK_DIR)
+                text = (proc.stdout or "") + (proc.stderr or "")
+            except (OSError, subprocess.TimeoutExpired):
+                text = ""
+            _CLI_FLAGS["text"] = text
+            _CLI_FLAGS["probed"] = True
+        return flag in _CLI_FLAGS["text"]
+
+
+def voice_flags(planned: bool, resume: bool) -> list[str]:
+    """The optional flags for one voice spawn, as far as this CLI takes them."""
+    out: list[str] = []
+    effort = plan_value("BRAIN_EFFORT_VOICE") if planned else ""
+    if effort and cli_supports("--effort"):
+        out += ["--effort", effort]
+    if resume and cli_supports("--system-prompt-snapshot"):
+        out += ["--system-prompt-snapshot", "off"]
+    return out
+
+
+def voice_env(denied_csv: str, access: dict) -> dict:
+    """The environment every voice spawn hands its MCP server.
+
+    `BRAIN_CHANNEL=voice` says which door the run came through — the
+    server's per-channel rules key on it, and a voice turn reached by
+    nothing that says so would be read as some other channel's."""
+    env = dict(os.environ)
+    env["BRAIN_DENIED_SERVICES"] = denied_csv
+    env["BRAIN_EXPOSED_ONLY"] = "1" if access["exposed_only"] else "0"
+    env["BRAIN_ASSIST_ACCESS"] = access["level"]
+    env["BRAIN_CHANNEL"] = "voice"
+    return env
+
+
+def _voice_context_module():
+    """`scripts/brain_voice_context.py`, the one place a request's context
+    becomes words — `_exposure_module`'s arrangement."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, "..", "scripts")
+    if path not in sys.path:
+        sys.path.insert(0, path)
+    import brain_voice_context  # noqa: PLC0415
+    return brain_voice_context
+
+
+def context_preamble(context) -> str:
+    """The request's context as the block in front of the person's words."""
+    if not context:
+        return ""
+    try:
+        return _voice_context_module().preamble(context)
+    except Exception as exc:  # noqa: BLE001 — a turn without context still answers
+        debug_log([f"[{{ts}}] CONTEXT could not be composed: {exc}"])
+        return ""
+
+
+def context_person(context) -> str:
+    """The speaker's person id off a request's context, or ""."""
+    if not context:
+        return ""
+    try:
+        return _voice_context_module().person_id(context)
+    except Exception:  # noqa: BLE001 — no speaker is a fact filed unowned
+        return ""
+
+
+def _journal_module():
+    """`scripts/brain_run_journal.py`: a run made here, into the panel's
+    journal, with the usage nudge a panel run gets from its listener."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, "..", "scripts")
+    if path not in sys.path:
+        sys.path.insert(0, path)
+    import brain_run_journal  # noqa: PLC0415
+    return brain_run_journal
+
+
+# Which journal outcome (`journal.OUTCOMES`) a voice failure is.
+JOURNAL_OUTCOME = {"timeout": "timeout", "auth": "auth"}
+
+
+def journal_turn(error: str, duration: float, envelope: dict | None,
+                 model: str, run_id: str = "", mode: str = "") -> None:
+    """One journal row for a voice turn, off the request thread. Never raises.
+
+    Voice is the highest-traffic Claude path in a house and it recorded
+    nothing: no row, so nothing counted it and nothing reported a failed
+    one, and no nudge, so its spend reached the usage figure only on the
+    tracker's half-hour heartbeat."""
+    def _do() -> None:
+        try:
+            outcome = "ok" if not error else JOURNAL_OUTCOME.get(error, "error")
+            _journal_module().record_run(
+                "voice", outcome, duration_s=duration, envelope=envelope,
+                model="" if model == "default" else model, error=error,
+                run_id=run_id, extra={"mode": mode} if mode else None)
+        except Exception:  # noqa: BLE001 — accounting must not fail a turn
+            pass
+    threading.Thread(target=_do, daemon=True).start()
+
+
 # --include-partial-messages gives token-level deltas for streaming TTS.
 # Disabled automatically if the installed CLI predates the flag.
 #
@@ -240,6 +420,10 @@ def resolve_access(value) -> dict:
 # because the deaths this counts are consecutive ones.
 PARTIAL_MESSAGES_OK = True
 PARTIAL_DISABLE_AFTER = int(os.environ.get("BRAIN_PARTIAL_DISABLE_AFTER", "2"))
+# How young a worker has to be for its death to count as dying AT SPAWN —
+# the shape a CLI that rejects --include-partial-messages makes. A worker
+# that answered for a while and then died says nothing about the flag.
+EARLY_DEATH_S = float(os.environ.get("BRAIN_EARLY_DEATH_S", "5"))
 PARTIAL_RETRY_AFTER_S = float(os.environ.get("BRAIN_PARTIAL_RETRY_AFTER_S",
                                              str(15 * 60)))
 # Consecutive early deaths of workers spawned WITH the flag, and the instant
@@ -300,11 +484,22 @@ AUTH_ERROR_RE = re.compile(
     r"|authentication[_ ]error",
     re.IGNORECASE,
 )
+# The remedy is the panel's own button: `/login` in a terminal is a shell
+# command in a tab `enable_terminal` can remove, whose default face is a
+# chat with no shell in it.
 AUTH_ERROR_MESSAGE = (
     "Claude's saved login has expired and could not be refreshed "
-    "automatically. Open the brAIn add-on from the sidebar and run "
-    "/login once — Assist and background tasks pick up the fresh login "
-    "automatically."
+    "automatically. Open brAIn from the sidebar and press Settings, then "
+    "Claude account, then Sign in again — Assist and background tasks pick "
+    "up the fresh sign-in automatically."
+)
+# What a turn that had already called a tool and then died says, instead
+# of being run a second time. The bridge's rule for a stream that broke
+# after the pool accepted it, one layer in: a toggle, a relative step, a
+# script or a notification that ran once must not run twice.
+PARTIAL_MESSAGE = (
+    "Sorry, I lost my place partway through that. Some of it may already "
+    "have happened — check before asking again."
 )
 
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
@@ -741,8 +936,13 @@ def _transcript_worth_reflecting(transcript: list) -> bool:
     return any(kw in blob for kw in REFLECT_KEYWORDS)
 
 
-def reflect_on_transcript(transcript: list) -> None:
+def reflect_on_transcript(transcript: list, person: str = "") -> None:
     """One-shot cheap Claude pass extracting durable facts (daemon thread).
+
+    `person` is the speaker's person id (`ben` for `person.ben`) when one
+    speaker held the whole conversation; a fact the model marks as theirs
+    is filed with subject `person:<id>` so it belongs to them rather than
+    to everyone.
 
     Never raises: any failure (unauthenticated, timeout, garbage output)
     just means no facts are stored this time.
@@ -759,7 +959,10 @@ def reflect_on_transcript(transcript: list) -> None:
         # step, and unclaimed it filed under "Your chats" — dozens of
         # identical machine prompts burying the person's own conversations.
         _, session_args = mint_claimed_session("memory")
-        prompt = REFLECTION_PROMPT + "\n\nConversation:\n" + convo
+        prompt = REFLECTION_PROMPT
+        if person:
+            prompt += REFLECTION_SPEAKER.format(name=person)
+        prompt += "\n\nConversation:\n" + convo
         proc = subprocess.run(
             cmd + session_args,
             input=prompt,
@@ -794,12 +997,21 @@ def reflect_on_transcript(transcript: list) -> None:
             confidence = obj.get("confidence")
             if confidence not in ("high", "medium", "low"):
                 confidence = "medium"
-            facts.append({
+            record = {
                 "ts": int(time.time()),
                 "source": "assist",
                 "fact": fact.strip()[:500],
                 "confidence": confidence,
-            })
+            }
+            # The inbox contract `remember_fact` already writes: `subject`
+            # names what the fact is about and `person` whose it is, and
+            # the facts store files it under `person:<id>`. Only for a fact
+            # the model said was the speaker's — a house fact keeps no
+            # owner, which is what it is.
+            if person and obj.get("about") == "speaker":
+                record["subject"] = f"person:{person}"
+                record["person"] = person
+            facts.append(record)
             if len(facts) >= 3:
                 break
         if not facts:
@@ -818,18 +1030,28 @@ def reflect_on_transcript(transcript: list) -> None:
 
 
 def maybe_reflect(worker: "Worker") -> None:
-    """Kick off a background reflection for a worker being retired."""
+    """Kick off a background reflection for a worker being retired.
+
+    The speaker rides only when ONE person held the conversation: two
+    voices in one session (a satellite in a shared kitchen) is a transcript
+    whose preferences belong to nobody in particular, and filing them under
+    either would be a guess about whose they were.
+    """
     if not ASSIST_LEARNING:
         return
     try:
         transcript = list(worker.transcript)
         worker.transcript = []  # never reflect the same exchanges twice
+        people = set(getattr(worker, "people", None) or ())
     except Exception:  # noqa: BLE001
         return
     if not _transcript_worth_reflecting(transcript):
         return
+    person = next(iter(people)) if len(people) == 1 else ""
+    person = person or ""          # a turn with no known speaker is None
     threading.Thread(
-        target=reflect_on_transcript, args=(transcript,), daemon=True
+        target=reflect_on_transcript, args=(transcript,),
+        kwargs={"person": person} if person else {}, daemon=True,
     ).start()
 
 
@@ -850,12 +1072,19 @@ class Worker:
         self.lock = threading.Lock()  # serializes turns on this worker
         self._events: Queue = Queue()
         # Bounded conversation buffer for the end-of-life reflection pass
-        # (see _record_exchange / maybe_reflect).
+        # (see _record_exchange / maybe_reflect), and who spoke in it.
         self.transcript: list = []
+        self.people: set = set()
+        # What the last turn did, read by Pool.process: whether it reached a
+        # tool before it ended (see `ask`), and the CLI's own result event
+        # for the journal (session, turns, tokens).
+        self.acted = False
+        self.last_result: dict | None = None
 
         system_prompt, model, denied_csv = profile[:3]
         access = resolve_access(profile[3] if len(profile) > 3 else "voice")
         self.access = access["level"]
+        self.model, planned = voice_model(model)
         cmd = resolve_claude_cmd() + [
             "-p",
             "--verbose",
@@ -873,18 +1102,16 @@ class Worker:
         if self.partial:
             cmd += ["--include-partial-messages"]
         cmd += scoping_args(access["mcp_only"])
-        if model and model != "default":
-            cmd += ["--model", model]
+        if self.model and self.model != "default":
+            cmd += ["--model", self.model]
+        cmd += voice_flags(planned, bool(resume))
         if resume:
             cmd += ["--resume", resume]
             self.session_id = resume
 
         # Pass this agent's service deny-list to the MCP server (inherited
         # via claude's environment). Per-worker, so it is per-agent.
-        env = dict(os.environ)
-        env["BRAIN_DENIED_SERVICES"] = denied_csv
-        env["BRAIN_EXPOSED_ONLY"] = "1" if access["exposed_only"] else "0"
-        env["BRAIN_ASSIST_ACCESS"] = access["level"]
+        env = voice_env(denied_csv, access)
         self.proc = subprocess.Popen(
             cmd,
             cwd=WORK_DIR,
@@ -924,8 +1151,18 @@ class Worker:
         When delta_cb is given, assistant text is forwarded incrementally:
         token-level via stream_event deltas when the CLI supports
         --include-partial-messages, otherwise per-turn via assistant
-        message events.
+        message events. A turn is several API messages when it uses a tool
+        — "I'll check." then the answer — and each new one is separated
+        from the last by a blank line, because glued together they are one
+        run-on message in Home Assistant's chat log ("I'll check.The lights
+        are off.") that differs from the answer that is spoken.
+
+        `self.acted` is set the moment the turn reaches a tool, whatever
+        becomes of it: a turn that dies after a `control_*` call has
+        changed the house, and `Pool.process` must not run it again.
         """
+        self.acted = False
+        self.last_result = None
         msg = {
             "type": "user",
             "message": {
@@ -940,6 +1177,17 @@ class Worker:
             return None
 
         saw_partial = False
+        emitted = False        # text already handed to delta_cb this turn
+        boundary = False       # a new API message began since that text
+
+        def emit(chunk: str) -> None:
+            nonlocal emitted, boundary
+            if boundary and emitted:
+                delta_cb("\n\n")
+            boundary = False
+            emitted = True
+            delta_cb(chunk)
+
         while True:
             remaining = deadline - time.time()
             if remaining <= 0:
@@ -951,17 +1199,38 @@ class Worker:
             etype = event.get("type")
             if etype == "_eof":
                 return None
-            if etype == "stream_event" and delta_cb is not None:
-                delta = (event.get("event") or {}).get("delta") or {}
-                if delta.get("type") == "text_delta" and delta.get("text"):
-                    saw_partial = True
-                    delta_cb(delta["text"])
-            elif etype == "assistant" and delta_cb is not None and not saw_partial:
-                # Coarse fallback: stream each turn's text as one chunk
-                for block in (event.get("message") or {}).get("content") or []:
-                    if isinstance(block, dict) and block.get("type") == "text" and block.get("text"):
-                        delta_cb(block["text"])
+            if etype == "stream_event":
+                inner = event.get("event") or {}
+                if inner.get("type") == "message_start":
+                    boundary = True
+                elif inner.get("type") == "content_block_start" and \
+                        (inner.get("content_block") or {}).get("type") == "tool_use":
+                    self.acted = True
+                if delta_cb is not None:
+                    delta = inner.get("delta") or {}
+                    if delta.get("type") == "text_delta" and delta.get("text"):
+                        saw_partial = True
+                        emit(delta["text"])
+            elif etype == "assistant":
+                blocks = (event.get("message") or {}).get("content") or []
+                if any(isinstance(b, dict) and b.get("type") == "tool_use"
+                       for b in blocks):
+                    self.acted = True
+                if delta_cb is not None and not saw_partial:
+                    # Coarse fallback: stream each message's text as one
+                    # chunk, each message its own paragraph.
+                    boundary = True
+                    for block in blocks:
+                        if isinstance(block, dict) and block.get("type") == "text" and block.get("text"):
+                            emit(block["text"])
+            elif etype == "user":
+                blocks = (event.get("message") or {}).get("content") or []
+                if isinstance(blocks, list) and any(
+                        isinstance(b, dict) and b.get("type") == "tool_result"
+                        for b in blocks):
+                    self.acted = True
             elif etype == "result":
+                self.last_result = event
                 if event.get("is_error"):
                     return None
                 result = event.get("result")
@@ -988,6 +1257,12 @@ class Pool:
         self.conv_locks: dict[str, threading.Lock] = {}
         self.started = time.time()
         self.last_request: dict | None = None
+        # What /health reports beside the heartbeat: how many turns, how
+        # many failed and of which kind, and how often the fallback ran.
+        # A pool that is alive and answering every turn with an apology is
+        # alive, and "alive" was all health could see.
+        self.stats: dict = {"turns": 0, "failures": 0, "fallbacks": 0,
+                            "by_error": {}, "last_failure": None}
 
     # -- worker lifecycle ---------------------------------------------------
 
@@ -1131,10 +1406,34 @@ class Pool:
 
     def handle(self, req: dict) -> None:
         """File-protocol frontend: process the request, write the response."""
-        response = self.process(req)
-        write_response(req["id"], response)
+        response, error = self.process_full(req)
+        write_response(req["id"], response, error)
 
     def process(self, req: dict, delta_cb=None) -> str:
+        """The turn's text, whatever became of it. See `process_full`."""
+        return self.process_full(req, delta_cb=delta_cb)[0]
+
+    def _count(self, error: str, mode: str) -> None:
+        with self.lock:
+            self.stats["turns"] += 1
+            if "fallback" in mode:
+                self.stats["fallbacks"] += 1
+            if error:
+                self.stats["failures"] += 1
+                by = self.stats["by_error"]
+                by[error] = by.get(error, 0) + 1
+                self.stats["last_failure"] = {"ts": time.time(), "error": error,
+                                              "mode": mode}
+
+    def process_full(self, req: dict, delta_cb=None) -> tuple[str, str]:
+        """`(text, error)` for one request; `error` is "" for an answer.
+
+        The error is a closed word — `timeout`, `empty`, `auth`, `partial`,
+        `error` — written beside the sentence on both transports, because a
+        failure handed to Home Assistant as if it were an answer is one its
+        pipeline cannot tell from one: the agent speaks an apology as a
+        reply and nothing anywhere counts it.
+        """
         req_id = req["id"]
         text = req["text"]
         conv_id = "".join(
@@ -1153,6 +1452,12 @@ class Pool:
         system_prompt = build_system_prompt(custom_prompt, access)
         profile = (system_prompt, model, denied_csv, access["level"])
         save_last_profile(custom_prompt, model, denied_csv, access["level"])
+        # Where the request came from and who asked, as words in the TURN
+        # (never the system prompt, which keys the spare — see
+        # brain_voice_context). Empty for a request that carried none.
+        context = req.get("context") if isinstance(req.get("context"), dict) else {}
+        preamble = context_preamble(context)
+        person = context_person(context)
 
         debug_log([
             "================================================================",
@@ -1165,11 +1470,15 @@ class Pool:
         ])
 
         start = time.time()
+        error = ""
+        envelope: dict | None = None
+        run_id = ""
+        ran_model = voice_model(model)[0]
         conv_lock = self.conv_locks.setdefault(conv_id, threading.Lock())
         with conv_lock:
             try:
                 worker, mode = self._take_worker(conv_id, profile)
-                message = local_time_line() + text
+                message = local_time_line() + preamble + text
                 # A truly fresh session can't see earlier turns — replay the
                 # transcript the integration sends (like the classic
                 # listener). The spare is exactly as fresh as a cold spawn:
@@ -1182,13 +1491,16 @@ class Pool:
                     ]
                     message = (
                         "Previous conversation:\n" + "\n".join(lines)
-                        + f"\n\n{local_time_line()}USER: {text}"
+                        + f"\n\n{local_time_line()}{preamble}USER: {text}"
                     )
 
                 with worker.lock:
                     response = worker.ask(message, deadline, delta_cb=delta_cb)
+                envelope = worker.last_result
+                run_id = worker.session_id or ""
+                ran_model = worker.model
                 if response is None and not worker.alive() and \
-                        time.time() - worker.created < 5 and worker.partial:
+                        time.time() - worker.created < EARLY_DEATH_S and worker.partial:
                     # CLI may predate --include-partial-messages — or this
                     # may be one bad spawn. Counted rather than concluded
                     # from; the fallback answers this request either way.
@@ -1199,37 +1511,58 @@ class Pool:
                     worker.last_used = time.time()
                     self._store_session(conv_id, worker.session_id)
                     _record_exchange(worker, text, response)
+                    worker.people.add(person or None)
+                elif worker.acted:
+                    # The turn reached a tool and then died: a toggle, a
+                    # relative step, a script or a notification may already
+                    # have happened, and the one-shot below starts from a
+                    # session that has no record of it. Running the request
+                    # again is how a light gets toggled twice — the bridge's
+                    # own rule for an accepted stream that broke, so say so
+                    # instead. The worker goes either way.
+                    self._drop_worker(conv_id, worker)
+                    mode += "+partial"
+                    response, error = PARTIAL_MESSAGE, "partial"
                 else:
-                    # Worker hung, died, or errored — drop it and fall back
-                    # to a one-shot invocation within the remaining budget.
+                    # Worker hung, died, or errored before touching anything
+                    # — drop it and fall back to a one-shot invocation
+                    # within the remaining budget.
                     self._drop_worker(conv_id, worker)
                     mode += "+fallback"
-                    response = self._oneshot(req, system_prompt, model, deadline, denied_csv,
-                                             access)
+                    response, run_id = self._oneshot_run(
+                        req, system_prompt, model, deadline, denied_csv,
+                        access, preamble)
+                    envelope = None
             except Exception as exc:  # noqa: BLE001 — never drop a request
                 log(f"worker path failed for {req_id}: {exc}")
                 mode = "error+fallback"
-                response = self._oneshot(req, system_prompt, model, deadline, denied_csv,
-                                             access)
+                response, run_id = self._oneshot_run(
+                    req, system_prompt, model, deadline, denied_csv, access,
+                    preamble)
+                envelope = None
 
         duration = time.time() - start
-        if response and AUTH_ERROR_RE.search(response):
+        if response and not error and AUTH_ERROR_RE.search(response):
             log(f"request {req_id}: Claude auth failure — recycling worker pool "
                 f"({response[:160]!r})")
             self.drop_all()
-            response = AUTH_ERROR_MESSAGE
+            response, error = AUTH_ERROR_MESSAGE, "auth"
         if response is None:
             if time.time() >= deadline:
+                error = "timeout"
                 response = (
                     f"Claude timed out after {int(duration)}s. This may be "
                     "caused by a broken MCP server connection. Try restarting "
                     "the brAIn add-on."
                 )
             else:
+                error = "empty"
                 response = (
-                    "Sorry, Claude didn't produce a response. Check the BRUH "
-                    "Claude Terminal add-on logs for details."
+                    "Sorry, Claude didn't produce a response. Check the "
+                    "brAIn add-on's log for details."
                 )
+        self._count(error, mode)
+        journal_turn(error, duration, envelope, ran_model, run_id, mode)
 
         debug_log([
             f"[{{ts}}] RESPONSE {req_id}",
@@ -1239,23 +1572,34 @@ class Pool:
             f"  Preview:   {response[:200]}",
             "----------------------------------------------------------------",
         ])
-        log(f"request {req_id}: {duration:.1f}s ({mode})")
+        log(f"request {req_id}: {duration:.1f}s ({mode})"
+            + (f" — {error}" if error else ""))
         self.last_request = {
             "ts": time.time(), "duration_s": round(duration, 1), "mode": mode,
+            "error": error or None,
         }
         write_pool_status(self)
-        return response
+        return response, error
 
     @staticmethod
     def _oneshot(
         req: dict, system_prompt: str, model: str, deadline: float,
-        denied_csv: str = "", access: dict | None = None,
+        denied_csv: str = "", access: dict | None = None, preamble: str = "",
     ) -> str | None:
         """Classic spawn-per-request fallback — identical to the bash path."""
+        return Pool._oneshot_run(req, system_prompt, model, deadline,
+                                 denied_csv, access, preamble)[0]
+
+    @staticmethod
+    def _oneshot_run(
+        req: dict, system_prompt: str, model: str, deadline: float,
+        denied_csv: str = "", access: dict | None = None, preamble: str = "",
+    ) -> tuple[str | None, str]:
+        """`_oneshot`, with the session id it minted, for the journal."""
         remaining = int(deadline - time.time())
         if remaining < 10:
-            return None
-        text = local_time_line() + req["text"]
+            return None, ""
+        text = local_time_line() + preamble + req["text"]
         if req.get("conversation_history"):
             lines = [
                 f"{m.get('role', '?').upper()}: {m.get('content', '')}"
@@ -1269,17 +1613,17 @@ class Pool:
         ]
         access = access or resolve_access("voice")
         cmd += scoping_args(access["mcp_only"])
-        if model and model != "default":
-            cmd += ["--model", model]
-        env = dict(os.environ)
-        env["BRAIN_DENIED_SERVICES"] = denied_csv
-        env["BRAIN_EXPOSED_ONLY"] = "1" if access["exposed_only"] else "0"
-        env["BRAIN_ASSIST_ACCESS"] = access["level"]
+        resolved, planned = voice_model(model)
+        if resolved and resolved != "default":
+            cmd += ["--model", resolved]
+        # A one-shot is never a resume: it mints its own session below.
+        cmd += voice_flags(planned, False)
+        env = voice_env(denied_csv, access)
         # The stream path claims its session off the CLI's own events; this
         # path spawns fresh and has no events to read, so it claims a minted
         # id up front like the bash listener does — unclaimed, every
         # fallback turn filed under "Your chats".
-        _, session_args = mint_claimed_session("voice")
+        session_id, session_args = mint_claimed_session("voice")
         try:
             proc = subprocess.run(
                 cmd + session_args,
@@ -1296,14 +1640,15 @@ class Pool:
                 # the voice answer is not.
                 remaining = int(deadline - time.time())
                 if remaining < 10:
-                    return None
+                    return None, ""
+                session_id = ""
                 proc = subprocess.run(
                     cmd, input=text, capture_output=True, text=True,
                     timeout=remaining, cwd=WORK_DIR, env=env,
                 )
-            return proc.stdout.strip() or None
+            return proc.stdout.strip() or None, session_id
         except (subprocess.TimeoutExpired, OSError):
-            return None
+            return None, session_id
 
 
 # ---------------------------------------------------------------------------
@@ -1346,6 +1691,13 @@ def publish_endpoint(port: int) -> None:
     os.replace(tmp, API_ENDPOINT_FILE)
 
 
+def pool_counts(pool) -> dict:
+    """The turn counters, copied under the pool's lock."""
+    stats = getattr(pool, "stats", None) or {}
+    with pool.lock:
+        return {**stats, "by_error": dict(stats.get("by_error") or {})}
+
+
 def write_pool_status(pool) -> None:
     """Heartbeat consumed by the integration's health sensor (file fallback
     when the HTTP endpoint isn't reachable)."""
@@ -1358,6 +1710,7 @@ def write_pool_status(pool) -> None:
             "uptime_s": int(time.time() - pool.started),
             "last_request": pool.last_request,
             "tool_access": TOOL_ACCESS,
+            "counts": pool_counts(pool),
         }
         tmp = POOL_STATUS_FILE + ".tmp"
         with open(tmp, "w") as fh:
@@ -1409,6 +1762,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             "uptime_s": int(time.time() - pool.started),
             "last_request": pool.last_request,
             "tool_access": TOOL_ACCESS,
+            "counts": pool_counts(pool),
         })
 
     def do_POST(self):  # noqa: N802
@@ -1450,8 +1804,13 @@ class ApiHandler(BaseHTTPRequestHandler):
                 pass  # client went away; result still completes server-side
 
         try:
-            response = self.pool.process(req, delta_cb=delta_cb)
-            emit({"type": "result", "text": response})
+            response, error = self.pool.process_full(req, delta_cb=delta_cb)
+            result = {"type": "result", "text": response}
+            if error:
+                # The sentence still rides as the text: the error is the
+                # word that says it is not an answer.
+                result["error"] = error
+            emit(result)
         except OSError:
             pass  # client disconnected mid-stream
         except Exception as exc:  # noqa: BLE001
@@ -1494,12 +1853,17 @@ def start_http_server(pool) -> None:
 # ---------------------------------------------------------------------------
 
 
-def write_response(req_id: str, text: str) -> None:
+def write_response(req_id: str, text: str, error: str = "") -> None:
+    """The answer file. A failure carries its word beside the sentence;
+    an answer is byte-for-byte the file it always was."""
     os.makedirs(RESPONSES_DIR, exist_ok=True)
     path = os.path.join(RESPONSES_DIR, f"{req_id}.json")
     tmp = f"{path}.tmp"
+    body = {"id": req_id, "text": text}
+    if error:
+        body["error"] = error
     with open(tmp, "w") as fh:
-        json.dump({"id": req_id, "text": text}, fh)
+        json.dump(body, fh)
     os.replace(tmp, path)
 
 
@@ -1603,6 +1967,9 @@ def main() -> None:
     refresh_area_map()
     refresh_memory()
     cleanup_stale_files()
+    # Ask the CLI which optional flags it takes now, once, rather than on
+    # the first voice command (cli_supports caches the answer).
+    cli_supports("--effort")
 
     pool = Pool()
     start_http_server(pool)

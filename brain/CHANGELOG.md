@@ -2,6 +2,629 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.11.0
+
+**A leak, smoke or gas alarm reaches you whatever brAIn is doing, and the
+Resident can correct its own first look.**
+
+### Safety and the Resident
+
+- **Leak, smoke, CO and gas alarms are sent the moment they trip.** brAIn files
+  a critical card naming the sensor and the time and sends it straight away —
+  through quiet hours, with reminders behind it — without waiting for any AI to
+  look at it, and without needing a Claude sign-in, the automatic switch or any
+  usage budget. Before, a leak reached your phone only if a model happened to
+  answer exactly "act"; a paused add-on or a spent budget silenced it, and quiet
+  hours held it until morning. With no notification service set, it lands in
+  Home Assistant's own notifications instead.
+- **A second leak is a second alert.** Each trip is its own card. Dismissing
+  Tuesday's leak used to silence every later trip of the same sensor for good.
+  A detector chattering on and off within five minutes is still one card.
+- **When the sensor reports dry, the card says so and the reminders stop.** The
+  card stays until you answer it — something still caused it — but your phone
+  stops being told about a sensor that says it is over.
+- **The deeper look corrects the first one.** When the Resident investigates a
+  card that is already on your list, it now rewrites that card — a specific fix
+  for this house instead of the rule's generic sentence — or holds it back with
+  its reason, instead of filing a second card beside it. It sees the signal's
+  own sentence, why it was sent to look, and the time of day.
+- **A stronger second opinion can say "no".** When an investigation was unsure
+  about something important and a stronger model looks again, that model is
+  shown the first conclusion and can withdraw it. Before, it re-ran the same
+  prompt blind and its "nothing here" was ignored.
+- **Real evidence is no longer thrown away.** The guard that refuses invented
+  readings now reads what the investigation actually looked at through its
+  tools, not its closing paragraph — which either refused genuine cases or let
+  anything through, depending on the Claude version.
+- **The Resident's questions and suggestions can be answered.** "Yes", "No" and
+  "Add to list" on a question or suggestion the Resident filed used to fail with
+  "already answered". "Yes" now files what the card said it would teach, and a
+  suggestion goes onto your To-do list. **Stop raising these** is no longer
+  offered on the Resident's cards or on safety cards — it deleted every open
+  Resident card, safety ones included, while muting nothing.
+- **Watching means watching.** Something the Resident decided to keep an eye on
+  comes back after it happens three more times, counted across days; it was
+  effectively a fortnight's mute. A batch the model failed to answer no longer
+  mutes everything in it.
+- **The Resident's cards age out.** One nobody answers leaves the list after a
+  week, a fortnight or a month depending on how much it matters. Safety cards
+  never expire on their own.
+- **A held row comes back when it gets worse.** A finding the first look held
+  back (a battery at 30%) is looked at again when its severity rises (the same
+  battery at 4%).
+- **Smaller fixes.** The first look sees your local time and weekday, each row's
+  severity, and why it decided to watch something before; "the small hours" now
+  means your small hours rather than UTC's; investigations the budget cannot pay
+  for wait in their own queue instead of being re-judged by a paid look every
+  minute; a day's look allowance never holds back a tripped safety sensor; a
+  flood of events never drops a safety trip; and investigations are handed the
+  memory about every entity in their evidence, not just the first.
+
+### Voice, tools and what brAIn may touch
+
+- **A "Voice assistant" agent can no longer restart Home Assistant, shut down
+  the host, or create an admin login.** The default voice level was scoped by
+  the entities a request named, so a request that named none got straight
+  through. That covered `homeassistant.restart`, `hassio.host_shutdown`,
+  `update.install` and `brain.create_user` with `admin: true`, and Home
+  Assistant accepted all of them because brAIn's token is an admin's. A misheard
+  sentence, a guest or the TV could reach them. A voice-level agent now checks
+  the service itself:
+  - A request that names no entity is refused, unless it is a notification or
+    one of the BRUH play services (Minecraft play actions, a label print, a
+    BRight show).
+  - A request that names entities may only use those entities' own services
+    (`light.turn_on` on a light). The exceptions are the services built to work
+    across domains: the `homeassistant.turn_on/off/toggle` meta-services,
+    text-to-speech, Music Assistant playing on a speaker, and a scene applied
+    inline.
+  - `update.install` is refused even on an update entity.
+
+  Agents set to "Whole house" or "Full admin" are unchanged.
+- **New agents start with the administration services blocked.** The first
+  agent, a discovered agent and any agent you add now begin with these services
+  already ticked in **Blocked services**: restart and stop, host reboot and
+  shutdown, `update.install`, `recorder.purge`, `shell_command.*`,
+  `backup.create` and the `brain.*` registry tools. You can untick any of them.
+  Opening blinds, unlocking and running scripts stay one click away in the list
+  rather than ticked. Agents you already have are not changed.
+- **A protected lock can't be unlocked through a scene any more.** `scene.apply`
+  and `scene.create` take their entities in an `entities` map, and Home
+  Assistant applies each entity's state there. That will unlock a lock or open a
+  cover. brAIn's protected list, each agent's Blocked services and the voice
+  exposure check all looked only at `entity_id` and `target`, so a protected
+  lock named inside a scene passed all three. brAIn now reads every entity a
+  request names, wherever it names it: scene maps, `snapshot_entities`,
+  `group_members`, a speaker in `media_player_entity_id`, and a protected entity
+  passed to a script as a variable.
+- **Running a scene, script or automation now checks what is inside it.**
+  `scene.turn_on`, `script.turn_on`, `automation.trigger`, and a script called
+  by its own name (`script.unlock_door`) used to be checked as the scene or
+  script and nothing more. brAIn now asks Home Assistant what each one
+  references:
+  - If any of those entities is on your protected list, the run is refused, on
+    every agent.
+  - On a "Voice assistant" agent, the run is also refused if any of them is not
+    exposed to Assist.
+
+  A script that only touches the hall light is not refused just because the
+  protected front-door lock is in the same room.
+- **Multi-day history questions get the whole window.** brAIn's history tool
+  asked Home Assistant for "since 3 days ago" without saying "until now". Home
+  Assistant then answers with a single day, so a three-day question was answered
+  from the day that ended two days ago, labelled as the last three days. The
+  query now runs to now.
+- **"What just happened" reads the end of the logbook, not the start.** The
+  logbook tool kept the first 50 entries of a window that Home Assistant lists
+  oldest first. Those are the entries furthest from "just now". It now returns
+  the newest 50, newest first, says how many it left out, and trims each entry
+  to what changed, when, and what caused it.
+- **Long statistics windows say when they are cut, and the numbers are
+  rounded.** A month of hourly statistics was quietly cut to its last 200 rows.
+  The tool now says so and suggests the daily view, and it rounds 17-digit means
+  to three decimals.
+- **brAIn can see why an automation did (or didn't) run, including since the
+  last restart.** Automation traces were read from a file Home Assistant only
+  writes when it shuts down, and they were looked up under the wrong name. So
+  nothing since the last restart was visible, and automations made in the UI had
+  no traces at all. Traces are now read live from Home Assistant: the recent
+  runs, how many times a trigger fired but a condition stopped it, and one run
+  step by step. Two new read-only tools sit alongside:
+  - `get_automation_config` returns the definition of any automation or script:
+    UI-made, YAML or package.
+  - `search_related` gives what a script or scene touches, or what uses an
+    entity: the same answer as Home Assistant's Related tab.
+
+  Scheduled cards and investigations can now read an automation they are asked
+  about.
+  - Voice agents are no longer sent about 40 tools they would only be refused
+    for: 43 tools in 27.7 KB instead of 84 in 52.5 KB.
+  - Every tool result is sent without padding, a fifth to a third smaller.
+  - The light, climate, cover and other control tools, plus scenes and scripts,
+    are marked so Claude Code never defers them behind tool search. A voice
+    command can act in its first turn instead of first spending one loading the
+    tool.
+  - The server now tells Claude which tool answers which question.
+- **Voice turns start faster and cost less.**
+- **A misleading tool was renamed.** `get_device_registry` returned a count of
+  entities per domain, not devices. It is now `get_entity_counts`, and the old
+  name still works.
+- **Memory remembers who taught it.** Every fact brAIn was told through any of
+  its faces was filed as taught by voice, with no link back to the conversation.
+  Facts now record whether they came from voice, the chat or the terminal (once
+  the launchers say which; see §4), plus the conversation they came from. A
+  voice agent can no longer file a fact about an entity it isn't allowed to see.
+- **Telling a brAIn voice assistant to undo an automation now counts as you
+  overriding it.** "Turn the hall light back on" said through brAIn was filed as
+  brAIn's own automated action. So it never counted as you overriding the motion
+  rule, and after a couple of rounds brAIn could report that the rule and brAIn
+  "keep undoing each other". Changes asked for through voice, the chat or the
+  terminal are now filed as yours. They feed overrides, habits and curiosity,
+  and they no longer produce that false conflict. Corrections you speak to Home
+  Assistant's own Assist now count as overrides too.
+
+### Checks and measurements
+
+- **Automation traces are read from Home Assistant directly, so the trace checks
+  can finally fire.** "Ran and errored", "never gets past its conditions" and
+  "still running when it was triggered again" read a file Home Assistant writes
+  only when it shuts down. They also looked runs up by the wrong key, so on a
+  real house they never found one. brAIn now asks Home Assistant for the recent
+  runs of every automation and script, keyed the way Home Assistant keys them.
+  UI-made automations and ones in packages are included. If Home Assistant will
+  not answer, the three checks say they could not look rather than reporting a
+  clean house. "Never gets past its conditions" also waits until the
+  automation's actions have not run for two weeks, so a night-only motion rule
+  failing its conditions all day is no longer reported.
+- **brAIn no longer suggests deleting your smoke alarm automation because it has
+  not fired.** "Has not run in 30 days" was what a healthy smoke, leak, CO or
+  gas response looks like, and that includes the emergency playbooks brAIn
+  writes. The check now leaves those alone: any automation watching a smoke,
+  gas, moisture, carbon monoxide or safety sensor, any alarm panel, and anything
+  brAIn wrote itself.
+- **Automations built in the new editor are understood.** Since Home Assistant
+  2026.7 the automation editor writes triggers such as "When a light turns on"
+  and "When a door opens", with the device under a target. brAIn could not
+  replay these, so they had no "would have fired" numbers, could not be trialled
+  for a week, and showed no evidence on condition suggestions. It now replays
+  the common ones: lights, switches, fans, motion and occupancy, locks, doors,
+  windows, covers, climate, media players and alarm panels. It also replays the
+  matching conditions. A trigger aimed at a whole area, floor or label is still
+  refused, with the reason. A kind brAIn does not know yet now says exactly
+  that, instead of claiming the recorder does not keep it. The "unavailable
+  trigger" check also sees these new triggers. One more fix: a "for 10 minutes"
+  condition is no longer cut short when a light is merely dimmed.
+- **A late night is measured as a late night.** If your household goes to bed
+  after midnight, brAIn used to read it as waking at 00:40 and settling at
+  22:00. The morning brief, the bedtime door check and the overnight repairs
+  then ran at the wrong ends of the night. A day now runs from 04:00 to 04:00,
+  so 00:40 is that night's bedtime. A voice command counts as somebody being up,
+  just as a press of a switch does. Earlier rows recorded the old way are
+  dropped once on the next read and are re-measured over the following nights.
+- **Washers and dryers that run a few times a week are recognised.** A machine
+  had to run for about twelve hours in ten days before brAIn could see its "on"
+  level. Most washers and dryers fell short, so "the washing is done" never
+  appeared for them. The on level is now read from the time the machine is
+  actually running. On a house with many power sensors, washers, dryers and
+  dishwashers are measured first, not whichever sorts first alphabetically. If
+  some sensors are past the nightly limit, the Knowledge tab says how many.
+- **The outdoor thermometer is chosen on evidence, and you can choose it
+  yourself.** Every room's heat-loss figure is measured against one outdoor
+  thermometer. brAIn used to take the first one alphabetically with an
+  outdoor-sounding name. That could be a heat pump's coil sensor, an outdoor
+  pool, or an "ambient" reading in the lounge. It now prefers:
+  - a sensor in an outdoor area or no area;
+  - a sensor from the same integration as your weather entity;
+  - a sensor reading what your weather entity reads;
+  - a sensor whose readings swing through the day the way outside air does.
+
+  It never uses a sensor in an indoor room. The Knowledge tab's heating
+  drill-down says which sensor it chose and why, and lets you pick another.
+  Picking one re-measures straight away.
+- **Your phone at 9% is not a battery to replace.** The low-battery check and
+  the battery forecast no longer report batteries you charge rather than change.
+  That covers phones and tablets from the companion app, robot vacuums and
+  mowers, electric cars, home batteries, UPSs, and anything that reports when it
+  is charging. Pressing "Not a problem" on a battery card now stops that battery
+  being reported again.
+- **Every sensor brAIn measures overnight is one it can use.** The nightly "what
+  is normal here" pass reads at most 400 sensors. It used to spend those places
+  alphabetically on energy totals and settings-page sensors, and could build a
+  baseline for neither. On a big house that meant sensors later in the alphabet,
+  such as upstairs thermometers and water flow, were never measured. Only
+  sensors it can use now take a place. If the limit still cuts some, the
+  Knowledge tab and Diagnostics say how many. Two smaller fixes are in the same
+  check. "Far outside its usual range" no longer says "from 650 weeks of
+  readings" when it means hourly readings. A reading must also move by an amount
+  that matters in its own unit, such as 20 W rather than half a watt.
+
+### Voice in the room, and services that say when they failed
+
+- **Voice knows which room you are in, and who is talking.** A request from a
+  satellite or a voice device now carries the room and floor it is in, so "turn
+  off the lights" said to the kitchen satellite means the kitchen lights. A
+  request from somebody signed in to Home Assistant carries their person, so a
+  preference stated by voice ("I like the bedroom at 19") is remembered as
+  theirs rather than everyone's. An automation's `extra_system_prompt`, and the
+  question an `assist_satellite.start_conversation` announced before brAIn was
+  asked, reach brAIn too — so your "yes" finally knows what it is a yes to. It
+  rides as a short note in front of your words, never in place of them, and only
+  when there is something to say.
+- **A question keeps the satellite listening.** When brAIn's reply asks you
+  something ("Which bedroom?"), Home Assistant is told to keep the microphone
+  open for your answer, the same as its own agents do (Home Assistant 2025.4 and
+  later). On older cores a follow-up now actually continues the conversation:
+  the classic path returned no conversation id, so every turn started over.
+- **A guest cannot borrow an administrator's agent.** Home Assistant lists every
+  conversation agent to every user, so a wall tablet's login could pick the
+  Full-admin agent and get a shell in `/config`. Somebody who is not a Home
+  Assistant administrator talking to a Whole-house or Full-admin agent is now
+  answered at the voice-assistant level, and the agent says so if they ask for
+  more. Satellites and automations have no user and keep the agent's own level.
+- **The powerful services need an administrator.** `brain.run_task` with `tools:
+  house` or `full` (and with no `tools`, which is `full`), `brain.ask` beyond
+  read-only, `brain.add_memory`, `brain.study`, `brain.intent` and
+  `brain.answer_question` refuse a signed-in user who is not an administrator,
+  the way BRUH Power Tools always did. Automations and scripts are unaffected.
+  `brain.add_memory` also refuses to file under `correction`, `confirmed` or
+  `person`, which brAIn keeps for your own answers. `brain.run_task` now accepts
+  the `model` its own form always offered.
+- **A task that failed says it failed.** An expired sign-in, a timeout or a run
+  that produced nothing used to come back from `brain.run_task` as if Claude had
+  said it, and `brain.ask` returned it as the answer with `data` empty — which
+  an automation reading `answer.data` took as a real "no". Every one of those
+  now raises an error carrying the reason, so it shows in the automation's
+  trace, and `brain_task_complete` carries `status: failed` and the reason's
+  code. When the reason is a sign-in, the message names the panel's **⚙ → Claude
+  account → Sign in again** button instead of a terminal command.
+- **Insight jobs read, pause, and never send a failure as a report.** A
+  scheduled insight job ran with the shell and file editing it never needed; it
+  now runs with read-only tools. On its schedule it pauses with **Automatic
+  insights** and the usage budget like everything else brAIn runs unasked
+  (`brain.run_insight` always runs), it reads what brAIn knows about the house
+  the way the panel's own cards do rather than the first 2 KB of the memory
+  document, and a run that fails shows as an error on the sensor beside the last
+  good report — an expired login is no longer pushed to your phone as the
+  morning briefing.
+- **Answering a guess from Home Assistant closes it.** `brain.answer_question`
+  used to write your answer to a file nothing read and file it as a fact, so a
+  "no" became something brAIn "knew" and the guess stayed open everywhere. It
+  now answers the guess yes or no exactly as the Findings tab's buttons do: a
+  yes files it as known, a no closes it and keeps your reason as a correction.
+  Start the answer with yes or no; the *Waiting on you* sensor lists the open
+  guesses with their ids.
+- **A voice command that already did something is not done twice.** If a voice
+  turn reached a device and then the worker died, brAIn quietly re-ran the whole
+  request — which is how a light got toggled twice. It now says it may have
+  partly happened and asks you to check.
+- **Voice turns are counted, and the usage figure follows them.** Every voice
+  turn (fast and classic) and every automation task is now in brAIn's run
+  journal, failures included, and the usage pill and sensors refresh after one
+  instead of up to half an hour later. The pool's health report counts failed
+  turns by kind.
+- **Voice runs on the voice plan, and a resumed chat uses today's
+  instructions.** An agent set to Default now runs on the plan's voice model and
+  thinking depth, as the classic listener always did. A conversation resumed
+  after a pause is answered under the current instructions and area map rather
+  than the ones its first turn recorded. Both are sent only to a Claude Code
+  that lists them.
+- **Streamed answers are paragraphs.** "I'll check." and the answer that follows
+  a tool call used to arrive glued together in Home Assistant's chat log ("I'll
+  check.The lights are off."). Each message is its own paragraph now, and the
+  chat log always ends on what was spoken.
+- **Restarting Home Assistant does not replay your fixes, and Dismiss is not an
+  ending.** After every restart `brain_change` fired again for every finding
+  brAIn had already fixed. Dismissing a finding fired `brain_case_ended`,
+  removed it from Repairs, and its return later fired as a brand-new finding.
+  Neither happens now, and the Repairs page keeps the findings that have waited
+  longest even on a busy house.
+
+- **A read-only task cannot read your files.** `brain.run_task` and `brain.ask`
+  with `tools: read_only` (and `house`) used to be able to open any file in
+  `/config`, including `secrets.yaml`, because a task runs there with file reads
+  pre-approved. Both narrow scopes now refuse file reads outright; `full` is
+  unchanged.
+
+### Memory, insights and what brAIn changes
+
+- **Forgetting something now reaches everything brAIn reads.** Since 2.2 most of
+  what brAIn writes (triage, the Resident, the morning brief, the weekly report,
+  cards) has read memory from a facts store underneath `memory.md`. Nothing you
+  did to correct memory reached that store. A `brain memory forget`, an edit to
+  `memory.md`, clearing memory, the ✕ on a queued fact and Undo all left the
+  fact being told to every run. They all reach it now. Each time memory is
+  filed, brAIn checks the store against the document: a fact you deleted from
+  `memory.md` is forgotten, a fact still waiting to be filed stays, and clearing
+  memory forgets everything that was filed.
+- **Facts about a room reach runs about that room, and the question you asked
+  picks what is remembered.** Facts tagged with a room were never handed to any
+  run, because nothing told memory which rooms a run was about. A card on the
+  default search mode also only ever got the house-wide facts. brAIn now works
+  out the rooms from the entities a run reads and passes them, the card's own
+  domains and your question to memory. Facts that share words with the question
+  come first. Facts about things the run did not name are capped at three per
+  subject, so one chatty device cannot fill the space. Cards are also told they
+  can look memory up themselves.
+- **Undo and "Let brAIn raise it again" take back the rule a Wrong made.**
+  Pressing Wrong on a house check teaches the check to stand down for that
+  entity. Undo, and "Let brAIn raise it again", put the finding back but left
+  the rule in place, so the check stayed silent. Both now remove the rule too.
+  Two different checks marked Wrong on the same sensor are now two rules rather
+  than one overwriting the other.
+- **Wrong on a Resident card is remembered against the things it was about.** A
+  correction on one of the Resident's own cards was filed as a house-wide note
+  that a later look at the same device might never see. It is now a rule on that
+  card's entities. The next time the Resident looks at them, it is shown that
+  you dismissed it before and why.
+- **Old device-health notes expire, and facts about removed devices go.** A note
+  like "the hall sensor's battery was at 12%" is true for a few weeks, not
+  forever. Notes of that kind now expire after thirty days. Facts about an
+  entity your house no longer has stop being used at once and are removed after
+  thirty days. If the entity comes back within that time, the facts come back
+  with it.
+- **A memory export now carries the facts store, including the rules your Wrong
+  presses made.** Exporting memory and importing it on another install brought
+  `memory.md` across but not the rules. So every check you had told "not here"
+  started reporting again on the new install. The export now includes the facts
+  store, and import merges it.
+- **The same fact said two ways is stored once.** Two writers describing one
+  thing in slightly different words used to create two facts, and both were told
+  to every run. Near-duplicates are now merged when they arrive. Facts that
+  differ by a "not" are kept apart.
+- **Analysis cards stop re-announcing things you have already seen.** The record
+  of what an insight run had already told you kept only the last 200 items.
+  Older ones were forgotten and could be announced again as new. It now
+  remembers far more and drops only what is very old.
+- **brAIn no longer pays for a question it then throws away.** When brAIn
+  wonders why you did something by hand, it spends a run working out a guess and
+  adds it to your list of open questions. If that list was already full, the
+  guess was dropped and the subject was marked done for good. That meant the
+  money was spent and the question was never asked. brAIn now checks for room
+  first and waits if there is none. A guess that was refused is kept and offered
+  again, at no cost, as soon as a slot frees. A confirmed guess is filed with
+  what it was about, so it reaches runs about that device.
+- **"I've fixed it" no longer silences a problem forever.** Ending a finding as
+  fixed, pressing "Got it" after brAIn fixed something, or finishing a to-do
+  made from one, used to stop that finding from ever being raised again. Only
+  Wrong is meant to do that. Now a fixed or accepted answer to a house check
+  lapses once the check runs and no longer reports the problem. If it comes back
+  later it is raised again, saying how long it stayed away. Any other fixed
+  answer lapses after ninety days.
+- **brAIn checks that its own fixes held.** Three minutes after brAIn makes a
+  fix, it runs the check that found the problem again. If the problem is still
+  there, the card comes back saying the fix did not hold, instead of sitting
+  under "fixed".
+- **Cards only refresh when what they read has changed.** In "refresh when
+  something changed" mode, a card was regenerated about once a day whether or
+  not anything had changed. It also partly triggered its own refresh. The check
+  compared timestamps that move every night, and it included the card's own
+  findings. It now compares what the card is actually told: the state of each
+  measurement brAIn keeps, the facts it would be given, and the findings it
+  reads, leaving out its own. The media and health cards are now included in
+  this check, and two cards that no longer exist were removed from it.
+- **Onboarding waits for real facts before recommending cards.** The recommend
+  step treated the empty memory template as enough to go on. So it proposed
+  cards before the home had been studied, and could not see what the study had
+  just found because that was still waiting to be filed. It now waits for real
+  fact lines, either in `memory.md` or waiting to be filed, and reads both when
+  recommending.
+- **The weekly report counts only the findings you can see.** "Still open" and
+  "open in total" included findings that triage had deliberately held back from
+  the Findings tab, so the report's numbers did not match the tab. They now do.
+- **Milestone cards look like the rest, and what they learn is kept.** The cards
+  on the Knowledge tab that appear when a measurement is ready were saved
+  without the shared stylesheet, so their charts used none of the panel's
+  colours. What the run learned about the house was also thrown away. Both are
+  fixed.
+- **Ideas you dismissed stay dismissed, even reworded.** An idea you dismissed
+  was blocked only under its exact title, and the run writing new ideas was
+  never told what you had already answered. So the same idea came back with
+  different wording. The run is now shown what was accepted, dismissed (with
+  your reason, if you gave one) and is still waiting.
+- **Scene schedules are offered for rooms with more than one word in the name.**
+  The "walk this room through its scenes each day" proposal was never offered
+  for a room like Living Room or Master Bedroom. It is now.
+- **A rule written from a sentence can restart its timer.** Rules brAIn drafted
+  from a sentence were always written so that a second trigger was ignored while
+  the first run was still going. That is wrong for "turn the light off ten
+  minutes after the last motion", where a second motion should restart the ten
+  minutes. The rule can now be written either way. Running several copies at
+  once is still refused.
+- **A one-off that you accept always switches itself off, and Remove leaves
+  nothing behind.** A one-off rule switches itself off after firing. It did that
+  by guessing its own entity name. On a house that already had an automation
+  with that name, the guess pointed at the other one, so the one-off kept firing
+  for ever. It now switches off whatever entity it is. Accepting a rule now
+  checks the entity Home Assistant actually registered. Removing a one-off, or
+  undoing an accept, now also removes its registry entry, so no "unavailable"
+  automation is left behind.
+- **Overnight repairs stop on a fault that keeps coming back.** With
+  self-healing on, an add-on that stopped every evening, or an integration that
+  failed to start every day, was put right at 3am every night for ever, and each
+  morning brief called it a fresh success. brAIn now remembers repairs across
+  nights. After the third repair of the same thing in fourteen days, it stops
+  and raises a finding saying the fault keeps coming back. The brief also says
+  when a repair is not the first.
+- **Emergency playbook descriptions follow the same rules as every other
+  scheduled run.** The plain-English paragraph on a smoke, leak or freeze
+  playbook card was written by a Claude run on the schedule, even while brAIn
+  was paused, signed out or over budget. It now waits like everything else, and
+  the card keeps its standard description until then.
+- **The deep check leaves nothing in memory.** The memory probe `brain doctor
+  --deep` files is now removed from the facts store as well as from `memory.md`.
+
+### Chat, Discuss and the feed's cards
+
+- **A fix's report is on its card.** When brAIn has tried a fix, the feed card
+  shows what the run concluded and what it changed, in place of the old "How
+  brAIn would fix it". A fix that came back as *needs you* now leads with your
+  own presses, not with another paid plan run that would reach the same answer.
+  A fix that failed says so, and trying again is in the ⋯ menu.
+- **A proposal's card shows its case.** An automation offered on the feed now
+  carries the same evidence the Proposals tab shows, next to Accept: the replay
+  ("would have fired N times this week"), the before-and-after, a trial's grade
+  and week, and the sentence a spoken rule was graded against.
+- **Questions sit near the top, and Dismiss on one means what it says.**
+  Questions get their own band in the feed, just under high-stakes problems. A
+  suggestion no longer outranks every question because its id happens to be a
+  bigger number. Dismissing a question now puts it to sleep for real: it stays
+  open, leaves every screen, and stops counting against the three-question
+  limit, so brAIn can ask something else meanwhile. Its 14-day expiry starts
+  again from when it comes back. Dismiss from a phone notification now gives the
+  same stakes-based quiet as Dismiss on the feed (a day, three days or a week),
+  not a flat 24 hours. Repairs' "Remind me tomorrow" still sends its 24 hours.
+- **Discussing a finding no longer stops the chat you were in.** **Discuss**
+  opens a new conversation beside whatever was running. An answer being written,
+  or an approval card waiting, carries on in the background. The conversation
+  knows which finding it is about from its first message, including after a
+  reload or a resume.
+- **A discussion asks before it changes anything, and an agreed change becomes a
+  plan.**
+  - In a discussion, every tool that can act (service calls, device control,
+    shell, file edits) shows a permission card first. A prompt sentence asking
+    it not to act is not enough. If your Claude Code is too old to accept the
+    rules, those tools are not offered at all.
+  - The conversation starts with the case's evidence, how sure brAIn was, the
+    actions it considered, and what its investigation said.
+  - When you and Claude agree on a change, it can offer it as a button. Pressing
+    it has brAIn plan that exact change read-only and put the plan on the card.
+    Nothing changes until you press **Apply**, and Apply has an Undo.
+- **Switching from the terminal to the chat picks up the right conversation.**
+  - Adopt opens the conversation through the same registry as everything else.
+    It never opens a second copy of a conversation that is already live
+    elsewhere.
+  - It prefers the conversation the chat last handed to the terminal over
+    whichever file happened to be written last.
+  - It no longer refuses while an answer is being written, because nothing is
+    stopped.
+  - After a round trip (chat → terminal → back), the chat shows what the
+    terminal added, not the scrollback from before the handoff.
+- **The chat knows the house before you tell it.**
+  - Every chat starts with a short brief: what brAIn is, the open cases, its
+    health, and the house's rhythm.
+  - Each message you send brings in the facts brAIn has about what you
+    mentioned. A conversation is given each fact once, not again on every
+    message.
+  - If the panel is down or slow, the chat works exactly as before.
+- **The terminal's context file knows the rooms and the tools.**
+  `/config/CLAUDE.md` now carries an area map: each room's id and its entities.
+  Before, the section was computed and never written. It also lists the
+  measurement tools, `recall`, `simulate_automation` and the findings and health
+  reads. It says to create automations with `brain.intent` rather than by
+  editing `automations.yaml` and reloading.
+- **A card can suggest an automation, and you can make one from any card.**
+  - An insight card can now name an automation the house clearly lacks. brAIn
+    drafts it, replays it and offers it on **Proposals**, exactly as if you had
+    typed the sentence.
+  - This runs unattended, so it obeys the same rules as other scheduled runs: it
+    needs a sign-in, automatic insights turned on, and budget left. It is capped
+    at two suggestions per card and four per day, and a card never re-offers
+    what it suggested last time.
+  - The card's ⋯ menu adds:
+    - **Make this an automation**, which puts the sentence in the ask bar for
+      you to read and send. It never sends from the menu.
+    - **See the automation it suggested**, once the suggestion is on Proposals.
+    - **Make an automation from this**, which starts the ask bar with "When ".
+
+### The engine, the run queue and what each session may do
+
+- **Insight cards and the Resident's first look answer in the shape they were
+  asked for again.** The quick, tool-free Claude run blocked every tool,
+  including the one the CLI uses to hand back a structured answer. So each first
+  look and each snapshot card spent four to six turns asking for a tool it could
+  not have. About two runs in five then gave up and answered in prose, and the
+  look was read as "nothing decided". These runs now load no tools, and the
+  structured answer comes back on the first turn.
+- **Unattended runs no longer carry Claude Code's whole toolbox.** The read-only
+  house analyst runs cards, investigations, fix plans, curiosity questions, the
+  brief, the weekly report and replies. Each of those runs carried Claude Code's
+  file, search, agent and to-do tools, about 22,000 tokens of instructions it
+  never used. It now gets Home Assistant's reading tools and nothing else.
+- **A retry after "overloaded" actually retries.** When Anthropic's service was
+  overloaded, brAIn waited and tried the run once more under the same
+  conversation id. Claude Code refused that id as "already in use", so the retry
+  failed before it asked anything. Every retry now gets a fresh id. If Claude
+  Code reports an id clash, the run is retried once more with a new one.
+- **A usage limit pauses the scheduled cards instead of failing them every
+  minute.** A run that meets your Claude plan's usage limit is now recorded as
+  "rate limited", not as a crash, and files no problem report. While the limit
+  holds, scheduled cards wait. The wait starts at 30 minutes and doubles up to 4
+  hours, and it ends at the first run that succeeds. Cards you ask for by hand
+  still run.
+- **A card that keeps failing waits longer each time.** A scheduled card that
+  failed used to be queued again on the next minute's tick, for ever. Each
+  attempt also ran a second, snapshot-based try. Now each failure doubles the
+  wait, from 15 minutes up to 12 hours, and the next success clears it. The
+  snapshot fallback is skipped when the search failed because of your sign-in, a
+  usage limit or an overloaded service, since it would fail the same way.
+  Pressing Regenerate is never held.
+- **Several Claude runs at once, in order of who is waiting.** A run you started
+  by pressing something no longer queues behind scheduled work. Claude runs now
+  have their own small queue, three at a time by default. A safety alert goes
+  first, then anything you pressed, then scheduled work, and one place is always
+  kept free of scheduled work. Long runs also no longer share threads with the
+  panel's own file reads, so the panel stays responsive while cards are being
+  made.
+- **If part of brAIn stops, brAIn says so.** The queue that makes cards and runs
+  fixes could stop for good if a failed fix also failed to record its failure.
+  When that happened, cards and fixes queued for ever while the health check
+  said all was well. That queue now marks the one job as failed and carries on.
+  Every background loop in the panel also reports when it last ran. A loop that
+  has stopped makes the health check say which one: a stopped card queue is
+  "failed", the others "degraded".
+- **The status poll no longer slows the panel.** While a card is being made, the
+  panel asks for its status every few seconds. That request used to read and
+  parse every stored card on the panel's main thread. It now runs in the
+  background and remembers each card's date until the file changes.
+- **Study, memory filing, automation tasks and the terminal's memory extraction
+  count like every other run.** These runs happen outside the panel, so their
+  failures filed no problem report. Their tokens were missing from the usage
+  estimate and the usage popover's breakdown, and they never prompted the usage
+  sensor to refresh. Each one now records itself in the run journal, and the
+  panel books it within a minute. Voice turns, which start recording
+  themselves in this release, are booked the same way, so a voice turn that
+  fails files a problem report too.
+- **The terminal and the chat ask before acting.** The file that told Claude
+  Code what it may do without asking also applied to the terminal and the chat.
+  So with "dangerously skip permissions" off, the terminal still ran shell
+  commands, edited files and called Home Assistant services without asking, and
+  the chat's approval card never appeared. That file now pre-approves only
+  reading Home Assistant. Background runs that cannot ask keep their full list
+  in a file only they are given. The option's description now says what off and
+  on each mean.
+- **Protected entities are protected in the terminal and the chat too.** With
+  `protected_entities` set, brAIn refuses any Home Assistant service call typed
+  as a shell command (`ha service call`, a curl to the services API, a WebSocket
+  `call_service`), because a command line cannot be checked for its targets. It
+  also refuses a YAML edit that names a protected entity. The refusal names the
+  Home Assistant tool to use instead, which can be checked.
+- **No session can be messaged by another, and Claude Code keeps no second
+  memory.** Claude Code's cross-session messaging, scheduling and notification
+  tools are now blocked for every brAIn session, and each session refuses
+  messages from other sessions. Claude Code's own "auto memory" is switched off,
+  so what you teach brAIn ends up in `memory.md` and nowhere else. A model
+  "advisor" saved from the terminal is not attached to unattended runs.
+- **Choosing Fable in Settings no longer puts it on timers.** A typed model
+  still overrides every job. The exception is a Fable model on a job nobody
+  pressed for: that job runs on its own planned model, and the log says why. The
+  Resident's daily allowances are now charged to the model each run really used
+  and counted by your house's local day, not UTC.
+- **The model picker offers the current models.** Settings → Claude model now
+  lists Opus 5.5 and Sonnet 5.5 first. The 5.0 versions are under "Previous
+  generation".
+- **The terminal's memory extraction is cheaper and reads each message once.**
+  After each turn, a small run looks for anything you taught brAIn. It used to
+  load the whole `/config` CLAUDE.md and the Home Assistant connection, and from
+  the second turn on it ran after nearly every message over overlapping windows.
+  It now runs with its own short instructions and no tools. It reads only what
+  was said since the last time it looked, and needs either two new messages or
+  one that teaches.
+- **Replying to a notification no longer delays your other answers.** A Reply
+  typed into a brAIn notification starts a Claude run that can take up to three
+  minutes. Done, Wrong and To-do answers given from your phone or the To-do app
+  used to wait behind it. The reply is now answered in the background and the
+  other answers are applied at once.
+
 ## 2.10.1
 
 **The classic terminal on a phone: Paste works, the keyboard stops fighting you.**

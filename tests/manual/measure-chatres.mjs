@@ -53,16 +53,33 @@ const OPTIONS = [
   { label: 'Replaced the CR2032', verb: 'done' },
   { label: 'Replace the CR2032 in the garage sensor', verb: 'todo' },
   { label: 'That cupboard is never opened', verb: 'wrong' },
+  // The change a discussion agreed. Its label is the plan run's brief, so
+  // it is a sentence rather than a button's worth of words, and the row
+  // has to wrap it rather than run it off the side of a phone.
+  { label: 'Add a condition to the garage door automation so it only '
+      + 'notifies after 22:00, and drop the battery check from it — the '
+      + 'sensor reports its own level', verb: 'plan' },
 ];
+const PLAN = OPTIONS[3];
 
 const STUB = `
 window.EventSource = function () {
   return { close() {}, addEventListener() {}, onmessage: null, onerror: null };
 };
-window.fetch = async (url) => {
+window.__posts = [];
+window.fetch = async (url, opts = {}) => {
   const p = String(url);
   const answer = (body) => new Response(JSON.stringify(body), {
     status: 200, headers: { 'Content-Type': 'application/json' } });
+  if ((opts.method || 'GET') !== 'GET') {
+    window.__posts.push({ path: p, body: opts.body ? JSON.parse(opts.body) : null });
+  }
+  if (/api\\/finding\\/\\d+\\/fix/.test(p)) {
+    // The row moves to planning and STAYS: a plan is not an ending.
+    return answer({ findings: [{ ts: ${FINDING_TS}, text: 'Garage door sensor battery is at 5%',
+      status: 'planning', severity: 'warning', fixable: true }],
+      hypotheses: [], open: 0 });
+  }
   if (p.includes('api/status')) {
     return answer({
       version: 'test', authenticated: true, auth_type: 'oauth',
@@ -185,6 +202,46 @@ for (const { width, touch } of CASES) {
   }
   if (!/settled/i.test(gone.note)) {
     note(`${width}px`, `a settled card says "${gone.note || '(nothing)'}"`);
+  }
+
+  // The plan option: its press is the card's own Fix it, carrying the
+  // agreed change as the plan run's brief — never an ending, never a run
+  // that acts — and the card records the choice while the finding stays.
+  await draw(page, { ts: FINDING_TS, options: OPTIONS, finding: true });
+  const pressed = await page.evaluate(async ({ label, ts }) => {
+    window.__posts.length = 0;
+    const row = [...document.querySelectorAll('#chatLog .cresopt')]
+      .find((b) => (b.querySelector('.creslabel') || {}).textContent === label);
+    if (!row) return { missing: true };
+    row.click();
+    for (let i = 0; i < 40 && !document.querySelector('#chatLog .chatres .cresnote'); i += 1) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    return {
+      posts: window.__posts.slice(),
+      note: (document.querySelector('#chatLog .chatres .cresnote') || {}).textContent || '',
+      stillListed: (state.findings || []).some((f) => f.ts === ts),
+    };
+  }, { label: PLAN.label, ts: FINDING_TS });
+  if (pressed.missing) {
+    note(`${width}px`, 'the plan option did not render');
+  } else {
+    const post = pressed.posts[0] || {};
+    if (!/api\/finding\/\d+\/fix$/.test(post.path || '')) {
+      note(`${width}px`, `the plan press went to ${post.path || '(nowhere)'}, not Fix it's route`);
+    }
+    if ((post.body || {}).change !== PLAN.label) {
+      note(`${width}px`, 'the plan press did not carry the agreed change as its brief');
+    }
+    if (pressed.posts.length !== 1) {
+      note(`${width}px`, `the plan press made ${pressed.posts.length} requests`);
+    }
+    if (!/You chose/.test(pressed.note)) {
+      note(`${width}px`, `after the plan press the card says "${pressed.note || '(nothing)'}"`);
+    }
+    if (!pressed.stillListed) {
+      note(`${width}px`, 'the plan press took the finding off the list');
+    }
   }
 
   // And a conversation that is not about a finding at all.

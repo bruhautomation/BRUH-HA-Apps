@@ -96,12 +96,19 @@ SETTLED_FILE = Path(os.environ.get(
 # diffs; it is derived, never read back, and republished on every write.
 STATE_FILE = Path(os.environ.get(
     "BRAIN_FINDINGS_STATE", "/config/.brain/findings_state.json"))
-# Plenty for a sensor attribute; the panel remains the place to work a list.
-STATE_MAX_ROWS = 50
 # Per-row cap on the prose in the mirror. See `_publish_state`.
 STATE_MAX_PROSE = 240
 
 MAX_FINDINGS = 200
+# The mirror carries the WHOLE live list, which the store already caps.
+# It was the newest 50, which was plenty for a sensor attribute and wrong
+# for everything else that reads the file: Repairs raises the OLDEST rows
+# waiting on somebody and could never see them on a busy house, and a row
+# falling off the cut read to the integration's watcher as a case that had
+# ended — `brain_case_ended`, then `brain_case` again when a newer row
+# was settled and it came back on. Bounded by the store's own cap rather
+# than by a second number, so the two cannot disagree about what is live.
+STATE_MAX_ROWS = MAX_FINDINGS
 # Far more than the list, because it is one short line each and losing the
 # oldest entry is how a problem you answered in spring comes back in autumn.
 MAX_SETTLED = 1000
@@ -291,6 +298,15 @@ def _publish_state(items: list[dict]) -> None:
     shaped.sort(key=lambda f: f["ts"], reverse=True)
     live = [s for s in shaped
             if s["status"] in LIVE_STATUSES and not is_snoozed(s, now)]
+    # Snoozed rows ride in a key of their own rather than in `findings`.
+    # Every reader of `findings` — the open count, the to-do list, Repairs —
+    # is right to leave a dismissed row out, and a reader that predates the
+    # key never sees one; what needs them is the watcher, which otherwise
+    # reads Dismiss as the case ENDING (`brain_case_ended`) and the row's
+    # return a day later as a brand-new problem (`brain_case` and
+    # `brain_finding` again, ringing whatever an automation hung off them).
+    snoozed = [s for s in shaped
+               if s["status"] in LIVE_STATUSES and is_snoozed(s, now)]
     open_rows = [s for s in live if s["status"] in UNSETTLED_STATUSES]
     try:
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -325,6 +341,16 @@ def _publish_state(items: list[dict]) -> None:
                  "answers": answers.request_answers(s),
                  **{k: s[k] for k in ("kind", "claim") if s.get(k)}}
                 for s in live[:STATE_MAX_ROWS]
+            ],
+            # The same compact shape the watcher's events are built from,
+            # plus when each comes back. No answers: a dismissed row is not
+            # asking anything until it returns to `findings`.
+            "snoozed": [
+                {**{k: s[k] for k in ("ts", "text", "severity", "status",
+                                      "entity_id", "fixable", "source_title")},
+                 "snoozed_until": int(s.get("snoozed_until") or 0),
+                 **{k: s[k] for k in ("kind", "claim") if s.get(k)}}
+                for s in snoozed[:STATE_MAX_ROWS]
             ],
         })
     except OSError as exc:
@@ -614,6 +640,10 @@ def _shape(entry: dict) -> dict:
     # reader, mirror and test already knows, key for key and order for
     # order — see the block by CASE_KINDS.
     out.update(_case_fields(entry))
+    # When a row brAIn fixed was reopened because its check still saw the
+    # fault (`_came_back`). Absent on every other row, for the same reason.
+    if entry.get("came_back"):
+        out["came_back"] = int(entry["came_back"])
     return out
 
 
@@ -766,7 +796,7 @@ def is_known(text: str) -> bool:
         return True
     if any(normalize(f.get("text", "")) == key for f in _load()):
         return True
-    return any(e.get("key") == key for e in _load_settled())
+    return key in suppressing_keys()
 
 
 # ---------------------------------------------------------------------------
@@ -882,7 +912,7 @@ def add_many(objs: list[dict]) -> list[dict]:
     """
     items = _load()
     seen = {normalize(f.get("text", "")) for f in items}
-    seen |= {str(e.get("key") or "") for e in _load_settled()}
+    seen |= suppressing_keys()
     used = {int(f.get("ts") or 0) for f in items}
     created = []
     for obj in objs:
@@ -983,6 +1013,107 @@ def add_case(row: dict, *, run_id: str = "", when: float | None = None) -> dict 
         "claim": claim,
     }])
     return created[0] if created else None
+
+
+# What an investigation may rewrite on a row it was sent to look at, and
+# the statuses it may do it in — a row a person has moved on (a plan they
+# asked for, a fix in flight, a snooze) is theirs, and a run that took
+# five minutes must not drag it back.
+REFINABLE = ("open", "needs_you", "triaging")
+
+
+@_mutates
+def refine(ts: int, case: dict, run_id: str = "",
+           when: float | None = None) -> dict | None:
+    """Rewrite a row with what the run that LOOKED found. Returns it, or None.
+
+    The deeper look used to be unable to correct the cheaper one: it was
+    told the row it had been sent to investigate was "already in front of
+    the homeowner, do not claim it again", so it either abstained — a
+    paid run that left no trace — or filed a second, differently worded
+    card beside the first. This is the third answer, and the right one.
+
+    **`text` is never touched.** It is the key a check re-reports under, so
+    a rewritten `text` would read as a new problem on the next pass and
+    file the rule's sentence all over again; what changes is everything a
+    card SHOWS — the `claim` (which the feed renders over `text`), the
+    detail, the fix and who wrote it, the evidence, the stakes and the
+    confidence. Severity only rises: an investigation's stakes top out at
+    `serious`, and a rule that filed `critical` (a freeze) must not be
+    talked down a tier by a model's own confidence.
+    """
+    if not isinstance(case, dict):
+        return None
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) != int(ts):
+            continue
+        if entry.get("status") not in REFINABLE:
+            return None
+        merged = {**entry, **{k: case[k] for k in (
+            "claim", "kind", "confidence", "stakes", "actions",
+            "memory_hint") if case.get(k) not in (None, "", [])}}
+        evidence = list(case.get("evidence") or []) + list(
+            entry.get("evidence") or [])
+        merged["evidence"] = evidence
+        if run_id:
+            merged["investigation"] = {"run_id": run_id}
+        entry.update(_case_fields(merged))
+        detail = str(case.get("detail") or "").strip()
+        if detail:
+            entry["detail"] = detail[:MAX_DETAIL]
+        fix = str(case.get("fix") or "").strip()
+        if fix:
+            entry["fix"] = fix[:MAX_FIX]
+            entry["fix_by"] = "resident"
+        if _severity_rank(case.get("severity")) > _severity_rank(
+                entry.get("severity")):
+            entry["severity"] = case["severity"]
+        if entry.get("status") == "triaging":
+            entry["status"] = "open"
+        entry["triage"] = _clean_triage({
+            "verdict": "elevated",
+            "reason": str(case.get("claim") or "")[:MAX_CLAIM],
+            "run_id": run_id,
+            "at": int(when if when is not None else time.time()),
+            "elevated_by_person": bool(
+                (entry.get("triage") or {}).get("elevated_by_person")),
+            "wrote_fix": bool(fix)})
+        _write(items)
+        return _shape(entry)
+    return None
+
+
+@_mutates
+def hold_after_look(ts: int, reason: str, run_id: str = "",
+                    when: float | None = None) -> dict | None:
+    """An investigation looked and found nothing: hold the row, saying why.
+
+    The same `held` the first look writes, reached one tier later and only
+    by a reply that SAID so (`resident.parse_dismissal` — an empty claim
+    with `dismiss`), never by a run that failed or came back empty, which
+    leave the row exactly where it was. Never over a person: a row
+    somebody put back with "Let brAIn raise it again" (`elevated_by_person`)
+    stays up whatever a run says, because a person overruling a verdict is
+    the one piece of evidence a second verdict may not overrule back.
+    """
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) != int(ts):
+            continue
+        if entry.get("status") not in REFINABLE:
+            return None
+        if (entry.get("triage") or {}).get("elevated_by_person"):
+            return None
+        entry["status"] = "held"
+        entry["triage"] = _clean_triage({
+            "verdict": "held", "reason": str(reason or "")[:MAX_CLAIM],
+            "run_id": run_id,
+            "at": int(when if when is not None else time.time()),
+            "wrote_fix": False})
+        _write(items)
+        return _shape(entry)
+    return None
 
 
 @_mutates
@@ -1291,8 +1422,20 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
     """
     ledger = _load_settled()
     key = str(key or "").strip() or normalize(shaped["text"])
+    prior = next((e for e in ledger if e.get("key") == key), None)
     ledger = [e for e in ledger if e.get("key") != key]
+    # A problem answered again after its earlier answer lapsed has come
+    # BACK, and how long it stayed away is the most useful number the
+    # ledger can hold about it — a battery that lasts four months is a
+    # maintenance interval, not a coincidence. Carried forward rather than
+    # computed, because the entry it is measured from is about to be
+    # replaced.
+    recurrence = {}
+    if prior is not None and prior.get("lapsed_at"):
+        recurrence = {"recurred": int(prior.get("recurred") or 0) + 1,
+                      "previous_at": int(prior.get("ts") or 0)}
     ledger.append({
+        **recurrence,
         "key": key,
         "text": shaped["text"],
         "kind": kind,
@@ -1307,6 +1450,87 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
         "source_title": str(shaped.get("source_title") or "")[:120],
     })
     _write_settled(ledger[-MAX_SETTLED:])
+
+
+# Which settled answers stop a problem being raised again, and for how long.
+#
+# The ledger was permanent for every ending, and the reason given — "the
+# analyst would re-report next week the thing you answered today" — is true
+# of exactly one of them. `ignored` (Wrong) says the report was wrong about
+# this house, and that does not stop being true: it is permanent, and the
+# rule it wrote is permanent with it. `fixed` and `accepted` say the report
+# was RIGHT, and a problem that was real can come back — a battery runs low
+# again next year, a backup goes stale again next month, the disk fills
+# again. Suppressing the second occurrence because somebody dealt with the
+# first is how a house check went blind for the life of the install, and
+# several check texts are one sentence for the whole house ("The newest
+# backup is more than a week old"), so one press blinded a whole check.
+#
+# So a right answer suppresses while it is still the answer:
+#
+#   * for a house check, until a pass of that check RUNS and no longer
+#     reports it (`lapse_settled`) — the problem is over, so the next time
+#     it happens is news. A check that could not look lapses nothing,
+#     which is `clear_resolved`'s rule for the same reason;
+#   * for anything else that was fixed — an analyst's report, a Resident
+#     case — for `FIXED_LAPSE_DAYS`, because nothing re-runs a model's
+#     judgement to say the problem has gone, and a fix is a dated event.
+#     An `accepted` row that is not a check's is a chore still on the
+#     list, and it suppresses until the chore is done (which re-settles it
+#     as `fixed`, starting that clock).
+#
+# A lapsed entry is kept, not deleted: it is still a label for the
+# scorecard, still listed in the analyst's "already dealt with" block, and
+# the entry a recurrence is measured from (`_remember_settled`).
+FIXED_LAPSE_DAYS = 90
+RIGHT_KINDS = ("fixed", "accepted")
+
+
+def _suppresses(entry: dict, now: float) -> bool:
+    kind = entry.get("kind")
+    if kind not in RIGHT_KINDS:
+        return True          # Wrong, and anything this does not recognise
+    if entry.get("lapsed_at"):
+        return False
+    if str(entry.get("source") or "").startswith("check:"):
+        return True          # until a pass of the check stops reporting it
+    if kind == "fixed":
+        age = now - float(entry.get("ts") or 0)
+        return age < FIXED_LAPSE_DAYS * 86400
+    return True
+
+
+def suppressing_keys(now: float | None = None) -> set[str]:
+    """The settled keys that still stop a re-report. One derivation, read
+    by `add_many` and `is_known` alike, so the two cannot disagree."""
+    now = time.time() if now is None else float(now)
+    return {str(e.get("key") or "") for e in _load_settled()
+            if _suppresses(e, now)}
+
+
+def lapse_settled(sources: set[str], keep_keys: set[str],
+                  now: float | None = None) -> int:
+    """A check that ran and no longer reports a problem ends its answer.
+
+    For every `fixed`/`accepted` entry a check in ``sources`` filed whose
+    key that pass did NOT report: the problem is over, so the answer stops
+    suppressing it and the next occurrence files again. Only checks that
+    RAN, `clear_resolved`'s rule — "I could not look" is not "it went
+    away". Returns how many entries lapsed.
+    """
+    now = time.time() if now is None else float(now)
+    ledger = _load_settled()
+    lapsed = 0
+    for entry in ledger:
+        if (entry.get("kind") in RIGHT_KINDS
+                and not entry.get("lapsed_at")
+                and str(entry.get("source") or "") in sources
+                and str(entry.get("key") or "") not in keep_keys):
+            entry["lapsed_at"] = int(now)
+            lapsed += 1
+    if lapsed:
+        _write_settled(ledger)
+    return lapsed
 
 
 def _load_settled() -> list[dict]:
@@ -1412,7 +1636,7 @@ def merge_rows(rows: list[dict]) -> int:
     a row imported from another one."""
     items = _load()
     seen = {normalize(f.get("text", "")) for f in items}
-    seen |= {str(e.get("key") or "") for e in _load_settled()}
+    seen |= suppressing_keys()
     used = {int(f.get("ts") or 0) for f in items}
     added = 0
     for row in rows:
@@ -1623,6 +1847,7 @@ def source_titles() -> dict[str, str]:
 MUTE_CLEARS = ("open", "triaging", "held", "needs_you")
 
 
+@_mutates
 def refresh_details(objs: list[dict]) -> int:
     """Update the detail and severity of rows a producer has re-reported.
 
@@ -1632,6 +1857,21 @@ def refresh_details(objs: list[dict]) -> int:
     known; this is the other half, so a battery forecast filed a week ago
     says "about 2 days" today rather than "about 9". Returns how many rows
     changed.
+
+    **A held row whose severity ROSE goes back to be looked at.** `held` is
+    a look's verdict about the row as it stood — a battery at 30% is not
+    worth anybody's attention — and a re-report that raises it (the same
+    battery at 4%, `warning` to `serious`) is new evidence the verdict was
+    never given. It went on climbing off every screen, because a held row
+    reaches no badge, no notification and no prompt, and nothing ever
+    offered it again. It returns to `triaging`, which is what the
+    Resident's sweep reads (`awaiting_triage`), so the next look judges it
+    as it is now; a severity that fell, or stayed, leaves the verdict
+    standing.
+
+    Locked, like every other mutator here — it was the one that was not,
+    and it writes the same file `record_triage` and the endings do from
+    other threads.
     """
     items = _load()
     by_key = {normalize(f.get("text", "")): f for f in items}
@@ -1645,12 +1885,92 @@ def refresh_details(objs: list[dict]) -> int:
             continue
         if (cur.get("detail") != entry["detail"]
                 or cur.get("severity") != entry["severity"]):
+            rose = _severity_rank(entry["severity"]) > _severity_rank(
+                cur.get("severity"))
             cur["detail"] = entry["detail"]
             cur["severity"] = entry["severity"]
+            if rose and cur.get("status") == "held":
+                cur["status"] = "triaging"
             changed += 1
     if changed:
         _write(items)
     return changed
+
+
+def _severity_rank(severity) -> int:
+    try:
+        return SEVERITIES.index(str(severity or "warning"))
+    except ValueError:
+        return SEVERITIES.index("warning")
+
+
+@_mutates
+def annotate(ts: int, line: str) -> dict | None:
+    """Add one sentence to a row's detail, and nothing else.
+
+    For a fact that arrived after the row did and belongs on the card —
+    the safety lane's "the sensor reported dry at 03:14" — where rewriting
+    the detail would lose what the row first said and a second row would
+    be a second card about one event. Capped at the store's own detail
+    limit by dropping from the FRONT of what came after the original, so
+    the first sentence (what happened) is the one that survives.
+    """
+    line = str(line or "").strip()
+    if not line:
+        return None
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) != int(ts):
+            continue
+        detail = str(entry.get("detail") or "").strip()
+        merged = f"{detail} {line}".strip() if detail else line
+        entry["detail"] = merged[:MAX_DETAIL]
+        _write(items)
+        return _shape(entry)
+    return None
+
+
+# How long a Resident case may sit unanswered before it is taken off the
+# list, by its stakes. A case is a judgement about a moment, and the only
+# lifecycle it had was a person ending it — so a low-stakes observation
+# from March sat on the feed beside this morning's, and the feed stopped
+# reading as now. These are generous on purpose: a person who has not
+# answered in a fortnight has answered, and a high-stakes case gets a
+# month because being wrong about it costs more than one more day of it.
+# Safety cases are absent: what ends a leak is somebody looking.
+CASE_TTL_BY_STAKES = {"low": 7 * 86400, "medium": 14 * 86400,
+                      "high": 30 * 86400}
+CASE_EXPIRES = ("open", "needs_you")
+
+
+@_mutates
+def expire_cases(now: float | None = None,
+                 sources: tuple[str, ...] = (RESIDENT_SOURCE,)) -> list[dict]:
+    """Take aged-out Resident cases off the list. Returns what went.
+
+    `clear_resolved`'s rule rather than an ending's: no memory line and no
+    ledger entry, because nobody said anything about the house — a case
+    that expires was a judgement nobody took up, and if the thing it was
+    about is still true the next look will say so again in today's words.
+    Only `open`/`needs_you`: a plan somebody asked for, a fix in flight and
+    a snoozed row are all a person's.
+    """
+    now = time.time() if now is None else now
+    items = _load()
+    kept, gone = [], []
+    for entry in items:
+        src = str(entry.get("source") or "")
+        ttl = CASE_TTL_BY_STAKES.get(str(entry.get("stakes") or "medium"),
+                                     CASE_TTL_BY_STAKES["medium"])
+        if (src in sources and entry.get("status") in CASE_EXPIRES
+                and not is_snoozed(_shape(entry), now)
+                and now - float(entry.get("ts") or now) > ttl):
+            gone.append(_shape(entry))
+            continue
+        kept.append(entry)
+    if gone:
+        _write(kept)
+    return gone
 
 
 @_mutates
@@ -1727,9 +2047,56 @@ def clear_resolved(sources: set[str], keep_keys: set[str]) -> list[dict]:
     rows that were removed.
     """
     kept, gone = resolve_clear(_load(), sources, keep_keys)
-    if gone:
+    came = _came_back(kept, sources, keep_keys, time.time())
+    if gone or came:
         _write(kept)
+    # And the answers. The same pass that may clear a row it no longer
+    # reports may end an answer about one — see `_suppresses`.
+    lapse_settled(sources, keep_keys)
     return gone
+
+
+# How long after a brAIn fix ends before the check that filed the row may
+# call it back. A fix that restarts an integration or an add-on takes a
+# moment to be visible to a check, and a pass that happened to land inside
+# that moment would reopen a row brAIn had just fixed.
+FIX_SETTLE_S = 120
+CAME_BACK_RESULT = ("Came back: the check that reported this still reports "
+                    "it after brAIn's fix, so the fix did not hold.")
+
+
+def _came_back(items: list[dict], sources: set[str], keep_keys: set[str],
+               now: float) -> int:
+    """Reopen a row brAIn fixed that its own check still reports.
+
+    `fixed` is set from the fix run's own reading of what it did, and a row
+    in `fixed` is in no list a re-report can reach: `add_many` dedupes it,
+    `refresh_details` and `clear_resolved` skip it. So a card could sit
+    green while the check that filed it saw the fault every pass. The
+    check that RAN is the verification: still reported, past the settling
+    moment, is a fix that did not hold, and the row goes back to `open`
+    saying so — which is a different claim from a new report, and the
+    reason it is the same row rather than a second one.
+
+    Only a house check's row, only a row brAIn fixed (a `fix_ended` stamp),
+    and only a check that ran. Modifies ``items`` in place; returns how
+    many came back.
+    """
+    came = 0
+    for f in items:
+        if (f.get("status") != "fixed"
+                or f.get("source") not in sources
+                or not str(f.get("source") or "").startswith("check:")
+                or normalize(f.get("text", "")) not in keep_keys):
+            continue
+        ended = float(f.get("fix_ended") or 0)
+        if not ended or now - ended < FIX_SETTLE_S:
+            continue
+        f["status"] = "open"
+        f["came_back"] = int(now)
+        f["result"] = CAME_BACK_RESULT
+        came += 1
+    return came
 
 
 @_mutates
@@ -1772,8 +2139,15 @@ def restore(shaped: dict) -> dict | None:
 # Prompt injection
 # ---------------------------------------------------------------------------
 
-def prompt_block() -> str:
+def prompt_block(exclude_sources=()) -> str:
     """What the analyst needs to know about findings before it reports more.
+
+    ``exclude_sources`` leaves a producer's own live rows out, and exists
+    for one reader: a card's refresh gate, which must not read the rows the
+    card itself filed as news about the house. A card files its findings as
+    `triaging`, which this block does not list, and the moment the Resident
+    promoted one to `open` the next fingerprint differed — the card had
+    triggered its own refresh.
 
     Three lists, all cheap and all load-bearing: what is already reported
     (so three cards don't all raise the same dead battery), what the
@@ -1790,7 +2164,9 @@ def prompt_block() -> str:
     every report built on the same wrong assumption.
     """
     everything = list_all()
-    live = [f for f in everything if f["status"] in LIVE_STATUSES][:PROMPT_OPEN]
+    skip = {str(x) for x in exclude_sources or () if x}
+    live = [f for f in everything if f["status"] in LIVE_STATUSES
+            and f.get("source") not in skip][:PROMPT_OPEN]
 
     def _settled(kind: str, limit: int) -> list[tuple[str, str]]:
         seen: set[str] = set()

@@ -12,8 +12,8 @@
       "description": "The entry format. The same number panel/capture.py writes."
     },
     "kind": {
-      "enum": ["checks", "analyst"],
-      "description": "A `checks` entry carries a house snapshot and the check ids that should fire on it, and is replayed with no model at all — that half runs in ordinary CI and is what fails when a floor moves. An `analyst` entry carries the bundle a real run was given and the reply it produced, and needs a real model to replay."
+      "enum": ["checks", "analyst", "first_look"],
+      "description": "A `checks` entry carries a house snapshot and the check ids that should fire on it, and is replayed with no model at all — that half runs in ordinary CI and is what fails when a floor moves. An `analyst` entry carries the bundle a real run was given and the reply it produced, and needs a real model to replay. A `first_look` entry carries one batch of signals the Resident's cheap first look judged, the inputs its prompt was built from, and per-signal labels saying the least (`floor`) or most (`ceiling`) a verdict may be: it is replayed against the current prompt, and its guard labels are checked free in CI against an adversary that answers `ignore` for everything."
     },
     "id": {
       "type": "string",
@@ -54,6 +54,14 @@
       }
     },
 
+    "batch": {
+      "type": "array",
+      "description": "REQUIRED for kind=first_look: the signals as `signals.make` produces them, in the order the look numbered them. A label's `signal` is a 1-based index into this list.",
+      "items": {"type": "object", "required": ["kind", "subject"]}
+    },
+    "now": {"type": "number", "description": "REQUIRED for kind=first_look: the instant every age in the batch is rendered against, so a replay renders the batch exactly as the look saw it."},
+    "inputs": {"type": "object", "description": "What a first look's prompt was built from besides the batch — memory, open cases, the clock line, watch notes, worked examples — so a replay rebuilds it with the current builder rather than replaying this release's text."},
+
     "labels": {
       "type": "array",
       "description": "The ground truth. Empty is a real answer for a checks entry — it means every check must be silent on this house — and is never a real answer for an analyst entry, which is unscoreable without one.",
@@ -79,6 +87,18 @@
               "note": {"type": "string", "description": "The homeowner's own words, redacted like everything else in the entry."},
               "entity_id": {"type": "string"},
               "ended_at": {"type": "integer"}
+            }
+          },
+          {
+            "$comment": "A first_look label: the least (`floor`) or most (`ceiling`) this signal's verdict could be and still agree with what was true. `guard: true` marks a floor the code enforces after any reply (`resident.never_ignore`), which the free replay checks against an adversary answering `ignore` for everything.",
+            "required": ["signal"],
+            "properties": {
+              "signal": {"type": "integer", "minimum": 1},
+              "floor": {"enum": ["ignore", "watch", "investigate", "act"]},
+              "ceiling": {"enum": ["ignore", "watch", "investigate", "act"]},
+              "guard": {"type": "boolean"},
+              "outcome": {"type": "string", "description": "What the household did, for a label the nightly outcomes join derived."},
+              "why": {"type": "string"}
             }
           }
         ]

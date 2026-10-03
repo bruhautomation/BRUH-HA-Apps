@@ -59,6 +59,16 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     "consolidate":     ("haiku",  "low",    False, False),
     "reflect":         ("haiku",  "low",    False, False),
     "auth_check":      ("haiku",  "low",    False, False),
+    # One sentence over a deterministic digest of who can reach the house.
+    "access_review":   ("haiku",  "low",    False, False),
+    # Understanding the house: reading what an entity IS, saying what the
+    # house is doing now, and noting what is coming up. All three are
+    # closed vocabularies validated in code, so the cheapest tier and no
+    # stepping in either direction — a stronger model would read the same
+    # names into the same words at a higher price.
+    "entity_model":    ("haiku",  "low",    False, False),
+    "situation":       ("haiku",  "low",    False, False),
+    "occasions":       ("haiku",  "low",    False, False),
     # Thinks — reasoning with tools where a wrong answer costs a card.
     "card":            ("sonnet", "medium", True,  True),
     "ask":             ("sonnet", "medium", True,  True),
@@ -78,6 +88,15 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     "fix_plan":        ("sonnet", "high",   False, True),
     "voice":           ("sonnet", "low",    True,  False),
     "task":            ("sonnet", "medium", False, True),
+    # Home Assistant's own maintainer (tidy, the house book, the nightly
+    # SRE pass, the upgrade advisor). Naming in a house's own style and a
+    # manual are cheap to get slightly wrong — every row is reviewed or
+    # cited — so they may step down; an upgrade verdict is the one that
+    # decides whether somebody installs tonight, so it may not.
+    "tidy":            ("sonnet", "low",    True,  False),
+    "house_book":      ("sonnet", "medium", True,  False),
+    "sre":             ("sonnet", "medium", True,  True),
+    "upgrade_advice":  ("sonnet", "high",   False, True),
     # Acts — changes a house or decides what a person acts on.
     "fix_apply":       ("opus",   "xhigh",  False, False),
     "intent":          ("opus",   "high",   False, False),
@@ -117,6 +136,70 @@ def resolve(job: str, thinking: str = DEFAULT_THINKING, override: str = "",
     return model, effort
 
 
+def tier_of(model: str) -> str | None:
+    """The tier a model id or alias belongs to, or None when it names none.
+
+    Read off the name, because the name is all a typed override carries:
+    `opus`, `claude-opus-5-5` and `claude-opus-4-8` are all the Opus tier,
+    and a model whose name holds no tier word is unknown rather than
+    guessed — the caller then falls back to the job's own tier, which is
+    the direction where being wrong costs a budget line rather than a run.
+    Highest tier first, so a name that somehow carried two is read as the
+    dearer.
+    """
+    low = str(model or "").strip().lower()
+    if not low:
+        return None
+    for tier in reversed(TIERS):
+        if tier in low:
+            return tier
+    return None
+
+
+def guard_override(job: str, override: str, thinking: str = DEFAULT_THINKING,
+                   *, pressed: bool = False) -> tuple[str, str]:
+    """`(override, "")`, or `("", why)` when a timer may not run it.
+
+    A typed `model` overrides every job — the pre-2.0 behaviour, kept on
+    purpose — except in the one place the plan exists to forbid: a Fable
+    model on a job nobody pressed for. `PRESS_ONLY` refuses the top tier
+    by JOB; this refuses it by MODEL, which is the door a typed override
+    walked straight through — "fable" in ⚙ put every scheduled card, look
+    and consolidation on the press-only tier, billing usage credits with
+    nobody asked. The refusal falls back to the job's own planned tier and
+    says so, `PRESS_ONLY`'s shape with the exception swapped for a
+    sentence, because a scheduler that cannot run is worse than one that
+    runs a tier lower than somebody typed.
+
+    A typed Opus is honoured. What bounds it on a timer is the Resident's
+    ledger, which charges a run to the tier it actually ran on.
+    """
+    override = str(override or "").strip()
+    if not override or pressed or job in PRESS_ONLY:
+        return override, ""
+    if tier_of(override) == "fable":
+        return "", (f"the {override} model is only ever run by a person's "
+                    "press, so this unattended run used its planned tier")
+    return override, ""
+
+
+def run_tier(job: str, thinking: str = DEFAULT_THINKING, override: str = "",
+             *, pressed: bool = False) -> str:
+    """The tier this job will actually be CHARGED to on this install.
+
+    The table's tier is what the job is planned at; the dial and a typed
+    override move it, and a budget keyed on the table's answer was a
+    budget a `generous` dial or an Opus override walked round — an
+    investigation on Opus counted against the Sonnet allowance, a first
+    look on Opus against nothing at all. A model whose name holds no tier
+    is charged at the job's planned tier.
+    """
+    allowed, _why = guard_override(job, override, thinking, pressed=pressed)
+    model, _effort = resolve(job, thinking, allowed, pressed=True)
+    planned, _effort = resolve(job, thinking, "", pressed=True)
+    return tier_of(model) or tier_of(planned) or JOBS.get(job, ("sonnet",))[0]
+
+
 def env_exports(override: str = "", thinking: str = DEFAULT_THINKING) -> dict[str, str]:
     """The tier answers as environment variables for the shell half.
 
@@ -125,14 +208,26 @@ def env_exports(override: str = "", thinking: str = DEFAULT_THINKING) -> dict[st
     two readers — a second copy of the tiers in shell is how the
     consolidator ends up on Opus the day somebody edits the wrong file.
     """
+    def model(job: str, pressed: bool = False) -> str:
+        # The shell half runs the consolidator and study on timers, so a
+        # typed Fable meets the same guard the panel's runs do. Voice is
+        # somebody speaking and the apply tier is somebody's press.
+        allowed, _why = guard_override(job, override, thinking, pressed=pressed)
+        return resolve(job, thinking, allowed)[0]
+
     out = {
-        "BRAIN_MODEL_HAIKU": resolve("triage", thinking, override)[0],
-        "BRAIN_MODEL_SONNET": resolve("card", thinking, override)[0],
-        "BRAIN_MODEL_OPUS": resolve("fix_apply", thinking, override)[0],
-        "BRAIN_MODEL_STUDY": resolve("study", thinking, override)[0],
-        "BRAIN_MODEL_MEMORY": resolve("consolidate", thinking, override)[0],
-        "BRAIN_MODEL_VOICE": resolve("voice", thinking, override)[0],
-        "BRAIN_MODEL_TASK": resolve("task", thinking, override)[0],
+        "BRAIN_MODEL_HAIKU": model("triage"),
+        "BRAIN_MODEL_SONNET": model("card"),
+        "BRAIN_MODEL_OPUS": model("fix_apply", pressed=True),
+        "BRAIN_MODEL_STUDY": model("study"),
+        "BRAIN_MODEL_MEMORY": model("consolidate"),
+        "BRAIN_MODEL_VOICE": model("voice", pressed=True),
+        # The voice job's depth beside its model: the pool and the classic
+        # listener pass it as `--effort` when an agent is set to Default
+        # (and the CLI takes the flag). The one effort the shell half
+        # reads, because voice is the one shell job a person waits on.
+        "BRAIN_EFFORT_VOICE": resolve("voice", thinking, override)[1],
+        "BRAIN_MODEL_TASK": model("task"),
         "BRAIN_THINKING": thinking if thinking in THINKING else DEFAULT_THINKING,
     }
     return out
@@ -148,7 +243,8 @@ def describe(job: str, thinking: str = DEFAULT_THINKING, override: str = "") -> 
 
 
 __all__ = ["DEFAULT_THINKING", "EFFORTS", "JOBS", "PRESS_ONLY", "THINKING",
-           "TIERS", "describe", "env_exports", "resolve"]
+           "TIERS", "describe", "env_exports", "guard_override", "resolve",
+           "run_tier", "tier_of"]
 
 
 def _settings_thinking() -> str:

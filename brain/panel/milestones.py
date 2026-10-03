@@ -57,6 +57,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+import categories
 
 log = logging.getLogger("brain.milestones")
 
@@ -521,6 +522,14 @@ def save_card(mile_id: str, obj: dict, mark: dict,
         raise ValueError(f"no milestone called {mile_id!r}")
     now = time.time() if now is None else now
     html = obj.get("html") if isinstance(obj.get("html"), str) else ""
+    # The design system, as every insight card gets it. The contract tells
+    # the model to use only `var(--…)` tokens BECAUSE brAIn prepends the
+    # sheet that defines them, and this was the one path that never did:
+    # strokes resolved to nothing, fills to black, and on the dark panel
+    # the chart was a white box. Here rather than in the caller, because a
+    # card saved by any route has to carry it (`inject_styles` is
+    # idempotent).
+    html = categories.inject_styles(html)
     if len(html.encode()) > MAX_HTML_BYTES:
         raise ValueError("generated visualization too large")
     highlights = obj.get("highlights")

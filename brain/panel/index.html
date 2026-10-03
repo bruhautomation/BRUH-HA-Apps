@@ -114,6 +114,7 @@
   <button class="subtab" data-view="terminal" data-group="ask" role="tab">Chat</button>
   <button class="subtab" data-view="memory" data-group="house" role="tab">Knowledge</button>
   <button class="subtab" data-view="activity" data-group="house" role="tab">Activity</button>
+  <button class="subtab" data-view="upkeep" data-group="house" role="tab">Upkeep</button>
   <button class="subtab" data-view="docs" data-group="help" role="tab">Docs</button>
 </nav>
 
@@ -527,6 +528,51 @@
          is the "refresh everything" control this panel deleted. -->
     <div id="actSummary" class="actsummary"></div>
     <div id="actList" class="actlist"></div>
+  </section>
+</div>
+
+<!-- Upkeep: Home Assistant ITSELF, looked after. The house book, tidier
+     names and rooms, whether each waiting update is safe tonight, and what
+     the overnight health check and the access review found. Every press
+     here spends one Claude run and STARTS it — the section reads the
+     outcome back — and nothing changes in Home Assistant until a person
+     ticks rows and presses Apply. -->
+<div id="viewUpkeep" class="view">
+  <section class="upwrap">
+    <div class="findhead">
+      <div>
+        <h2>Upkeep</h2>
+        <p class="sub">Home Assistant itself, looked after: a plain-language
+          book of how this house works, tidier names and rooms, whether each
+          waiting update is safe to install, and what the overnight check
+          found. Each button spends one Claude run; nothing in Home Assistant
+          changes until you tick it and press Apply.</p>
+      </div>
+    </div>
+    <section class="ksec upsec">
+      <h2>House book</h2>
+      <p class="hint tight">How this house works, for a partner or a sitter.
+        Every sentence names what it came from; codes and passwords are left
+        out.</p>
+      <div id="upBook" class="upbody"></div>
+    </section>
+    <section class="ksec upsec">
+      <h2>Names, rooms and aliases</h2>
+      <p class="hint tight">brAIn suggests names in this house's own style,
+        a room for devices in none, and the words people actually say. Tick
+        what you want; Undo works for 30 days.</p>
+      <div id="upTidy" class="upbody"></div>
+    </section>
+    <section class="ksec upsec">
+      <h2>Updates waiting</h2>
+      <p class="hint tight">brAIn reads each update's release notes against
+        your configuration. It never installs anything.</p>
+      <div id="upUpdates" class="upbody"></div>
+    </section>
+    <section class="ksec upsec">
+      <h2>Overnight health and access</h2>
+      <div id="upHealth" class="upbody"></div>
+    </section>
   </section>
 </div>
 
@@ -1177,7 +1223,7 @@
               <label for="setModel">Claude model</label>
               <select id="setModel" class="selin"></select>
               <input id="setModelCustom" class="hidden" type="text" maxlength="100"
-                     autocomplete="off" spellcheck="false" placeholder="e.g. claude-opus-5">
+                     autocomplete="off" spellcheck="false" placeholder="e.g. claude-opus-5-5">
               <p class="hint tight">Smaller models cost far fewer tokens per run; the
                 biggest ones dig deeper. Pick <b>Custom model id…</b> for anything newer
                 than this add-on.</p>

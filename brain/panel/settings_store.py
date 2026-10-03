@@ -28,6 +28,11 @@ the panel's ⚙ dialog edits at runtime — no add-on restart needed:
                     by default: a house's entity names are a floor plan,
                     and nothing leaves the add-on until a person exports
                     one from ⚙ → Diagnostics.
+  thermal_outdoor — the outdoor temperature sensor every room's heat-loss
+                    model is measured against, when somebody has chosen
+                    one on the Knowledge tab. None means "let brAIn rank
+                    them" (`thermal.choose_outdoor`), which is the
+                    default; a choice is only ever an entity id.
   chat_model      — the chat terminal's own model, chosen from the chat
                     itself. None means "follow the global model option":
                     the chat is where a different model is most often
@@ -181,7 +186,44 @@ DEFAULTS = {
     # looking at the row that earned it, and because the scorecard that
     # argues for it lives on the same tab.
     "muted_sources": [],
+    # See the module docstring. A panel setting because it is chosen while
+    # looking at the reference brAIn picked and the reasons it gave.
+    "thermal_outdoor": None,
+    # The calendars brAIn may read for what is coming up (`occasions.py`),
+    # as entity ids. EMPTY by default and only ever what somebody ticked:
+    # a calendar is the most personal thing a house holds, and "brAIn read
+    # my calendar" has to be a thing a person chose.
+    "occasion_calendars": [],
 }
+
+# An entity id, and nothing else: this one is read by the nightly pass
+# and compared against the states, so it has no business holding prose.
+_ENTITY_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
+MAX_ENTITY_CHARS = 255
+
+MAX_CALENDARS = 10
+_CALENDAR_RE = re.compile(r"^calendar\.[a-z0-9_]{1,120}$")
+
+
+def clean_calendars(value) -> list[str]:
+    """A list of calendar entity ids — checked, deduped, capped — or a
+    ValueError. An id that is not a calendar's is refused rather than
+    dropped: a typo silently reading nothing is the failure to avoid."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("occasion_calendars must be a list of calendar ids")
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not _CALENDAR_RE.match(item.strip()):
+            raise ValueError(f"{str(item)[:60]!r} is not a calendar entity id")
+        item = item.strip()
+        if item not in out:
+            out.append(item)
+    if len(out) > MAX_CALENDARS:
+        raise ValueError(f"at most {MAX_CALENDARS} calendars")
+    return out
+
 
 # How many producers may be muted. There are about forty checks and a
 # handful of categories; a list past this is a Findings tab switched off
@@ -270,6 +312,13 @@ def load() -> dict:
             and lo <= sessions <= hi:
         out["chat_max_sessions"] = sessions
     try:
+        out["occasion_calendars"] = clean_calendars(
+            data.get("occasion_calendars"))
+    except ValueError:
+        # Unreadable is NONE: the wrong direction here reads a calendar
+        # nobody chose.
+        pass
+    try:
         out["muted_sources"] = clean_sources(data.get("muted_sources"))
     except ValueError:
         # A list that cannot be read mutes nothing: the wrong direction
@@ -279,6 +328,10 @@ def load() -> dict:
         value = data.get(key)
         if isinstance(value, str) and value.strip():
             out[key] = value.strip()[:MAX_MODEL_CHARS]
+    outdoor = data.get("thermal_outdoor")
+    if isinstance(outdoor, str) and _ENTITY_RE.match(outdoor) \
+            and len(outdoor) <= MAX_ENTITY_CHARS:
+        out["thermal_outdoor"] = outdoor
     return out
 
 
@@ -350,6 +403,8 @@ def save(fields: dict) -> dict:
             clean[key] = value
         elif key == "muted_sources":
             clean[key] = clean_sources(value)
+        elif key == "occasion_calendars":
+            clean[key] = clean_calendars(value)
         elif key == "plan":
             if value not in PLANS:
                 raise ValueError(f"plan must be one of {', '.join(PLANS)}")
@@ -400,6 +455,15 @@ def save(fields: dict) -> dict:
                 raise ValueError(
                     f"chat_max_sessions must be an integer {lo}-{hi}")
             clean[key] = value
+        elif key == "thermal_outdoor":
+            # None (or "") is "let brAIn rank them".
+            if value is not None and not isinstance(value, str):
+                raise ValueError("thermal_outdoor must be an entity id or null")
+            value = (value or "").strip()
+            if value and (not _ENTITY_RE.match(value)
+                          or len(value) > MAX_ENTITY_CHARS):
+                raise ValueError("thermal_outdoor must be an entity id")
+            clean[key] = value or None
         elif key == "chat_model":
             # A panel setting, not a Configuration-tab option: it never
             # reaches the add-on's options, so an empty chat picker cannot

@@ -204,12 +204,55 @@ const FEED = [
     situation: 'change', finding_status: 'fixed',
     claim: 'brAIn pointed the hall automation at the new sensor',
     detail: 'binary_sensor.hall_old had been renamed.',
+    // The rule's sentence from before the run. A finished fix shows what
+    // the run REPORTED in its place, never this under it.
+    fix: 'Point it at the new sensor.', fixable: true,
+    result: 'Replaced binary_sensor.hall_old with binary_sensor.hall and '
+      + 'reloaded the automations.',
+    changed: ['automations.yaml: the hall automation\'s trigger'],
     source: 'check:auto.dead_ref', source_title: 'Automation check',
     origin: { store: 'findings', key: 1005 },
     fix_started: NOW - 60, fix_ended: NOW - 30, fix_files: 1, fix_calls: 0,
     answers: [
       A('ack', 'Got it', '/api/case/f:1005/do', { primary: true, request: 'ack' }),
       A('unfix', 'Undo the fix', '/api/finding/1005/unfix'),
+    ],
+  }),
+  // A fix run that came back saying a person has to do this. Its card
+  // shows the fixer's answer instead of the rule's guess, and it does not
+  // lead with another plan run to reach the same conclusion.
+  kase({
+    id: 'f:1009', kind: 'problem', severity: 'warning', stakes: 'medium',
+    situation: 'hands', finding_status: 'needs_you', fixable: true,
+    claim: 'The hall sensor stopped reporting',
+    fix: 'Reload its integration.',
+    result: 'brAIn checked: the sensor is answering the hub but its battery '
+      + 'reads 0%. Only a person can swap the CR2032.',
+    source: 'resident', source_title: 'The Resident',
+    origin: { store: 'findings', key: 1009 },
+    answers: [
+      A('todo', 'Add to list', '/api/case/f:1009/do', { primary: true, request: 'todo' }),
+      A('not_now', 'Dismiss', '/api/case/f:1009/not_now', { request: 'snooze' }),
+      A('wrong', 'Not a problem', '/api/case/f:1009/wrong', { note: true, request: 'wrong' }),
+    ],
+  }),
+  // A proposal on trial: its replay and the week's grade sit beside the
+  // press that accepts it, which is the whole argument for a trial.
+  kase({
+    id: 'p:1010', kind: 'opportunity', severity: 'info', stakes: 'low',
+    status: 'watching', situation: 'opportunity',
+    claim: 'Turn the landing light off at 23:30',
+    source: 'routines', source_title: 'routine',
+    origin: { store: 'proposals', key: 1010 },
+    proposal_status: 'trialling',
+    replay: { would_run: 9, days: 30, blocked_by_conditions: 0 },
+    trial_result: { would_fire: 6, agreed: 4, disagreed: 1, contradicted: 1,
+                    days: 3 },
+    trial_started_at: NOW - 3 * 86400, trial_ends_at: NOW + 4 * 86400,
+    answers: [
+      A('accept', 'Make the change', '/api/case/p:1010/do', { primary: true }),
+      A('not_now', 'Dismiss', '/api/case/p:1010/not_now', { request: 'snooze' }),
+      A('decline', 'No thanks', '/api/case/p:1010/wrong', { note: true }),
     ],
   }),
 ];
@@ -323,6 +366,18 @@ const read = (page) => page.evaluate((ids) => {
                    summary: d.querySelector('summary').textContent.trim() };
         })(),
         planShown: !!c.querySelector('.findplan'),
+        resultHead: c.querySelector('.findresult .findfixlabel')?.textContent || '',
+        resultText: c.querySelector('.findresult p')?.textContent || '',
+        changedRows: [...c.querySelectorAll('.findresult .findchanged li')].length,
+        proof: c.querySelector('.caseproof .propreplay')?.textContent || '',
+        trial: c.querySelector('.caseproof .proptrial')?.textContent || '',
+        proofAboveActions: (() => {
+          const proof = c.querySelector('.caseproof');
+          const acts = c.querySelector('.findactions');
+          if (!proof || !acts) return true;
+          return Math.round(proof.getBoundingClientRect().bottom)
+            <= Math.round(acts.getBoundingClientRect().top);
+        })(),
         verbs: [...c.querySelectorAll('.findactions button')].map((b) => ({
           label: b.textContent.trim(),
           verb: b.dataset.verb || '',
@@ -482,6 +537,47 @@ for (const { width, touch } of CASES) {
   const planned = feed.cards.find((c) => c.id === 'f:1008');
   if (planned && !planned.planShown) {
     note(`${width}px`, 'a plan waiting for consent is not shown on its card');
+  }
+
+  // What a fix run reported. On a finished fix and on one the fixer handed
+  // back, the report REPLACES the rule's sentence — a stale "How brAIn
+  // would fix it" under a run that already did is how a card stops saying
+  // what the house looks like.
+  for (const [id, head] of [['f:1005', 'What brAIn did'],
+                            ['f:1009', 'this one needs you']]) {
+    const card = feed.cards.find((c) => c.id === id);
+    if (!card) continue;
+    if (!card.resultHead.includes(head)) {
+      note(`${width}px`, `${id}'s fix report is headed "${card.resultHead}"`);
+    }
+    if (!card.resultText.trim()) {
+      note(`${width}px`, `${id} carries no fix report`);
+    }
+    if (card.fixText) {
+      note(`${width}px`, `${id} still shows the rule's sentence under the report`);
+    }
+  }
+  const fixed = feed.cards.find((c) => c.id === 'f:1005');
+  if (fixed && fixed.changedRows !== 1) {
+    note(`${width}px`, `a finished fix lists ${fixed.changedRows} changes, not 1`);
+  }
+  const handedBack = feed.cards.find((c) => c.id === 'f:1009');
+  if (handedBack && handedBack.verbs.some((v) => v.verb === 'fix')) {
+    note(`${width}px`, 'a fix the fixer handed back leads with another plan run');
+  }
+
+  // A proposal's evidence beside the press that accepts it.
+  const trialled = feed.cards.find((c) => c.id === 'p:1010');
+  if (trialled) {
+    if (!/would have run 9/.test(trialled.proof)) {
+      note(`${width}px`, `the trialled proposal's replay reads "${trialled.proof}"`);
+    }
+    if (!/you did the same on 4/.test(trialled.trial)) {
+      note(`${width}px`, `the trialled proposal's grade reads "${trialled.trial}"`);
+    }
+    if (!trialled.proofAboveActions) {
+      note(`${width}px`, 'the trial grade sits under the buttons, not beside them');
+    }
   }
 
   // Pretty names. The chip carries the name and the room; the id is the

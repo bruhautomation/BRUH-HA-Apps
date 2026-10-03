@@ -3282,6 +3282,14 @@ body.term-classic #termMode .ico-out { display: block; }
 }
 .findresult p { margin: 0 0 7px; }
 .findresult p:last-child { margin-bottom: 0; }
+/* The fixer's report on a case card says what kind of report it is, and
+   the heading stacks over it for `.findfix`'s reason. */
+.findresult > .findfixlabel { display: block; margin-bottom: 5px; }
+/* A proposal's evidence on its case card: the replay and the trial's
+   grade, in the Proposals tab's own classes, beside the buttons that act
+   on them. */
+.caseproof { margin-top: 11px; }
+.caseproof > p:last-child { margin-bottom: 0; }
 .findchanged { margin: 8px 0 0; padding-left: 18px; }
 .findchanged li { margin: 3px 0; }
 
@@ -4689,4 +4697,145 @@ body.term-classic #termMode .ico-out { display: block; }
   @container card (max-width: 600px) {
     .card-head .cardact { width: 44px; }
   }
+}
+
+/* The thermal drill-down's outdoor reference: which one, why, and a picker.
+   No font-size on the select, so the 16px touch floor above still holds. */
+.kref { margin-top: 8px; }
+.kref .kreflabel { display: block; margin-top: 6px; color: var(--ink-2); font-size: 12px; }
+.kref select { display: block; max-width: 100%; margin-top: 4px; min-height: 36px; }
+@media (pointer: coarse) { .kref select { min-height: 44px; } }
+
+/* ---------------------------------------------------------------- upkeep
+   The House → Upkeep pane: the house book, names and rooms, updates and the
+   overnight check. One block, appended; it borrows `.findhead`, `.ksec` and
+   `.btn` and adds only what those do not have. */
+.upwrap { max-width: 900px; }
+.upbody { display: grid; gap: 10px; }
+.upbody h3 { margin: 12px 0 0; font-size: 15px; }
+.upactions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.upline { margin: 0; font-size: 14px; color: var(--ink); max-width: 72ch; }
+.upline.muted { color: var(--ink-2); }
+.upline.busy { color: var(--accent-2); }
+.upline.warn {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 16%, var(--surface));
+}
+.upstatus { display: grid; gap: 6px; }
+.upstatus:empty { display: none; }
+.uplist { display: grid; gap: 8px; }
+.uprow {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  min-width: 0;
+}
+.uprow input[type="checkbox"] { width: 22px; height: 22px; margin: 1px 0 0; flex: none; }
+.uprowbody { display: grid; gap: 4px; min-width: 0; }
+.uprowhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+             overflow-wrap: anywhere; }
+.upchip {
+  display: inline-block;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 1px 7px;
+}
+.upchip.kind { font-weight: 600; }
+.upwhy { font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere; }
+.upreach {
+  font-size: 13px;
+  color: var(--ink);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning) 14%, var(--surface));
+}
+.uprefused summary, .upedit summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.upbatch { display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+           font-size: 14px; }
+.uplink { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+          font-size: 14px; overflow-wrap: anywhere; min-width: 0; }
+.uplink a { color: var(--accent-2); word-break: break-all; }
+.upbooksec h3 { margin: 14px 0 6px; }
+.upbooklist { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.upbooklist li { font-size: 14.5px; line-height: 1.5; }
+.upchips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.upupdate {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  justify-items: start;
+}
+.upupdatehead { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.upverdict { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+             font-size: 14px; }
+/* The verdict is a word, and the colour only repeats it. */
+.upverdict.safe_tonight .upchip.verdict {
+  color: var(--ink); background: color-mix(in srgb, var(--good) 22%, var(--surface)); }
+.upverdict.wait .upchip.verdict {
+  color: var(--ink); background: color-mix(in srgb, var(--serious) 24%, var(--surface)); }
+.upquote {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--grid);
+  display: grid;
+  gap: 2px;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 100%;
+}
+.upquote code { white-space: pre-wrap; }
+.upedit pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px;
+              margin: 0; }
+.upsentence { margin: 0; font-size: 15px; max-width: 68ch; }
+
+@media (pointer: coarse) {
+  .upsec .btn { min-height: 44px; }
+}
+
+/* ------------------------------------------------------------ the house now
+   One quiet line above the Findings feed (`renderHouseNow` in app.js): the
+   mode as a word, the sentence, what is coming up. Small on purpose — it is
+   context for the list under it, not a card. */
+.housenow {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.25));
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.4;
+  min-width: 0;
+}
+.housenow-top { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+.housenow-mode { font-weight: 600; white-space: nowrap; }
+.housenow-sentence { min-width: 0; overflow-wrap: anywhere; }
+.housenow-sentence.stale { opacity: 0.7; font-style: italic; }
+.housenow-reason, .housenow-coming { margin-top: 4px; opacity: 0.8; font-size: 13px; overflow-wrap: anywhere; }
+.housenow-cals { margin-top: 6px; font-size: 13px; }
+.housenow-cals > summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; opacity: 0.8; }
+.housenow-callist { display: grid; gap: 4px; padding: 4px 0 2px; }
+.housenow-cal { display: flex; gap: 8px; align-items: center; min-height: 32px; }
+@media (pointer: coarse) {
+  .housenow-cals > summary, .housenow-cal { min-height: 44px; }
 }

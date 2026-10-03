@@ -456,6 +456,8 @@ export TZ="${TZ:-}"
 export CLAUDE_CODE_DISABLE_MCP_DISCOVERY=1
 export CLAUDE_MCP_SERVERS_OVERRIDE="/config/.mcp.json"
 export DISABLE_AUTOUPDATER=1
+export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
+export BRAIN_HEADLESS_SETTINGS="/config/.brain/headless_settings.json"
 ENVEOF
 
     # Which model does which job: the panel plans every run off
@@ -546,6 +548,17 @@ setup_claude_user() {
     touch /data/run-sources.jsonl 2>/dev/null || true
     chown claude:claude /data/run-sources.jsonl 2>/dev/null || true
     chmod 664 /data/run-sources.jsonl 2>/dev/null || true
+    # The run journal and the usage nudge have the same two writers: the
+    # panel (root) and the shell half's runs, which record themselves with
+    # `journal.py record` from the process that ran the model — the
+    # consolidator and study as the claude user. Same arrangement, same
+    # reason: root can write a claude-owned file, not the reverse, and a
+    # failed append there is silent by design.
+    for f in /data/journal.jsonl /data/usage-nudge; do
+        touch "$f" 2>/dev/null || true
+        chown claude:claude "$f" 2>/dev/null || true
+        chmod 664 "$f" 2>/dev/null || true
+    done
     # The edit journal has the same two writers in the same two users: the
     # PreToolUse hook (`brain-edit-snapshot.py`, under the claude user
     # every Claude edit runs as) and the panel's automation_writer (root,
@@ -617,10 +630,34 @@ fi
 if [ -r /opt/scripts/brain-auth-env.sh ]; then
     . /opt/scripts/brain-auth-env.sh
 fi
+# A run that cannot be asked anything gets the headless allow-list.
+# /config/.claude/settings.local.json pre-approves only reading tools, so
+# the terminal and the chat ask before anything acts; a `-p` run with no
+# prompt tool has nobody to ask, and one that names no settings of its own
+# is a listener, a full-access voice worker or `brain ask` — the callers
+# the old project-wide grant was written for. A run that names its own
+# `--settings` (a voice agent's scoping, an engine run) or a prompt tool
+# (the chat) is left exactly as it asked.
+headless=0
+named=0
+for arg in "$@"; do
+    case "$arg" in
+        -p|--print) headless=1 ;;
+        --settings|--settings=*|--permission-prompt-tool|--permission-prompt-tool=*) named=1 ;;
+    esac
+done
+headless_settings="${BRAIN_HEADLESS_SETTINGS:-/config/.brain/headless_settings.json}"
+if [ "$headless" = 1 ] && [ "$named" = 0 ] && [ -r "$headless_settings" ]; then
+    set -- --settings "$headless_settings" "$@"
+    # The advisor is a second model attached to the run, counted by
+    # nothing a headless run reports.
+    export CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1
+fi
 if [ "$(id -u)" = "0" ]; then
     exec su-exec claude \
         env ${ANTHROPIC_API_KEY:+ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"} \
             ${CLAUDE_CODE_OAUTH_TOKEN:+CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"} \
+            ${CLAUDE_CODE_DISABLE_ADVISOR_TOOL:+CLAUDE_CODE_DISABLE_ADVISOR_TOOL="$CLAUDE_CODE_DISABLE_ADVISOR_TOOL"} \
         /root/.local/bin/claude "$@"
 else
     exec /root/.local/bin/claude "$@"
@@ -1253,16 +1290,24 @@ setup_mcp_server() {
 
 # Voice tool scoping: the assist channel loads this deny-list via --settings
 # for every agent below Full admin (its own level decides; see the worker
-# pool's resolve_access). Deny wins over the project
-# allowlist, so voice keeps every MCP device tool but can't run shell
-# commands, edit files, or reach the web. Automations keep full access.
+# pool's resolve_access). It carries its own `mcp__home-assistant__*`
+# allow, because the project file now pre-approves only reading tools and
+# a voice worker cannot be asked; deny wins over any allow, so voice keeps
+# every MCP device tool but can't run shell commands, edit files, reach the
+# web, or use the platform's cross-session tools. Automations keep full
+# access through headless_settings.json.
 setup_assist_scoping() {
     mkdir -p /config/.brain
     cat > /config/.brain/assist_settings.json << 'SCOPE'
 {
   "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": ["home-assistant"],
+  "crossSessionInbound": "refuse",
+  "autoMemoryEnabled": false,
   "permissions": {
+    "allow": [
+      "mcp__home-assistant__*"
+    ],
     "deny": [
       "Bash",
       "Bash(*)",
@@ -1275,7 +1320,20 @@ setup_assist_scoping() {
       "WebFetch",
       "WebSearch",
       "Agent",
-      "Skill"
+      "Skill",
+      "SendMessage",
+      "ListAgents",
+      "ListPeers",
+      "RemoteTrigger",
+      "PushNotification",
+      "SendUserMessage",
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "ScheduleWakeup",
+      "Monitor",
+      "TeamCreate",
+      "TeamDelete"
     ]
   }
 }
@@ -1287,7 +1345,34 @@ SCOPE
 
 setup_claude_settings() {
     local claude_settings_dir="/config/.claude"
-    mkdir -p "$claude_settings_dir"
+    local brain_settings_dir="/config/.brain"
+    mkdir -p "$claude_settings_dir" "$brain_settings_dir"
+    # Two files, because two kinds of run read /config's settings and they
+    # must not be granted the same things.
+    #
+    # settings.local.json is the PROJECT file, and every Claude process
+    # started in /config reads it — the interactive terminal and the chat
+    # as much as the listeners. It used to pre-approve Bash(*), Write, Edit
+    # and every Home Assistant tool for all of them, so the terminal never
+    # asked before a shell command or an edit, `dangerously_skip_permissions`
+    # changed almost nothing, and the chat's approval card could never
+    # appear. It now pre-approves only the analyst's READING tools (filled
+    # in below from engine.ANALYST_TOOLS, the one list of them), so a person
+    # in the terminal or the chat is asked before anything acts.
+    #
+    # headless_settings.json is the old allow-list, for the runs that cannot
+    # be asked anything: claude-run adds it to a `-p` run that names no
+    # settings of its own and no prompt tool (the automation listener, a
+    # full-access voice worker, `brain ask`), and engine.run_agent — the
+    # Fix it run — names it explicitly.
+    #
+    # Both carry the platform deny-list (cross-session messaging, remote
+    # triggers, push, cron, Monitor: tools that act outside the run with no
+    # prompt — engine.PLATFORM_DENIED, which tests/test_security.py holds
+    # these lists to), refuse inbound cross-session messages, and switch
+    # Claude Code's own auto-memory off: brAIn has one memory and it is
+    # memory.md.
+    #
     # enableAllProjectMcpServers / enabledMcpjsonServers pre-APPROVE the
     # project-scoped home-assistant server declared in /config/.mcp.json.
     # Current Claude Code requires project .mcp.json servers to be trusted
@@ -1298,10 +1383,78 @@ setup_claude_settings() {
     # interactive trust dialog) makes the HA tools load in every headless run.
     # NOTE: this is separate from the permissions.allow entry below, which
     # only governs whether an already-loaded tool may run without a prompt.
+    #
+    # The hooks: brain-edit-snapshot.py snapshots a file before Claude edits
+    # it (what `brain undo` and a fix's undo put back), brain-protect-hook.py
+    # refuses a shell service call or a YAML edit that would reach a
+    # `protected_entities` entity around the MCP chokepoint, and the Stop
+    # hook teaches memory from the terminal and the chat.
     cat > "$claude_settings_dir/settings.local.json" << 'SETTINGS'
 {
   "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": ["home-assistant"],
+  "crossSessionInbound": "refuse",
+  "autoMemoryEnabled": false,
+  "permissions": {
+    "allow": [],
+    "deny": [
+      "SendMessage",
+      "ListAgents",
+      "ListPeers",
+      "RemoteTrigger",
+      "PushNotification",
+      "SendUserMessage",
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "ScheduleWakeup",
+      "Monitor",
+      "TeamCreate",
+      "TeamDelete"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/scripts/brain-edit-snapshot.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/scripts/brain-protect-hook.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/scripts/brain-memory-extract.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+SETTINGS
+    cat > "$brain_settings_dir/headless_settings.json" << 'HEADLESS'
+{
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": ["home-assistant"],
+  "crossSessionInbound": "refuse",
+  "autoMemoryEnabled": false,
   "permissions": {
     "allow": [
       "mcp__home-assistant__*",
@@ -1322,6 +1475,21 @@ setup_claude_settings() {
       "TaskList",
       "TodoWrite",
       "TodoRead"
+    ],
+    "deny": [
+      "SendMessage",
+      "ListAgents",
+      "ListPeers",
+      "RemoteTrigger",
+      "PushNotification",
+      "SendUserMessage",
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "ScheduleWakeup",
+      "Monitor",
+      "TeamCreate",
+      "TeamDelete"
     ]
   },
   "hooks": {
@@ -1334,14 +1502,13 @@ setup_claude_settings() {
             "command": "python3 /opt/scripts/brain-edit-snapshot.py"
           }
         ]
-      }
-    ],
-    "Stop": [
+      },
       {
+        "matcher": "Bash|Write|Edit|MultiEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /opt/scripts/brain-memory-extract.py",
+            "command": "python3 /opt/scripts/brain-protect-hook.py",
             "timeout": 10
           }
         ]
@@ -1349,7 +1516,37 @@ setup_claude_settings() {
     ]
   }
 }
-SETTINGS
+HEADLESS
+    # The project file's reading allow-list, out of engine.py rather than
+    # typed here: two answers to "which tools only read" is how an acting
+    # tool reaches the terminal unasked. A list that cannot be read leaves
+    # `allow` empty, which is the direction where being wrong costs a
+    # prompt rather than an action.
+    local panel_dir="${BRAIN_PANEL_DIR:-/opt/panel}" reading
+    if reading=$(BRAIN_PANEL_DIR="$panel_dir" python3 - <<'PYREAD' 2>/dev/null
+import json
+import os
+import sys
+sys.path.insert(0, os.environ.get("BRAIN_PANEL_DIR", "/opt/panel"))
+import engine
+print(json.dumps(list(engine.ANALYST_TOOLS)))
+PYREAD
+    ) && [ -n "$reading" ]; then
+        local filled
+        # offer_resolutions is the one tool beside them that changes
+        # nothing: it puts buttons on the chat's own screen, and an
+        # approval card in front of an offer of buttons is a press for
+        # nothing.
+        if filled=$(jq --argjson read "$reading" \
+                '.permissions.allow = ($read + ["mcp__home-assistant__offer_resolutions"])' \
+                "$claude_settings_dir/settings.local.json" 2>/dev/null); then
+            printf '%s\n' "$filled" > "$claude_settings_dir/settings.local.json"
+        fi
+    else
+        bashio::log.warning "Could not read the analyst's reading tools from ${panel_dir}/engine.py; the terminal and the chat will ask before every tool"
+    fi
+    chown claude:claude "$brain_settings_dir/headless_settings.json" 2>/dev/null || true
+    chmod 644 "$brain_settings_dir/headless_settings.json" 2>/dev/null || true
     chown -R claude:claude "$claude_settings_dir" 2>/dev/null || true
     # Slash commands. /learn is the terminal-native face of a study session:
     # you watch it work and can correct it mid-flight, which a scheduled run
@@ -1781,13 +1978,16 @@ setup_automation_integration() {
 #
 # This flag controls the INTERACTIVE TERMINAL only. Background listeners
 # (Assist conversation agents, Automation tasks) get their tool permissions
-# from /config/.claude/settings.local.json, which pre-approves MCP tools,
-# Bash, Read, Write, and Edit — so they never need this flag.
+# from /config/.brain/headless_settings.json, which claude-run adds to a
+# headless run — so they never need this flag.
 #
-# The flag is OFF by default.  The project-level settings.local.json already
-# grants the permissions Claude Code needs to work with Home Assistant, so
-# most users do not need to enable this.  Turning it on skips ALL permission
-# prompts, including for operations not in the allowlist.
+# The flag is OFF by default, and off now means something: the project
+# file (/config/.claude/settings.local.json) pre-approves only Home
+# Assistant's reading tools, so the terminal asks before a shell command,
+# an edit or a service call. Turning it on skips ALL of those prompts.
+# brain-protect-hook.py still refuses a shell service call or a YAML edit
+# that would reach a `protected_entities` entity either way: a hook's
+# refusal is not a prompt, and skipping prompts does not skip it.
 #
 # SECURITY NOTE: Even with this flag enabled, Claude Code still runs as a
 # non-root user (UID 1000) inside an isolated container. It cannot access the

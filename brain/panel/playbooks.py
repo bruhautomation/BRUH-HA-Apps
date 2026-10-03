@@ -156,13 +156,32 @@ def _domain_class(domain: str, classes: tuple[str, ...]):
     return pick
 
 
-def _water_shutoff(eid: str, attrs: dict) -> bool:
-    if eid.startswith("valve."):
-        return True
-    if not eid.startswith("switch."):
-        return False
+def _shutoff_by_name(eid: str, attrs: dict) -> bool:
     words = _tokens(eid.split(".", 1)[1]) | _tokens(attrs.get("friendly_name"))
     return bool(words & set(WATER_WORDS))
+
+
+def _water_shutoff_in(world):
+    """The shutoff predicate, reading `world_model` where it is sure.
+
+    A `valve` is always one (`world_model.water_shutoff` will not let a
+    reading take one out); a switch is one when a confident reading says
+    it controls the water supply — `switch.hoofdkraan` — and otherwise
+    when its name says so, which is what this was before."""
+    import world_model  # noqa: PLC0415 — a leaf
+
+    def pick(eid: str, attrs: dict) -> bool:
+        if eid.startswith("valve."):
+            return True
+        if not eid.startswith("switch."):
+            return False
+        return world_model.water_shutoff(
+            world, eid, lambda: _shutoff_by_name(eid, attrs))
+    return pick
+
+
+def _water_shutoff(eid: str, attrs: dict) -> bool:
+    return _water_shutoff_in(None)(eid, attrs)
 
 
 # ---------------------------------------------------------------------------
@@ -312,13 +331,25 @@ def _leak(house: House, snap: dict, patterns: list[str],
     if not sensors:
         return None
 
-    shutoffs, skipped = _split(_pick(house, _water_shutoff), patterns)
+    import world_model  # noqa: PLC0415
+
+    world = house.world
+    shutoffs, skipped = _split(_pick(house, _water_shutoff_in(world)),
+                               patterns)
     heaters, s2 = _split(
         _pick(house, lambda e, a: e.startswith("water_heater.")), patterns)
     skipped += s2
 
     valves = [r for r in shutoffs if r["entity_id"].startswith("valve.")]
     switches = [r for r in shutoffs if r["entity_id"].startswith("switch.")]
+    # A switch whose ON closes the water is turned ON in a leak. Only a
+    # confident reading may say so; with none, a water switch is read the
+    # way it always was — on means the water runs — and the card lists
+    # both groups by name, so the person accepting it sees which way each
+    # one will be thrown.
+    closes_on = [r for r in switches if world_model.polarity(
+        world, r["entity_id"]) == "on_means_closed"]
+    switches = [r for r in switches if r not in closes_on]
 
     groups = []
     if valves:
@@ -327,6 +358,9 @@ def _leak(house: House, snap: dict, patterns: list[str],
     if switches:
         groups.append(_group("Water switches off", "switch.turn_off",
                              switches, "off"))
+    if closes_on:
+        groups.append(_group("Water switches on (on closes these)",
+                             "switch.turn_on", closes_on, "on"))
     if heaters:
         groups.append(_group("Water heaters off", "water_heater.turn_off",
                              heaters, "off"))

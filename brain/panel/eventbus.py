@@ -150,6 +150,19 @@ def backoff_delay(attempt: int, rand=random.random) -> float:
     return max(0.1, base * (1.0 + BACKOFF_JITTER * (2.0 * rand() - 1.0)))
 
 
+def _tripped_safety(data: dict) -> bool:
+    """Whether a state change is a safety detector reporting a hazard."""
+    new_state = (data or {}).get("new_state")
+    if not isinstance(new_state, dict):
+        return False
+    attrs = new_state.get("attributes")
+    if not signals.RegistryContext.safety_class(
+            attrs if isinstance(attrs, dict) else {}):
+        return False
+    return str(new_state.get("state") or "").strip().lower() \
+        in signals.HOT_SAFETY_STATES
+
+
 class EventBus:
     """One subscription to Home Assistant's event bus.
 
@@ -180,10 +193,16 @@ class EventBus:
     def __init__(self, on_signal, *, on_event=None, known_ids=None,
                  protected=None, session_factory=None,
                  event_types=EVENT_TYPES, clock=time.time,
-                 rhythm_payload=None, tz=None):
+                 rhythm_payload=None, tz=None, safety_roles=None):
         self._on_signal = on_signal
         self._on_event = on_event
         self._known_ids = known_ids
+        # `{entity_id: device class}` for the binary sensors a confident
+        # `world_model` reading made safety sensors, as a callable for
+        # `known_ids`' reason. It can only ADD: a device class Home
+        # Assistant gave a sensor is read off the event itself and wins
+        # whatever this answers (`RegistryContext.safety_class_of`).
+        self._safety_roles = safety_roles
         self._protected = protected
         self._session_factory = session_factory
         self._event_types = tuple(event_types)
@@ -310,7 +329,15 @@ class EventBus:
             except (OSError, ValueError, TypeError) as exc:
                 log.debug("event bus could not read the known entities: %s", exc)
                 known = self._ctx.known
-        self._ctx = signals.RegistryContext(patterns, known, built_at=now)
+        added: dict[str, str] = {}
+        if callable(self._safety_roles):
+            try:
+                added = dict(self._safety_roles() or {})
+            except (OSError, ValueError, TypeError) as exc:
+                log.debug("event bus could not read the safety roles: %s", exc)
+                added = dict(self._ctx.added_safety)
+        self._ctx = signals.RegistryContext(patterns, known, built_at=now,
+                                            added_safety=added)
         self._ctx_at = now
         return self._ctx
 
@@ -353,6 +380,15 @@ class EventBus:
         if self._in_second <= MAX_EVENTS_PER_S:
             return True
         if self._in_second > HARD_CEILING_PER_S:
+            # Except a safety detector tripping. The ceiling is what this
+            # process needs to survive a flood, and a flood is exactly when
+            # a leak sensor's one event must not be the one that is
+            # dropped — the safety lane hangs off this event and nothing
+            # else will ever report it. One attribute read; the flood is
+            # still bounded, because a house does not have thousands of
+            # smoke detectors tripping in a second.
+            if event_type == "state_changed" and _tripped_safety(data):
+                return True
             self._events_dropped += 1
             return False
         if event_type == "state_changed":

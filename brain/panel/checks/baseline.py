@@ -33,8 +33,33 @@ UNUSUAL_SPREADS = 6.0
 UNUSUAL_SPREADS_OVERALL = 9.0
 # A reading has to be outside its band by something a person would
 # notice, not merely by arithmetic: a temperature 6 spreads out of a band
-# 0.02 wide is 0.12 degrees.
+# 0.02 wide is 0.12 degrees. The number is in the reading's own unit, so
+# one constant meant 0.5 W, 0.5 lx and 0.5 ppm as readily as half a
+# degree — nothing at all on a meter that moves in hundreds. The table
+# names the units whose "noticeable" is plainly different; anything else
+# keeps the old half a unit, which is the cautious direction for a floor
+# that only ever stands a row down.
 MIN_ABSOLUTE_MOVE = 0.5
+MIN_MOVE_BY_UNIT = {
+    "°C": 0.5, "K": 0.5, "°F": 1.0,
+    "%": 2.0,
+    "W": 20.0, "kW": 0.02, "VA": 20.0, "A": 0.2, "mA": 200.0, "V": 3.0,
+    "lx": 20.0,
+    "ppm": 50.0, "ppb": 20.0, "µg/m³": 5.0,
+    "hPa": 1.0, "mbar": 1.0, "Pa": 100.0, "kPa": 0.1, "inHg": 0.03,
+    "psi": 0.2, "bar": 0.02,
+    "dB": 3.0, "dBA": 3.0, "dBm": 5.0,
+    "L/min": 0.5, "L/h": 10.0, "m³/h": 0.05, "gal/min": 0.2,
+}
+
+
+def min_move(unit: str | None, default: float = MIN_ABSOLUTE_MOVE) -> float:
+    """The smallest move worth a row, in this reading's own unit.
+
+    Shared with `forecast.decline`, whose floor had the same unitless
+    half a unit for the same reason.
+    """
+    return MIN_MOVE_BY_UNIT.get(str(unit or "").strip(), default)
 # More than this and the house is not unusual, the baseline is: a
 # heating season starting, a meter replaced, a fortnight of samples
 # describing a different life. Reporting fifty rows would be reporting
@@ -87,7 +112,7 @@ def eligible(house: House, eid: str, st: dict) -> bool:
     # one sensor under two different fixes is how a list stops being
     # read — the same rule `dev.unavailable` follows for a dead Z-Wave
     # node, and they share the question so they cannot disagree about it.
-    if devices.out_of_range(st, eid):
+    if devices.out_of_range(st, eid, house.world):
         return False
     return domain_of(eid) == "sensor"
 
@@ -132,7 +157,9 @@ def unusual(snap: dict, now: float) -> list[dict]:
                else UNUSUAL_SPREADS_OVERALL)
         if abs(found["sigmas"]) < bar:
             continue
-        if abs(value - found["median"]) < MIN_ABSOLUTE_MOVE:
+        measured_in = baseline.get("unit") or (
+            st.get("attributes") or {}).get("unit_of_measurement")
+        if abs(value - found["median"]) < min_move(measured_in):
             continue
         hits.append((abs(found["sigmas"]), eid, found, baseline))
 
@@ -146,17 +173,24 @@ def unusual(snap: dict, now: float) -> list[dict]:
     for _rank, eid, found, baseline in hits:
         unit = baseline.get("unit") or ""
         where = house.where(eid)
+        # `n` is a different count on each path: one reading per week in
+        # an hour-of-the-week bucket, and every hourly reading in the
+        # month on the whole-history fallback — where "from 650 weeks of
+        # readings" is what the one sentence used to say.
+        if found["source"] == "overall":
+            against = (f"across all its readings (from {found['n']} hourly "
+                       "readings over its whole history — this house has "
+                       "not been measured at this hour of the week yet)")
+        else:
+            weeks = found["n"]
+            against = (f"for this hour of the week (from {weeks} "
+                       f"{'week' if weeks == 1 else 'weeks'} of readings)")
         out.append({
             "text": f"{house.name(eid)} is reading far outside its usual range",
             "detail": (
                 f"{found['value']:g}{unit} now, against a usual "
-                f"{found['median']:g}{unit} for this hour of the week "
-                f"(from {found['n']} weeks of readings"
-                + (", or from its whole history — this house has not been "
-                   "measured at this hour yet" if found["source"] == "overall"
-                   else "")
-                + f"). That is {abs(found['sigmas']):g} times its normal "
-                  "variation."
+                f"{found['median']:g}{unit} {against}. That is "
+                f"{abs(found['sigmas']):g} times its normal variation."
                 + (f" {where}." if where else "")),
             "fix": ("Look at what it is measuring. If this is normal for a "
                     "reason brAIn cannot see — a guest, a heatwave, a new "

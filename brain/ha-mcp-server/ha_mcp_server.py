@@ -13,6 +13,7 @@ Runs as a stdio-based MCP server that Claude Code launches automatically.
 import base64
 import io
 import json
+import math
 import os
 import re
 import sys
@@ -83,40 +84,189 @@ ACTION_LEDGER = os.environ.get("BRAIN_ACTION_LEDGER",
 ACTION_LEDGER_MAX_BYTES = 2 * 1024 * 1024
 
 
-def _call_entities(data):
-    """The entity ids a service call names, at either of the two places.
+# ---------------------------------------------------------------------------
+# What a service call names, wherever it names it
+# ---------------------------------------------------------------------------
+#
+# Every guard at the chokepoint below used to read `entity_id` and `target`
+# and nothing else, and Home Assistant has services that take their
+# entities under other keys: `scene.apply` and `scene.create` take an
+# `entities` map that Core hands to each domain's reproduce_state — which
+# will unlock a lock or open a cover — `scene.create` a `snapshot_entities`
+# list, `media_player.join` its `group_members`, `tts.speak` its
+# `media_player_entity_id`. A protected lock named in `entities` passed the
+# protected list, the deny-list and the voice exposure gate in one call.
+# So the payload is walked whole: anything under a key that holds entities
+# by definition is NAMED, and any other string (or dict key) that is
+# exactly an entity id's shape is LOOSE — the second is what catches a
+# protected entity passed to a script as a variable, and is asked only the
+# questions a wrong guess cannot turn into a refusal of ordinary text.
+_ENTITY_KEYS = frozenset({"entity_id", "entity_ids", "entities",
+                          "snapshot_entities", "group_members"})
+_ENTITY_TOKEN_RE = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z0-9_]+$")
+_SCOPE_KEYS = ("area_id", "device_id", "label_id", "floor_id")
+# A payload is somebody's JSON; a walk with no floor is a walk a hostile one
+# can make arbitrarily deep.
+_SCAN_DEPTH = 12
 
-    A call may put `entity_id` at the top level or inside `target`, and
-    either may be a string or a list. Area, device, label and floor
-    targets are recorded under `target` and deliberately not resolved:
-    resolving one needs the registries as they were at the time of the
-    call, and a wrong expansion would attribute somebody else's change to
-    brAIn — which is the one mistake this ledger exists to prevent.
-    """
-    out = []
-    for source in (data or {}, (data or {}).get("target") or {}):
-        if not isinstance(source, dict):
-            continue
-        value = source.get("entity_id")
-        if isinstance(value, str):
-            value = [value]
-        if isinstance(value, list):
-            out.extend(str(v) for v in value if isinstance(v, str) and "." in v)
+
+def _entity_key(key):
+    key = str(key).lower()
+    return (key in _ENTITY_KEYS or key.endswith("_entity_id")
+            or key.endswith("_entity_ids"))
+
+
+def _entity_values(value):
+    """The ids in a field that holds entities: a string, a comma list, a
+    list, or a map keyed by entity id (scene.apply's `entities`)."""
+    if isinstance(value, str):
+        return [x.strip() for x in value.split(",") if x.strip()]
+    if isinstance(value, (list, tuple)):
+        out = []
+        for item in value:
+            if isinstance(item, str):
+                out.extend(x.strip() for x in item.split(",") if x.strip())
+        return out
+    if isinstance(value, dict):
+        return [str(k).strip() for k in value if str(k).strip()]
+    return []
+
+
+def _dedupe(items):
     seen = set()
-    return [e for e in out if not (e in seen or seen.add(e))]
+    return [i for i in items if not (i in seen or seen.add(i))]
 
 
-def record_action(domain, service, data):
+def _payload_entities(payload):
+    """(named, loose): every entity id a service payload names.
+
+    `named` is everything under an entity-holding key at any depth —
+    `entity_id`, `entities` (list or map), `snapshot_entities`,
+    `group_members`, `*_entity_id`. `loose` is every other string that is
+    exactly an entity id's shape, and every dict key that is, minus what is
+    already named. Neither is lowercased: the guards that read them do
+    their own case-folding, and the ledger records what was asked for.
+    """
+    named, loose = [], []
+
+    def walk(node, depth):
+        if depth > _SCAN_DEPTH:
+            return
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if _entity_key(key):
+                    named.extend(_entity_values(value))
+                    if isinstance(value, dict):
+                        walk(list(value.values()), depth + 1)
+                    continue
+                if isinstance(key, str) and _ENTITY_TOKEN_RE.match(key.strip().lower()):
+                    loose.append(key.strip())
+                walk(value, depth + 1)
+        elif isinstance(node, (list, tuple)):
+            for item in node:
+                walk(item, depth + 1)
+        elif isinstance(node, str):
+            for part in node.split(","):
+                token = part.strip()
+                if _ENTITY_TOKEN_RE.match(token.lower()):
+                    loose.append(token)
+
+    walk(payload if isinstance(payload, (dict, list)) else {}, 0)
+    named = _dedupe(named)
+    lowered = {n.lower() for n in named}
+    return named, _dedupe(t for t in loose if t.lower() not in lowered)
+
+
+def _target_ids(payload):
+    """The service's own target: `entity_id` at the top or under `target`."""
+    payload = payload if isinstance(payload, dict) else {}
+    out = []
+    for scope in (payload, payload.get("target")):
+        if isinstance(scope, dict):
+            out.extend(_entity_values(scope.get("entity_id")))
+    return _dedupe(out)
+
+
+def _top_named(payload):
+    """Entities the service itself is handed — every entity-holding key at
+    the top level or under `target`, never inside a script's `variables` or
+    a notification's `data`, which are the payload's passengers."""
+    payload = payload if isinstance(payload, dict) else {}
+    out = []
+    for scope in (payload, payload.get("target")):
+        if isinstance(scope, dict):
+            for key, value in scope.items():
+                if _entity_key(key):
+                    out.extend(_entity_values(value))
+    return _dedupe(out)
+
+
+def _call_entities(data, extra=()):
+    """The entity ids a service call names, for the ledger.
+
+    Every NAMED id, wherever the payload put it — a scene applied with an
+    `entities` map changes those entities, and a ledger that did not list
+    them would file brAIn's change as somebody else's. Loose strings are
+    not recorded: the ledger's whole job is not to claim a change brAIn
+    did not make. Area, device, label and floor targets are recorded under
+    `target` and deliberately not resolved: resolving one needs the
+    registries as they were at the time of the call, and a wrong expansion
+    would attribute somebody else's change to brAIn — which is the one
+    mistake this ledger exists to prevent.
+    """
+    named, _loose = _payload_entities(data or {})
+    out = [str(v) for v in list(named) + list(extra)
+           if isinstance(v, str) and "." in v]
+    return _dedupe(out)
+
+
+# Which face of brAIn this process serves. The launcher says so in
+# BRAIN_CHANNEL; until every launcher does, the voice launchers are known by
+# what they already set (the pool sets BRAIN_ASSIST_ACCESS, the classic
+# listener sets BRAIN_EXPOSED_ONLY to 0 or 1, and nothing else sets either),
+# and anything else is unknown — "" — which the action miner reads as brAIn
+# acting on its own, the answer it gave every row before this existed. That
+# is the safe direction: an unattended run filed as a person would invent
+# overrides and habits, where a person filed as brAIn only loses one.
+CHANNEL_RE = re.compile(r"[^a-z0-9_-]")
+
+
+def _channel():
+    word = CHANNEL_RE.sub("", os.environ.get("BRAIN_CHANNEL", "").strip().lower())[:32]
+    if word:
+        return word
+    if os.environ.get("BRAIN_ASSIST_ACCESS") or "BRAIN_EXPOSED_ONLY" in os.environ:
+        return "voice"
+    return ""
+
+
+def _run_id():
+    """The conversation this process is serving, when the CLI said.
+
+    Claude Code puts its session id in every stdio MCP server's environment
+    as CLAUDE_CODE_SESSION_ID; it is the same id `run_sources` and the
+    panel's "See the run" key on.
+    """
+    value = os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip()
+    return value[:64] if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value) else ""
+
+
+def record_action(domain, service, data, extra=()):
     """Append one service call to the ledger. Never raises.
 
     Accounting must not fail the call it is accounting for — the same rule
     the panel's run journal follows. A ledger this cannot write costs the
     timeline an attribution; a ledger that raises costs somebody their
     lights.
+
+    The row carries the CHANNEL that asked (`voice`, `chat`, `terminal`, an
+    unattended job's name, or nothing when it cannot be told): a person
+    saying "turn the hall light back on" through brAIn is a person, and
+    `actions.classify` can only file it as one if the row says who asked.
     """
     try:
         target = {}
-        for key in ("area_id", "device_id", "label_id", "floor_id"):
+        for key in _SCOPE_KEYS:
             for source in (data or {}, (data or {}).get("target") or {}):
                 if isinstance(source, dict) and source.get(key):
                     target[key] = source[key]
@@ -124,8 +274,14 @@ def record_action(domain, service, data):
             "ts": time.time(),
             "domain": domain,
             "service": service,
-            "entities": _call_entities(data),
+            "entities": _call_entities(data, extra),
         }
+        channel = _channel()
+        if channel:
+            row["channel"] = channel
+        run_id = _run_id()
+        if run_id:
+            row["run_id"] = run_id
         if target:
             row["target"] = target
         path = ACTION_LEDGER
@@ -140,7 +296,13 @@ def record_action(domain, service, data):
             # appended to. Losing the trim costs disk; refusing the append
             # would cost the timeline every action from here on.
             pass
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        # The directory is run.sh's to make (it creates /config/.brain before
+        # anything starts), never this writer's: `facts_store.writable`'s
+        # rule. A writer that made it grew a stray /config/.brain on every
+        # machine the suite ran on — which the facts store then read as a
+        # real install, and test_insights_addon's memory budget with it.
+        if not os.path.isdir(os.path.dirname(path) or "."):
+            return
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row) + "\n")
     except Exception:  # noqa: BLE001 - see docstring
@@ -207,6 +369,32 @@ def _meta_call_denied(payload):
     return None
 
 
+# `scene.apply` and `scene.create` are the meta-services' problem one layer
+# over: Core reproduces each entity's state through that entity's own domain,
+# so `scene.apply {"entities": {"lock.front_door": "unlocked"}}` is a
+# lock.unlock that no deny pattern names. Same answer, same conservatism:
+# a named entity whose domain appears in a denied pattern refuses the call.
+_REPRODUCE_SERVICES = (("scene", "apply"), ("scene", "create"))
+
+
+def _reproduce_denied(domain, service, payload):
+    """Why a state-reproducing call is refused by the deny-list, or None."""
+    if not DENIED_SERVICES:
+        return None
+    if (str(domain).lower(), str(service).lower()) not in _REPRODUCE_SERVICES:
+        return None
+    named, _loose = _payload_entities(payload or {})
+    denied_domains = {p.split(".", 1)[0] for p in DENIED_SERVICES}
+    if "*" in denied_domains and named:
+        return "it sets entity states, and every service is restricted here"
+    for eid in named:
+        edomain = eid.split(".", 1)[0].lower()
+        if edomain in denied_domains:
+            return (f"it sets the state of {eid}, and {edomain} services are "
+                    "restricted for this assistant")
+    return None
+
+
 def _entity_protected(entity_id):
     """True if this entity id matches the protected list."""
     target = str(entity_id or "").strip().lower()
@@ -233,34 +421,85 @@ def _protected_scopes():
     Unreadable registry → empty sets, and the caller fails closed on any
     area/device target while a protected list exists.
     """
-    import time as _time
-    now = _time.time()
+    if not _refresh_registry():
+        return set(), set(), False
+    return _PROTECTED_SCOPES["areas"], _PROTECTED_SCOPES["devices"], True
+
+
+def _refresh_registry():
+    """Read the entity and device registries into the shared cache.
+
+    One read serves two questions: which areas and devices hold a protected
+    entity (`_protected_scopes`), and which device and area each entity
+    lives in (`_registry_maps`, for working out what a script or scene
+    reaches). True when the cache is fresh, False when the registry could
+    not be read — and a failure is never cached, so the next call asks
+    again rather than serving "I could not look" for a minute.
+    """
+    now = time.time()
     if now - _PROTECTED_SCOPES["at"] < _PROTECTED_SCOPES_TTL:
-        return _PROTECTED_SCOPES["areas"], _PROTECTED_SCOPES["devices"], True
-    areas, devices, ok = set(), set(), False
+        return True
     try:
         entities = _ws_command({"type": "config/entity_registry/list"})
         device_rows = _ws_command({"type": "config/device_registry/list"})
-        if isinstance(entities, list) and isinstance(device_rows, list):
-            device_area = {d.get("id"): d.get("area_id") for d in device_rows
-                           if isinstance(d, dict)}
-            for e in entities:
-                if not isinstance(e, dict) or not _entity_protected(e.get("entity_id")):
-                    continue
-                if e.get("device_id"):
-                    devices.add(e["device_id"])
-                area = e.get("area_id") or device_area.get(e.get("device_id"))
-                if area:
-                    areas.add(area)
-            ok = True
-    except Exception:  # noqa: BLE001 — an unreadable registry fails closed below
-        ok = False
-    if ok:
-        _PROTECTED_SCOPES.update(at=now, areas=areas, devices=devices)
-    return areas, devices, ok
+    except Exception:  # noqa: BLE001 — an unreadable registry fails closed in the callers
+        return False
+    if not (isinstance(entities, list) and isinstance(device_rows, list)):
+        return False
+    device_area = {d.get("id"): d.get("area_id") for d in device_rows
+                   if isinstance(d, dict) and d.get("id")}
+    entity_map = {}
+    areas, devices = set(), set()
+    for e in entities:
+        if not isinstance(e, dict) or not e.get("entity_id"):
+            continue
+        eid = str(e["entity_id"]).lower()
+        entity_map[eid] = {
+            "device_id": e.get("device_id"),
+            "area_id": e.get("area_id") or device_area.get(e.get("device_id")),
+            "labels": [str(x) for x in e.get("labels") or []],
+        }
+        if not _entity_protected(eid):
+            continue
+        if e.get("device_id"):
+            devices.add(e["device_id"])
+        area = entity_map[eid]["area_id"]
+        if area:
+            areas.add(area)
+    _PROTECTED_SCOPES.update(at=now, areas=areas, devices=devices,
+                             entities=entity_map, device_area=device_area)
+    return True
 
 
-def _protected_target(payload, empty_is_all=False):
+def _registry_maps():
+    """(entity → {device_id, area_id, labels}, device → area_id), or None."""
+    if not _refresh_registry():
+        return None
+    return (_PROTECTED_SCOPES.get("entities") or {},
+            _PROTECTED_SCOPES.get("device_area") or {})
+
+
+_AREA_FLOORS = {"at": 0.0, "floors": {}}
+
+
+def _area_floors():
+    """area_id → floor_id, or None when the area registry cannot be read."""
+    now = time.time()
+    if now - _AREA_FLOORS["at"] < _PROTECTED_SCOPES_TTL:
+        return _AREA_FLOORS["floors"]
+    try:
+        rows = _ws_command({"type": "config/area_registry/list"})
+    except Exception:  # noqa: BLE001 — the caller fails closed on None
+        return None
+    if not isinstance(rows, list):
+        return None
+    floors = {r.get("area_id"): r.get("floor_id") for r in rows
+              if isinstance(r, dict) and r.get("area_id")}
+    _AREA_FLOORS.update(at=now, floors=floors)
+    return floors
+
+
+def _protected_target(payload, empty_is_all=False, extra=()):
     """Why a service call's targets touch a protected entity, or None.
 
     ``empty_is_all`` is the meta-service rule: a ``homeassistant.turn_off``
@@ -271,21 +510,23 @@ def _protected_target(payload, empty_is_all=False):
     because most services legitimately take no entity target at all
     (notify, reload, the brain.* registry services), and refusing those
     while a protected list exists would take the add-on's own tooling away.
+
+    Every entity the payload names is asked about, wherever it names it
+    (`_payload_entities`) — and so is every loose string that is exactly an
+    entity id, because a protected id passed to a script as a variable is
+    the same protected id. ``extra`` is a target the payload does not spell
+    out: `script.<object_id>` called as a service runs that script.
     """
     if not PROTECTED_ENTITIES:
         return None
     payload = payload if isinstance(payload, dict) else {}
     target = payload.get("target")
     scopes = [payload] + ([target] if isinstance(target, dict) else [])
-    entity_ids = []
+    named, loose = _payload_entities(payload)
+    entity_ids = list(named) + [str(x) for x in extra]
     area_ids = []
     device_ids = []
     for scope in scopes:
-        raw = scope.get("entity_id")
-        if isinstance(raw, str):
-            entity_ids.extend(x.strip() for x in raw.split(",") if x.strip())
-        elif isinstance(raw, list):
-            entity_ids.extend(str(x) for x in raw)
         for key, bucket in (("area_id", area_ids), ("device_id", device_ids)):
             val = scope.get(key)
             if isinstance(val, str):
@@ -303,6 +544,9 @@ def _protected_target(payload, empty_is_all=False):
             return "it addresses all entities, including protected ones"
         if _entity_protected(eid):
             return f"{eid} is a protected entity"
+    for eid in loose:
+        if _entity_protected(eid):
+            return f"it names {eid}, a protected entity"
     if area_ids or device_ids:
         areas, devices, ok = _protected_scopes()
         if not ok:
@@ -373,9 +617,53 @@ UNEXPOSED_READ = (
     "assistant cannot see it. Tell the user it can be exposed under "
     "Settings → Voice assistants; do not retry."
 )
+UNEXPOSED_ACT = (
+    "{what} is refused because {why}. Tell the user it can be exposed under "
+    "Settings → Voice assistants, or this agent's access raised in its brAIn "
+    "settings; do not retry or look for another route."
+)
+PROTECTED_REFUSAL = (
+    "{what} is refused because {why}. The homeowner keeps a protected list, "
+    "and nothing brAIn does may act on what is on it. Tell the user; do not "
+    "retry or look for another route."
+)
 
 
-def _exposure_refusal(payload):
+# The domains Home Assistant keeps entities in. A LOOSE string is asked
+# about exposure only when it is plausibly an entity — in the snapshot's
+# registry, or under one of these — because `song.mp3` handed to BRight is
+# the shape of an entity id and no entity at all, and refusing it as "not
+# exposed" would be a voice refusal invented out of a file name. A named
+# field is always asked: something under `entities` is an entity by the
+# service's own definition.
+ENTITY_DOMAINS = frozenset({
+    "ai_task", "air_quality", "alarm_control_panel", "alert",
+    "assist_satellite", "automation", "binary_sensor", "button", "calendar",
+    "camera", "climate", "conversation", "counter", "cover", "date",
+    "datetime", "device_tracker", "event", "fan", "geo_location", "group",
+    "humidifier", "image", "image_processing", "input_boolean",
+    "input_button", "input_datetime", "input_number", "input_select",
+    "input_text", "lawn_mower", "light", "lock", "media_player", "notify",
+    "number", "person", "plant", "proximity", "remote", "scene", "schedule",
+    "script", "select", "sensor", "siren", "stt", "sun", "switch", "tag",
+    "text", "time", "timer", "todo", "tts", "update", "vacuum", "valve",
+    "wake_word", "water_heater", "weather", "zone",
+})
+
+
+def _plausible_entity(token, snap):
+    token = str(token or "").strip().lower()
+    if not token or "." not in token:
+        return False
+    if isinstance(snap, dict):
+        for key in ("_exposed_set", "_hidden_set", "exposed", "hidden"):
+            known = snap.get(key)
+            if known and token in known:
+                return True
+    return token.split(".", 1)[0] in ENTITY_DOMAINS
+
+
+def _exposure_refusal(payload, extra=()):
     """Why a service call's targets reach something voice cannot see, or None.
 
     Only entity targets can be checked against the exposure list; an area,
@@ -384,32 +672,278 @@ def _exposure_refusal(payload):
     hidden entity reached through its room is the bypass. The area map
     voice is shown lists the exposed ids per area, so the model can name
     them — which is what the sentence asks for.
+
+    Every entity the payload names is asked, wherever it names it — an
+    `entities` map on scene.apply, `group_members` on media_player.join, a
+    speaker in `media_player_entity_id` — and so is any loose string that
+    is plausibly an entity (`_plausible_entity`).
     """
     if not EXPOSED_ONLY:
         return None
     payload = payload if isinstance(payload, dict) else {}
     target = payload.get("target")
     scopes = [payload] + ([target] if isinstance(target, dict) else [])
-    entity_ids = []
     for scope in scopes:
-        raw = scope.get("entity_id")
-        if isinstance(raw, str):
-            entity_ids.extend(x.strip() for x in raw.split(",") if x.strip())
-        elif isinstance(raw, list):
-            entity_ids.extend(str(x) for x in raw)
-        for key in ("area_id", "device_id", "label_id", "floor_id"):
+        for key in _SCOPE_KEYS:
             if scope.get(key):
                 return ("it targets an area, device, label or floor, and voice "
                         "may only act on the entities Home Assistant exposes "
                         "to it — name the entity ids instead")
-    if _exposure() is None:
+    named, loose = _payload_entities(payload)
+    snap = _exposure()
+    if snap is None:
         return ("Home Assistant's exposure settings could not be read, and "
                 "voice may only act on what is exposed to it")
-    for eid in entity_ids:
+    for eid in list(named) + [str(x) for x in extra]:
         if eid.lower() == "all":
             return "it addresses all entities, including ones not exposed to voice"
         if not _entity_exposed(eid):
             return f"{eid} is not exposed to voice assistants in Home Assistant"
+    for eid in loose:
+        if _plausible_entity(eid, snap) and not _entity_exposed(eid):
+            return f"it names {eid}, which is not exposed to voice assistants in Home Assistant"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# The voice level scopes SERVICES as well as entities
+# ---------------------------------------------------------------------------
+#
+# The exposure gate above asks about the entities a call names, and a call
+# that names none passed it — with the Supervisor's admin token behind it.
+# So a default "Voice assistant" agent, the one a kitchen satellite talks
+# to, could be talked into `homeassistant.restart`, `hassio.host_shutdown`,
+# `update.install` or `brain.create_user` with `admin: true`, while the
+# same `reload_config` was refused as a tool. Home Assistant's own Assist
+# can only run intents on exposed entities; the voice level is meant to be
+# no wider. Three rules, all at the chokepoint so a tool added later is
+# covered by being a service call:
+#
+#  - a call that names no entity (and no area, which the exposure gate
+#    refuses with its own sentence) is refused unless its service is on
+#    `VOICE_UNTARGETED` — a notification, and the BRUH add-ons' play
+#    services that voice's own tools already use;
+#  - a call that does name entities may only name its own domain's —
+#    `light.turn_on` on a light — unless the service is one whose whole job
+#    is to act across domains (`VOICE_CROSS_DOMAIN`: the meta-services, a
+#    TTS announcement, Music Assistant playing on a speaker, a scene applied
+#    inline). That is what keeps `brain.delete_entity {entity_id: light.x}`
+#    and `zwave_js.set_config_parameter` on an exposed lock out of reach;
+#  - and `VOICE_REFUSED_DOMAINS` is the one domain whose same-domain service
+#    is administration: `update.install` on an update entity.
+#
+# An allow-list rather than a deny-list of admin domains, because a deny
+# list is a list of the admin services somebody thought of, and every
+# integration installed afterwards brings more.
+VOICE_UNTARGETED = {
+    "notify": None,                       # every notifier: send_notification's route
+    "persistent_notification": frozenset({"create"}),
+    "bruh_minecraft": frozenset({
+        "get_status", "teleport", "set_gamemode", "give", "set_time",
+        "set_weather", "say", "list_addons", "search_addons"}),
+    "bruh_print": frozenset({"get_status", "print_text", "print_template"}),
+    "bright": frozenset({"get_status", "start_show", "start_party",
+                         "party_mode", "stop_show"}),
+    "music_assistant": frozenset({"search", "get_library"}),
+}
+VOICE_CROSS_DOMAIN = {
+    "homeassistant": frozenset({"turn_on", "turn_off", "toggle", "update_entity"}),
+    "tts": None,
+    "music_assistant": frozenset({"play_media", "play_announcement",
+                                  "transfer_queue", "get_queue"}),
+    "scene": frozenset({"apply", "create"}),
+}
+VOICE_REFUSED_DOMAINS = frozenset({"update"})
+VOICE_SERVICE_REFUSAL = (
+    "{what} is refused because {why}. This voice agent is set to 'Voice "
+    "assistant', which reaches only the entities Home Assistant exposes to "
+    "Assist. Tell the user it needs an agent set to 'Whole house' or 'Full "
+    "admin' (Settings → Devices & services → brAIn → the agent → "
+    "Configure); do not retry or look for another route."
+)
+
+
+def _listed(table, domain, service):
+    if domain not in table:
+        return False
+    allowed = table[domain]
+    return allowed is None or service in allowed
+
+
+def _voice_service_refusal(domain, service, payload, extra=()):
+    """Why a voice-level agent may not make this call at all, or None."""
+    if not EXPOSED_ONLY:
+        return None
+    d, s = str(domain).lower(), str(service).lower()
+    if d in VOICE_REFUSED_DOMAINS:
+        return f"{d} services administer Home Assistant itself"
+    payload = payload if isinstance(payload, dict) else {}
+    untargeted_ok = _listed(VOICE_UNTARGETED, d, s)
+    # The service's OWN targets, never an entity riding in a payload's
+    # passengers: `hassio.addon_stop` with a light tucked into `data` names
+    # no target, and reading the light as one would be the bypass again.
+    targets = list(_top_named(payload)) + [str(x) for x in extra]
+    scoped = any(isinstance(scope, dict) and any(scope.get(k) for k in _SCOPE_KEYS)
+                 for scope in (payload, payload.get("target")))
+    if not (targets or scoped or untargeted_ok):
+        return ("it names no entity, and a service with no target reaches "
+                "past the entities exposed to voice — it can restart Home "
+                "Assistant, change a user or a backup")
+    if untargeted_ok or _listed(VOICE_CROSS_DOMAIN, d, s):
+        return None
+    for eid in targets:
+        edomain = eid.split(".", 1)[0].lower()
+        if eid.lower() != "all" and edomain != d:
+            return (f"it acts on {eid} through a {d} service rather than "
+                    f"one of {edomain}'s own")
+    return None
+
+
+# ---------------------------------------------------------------------------
+# What a script, a scene or an automation reaches
+# ---------------------------------------------------------------------------
+#
+# `fire_event` has been refused while anything is protected since the list
+# existed, because an event reaches the house through whatever listens for
+# it and nothing here can see which. `scene.turn_on`, `script.turn_on` and
+# `automation.trigger` reach it the same indirect way and were checked only
+# as the scene, the script or the automation — so a scene holding the
+# protected front door lock was one `activate_scene` away, and on the voice
+# channel a default-exposed script was the way round an unexposed lock that
+# REACH_EXPOSED only asked the model not to take. These are not opaque the
+# way an event is: Home Assistant's own `search/related` answers what each
+# one references, scenes and nested scripts unwrapped. So it is asked, and
+# a protected member refuses the run on every channel and an unexposed one
+# refuses it on voice. A container whose members cannot be read is refused
+# while the protected list is non-empty — the label/floor rule — and on
+# voice; with neither in force nothing is looked up at all.
+#
+# What `search/related` returns is a reference graph and not a target list,
+# and the difference is load-bearing: it adds the AREA and DEVICE of every
+# referenced entity, and the floor of every area, so a script that turns on
+# the hall light lists the hall — and refusing on that would refuse every
+# script that touches anything in a room with a protected lock in it. So
+# areas, devices and floors are asked about only when they are not
+# explained by a referenced entity (`_direct_scopes`): what is left is what
+# the script or automation targets by area, device, label or floor itself.
+_RUNS_MEMBERS = {
+    "script": frozenset({("script", "turn_on"), ("script", "toggle"),
+                         ("homeassistant", "turn_on"), ("homeassistant", "toggle")}),
+    "scene": frozenset({("scene", "turn_on"), ("homeassistant", "turn_on"),
+                        ("homeassistant", "toggle")}),
+    "automation": frozenset({("automation", "trigger")}),
+}
+# The services of the script domain itself; any other `script.<name>` is
+# the script of that object id, run directly.
+_SCRIPT_OWN_SERVICES = frozenset({"turn_on", "turn_off", "toggle", "reload"})
+
+
+def _script_service_target(domain, service):
+    """`script.<object_id>` called as a service is a run of that script."""
+    d, s = str(domain).lower(), str(service).lower()
+    if d != "script" or s in _SCRIPT_OWN_SERVICES or not re.fullmatch(r"[a-z0-9_]+", s):
+        return None
+    return f"script.{s}"
+
+
+def _containers(domain, service, payload, extra=()):
+    """The scripts, scenes and automations this call would RUN."""
+    pair = (str(domain).lower(), str(service).lower())
+    out = [str(x).lower() for x in extra]
+    for eid in _target_ids(payload):
+        kind = eid.split(".", 1)[0].lower()
+        if pair in _RUNS_MEMBERS.get(kind, ()):
+            out.append(eid.lower())
+    return _dedupe(out)
+
+
+def _related(item_id):
+    """What Home Assistant says this script/scene/automation references, or
+    None when it would not answer. Never cached: a guard that answered from
+    a minute ago would answer for the script as it was before the edit."""
+    kind = item_id.split(".", 1)[0]
+    try:
+        result = _ws_command({"type": "search/related", "item_type": kind,
+                              "item_id": item_id})
+    except Exception:  # noqa: BLE001 — None is "could not look"
+        return None
+    if not isinstance(result, dict) or "error" in result:
+        return None
+    return {str(k): [str(x) for x in v] for k, v in result.items()
+            if isinstance(v, (list, tuple, set))}
+
+
+def _direct_scopes(container, related):
+    """(areas, devices, labels, floors) the container targets ITSELF, or None
+    when the registries that tell those from resolved-up ones are unreadable."""
+    wanted = any(related.get(k) for k in ("area", "device", "label", "floor"))
+    if not wanted:
+        return set(), set(), set(), set()
+    maps = _registry_maps()
+    if maps is None:
+        return None
+    entity_map, device_area = maps
+    entities = [e.lower() for e in related.get("entity", [])]
+    explained_devices = {entity_map[e]["device_id"] for e in entities
+                         if e in entity_map and entity_map[e]["device_id"]}
+    devices = set(related.get("device", [])) - explained_devices
+    explained_areas = {entity_map[e]["area_id"] for e in entities
+                       if e in entity_map and entity_map[e]["area_id"]}
+    explained_areas |= {device_area.get(d) for d in devices if device_area.get(d)}
+    areas = set(related.get("area", [])) - explained_areas
+    own = (entity_map.get(container) or {}).get("labels") or []
+    labels = set(related.get("label", [])) - set(own)
+    floors = set(related.get("floor", []))
+    if floors:
+        area_floor = _area_floors()
+        if area_floor is None:
+            return None
+        floors -= {area_floor.get(a) for a in related.get("area", [])}
+    return areas, devices, labels, floors
+
+
+def _member_refusal(domain, service, payload, extra=()):
+    """("protected" | "exposure", why) when a script, scene or automation
+    this call runs reaches something it may not, else None."""
+    if not (PROTECTED_ENTITIES or EXPOSED_ONLY):
+        return None
+    kind = "protected" if PROTECTED_ENTITIES else "exposure"
+    for container in _containers(domain, service, payload, extra):
+        related = _related(container)
+        if related is None:
+            return kind, (f"what {container} acts on could not be read from "
+                          "Home Assistant, so it cannot be checked")
+        entities = [e.lower() for e in related.get("entity", [])]
+        for eid in entities:
+            if _entity_protected(eid):
+                return "protected", f"{container} acts on {eid}, a protected entity"
+        if EXPOSED_ONLY:
+            for eid in entities:
+                if not _entity_exposed(eid):
+                    return "exposure", (f"{container} reaches {eid}, which is not "
+                                        "exposed to voice assistants in Home Assistant")
+        direct = _direct_scopes(container, related)
+        if direct is None:
+            return kind, (f"the registry could not be read to see which areas "
+                          f"and devices {container} acts on")
+        areas, devices, labels, floors = direct
+        if PROTECTED_ENTITIES and (areas or devices or labels or floors):
+            if labels or floors:
+                return "protected", (f"{container} targets a label or floor, whose "
+                                     "members cannot be checked against the protected list")
+            p_areas, p_devices, ok = _protected_scopes()
+            if not ok:
+                return "protected", (f"the registry could not be read to check what "
+                                     f"{container} reaches")
+            for a in sorted(areas):
+                if a in p_areas:
+                    return "protected", f"{container} targets area {a}, which contains a protected entity"
+            for d in sorted(devices):
+                if d in p_devices:
+                    return "protected", f"{container} targets device {d}, a protected entity's device"
+        if EXPOSED_ONLY and (areas or devices or labels or floors):
+            return "exposure", (f"{container} acts through an area, device, label or "
+                                "floor, and voice may only reach the entities exposed to it")
     return None
 
 
@@ -567,10 +1101,22 @@ def call_service(domain, service, data=None, return_response=False):
     from brain.create_area, or the orphan list from
     brain.delete_orphaned_entities).
     """
+    domain, service = str(domain or ""), str(service or "")
     if _service_denied(domain, service):
         return {"error": (
             f"Service {domain}.{service} is not permitted for this assistant. "
             "Tell the user this action is restricted; do not retry."
+        )}
+    # `script.<object_id>` runs that script exactly as `script.turn_on` on it
+    # does, with no entity id anywhere in the payload — so every check below
+    # was looking at an empty target. It is checked as the script it runs.
+    script = _script_service_target(domain, service)
+    extra = [script] if script else []
+    if script and _service_denied("script", "turn_on"):
+        return {"error": (
+            f"Service {domain}.{service} runs {script}, and script.turn_on is "
+            "not permitted for this assistant. Tell the user this action is "
+            "restricted; do not retry."
         )}
     if domain.lower() == "homeassistant" and service.lower() in _META_SERVICES:
         reason = _meta_call_denied(data)
@@ -581,28 +1127,39 @@ def call_service(domain, service, data=None, return_response=False):
                 "if that is also refused, tell the user the action is "
                 "restricted and do not retry."
             )}
+    reproduce = _reproduce_denied(domain, service, data)
+    if reproduce:
+        return {"error": (
+            f"{domain}.{service} is not permitted here because {reproduce}. "
+            "Tell the user the action is restricted; do not retry."
+        )}
     protected = _protected_target(
         data,
         empty_is_all=(domain.lower() == "homeassistant"
-                      and service.lower() in _META_SERVICES))
+                      and service.lower() in _META_SERVICES),
+        extra=extra)
     if protected:
-        return {"error": (
-            f"{domain}.{service} is refused because {protected}. The "
-            "homeowner has put it on brAIn's protected list, and nothing "
-            "brAIn does may act on it. Tell the user; do not retry or "
-            "look for another route."
-        )}
+        return {"error": PROTECTED_REFUSAL.format(
+            what=f"{domain}.{service}", why=protected)}
     if EXPOSED_ONLY and (domain.lower(), service.lower()) in VOICE_ADMIN_SERVICES:
         return {"error": ADDON_VOICE_REFUSAL.format(what=f"{domain}.{service}")}
-    unexposed = _exposure_refusal(data)
+    # Exposure first: "that lock is not exposed" is the sentence a person can
+    # act on, and the service rule's sentence is for what is left after it.
+    unexposed = _exposure_refusal(data, extra)
     if unexposed:
-        return {"error": (
-            f"{domain}.{service} is refused because {unexposed}. Tell the "
-            "user it can be exposed under Settings → Voice assistants; do "
-            "not retry or look for another route."
-        )}
+        return {"error": UNEXPOSED_ACT.format(
+            what=f"{domain}.{service}", why=unexposed)}
+    voice = _voice_service_refusal(domain, service, data, extra)
+    if voice:
+        return {"error": VOICE_SERVICE_REFUSAL.format(
+            what=f"{domain}.{service}", why=voice)}
+    members = _member_refusal(domain, service, data, extra)
+    if members:
+        kind, why = members
+        template = PROTECTED_REFUSAL if kind == "protected" else UNEXPOSED_ACT
+        return {"error": template.format(what=f"{domain}.{service}", why=why)}
     payload = data or {}
-    record_action(domain, service, payload)
+    record_action(domain, service, payload, extra)
     if return_response:
         try:
             result = _ws_command({
@@ -2255,120 +2812,301 @@ def get_camera_snapshot(entity_id, max_dim=1024):
 # ============================================================================
 
 def get_automations():
-    """List all automations with their states."""
+    """List all automations with their states — and each one's config `id`,
+    which is the key its traces and its definition are filed under (a
+    UI-made automation's is a timestamp, nothing like its entity id)."""
     states = ha_api_request("/api/states")
     if isinstance(states, list):
         automations = [s for s in states if s.get("entity_id", "").startswith("automation.")]
         return [
-            {
+            {k: v for k, v in {
                 "entity_id": a.get("entity_id"),
+                "id": (a.get("attributes") or {}).get("id"),
                 "state": a.get("state"),
-                "friendly_name": a.get("attributes", {}).get("friendly_name", ""),
-                "last_triggered": a.get("attributes", {}).get("last_triggered"),
-            }
+                "friendly_name": (a.get("attributes") or {}).get("friendly_name", ""),
+                "last_triggered": (a.get("attributes") or {}).get("last_triggered"),
+            }.items() if v is not None}
             for a in automations
         ]
     return states
 
 
-# Cap on the stored-trace payload: one trace of a complex automation can
-# carry every step's changed variables and dwarf the rest of the response.
+# Cap on one trace's payload: a complex automation's run carries every
+# step's changed variables and can dwarf the rest of the response.
 MAX_TRACE_BYTES = 60_000
+MAX_TRACE_RUNS = 5
+# A config id (what `trace/get` and `config/automation/config` key on):
+# UI-made ones are a millisecond timestamp, YAML ones whatever was typed.
+_CONFIG_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 
 
-def get_automation_trace(automation_id):
-    """Get recent traces for an automation.
+def _trace_subject(automation_id):
+    """What `trace/list` keys this automation or script under, or an error.
 
-    The trace API is WebSocket-only (no REST endpoint).  This function
-    combines the automation's entity state (last_triggered, mode, etc.)
-    with stored trace data read from HA's .storage directory.
+    Core files a trace under `<domain>.<config id>` — an automation's
+    `unique_id`, which for a UI-made automation is a timestamp and never
+    its entity id. The tool used to look traces up by entity id in the
+    shutdown-time file and so found nothing for every UI-made automation;
+    the config id is read off the entity's own `id` attribute, and a bare
+    config id is accepted as given.
     """
-    # Normalise entity_id
-    entity_id = automation_id
-    if not entity_id.startswith("automation."):
-        entity_id = f"automation.{entity_id}"
-
-    output = {}
-
-    # 1. Always-available: entity state from REST API
+    raw = str(automation_id or "").strip()
+    if raw.startswith("script."):
+        domain, entity_id = "script", raw
+    elif raw.startswith("automation."):
+        domain, entity_id = "automation", raw
+    elif _CONFIG_ID_RE.match(raw):
+        # A bare config id: find the automation that carries it.
+        states = ha_api_request("/api/states")
+        if not isinstance(states, list):
+            return None, states
+        for s in states:
+            if (str(s.get("entity_id", "")).startswith("automation.")
+                    and str((s.get("attributes") or {}).get("id")) == raw):
+                return {"domain": "automation", "item_id": raw,
+                        "entity_id": s["entity_id"], "state": s}, None
+        return None, {"error": (f"No automation has the id {raw!r} — "
+                                "get_automations lists each one's id.")}
+    else:
+        return None, {"error": "Name an automation or script by entity id "
+                               "(automation.x, script.x) or its config id."}
+    if not ENTITY_ID_RE.match(entity_id):
+        return None, {"error": f"{entity_id!r} is not an entity id."}
     state = ha_api_request(f"/api/states/{entity_id}")
-    if isinstance(state, dict) and "error" not in state:
-        attrs = state.get("attributes", {})
-        output["entity_id"] = state.get("entity_id", entity_id)
-        output["state"] = state.get("state")
-        output["last_triggered"] = attrs.get("last_triggered")
-        output["last_changed"] = state.get("last_changed")
-        output["mode"] = attrs.get("mode")
-        output["current"] = attrs.get("current", 0)
-        output["friendly_name"] = attrs.get("friendly_name")
+    if not isinstance(state, dict) or "error" in state:
+        return None, {"error": f"{entity_id} was not found in Home Assistant."}
+    if domain == "script":
+        item_id = entity_id.split(".", 1)[1]
     else:
-        output["entity_state_error"] = state
+        item_id = (state.get("attributes") or {}).get("id")
+        if not item_id:
+            return None, {"error": (
+                f"{entity_id} has no id: in its YAML, so Home Assistant keeps "
+                "no traces for it. Adding an id: line to its definition is "
+                "what makes it traceable.")}
+    return {"domain": domain, "item_id": str(item_id),
+            "entity_id": entity_id, "state": state}, None
 
-    # 2. Try reading stored traces from disk (HA saves them in .storage)
-    traces = _read_stored_traces(automation_id, entity_id)
-    if traces:
-        # Stored traces can be arbitrarily large (every step's changed
-        # variables) — cap the payload like the other listing tools do.
-        while (len(traces) > 1
-               and len(json.dumps(traces, default=str)) > MAX_TRACE_BYTES):
-            traces = traces[1:]  # drop oldest first
-        if len(json.dumps(traces, default=str)) > MAX_TRACE_BYTES:
-            newest = traces[-1]
-            traces = [{
-                k: newest.get(k)
-                for k in ("run_id", "state", "script_execution", "timestamp",
-                          "error", "last_step")
-                if isinstance(newest, dict) and newest.get(k) is not None
-            }]
-            output["traces_note"] = (
-                "Trace detail truncated (payload too large) — summary of the "
-                "most recent run only. Full traces: Settings > Automations > "
-                "(automation) > Traces in the HA UI."
-            )
-        output["traces"] = traces
-    else:
-        output["traces_note"] = (
-            "No stored traces found on disk. Traces are available in the "
-            "HA UI under Settings > Automations > (select automation) > Traces."
-        )
 
+def _trace_time(row):
+    stamp = row.get("timestamp") if isinstance(row, dict) else None
+    return str((stamp or {}).get("start") or "") if isinstance(stamp, dict) else ""
+
+
+def _run_summary(row):
+    """A `trace/list` row (Core's short dict) as one line of a run list."""
+    stamp = row.get("timestamp") or {}
+    out = {"run_id": row.get("run_id"), "start": stamp.get("start"),
+           "finish": stamp.get("finish"), "state": row.get("state"),
+           "script_execution": row.get("script_execution"),
+           "trigger": row.get("trigger"), "last_step": row.get("last_step"),
+           "error": row.get("error")}
+    return {k: v for k, v in out.items() if v not in (None, "")}
+
+
+def _trim_trace(trace, detail=True):
+    """`trace/get`'s extended dict, as the steps and their results.
+
+    The definition is left out (get_automation_config returns it), and so
+    is the automation's own state in every step's variables (`this`), which
+    is the same few hundred bytes repeated at every step.
+    """
+    out = {k: trace.get(k) for k in ("run_id", "state", "script_execution",
+                                     "timestamp", "trigger", "error", "last_step")
+           if trace.get(k) not in (None, "")}
+    user = (trace.get("context") or {}).get("user_id") if isinstance(
+        trace.get("context"), dict) else None
+    if user:
+        out["started_by_user"] = user
+    steps = {}
+    for path, elements in (trace.get("trace") or {}).items():
+        if not isinstance(elements, list):
+            continue
+        rows = []
+        for el in elements:
+            if not isinstance(el, dict):
+                continue
+            row = {k: el.get(k) for k in ("timestamp", "result", "error",
+                                          "template_errors", "child_id")
+                   if el.get(k) not in (None, "", {}, [])}
+            if detail and isinstance(el.get("changed_variables"), dict):
+                variables = {k: v for k, v in el["changed_variables"].items()
+                             if k != "this"}
+                if variables:
+                    row["changed_variables"] = variables
+            rows.append(row)
+        steps[path] = rows
+    out["steps"] = steps
+    return out
+
+
+def get_automation_trace(automation_id, run_id=None):
+    """Why an automation (or script) did what it did: its recent runs, and
+    one run's trigger, conditions and steps with their results.
+
+    Read live over the WebSocket API (`trace/list`, `trace/get`) — what the
+    Traces screen reads. The old version read `.storage/trace.saved_traces`,
+    which Core writes only at shutdown, so no run since the last restart was
+    ever visible, and looked it up by entity id where Core keys it by config
+    id. The definition the run executed is get_automation_config's.
+    """
+    subject, error = _trace_subject(automation_id)
+    if error:
+        return error
+    state = subject["state"]
+    attrs = state.get("attributes") or {}
+    output = {k: v for k, v in {
+        "entity_id": subject["entity_id"],
+        "id": subject["item_id"],
+        "state": state.get("state"),
+        "friendly_name": attrs.get("friendly_name"),
+        "last_triggered": attrs.get("last_triggered"),
+        "mode": attrs.get("mode"),
+        "current": attrs.get("current"),
+    }.items() if v is not None}
+    try:
+        listed = _ws_command({"type": "trace/list", "domain": subject["domain"],
+                              "item_id": subject["item_id"]})
+    except ImportError:
+        return {"error": "websockets package not available in this environment"}
+    except Exception as e:  # noqa: BLE001
+        return {**output, "error": f"Home Assistant's traces could not be read: {e}"}
+    if isinstance(listed, dict) and "error" in listed:
+        return {**output, "error": f"Home Assistant's traces could not be read: "
+                                   f"{listed['error']}"}
+    rows = [r for r in (listed or []) if isinstance(r, dict)]
+    rows.sort(key=_trace_time, reverse=True)
+    runs = [r for r in rows if not r.get("not_triggered")]
+    skipped = len(rows) - len(runs)
+    output["runs"] = [_run_summary(r) for r in runs[:MAX_TRACE_RUNS]]
+    if skipped:
+        # A trigger that fired and a condition that said no is a "not
+        # triggered" trace in current Core; the count is the answer to
+        # "why didn't it run" more often than any single trace is.
+        output["not_triggered"] = skipped
+    if not rows:
+        output["note"] = (
+            "Home Assistant holds no traces for this — it has not run since "
+            "Home Assistant started keeping them (it keeps the last few runs "
+            "of each, and restores saved ones at startup).")
+        return output
+    wanted = str(run_id).strip() if run_id else (runs or rows)[0].get("run_id")
+    try:
+        trace = _ws_command({"type": "trace/get", "domain": subject["domain"],
+                             "item_id": subject["item_id"], "run_id": wanted})
+    except Exception as e:  # noqa: BLE001
+        return {**output, "error": f"Trace {wanted} could not be read: {e}"}
+    if not isinstance(trace, dict) or "error" in trace:
+        return {**output, "error": f"Trace {wanted} could not be read: "
+                                   f"{(trace or {}).get('error') if isinstance(trace, dict) else trace}"}
+    detail = _trim_trace(trace)
+    if len(_compact(detail)) > MAX_TRACE_BYTES:
+        detail = _trim_trace(trace, detail=False)
+        output["note"] = ("The run's changed variables were left out to fit — "
+                          "its steps and their results are all here.")
+    if len(_compact(detail)) > MAX_TRACE_BYTES:
+        detail = {k: v for k, v in detail.items() if k != "steps"}
+        detail["steps_omitted"] = True
+        output["note"] = ("This run's steps are too large to return; the Traces "
+                          "screen in Home Assistant shows them.")
+    output["run"] = detail
     return output
 
 
-def _read_stored_traces(automation_id, entity_id):
-    """Read stored automation traces from HA's .storage directory."""
-    import os
-    storage_path = "/config/.storage/trace.saved_traces"
-    if not os.path.isfile(storage_path):
-        return None
+MAX_CONFIG_BYTES = 100_000
+
+
+def get_automation_config(entity_id):
+    """The definition an automation or script runs, as Home Assistant holds it.
+
+    Over the WebSocket's `automation/config` / `script/config`, which answer
+    for every automation — UI-made, YAML, a package — by entity id. A bare
+    config id is read through the REST editor endpoint, which knows only
+    the automations in automations.yaml. Unattended runs have no file
+    access, so without this they debugged automations they could not read.
+    """
+    raw = str(entity_id or "").strip()
+    if "." in raw and raw.split(".", 1)[0] in ("automation", "script"):
+        if not ENTITY_ID_RE.match(raw):
+            return {"error": f"{raw!r} is not an entity id."}
+        domain = raw.split(".", 1)[0]
+        try:
+            result = _ws_command({"type": f"{domain}/config", "entity_id": raw})
+        except ImportError:
+            return {"error": "websockets package not available in this environment"}
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)}
+        if not isinstance(result, dict) or "error" in result:
+            return {"error": f"{raw} has no definition Home Assistant will "
+                             f"show: {(result or {}).get('error') if isinstance(result, dict) else result}"}
+        config = result.get("config")
+        out = {"entity_id": raw, "config": config}
+    elif _CONFIG_ID_RE.match(raw):
+        result = ha_api_request(
+            f"/api/config/automation/config/{urllib.parse.quote(raw, safe='')}")
+        if not isinstance(result, dict) or "error" in result:
+            return {"error": (f"No automation in automations.yaml has the id "
+                              f"{raw!r}. Pass its entity id instead — that "
+                              "reaches YAML and package automations too.")}
+        out = {"id": raw, "config": result}
+    else:
+        return {"error": "Name an automation or script by entity id "
+                         "(automation.x, script.x) or an automation's config id."}
+    if len(_compact(out)) > MAX_CONFIG_BYTES:
+        config = out.get("config") if isinstance(out.get("config"), dict) else {}
+        return {k: v for k, v in out.items() if k != "config"} | {
+            "note": "The definition is too large to return whole.",
+            "keys": sorted(config)}
+    return out
+
+
+# Core's search/related item types (homeassistant/components/search ItemType).
+RELATED_ITEM_TYPES = (
+    "area", "automation", "automation_blueprint", "config_entry", "device",
+    "entity", "floor", "group", "integration", "label", "person", "scene",
+    "script", "script_blueprint",
+)
+MAX_RELATED = 100
+
+
+def search_related(item_type, item_id):
+    """Everything Home Assistant relates to one thing — what the Related tab
+    in its own UI shows: the entities a script or scene touches, the
+    automations that reference an entity, the devices in an area.
+
+    It is a reference graph, not a list of what is acted on: it adds the
+    area and device of every entity it finds, so a script that turns on the
+    hall light lists the hall.
+    """
+    item_type = str(item_type or "").strip()
+    if item_type not in RELATED_ITEM_TYPES:
+        return {"error": "item_type must be one of " + ", ".join(RELATED_ITEM_TYPES)}
+    item_id = str(item_id or "").strip()
+    if not item_id or len(item_id) > 255:
+        return {"error": "Give the item's id (an entity id, area_id, device_id, ...)."}
     try:
-        with open(storage_path) as fh:
-            store = json.load(fh)
-        data = store.get("data", {})
-
-        # Try both the entity_id and the bare automation id as keys
-        traces = data.get(entity_id)
-        if traces is None:
-            traces = data.get(automation_id)
-        if traces is None:
-            # HA may nest under domain key: data.automation.{id}
-            auto_data = data.get("automation", {})
-            bare_id = entity_id.replace("automation.", "", 1)
-            traces = auto_data.get(entity_id) or auto_data.get(bare_id)
-
-        if not traces:
-            return None
-
-        # Return the most recent traces (limit to 5)
-        if isinstance(traces, list):
-            return traces[-5:]
-        if isinstance(traces, dict):
-            # Some versions store as dict keyed by run_id
-            items = sorted(traces.values(), key=lambda t: t.get("timestamp", {}).get("start", ""), reverse=True)
-            return items[:5]
-        return traces
-    except (OSError, json.JSONDecodeError, KeyError, TypeError):
-        return None
+        result = _ws_command({"type": "search/related", "item_type": item_type,
+                              "item_id": item_id})
+    except ImportError:
+        return {"error": "websockets package not available in this environment"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+    if not isinstance(result, dict) or "error" in result:
+        return result if isinstance(result, dict) else {"error": str(result)}
+    related, counts = {}, {}
+    for kind, values in sorted(result.items()):
+        if not isinstance(values, (list, tuple, set)):
+            continue
+        values = sorted(str(v) for v in values)
+        counts[kind] = len(values)
+        related[kind] = values[:MAX_RELATED]
+    out = {"item_type": item_type, "item_id": item_id, "related": related}
+    if any(n > MAX_RELATED for n in counts.values()):
+        out["counts"] = counts
+        out["note"] = f"Lists over {MAX_RELATED} are cut; counts are whole."
+    if not related:
+        out["note"] = "Home Assistant relates nothing to this."
+    return out
 
 
 def get_config():
@@ -2389,8 +3127,15 @@ def get_services():
     return result
 
 
-def get_device_registry():
-    """Get device registry summary from entity states."""
+def get_entity_counts():
+    """How many entities of each domain there are.
+
+    It shipped as `get_device_registry`, a name that promised the device
+    registry and delivered a per-domain tally of states — and a name wins a
+    model's choice over the description under it, so asking for devices
+    reached for this rather than get_registry('devices'). The old name is
+    still answered (`TOOL_ALIASES`) and listed nowhere.
+    """
     states = ha_api_request("/api/states")
     if isinstance(states, list):
         domains = {}
@@ -2407,21 +3152,108 @@ def get_device_registry():
     return {"error": "Could not retrieve device information"}
 
 
+# Home Assistant's entity-id shape, the panel's `ha_data.ENTITY_ID_RE`. The
+# MCP server cannot import the panel (a different process, a different
+# user), so the rule is written here and the two are held together by
+# tests/test_mcp_history_query.py driving this one against a real server.
+ENTITY_ID_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+
+
+def _query(params):
+    """A query string out of params — every value percent-encoded.
+
+    Core's valueless flags (`minimal_response`, `no_attributes`) are sent
+    with an empty value, which Core reads as present: the same spelling the
+    panel's `history_params` sends through aiohttp. A `+` in a timestamp is
+    encoded too, where pasted into a URL it would arrive as a space.
+    """
+    return urllib.parse.urlencode(params)
+
+
+def _history_query(entity_id, end):
+    """Core's `/history/period/<start>` query for one entity, as the panel's
+    `ha_data.history_params` builds it.
+
+    **`end` is required, because Core's default is not now.** With no
+    `end_time`, `/history/period/<start>` answers with start plus ONE DAY —
+    so `hours=72` came back as the day that ended two days ago, labelled as
+    the last three days, with its `last`, `min` and `max` describing that
+    old day. The panel learned this from `closures.fetch_history`; this copy
+    never did, because a mock that accepts whatever endpoint it is handed
+    cannot see a parameter that is not there.
+    """
+    return _query({"filter_entity_id": entity_id, "end_time": end.isoformat(),
+                   "minimal_response": "", "no_attributes": ""})
+
+
+# How many logbook rows one call hands back. The NEWEST: Core answers a
+# window oldest first, and a tool asked "what happened" that kept the first
+# fifty of a busy hour dropped exactly the part that was being asked about.
+MAX_LOGBOOK_ROWS = 50
+
+
+def _trim_logbook_row(row):
+    """A logbook row as the five things a reader acts on.
+
+    What changed and when, its name, the state (or the logbook's message
+    for a row that is an event rather than a state), and what Core's
+    context chain says caused it — never the context ids, which cost a
+    reader tokens and say nothing a person or a model can use.
+    """
+    out = {"when": row.get("when"), "entity_id": row.get("entity_id"),
+           "name": row.get("name")}
+    if row.get("state") is not None:
+        out["state"] = row.get("state")
+    elif row.get("message"):
+        out["message"] = row.get("message")
+    by = row.get("context_entity_id")
+    if by:
+        out["by"] = by
+        name = row.get("context_entity_id_name") or row.get("context_name")
+        if name and name != by:
+            out["by_name"] = name
+    elif row.get("context_domain") == "conversation":
+        out["by"] = "a voice assistant"
+    elif row.get("context_user_id"):
+        out["by"] = "someone signed in"
+    return {k: v for k, v in out.items() if v not in (None, "")}
+
+
 def get_logbook(hours=1, entity_id=None):
-    """Get logbook entries."""
+    """The newest logbook entries in a window, newest first.
+
+    For WHY something changed, `explain_change` reads the same logbook and
+    adds what brAIn did; for a whole-house timeline with a cause on every
+    row, `get_activity`.
+    """
     from datetime import datetime, timedelta, timezone
     try:
         hours = max(0.1, min(float(hours or 1), 24))  # Clamp between 0.1 and 24
     except (TypeError, ValueError):
         hours = 1
-    start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-    endpoint = f"/api/logbook/{start}"
+    now = datetime.now(timezone.utc)
+    start = (now - timedelta(hours=hours)).isoformat()
+    params = {"end_time": now.isoformat()}
     if entity_id:
-        endpoint += f"?entity={entity_id}"
-    result = ha_api_request(endpoint)
-    if isinstance(result, list):
-        return result[:50]  # Limit to 50 entries
-    return result
+        # Refused rather than escaped: an id that is not an id names
+        # nothing, and the panel's own logbook fetch draws the line here.
+        if not ENTITY_ID_RE.match(str(entity_id)):
+            return {"error": f"{entity_id!r} is not an entity id "
+                             "(domain.object_id, lower case)."}
+        params["entity"] = entity_id
+    result = ha_api_request(f"/api/logbook/{start}?{_query(params)}")
+    if not isinstance(result, list):
+        return result
+    rows = [_trim_logbook_row(r) for r in result if isinstance(r, dict)]
+    newest = rows[-MAX_LOGBOOK_ROWS:][::-1]
+    out = {"hours": hours, "order": "newest first", "total": len(rows),
+           "returned": len(newest), "entries": newest}
+    if len(rows) > len(newest):
+        out["note"] = (f"The {len(rows) - len(newest)} oldest entries in this "
+                       "window are not shown — ask for fewer hours or name an "
+                       "entity_id. For what caused a change use explain_change; "
+                       "for the whole house with causes, get_activity.")
+    return out
 
 
 def get_history(entity_id, hours=24):
@@ -2429,15 +3261,17 @@ def get_history(entity_id, hours=24):
     from datetime import datetime, timedelta, timezone
     if not _entity_exposed(entity_id):
         return {"error": UNEXPOSED_READ.format(eid=entity_id)}
+    if not ENTITY_ID_RE.match(str(entity_id or "")):
+        return {"error": f"{entity_id!r} is not an entity id "
+                         "(domain.object_id, lower case)."}
     try:
         hours = max(1, min(int(hours), 168))
     except (TypeError, ValueError):
         hours = 24
-    start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    now = datetime.now(timezone.utc)
+    start = (now - timedelta(hours=hours)).isoformat()
     result = ha_api_request(
-        f"/api/history/period/{start}"
-        f"?filter_entity_id={entity_id}&minimal_response&no_attributes"
-    )
+        f"/api/history/period/{start}?{_history_query(entity_id, now)}")
     if isinstance(result, dict) and "error" in result:
         return result
     if not isinstance(result, list) or not result or not result[0]:
@@ -2527,13 +3361,43 @@ def get_statistics(entity_id, period="hour", days=7):
         return value
 
     stats = [
-        {k: (_iso(r.get(k)) if k == "start" else r.get(k))
+        {k: (_iso(r.get(k)) if k == "start" else _round_stat(r.get(k)))
          for k in ("start", "mean", "min", "max", "sum") if r.get(k) is not None}
         for r in rows
     ]
-    if len(stats) > 200:
-        stats = stats[-200:]
-    return {"entity_id": entity_id, "period": period, "days": days, "stats": stats}
+    out = {"entity_id": entity_id, "period": period, "days": days}
+    if len(stats) > MAX_STAT_ROWS:
+        # Said, never silent: a week of hourly rows is 168 and a month is
+        # 720, and the last 200 of a month reported as the month is the
+        # same lie get_history's missing end_time told.
+        out["note"] = (f"Showing the newest {MAX_STAT_ROWS} of {len(stats)} "
+                       f"{period} rows — the first {len(stats) - MAX_STAT_ROWS} "
+                       "are not shown. Ask for period 'day' (or fewer days) "
+                       "to see the whole window.")
+        stats = stats[-MAX_STAT_ROWS:]
+    out["stats"] = stats
+    return out
+
+
+MAX_STAT_ROWS = 200
+
+
+def _round_stat(value):
+    """A statistic to the precision anybody reads it at.
+
+    The recorder hands back means like 21.437916666666667, which is
+    seventeen characters of noise per row and a few thousand rows a month.
+    Three decimals keeps a cumulative `sum` exact enough to difference and
+    a temperature exact to the thousandth; a value under 0.01 keeps three
+    significant figures instead, so a small reading is not rounded to 0.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return value
+    if not math.isfinite(value):
+        return value
+    if value == 0 or abs(value) >= 0.01:
+        return round(value, 3)
+    return float(f"{value:.3g}")
 
 
 def get_weather_forecast(entity_id, forecast_type="daily"):
@@ -2995,7 +3859,9 @@ def get_dashboard(url_path=None, view_index=None):
         }
 
     payload = {**_dashboard_named(url_path, result), "config": result}
-    if len(json.dumps(payload)) > MAX_DASHBOARD_BYTES:
+    # Measured the way it is sent: the cap was checked on one encoding and
+    # the payload emitted in a fatter one.
+    if len(_compact(payload)) > MAX_DASHBOARD_BYTES:
         return {
             **_dashboard_named(url_path, result),
             "note": (f"Config too large to return whole (> {MAX_DASHBOARD_BYTES} "
@@ -3112,14 +3978,28 @@ def remember_fact(fact, confidence="high", subject="", person=""):
         confidence = "high"
     subject = str(subject or "").strip()[:255]
     person = str(person or "").strip()[:64]
+    # A voice agent told it cannot see an entity could still file a fact
+    # ABOUT it, which every later run — of every channel — is then handed
+    # as something the household said.
+    if EXPOSED_ONLY and ENTITY_ID_RE.match(subject.lower()) \
+            and not _entity_exposed(subject):
+        return {"error": UNEXPOSED_READ.format(eid=subject)}
 
+    # Who taught it. Every fact used to be filed `source: "assist"` whatever
+    # asked — so a preference typed into the chat read as voice-taught, and
+    # nothing linked it back to the conversation it came from, when the
+    # facts store and `recall` both tell the model to weigh a fact by who
+    # taught it. A channel this process cannot name is said as that,
+    # rather than as voice.
+    source = _channel() or "conversation"
+    run_id = _run_id()
     inbox_dir = os.path.join(MEMORY_DIR, "inbox")
     try:
         os.makedirs(inbox_dir, exist_ok=True)
         now = int(time.time())
         record = {
             "ts": now,
-            "source": "assist",
+            "source": source,
             "fact": fact.strip(),
             "confidence": confidence,
         }
@@ -3127,7 +4007,9 @@ def remember_fact(fact, confidence="high", subject="", person=""):
             record["subject"] = subject
         if person:
             record["person"] = person
-        path = os.path.join(inbox_dir, f"{now}-assist.jsonl")
+        if run_id:
+            record["run_id"] = run_id
+        path = os.path.join(inbox_dir, f"{now}-{source}.jsonl")
         with open(path, "a") as fh:
             fh.write(json.dumps(record) + "\n")
     except OSError as exc:
@@ -3148,7 +4030,7 @@ def remember_fact(fact, confidence="high", subject="", person=""):
 # a friendlier set translated at the far end: one vocabulary from the tool
 # schema to the HTTP route is one fewer place for two answers to the same
 # question to drift apart.
-RESOLUTION_KINDS = ("done", "wrong", "todo", "advice")
+RESOLUTION_KINDS = ("done", "wrong", "todo", "advice", "plan")
 MAX_RESOLUTIONS = 4
 MAX_RESOLUTION_LABEL = 90
 # `advice` replaces the card's "What you'd need to do" with the sentence
@@ -3193,7 +4075,8 @@ def offer_resolutions(options):
         if kind not in RESOLUTION_KINDS:
             return {"error": "kind must be one of "
                              + ", ".join(RESOLUTION_KINDS)}
-        cap = MAX_ADVICE_LABEL if kind == "advice" else MAX_RESOLUTION_LABEL
+        cap = (MAX_ADVICE_LABEL if kind in ("advice", "plan")
+               else MAX_RESOLUTION_LABEL)
         cleaned.append({"label": label.strip()[:cap], "kind": kind})
     return {
         "status": "offered",
@@ -3202,7 +4085,9 @@ def offer_resolutions(options):
                 "one, or none — you are not told which, and nothing is "
                 "settled until they do. An `advice` option settles nothing "
                 "either way: pressing it puts your sentence on the card as "
-                "what to do about it.",
+                "what to do about it. A `plan` option changes nothing by "
+                "being pressed either: brAIn plans that change read-only and "
+                "the card waits for them to press Apply.",
     }
 
 
@@ -4293,7 +5178,7 @@ TOOLS = [
     # ------------------------------------------------------------------
     {
         "name": "get_automations",
-        "description": "List all automations with their current state (on/off), friendly name, and last triggered time.",
+        "description": "List all automations with their current state (on/off), friendly name, last triggered time and config id (the key their traces and definition are filed under).",
         "inputSchema": {
             "type": "object",
             "properties": {}
@@ -4301,16 +5186,73 @@ TOOLS = [
     },
     {
         "name": "get_automation_trace",
-        "description": "Get state info and recent execution traces for a specific automation. Returns last_triggered time, current state, and stored trace data when available. Useful for debugging why an automation did or didn't fire.",
+        "description": (
+            "Why an automation or script did (or did not) do something: its "
+            "recent runs (start, trigger, how it ended, any error, plus how "
+            "many times a trigger fired but a condition stopped it), and one "
+            "run in full — each step's path and result. Live from Home "
+            "Assistant, including runs since the last restart. Pair with "
+            "get_automation_config to read the definition the run executed."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "automation_id": {
                     "type": "string",
-                    "description": "The automation entity ID (e.g., 'automation.turn_on_lights')"
+                    "description": "The automation or script entity id (e.g. 'automation.hall_lights', 'script.goodnight'), or an automation's config id from get_automations"
+                },
+                "run_id": {
+                    "type": "string",
+                    "description": "Optional: which run to return in full (from the runs list). Default: the newest."
                 }
             },
             "required": ["automation_id"]
+        }
+    },
+    {
+        "name": "get_automation_config",
+        "description": (
+            "The definition of an automation or script — triggers, "
+            "conditions, actions, mode — as Home Assistant holds it, for "
+            "UI-made, YAML and package automations alike. Read-only. Use it "
+            "with get_automation_trace to say why one did what it did and "
+            "what the smallest change would be."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "automation.x or script.x — or an automation's config id from get_automations"
+                }
+            },
+            "required": ["entity_id"]
+        }
+    },
+    {
+        "name": "search_related",
+        "description": (
+            "Everything Home Assistant relates to one item — the entities, "
+            "devices and areas a script, scene or automation references; the "
+            "automations and scripts that use an entity; what is in an area. "
+            "The same answer as the Related tab in Home Assistant's UI. It is "
+            "a reference graph: the area and device of every entity found are "
+            "included too."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "item_type": {
+                    "type": "string",
+                    "enum": list(RELATED_ITEM_TYPES),
+                    "description": "What kind of item item_id is"
+                },
+                "item_id": {
+                    "type": "string",
+                    "description": "Its id: an entity id for entity/automation/script/scene/group/person, else the area_id, device_id, floor_id, label_id, config entry id or integration domain"
+                }
+            },
+            "required": ["item_type", "item_id"]
         }
     },
     # ------------------------------------------------------------------
@@ -4333,8 +5275,8 @@ TOOLS = [
         }
     },
     {
-        "name": "get_device_registry",
-        "description": "Get a count summary of entities grouped by domain (total entities and a per-domain tally). NOTE: this is derived from entity states, not the HA device registry. For area/room groupings use get_areas.",
+        "name": "get_entity_counts",
+        "description": "How many entities there are, in total and per domain (light, sensor, ...) — an orientation tally from the entity states. For the devices themselves use get_registry('devices'); for rooms, get_areas.",
         "inputSchema": {
             "type": "object",
             "properties": {}
@@ -4350,7 +5292,14 @@ TOOLS = [
     },
     {
         "name": "get_logbook",
-        "description": "Get recent logbook entries from Home Assistant. Shows state changes and events.",
+        "description": (
+            "The newest logbook entries (state changes and events) in the "
+            "last N hours, newest first, at most 50 — each with when, the "
+            "entity, its name, the state and what Home Assistant says caused "
+            "it. For WHY one entity changed (including what brAIn did) use "
+            "explain_change; for a whole-house timeline with causes use "
+            "get_activity."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -4818,7 +5767,13 @@ TOOLS = [
             "to this house (\"Power-cycle the Tuya hub in the garage — the "
             "other three valves on it are answering\"), and pressing it "
             "replaces the generic 'What you'd need to do' on the card with "
-            "that sentence while the finding stays open. Offer only endings "
+            "that sentence while the finding stays open. 'plan' is how a "
+            "change you have agreed with them is made: its label says exactly "
+            "what to change (\"Add a condition so the hall light automation "
+            "only runs after sunset\"), and pressing it has brAIn work out "
+            "those steps read-only and put them on the card for them to "
+            "Apply, with an Undo — never make the change yourself in the "
+            "conversation. Offer only endings "
             "your own investigation supports, and leave out any you cannot "
             "justify — two honest options beat four. This changes nothing "
             "by itself: nothing is settled until they press, and you are not "
@@ -4841,8 +5796,8 @@ TOOLS = [
                             },
                             "kind": {
                                 "type": "string",
-                                "enum": ["done", "todo", "wrong", "advice"],
-                                "description": "done = they have already done this, and it goes into memory as a fix. todo = work for their to-do list, written as an instruction. wrong = brAIn has misread the house, and the label is the correction. advice = not an ending: the label becomes the card's 'What you'd need to do', specific to this house, and the finding stays open."
+                                "enum": ["done", "todo", "wrong", "advice", "plan"],
+                                "description": "done = they have already done this, and it goes into memory as a fix. todo = work for their to-do list, written as an instruction. wrong = brAIn has misread the house, and the label is the correction. advice = not an ending: the label becomes the card's 'What you'd need to do', specific to this house, and the finding stays open. plan = the change you agreed, said exactly: brAIn plans it read-only for them to Apply, with an Undo."
                             }
                         },
                         "required": ["label", "kind"]
@@ -4892,9 +5847,11 @@ TOOL_IMPLEMENTATIONS = {
     # System tools
     "get_automations": "get_automations",
     "get_automation_trace": "get_automation_trace",
+    "get_automation_config": "get_automation_config",
+    "search_related": "search_related",
     "get_ha_config": "get_config",
     "get_services": "get_services",
-    "get_device_registry": "get_device_registry",
+    "get_entity_counts": "get_entity_counts",
     "get_areas": "get_areas",
     "get_logbook": "get_logbook",
     "get_history": "get_history",
@@ -4985,8 +5942,9 @@ _TOOL_SPECS = {
 # entities if it is about one, and a template only when every entity it
 # names is exposed and it names them literally.
 VOICE_REFUSED_TOOLS = frozenset({
-    "get_registry", "get_device_registry", "list_dashboards", "get_dashboard",
-    "get_automations", "get_automation_trace", "get_activity",
+    "get_registry", "get_entity_counts", "list_dashboards", "get_dashboard",
+    "get_automations", "get_automation_trace", "get_automation_config",
+    "search_related", "get_activity",
     "get_house_model", "room_physics", "simulate_automation", "get_findings",
     "get_health", "get_error_log", "fire_event", "get_supervisor_info",
     "reload_config", "offer_resolutions",
@@ -5059,6 +6017,76 @@ def _voice_refusal(name, kwargs):
     return None
 
 
+# Names a tool used to have. Answered and listed nowhere: a conversation
+# resumed from before a rename, or a prompt nobody has rewritten, still gets
+# the tool it asked for, while tools/list stops offering the misleading name.
+TOOL_ALIASES = {"get_device_registry": "get_entity_counts"}
+
+# What a voice-level process is not shown at all. The dispatcher refuses all
+# of these anyway (`_voice_refusal`, the in-function refusals) and stays the
+# backstop; listing them cost every voice turn ~37 schemas it could only be
+# refused for, and a long overlapping tool list is also a worse choice of tool.
+VOICE_HIDDEN_TOOLS = frozenset({
+    "minecraft_command", "minecraft_server",   # refused for voice in full
+})
+VOICE_HIDDEN_PREFIXES = ("music_assistant_",)  # MA_VOICE_REFUSAL, every one
+
+# The tools a voice turn acts with, marked so Claude Code never defers them
+# behind tool search: deferral is the default for MCP tools now, and a voice
+# worker told to act in its FIRST response could not until a ToolSearch turn
+# had loaded the schema it needed — the extra model turn the pre-warmed
+# workers and the area map exist to save. The rest stay deferrable, which is
+# the point of tool search on a server this size.
+ALWAYS_LOAD_TOOLS = frozenset({
+    "control_light", "control_climate", "control_media_player",
+    "control_cover", "control_fan", "control_switch", "control_lock",
+    "control_alarm", "control_vacuum", "activate_scene", "run_script",
+    "call_service", "get_entity_state", "get_all_states",
+})
+for _tool in TOOLS:
+    if _tool["name"] in ALWAYS_LOAD_TOOLS:
+        _tool["_meta"] = {"anthropic/alwaysLoad": True}
+
+
+def tools_for_channel():
+    """What tools/list offers this process: everything, or on the voice
+    channel everything voice is not refused outright."""
+    if not EXPOSED_ONLY:
+        return TOOLS
+    return [t for t in TOOLS
+            if t["name"] not in VOICE_REFUSED_TOOLS
+            and t["name"] not in VOICE_HIDDEN_TOOLS
+            and not t["name"].startswith(VOICE_REFUSED_PREFIXES)
+            and not t["name"].startswith(VOICE_HIDDEN_PREFIXES)]
+
+
+# What the server tells the client at initialize. Claude Code shows server
+# instructions to the model up front and leans on them to choose what to
+# load from tool search, so they say which tool answers which question —
+# briefly, because they ride every turn of every conversation.
+INSTRUCTIONS = (
+    "Home Assistant, through brAIn. Find entities with get_all_states (domain, "
+    "name_filter) or get_areas; one in full with get_entity_state. Act with the "
+    "control_* tools, activate_scene, run_script, or call_service. Over time: "
+    "get_history (state changes, up to 7 days), get_statistics (long-term), "
+    "get_logbook (newest events). Why something changed: explain_change, "
+    "get_activity. What is normal: what_is_normal, get_baseline. Automations: "
+    "get_automations, get_automation_config (the definition), "
+    "get_automation_trace (why a run did what it did), search_related (what a "
+    "script or scene touches). Memory: recall; remember_fact for a durable "
+    "household fact. A refusal is the homeowner's policy — a protected "
+    "entity, a blocked service, what is exposed to voice: tell the user and "
+    "do not look for another route."
+)
+VOICE_INSTRUCTIONS = (
+    "Home Assistant, for a voice assistant. Act on the entity ids in your "
+    "area map directly — control_* tools, activate_scene, run_script, "
+    "call_service — in your first response. You reach only what Home "
+    "Assistant exposes to Assist; a refusal is final: say so in one sentence "
+    "and do not look for another route."
+)
+
+
 def handle_tool_call(name, arguments):
     """Dispatch a tool call.
 
@@ -5066,6 +6094,7 @@ def handle_tool_call(name, arguments):
     passed as keyword args to the implementation (looked up late via
     globals() so tests can patch implementations on the module).
     """
+    name = TOOL_ALIASES.get(name, name)
     fn_name = TOOL_IMPLEMENTATIONS.get(name)
     spec = _TOOL_SPECS.get(name)
     if fn_name is None or spec is None:
@@ -5082,6 +6111,14 @@ def handle_tool_call(name, arguments):
         return globals()[fn_name](**kwargs)
     except Exception as e:
         return {"error": str(e)}
+
+
+def _compact(value):
+    """JSON with no padding. A result is read by a model, not a person, and
+    `indent=2` was a fifth to a third of every bulky one — a states list, a
+    registry, an hour-by-hour statistics window — re-read on every later
+    turn of the conversation it lands in."""
+    return json.dumps(value, separators=(",", ":"), default=str)
 
 
 def build_tool_response(result):
@@ -5103,11 +6140,11 @@ def build_tool_response(result):
         if meta:
             content.append({
                 "type": "text",
-                "text": json.dumps(meta, indent=2, default=str),
+                "text": _compact(meta),
             })
         return {"content": content}
 
-    result_text = json.dumps(result, indent=2, default=str)
+    result_text = _compact(result)
     response_obj = {
         "content": [{"type": "text", "text": result_text}],
     }
@@ -5127,7 +6164,7 @@ def send_response(response_id, result):
         "id": response_id,
         "result": result,
     }
-    msg = json.dumps(response)
+    msg = _compact(response)
     sys.stdout.write(msg + "\n")
     sys.stdout.flush()
 
@@ -5139,7 +6176,7 @@ def send_error(response_id, code, message):
         "id": response_id,
         "error": {"code": code, "message": message},
     }
-    msg = json.dumps(response)
+    msg = _compact(response)
     sys.stdout.write(msg + "\n")
     sys.stdout.flush()
 
@@ -5171,6 +6208,7 @@ def main():
                     "name": "home-assistant",
                     "version": "1.0.0",
                 },
+                "instructions": VOICE_INSTRUCTIONS if EXPOSED_ONLY else INSTRUCTIONS,
             })
 
         elif method == "notifications/initialized":
@@ -5184,7 +6222,7 @@ def main():
             send_response(req_id, {"prompts": []})
 
         elif method == "tools/list":
-            send_response(req_id, {"tools": TOOLS})
+            send_response(req_id, {"tools": tools_for_channel()})
 
         elif method == "tools/call":
             tool_name = params.get("name", "")

@@ -16,7 +16,14 @@ and so cannot clear anything):
     automations    the list in automations.yaml
     scripts        the mapping in scripts.yaml
     scenes         the list in scenes.yaml
-    traces         {entity_id: [trace, ...]} from .storage/trace.saved_traces
+    traces         {"automation.<config id>" | "script.<id>": [run, ...]} —
+                    Core's own `trace/list` over the WebSocket, keyed the
+                    way Core keys them (`domain.item_id`, the config id and
+                    never the entity id), each run the `short_dict` Core
+                    sends: `run_id`, `state`, `script_execution`,
+                    `timestamp: {start, finish}`, `last_step`, `error`.
+                    Oldest first. Unavailable when Core would not list
+                    them, which is not a house where nothing has run
     stats          {entity_id: [{start, mean, min, max}]} — 7 daily rows
                     for every numeric measurement sensor
     battery_stats  {entity_id: [{start, mean}]} — 60 daily rows for every
@@ -45,6 +52,14 @@ and so cannot clear anything):
                     itself up. Unavailable when Core would not answer, which
                     is a different claim from a house with nothing failing
     recorder       {db_bytes, db_path, purge_keep_days}
+    users          [{id, name, admin, owner, active, system, local_only}] —
+                    `config/auth/list`, an admin command; unavailable when
+                    the token cannot run it (checks/security.py)
+    exposure       {entity_id: {assistant: bool}} — what Home Assistant
+                    exposes to which voice assistant, explicitly
+    posture        this add-on's own options that change what it may do
+    ip_bans        [{ip, banned_at}] from /config/ip_bans.yaml — an absent
+                    file is an empty list, an unparsable one unavailable
     closures       how much of each hour of the week each door, window,
                     lock and cover is normally open, as `panel/closures.py`
                     last measured it. Unavailable until the first nightly
@@ -76,7 +91,6 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-import json
 import logging
 import os
 import time
@@ -85,8 +99,8 @@ from typing import Any
 log = logging.getLogger("brain.checks")
 
 CONFIG_DIR = os.environ.get("BRAIN_HA_CONFIG_DIR", "/config")
-TRACES_FILE = os.environ.get("BRAIN_TRACES_FILE",
-                             os.path.join(CONFIG_DIR, ".storage", "trace.saved_traces"))
+# The two domains Core keeps traces for (`trace.websocket_api.TRACE_DOMAINS`).
+TRACE_DOMAINS = ("automation", "script")
 SUPERVISOR_API = os.environ.get("BRAIN_SUPERVISOR_API", "http://supervisor")
 RECORDER_DB = os.environ.get(
     "BRAIN_RECORDER_DB", os.path.join(CONFIG_DIR, "home-assistant_v2.db"))
@@ -158,29 +172,6 @@ def load_configs(config_dir: str = CONFIG_DIR) -> dict:
     return out
 
 
-def load_traces(path: str = TRACES_FILE) -> dict | None:
-    """The stored traces, keyed by entity id."""
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            store = json.load(fh)
-    except (OSError, ValueError):
-        return None
-    data = store.get("data") if isinstance(store, dict) else None
-    if not isinstance(data, dict):
-        return None
-    out: dict[str, list] = {}
-    for key, rows in data.items():
-        if isinstance(rows, dict) and not any(
-                isinstance(v, dict) and "run_id" in v for v in rows.values()):
-            # {"automation": {...}} nesting seen on some versions
-            for inner_key, inner_rows in rows.items():
-                eid = inner_key if "." in inner_key else f"{key}.{inner_key}"
-                out[eid] = _trace_rows(inner_rows)
-            continue
-        out[key] = _trace_rows(rows)
-    return out
-
-
 def load_recorder(config_dir: str = CONFIG_DIR) -> dict | None:
     """How big the recorder database is, and how long it is told to keep.
 
@@ -205,12 +196,6 @@ def load_recorder(config_dir: str = CONFIG_DIR) -> dict | None:
             keep = value
     return {"db_bytes": db_bytes, "db_path": db_path,
             "purge_keep_days": keep}
-
-
-def _trace_rows(rows: Any) -> list:
-    if isinstance(rows, dict):
-        rows = list(rows.values())
-    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
 
 
 # ---------------------------------------------------------------------------
@@ -286,12 +271,25 @@ async def collect(now: float | None = None) -> dict:
         snap[key] = cfg[key]
     _mark("automations", cfg["automations"] is not None,
           "" if cfg["automations"] is not None else "automations.yaml not readable")
-    traces = load_traces()
-    snap["traces"] = traces or {}
-    _mark("traces", traces is not None,
-          "" if traces is not None else "no stored traces")
 
     async with aiohttp.ClientSession() as session:
+        # The runs Core is holding right now, over the WebSocket — never
+        # the `.storage/trace.saved_traces` file, which Core writes only
+        # as it SHUTS DOWN: a pass reading it saw the house as of the
+        # last restart, and nested every row one level deeper than the
+        # checks looked. A Core that would not list them leaves the key
+        # unavailable, so the three trace checks are skipped rather than
+        # reporting a house where nothing has run.
+        try:
+            traces = await live_traces(session)
+            snap["traces"] = traces or {}
+            _mark("traces", traces is not None,
+                  "" if traces is not None else
+                  "Home Assistant did not list its automation traces")
+        except Exception as exc:  # noqa: BLE001 — every fetch is best effort
+            snap["traces"] = {}
+            _mark("traces", False, str(exc))
+
         try:
             raw = await ha_data._rest_get(session, "/states", timeout=60)
             snap["states"] = {
@@ -484,6 +482,12 @@ async def collect(now: float | None = None) -> dict:
             snap["thermal"] = {"rooms": {}, "recent": {}, "built_at": 0}
             _mark("thermal", False, str(exc))
 
+        # The access steward's keys — users, what is exposed to which voice
+        # assistant, this add-on's own posture and the login bans — each
+        # its own attempt inside `security.collect`, which never raises.
+        from . import security as _security
+        await _security.collect(session, snap, _mark)
+
         try:
             mined = await actions.collect(
                 session, now - LOGBOOK_HOURS * 3600, now,
@@ -528,6 +532,20 @@ async def collect(now: float | None = None) -> dict:
         snap["facts"] = {}
         _mark("facts", False, f"the facts store could not be read: {exc}")
 
+    # What each entity IS (`world_model`): the readings whose fingerprint
+    # still matches the registry this pass fetched. Read, never built —
+    # the nightly pass reads the house and a checks pass picks up what it
+    # left. Unreadable is an EMPTY map, which every reader answers with
+    # today's word list: "I could not look" must not become a role.
+    try:
+        import world_model  # noqa: PLC0415
+        snap["world"] = world_model.view(world_model.load(),
+                                         world_model.candidates(snap))
+        _mark("world", True, "")
+    except Exception as exc:  # noqa: BLE001
+        snap["world"] = {}
+        _mark("world", False, f"the entity readings could not be read: {exc}")
+
     recorder = load_recorder()
     snap["recorder"] = recorder or {}
     _mark("recorder", recorder is not None,
@@ -536,6 +554,60 @@ async def collect(now: float | None = None) -> dict:
           "(a remote database answers this question itself)")
 
     return snap
+
+
+async def live_traces(session) -> dict[str, list] | None:
+    """Every run Core is keeping a trace of, keyed the way Core keys them.
+
+    `trace/list` for each of `TRACE_DOMAINS` in one round trip. Core
+    answers with a flat list of each run's `short_dict` — `domain`,
+    `item_id`, `run_id`, `state`, `script_execution`, `timestamp: {start,
+    finish}`, `last_step`, and `error` only when there was one — across
+    every automation or script it holds, and this files them under
+    `f"{domain}.{item_id}"`: the bucket key `ActionTrace.key` itself uses.
+    `item_id` is the automation's CONFIG id (its `unique_id`, which is
+    the `id` attribute on its state), never its entity id — a UI-made
+    automation's is a millisecond timestamp, so a lookup by entity id
+    finds nothing on exactly the automations people build most.
+
+    Two kinds of row are dropped here rather than in every check. A run
+    still `running` has no `script_execution` yet, so it is not a verdict
+    about anything. And a `not_triggered` row (Core keeps those in their
+    own bucket since triggers learned to say why they did NOT fire) is a
+    change the trigger looked at and declined — not a run at all, and
+    counting one as a run would let a busy motion sensor fill
+    `condition_never_passes`' window with things that never reached the
+    condition.
+
+    None when either domain was refused: "I could not ask" may not read
+    as "nothing has run".
+    """
+    import ha_data
+
+    answers = await ha_data._ws_commands(session, [
+        {"type": "trace/list", "domain": domain} for domain in TRACE_DOMAINS])
+    if len(answers) != len(TRACE_DOMAINS) or not all(
+            isinstance(rows, list) for rows in answers):
+        return None
+    out: dict[str, list] = {}
+    for domain, rows in zip(TRACE_DOMAINS, answers):
+        for row in rows:
+            if not isinstance(row, dict) or row.get("not_triggered"):
+                continue
+            if row.get("state") == "running":
+                continue
+            item = row.get("item_id")
+            if item is None or str(item) in ("", "None"):
+                # An automation with no `id:` is traced under the key
+                # "automation.None" — every one of them in one bucket, so
+                # none of those runs belongs to anything we can name.
+                continue
+            out.setdefault(f"{row.get('domain') or domain}.{item}",
+                           []).append(row)
+    for rows in out.values():
+        rows.sort(key=lambda r: str((r.get("timestamp") or {}).get("start")
+                                    or ""))
+    return out
 
 
 async def _users(session) -> dict[str, str]:
@@ -654,7 +726,12 @@ async def _addon_details(session, addons: list) -> list:
         extra = info.get(str(row.get("slug") or ""))
         if extra:
             row = {**row, **{k: extra[k] for k in
-                             ("boot", "state", "watchdog", "startup")
+                             ("boot", "state", "watchdog", "startup",
+                              # What the access steward reads: an explicit
+                              # False is protection mode off, and a row
+                              # without the key is "I could not look".
+                              "protected", "full_access", "docker_api",
+                              "host_network")
                              if k in extra}}
         out.append(row)
     return out

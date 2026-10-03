@@ -192,12 +192,15 @@ cmd_clear() {
 # Hypotheses — the replacement for the old open-ended question list
 # --------------------------------------------------------------------------
 
+# `max(ts, snoozed_until)` for the panel's reason (`hypotheses._asked_at`):
+# a dismissed guess ages from when it comes back.
 _retire_stale_hypotheses_locked() {
     local now cutoff
     now=$(date +%s)
     cutoff=$((now - HYPOTHESIS_TTL_DAYS * 86400))
     jq -c --argjson cutoff "$cutoff" \
-        'if .status == "open" and (.ts // 0) < $cutoff
+        'if .status == "open"
+            and ([(.ts // 0), (.snoozed_until // 0)] | max) < $cutoff
          then .status = "expired" else . end' \
         "$HYPOTHESES_FILE" > "${HYPOTHESES_FILE}.tmp" 2>/dev/null \
         && mv "${HYPOTHESES_FILE}.tmp" "$HYPOTHESES_FILE"

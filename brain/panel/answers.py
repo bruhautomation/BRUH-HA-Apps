@@ -75,6 +75,10 @@ SITUATIONS = (
     "battery", "unplugged", "stuck", "chore_check", "automation",
     "generic", "hands", "planned", "planning", "fixing", "change",
     "question", "opportunity", "chore", "chore_done", "watching",
+    "fix_failed",
+    # A registry tidy-up brAIn can propose for review (`tidy.py`), and a
+    # question the house book needs a person to answer (`house_book.py`).
+    "tidy", "gap",
 )
 
 # Which check ids read as which situation. Keyed on the id and never on
@@ -91,7 +95,15 @@ CHECK_SITUATIONS = {
     "base.unusual": "stuck",
     "chore.waiting": "chore_check",
     "evening.left_open": "chore_check",
+    # Names and rooms are what `tidy` proposes, so "Fix it" on these two is
+    # the tidy run — a table to tick through — rather than a plan run that
+    # would rename forty entities one tool call at a time.
+    "reg.hardware_name": "tidy",
+    "reg.no_area": "tidy",
 }
+# The house book files its gap questions under this source; their answer is
+# typed, never a bare Yes.
+HOUSE_BOOK_SOURCE = "house_book"
 # Every `auto.*` check is an automation problem, whatever its id.
 AUTOMATION_PREFIX = "auto."
 
@@ -153,9 +165,17 @@ def situation(case: dict) -> str:
 
     if store == "todo":
         return "chore_done" if status == "done" else "chore"
+    if kind == "question" and case.get("source") == HOUSE_BOOK_SOURCE:
+        return "gap"
     if kind == "question" or store == "hypotheses":
         return "question"
-    if kind == "opportunity" or store == "proposals":
+    # An opportunity is a PROPOSAL — a config brAIn wrote and Accept puts
+    # into Home Assistant — only when it lives in that store. One the
+    # Resident filed into the findings store has no config behind it, so
+    # *Make the change* and *Try it for a week* were presses with nothing
+    # to write or replay; it gets a finding's row instead (Fix it where
+    # brAIn could, Add to list, Dismiss, Not a problem).
+    if store == "proposals" or (kind == "opportunity" and store != "findings"):
         return "opportunity"
     if kind == "change" or fstatus == "fixed":
         return "change"
@@ -171,10 +191,29 @@ def situation(case: dict) -> str:
     source = str(case.get("source") or "")
     check = source[len("check:"):] if source.startswith("check:") else ""
     if check in CHECK_SITUATIONS:
-        return CHECK_SITUATIONS[check]
-    if check.startswith(AUTOMATION_PREFIX):
-        return "automation"
-    return "generic" if case.get("fixable") else "hands"
+        base = CHECK_SITUATIONS[check]
+        # A tidy-up a person said needs their own hands is theirs.
+        if base == "tidy" and not case.get("fixable"):
+            base = "hands"
+    elif check.startswith(AUTOMATION_PREFIX):
+        base = "automation"
+    else:
+        base = "generic" if case.get("fixable") else "hands"
+    # A fix run has already been here, and what it concluded decides the
+    # first press more than the rule's own `fixable` does. `needs_you` is
+    # the fixer saying a person has to do this — `fixable` is the row's
+    # claim from before anybody looked, and leading with *Fix it* on it
+    # bought another plan run to reach the same conclusion — so it is a
+    # pair of hands, keeping the check's own situation (and the reason
+    # its box opens with) where that already was one. `failed` is a run
+    # that did not finish: trying again is a fair press, and it is behind
+    # the ⋯ rather than leading, because the second attempt is the one
+    # that should be read about first.
+    if fstatus == "needs_you":
+        return base if base in HANDS else "hands"
+    if fstatus == "failed" and base not in HANDS:
+        return "fix_failed"
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -197,9 +236,21 @@ def _wrong(case_id: str, prefill: str = "", label: str = "Not a problem") -> dic
         prefill=prefill, done="Noted — brAIn won't raise this again")
 
 
-def _dismiss(case_id: str) -> dict:
+def _dismiss(case_id: str, question: bool = False) -> dict:
     """The snooze. Off the list for now, nothing settled, nothing taught,
-    and brAIn picks when it comes back."""
+    and brAIn picks when it comes back.
+
+    A question says so in its own words, because what it does is
+    different in one way that matters: a guess is not "still true or
+    not", it is asked again — and while it is away it stops holding up
+    the next one (`hypotheses.snooze`)."""
+    if question:
+        return _answer(
+            "not_now", "Dismiss",
+            "Not now. brAIn asks again in a week, and asks something else "
+            "meanwhile — nothing is recorded either way.",
+            route=f"/api/case/{case_id}/not_now", request="snooze",
+            done="Asked again later")
     return _answer(
         "not_now", "Dismiss",
         "Off the list for now. Nothing is recorded — brAIn brings it back "
@@ -279,16 +330,44 @@ def answers(case: dict) -> list[dict]:
                 done="Put back — read what it says"))
         return out
 
+    if sit == "gap":
+        answer = _answer(
+            "answer", "Answer", "Say where it is or what it does. It goes "
+            "into memory, and the house book uses it next time.",
+            route=f"/api/house_book/question/{key}/answer", primary=True,
+            note=True, done="Filed into memory for the house book")
+        answer["ask"] = ("Your answer goes into memory exactly as you write "
+                         "it — never type a code or a password here.")
+        answer["placeholder"] = "Behind the boiler, the red lever."
+        return [answer, _dismiss(cid),
+                _wrong(cid, label="Doesn't apply")]
+
+    if sit == "tidy":
+        return [_answer(
+            "fix", "Fix it", "brAIn suggests names, rooms and aliases in "
+            "this house's own style. Nothing changes until you tick them "
+            "under House → Upkeep and press Apply.", route="/api/tidy/run",
+            primary=True, done="Suggesting — review them under House → Upkeep"),
+            _todo(cid), _dismiss(cid), _wrong(cid)]
+
     if sit == "question":
         return [
             _answer("yes", "Yes", "That's right. It becomes a plain fact "
                     "in memory.", route=f"/api/case/{cid}/do",
                     primary=True, done="Filed into memory"),
+            # `request="wrong"`: a question the Resident filed is a finding
+            # row, so Home Assistant's Repairs and a notification can carry
+            # *No* back as the same correction the tab makes. They offered
+            # only Dismiss before.
             _answer("no", "No", "Not right — say why if you can, and the "
                     "reason retires every guess built on the same "
                     "misreading.", route=f"/api/case/{cid}/wrong",
-                    note=True, done="Noted"),
-            _dismiss(cid),
+                    request="wrong", note=True, done="Noted"),
+            # A guess in the hypothesis queue is asked again rather than
+            # brought back, and says so; a question the Resident filed is
+            # a finding row and is snoozed like one.
+            _dismiss(cid, question=(case.get("origin") or {}).get("store")
+                     == "hypotheses"),
         ]
 
     if sit == "opportunity":
@@ -341,7 +420,7 @@ def answers(case: dict) -> list[dict]:
     if sit == "chore_check":
         return [_done(key, primary=True), _dismiss(cid), _wrong(cid)]
     out: list[dict] = []
-    if sit not in HANDS and case.get("fixable"):
+    if sit not in HANDS and sit != "fix_failed" and case.get("fixable"):
         out.append(_fix(key))
     out.append(_todo(cid, primary=not out))
     out.append(_dismiss(cid))

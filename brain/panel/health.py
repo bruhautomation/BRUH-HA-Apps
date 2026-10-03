@@ -122,8 +122,75 @@ DAEMONS = {
 }
 
 
+# The panel's own loops (`server._loop_health`), in the words a person
+# would use. A loop's NAME is an implementation detail; what stopped is the
+# thing it does. The generation worker is the one `failed`: with it gone,
+# every card, fix and plan queues for ever while every other surface says
+# "queued" — the panel is up and the part of it that does the work is not.
+LOOPS = {
+    "worker": ("the queue that makes cards and runs fixes", "failed"),
+    "scheduler": ("the card scheduler", "degraded"),
+    "checks": ("the house checks loop", "degraded"),
+    "baselines": ("the nightly measurement loop", "degraded"),
+    "notify_flush": ("the notification queue", "degraded"),
+    "brief": ("the morning brief", "degraded"),
+    "evening": ("the bedtime checks pass", "degraded"),
+    "healing": ("overnight healing", "degraded"),
+    "weekly": ("the weekly report", "degraded"),
+    "maintainer": ("the maintainer (tidy-ups, upgrade notes, the house book)",
+                   "degraded"),
+    "requests": ("answers given in Home Assistant", "degraded"),
+    "resident": ("the attention loop", "degraded"),
+    "situation": ("the reading of what the house is doing now", "degraded"),
+    "options": ("the add-on options poll", "degraded"),
+}
+
+
 def _problem(state: str, what: str, fix: str, key: str) -> dict:
     return {"state": state, "what": what, "fix": fix, "id": key}
+
+
+def _loop_problems(diag: dict) -> list[dict]:
+    """A loop that stopped, one that stopped going round, and a worker on
+    one job for longer than any job may take.
+
+    A loop that was CANCELLED is a shutdown and says nothing. An absent
+    `loops` block is a mirror from before this existed, or a panel that
+    could not say — "I could not look", never "nothing is wrong", and
+    never a fault either.
+    """
+    found: list[dict] = []
+    loops = diag.get("loops")
+    if not isinstance(loops, dict):
+        return found
+    for name, row in loops.items():
+        if not isinstance(row, dict) or row.get("stopped"):
+            continue
+        what, severity = LOOPS.get(name, (f"the {name} loop", "degraded"))
+        if row.get("alive") is False:
+            reason = str(row.get("error") or "").strip()
+            found.append(_problem(
+                severity, f"{what} has stopped",
+                "It will not start again by itself. Restart the add-on"
+                + (f"; it stopped with: {reason}" if reason else
+                   "; the reason is in the add-on log") + ".",
+                f"loop:{name}"))
+            continue
+        age, limit = _num(row.get("beat_age_s")), _num(row.get("stall_after_s"))
+        if age is not None and limit and age > limit:
+            found.append(_problem(
+                "degraded", f"{what} has not gone round in {int(age // 60)} minutes",
+                "It is still running and not getting anywhere. Restart the "
+                "add-on; what it was waiting on is in the add-on log.",
+                f"loop:{name}"))
+        busy, cap = _num(row.get("busy_s")), _num(row.get("busy_limit_s"))
+        if busy is not None and cap and busy > cap:
+            found.append(_problem(
+                "degraded", f"{what} has been on one job for {int(busy // 60)} minutes",
+                "That is longer than any card or fix is allowed to take, so "
+                "everything queued behind it is waiting. Restart the add-on.",
+                f"loop:{name}:busy"))
+    return found
 
 
 def expected_daemons(options: dict | None = None) -> frozenset[str]:
@@ -205,6 +272,7 @@ def problems(diag: dict, options: dict | None = None,
             found.append(_problem(spec["severity"], spec["what"] + " is not running",
                                   spec["fix"], f"daemon:{name}"))
     found.extend(_assist_daemon(diag, options))
+    found.extend(_loop_problems(diag))
 
     consol = (daemons.get("memory_consolidator") or {})
     age = consol.get("last_pass_hours_ago")

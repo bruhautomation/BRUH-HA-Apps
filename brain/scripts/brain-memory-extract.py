@@ -42,6 +42,29 @@ you brAIn read the house wrong*.
 
 **Nothing raises and nothing blocks.** Every failure is silent and exits
 0. A missed fact costs a fact; a hook that throws costs the turn.
+
+Two things it used to get wrong, both about cost.
+
+**The pass runs where the engine's runs do, not in /config.** From
+/config it paid for Claude Code's default system prompt, the whole
+generated /config/CLAUDE.md (a memory excerpt included, which also nudged
+it toward facts the house already knew), the project's MCP server and its
+own Stop hook firing again — all to read a few kilobytes of conversation.
+It now runs from CLAUDE_HOME with its own `--system-prompt`, no tools, no
+MCP (`--strict-mcp-config` and nothing to load), and no setting source at
+all — the isolation `engine.run_claude` stands on, spelled out here
+because the hook must not need the panel to start.
+
+**Only what is new since the last pass is read.** Every window used to
+reach back to the previous user turn, so from the second turn of any
+conversation it held two of them and the keyword gate — which asks of a
+single exchange whether it carries teaching language — was never
+consulted: one run per turn, over windows that overlapped. The last
+message a pass read is remembered per conversation, the next window
+starts after it, and the previous exchange rides along only as context the
+model is told to extract nothing from. A window of one new message has to
+carry teaching language; a message judged not worth a pass still moves
+the marker, so it is not read again.
 """
 from __future__ import annotations
 
@@ -81,10 +104,9 @@ CHAT_TRANSCRIPT_DIR = Path(os.environ.get(
     "BRAIN_CHAT_TRANSCRIPT_DIR", "/data/chat"))
 
 # Anything the CLI would be asked for that is not a person's own typing.
-# `memory` is this pass's own claim: the extraction is itself a Claude run
-# from /config, and unclaimed it would file in the Chats rail as a
-# conversation somebody had — dozens of identical machine prompts burying
-# the chats this feature exists to learn from.
+# `memory` is this pass's own claim: the extraction is itself a Claude run,
+# and unclaimed its transcript would be a conversation nobody can
+# attribute, read anywhere that lists runs as one a person had.
 EXTRACT_SOURCE = "memory"
 
 # The model tier for a cheap one-turn extraction. run.sh writes
@@ -144,11 +166,15 @@ KEYWORDS = (
 _ID_RE = re.compile(r"[A-Za-z0-9._-]{1,120}")
 
 EXTRACT_PROMPT = (
-    "From this conversation between a person and their smart-home "
-    "assistant, extract 0-3 durable facts worth remembering about the "
+    "You read part of a conversation between a person and their smart-home "
+    "assistant and extract 0-3 durable facts worth remembering about the "
     "HOUSE: how something is wired or configured, what a device or area is "
     "really called, a standing preference, a correction to something the "
     "assistant had wrong, or an intent the person stated.\n\n"
+    "The conversation arrives in two parts. EARLIER is context you have "
+    "already been shown: extract nothing from it. NEW is what was said "
+    "since — extract only from that, reading EARLIER to understand it "
+    "(\"no, the other one\" means something only after what it answers).\n\n"
     "Exclude anything transient (current states, one-off commands, what is "
     "on right now), anything secret, and anything about a PERSON rather "
     "than the house — never health, whereabouts, who was home, sleep or "
@@ -162,6 +188,36 @@ EXTRACT_PROMPT = (
     "mean to do. At most 3 lines. If there is nothing durable, output the "
     "single word NONE."
 )
+
+# What the pass is told about the platform around it — engine.py's
+# `isolation_settings()`, written out here because the hook must start
+# without the panel (tests/test_memory_extract.py holds the two equal).
+# Inbound cross-session messages refused, Claude Code's own memory off,
+# and the tools that act outside a run with no prompt denied by name.
+ISOLATION_SETTINGS = {
+    "crossSessionInbound": "refuse",
+    "autoMemoryEnabled": False,
+    "permissions": {"deny": [
+        "SendMessage", "ListAgents", "ListPeers", "RemoteTrigger",
+        "PushNotification", "SendUserMessage", "CronCreate", "CronDelete",
+        "CronList", "ScheduleWakeup", "Monitor", "TeamCreate", "TeamDelete",
+    ]},
+}
+
+# Flags an older CLI may not know, and how many argv entries follow each:
+# the CLI names an unknown flag and dies before it reaches the API, and the
+# pass is retried without it. `--tools` falls back to the deny-everything
+# spelling an older CLI does know.
+OPTIONAL_FLAGS = {"tools": 1, "strict-mcp-config": 0, "setting-sources": 1,
+                  "settings": 1, "session-id": 1, "output-format": 1}
+_UNKNOWN_OPTION_RE = re.compile(r"unknown option ['\"]?--([A-Za-z][\w-]*)", re.I)
+
+# The context a window carries from before its marker, at most.
+CONTEXT_CHARS = 1200
+# Where the shell half's journal lives: the run journal's own command-line
+# half, imported from the panel when it is there (`journal.record_shell`).
+PANEL_DIR = os.environ.get("BRAIN_PANEL_DIR", "/opt/panel")
+JOURNAL_SOURCE = "memory_extract"
 
 
 def _log(message: str) -> None:
@@ -272,19 +328,15 @@ def _block_text(content) -> str:
     return "\n".join(parts)
 
 
-def read_last_turn(path: str) -> tuple[str, int, str]:
-    """``(text, exchanges, said)`` for the most recent exchange or two —
-    the whole exchange, how many turns it spans, and what the PERSON said
-    on its own, which is the half the worth-check judges.
+def read_messages(path: str) -> list[dict]:
+    """The conversation in a transcript's tail: ``[{role, text, uuid}]``.
 
     Claude Code's transcript is JSONL, one object per event, with the
-    conversation carried on the ``user``/``assistant`` lines. Reading back
-    to the *previous* user line rather than only the last one is what makes
-    a follow-up ("no, the other one") legible: on its own it is a fragment,
-    and with the turn it corrects in front of it, it is a correction.
-
-    Sidechains are a subagent's conversation, not the person's, and are
-    dropped whole.
+    conversation carried on the ``user``/``assistant`` lines and each line
+    carrying the ``uuid`` the CLI gave it — which is what a window is
+    measured from. Sidechains are a subagent's conversation, not the
+    person's, and are dropped whole; a line with no prose (a tool result,
+    a tool call) is the turn's machinery and is dropped too.
     """
     try:
         size = os.path.getsize(path)
@@ -294,9 +346,9 @@ def read_last_turn(path: str) -> tuple[str, int, str]:
                 fh.readline()       # the partial line the seek landed in
             lines = fh.readlines()
     except OSError:
-        return "", 0, ""
+        return []
 
-    messages: list[tuple[str, str]] = []
+    messages: list[dict] = []
     for line in lines:
         line = line.strip()
         if not line:
@@ -320,43 +372,90 @@ def read_last_turn(path: str) -> tuple[str, int, str]:
         text = _block_text(message.get("content")).strip()
         if not text:
             continue
-        messages.append((role, text[:MAX_MESSAGE_CHARS]))
+        messages.append({"role": role, "text": text[:MAX_MESSAGE_CHARS],
+                         "uuid": str(entry.get("uuid") or "")})
+    return messages
 
+
+def _render(messages: list[dict]) -> str:
+    return "\n".join(
+        f"{'USER' if m['role'] == 'user' else 'ASSISTANT'}: {m['text']}"
+        for m in messages)
+
+
+def read_new_turns(path: str, last_uuid: str = "") -> dict:
+    """What has been said since the last pass over this conversation.
+
+    ``{"text", "new_users", "said", "last_uuid"}``: the window as the
+    model reads it (an EARLIER part it is told to extract nothing from, and
+    the NEW part), how many things the person said in the new part, what
+    they said on its own — the half the worth-check judges — and the uuid
+    of the last message read, which is the next window's start.
+
+    The window starts after ``last_uuid`` when the transcript still holds
+    it. When it does not — a first pass, a transcript with no uuids, a
+    marker that fell out of the tail — it is the latest exchange alone,
+    because reading back further is re-reading what an earlier pass (or a
+    pass that was not running yet) already had its chance at.
+    """
+    empty = {"text": "", "new_users": 0, "said": "", "last_uuid": last_uuid}
+    messages = read_messages(path)
     if not messages:
-        return "", 0, ""
+        return empty
+    marker_at = None
+    if last_uuid:
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i]["uuid"] == last_uuid:
+                marker_at = i
+                break
+    if marker_at is not None:
+        start = marker_at + 1
+    else:
+        users = [i for i, m in enumerate(messages) if m["role"] == "user"]
+        if not users:
+            return empty
+        start = users[-1]
+    new = messages[start:]
+    if not any(m["role"] == "user" for m in new):
+        return {**empty, "last_uuid": messages[-1]["uuid"] or last_uuid}
+    # The exchange before the window, as context: from the previous thing
+    # the person said up to the window's start.
+    before = messages[:start]
+    prior_users = [i for i, m in enumerate(before) if m["role"] == "user"]
+    context = before[prior_users[-1]:] if prior_users else []
 
-    # Walk back to the second-to-last thing the person said, or to the
-    # start of what we have.
-    user_at = [i for i, (role, _) in enumerate(messages) if role == "user"]
-    if not user_at:
-        return "", 0, ""
-    start = user_at[-2] if len(user_at) >= 2 else user_at[-1]
-    slice_ = messages[start:]
-    exchanges = sum(1 for role, _ in slice_ if role == "user")
-
-    blob = "\n".join(
-        f"{'USER' if role == 'user' else 'ASSISTANT'}: {text}"
-        for role, text in slice_)
-    if len(blob) > MAX_TEXT_BYTES:
-        blob = blob[-MAX_TEXT_BYTES:]
-    said = "\n".join(text for role, text in slice_ if role == "user")
-    return blob, exchanges, said
+    new_text = _render(new)
+    if len(new_text) > MAX_TEXT_BYTES:
+        new_text = new_text[-MAX_TEXT_BYTES:]
+    context_text = _render(context)
+    if len(context_text) > CONTEXT_CHARS:
+        context_text = context_text[-CONTEXT_CHARS:]
+    text = (f"EARLIER (context only):\n{context_text}\n\nNEW:\n{new_text}"
+            if context_text else f"NEW:\n{new_text}")
+    return {
+        "text": text,
+        "new_users": sum(1 for m in new if m["role"] == "user"),
+        "said": "\n".join(m["text"] for m in new if m["role"] == "user"),
+        "last_uuid": new[-1]["uuid"] or last_uuid,
+    }
 
 
-def worth_extracting(said: str, exchanges: int) -> bool:
+def worth_extracting(said: str, new_users: int) -> bool:
     """Cheap, deterministic, and made in the direction where being wrong is
     cheap: a missed fact costs a fact, a pass over nothing costs one haiku
     turn. Nothing asks a model whether to ask a model.
 
-    Judged on what the PERSON typed and never on the reply: the model
-    answers "Noted — I will remember that" to nearly anything, and a
-    keyword list read over the whole exchange found "remember" in every
-    turn and spent a run on "ok". The voice pool reads its transcript the
-    same way (``u.lower() for u, _ in transcript``).
+    Judged on what the PERSON typed since the last pass, and never on the
+    reply: the model answers "Noted — I will remember that" to nearly
+    anything, and a keyword list read over the whole exchange found
+    "remember" in every turn and spent a run on "ok". One new message has
+    to carry teaching language. Two or more is a conversation that went on
+    while a pass was held back by its spacing — each already judged worth
+    one — and is read whatever its words.
     """
     if len(said.strip()) < MIN_CHARS:
         return False
-    if exchanges >= 2:
+    if new_users >= 2:
         return True
     lowered = said.lower()
     return any(keyword in lowered for keyword in KEYWORDS)
@@ -410,18 +509,49 @@ def spacing_ok(session_id: str, text: str, now: float | None = None) -> bool:
     return state.get("hash") != _digest(text)
 
 
-def remember_extraction(session_id: str, text: str) -> None:
+def _read_state(session_id: str) -> dict:
+    path = _state_path(session_id)
+    if path is None:
+        return {}
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def _write_state(session_id: str, state: dict) -> None:
     path = _state_path(session_id)
     if path is None:
         return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(
-            {"ts": int(time.time()), "hash": _digest(text)},
-            separators=(",", ":")), encoding="utf-8")
+        path.write_text(json.dumps(state, separators=(",", ":")),
+                        encoding="utf-8")
     except OSError:
         # Losing the marker costs one extra extraction, never a wrong one.
         pass
+
+
+def marker(session_id: str) -> str:
+    """The uuid of the last message a pass over this conversation read."""
+    value = _read_state(session_id).get("last_uuid")
+    return value if isinstance(value, str) else ""
+
+
+def remember_extraction(session_id: str, text: str, last_uuid: str = "") -> None:
+    _write_state(session_id, {"ts": int(time.time()), "hash": _digest(text),
+                              "last_uuid": last_uuid})
+
+
+def advance(session_id: str, last_uuid: str) -> None:
+    """Move the window past messages judged not worth a pass, without
+    touching the clock: they were read, and nothing was spent on them."""
+    if not last_uuid:
+        return
+    state = _read_state(session_id)
+    state["last_uuid"] = last_uuid
+    _write_state(session_id, state)
 
 
 # ---------------------------------------------------------------------------
@@ -486,37 +616,106 @@ def parse_facts(stdout: str) -> list[dict]:
     return facts
 
 
-def run_extraction(text: str, workdir: str) -> tuple[list[dict], str]:
-    """One capped Claude turn, no tools. Returns ``(facts, run_id)``."""
-    cmd = resolve_claude_cmd() + [
+def _without(argv: list[str], flag: str, arity: int) -> list[str]:
+    out, skip = [], 0
+    for arg in argv:
+        if skip:
+            skip -= 1
+            continue
+        if arg == "--" + flag:
+            skip = arity
+            continue
+        out.append(arg)
+    return out
+
+
+def _workdir() -> str:
+    """CLAUDE_HOME, where the engine's runs work from: no CLAUDE.md, no
+    project MCP server, no project settings. Never /config."""
+    if os.path.isdir(CLAUDE_HOME):
+        return CLAUDE_HOME
+    import tempfile
+    return tempfile.gettempdir()
+
+
+def _journal(returncode: int, stdout: str, stderr: str, run_id: str,
+             started: float) -> None:
+    """One row in the run journal, from this process (the shell half's
+    door, `journal.record_shell`). The panel books it: a failure files a
+    report, the tokens reach the usage breakdown, and the tracker is
+    nudged. A panel this process cannot import records nothing — the
+    state this was in before it existed."""
+    try:
+        if PANEL_DIR and PANEL_DIR not in sys.path:
+            sys.path.insert(0, PANEL_DIR)
+        import journal
+        journal.record_shell(
+            JOURNAL_SOURCE, returncode, envelope=journal.envelope_of(stdout),
+            stderr_text=stderr, run_id=run_id, model=MODEL,
+            duration_s=time.monotonic() - started)
+    except Exception:  # noqa: BLE001 — accounting never fails the pass
+        pass
+
+
+def run_extraction(text: str, workdir: str = "") -> tuple[list[dict], str]:
+    """One capped Claude turn with no tools, no MCP and no project around
+    it. Returns ``(facts, run_id)``."""
+    run_id = str(uuid.uuid4())
+    argv = resolve_claude_cmd() + [
         "-p",
-        "--disallowedTools", "*",
+        "--output-format", "json",
+        "--tools", "",
+        "--strict-mcp-config",
+        "--setting-sources", "",
+        "--settings", json.dumps(ISOLATION_SETTINGS, separators=(",", ":")),
+        "--system-prompt", EXTRACT_PROMPT,
         "--max-turns", "1",
         "--model", MODEL,
+        "--session-id", run_id,
     ]
-    run_id = str(uuid.uuid4())
     # Claimed BEFORE the run, because a pass that times out still leaves a
     # transcript and it should still be labelled as the pass it was.
     claim(run_id)
-    prompt = EXTRACT_PROMPT + "\n\nConversation:\n" + text
-    try:
-        proc = subprocess.run(
-            cmd + ["--session-id", run_id],
-            input=prompt, capture_output=True, text=True,
-            timeout=EXTRACT_TIMEOUT, cwd=workdir,
-        )
-        if proc.returncode != 0 and "session-id" in (proc.stderr or ""):
-            # A CLI from before --session-id refuses the flag by name. The
-            # label is optional; the run is not.
+    env = dict(os.environ)
+    env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+    env["CLAUDE_CODE_DISABLE_ADVISOR_TOOL"] = "1"
+    prompt = "Conversation:\n" + text
+    started = time.monotonic()
+    proc = None
+    for _ in range(len(OPTIONAL_FLAGS) + 1):
+        try:
             proc = subprocess.run(
-                cmd, input=prompt, capture_output=True, text=True,
-                timeout=EXTRACT_TIMEOUT, cwd=workdir,
+                argv, input=prompt, capture_output=True, text=True,
+                timeout=EXTRACT_TIMEOUT, cwd=workdir or _workdir(), env=env,
             )
-    except (OSError, subprocess.SubprocessError):
-        return [], run_id
+        except subprocess.TimeoutExpired as exc:
+            _journal(124, "", str(exc), run_id, started)
+            return [], run_id
+        except (OSError, subprocess.SubprocessError):
+            return [], run_id
+        if proc.returncode == 0:
+            break
+        # An older CLI names a flag it does not know and stops before any
+        # request. The flag is optional; the pass is not.
+        rejected = _UNKNOWN_OPTION_RE.search(proc.stderr or "")
+        name = rejected.group(1) if rejected else ""
+        if name not in OPTIONAL_FLAGS or "--" + name not in argv:
+            break
+        argv = _without(argv, name, OPTIONAL_FLAGS[name])
+        if name == "tools":
+            argv += ["--disallowedTools", "*"]
+    _journal(proc.returncode, proc.stdout or "", proc.stderr or "", run_id,
+             started)
     if proc.returncode != 0:
         return [], run_id
-    return parse_facts(proc.stdout or ""), run_id
+    reply = proc.stdout or ""
+    try:
+        envelope = json.loads(reply)
+    except ValueError:
+        envelope = None
+    if isinstance(envelope, dict) and isinstance(envelope.get("result"), str):
+        reply = envelope["result"]
+    return parse_facts(reply), run_id
 
 
 # ---------------------------------------------------------------------------
@@ -581,19 +780,30 @@ def file_facts(facts: list[dict], source: str, run_id: str) -> Path | None:
 
 
 def extract(session_id: str, transcript: str, cwd: str) -> int:
-    """The detached half. Everything that costs time lives here."""
-    text, exchanges, said = read_last_turn(transcript)
-    if not worth_extracting(said, exchanges):
+    """The detached half. Everything that costs time lives here.
+
+    ``cwd`` is where the person's CLI was standing; the pass does not run
+    there (see the module's docstring) and it is accepted only because the
+    hook hands it over.
+    """
+    window = read_new_turns(transcript, marker(session_id))
+    if not window["new_users"]:
+        # Nothing said since the last pass: an interrupted answer, a bare
+        # "continue", a Stop over a turn the last pass already read.
         return 0
-    if not spacing_ok(session_id, text):
+    if not worth_extracting(window["said"], window["new_users"]):
+        advance(session_id, window["last_uuid"])
+        return 0
+    if not spacing_ok(session_id, window["text"]):
+        # Held, not dropped: the marker stays where it was, so what was
+        # said here is read by the next pass this conversation earns.
         return 0
     # Stamped before the run, not after: a pass that hangs for its whole
     # timeout must not let the next Stop start a second one over the same
     # exchange.
-    remember_extraction(session_id, text)
+    remember_extraction(session_id, window["text"], window["last_uuid"])
 
-    workdir = cwd if cwd and os.path.isdir(cwd) else "/config"
-    facts, run_id = run_extraction(text, workdir)
+    facts, run_id = run_extraction(window["text"])
     if not facts:
         return 0
     path = file_facts(facts, turn_source(session_id), run_id)

@@ -164,20 +164,26 @@ def read_ledger(since: float, path: str | None = None) -> list[dict]:
     return out
 
 
-def _ledger_index(calls: list[dict]) -> dict[str, list[float]]:
-    """{entity_id: [call time, ...]} for the entities brAIn named.
+def _ledger_index(calls: list[dict]) -> dict[str, list[tuple[float, str]]]:
+    """{entity_id: [(call time, channel), ...]} for the entities brAIn named.
 
     An area or device target is deliberately not resolved: the MCP server
     records what it was asked for, and resolving a target here would need
     the registries at the time of the call rather than now. A change
     brAIn made through an area target therefore reads as unattributed —
     the honest answer, and the reason ``control_*`` tools name entities.
+
+    The channel is whatever the row says asked (``voice``, ``chat``,
+    ``terminal``, an unattended job's name) and ``""`` for a row written
+    before rows said, which reads as brAIn acting on its own — the answer
+    every row got before.
     """
-    index: dict[str, list[float]] = {}
+    index: dict[str, list[tuple[float, str]]] = {}
     for call in calls:
+        channel = str(call.get("channel") or "")
         for eid in call.get("entities") or []:
             if isinstance(eid, str) and eid:
-                index.setdefault(eid, []).append(call["ts"])
+                index.setdefault(eid, []).append((call["ts"], channel))
     for times in index.values():
         times.sort()
     return index
@@ -187,12 +193,40 @@ def _ledger_index(calls: list[dict]) -> dict[str, list[float]]:
 # Classification
 # ---------------------------------------------------------------------------
 
-def _brain_did_it(index: dict[str, list[float]], entity_id: str,
-                  ts: float) -> bool:
-    for called in index.get(entity_id, ()):
+# The channels a PERSON drives. A change brAIn made because somebody said
+# "turn the hall light back on" to a brAIn voice agent, or typed it into the
+# chat or the terminal, is that person's change — and filing it as brAIn's
+# own automated move made a spoken correction of a motion rule read as
+# "'Hall motion' and 'brAIn' keep undoing each other", and kept it out of
+# the overrides, the habits and curiosity, which all look for a person.
+# Every other channel — a card, a fix, the Resident, the automation
+# listener, a row from before rows said — stays `brain`: an unattended run
+# filed as a person would invent the overrides and habits it then reports.
+PERSON_CHANNELS = {
+    "voice": ("voice", "you, through a brAIn voice assistant"),
+    "chat": ("person", "you, in the brAIn chat"),
+    "terminal": ("person", "you, in the brAIn terminal"),
+}
+
+
+def _brain_call(index: dict[str, list], entity_id: str,
+                ts: float) -> str | None:
+    """The channel of the brAIn call that explains this change, or None.
+
+    The NEAREST call before the change wins, so a person's voice command a
+    second before the change is not credited to an unattended run that
+    touched the same light nineteen seconds earlier.
+    """
+    found = None
+    for entry in index.get(entity_id, ()):
+        called, channel = entry if isinstance(entry, tuple) else (entry, "")
         if called <= ts <= called + BRAIN_MATCH_S:
-            return True
-    return False
+            found = channel
+    return found
+
+
+def _brain_did_it(index: dict[str, list], entity_id: str, ts: float) -> bool:
+    return _brain_call(index, entity_id, ts) is not None
 
 
 def classify(entry: dict, users: dict[str, str] | None = None,
@@ -219,7 +253,13 @@ def classify(entry: dict, users: dict[str, str] | None = None,
         "root_user_name": user_name,
     }
 
-    if brain_index and ts is not None and _brain_did_it(brain_index, entity_id, ts):
+    channel = (_brain_call(brain_index, entity_id, ts)
+               if brain_index and ts is not None else None)
+    if channel is not None:
+        if channel in PERSON_CHANNELS:
+            out["cause"], out["by_name"] = PERSON_CHANNELS[channel]
+            out["via"] = "brain"
+            return out
         out["cause"] = "brain"
         out["by_name"] = "brAIn"
         return out
@@ -306,6 +346,11 @@ def count_causes(actions: list[dict]) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 AUTOMATED = ("automation", "script", "scene", "brain")
+# A person putting something back, by hand or out loud. "Turn the hall light
+# back on" said to a voice assistant a minute after the motion rule turned
+# it off is the same disagreement as the switch on the wall, and the
+# clearest one, because it was said in words.
+PERSON_CAUSES = ("person", "voice")
 
 
 def find_overrides(actions: list[dict],
@@ -329,7 +374,7 @@ def find_overrides(actions: list[dict],
         if action["cause"] in AUTOMATED:
             last_auto[eid] = action
             continue
-        if action["cause"] != "person":
+        if action["cause"] not in PERSON_CAUSES:
             continue
         prior = last_auto.get(eid)
         if not prior:
