@@ -144,7 +144,10 @@ def decline(snap: dict, now: float) -> list[dict]:
         # they end up disagreeing about which box a battery is in.
         if not st or not baseline_check.eligible(house, eid, st):
             continue
-        if abs(moved.get("move") or 0.0) < DECLINE_MIN_MOVE:
+        unit = baseline.get("unit") or (st.get("attributes") or {}).get(
+            "unit_of_measurement")
+        if abs(moved.get("move") or 0.0) < baseline_check.min_move(
+                unit, DECLINE_MIN_MOVE):
             continue
         attrs = st.get("attributes") or {}
         hits.append((abs(moved["spreads"]), eid, moved,

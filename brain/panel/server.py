@@ -7518,9 +7518,26 @@ async def build_baselines(reason: str = "schedule") -> dict:
             states = await ha_data._rest_get(session, "/states", timeout=60)
             by_id = {s["entity_id"]: s for s in (states or [])
                      if isinstance(s, dict) and s.get("entity_id")}
+            # The registries, once, before any builder: the baselines read
+            # the entity registry to keep diagnostic and config sensors off
+            # the cap, and thermal needs all three. A registry that did not
+            # answer costs the baselines that one filter and costs thermal
+            # its whole pass — see thermal's block below.
+            areas = devices = ents = None
+            registry_error = ""
             try:
-                payload = _done("baselines",
-                                await baselines.build(session, by_id, started))
+                areas, devices, ents = await ha_data._ws_commands(session, [
+                    {"type": "config/area_registry/list"},
+                    {"type": "config/device_registry/list"},
+                    {"type": "config/entity_registry/list"}])
+            except Exception as exc:  # noqa: BLE001 — a fetch, not the pass
+                registry_error = str(exc)[:200]
+                log.info("baseline pass: the registries did not answer: %s",
+                         exc)
+            try:
+                payload = _done("baselines", await baselines.build(
+                    session, by_id, started,
+                    entities=ents if isinstance(ents, list) else None))
             except Exception as exc:  # noqa: BLE001 — one builder, not the pass
                 _failed("baselines", exc)
             # The same pass, because it is the same claim about the same
@@ -7550,14 +7567,11 @@ async def build_baselines(reason: str = "schedule") -> dict:
             # every room is unnameable and the store would be written as
             # a house with no rooms in it.
             try:
-                areas, devices, ents = await ha_data._ws_commands(session, [
-                    {"type": "config/area_registry/list"},
-                    {"type": "config/device_registry/list"},
-                    {"type": "config/entity_registry/list"}])
                 if ents is None or areas is None:
                     raise RuntimeError(
                         "the registries did not answer — the thermal store "
-                        "was left as it was")
+                        "was left as it was"
+                        + (f" ({registry_error})" if registry_error else ""))
                 rooms = _done("thermal", await thermal.build(
                     session, by_id,
                     {"areas": areas, "devices": devices or [],
@@ -7620,6 +7634,9 @@ async def h_baselines(request: web.Request) -> web.Response:
         "tz": store.get("tz", ""),
         "days": store.get("days", baselines.HISTORY_DAYS),
         "measured": len(store.get("entities") or {}),
+        "asked": store.get("asked", 0),
+        "cut": store.get("cut_count", 0),
+        "cut_sample": list(store.get("cut") or []),
         "stale": baselines.is_stale(store) if store.get("built_at") else True,
         "running": _baselines_busy(),
         "last": BASELINE_STATE["last"],
@@ -8866,6 +8883,16 @@ def _diagnostics_payload() -> dict:
         "baselines": {
             "built_at": _baseline_store.get("built_at", 0),
             "measured": len(_baseline_store.get("entities") or {}),
+            "asked": _baseline_store.get("asked", 0),
+            # What the nightly cap left out, and how many were never
+            # candidates (no mean to bucket, or a settings-page sensor):
+            # a sensor past the cap is one every reader is blind to.
+            "eligible": _baseline_store.get(
+                "eligible", _baseline_store.get("asked", 0)),
+            "cut": _baseline_store.get("cut_count", 0),
+            "cut_sample": list(_baseline_store.get("cut") or []),
+            "skipped": dict(_baseline_store.get("skipped") or {}),
+            "categories_read": _baseline_store.get("categories_read"),
             "tz": _baseline_store.get("tz", ""),
             "stale": (baselines.is_stale(_baseline_store)
                       if _baseline_store.get("built_at") else True),
