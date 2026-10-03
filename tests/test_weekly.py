@@ -489,7 +489,7 @@ class TestThePanelWiring(unittest.TestCase):
         old = self.server._weekly_state
         old_run, old_notify = engine.run_analyst, self.server._send_notification
 
-        async def swallow(rows):
+        async def swallow(rows, *a, **k):
             return None
 
         engine.run_analyst = lambda *a, **k: {"ok": True, "text": "x" * 80}

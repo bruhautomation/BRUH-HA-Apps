@@ -504,10 +504,16 @@ class TestButtonsOnTheMessage(NotifyCase):
             self.assertEqual(self.payloads, [None], service)
 
     def test_a_batch_carries_none_because_it_could_not_say_which(self):
+        # No BUTTONS: a digest is several problems and a button on it would
+        # have to guess which. The companion app still gets the delivery's
+        # `tag`, which carries no action — it is how a swipe on the phone
+        # finds its way back to the line in the delivery ledger.
         os.environ["BRAIN_FINDINGS_NOTIFY"] = "notify.mobile_app_pixel"
         rows = [findings_store.add(f"Problem {i}")[0] for i in range(3)]
         self._announce(rows)
-        self.assertEqual(self.payloads, [None])
+        [data] = self.payloads
+        self.assertNotIn("actions", data or {})
+        self.assertEqual(set(data or {}) - {"tag"}, set())
 
 
 class TestQuietHoursRouting(NotifyCase):

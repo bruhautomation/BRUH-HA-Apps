@@ -85,6 +85,12 @@ EVENT_TYPES = (
     # tellable from "the socket died".
     "automation_triggered",
     "call_service",
+    # Read by `server._on_bus_event` into the delivery ledger
+    # (`deliveries.note_cleared`): the companion app on Android says when
+    # one of brAIn's notifications was swiped away, which is the only
+    # evidence a household gives that a kind of message is not worth an
+    # interruption. Never a signal — a swipe is not something in the house.
+    "mobile_app_notification_cleared",
 )
 
 # How many events a second this will look at before it starts dropping.
