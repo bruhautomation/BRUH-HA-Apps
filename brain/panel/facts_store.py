@@ -936,3 +936,26 @@ def summary(now: float | None = None) -> dict:
         "last_ingest": state["last_ingest"],
         "ingested": state["ingested"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Rows by predicate — what the Resident's nightly reflect pass rewrites
+# ---------------------------------------------------------------------------
+
+def with_predicate(prefix: str, now: float | None = None) -> list[dict]:
+    """Every live fact whose predicate starts with ``prefix``, oldest first.
+
+    `outcomes` files its `judgement:` facts here and has to find them again
+    to supersede or replace one — and an empty prefix would be every fact
+    in the store, which is never what a caller asking by predicate meant,
+    so it answers nothing instead.
+    """
+    prefix = str(prefix or "")
+    if not prefix:
+        return []
+    now = time.time() if now is None else float(now)
+    rows = [dict(r) for r in _load()
+            if str(r.get("predicate") or "").startswith(prefix)
+            and not _expired(r, now)]
+    rows.sort(key=lambda r: (int(r.get("ts") or 0), str(r.get("id") or "")))
+    return rows

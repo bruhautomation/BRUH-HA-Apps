@@ -520,9 +520,8 @@ def items(graded: list[dict]) -> list[dict]:
             else:
                 place(f"v:{g.get('id')}", g)
             continue
-        if g.get("stage") == "investigate" and str(g.get("id")) in claimed:
-            # Already filed under the look that sent it, above or below.
-            pass
+        # An investigation with no row of its own: the look that sent it
+        # was filed under this same key above, so the two fold into one.
         place(f"v:{g.get('id')}", g)
 
     out: list[dict] = []
@@ -545,6 +544,7 @@ def _blank() -> dict:
     return {"items": 0, "surfaced": 0, "dismissed": 0, "confirmed": 0,
             "wrong": 0, "missed": 0, "passed_ok": 0, "undone": 0,
             "cleared": 0, "stood": 0, "pending": 0, "flags": [],
+            "last_confirmed_at": 0, "last_wrong_at": 0,
             "whys": [], "notes": []}
 
 
@@ -560,14 +560,20 @@ def tallies(graded_items: list[dict]) -> dict[str, dict[str, dict]]:
             t = scopes[scope].setdefault(str(name), _blank())
             t["items"] += 1
             klass, outcome = it.get("class"), it.get("outcome")
+            ended = int(it.get("ended_at") or 0)
             if klass == "surfaced":
                 t["surfaced"] += 1
                 if outcome in ("confirmed", "wrong"):
                     t[outcome] += 1
+                    stamp = f"last_{outcome}_at"
+                    t[stamp] = max(t[stamp], ended)
             elif klass == "dismissed":
                 t["dismissed"] += 1
                 if it.get("agree") is False:
                     t["missed"] += 1
+                    # Something passed over turned out to matter, which is
+                    # a confirmation of the scope as much as a Done is.
+                    t["last_confirmed_at"] = max(t["last_confirmed_at"], ended)
                 elif it.get("agree") is True:
                     t["passed_ok"] += 1
             if outcome in ("undone", "cleared", "stood", "pending"):
@@ -793,9 +799,15 @@ def similar(signal: dict, k: int = EXAMPLES_K,
         score = similarity(signal, it)
         if score <= 0:
             continue
-        ranked.append((-score, -int(it.get("at") or 0), str(it.get("id")), it))
-    ranked.sort(key=lambda r: r[:3])
-    return [r[3] for r in ranked[:max(0, int(k))]]
+        # A call the household actually answered teaches more than one
+        # nobody contradicted, so silence ranks below a word at equal
+        # resemblance — or a quiet week's `stood` rows crowd out the Wrong
+        # somebody typed a reason under.
+        strong = 0 if it.get("agree") is None else 1
+        ranked.append((-score, -strong, -int(it.get("at") or 0),
+                       str(it.get("id")), it))
+    ranked.sort(key=lambda r: r[:4])
+    return [r[4] for r in ranked[:max(0, int(k))]]
 
 
 _SAID = {
@@ -967,7 +979,12 @@ def candidates(scopes: dict[str, dict[str, dict]]) -> list[dict]:
             labelled = t["confirmed"] + t["wrong"]
             passed = t["missed"] + t["passed_ok"] + t["stood"]
             row = None
+            # A quieter judgement needs the LAST word on the scope to have
+            # been "not a problem": a case confirmed after the run of
+            # wrongs ends the judgement (`superseded`) and the arithmetic
+            # must not put it straight back the next night.
             if (labelled >= MIN_LABELLED and t["wrong"] / labelled >= QUIET_SHARE
+                    and t["last_wrong_at"] > t["last_confirmed_at"]
                     and not set(t["flags"]) & set(NEVER_QUIETER_FLAGS)
                     and name not in SAFETY_SOURCES
                     and name[len("check:"):] not in signals.SAFETY_CHECKS):

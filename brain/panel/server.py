@@ -178,6 +178,7 @@ import music_assistant
 import notify_router
 import override_ledger
 import onboarding
+import outcomes
 import playbooks
 import prompt_store
 import proposals
@@ -6432,6 +6433,7 @@ async def _resident_look(now: float, settings: dict, thinking: str,
             resident.watch_note, str(sig.get("subject") or ""))
         if note:
             notes.append(note)
+    look_inputs: dict = {}   # what the prompt was built from, for a capture
     prompt = resident.first_look_prompt(
         # `numbered=False`: `first_look_prompt` lays the rows out in its own
         # numbered list, and two numbers on one row is a reply that means
@@ -6444,10 +6446,11 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         # subjects, so a look at twelve signals reads the facts about
         # those twelve and not the head of a document about the house.
         await asyncio.to_thread(
-            _memory_block,
-            entities=[sig.get("subject") for sig in batch if sig.get("subject")]),
+            _memory_block, entities=outcomes.scope_subjects(batch)),
         await asyncio.to_thread(_open_case_rows),
-        now_line=_now_line(now), watch_notes=notes)
+        now_line=_now_line(now), watch_notes=notes,
+        examples=await asyncio.to_thread(_outcome_examples, batch, now),
+        inputs=look_inputs)
     TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
     RESIDENT_STATE["last_look_at"] = now
     try:
@@ -6469,6 +6472,8 @@ async def _resident_look(now: float, settings: dict, thinking: str,
 
     if not result.get("ok"):
         return await _resident_run_failed(batch, run_id, now, surfaced)
+    await asyncio.to_thread(_capture_look, settings, run_id, batch,
+                            look_inputs, result, cost, now)
     verdicts = resident.parse_first_look(_answer(result), len(batch), batch)
     return await _resident_apply(batch, verdicts, run_id, now, settings,
                                  thinking, surfaced, len(watched_off))
@@ -6511,6 +6516,7 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
     have to act on is the safe direction and "I am watching this" is not a
     reason to hide it.
     """
+    await asyncio.to_thread(outcomes.record_look, batch, verdicts, run_id, now)
     decided: dict[int, tuple[str, str]] = {}
     counts = {word: 0 for word in resident.VERDICTS}
     # `(signal, why, row it refines or 0)`: the look's reason travels with
@@ -6749,11 +6755,14 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     rows = signals.prompt_rows([signal], now, numbered=False)
     prompt = resident.investigate_prompt(
         signal,
-        await asyncio.to_thread(_memory_block, entities=_signal_entities(signal)),
+        await asyncio.to_thread(_memory_block, entities=_signal_entities(
+            signal) + outcomes.scope_subjects([signal])),
         await _house_prompt_block(now),
         await asyncio.to_thread(_open_case_rows, exclude=exclude),
         signal_row=rows[0] if rows else "", why=why, refining=refining,
-        now_line=_now_line(now))
+        now_line=_now_line(now),
+        examples=await asyncio.to_thread(_outcome_examples, [signal], now,
+                                         investigating=True))
     result = await asyncio.to_thread(
         engine.run_analyst, prompt, resident.INVESTIGATE_SYSTEM, eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
@@ -6764,6 +6773,7 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     if not result.get("ok"):
         log.info("an investigation of %s came back empty: %s",
                  signal.get("subject"), result.get("error") or "no answer")
+        await _outcome(signal, "failed", run_id, now, why, refines)
         return False
 
     answer = _answer(result)
@@ -6775,6 +6785,8 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
             log.info("an investigation found nothing in %s%s",
                      refining.get("text"),
                      "" if held else " (the row had moved on; left as it is)")
+            await _outcome(signal, "held" if held else "moved_on", run_id,
+                           now, why, refines, row=held, said=dismissal)
             return False
 
     # What the run actually read. `parse_case` refuses a case whose
@@ -6792,9 +6804,11 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
             RESIDENT_STATE["refused"] = RESIDENT_STATE.get("refused", 0) + 1
             log.warning("an investigation of %s cited evidence it never read; "
                         "its case was refused", signal.get("subject"))
+            await _outcome(signal, "refused", run_id, now, why, refines)
         else:
             log.info("the investigation of %s made no claim",
                      signal.get("subject"))
+            await _outcome(signal, "no_claim", run_id, now, why, refines)
         return False
 
     if case.get("escalate"):
@@ -6803,6 +6817,8 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
         if case is None:
             log.info("a stronger look withdrew the case about %s",
                      signal.get("subject"))
+            await _outcome(signal, "withdrawn", run_id, now, why, refines,
+                           escalated=True)
             return False
     # The signal that started it, folded in — because "what made brAIn look"
     # is evidence about the claim and the run has no way to cite it: it was
@@ -6817,9 +6833,12 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
                                       case_run, now)
         if row is None:
             log.info("the row an investigation refined had moved on")
+            await _outcome(signal, "moved_on", case_run, now, why, refines)
             return False
         log.info("the Resident rewrote a row after looking: %s",
                  row.get("claim") or row.get("text"))
+        await _outcome(signal, "refined", case_run, now, why, refines,
+                       row=row, case=case, escalated=case_run != run_id)
         return True
 
     filed = await asyncio.to_thread(
@@ -6830,10 +6849,14 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
         # makes a re-report silent and a dismissal permanent.
         RESIDENT_STATE["duplicates"] += 1
         log.info("an investigation reached a claim the house already holds")
+        await _outcome(signal, "duplicate", case_run, now, why, refines,
+                       case=case)
         return False
     await _announce_findings([filed])
     log.info("the Resident filed a %s case: %s", filed.get("kind", "problem"),
              filed["text"])
+    await _outcome(signal, "filed", case_run, now, why, refines, row=filed,
+                   case=case, escalated=case_run != run_id)
     return True
 
 
@@ -6897,7 +6920,9 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
             await _house_prompt_block(now),
             await asyncio.to_thread(_open_case_rows, exclude=exclude),
             signal_row=rows[0] if rows else "", why=why, refining=refining,
-            prior_case=case, now_line=_now_line(now)),
+            prior_case=case, now_line=_now_line(now),
+            examples=await asyncio.to_thread(_outcome_examples, [signal], now,
+                                             investigating=True)),
         resident.INVESTIGATE_SYSTEM, eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
         "resident", job=ESCALATE_JOB, schema=resident.CASE_SCHEMA)
@@ -6974,6 +6999,471 @@ def _resident_diagnostics() -> dict:
         "looks_today": _triage_runs_today(time.time()),
         "looks_per_day": triage.MAX_PER_DAY,
     }
+
+
+# ---------------------------------------------------------------------------
+# Outcomes — what the Resident decided, and what the household did next
+# ---------------------------------------------------------------------------
+#
+# `outcomes.py` holds the log, the join and the rules; what lives here is
+# the four places it touches the running panel: a line per investigation
+# result, the worked examples a prompt is handed, the nightly pass that
+# grades and reflects, and the replay a person presses for. Every one of
+# them is best-effort in the direction that keeps the loop running — a
+# verdict log that could not be written, an example block that could not
+# be built and a reflect run that failed all leave the Resident exactly as
+# it was, because the accounting must never be what stops the house being
+# watched.
+
+# The reflect run is a cheap look at a handful of numbered patterns.
+REFLECT_TIMEOUT_S = 180
+REFLECT_MAX_TURNS = 4
+# A judgement already standing is re-asked about weekly at most: the
+# counts on it go stale slowly, and re-asking nightly would spend a run to
+# write the same sentence.
+REFLECT_REFRESH_S = 7 * 86400
+# The replay's spend cap when the request names none. A first look is a
+# few thousand tokens; this is a few dozen of them, and a measurement that
+# can quietly spend an account's window is one nobody runs twice.
+EVAL_DEFAULT_TOKENS = 60_000
+EVAL_MAX_TOKENS = 500_000
+EVAL_DEFAULT_BATCHES = 20
+EVAL_MAX_BATCHES = 100
+EVAL_DEFAULT_DAYS = 14
+
+OUTCOMES_STATE: dict = {"last_error": "", "running": False}
+EVAL_STATE: dict = {"starting": False, "started_at": 0.0, "report": None,
+                    "error": ""}
+
+
+async def _outcome(signal: dict, result: str, run_id: str, now: float,
+                   why: str = "", refines: int = 0, *, row: dict | None = None,
+                   case: dict | None = None, said: str = "",
+                   escalated: bool = False) -> None:
+    """One line in the verdict log for what an investigation came to.
+
+    ``why`` is the look's reason for sending it (what to look FOR) and
+    ``said`` the investigation's own sentence where it gave one rather
+    than a case. Never raises: `record_investigation` swallows its own
+    failures, and this is awaited on the investigation's success path.
+    """
+    await asyncio.to_thread(
+        outcomes.record_investigation, signal, result, run_id=run_id,
+        now=now, why=said or str((case or {}).get("claim") or ""),
+        asked=why, refines=refines, row=row, case=case, escalated=escalated)
+
+
+def _outcome_examples(batch: list[dict], now: float, *,
+                      investigating: bool = False) -> list[str]:
+    """Past calls like these, with what the household did — for a prompt.
+
+    An investigation gets fewer, and the calibration sentence above them:
+    it is the one run that states a confidence, so it is the one run the
+    record of how that confidence has held up is about. Never raises — an
+    empty list is the prompt as it was before this existed.
+    """
+    try:
+        tz, _name = baselines.house_timezone()
+    except Exception:  # noqa: BLE001 — a clock we cannot read is UTC
+        tz = None
+    try:
+        if investigating:
+            lines = outcomes.examples_for(
+                batch, now, k=outcomes.INVESTIGATE_EXAMPLES_K,
+                limit_chars=outcomes.INVESTIGATE_EXAMPLES_CHARS, tz=tz)
+            note = outcomes.calibration_note(facts_store.with_predicate(
+                outcomes.CALIBRATION_PREDICATE, now))
+            return ([f"Your own calibration: {note}"] if note else []) + lines
+        return outcomes.examples_for(batch, now, tz=tz)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not build the worked examples: %s", exc)
+        return []
+
+
+def _capture_look(settings: dict, run_id: str, batch: list[dict],
+                  inputs: dict, result: dict, cost: dict, now: float) -> None:
+    """Keep this look for the replay, when capture is switched on.
+
+    The same switch as an analyst capture and the same file shape rules —
+    off by default, redacted on the way in, capped — because a first look
+    is as much a floor plan as a card bundle is. Never raises.
+    """
+    if not settings.get("capture"):
+        return
+    try:
+        capture.record_first_look(
+            capture.run_id_from(result.get("meta") or {}) or run_id,
+            batch=batch, inputs=inputs, reply=_answer(result) or {},
+            model=str((result.get("meta") or {}).get("model") or eff_model()),
+            tokens=cost, now=now)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not capture the first look: %s", exc)
+
+
+def _learning_on() -> bool:
+    """The `learning` option: may brAIn file what it works out? Live from
+    the Supervisor, the run.sh export otherwise — `_curiosity_enabled`'s
+    shape. A judgement is something brAIn learned, so it answers to it."""
+    snap = addon_options.snapshot() or {}
+    value = snap.get("learning")
+    if value is None:
+        raw = os.environ.get("BRAIN_ASSIST_LEARNING", "true").strip().lower()
+        return raw not in ("false", "0", "no", "")
+    return bool(value)
+
+
+def _label_first_look_captures(graded: list[dict]) -> int:
+    """Label every captured first look by what the household did next."""
+    labelled = 0
+    for entry in capture.first_looks():
+        run_id = str(entry.get("run_id") or "")
+        labels = outcomes.look_labels(graded, run_id)
+        if labels and capture.label_first_look(run_id, labels):
+            labelled += 1
+    return labelled
+
+
+def _supersede_judgements(graded: list[dict], now: float) -> int:
+    """Drop the quieter judgements a later confirmed case contradicted."""
+    standing = outcomes.judgement_rows(
+        facts_store.with_predicate(outcomes.JUDGEMENT_PREFIX, now))
+    gone = 0
+    for fact in outcomes.superseded(standing, graded):
+        if facts_store.forget(str(fact.get("id") or "")):
+            gone += 1
+            log.info("a judgement no longer holds and was dropped: %s",
+                     log_safe(fact.get("text")))
+    return gone
+
+
+def _write_calibration(line: str, now: float) -> bool:
+    """The calibration sentence, replacing the last one — or removing it
+    when no bucket has earned one any more, because a stale reliability
+    figure is a figure a prompt goes on believing."""
+    standing = facts_store.with_predicate(outcomes.CALIBRATION_PREDICATE, now)
+    if any(f.get("text") == line for f in standing) and line:
+        return False
+    for fact in standing:
+        facts_store.forget(str(fact.get("id") or ""))
+    if not line:
+        return bool(standing)
+    facts_store.add(line, subject=outcomes.CALIBRATION_SUBJECT,
+                    source="resident", confidence=outcomes.JUDGEMENT_CONFIDENCE,
+                    predicate=outcomes.CALIBRATION_PREDICATE, ts=now)
+    return True
+
+
+def _fresh_candidates(cands: list[dict], now: float) -> list[dict]:
+    """The candidates no standing judgement already answers this week."""
+    standing = outcomes.judgement_rows(
+        facts_store.with_predicate(outcomes.JUDGEMENT_PREFIX, now))
+    out = []
+    for cand in cands:
+        same = [f for f in standing
+                if f.get("subject") == cand["subject"]
+                and f.get("predicate") == outcomes.predicate_for(cand)
+                and now - float(f.get("ts") or 0) < REFLECT_REFRESH_S]
+        if not same:
+            out.append(cand)
+    return out
+
+
+async def _reflect(cands: list[dict], now: float) -> dict:
+    """One cheap run writing what the lopsided patterns teach.
+
+    The arithmetic decided WHICH scopes (`outcomes.candidates`); the model
+    only says what each means, and `parse_reflect` checks every sentence
+    before it becomes a fact. A run that failed writes nothing and says so
+    — the standing judgements are left as they were, because a failed run
+    is never a verdict.
+    """
+    result = await asyncio.to_thread(
+        engine.run_claude, outcomes.reflect_prompt(cands),
+        outcomes.REFLECT_SYSTEM, eff_model(), REFLECT_TIMEOUT_S,
+        REFLECT_MAX_TURNS, "resident", job="reflect",
+        schema=outcomes.REFLECT_SCHEMA)
+    cost = await asyncio.to_thread(_record_usage, result, "resident-reflect")
+    LEDGER.record("reflect", int(cost.get("total") or 0), now)
+    run_id = str((result.get("meta") or {}).get("session_id") or "")
+    if not result.get("ok"):
+        return {"ran": True, "ok": False, "candidates": len(cands),
+                "error": str(result.get("error") or "no answer")[:200]}
+    lessons = outcomes.parse_reflect(_answer(result), cands)
+
+    def write() -> int:
+        expires = time.strftime(
+            "%Y-%m-%d", time.localtime(
+                now + outcomes.JUDGEMENT_TTL_DAYS * 86400))
+        standing = outcomes.judgement_rows(
+            facts_store.with_predicate(outcomes.JUDGEMENT_PREFIX, now))
+        written = 0
+        for idx, lesson in sorted(lessons.items()):
+            cand = cands[idx - 1]
+            # One judgement per scope: whatever stood about this subject
+            # is replaced, in either direction, by what the record says now.
+            for fact in standing:
+                if (fact.get("subject") == cand["subject"]
+                        and fact.get("predicate") !=
+                        outcomes.CALIBRATION_PREDICATE):
+                    facts_store.forget(str(fact.get("id") or ""))
+            row, _created = facts_store.add(
+                outcomes.judgement_text(cand, lesson),
+                subject=cand["subject"], source="resident",
+                confidence=outcomes.JUDGEMENT_CONFIDENCE, run_id=run_id,
+                predicate=outcomes.predicate_for(cand), expires=expires,
+                ts=now)
+            written += 1 if row else 0
+        return written
+
+    written = await asyncio.to_thread(write)
+    log.info("reflect: %d pattern(s), %d judgement(s) written, %d refused "
+             "or left empty", len(cands), written, len(cands) - written)
+    return {"ran": True, "ok": True, "candidates": len(cands),
+            "written": written, "refused": len(cands) - len(lessons),
+            "run_id": run_id}
+
+
+async def _outcomes_nightly(now: float, *, force: bool = False) -> dict:
+    """Grade the night's verdicts, keep what holds, and reflect on it.
+
+    Deterministic first and free: the join, the superseding of any
+    judgement a confirmed case has contradicted, the calibration sentence
+    and the labels on captured looks all happen whatever the gates say,
+    because none of them spends anything. Only the reflect run answers to
+    the three gates every scheduled Claude run answers to — and to
+    `learning`, because a judgement is something brAIn learned.
+    """
+    state = await asyncio.to_thread(outcomes.load_state)
+    if not force and not outcomes.join_due(now, state):
+        return {"skipped": "the join ran less than a day ago"}
+    graded = await asyncio.to_thread(outcomes.load_graded, now)
+    rep = await asyncio.to_thread(outcomes.report, graded)
+    writable = facts_store.writable()
+    removed = (await asyncio.to_thread(_supersede_judgements, graded, now)
+               if writable else 0)
+    if writable and _learning_on():
+        await asyncio.to_thread(_write_calibration,
+                                rep.get("calibration_line") or "", now)
+    labelled = await asyncio.to_thread(_label_first_look_captures, graded)
+    cands = outcomes.candidates(outcomes.tallies(outcomes.items(graded)))
+    fresh = await asyncio.to_thread(_fresh_candidates, cands, now) \
+        if writable else []
+    settings = await asyncio.to_thread(settings_store.load)
+    reflect: dict = {"at": int(now), "ran": False,
+                     "candidates": len(cands), "fresh": len(fresh)}
+    excuse = ("" if writable else
+              "the facts store is not writable on this install")
+    if not excuse and not _learning_on():
+        excuse = "learning is switched off"
+    excuse = excuse or _resident_gate(settings)
+    if excuse:
+        reflect["held"] = excuse
+    elif fresh:
+        try:
+            reflect.update(await _reflect(fresh, now))
+        except Exception as exc:  # noqa: BLE001 — the join above stands
+            reflect.update({"ran": True, "ok": False,
+                            "error": str(exc)[:200]})
+    standing = await asyncio.to_thread(
+        facts_store.with_predicate, outcomes.JUDGEMENT_PREFIX, now)
+    state.update({
+        "joined_at": int(now),
+        "summary": {k: rep[k] for k in ("rows", "by_outcome", "by_stage")},
+        "items": rep["items"],
+        "calibration_line": rep.get("calibration_line") or "",
+        "superseded": removed,
+        "captures_labelled": labelled,
+        "judgements": len(outcomes.judgement_rows(standing)),
+        "reflect": reflect,
+    })
+    await asyncio.to_thread(outcomes.save_state, state)
+    log.info("outcomes: %d verdict(s) graded, %d judgement(s) standing, %d "
+             "superseded%s", rep["rows"], state["judgements"], removed,
+             f"; reflect held: {reflect['held']}" if reflect.get("held")
+             else "")
+    return state
+
+
+async def _outcomes_tick(now: float) -> None:
+    """`_outcomes_nightly` for a loop: never raises, never overlaps."""
+    if OUTCOMES_STATE["running"]:
+        return
+    OUTCOMES_STATE["running"] = True
+    try:
+        await _outcomes_nightly(now)
+        OUTCOMES_STATE["last_error"] = ""
+    except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
+        OUTCOMES_STATE["last_error"] = str(exc)[:200]
+        log.warning("the outcomes pass failed: %s", exc)
+    finally:
+        OUTCOMES_STATE["running"] = False
+
+
+def _outcomes_diagnostics() -> dict:
+    """The row in `/api/diagnostics`: is the log written, when did the join
+    last run, and what did reflect do. Counts only — never a verdict's
+    sentence or a homeowner's note."""
+    try:
+        out = outcomes.diagnostics()
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)[:200]}
+    out["last_error"] = OUTCOMES_STATE["last_error"]
+    out["eval"] = {"running": bool(EVAL_STATE["starting"]),
+                   "last": ((EVAL_STATE["report"] or {}).get("total")
+                            if EVAL_STATE["report"] else None)}
+    return out
+
+
+async def h_resident_outcomes(request: web.Request) -> web.Response:
+    """What the Resident decided and what came of it, graded now.
+
+    Computed fresh on every request — it is a deterministic join over three
+    small files, and a person looking at it wants this afternoon's Wrong in
+    it rather than last night's. `?nightly=1` also runs the nightly pass
+    now (the free half, plus a reflect run if the gates allow), which is
+    how somebody checks a judgement without waiting for the small hours.
+    """
+    now = time.time()
+    if request.query.get("nightly") in ("1", "true", "yes"):
+        if OUTCOMES_STATE["running"]:
+            return web.json_response(
+                {"error": "the outcomes pass is already running"}, status=409)
+        OUTCOMES_STATE["running"] = True
+        try:
+            await _outcomes_nightly(now, force=True)
+        finally:
+            OUTCOMES_STATE["running"] = False
+
+    def build() -> dict:
+        graded = outcomes.load_graded(now)
+        rep = outcomes.report(graded, full=True)
+        rep["candidates"] = [
+            {k: c[k] for k in ("scope", "subject", "direction", "counts")}
+            for c in outcomes.candidates(
+                outcomes.tallies(outcomes.items(graded)))]
+        rep["judgements"] = [
+            {k: f.get(k) for k in ("id", "subject", "predicate", "text", "ts",
+                                    "expires", "run_id")}
+            for f in facts_store.with_predicate(outcomes.JUDGEMENT_PREFIX,
+                                                now)]
+        rep["state"] = outcomes.load_state()
+        return rep
+
+    return web.json_response(await asyncio.to_thread(build))
+
+
+def _eval_ask(prompt: str) -> tuple[dict | None, int]:
+    """One replayed look through the real runner, under `replay`."""
+    result = engine.run_claude(
+        prompt, resident.FIRST_LOOK_SYSTEM, eff_model(), resident.TIMEOUT_S,
+        resident.MAX_TURNS, "replay", job=resident.JOB_FIRST_LOOK,
+        schema=resident.FIRST_LOOK_SCHEMA)
+    cost = _record_usage(result, "eval-first-look")
+    if not result.get("ok"):
+        return None, int(cost.get("total") or 0)
+    return _answer(result) or {}, int(cost.get("total") or 0)
+
+
+def _run_eval(entries: list[dict], max_tokens: int, max_batches: int,
+              days: int, now: float) -> dict:
+    """Replay labelled batches against today's prompt, under a spend cap.
+
+    The cap is checked BEFORE each run (`replay.py`'s rule: a cap that
+    stops once it has been passed has already spent the run that passed
+    it), and what it stopped is counted rather than dropped. The report
+    carries the captured verdicts' own agreement beside the replayed one,
+    because a number without the number it is compared against is not
+    evidence for a change — and nothing here changes anything: promotion
+    is a person reading this and editing a prompt.
+    """
+    rows: list[dict] = []
+    spent, skipped = 0, 0
+    for entry in entries:
+        if len(rows) >= max_batches or spent >= max_tokens:
+            skipped += 1
+            continue
+        row = outcomes.replay_look(entry, _eval_ask)
+        spent += int(row.get("tokens") or 0)
+        rows.append(row)
+    return {"generated_at": int(now), "kind": "first_look", "days": days,
+            "max_tokens": max_tokens, "rows": rows, "skipped": skipped,
+            "total": outcomes.summarise_replay(rows),
+            "promotion": "never automatic: a changed prompt ships when a "
+                         "person reads this number and decides it should"}
+
+
+async def h_resident_eval_get(request: web.Request) -> web.Response:
+    return web.json_response({
+        "running": bool(EVAL_STATE["starting"]),
+        "started_at": int(EVAL_STATE["started_at"] or 0) or None,
+        "error": EVAL_STATE["error"], "report": EVAL_STATE["report"]})
+
+
+async def h_resident_eval_start(request: web.Request) -> web.Response:
+    """`brain eval first_look`: replay captured looks against today's prompt.
+
+    A press, never a timer — it spends real runs — so it skips the usage
+    budget and nothing else that matters: a credential is required, the
+    spend is capped, and it STARTS rather than awaits, because twenty runs
+    are minutes and ingress will not hold a request that long
+    (`h_baselines_run`'s clock). The outcome is read back off GET.
+    """
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — an empty body is the defaults
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    kind = str(body.get("kind") or "first_look")
+    if kind != "first_look":
+        return web.json_response(
+            {"error": f"there is no replay for {kind!r}; the one there is "
+                      "is first_look"}, status=400)
+
+    def clamp(name: str, default: int, top: int) -> int:
+        try:
+            value = int(body.get(name) or default)
+        except (TypeError, ValueError):
+            value = default
+        return max(1, min(top, value))
+
+    max_tokens = clamp("max_tokens", EVAL_DEFAULT_TOKENS, EVAL_MAX_TOKENS)
+    max_batches = clamp("max_batches", EVAL_DEFAULT_BATCHES, EVAL_MAX_BATCHES)
+    days = clamp("days", EVAL_DEFAULT_DAYS, 365)
+    if EVAL_STATE["starting"]:
+        return web.json_response(
+            {"running": True, "error": "a replay is already running"},
+            status=409)
+    if not engine.get_auth():
+        return web.json_response(
+            {"error": "there is no Claude credential, so nothing can be "
+                      "replayed"}, status=409)
+    now = time.time()
+    entries = [e for e in await asyncio.to_thread(
+        capture.first_looks, now - days * 86400) if e.get("labels")]
+    if not entries:
+        return web.json_response(
+            {"error": f"no captured first look from the last {days} days "
+                      "carries a label yet — switch capture on under ⚙ → "
+                      "Diagnostics and let the household answer a few cards; "
+                      "the nightly pass labels them"}, status=409)
+    # Flipped synchronously, `start_auth_check`'s rule: two presses in one
+    # tick must not both pass a guard their own task has not set yet.
+    EVAL_STATE.update({"starting": True, "started_at": now, "error": ""})
+
+    async def run_it() -> None:
+        try:
+            EVAL_STATE["report"] = await asyncio.to_thread(
+                _run_eval, entries, max_tokens, max_batches, days, now)
+        except Exception as exc:  # noqa: BLE001
+            EVAL_STATE["error"] = str(exc)[:200]
+            log.warning("the first-look replay failed: %s", exc)
+        finally:
+            EVAL_STATE["starting"] = False
+
+    asyncio.create_task(run_it())
+    return web.json_response({"running": True, "batches": len(entries),
+                              "max_tokens": max_tokens,
+                              "max_batches": max_batches, "days": days})
 
 
 async def _ask_why(now: float, reason: str = "schedule") -> int:
@@ -8017,6 +8507,10 @@ async def _baseline_loop() -> None:
                 await build_baselines("schedule")
         except Exception as exc:  # noqa: BLE001
             log.debug("baseline loop: %s", exc)
+        # The Resident's nightly grading rides the same hourly wake: it
+        # decides for itself whether a day has passed, off its own state
+        # file, so a baseline build that failed does not hold it back.
+        await _outcomes_tick(time.time())
         await asyncio.sleep(3600)
 
 
@@ -9349,6 +9843,10 @@ def _diagnostics_payload() -> dict:
         # everything because a gate said no — and each has its own number
         # here.
         "resident": _resident_diagnostics(),
+        # What the Resident decided, graded against what the household did
+        # next: a log nothing writes and a join that stopped running read
+        # identically from every other screen.
+        "outcomes": _outcomes_diagnostics(),
         # And the subscription under it. A socket that never connected, one
         # that is reading nothing because the house is quiet, and one that
         # is dropping everything because something is flooding it are three
@@ -11580,6 +12078,8 @@ async def h_finding_unfix(request: web.Request) -> web.Response:
         return _findings_payload()
 
     payload = await asyncio.to_thread(restore)
+    await asyncio.to_thread(outcomes.note_undone, finding["ts"],
+                            finding.get("text") or "")
     # The fix queued "brAIn fixed this on …" when it finished, and that is
     # no longer true. A correction is the one thing that is right whether
     # or not the consolidator has got to it yet: still in the queue, the
@@ -13829,6 +14329,9 @@ def make_app() -> web.Application:
     app.router.add_get("/api/capture/{run_id}", h_capture_get)
     app.router.add_post("/api/capture/{run_id}/export", h_capture_export)
     app.router.add_delete("/api/capture/{run_id}", h_capture_delete)
+    app.router.add_get("/api/resident/outcomes", h_resident_outcomes)
+    app.router.add_get("/api/resident/eval", h_resident_eval_get)
+    app.router.add_post("/api/resident/eval", h_resident_eval_start)
     app.router.add_get("/api/baselines", h_baselines)
     app.router.add_post("/api/baselines/run", h_baselines_run)
     app.router.add_get("/api/curiosity", h_curiosity)

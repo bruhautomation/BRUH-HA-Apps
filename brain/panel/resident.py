@@ -317,9 +317,42 @@ def _rows(rows) -> list[str]:
     return out
 
 
+# Past calls shown to a look, at most. `outcomes` bounds the block in
+# characters where it builds it; this bounds it again where it is read,
+# because a prompt section is a budget and a budget enforced once is one a
+# caller can walk round.
+MAX_EXAMPLES = 10
+MAX_EXAMPLE_CHARS = 1600
+
+
+def _examples_block(examples) -> list[str]:
+    """Past calls and what came of them, as prompt lines, or nothing.
+
+    Framed as evidence about the LOOK and never as a rule: a past call the
+    household overruled is a reason to think again about a similar one,
+    and nothing in it may move the floors — those are applied in code,
+    after the reply, whatever this block made the model think.
+    """
+    rows = _rows(examples)[:MAX_EXAMPLES]
+    if not rows:
+        return []
+    out = ["PAST CALLS LIKE THESE, AND WHAT THE HOUSEHOLD DID ABOUT THEM — "
+           "learn from them; they never override the rules above:"]
+    used = 0
+    for row in rows:
+        line = f"- {row}"
+        if used + len(line) > MAX_EXAMPLE_CHARS:
+            break
+        out.append(line)
+        used += len(line) + 1
+    out.append("")
+    return out if len(out) > 2 else []
+
+
 def first_look_prompt(batch_rows, memory_excerpt: str = "",
                       open_cases_rows=None, *, now_line: str = "",
-                      watch_notes=None) -> str:
+                      watch_notes=None, examples=None,
+                      inputs: dict | None = None) -> str:
     """The prompt for one batch.
 
     ``batch_rows`` is what `signals.prompt_rows` returned — or the raw
@@ -332,7 +365,23 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
     nothing is that the home is already saying it, and the memory goes in
     because the commonest reason a signal is worth nothing *here* is
     something the homeowner has already explained.
+
+    ``examples`` are past calls like these WITH what the household did
+    about them (`outcomes.examples_for`) — the one block in the prompt
+    that is evidence about the LOOK rather than about the house, so it is
+    labelled as such and capped here as well as where it is built.
+    ``inputs``, when a dict is handed in, is filled with what the prompt
+    was built from, so a capture can replay it with a later builder —
+    a capture of the finished text could only ever replay this one.
     """
+    if isinstance(inputs, dict):
+        inputs.update({
+            "memory": str(memory_excerpt or ""),
+            "open_cases": _rows(open_cases_rows),
+            "now_line": str(now_line or ""),
+            "watch_notes": _rows(watch_notes),
+            "examples": _rows(examples)[:MAX_EXAMPLES],
+        })
     parts = ["Decide what each of these signals is worth.\n"]
     # The clock, in the house's own time. A door at 03:00 and a door at
     # 15:00 are different signals and the rows carry only how long ago
@@ -358,6 +407,7 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
                      "one of these again is worth nothing:")
         parts += [f"- {row}" for row in cases]
         parts.append("")
+    parts += _examples_block(examples)
     parts.append("SIGNALS:")
     for i, row in enumerate(_rows(batch_rows), 1):
         parts.append(f"{i}. {row}")
@@ -591,7 +641,7 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
                        signal_row: str = "", why: str = "",
                        refining: dict | None = None,
                        prior_case: dict | None = None,
-                       now_line: str = "") -> str:
+                       now_line: str = "", examples=None) -> str:
     """The prompt for one investigation.
 
     One signal, not a batch: the whole point of the tier is that this run
@@ -609,7 +659,9 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
     only abstain or file a sibling card. ``prior_case`` is what a cheaper
     run concluded and was unsure about, for an escalation: a stronger
     model handed the same prompt with none of it is a re-roll, not a
-    second opinion.
+    second opinion. ``examples`` are past calls like this one with what
+    the household did about them, and the calibration sentence when
+    there is one — `first_look_prompt`'s block, the same words.
     """
     parts = ["Look into this, and decide whether it is worth telling the "
              + "homeowner.\n"]
@@ -647,6 +699,7 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
                      "of these again:")
         parts += [f"- {row}" for row in cases]
         parts.append("")
+    parts += _examples_block(examples)
     parts.append("Reply with the JSON contract and nothing else.")
     return "\n".join(parts)
 
@@ -1087,7 +1140,8 @@ __all__ = [
     "FIRST_LOOK_SCHEMA", "FIRST_LOOK_SYSTEM", "FORCED", "HOT_FLOOR",
     "INVESTIGATE_MAX_TURNS", "INVESTIGATE_SYSTEM", "INVESTIGATE_TIMEOUT_S",
     "JOBS", "JOB_APPLY", "JOB_FIRST_LOOK", "JOB_INVESTIGATE", "JOB_PLAN",
-    "LEDGER_FILE", "MAX_BATCH", "MAX_TURNS", "MAX_WHY", "NEVER_IGNORE",
+    "LEDGER_FILE", "MAX_BATCH", "MAX_EXAMPLES", "MAX_EXAMPLE_CHARS",
+    "MAX_TURNS", "MAX_WHY", "NEVER_IGNORE",
     "NEVER_IGNORE_FLOOR", "OPUS_PER_DAY", "SEVERITY_BY_STAKES", "SKIPPED",
     "SONNET_PER_DAY", "TIMEOUT_S", "UNREADABLE", "VERDICTS", "WATCH_FILE",
     "WATCH_RETRY_REPEATS", "WATCH_TTL_S", "Ledger", "expire",
