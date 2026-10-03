@@ -3971,14 +3971,28 @@ def remember_fact(fact, confidence="high", subject="", person=""):
         confidence = "high"
     subject = str(subject or "").strip()[:255]
     person = str(person or "").strip()[:64]
+    # A voice agent told it cannot see an entity could still file a fact
+    # ABOUT it, which every later run — of every channel — is then handed
+    # as something the household said.
+    if EXPOSED_ONLY and ENTITY_ID_RE.match(subject.lower()) \
+            and not _entity_exposed(subject):
+        return {"error": UNEXPOSED_READ.format(eid=subject)}
 
+    # Who taught it. Every fact used to be filed `source: "assist"` whatever
+    # asked — so a preference typed into the chat read as voice-taught, and
+    # nothing linked it back to the conversation it came from, when the
+    # facts store and `recall` both tell the model to weigh a fact by who
+    # taught it. A channel this process cannot name is said as that,
+    # rather than as voice.
+    source = _channel() or "conversation"
+    run_id = _run_id()
     inbox_dir = os.path.join(MEMORY_DIR, "inbox")
     try:
         os.makedirs(inbox_dir, exist_ok=True)
         now = int(time.time())
         record = {
             "ts": now,
-            "source": "assist",
+            "source": source,
             "fact": fact.strip(),
             "confidence": confidence,
         }
@@ -3986,7 +4000,9 @@ def remember_fact(fact, confidence="high", subject="", person=""):
             record["subject"] = subject
         if person:
             record["person"] = person
-        path = os.path.join(inbox_dir, f"{now}-assist.jsonl")
+        if run_id:
+            record["run_id"] = run_id
+        path = os.path.join(inbox_dir, f"{now}-{source}.jsonl")
         with open(path, "a") as fh:
             fh.write(json.dumps(record) + "\n")
     except OSError as exc:

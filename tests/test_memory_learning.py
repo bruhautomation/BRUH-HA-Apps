@@ -48,13 +48,21 @@ SHARE_LOGIN = ADDON / "scripts" / "ha-share-login.sh"
 INTEGRATION_INIT = ADDON / "custom_components" / "brain" / "__init__.py"
 FAKE_CLAUDE = Path(__file__).resolve().parent / "fake_claude.py"
 
-VALID_SOURCES = {"assist", "terminal", "insights", "service"}
+# The channels a writer may name itself by. remember_fact names the face of
+# brAIn that taught the fact (voice, chat, terminal, a job) since it stopped
+# filing everything as "assist", and "conversation" when it cannot tell.
+VALID_SOURCES = {"assist", "terminal", "insights", "service", "voice", "chat",
+                 "conversation"}
+# What a line must carry, and what it may: a writer that knows the subject,
+# the person or the run it came from says so (facts_store reads all three).
+CONTRACT_KEYS = {"ts", "source", "fact", "confidence"}
+OPTIONAL_KEYS = {"subject", "person", "run_id"}
 
 
 def assert_contract_line(line: str, expect_source=None, expect_fact=None):
     """One inbox JSONL line must match the cross-add-on contract."""
     record = json.loads(line)
-    assert set(record) == {"ts", "source", "fact", "confidence"}
+    assert CONTRACT_KEYS <= set(record) <= CONTRACT_KEYS | OPTIONAL_KEYS
     assert isinstance(record["ts"], int)
     assert record["source"] in VALID_SOURCES
     assert isinstance(record["fact"], str) and record["fact"]
@@ -88,23 +96,29 @@ def mcp(monkeypatch, tmp_path):
     import ha_mcp_server
 
     monkeypatch.setattr(ha_mcp_server, "MEMORY_DIR", str(tmp_path / "memory"))
+    # Which face taught a fact is read off the environment the CLI launched
+    # the server with — and the suite may itself run inside one.
+    for var in ("BRAIN_CHANNEL", "BRAIN_ASSIST_ACCESS", "BRAIN_EXPOSED_ONLY",
+                "CLAUDE_CODE_SESSION_ID"):
+        monkeypatch.delenv(var, raising=False)
     return ha_mcp_server
 
 
-def test_remember_fact_writes_contract_line(mcp, tmp_path):
+def test_remember_fact_writes_contract_line(mcp, tmp_path, monkeypatch):
+    monkeypatch.setenv("BRAIN_ASSIST_ACCESS", "voice")
     result = mcp.remember_fact("We call the office lamp 'the beacon'")
     assert result.get("status") == "remembered"
     lines = inbox_lines(tmp_path / "memory")
     assert len(lines) == 1
     record = assert_contract_line(
         lines[0],
-        expect_source="assist",
+        expect_source="voice",
         expect_fact="We call the office lamp 'the beacon'",
     )
     assert record["confidence"] == "high"
-    # File naming: <epoch>-assist.jsonl
+    # File naming: <epoch>-<source>.jsonl
     (path,) = (tmp_path / "memory" / "inbox").glob("*.jsonl")
-    assert path.name.endswith("-assist.jsonl")
+    assert path.name.endswith("-voice.jsonl")
     assert path.name.split("-")[0].isdigit()
 
 
