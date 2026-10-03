@@ -196,6 +196,19 @@ class TestTheJoin(unittest.TestCase):
         self.assertIn("67%", line)
         self.assertIn("(4 of 6)", line)
 
+    def test_a_scope_keeps_the_newest_reasons_not_the_first(self):
+        rows, ledger = [], []
+        for i in range(8):
+            key = f"k{i}"
+            rows.append(look_row(at=1000 + i, finding_ts=100 + i, key=key,
+                                 verdict="investigate", why=f"why {i}",
+                                 id=f"r{i}"))
+            ledger.append(settled(key, "ignored", 5000 + i, note=f"note {i}"))
+        items = outcomes.items(outcomes.grade(rows, [], ledger, 9000))
+        scope = outcomes.tallies(items)["source"]["check:dev.frozen"]
+        self.assertEqual(scope["whys"], [f"why {i}" for i in range(3, 8)])
+        self.assertEqual(scope["notes"], [f"note {i}" for i in range(3, 8)])
+
     def test_a_bucket_below_the_floor_says_nothing(self):
         rows = [{**look_row(at=1000, case_ts=100, key="k"),
                  "stage": "investigate", "verdict": "filed",

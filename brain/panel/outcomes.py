@@ -590,10 +590,13 @@ def tallies(graded_items: list[dict]) -> dict[str, dict[str, dict]]:
             if outcome in ("undone", "cleared", "stood", "pending"):
                 t[outcome] += 1
             t["flags"] = sorted(set(t["flags"]) | set(it.get("flags") or []))
-            if it.get("why") and len(t["whys"]) < 5:
-                t["whys"].append(str(it["why"])[:160])
-            if it.get("note") and len(t["notes"]) < 5:
-                t["notes"].append(str(it["note"])[:MAX_NOTE])
+            # The NEWEST few: items arrive oldest first, and what the
+            # household said last week is the better evidence of what is
+            # true now than what it said in March.
+            if it.get("why"):
+                t["whys"] = (t["whys"] + [str(it["why"])[:160]])[-5:]
+            if it.get("note"):
+                t["notes"] = (t["notes"] + [str(it["note"])[:MAX_NOTE]])[-5:]
     return scopes
 
 
