@@ -22,8 +22,8 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
@@ -173,7 +173,7 @@ class TestAPersonCanChooseIt(unittest.TestCase):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
         self.settings = os.path.join(self.dir.name, "settings.json")
-        patch = mock.patch.object(settings_store, "SETTINGS_FILE", self.settings)
+        patch = unittest.mock.patch.object(settings_store, "SETTINGS_FILE", self.settings)
         patch.start()
         self.addCleanup(patch.stop)
 

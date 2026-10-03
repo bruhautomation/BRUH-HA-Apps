@@ -21,8 +21,8 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
@@ -133,7 +133,7 @@ class TestTheCapTakesTheChoreMachinesFirst(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "appliances.json")
-            with mock.patch.object(appliances, "fetch", fetch):
+            with unittest.mock.patch.object(appliances, "fetch", fetch):
                 payload = asyncio.run(appliances.build(
                     None, self.house(), NOW, path))
             self.assertEqual(payload["cut_count"], 7)

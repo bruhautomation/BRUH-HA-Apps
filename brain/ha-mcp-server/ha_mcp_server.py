@@ -13,6 +13,7 @@ Runs as a stdio-based MCP server that Claude Code launches automatically.
 import base64
 import io
 import json
+import math
 import os
 import re
 import sys
@@ -3392,7 +3393,7 @@ def _round_stat(value):
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return value
-    if value != value or value in (float("inf"), float("-inf")):  # NaN, inf
+    if not math.isfinite(value):
         return value
     if value == 0 or abs(value) >= 0.01:
         return round(value, 3)
