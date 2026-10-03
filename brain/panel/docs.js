@@ -222,16 +222,15 @@ buttons can be read without reading the words:
 
 The other kinds of card take the same shape with their own words: a **guess**
 brAIn wants confirmed offers **Yes**, **No** and **Dismiss**; a **suggestion**
-offers **Make the change**, **Try it for a week**, **Dismiss** and **No thanks**;
-a **plan waiting for consent** offers **Apply**, **Don't change it** and **Not a
+of a change to your automations is not on this feed at all — it is on the
+**Proposals** tab, with **Enable it**, **Try it for a week** and **No thanks** beside
+its evidence; a **plan waiting for consent** offers **Apply**, **Don't change it** and **Not a
 problem**; a **change brAIn made** offers **Got it**, and **Undo the fix** while it
 can be put back — and once a fix has run, its card shows what the run concluded
 and changed, a fix that came back needing you leads with your own presses, and
 one that failed says so with **Try again** behind the ⋯; a chore on your **To-do** tab offers **Done** and **Remove**. A
 chore a house check raised — empty the dishwasher, shut the back door — leads
 with **Done**, because the work is minutes and a list is sillier than doing it.
-A suggestion's card carries the same evidence the Proposals tab does — the replay,
-the before and after, a trial's grade — next to the button that accepts it.
 Questions sit just under the high-stakes problems, and **Dismiss** on a question
 puts it to sleep: brAIn asks something else meanwhile and asks again later (a
 week for most), and nothing is recorded either way.
@@ -1618,13 +1617,15 @@ The **Proposals** tab is the only list in the panel that is not about something
 being wrong: a list of things you might want, with the evidence for each one and a
 week's replay of your own history behind it.
 
-It still has a tab of its own **and** its suggestions now ride in the Findings feed as
-\`Could be better\` cases. That is deliberate rather than an oversight: this tab
-carries the swatches, the replay numbers and the trial lifecycle, which a one-line
-card in a feed cannot, and the feed carries the decision, which is what a badge can
-honestly count. Answering one in either place answers it in both — there is one
-store underneath and one ledger, so a card you decline here does not come back
-there. The tab goes when the four-tab panel lands; the decision has already moved.
+This tab is the one place a proposal is offered. For a release they also rode in
+the Findings feed, and a suggestion was then counted by both badges and could be
+answered in either place — while the feed's card could carry only the replay
+and a trial's grade, and sent a playbook or a set of scenes back here for its
+evidence anyway. Everything you would want before saying yes is on this tab: the
+replay and the before-and-after, a playbook's targets by name, the four moods
+drawn as swatches, a trial's week and its grade, and **Undo** on anything you
+accepted. The Findings feed is for problems and questions; its badge counts
+those, and this tab's badge counts suggestions.
 
 \`\`\`
 proposed  ──"Try it for a week"──▶  trialling  ──▶  accepted
@@ -2627,7 +2628,7 @@ again opens the group's first pane.
 
 \`enable_terminal\` switches the Ask tab off. \`enable_insights\` switches off
 everything that only a scheduled Claude run ever fills: the scheduler stops, and
-the **Insights** and **Proposals** panes go from Home's strip. **Home stays**,
+the **Insights** pane goes from Home's strip. **Findings and Proposals stay**,
 because the house checks cost nothing to run and still file there. The panel
 itself always runs, because it is the ingress target.
 
@@ -3292,7 +3293,7 @@ the rest of your options.
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | \`enable_terminal\` | bool | \`true\` | Run the ttyd terminal and show the classic terminal under **Ask**. Turn off for a dashboard-only install with no shell. |
-| \`enable_insights\` | bool | \`true\` | Run the card scheduler and show the **Insights** and **Proposals** tabs. Off stops every scheduled Claude run; **Home stays**, because the house checks cost nothing and still file there. |
+| \`enable_insights\` | bool | \`true\` | Run the card scheduler and show the **Insights** tab. Off stops every scheduled Claude run; **Findings and Proposals stay**, because the house checks cost nothing and still file there. |
 
 ## Terminal
 

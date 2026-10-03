@@ -526,13 +526,15 @@ function renderAuth() {
   $("#onboard").classList.toggle("hidden", signIn || obState.onboarded);
   $("#dash").classList.toggle("hidden", !ready);
   $("#settingsBtn").classList.toggle("hidden", !s.authenticated);
-  // `enable_insights: false` takes the two tabs that are only ever filled
-  // by a Claude run the scheduler would have queued; Findings stays, since
-  // the house checks cost nothing and still file there.
+  // `enable_insights: false` takes the one tab only ever filled by a
+  // Claude run the scheduler would have queued; Findings stays, since the
+  // house checks cost nothing and still file there — and so does
+  // Proposals, which the checks pass fills too and which is now the one
+  // surface a proposal is offered on.
   const insightsOn = s.insights_enabled !== false;
-  document.querySelectorAll('.subtab[data-view="insights"], .subtab[data-view="proposals"]')
+  document.querySelectorAll('.subtab[data-view="insights"]')
     .forEach((b) => b.classList.toggle("gone", !insightsOn));
-  if (!insightsOn && (currentView === "insights" || currentView === "proposals")) {
+  if (!insightsOn && currentView === "insights") {
     switchView("findings");
   } else {
     syncTabs(currentView);
@@ -5136,14 +5138,6 @@ function makeCase(row) {
     card.appendChild(box);
   }
 
-  // A proposal's evidence, beside the button that accepts it: the replay,
-  // and a trial's grade once the week has started. The Proposals sub-tab
-  // always had both; the feed — which is where *Make the change* is
-  // pressed — had neither, so the whole argument for a trial never reached
-  // the screen the yes is given on.
-  const proof = caseProofNode(row);
-  if (proof) card.appendChild(proof);
-
   // The plan a read-only run wrote, above the Apply that would let it —
   // the one block on the card somebody is about to consent to, so it is
   // never folded away.
@@ -5222,34 +5216,6 @@ function caseResultNode(row) {
     box.appendChild(list);
   }
   return box;
-}
-
-// An opportunity's evidence, in the Proposals tab's own sentences — the
-// same two helpers, handed the case in the shape they read, so the card
-// and the tab cannot word one trial two ways. A playbook and a scene have
-// no replay (no week had a smoke alarm in it; a mood is a picture), so the
-// card says where their evidence is rather than going quiet.
-function caseProofNode(row) {
-  if (row.kind !== "opportunity") return null;
-  const box = el("div", "caseproof");
-  const shaped = {
-    replay: row.replay, replay_before: row.replay_before,
-    trial_result: row.trial_result, trial_started_at: row.trial_started_at,
-    trial_ends_at: row.trial_ends_at,
-  };
-  let line = "";
-  if (row.case_line) line = row.case_line;
-  else if (row.replay) line = propReplayLine(shaped);
-  else if (row.playbook || row.scene) {
-    line = row.playbook
-      ? "What it would act on is listed on the Proposals tab, by name."
-      : "The four moods are drawn on the Proposals tab.";
-  }
-  if (line) box.appendChild(el("p", "propreplay", line));
-  if (row.proposal_status === "trialling") {
-    box.appendChild(el("p", "proptrial", propTrialLine(shaped)));
-  }
-  return box.childNodes.length ? box : null;
 }
 
 // Everything that makes the claim checkable, behind one disclosure: what

@@ -6496,9 +6496,11 @@ def _open_case_rows(limit: int = 12, exclude=None) -> list[str]:
     """
     drop = {str(e) for e in (exclude or ()) if e}
     try:
-        # Every kind, chores included: an accepted chore is off the feed and
-        # is still something the house has already said.
-        rows = cases.list_cases("open", kinds=cases.KINDS)
+        # Every kind and every store, chores and proposals included: an
+        # accepted chore and a suggestion on the Proposals tab are off the
+        # feed and are still something the house has already said.
+        rows = cases.list_cases("open", kinds=cases.KINDS,
+                                stores=cases.STORES)
     except Exception as exc:  # noqa: BLE001 — a prompt section, not the run
         log.debug("could not list the open cases: %s", exc)
         return []

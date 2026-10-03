@@ -4,10 +4,10 @@
 Three things the feed got wrong while every store underneath had it right:
 
 * **The evidence was dropped on the way to the card.** The fixer writes a
-  `result` and a `changed` list, a proposal carries its replay and its
-  trial's grade — and the read model copied none of it, so a failed or
-  needs-you fix rendered as an ordinary problem whose first button bought
-  another plan run, and *Make the change* sat under no evidence at all.
+  `result` and a `changed` list — and the read model copied none of it, so
+  a failed or needs-you fix rendered as an ordinary problem whose first
+  button bought another plan run. (A proposal's evidence went the other
+  way: proposals left the feed for their own tab, which carries it whole.)
 * **Questions sank.** A guess is `low` stakes and a proposal's id is a
   millisecond, so every question sorted under every warning AND every
   opportunity, whatever their ages.
@@ -110,7 +110,17 @@ class TestTheFixersReportReachesTheCard(StoresCase):
         self.assertEqual(got[0], "todo")
 
 
-class TestTheProposalsEvidenceReachesTheCard(StoresCase):
+class TestAProposalIsOfferedOnItsOwnTab(StoresCase):
+    """One surface for a proposal, and it is the Proposals tab.
+
+    The feed carried proposals beside findings for a release, with the
+    replay and a trial's grade copied onto the case — and a playbook or a
+    set of scenes still sent you to the tab for its evidence, while both
+    badges counted the same decision. The tab carries the whole of it, so
+    the feed lists none and counts none, and what was copied for it is
+    gone with it.
+    """
+
     def proposal(self, **extra) -> dict:
         return proposals.add({
             "kind": "routine", "source": "routines",
@@ -120,37 +130,38 @@ class TestTheProposalsEvidenceReachesTheCard(StoresCase):
             "replay": {"would_run": 9, "days": 30, "blocked_by_conditions": 0},
             **extra})
 
-    def test_the_replay_rides_on_the_case(self):
+    def test_the_feed_lists_none_and_the_badge_counts_none(self):
         row = self.proposal()
-        case = cases.get(f"p:{row['ts']}")
-        self.assertEqual(case["replay"]["would_run"], 9)
-        self.assertEqual(case["proposal_status"], "proposed")
-        self.assertIsNone(case["trial_result"])
-
-    def test_a_trialled_proposal_carries_its_grade_beside_make_the_change(self):
-        row = self.proposal()
+        self.assertNotIn(f"p:{row['ts']}",
+                         {c["id"] for c in cases.list_cases("open")})
+        self.assertEqual(cases.open_count(), 0)
+        # A trial is not on the feed either: it is the tab's lifecycle.
         proposals.start_trial(row["ts"])
-        proposals.record_trial(row["ts"], {"would_fire": 6, "agreed": 4,
-                                           "disagreed": 1, "contradicted": 1,
-                                           "days": 3})
-        case = cases.get(f"p:{row['ts']}")
-        self.assertEqual(case["status"], "watching")
-        self.assertEqual(case["proposal_status"], "trialling")
-        self.assertEqual(case["trial_result"]["agreed"], 4)
-        self.assertGreater(case["trial_ends_at"], case["trial_started_at"])
-        # The press it sits beside is still the accept.
-        self.assertEqual(verbs(case)[0], "accept")
+        self.assertEqual(cases.list_cases(), [])
 
-    def test_a_rule_asked_for_in_words_carries_its_composed_case(self):
-        row = self.proposal(spoken={"sentence": "x", "case": "It would have "
-                                    "run 9 times; you did the same on 7."})
-        case = cases.get(f"p:{row['ts']}")
-        self.assertIn("you did the same on 7", case["case_line"])
+    def test_a_caller_that_names_the_store_still_gets_it(self):
+        """The Resident's "already said" list asks for every store."""
+        row = self.proposal()
+        listed = cases.list_cases("open", kinds=cases.KINDS,
+                                  stores=cases.STORES)
+        self.assertIn(f"p:{row['ts']}", {c["id"] for c in listed})
+        # …and `get` still answers, for a page that was served before.
+        self.assertEqual(cases.get(f"p:{row['ts']}")["claim"], row["title"])
 
-    def test_a_playbook_says_where_its_evidence_is(self):
-        row = self.proposal(kind="playbook", playbook={"class": "smoke"},
-                            config={"trigger": [{"platform": "state"}]})
-        self.assertTrue(cases.get(f"p:{row['ts']}")["playbook"])
+    def test_no_feed_only_copy_of_the_evidence_rides_on_the_case(self):
+        row = self.proposal()
+        case = cases.get(f"p:{row['ts']}")
+        for gone in ("replay", "trial_result", "case_line",
+                     "proposal_status", "playbook", "scene"):
+            self.assertNotIn(gone, case)
+
+    def test_the_findings_and_guesses_still_share_the_feed(self):
+        problem = self.file_problem()
+        guess = self.file_question()
+        self.proposal()
+        self.assertEqual({c["id"] for c in cases.list_cases()},
+                         {f"f:{problem['ts']}", f"h:{guess['ts']}"})
+        self.assertEqual(cases.open_count(), 2)
 
 
 class TestQuestionsHaveTheirOwnBand(StoresCase):
@@ -172,7 +183,9 @@ class TestQuestionsHaveTheirOwnBand(StoresCase):
         guess = self.file_question()
         opp = self.file_opportunity()
         self.assertGreater(opp["ts"], guess["ts"] * 100)   # the old trap
-        listed = cases.list_cases()
+        # Every store: a proposal is off the feed, and the ordering is the
+        # read model's, which the Resident's list reads with every store.
+        listed = cases.list_cases(stores=cases.STORES)
         ids = [c["id"] for c in listed]
         self.assertLess(ids.index(f"h:{guess['ts']}"),
                         ids.index(f"p:{opp['ts']}"))
@@ -182,7 +195,7 @@ class TestQuestionsHaveTheirOwnBand(StoresCase):
 
     def test_created_at_is_seconds_whichever_store(self):
         made = self.one_of_each()
-        for case in cases.list_cases(kinds=cases.KINDS):
+        for case in cases.list_cases(kinds=cases.KINDS, stores=cases.STORES):
             self.assertLess(abs(case["created_at"] - time.time()), 600,
                             case["id"])
         self.assertTrue(made)

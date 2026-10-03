@@ -3288,8 +3288,6 @@ body.term-classic #termMode .ico-out { display: block; }
 /* A proposal's evidence on its case card: the replay and the trial's
    grade, in the Proposals tab's own classes, beside the buttons that act
    on them. */
-.caseproof { margin-top: 11px; }
-.caseproof > p:last-child { margin-bottom: 0; }
 .findchanged { margin: 8px 0 0; padding-left: 18px; }
 .findchanged li { margin: 3px 0; }
 
