@@ -8098,7 +8098,7 @@ def _understanding_gate(settings: dict, pressed: bool) -> str:
     return _resident_gate(settings)
 
 
-async def _house_snapshot() -> dict:
+async def _registry_snapshot() -> dict:
     """States and the three registries, in the checks snapshot's shape.
 
     A registry that did not answer RAISES rather than reading as empty:
@@ -8150,7 +8150,7 @@ async def _world_model_read(reason: str, pressed: bool, snap: dict | None,
     now = time.time() if now is None else float(now)
     store = await asyncio.to_thread(world_model.load)
     if snap is None:
-        snap = await _house_snapshot()
+        snap = await _registry_snapshot()
     cands = world_model.candidates(snap)
     pending = world_model.needs_reading(store, cands)
     if pressed and not pending:
