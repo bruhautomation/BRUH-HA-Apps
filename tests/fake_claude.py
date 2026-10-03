@@ -24,6 +24,16 @@ Behavior switches via env:
                    | overloaded_then_ok (one-shot: the first call answers
                      the API's own 529 envelope, every later call answers
                      normally; "first" is remembered in FAKE_ONCE_FILE)
+                   | tool_then_crash (stream: start the turn, call a tool,
+                     get its result back, then die before the result event
+                     — a voice turn that may already have changed the house)
+  FAKE_ONESHOT_TEXT  (one-shot, ok mode) answer with exactly this instead
+                   of echoing the prompt
+  FAKE_HELP        comma-separated flags `--help` lists (default: none — an
+                   older CLI). A `--help` call is answered before anything
+                   is logged, because it is a probe and not a run.
+  FAKE_HELP_LOG    append one line per `--help` probe, so a test can count
+                   how often a caller asked
 """
 
 import json
@@ -32,6 +42,15 @@ import sys
 import time
 
 argv = sys.argv[1:]
+if argv == ["--help"]:
+    help_log = os.environ.get("FAKE_HELP_LOG")
+    if help_log:
+        with open(help_log, "a") as fh:
+            fh.write("help\n")
+    print("Usage: claude [options] [command] [prompt]\n\nOptions:")
+    for flag in filter(None, os.environ.get("FAKE_HELP", "").split(",")):
+        print(f"  {flag.strip()} <value>")
+    sys.exit(0)
 log_path = os.environ.get("FAKE_CLAUDE_LOG")
 if log_path:
     # One write per invocation: the pool pre-warms a spare in the background,
@@ -42,7 +61,9 @@ if log_path:
                  + "ENV BRAIN_DENIED_SERVICES="
                  + os.environ.get("BRAIN_DENIED_SERVICES", "") + "\n"
                  + "ENV BRAIN_EXPOSED_ONLY="
-                 + os.environ.get("BRAIN_EXPOSED_ONLY", "") + "\n")
+                 + os.environ.get("BRAIN_EXPOSED_ONLY", "") + "\n"
+                 + "ENV BRAIN_CHANNEL="
+                 + os.environ.get("BRAIN_CHANNEL", "") + "\n")
 
 mode = os.environ.get("FAKE_MODE", "ok")
 
@@ -65,6 +86,32 @@ if "--input-format" in argv:
             time.sleep(60)
             continue
         if mode == "crash":
+            sys.exit(1)
+        if mode == "tool_then_crash":
+            # The real CLI's shape for a turn that reached a tool: the
+            # message opens, a tool_use block starts (token streaming
+            # only), the assistant message carries it whole, and the tool's
+            # result comes back as a user event — then this process dies.
+            if "--include-partial-messages" in argv:
+                print(json.dumps({"type": "stream_event", "session_id": sid,
+                                  "event": {"type": "message_start"}}),
+                      flush=True)
+                print(json.dumps({"type": "stream_event", "session_id": sid,
+                                  "event": {"type": "content_block_start",
+                                            "content_block": {
+                                                "type": "tool_use",
+                                                "name": "control_light"}}}),
+                      flush=True)
+            print(json.dumps({"type": "assistant", "session_id": sid,
+                              "message": {"content": [
+                                  {"type": "text", "text": "Turning it off."},
+                                  {"type": "tool_use", "id": "t1",
+                                   "name": "control_light", "input": {}}]}}),
+                  flush=True)
+            print(json.dumps({"type": "user", "session_id": sid,
+                              "message": {"content": [
+                                  {"type": "tool_result", "tool_use_id": "t1",
+                                   "content": "ok"}]}}), flush=True)
             sys.exit(1)
         if mode == "autherror":
             # the real CLI marks the result event as an error
@@ -154,5 +201,9 @@ else:
             }))
         else:
             print(text)
+    elif os.environ.get("FAKE_ONESHOT_TEXT"):
+        # A one-shot that answers with exactly this — a reflection pass's
+        # JSON lines, say — instead of echoing its prompt.
+        print(os.environ["FAKE_ONESHOT_TEXT"])
     else:
         print(f"ONESHOT: {data}")

@@ -143,6 +143,11 @@ def env_exports(override: str = "", thinking: str = DEFAULT_THINKING) -> dict[st
         "BRAIN_MODEL_STUDY": resolve("study", thinking, override)[0],
         "BRAIN_MODEL_MEMORY": resolve("consolidate", thinking, override)[0],
         "BRAIN_MODEL_VOICE": resolve("voice", thinking, override)[0],
+        # The voice job's depth beside its model: the pool and the classic
+        # listener pass it as `--effort` when an agent is set to Default
+        # (and the CLI takes the flag). The one effort the shell half
+        # reads, because voice is the one shell job a person waits on.
+        "BRAIN_EFFORT_VOICE": resolve("voice", thinking, override)[1],
         "BRAIN_MODEL_TASK": resolve("task", thinking, override)[0],
         "BRAIN_THINKING": thinking if thinking in THINKING else DEFAULT_THINKING,
     }

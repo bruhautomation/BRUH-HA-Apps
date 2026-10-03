@@ -229,8 +229,12 @@ class TestSimulate(unittest.TestCase):
 class TestRememberFactCarriesTheSubject(unittest.TestCase):
     def test_the_inbox_line_names_the_subject(self):
         import tempfile
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("BRAIN_") and k != "CLAUDE_CODE_SESSION_ID"}
+        env["BRAIN_CHANNEL"] = "chat"
         with tempfile.TemporaryDirectory() as tmp, \
-                patch.object(ha_mcp_server, "MEMORY_DIR", tmp):
+                patch.object(ha_mcp_server, "MEMORY_DIR", tmp), \
+                patch.dict(os.environ, env, clear=True):
             out = ha_mcp_server.remember_fact(
                 "Ben likes the lounge warm", subject="area:lounge", person="ben")
             self.assertEqual(out["status"], "remembered")
@@ -240,7 +244,7 @@ class TestRememberFactCarriesTheSubject(unittest.TestCase):
                 rec = json.loads(fh.readline())
         self.assertEqual(rec["subject"], "area:lounge")
         self.assertEqual(rec["person"], "ben")
-        self.assertEqual(rec["source"], "assist")
+        self.assertEqual(rec["source"], "chat")
 
 
 if __name__ == "__main__":

@@ -6868,11 +6868,64 @@ function drillThermal(box, payload) {
   ]);
   const ok = drillTable(box,
     ["Room", "Loss k /h", "τ hours", "Gain", "To warm"], rows);
-  if (ok && payload.outdoor) {
-    box.appendChild(el("div", "kfoot",
-      `Measured against ${payload.outdoor}${payload.unit ? ` (${payload.unit})` : ""}.`));
-  }
+  thermalReference(box, payload);
   return ok;
+}
+
+// Every room above is measured against ONE outdoor thermometer, so which
+// one, and why, is said under the table — and the person who knows better
+// can change it. A reference nobody can check is one nobody can correct.
+// Drawn even when no room was measured, because a wrong reference is the
+// likeliest reason none was. The choice is a panel setting
+// (`thermal_outdoor`) and takes effect at the next measuring pass, which
+// is started on the spot rather than left for tonight.
+function thermalReference(box, payload) {
+  const cands = Array.isArray(payload.outdoor_candidates)
+    ? payload.outdoor_candidates : [];
+  if (!payload.outdoor && !cands.length) return;
+  const wrap = el("div", "kref");
+  wrap.appendChild(el("div", "kfoot", payload.outdoor
+    ? `Measured against ${payload.outdoor}${payload.unit ? ` (${payload.unit})` : ""}.`
+    : "No outdoor reference yet."));
+  if (payload.outdoor_why) wrap.appendChild(el("div", "kfoot", payload.outdoor_why));
+  const choice = payload.outdoor_choice || "";
+  if (choice && choice !== payload.outdoor) {
+    wrap.appendChild(el("div", "kfoot",
+      `${choice} was chosen and is measured against from the next measuring pass.`));
+  }
+  if (cands.length) {
+    const label = el("label", "kreflabel", "Outdoor reference ");
+    const sel = el("select");
+    sel.appendChild(new Option("Let brAIn choose", ""));
+    const listed = new Set();
+    cands.forEach((c) => {
+      listed.add(c.entity_id);
+      sel.appendChild(new Option(
+        `${c.name || c.entity_id} (${c.entity_id})`
+        + (c.ruled_out ? ` — ${c.ruled_out}` : ""), c.entity_id));
+    });
+    if (choice && !listed.has(choice)) sel.appendChild(new Option(choice, choice));
+    sel.value = choice;
+    sel.addEventListener("change", async () => {
+      sel.disabled = true;
+      try {
+        await api("api/settings", {
+          method: "PUT", body: JSON.stringify({ thermal_outdoor: sel.value || null }) });
+        // A 409 is a pass already running, which will read the choice too.
+        await api("api/baselines/run", { method: "POST" }).catch(() => null);
+        toast(sel.value
+          ? `Re-measuring the rooms against ${sel.value} — a few minutes`
+          : "Re-measuring, with brAIn choosing the reference — a few minutes");
+      } catch (e) {
+        toast(e.message);
+      } finally {
+        sel.disabled = false;
+      }
+    });
+    label.appendChild(sel);
+    wrap.appendChild(label);
+  }
+  box.appendChild(wrap);
 }
 
 // ---- closures: how much of each hour of the week each door is open. A

@@ -10,7 +10,10 @@ files every state change under a cause, and the first change caused by a
 **person** is the house waking up — not a motion sensor (which fires for
 a cat and for the heating), not a light coming on (an automation does
 that at dawn), but somebody actually doing something. The last one is the
-house settling.
+house settling. A **voice** command is a person doing something too, and
+the most deliberate one a house records: somebody said what they wanted
+in words. Leaving it out measured a voice-first house by its phone taps
+alone, which is to say mostly not at all.
 
 Four rules keep it honest, and they are the same four the baselines and
 the override ledger carry, because they are the same failure.
@@ -36,6 +39,24 @@ holds none. `MAX_SPREAD_MIN` is what refuses it.
 — 23:40 and 00:20 are forty minutes apart and average to *noon* on a
 straight number line. Everything here is measured as minutes around the
 clock and the centre is found by rotating to the tightest arc first.
+
+**A day ends at 04:00, not at midnight** (`DAY_START_MIN`). The circular
+median above defends a settle at 00:20, and a store that filed each
+action under its calendar date could never record one: anything after
+midnight became the NEXT date's first action, so a household that goes
+to bed at 00:40 was measured as waking at 00:40 and settling at 22:00 —
+not imprecise but inverted, and every reader downstream inherits it (the
+brief arriving at half past midnight, the bedtime check running at ten,
+the overnight heal restarting add-ons while people are still up). So an
+action belongs to the house day it happened in, which runs from 04:00 to
+04:00, and first and last are read in that day's own order. The hour is
+fixed rather than measured on purpose: the quiet trough of nearly every
+household sits between three and five, and a boundary that moved with
+the data would file the same night under two different days as the
+store aged, which is the one property a day key may not have. A row
+written under the old calendar rule that the new rule would have split
+differently is dropped when the store is read rather than carried — a
+measurement that was wrong is not one to keep averaging in.
 """
 from __future__ import annotations
 
@@ -61,6 +82,25 @@ MAX_SPREAD_MIN = 90.0
 WEEKDAY = "weekday"
 WEEKEND = "weekend"
 
+# Where one house day ends and the next begins, in minutes after local
+# midnight. See the module docstring for why it is a fixed hour.
+DAY_START_MIN = 4 * 60
+# The causes that are somebody doing something (`actions.CAUSES`).
+# `unattributed` stays out: a wall switch and a device's own integration
+# reach Core identically, and a wake time measured off a device reporting
+# itself is the heating's wake time.
+PERSON_CAUSES = frozenset({"person", "voice"})
+
+
+def house_day(when: dt.datetime) -> dt.date:
+    """The house day an instant belongs to: 00:40 on Saturday is Friday."""
+    return (when - dt.timedelta(minutes=DAY_START_MIN)).date()
+
+
+def _day_order(minute: int) -> int:
+    """A clock minute's place within its house day (04:00 is 0)."""
+    return (int(minute) - DAY_START_MIN) % MINUTES_PER_DAY
+
 
 # ---------------------------------------------------------------------------
 # Clock arithmetic that does not break at midnight
@@ -85,7 +125,37 @@ def load(path: str | None = None) -> dict:
         return {"days": {}}
     if not isinstance(data, dict) or not isinstance(data.get("days"), dict):
         return {"days": {}}
-    return data
+    return _repair(data)
+
+
+def _repair(payload: dict) -> dict:
+    """Drop what a calendar-day store recorded wrongly, once.
+
+    A store written before the house day carries no `day_start`. Where it
+    shows a first action before `DAY_START_MIN`, that date's first was
+    the previous evening's late activity and the previous date's last
+    was missing it — two rows the new rule files differently, so both go.
+    Every other old row is exactly what the new rule would have written
+    (its activity all fell between 04:00 and midnight) and is kept, so a
+    house that never stayed up past midnight loses nothing.
+    """
+    if payload.get("day_start") == DAY_START_MIN:
+        return payload
+    days = dict(payload.get("days") or {})
+    wrong = set()
+    for key, row in days.items():
+        first = row.get("first") if isinstance(row, dict) else None
+        if isinstance(first, int) and first < DAY_START_MIN:
+            wrong.add(key)
+            day = _date(key)
+            if day:
+                wrong.add((day - dt.timedelta(days=1)).isoformat())
+    if wrong:
+        log.info("rhythm: %d day(s) measured across midnight under the old "
+                 "calendar rule were dropped", len(wrong & set(days)))
+    return {**payload, "days": {k: v for k, v in days.items()
+                                if k not in wrong},
+            "day_start": DAY_START_MIN}
 
 
 def save(payload: dict, path: str | None = None) -> None:
@@ -103,35 +173,43 @@ def save(payload: dict, path: str | None = None) -> None:
 
 def record(actions: list[dict], tz: dt.tzinfo, now: float | None = None,
            path: str | None = None) -> int:
-    """File the first and last person-caused minute of each day seen.
+    """File the first and last person-caused minute of each house day seen.
 
     Returns how many days were touched. A day already recorded is
     *widened*, never replaced: passes overlap, so a window that starts at
     04:00 sees a later "first" than the pass that saw midnight, and
     taking the newest would walk the wake time forwards all morning.
+
+    "First" and "last" are in the house day's own order (`_day_order`),
+    so 00:40 is LATER than 23:10 — the stored numbers stay clock minutes,
+    which is what the circular median and every reader already take.
     """
     now = time.time() if now is None else now
     payload = load(path)
     days = payload["days"]
     touched = set()
     for action in actions or []:
-        if not isinstance(action, dict) or action.get("cause") != "person":
+        if (not isinstance(action, dict)
+                or action.get("cause") not in PERSON_CAUSES):
             continue
         ts = action.get("ts")
         if not isinstance(ts, (int, float)) or isinstance(ts, bool):
             continue
         when = dt.datetime.fromtimestamp(float(ts), tz)
-        key = when.date().isoformat()
+        day = house_day(when)
+        key = day.isoformat()
         minute = when.hour * 60 + when.minute
         row = days.get(key)
         if not isinstance(row, dict):
             row = {"first": minute, "last": minute,
-                   "dow": when.weekday(), "n": 0}
+                   "dow": day.weekday(), "n": 0}
             days[key] = row
         # Widened, never replaced. See the docstring.
-        row["first"] = min(int(row.get("first", minute)), minute)
-        row["last"] = max(int(row.get("last", minute)), minute)
-        row["dow"] = when.weekday()
+        row["first"] = min(int(row.get("first", minute)), minute,
+                           key=_day_order)
+        row["last"] = max(int(row.get("last", minute)), minute,
+                          key=_day_order)
+        row["dow"] = day.weekday()
         row["n"] = int(row.get("n", 0)) + 1
         touched.add(key)
 
@@ -139,6 +217,7 @@ def record(actions: list[dict], tz: dt.tzinfo, now: float | None = None,
     payload["days"] = {k: v for k, v in days.items()
                        if _date(k) and _date(k) >= cutoff}
     payload["updated_at"] = int(now)
+    payload["day_start"] = DAY_START_MIN
     save(payload, path)
     return len(touched)
 
@@ -287,13 +366,21 @@ def wake_minute(payload: dict, when: dt.datetime) -> float | None:
 
 
 def settle_minute(payload: dict, when: dt.datetime) -> float | None:
-    part = payload.get(WEEKEND if when.weekday() >= 5 else WEEKDAY) or {}
+    """The usual last-activity minute for the house day `when` is in.
+
+    The HOUSE day, where `wake_minute` reads the calendar one: at 00:30
+    on a Saturday the settle that matters is Friday night's, which is the
+    day it was filed under, and the wake still to come is Saturday's.
+    """
+    day = house_day(when)
+    part = payload.get(WEEKEND if day.weekday() >= 5 else WEEKDAY) or {}
     shape = part.get("settles")
     return shape["minute"] if shape else None
 
 
 __all__ = [
-    "KEEP_DAYS", "MAX_SPREAD_MIN", "MINUTES_PER_DAY", "MIN_DAYS",
+    "DAY_START_MIN", "KEEP_DAYS", "MAX_SPREAD_MIN", "MINUTES_PER_DAY",
+    "MIN_DAYS", "PERSON_CAUSES", "house_day",
     "PROGRESS_UNIT_S", "STORE", "WEEKDAY", "WEEKEND", "circular_distance",
     "circular_median",
     "circular_spread", "clock", "load", "profile", "progress", "record",

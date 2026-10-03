@@ -112,10 +112,18 @@ MAX_ASKED = 400
 # and is what a crash leaves behind, which is why it is in the set that
 # blocks a re-ask: a run that died having spent the money must not be
 # indistinguishable from one that never happened.
-STATUSES = ("asked", "explained", "guessed", "unknown", "failed")
+STATUSES = ("asked", "explained", "guessed", "unknown", "failed", "deferred")
 # Which of those may be asked again, and under what. `explained` and
 # `guessed` are done — the fact is filed or the question is on the list.
-RETRYABLE = ("unknown", "failed", "asked")
+#
+# `deferred` is a guess the hypothesis queue would not take because it was
+# full. It used to be recorded `guessed`, which is "the question is on the
+# list" — and it was on no list, so a subject was closed for ever without
+# anybody ever having been asked, by a run that had already been paid for.
+# The guess is kept on the entry and re-proposed for nothing the moment a
+# slot frees (`deferred`); it is retryable as well, so if the queue stays
+# full and the evidence keeps growing, a fresh look is still possible.
+RETRYABLE = ("unknown", "failed", "asked", "deferred")
 
 
 SYSTEM = """You work out why somebody did something in their own home.
@@ -531,12 +539,59 @@ def parse(reply: dict | None) -> dict | None:
     return out
 
 
-def status_for(answer: dict | None) -> str:
-    """The store's word for what an answer was. One mapping, one place."""
+# What `_file_curiosity` answers when the hypothesis queue would not take
+# a guess. Named, because two modules spelling it is a status that stops
+# being recognised the day one of them is reworded.
+REFUSED = "hypothesis-refused"
+
+
+def status_for(answer: dict | None, filed: str = "") -> str:
+    """The store's word for what an answer was. One mapping, one place.
+
+    ``filed`` matters for exactly one case: a guess the queue refused was
+    not put to anybody, and the word for that is `deferred`, not
+    `guessed`.
+    """
     if not answer:
         return "failed"
+    if answer["confidence"] == "guess" and filed == REFUSED:
+        return "deferred"
     return {"explained": "explained", "guess": "guessed",
             "unknown": "unknown"}[answer["confidence"]]
+
+
+def deferred(payload: dict | None = None, path: str | None = None) -> list[dict]:
+    """Guesses a full queue turned away, oldest first — free to re-propose.
+
+    Oldest first so nothing loses the same lottery twice, `triage`'s rule
+    for a queue that drains a little at a time.
+    """
+    payload = load(path) if payload is None else payload
+    out = [dict(e) for e in (payload.get("asked") or {}).values()
+           if isinstance(e, dict) and e.get("status") == "deferred"
+           and e.get("ask")]
+    out.sort(key=lambda e: e.get("answered_at") or e.get("asked_at") or 0)
+    return out
+
+
+def mark_reproposed(subject: str, now: float | None = None,
+                    path: str | None = None) -> dict | None:
+    """A deferred guess reached the queue after all: it is `guessed` now."""
+    now = time.time() if now is None else now
+    payload = load(path)
+    entry = _entry(payload, subject)
+    if entry is None or entry.get("status") != "deferred":
+        return None
+    entry["status"] = "guessed"
+    entry["filed"] = "hypothesis"
+    entry["reproposed_at"] = int(now)
+    payload["asked"][subject] = entry
+    payload.setdefault("log", []).append({
+        "ts": int(now), "subject": subject, "name": entry.get("name") or "",
+        "status": "guessed", "because": entry.get("because") or "",
+        "filed": "hypothesis", "error": ""})
+    save(payload, path)
+    return entry
 
 
 def mark_asked(candidate: dict, now: float | None = None,
@@ -588,7 +643,7 @@ def record_answer(subject: str, answer: dict | None, filed: str = "",
     entry = _entry(payload, subject)
     if entry is None:
         return None
-    entry["status"] = status_for(answer)
+    entry["status"] = status_for(answer, filed)
     entry["answered_at"] = int(now)
     entry["filed"] = filed
     entry["error"] = _clean(error, 200)
@@ -641,8 +696,9 @@ def counts(payload: dict | None = None, path: str | None = None) -> dict:
 __all__ = [
     "SCHEMA",
     "CONFIDENCES", "MAX_ASKED", "MAX_PER_DAY", "MAX_PER_PASS",
-    "MAX_PER_WEEK", "MAX_TURNS", "RETRYABLE", "RETRY_EVENTS", "STATUSES",
-    "STORE", "SYSTEM", "TIMEOUT_S", "budget_reason", "counts", "describe",
-    "frame", "load", "mark_asked", "may_ask", "parse", "ready", "recent",
+    "MAX_PER_WEEK", "MAX_TURNS", "REFUSED", "RETRYABLE", "RETRY_EVENTS",
+    "STATUSES", "STORE", "SYSTEM", "TIMEOUT_S", "budget_reason", "counts",
+    "deferred", "describe", "frame", "load", "mark_asked",
+    "mark_reproposed", "may_ask", "parse", "ready", "recent",
     "record_answer", "save", "spent", "status_for", "worth_asking",
 ]

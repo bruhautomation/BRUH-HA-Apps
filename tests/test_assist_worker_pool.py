@@ -39,6 +39,12 @@ def load_pool_module(tmp_path: Path, monkeypatch, **extra_env):
     monkeypatch.setenv("BRAIN_RUN_SOURCES", str(tmp_path / "run-sources.jsonl"))
     # No token -> area-map refresh is skipped; prompts use the no-map branch.
     monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
+    # The voice tier's plan, the run journal and the usage nudge all have
+    # real /data paths as their defaults; a suite that wrote any of them on
+    # the machine running it would be a suite with a side effect.
+    monkeypatch.setenv("BRAIN_ENV_FILE", str(tmp_path / "brain_env"))
+    monkeypatch.setenv("BRAIN_JOURNAL_FILE", str(tmp_path / "journal.jsonl"))
+    monkeypatch.setenv("BRAIN_USAGE_NUDGE", str(tmp_path / "usage-nudge"))
     monkeypatch.delenv("FAKE_MODE", raising=False)
     for key, value in extra_env.items():
         monkeypatch.setenv(key, value)
@@ -51,6 +57,12 @@ def load_pool_module(tmp_path: Path, monkeypatch, **extra_env):
     for d in (mod.REQUESTS_DIR, mod.RESPONSES_DIR, mod.SESSIONS_DIR,
               mod.CACHE_DIR, mod.LOG_DIR):
         os.makedirs(d, exist_ok=True)
+    # A turn's journal row is written off the request thread through the
+    # panel's own `journal` module, which another test may already have
+    # imported against the real /data path — so it is recorded here, and
+    # driven for real in tests/test_voice_run_contract.py.
+    mod.journaled = []
+    mod.journal_turn = lambda *a, **kw: mod.journaled.append((a, kw))
     return mod
 
 
@@ -235,8 +247,10 @@ def test_reflection_survives_a_cli_that_rejects_session_id(tmp_path, monkeypatch
 
 def test_auth_error_recycles_pool_and_gives_guidance(tmp_path, monkeypatch):
     """An expired OAuth login must not leak the raw CLI error to the voice
-    channel: the pool replaces it with an actionable /login instruction and
-    drops its workers so post-relogin requests spawn fresh processes."""
+    channel: the pool replaces it with the panel's own sign-in button (the
+    remedy every surface names now — a `/login` typed into a terminal is a
+    tab `enable_terminal` can remove) and drops its workers so post-relogin
+    requests spawn fresh processes."""
     mod = load_pool_module(tmp_path, monkeypatch)
     monkeypatch.setenv("FAKE_MODE", "autherror")
     pool = mod.Pool()
@@ -245,7 +259,8 @@ def test_auth_error_recycles_pool_and_gives_guidance(tmp_path, monkeypatch):
         pool.handle(req)
         resp = read_response(mod, req["id"])
         assert "OAuth session expired" not in resp
-        assert "/login" in resp and "brAIn" in resp
+        assert "Sign in again" in resp and "brAIn" in resp
+        assert "/login" not in resp
         assert "convA" not in pool.workers, "broken worker must be dropped"
     finally:
         shutdown(pool)
@@ -708,6 +723,11 @@ def test_the_count_is_kept_by_the_real_request_path(tmp_path, monkeypatch):
     notice keys on (`worker.partial`) is set where the argv is built."""
     mod = load_pool_module(tmp_path, monkeypatch)
     monkeypatch.setenv("FAKE_MODE", "crash")
+    # What is asked is whether a death at spawn is NOTICED, not how fast
+    # this machine spawns: on a loaded runner a crashing spawn has taken
+    # longer than the production window to be read as dead, which failed
+    # this test for a reason that has nothing to do with the pool.
+    monkeypatch.setattr(mod, "EARLY_DEATH_S", 120.0)
     pool = mod.Pool()
     try:
         # Cold-spawned on purpose, both times. "Died at SPAWN" is measured

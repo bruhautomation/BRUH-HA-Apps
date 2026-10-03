@@ -9,6 +9,7 @@ home it hasn't looked at.
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -34,6 +35,7 @@ class OnboardingCase(unittest.TestCase):
             "requests": onboarding.STUDY_REQUESTS_DIR,
             "curriculum": onboarding.CURRICULUM_FILE,
             "memory": onboarding.MEMORY_FILE,
+            "inbox": onboarding.INBOX_DIR,
             "cats": user_categories.USER_CATS_FILE,
             "hyp": hypotheses.HYPOTHESES_FILE,
             # accept() records which shipped categories this home asked
@@ -50,6 +52,7 @@ class OnboardingCase(unittest.TestCase):
         onboarding.STUDY_REQUESTS_DIR = root / "study_requests"
         onboarding.CURRICULUM_FILE = root / "curriculum.json"
         onboarding.MEMORY_FILE = root / "memory.md"
+        onboarding.INBOX_DIR = root / "inbox"
         user_categories.USER_CATS_FILE = str(root / "user_cats.json")
         hypotheses.HYPOTHESES_FILE = root / "hypotheses.jsonl"
         prompt_store.OVERRIDES_FILE = str(root / "prompt_overrides.json")
@@ -60,14 +63,15 @@ class OnboardingCase(unittest.TestCase):
         onboarding.STUDY_REQUESTS_DIR = self._old["requests"]
         onboarding.CURRICULUM_FILE = self._old["curriculum"]
         onboarding.MEMORY_FILE = self._old["memory"]
+        onboarding.INBOX_DIR = self._old["inbox"]
         user_categories.USER_CATS_FILE = self._old["cats"]
         hypotheses.HYPOTHESES_FILE = self._old["hyp"]
         prompt_store.OVERRIDES_FILE = self._old["prompts"]
         self.tmp.cleanup()
 
-    def _studied(self, *topics):
+    def _studied(self, *topics, ts=1700000000):
         onboarding.CURRICULUM_FILE.write_text(
-            json.dumps({t: {"ts": 1700000000} for t in topics}))
+            json.dumps({t: {"ts": ts} for t in topics}))
 
 
 class TestOnboardedFlag(OnboardingCase):
@@ -119,7 +123,7 @@ class TestLearningPhase(OnboardingCase):
         """Facts reach the document only at consolidation. Recommending from
         an empty memory would produce exactly the generic cards this flow
         exists to avoid."""
-        self._studied(*onboarding.FIRST_TOPICS)
+        self._studied(*onboarding.FIRST_TOPICS, ts=int(time.time()))
         p = onboarding.learning_progress()
         self.assertTrue(p["complete"])
         self.assertFalse(p["memory_ready"])

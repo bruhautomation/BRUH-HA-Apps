@@ -783,6 +783,11 @@ async def stage_memory(hooks: Hooks) -> dict:
             "the fact this check queued has been taken back out.",
             f"{queued} queued before, {after} after")
     if not landed:
+        # The pass dropped the line, and the facts store had read it
+        # within the minute anyway. Out of there too, or every deep check
+        # leaves one more fact about brAIn checking itself in every run's
+        # memory (the queue half finds nothing: the pass archived it).
+        await asyncio.to_thread(hooks.drop_memory, SOURCE, marker)
         # A SKIP, and the demotion is the fix for the thing this used to
         # report. It said "a pass consumed it without writing it down" —
         # the sentence for a broken memory pipeline — and it said it
@@ -814,8 +819,12 @@ async def stage_memory(hooks: Hooks) -> dict:
             "stopped growing — the add-on log's [brain-memory] lines say "
             "how many lines each pass filed.")
 
-    # Cleanup, and it is the other half of the check.
+    # Cleanup, and it is the other half of the check. The document through
+    # `FORGET:`, and the facts store directly — it read the probe within
+    # the minute, as it reads every queued line, and a cleanup that only
+    # reached the document left a fact about this check in every prompt.
     await asyncio.to_thread(hooks.queue_memory, f"FORGET: {marker}", SOURCE)
+    await asyncio.to_thread(hooks.drop_memory, SOURCE, marker)
     ok, error = await _consolidate(hooks)
     document = await asyncio.to_thread(hooks.memory_text)
     if MEMORY_FACT_PREFIX in document:

@@ -187,8 +187,16 @@ def is_known(text: str) -> bool:
     return any(normalize(e["text"]) == key for e in list_all())
 
 
-def propose(text: str, topic: str = "") -> dict | None:
+def propose(text: str, topic: str = "", *, subject: str = "",
+            fact: str = "") -> dict | None:
     """Queue a new guess, or return None if it is known or the queue is full.
+
+    ``subject`` is what the guess is about (an entity id), and ``fact`` the
+    statement to file if somebody says yes. Both optional and both for the
+    same reason: a curiosity guess is "<because> — <question>?", and
+    confirming it filed that whole string — a question mark and all — as a
+    standing fact about the house, tagged by scanning a sentence written in
+    friendly names. The because is the fact; the question was the asking.
 
     The known-check, the cap and the append are one decision over one read,
     taken under the lock. Asking ``is_known``/``budget`` first and appending
@@ -211,6 +219,10 @@ def propose(text: str, topic: str = "") -> dict | None:
             return None
         entry = {"ts": _unique_ts({int(e.get("ts") or 0) for e in entries}),
                  "text": text, "topic": str(topic or "")[:64], "status": "open"}
+        if subject:
+            entry["subject"] = str(subject)[:255]
+        if fact:
+            entry["fact"] = str(fact).strip()[:MAX_TEXT_CHARS]
         entries.append(entry)
         _write(entries)
     return entry
@@ -244,7 +256,8 @@ def _settle(ts: int, status: str, note: str = "") -> dict | None:
                     e["note"] = note
                 _write(entries)
                 return {"ts": ts, "text": e["text"], "status": status,
-                        "note": note}
+                        "note": note, "subject": str(e.get("subject") or ""),
+                        "fact": str(e.get("fact") or "")}
     return None
 
 

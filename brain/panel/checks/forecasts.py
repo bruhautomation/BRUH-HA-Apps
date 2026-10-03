@@ -12,6 +12,7 @@ lives in ``detail`` so the finding refreshes rather than re-files.
 from __future__ import annotations
 
 from . import baseline as baseline_check
+from . import devices
 from ._util import DAY, House, num
 
 # A runway shorter than this is worth a row; longer is not yet news.
@@ -62,6 +63,10 @@ def battery_runway(snap: dict, now: float) -> list[dict]:
         if not st or not house.enabled(eid):
             continue
         if st.get("state") in ("unavailable", "unknown"):
+            continue
+        # A battery somebody charges is not one to have a replacement
+        # ready for — `dev.battery_low`'s rule, through the same helper.
+        if devices.rechargeable(house, eid):
             continue
         points = []
         for r in rows if isinstance(rows, list) else []:
@@ -139,7 +144,10 @@ def decline(snap: dict, now: float) -> list[dict]:
         # they end up disagreeing about which box a battery is in.
         if not st or not baseline_check.eligible(house, eid, st):
             continue
-        if abs(moved.get("move") or 0.0) < DECLINE_MIN_MOVE:
+        unit = baseline.get("unit") or (st.get("attributes") or {}).get(
+            "unit_of_measurement")
+        if abs(moved.get("move") or 0.0) < baseline_check.min_move(
+                unit, DECLINE_MIN_MOVE):
             continue
         attrs = st.get("attributes") or {}
         hits.append((abs(moved["spreads"]), eid, moved,

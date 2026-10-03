@@ -161,6 +161,20 @@ def is_protected(entity_id: str, patterns: list[str]) -> bool:
     return any(p in (target, f"{domain}.*", "*") for p in patterns)
 
 
+_SELF_TEMPLATE = "{{this.entity_id}}"
+
+
+def _acts_on_itself(call: dict, entity) -> bool:
+    """`automation.turn_off` on ``{{ this.entity_id }}``, and nothing wider.
+
+    `this` is the automation running the action, so the call can switch
+    off exactly one thing — itself — whatever the protected list says.
+    Spaces inside the braces are the template author's and mean nothing.
+    """
+    return (str(call.get("service") or "") == "automation.turn_off"
+            and "".join(str(entity or "").split()) == _SELF_TEMPLATE)
+
+
 def _protected_refusal(config: dict, patterns: list[str]) -> str | None:
     """Why this automation may not be written, or None."""
     if not patterns:
@@ -182,6 +196,11 @@ def _protected_refusal(config: dict, patterns: list[str]) -> str | None:
         entity = call.get("entity_id")
         ids = [entity] if isinstance(entity, str) else list(entity or [])
         for eid in ids:
+            if _acts_on_itself(call, eid):
+                # The one template that names a single, knowable entity:
+                # the automation running the action. A one-off disarms
+                # itself this way, and it can reach nothing else.
+                continue
             if is_protected(str(eid), patterns):
                 return (f"{eid} is on the protected entities list, so brAIn "
                         "will not write an automation that acts on it")
