@@ -57,6 +57,7 @@ without the add-on runtime.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -275,6 +276,7 @@ def load() -> dict:
         # A list that cannot be read mutes nothing: the wrong direction
         # here hides a card.
         pass
+    _load_notify_policy(data, out)
     for key in ("model", "chat_model"):
         value = data.get(key)
         if isinstance(value, str) and value.strip():
@@ -350,6 +352,8 @@ def save(fields: dict) -> dict:
             clean[key] = value
         elif key == "muted_sources":
             clean[key] = clean_sources(value)
+        elif key in NOTIFY_POLICY_KEYS:
+            clean[key] = clean_notify_policy(key, value)
         elif key == "plan":
             if value not in PLANS:
                 raise ValueError(f"plan must be one of {', '.join(PLANS)}")
@@ -445,3 +449,117 @@ def clean_schedule(value) -> list[str] | None:
     if len(times) > MAX_SCHEDULE_TIMES:
         raise ValueError(f"at most {MAX_SCHEDULE_TIMES} schedule times")
     return sorted(times) or None
+
+
+# ---------------------------------------------------------------------------
+# Who hears what, when — the household's own sentence (W2D)
+# ---------------------------------------------------------------------------
+#
+#   notify_policy         — one sentence, in the household's own words, about
+#                           what is worth an interruption and when: "wake me
+#                           for water, smoke, the freezer or the front door
+#                           at night; batteries can wait for Saturday". The
+#                           dispatcher (`dispatch.py`) reads it before a
+#                           notify-tier finding is sent. Free text on
+#                           purpose: the alternative is the dozen options it
+#                           replaces, and nobody can say which of a severity
+#                           floor, an urgency table and two hour boxes they
+#                           meant when what they meant was a sentence.
+#   notify_policy_learned — clauses the household AGREED to from a learned
+#                           suggestion ("Notifications about the garden
+#                           lights can wait for the morning list."). Kept
+#                           apart from the sentence so each one is shown on
+#                           its own and can be taken back on its own — a
+#                           clause spliced into somebody's sentence is one
+#                           they cannot find again to remove.
+#
+# Neither can widen anything. The sentence is read by a model whose every
+# answer is checked in code (a closed vocabulary, a bounded hold, words that
+# may name only the row's own entities), and nothing it says can delay or
+# reword an escalating row or mute a critical one.
+NOTIFY_POLICY_KEYS = ("notify_policy", "notify_policy_learned")
+NOTIFY_POLICY_MAX = 400
+NOTIFY_LEARNED_MAX = 12
+NOTIFY_CLAUSE_MAX = 200
+DEFAULTS.update({"notify_policy": "", "notify_policy_learned": []})
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
+
+
+def _one_line(value: str, cap: int) -> str:
+    """Whitespace collapsed and control characters gone: the sentence is
+    pasted into a prompt between fences, and a newline is how a block of
+    text stops looking like one line somebody typed."""
+    return " ".join(_CONTROL.sub(" ", value).split())[:cap]
+
+
+def _clean_clause(item) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    clause = _one_line(str(item.get("clause") or ""), NOTIFY_CLAUSE_MAX)
+    if not clause:
+        return None
+    ident = re.sub(r"[^a-z0-9]", "", str(item.get("id") or "").lower())[:16]
+    at = item.get("at")
+    # A clause written without an id gets one from its own words, so the
+    # same clause read twice is the same clause to the ✕ that removes it.
+    ident = ident or hashlib.sha1(clause.encode("utf-8")).hexdigest()[:8]
+    return {"id": ident,
+            "clause": clause,
+            "subject": _one_line(str(item.get("subject") or ""), 120),
+            "at": int(at) if isinstance(at, (int, float))
+            and not isinstance(at, bool) else 0}
+
+
+def clean_notify_policy(key: str, value):
+    """The stored form of one of the two, or a ValueError."""
+    if key == "notify_policy":
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError("notify_policy must be a sentence (a string)")
+        return _one_line(value, NOTIFY_POLICY_MAX)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("notify_policy_learned must be a list of clauses")
+    out: list[dict] = []
+    seen: set[str] = set()
+    for item in value:
+        clause = _clean_clause(item)
+        if clause is None:
+            raise ValueError("every learned clause has a non-empty clause")
+        if clause["clause"].lower() in seen:
+            continue
+        seen.add(clause["clause"].lower())
+        out.append(clause)
+    if len(out) > NOTIFY_LEARNED_MAX:
+        raise ValueError(f"at most {NOTIFY_LEARNED_MAX} learned clauses")
+    return out
+
+
+def _load_notify_policy(data: dict, out: dict) -> None:
+    """Read the two back. An unreadable value is the default — an empty
+    sentence and no clauses — which is the deterministic path, the one
+    every release before this sent."""
+    for key in NOTIFY_POLICY_KEYS:
+        try:
+            out[key] = clean_notify_policy(key, data.get(key))
+        except ValueError:
+            out[key] = DEFAULTS[key] if key == "notify_policy" else []
+
+
+def notify_policy_text(settings: dict | None = None) -> str:
+    """The sentence and the agreed clauses, as the dispatcher reads them.
+
+    One string with the clauses after the sentence, because a model
+    reading two lists has to decide which wins, and the household's own
+    sentence was written first and is the one they can see.
+    """
+    settings = settings if settings is not None else load()
+    parts = [str(settings.get("notify_policy") or "").strip()]
+    parts += [str(c.get("clause") or "").strip()
+              for c in settings.get("notify_policy_learned") or []
+              if isinstance(c, dict)]
+    return " ".join(p if p.endswith((".", "!", "?", ";")) else p + "."
+                    for p in parts if p)
