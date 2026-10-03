@@ -238,6 +238,93 @@ Resident can correct its own first look.**
   readings" when it means hourly readings. A reading must also move by an amount
   that matters in its own unit, such as 20 W rather than half a watt.
 
+### Voice in the room, and services that say when they failed
+
+- **Voice knows which room you are in, and who is talking.** A request from a
+  satellite or a voice device now carries the room and floor it is in, so "turn
+  off the lights" said to the kitchen satellite means the kitchen lights. A
+  request from somebody signed in to Home Assistant carries their person, so a
+  preference stated by voice ("I like the bedroom at 19") is remembered as
+  theirs rather than everyone's. An automation's `extra_system_prompt`, and the
+  question an `assist_satellite.start_conversation` announced before brAIn was
+  asked, reach brAIn too — so your "yes" finally knows what it is a yes to. It
+  rides as a short note in front of your words, never in place of them, and only
+  when there is something to say.
+- **A question keeps the satellite listening.** When brAIn's reply asks you
+  something ("Which bedroom?"), Home Assistant is told to keep the microphone
+  open for your answer, the same as its own agents do (Home Assistant 2025.4 and
+  later). On older cores a follow-up now actually continues the conversation:
+  the classic path returned no conversation id, so every turn started over.
+- **A guest cannot borrow an administrator's agent.** Home Assistant lists every
+  conversation agent to every user, so a wall tablet's login could pick the
+  Full-admin agent and get a shell in `/config`. Somebody who is not a Home
+  Assistant administrator talking to a Whole-house or Full-admin agent is now
+  answered at the voice-assistant level, and the agent says so if they ask for
+  more. Satellites and automations have no user and keep the agent's own level.
+- **The powerful services need an administrator.** `brain.run_task` with `tools:
+  house` or `full` (and with no `tools`, which is `full`), `brain.ask` beyond
+  read-only, `brain.add_memory`, `brain.study`, `brain.intent` and
+  `brain.answer_question` refuse a signed-in user who is not an administrator,
+  the way BRUH Power Tools always did. Automations and scripts are unaffected.
+  `brain.add_memory` also refuses to file under `correction`, `confirmed` or
+  `person`, which brAIn keeps for your own answers. `brain.run_task` now accepts
+  the `model` its own form always offered.
+- **A task that failed says it failed.** An expired sign-in, a timeout or a run
+  that produced nothing used to come back from `brain.run_task` as if Claude had
+  said it, and `brain.ask` returned it as the answer with `data` empty — which
+  an automation reading `answer.data` took as a real "no". Every one of those
+  now raises an error carrying the reason, so it shows in the automation's
+  trace, and `brain_task_complete` carries `status: failed` and the reason's
+  code. When the reason is a sign-in, the message names the panel's **⚙ → Claude
+  account → Sign in again** button instead of a terminal command.
+- **Insight jobs read, pause, and never send a failure as a report.** A
+  scheduled insight job ran with the shell and file editing it never needed; it
+  now runs with read-only tools. On its schedule it pauses with **Automatic
+  insights** and the usage budget like everything else brAIn runs unasked
+  (`brain.run_insight` always runs), it reads what brAIn knows about the house
+  the way the panel's own cards do rather than the first 2 KB of the memory
+  document, and a run that fails shows as an error on the sensor beside the last
+  good report — an expired login is no longer pushed to your phone as the
+  morning briefing.
+- **Answering a guess from Home Assistant closes it.** `brain.answer_question`
+  used to write your answer to a file nothing read and file it as a fact, so a
+  "no" became something brAIn "knew" and the guess stayed open everywhere. It
+  now answers the guess yes or no exactly as the Findings tab's buttons do: a
+  yes files it as known, a no closes it and keeps your reason as a correction.
+  Start the answer with yes or no; the *Waiting on you* sensor lists the open
+  guesses with their ids.
+- **A voice command that already did something is not done twice.** If a voice
+  turn reached a device and then the worker died, brAIn quietly re-ran the whole
+  request — which is how a light got toggled twice. It now says it may have
+  partly happened and asks you to check.
+- **Voice turns are counted, and the usage figure follows them.** Every voice
+  turn (fast and classic) and every automation task is now in brAIn's run
+  journal, failures included, and the usage pill and sensors refresh after one
+  instead of up to half an hour later. The pool's health report counts failed
+  turns by kind.
+- **Voice runs on the voice plan, and a resumed chat uses today's
+  instructions.** An agent set to Default now runs on the plan's voice model and
+  thinking depth, as the classic listener always did. A conversation resumed
+  after a pause is answered under the current instructions and area map rather
+  than the ones its first turn recorded. Both are sent only to a Claude Code
+  that lists them.
+- **Streamed answers are paragraphs.** "I'll check." and the answer that follows
+  a tool call used to arrive glued together in Home Assistant's chat log ("I'll
+  check.The lights are off."). Each message is its own paragraph now, and the
+  chat log always ends on what was spoken.
+- **Restarting Home Assistant does not replay your fixes, and Dismiss is not an
+  ending.** After every restart `brain_change` fired again for every finding
+  brAIn had already fixed. Dismissing a finding fired `brain_case_ended`,
+  removed it from Repairs, and its return later fired as a brand-new finding.
+  Neither happens now, and the Repairs page keeps the findings that have waited
+  longest even on a busy house.
+
+- **A read-only task cannot read your files.** `brain.run_task` and `brain.ask`
+  with `tools: read_only` (and `house`) used to be able to open any file in
+  `/config`, including `secrets.yaml`, because a task runs there with file reads
+  pre-approved. Both narrow scopes now refuse file reads outright; `full` is
+  unchanged.
+
 ## 2.10.1
 
 **The classic terminal on a phone: Paste works, the keyboard stops fighting you.**
