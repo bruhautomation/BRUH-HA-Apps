@@ -225,9 +225,16 @@ brAIn wants confirmed offers **Yes**, **No** and **Dismiss**; a **suggestion**
 offers **Make the change**, **Try it for a week**, **Dismiss** and **No thanks**;
 a **plan waiting for consent** offers **Apply**, **Don't change it** and **Not a
 problem**; a **change brAIn made** offers **Got it**, and **Undo the fix** while it
-can be put back; a chore on your **To-do** tab offers **Done** and **Remove**. A
+can be put back — and once a fix has run, its card shows what the run concluded
+and changed, a fix that came back needing you leads with your own presses, and
+one that failed says so with **Try again** behind the ⋯; a chore on your **To-do** tab offers **Done** and **Remove**. A
 chore a house check raised — empty the dishwasher, shut the back door — leads
 with **Done**, because the work is minutes and a list is sillier than doing it.
+A suggestion's card carries the same evidence the Proposals tab does — the replay,
+the before and after, a trial's grade — next to the button that accepts it.
+Questions sit just under the high-stakes problems, and **Dismiss** on a question
+puts it to sleep: brAIn asks something else meanwhile and asks again later (a
+week for most), and nothing is recorded either way.
 
 Dismiss and Not a problem are both on every answerable card — one is "not now"
 and the other is "you have this wrong", and only the second teaches: the reason
@@ -312,6 +319,13 @@ the press it was.
   which, because "Replace it" and "Replaced it" land in different places. Nothing is
   settled until you press: Claude proposes the endings, and none of them touches your
   house — **Fix it** is deliberately not one of them and stays where it is.
+  Discuss opens a **new** conversation beside whatever you were doing in the chat,
+  so an answer being written carries on. In it Claude can read anything but has to
+  ask before it changes anything: every service call, file edit or shell command
+  shows a permission card first. When you agree what to change, Claude can offer
+  it as a button; pressing it has brAIn plan exactly that change, read-only, and
+  put the plan on the card. Nothing happens until you press **Apply**, and
+  **Undo** puts it back.
 - **I fixed it** — you handled it yourself. brAIn remembers that you did, and there
   is an optional box for **how** ("replaced the CR2032 — it's a 3-monthly job on that
   one"), which goes into memory beside the fact.
@@ -675,6 +689,12 @@ with a one-line reason.
 - **Ask anything.** Type a question and get a card back: "why is the upstairs cold in
   the morning", "which of my devices are costing the most", "did anyone open the back
   door while we were out". Keep the ones worth having weekly with **＋ Make recurring**.
+- **A card can suggest an automation.** When a card points at an automation your
+  house is missing, brAIn drafts it, replays it against your recorder and offers it
+  on **Proposals**, exactly as if you had typed it into the ask bar. It counts as an
+  automatic run (sign-in, automatic insights on, budget left) and is limited to two
+  per card and four a day. Every card's ⋯ has **Make this an automation**, which
+  puts the suggestion — or "When " — into the ask bar for you to finish and send.
 - **Put them on your dashboard.** Any card gives you ready-to-paste YAML for a Webpage
   card, so an insight can live on your own dashboard next to everything else.
 - **Tags and filters.** Cards carry tags brAIn assigns; the chips at the top filter by
@@ -954,7 +974,9 @@ same \`/config\`, with the same permissions — what differs is only how you see
 - **The face switch carries the conversation, and it is the only control that does.**
   Switching to Classic releases the chat's process and the terminal picks the same
   conversation up — a new tmux window if it's already open, otherwise the next time
-  you open it; switching back adopts whatever the terminal was last doing. There is
+  you open it; switching back picks up the conversation you handed over, including
+  anything you added in the terminal, and never opens a second copy of one already
+  live in the chat. There is
   deliberately no second "continue in the terminal" button beside a switch that
   already moves you, because two controls for one thing is how you end up unsure
   which one actually moved.
@@ -989,7 +1011,14 @@ simply because you prefer it.
 
 - **Native Home Assistant access** through the same MCP server the rest of brAIn uses.
 - **\`/config/CLAUDE.md\` written for you** at startup, describing your actual
-  installation, so a fresh session already knows your house.
+  installation — including a map of your areas and their entities — so a fresh
+  session already knows your house, and telling Claude to create automations with
+  \`brain.intent\` rather than by editing \`automations.yaml\` by hand.
+- **The chat knows the house before you tell it.** Each chat starts with a short
+  brief (open cases, health, when the house usually wakes and settles), and every
+  message you send brings in the facts brAIn has about what you mentioned, each
+  once per conversation. If the panel is busy or down, the chat still works — it
+  just starts without the brief.
 - **Built for a phone**, not merely tolerable on one: a key toolbar that stays above
   the software keyboard, working copy/paste, swipe-scroll, an iOS dictation fix, and
   a top bar that folds away while you're typing so the terminal gets the screen.
@@ -2038,6 +2067,9 @@ Every other notifier means something different by the payload the buttons ride
 in, or nothing at all, and a guess there is how a working notification stops
 arriving; and a digest about three problems could not say which one a button
 answered. In both cases the message is the one you were already getting.
+Dismiss from a notification gives the same quiet as Dismiss on the feed — a day
+for something serious, three days or a week otherwise; Repairs' *Remind me
+tomorrow* still means tomorrow.
 
 A fourth button, **Reply**, opens a text box on the phone — the companion
 app's own reply field — and what you type goes to the Resident with the

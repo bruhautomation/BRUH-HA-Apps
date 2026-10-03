@@ -453,6 +453,79 @@ Resident can correct its own first look.**
 - **The deep check leaves nothing in memory.** The memory probe `brain doctor
   --deep` files is now removed from the facts store as well as from `memory.md`.
 
+### Chat, Discuss and the feed's cards
+
+- **A fix's report is on its card.** When brAIn has tried a fix, the feed card
+  shows what the run concluded and what it changed, in place of the old "How
+  brAIn would fix it". A fix that came back as *needs you* now leads with your
+  own presses, not with another paid plan run that would reach the same answer.
+  A fix that failed says so, and trying again is in the ⋯ menu.
+- **A proposal's card shows its case.** An automation offered on the feed now
+  carries the same evidence the Proposals tab shows, next to Accept: the replay
+  ("would have fired N times this week"), the before-and-after, a trial's grade
+  and week, and the sentence a spoken rule was graded against.
+- **Questions sit near the top, and Dismiss on one means what it says.**
+  Questions get their own band in the feed, just under high-stakes problems. A
+  suggestion no longer outranks every question because its id happens to be a
+  bigger number. Dismissing a question now puts it to sleep for real: it stays
+  open, leaves every screen, and stops counting against the three-question
+  limit, so brAIn can ask something else meanwhile. Its 14-day expiry starts
+  again from when it comes back. Dismiss from a phone notification now gives the
+  same stakes-based quiet as Dismiss on the feed (a day, three days or a week),
+  not a flat 24 hours. Repairs' "Remind me tomorrow" still sends its 24 hours.
+- **Discussing a finding no longer stops the chat you were in.** **Discuss**
+  opens a new conversation beside whatever was running. An answer being written,
+  or an approval card waiting, carries on in the background. The conversation
+  knows which finding it is about from its first message, including after a
+  reload or a resume.
+- **A discussion asks before it changes anything, and an agreed change becomes a
+  plan.**
+  - In a discussion, every tool that can act (service calls, device control,
+    shell, file edits) shows a permission card first. A prompt sentence asking
+    it not to act is not enough. If your Claude Code is too old to accept the
+    rules, those tools are not offered at all.
+  - The conversation starts with the case's evidence, how sure brAIn was, the
+    actions it considered, and what its investigation said.
+  - When you and Claude agree on a change, it can offer it as a button. Pressing
+    it has brAIn plan that exact change read-only and put the plan on the card.
+    Nothing changes until you press **Apply**, and Apply has an Undo.
+- **Switching from the terminal to the chat picks up the right conversation.**
+  - Adopt opens the conversation through the same registry as everything else.
+    It never opens a second copy of a conversation that is already live
+    elsewhere.
+  - It prefers the conversation the chat last handed to the terminal over
+    whichever file happened to be written last.
+  - It no longer refuses while an answer is being written, because nothing is
+    stopped.
+  - After a round trip (chat → terminal → back), the chat shows what the
+    terminal added, not the scrollback from before the handoff.
+- **The chat knows the house before you tell it.**
+  - Every chat starts with a short brief: what brAIn is, the open cases, its
+    health, and the house's rhythm.
+  - Each message you send brings in the facts brAIn has about what you
+    mentioned. A conversation is given each fact once, not again on every
+    message.
+  - If the panel is down or slow, the chat works exactly as before.
+- **The terminal's context file knows the rooms and the tools.**
+  `/config/CLAUDE.md` now carries an area map: each room's id and its entities.
+  Before, the section was computed and never written. It also lists the
+  measurement tools, `recall`, `simulate_automation` and the findings and health
+  reads. It says to create automations with `brain.intent` rather than by
+  editing `automations.yaml` and reloading.
+- **A card can suggest an automation, and you can make one from any card.**
+  - An insight card can now name an automation the house clearly lacks. brAIn
+    drafts it, replays it and offers it on **Proposals**, exactly as if you had
+    typed the sentence.
+  - This runs unattended, so it obeys the same rules as other scheduled runs: it
+    needs a sign-in, automatic insights turned on, and budget left. It is capped
+    at two suggestions per card and four per day, and a card never re-offers
+    what it suggested last time.
+  - The card's ⋯ menu adds:
+    - **Make this an automation**, which puts the sentence in the ask bar for
+      you to read and send. It never sends from the menu.
+    - **See the automation it suggested**, once the suggestion is on Proposals.
+    - **Make an automation from this**, which starts the ask bar with "When ".
+
 ## 2.10.1
 
 **The classic terminal on a phone: Paste works, the keyboard stops fighting you.**
