@@ -614,6 +614,10 @@ def _shape(entry: dict) -> dict:
     # reader, mirror and test already knows, key for key and order for
     # order — see the block by CASE_KINDS.
     out.update(_case_fields(entry))
+    # When a row brAIn fixed was reopened because its check still saw the
+    # fault (`_came_back`). Absent on every other row, for the same reason.
+    if entry.get("came_back"):
+        out["came_back"] = int(entry["came_back"])
     return out
 
 
@@ -766,7 +770,7 @@ def is_known(text: str) -> bool:
         return True
     if any(normalize(f.get("text", "")) == key for f in _load()):
         return True
-    return any(e.get("key") == key for e in _load_settled())
+    return key in suppressing_keys()
 
 
 # ---------------------------------------------------------------------------
@@ -882,7 +886,7 @@ def add_many(objs: list[dict]) -> list[dict]:
     """
     items = _load()
     seen = {normalize(f.get("text", "")) for f in items}
-    seen |= {str(e.get("key") or "") for e in _load_settled()}
+    seen |= suppressing_keys()
     used = {int(f.get("ts") or 0) for f in items}
     created = []
     for obj in objs:
@@ -1291,8 +1295,20 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
     """
     ledger = _load_settled()
     key = str(key or "").strip() or normalize(shaped["text"])
+    prior = next((e for e in ledger if e.get("key") == key), None)
     ledger = [e for e in ledger if e.get("key") != key]
+    # A problem answered again after its earlier answer lapsed has come
+    # BACK, and how long it stayed away is the most useful number the
+    # ledger can hold about it — a battery that lasts four months is a
+    # maintenance interval, not a coincidence. Carried forward rather than
+    # computed, because the entry it is measured from is about to be
+    # replaced.
+    recurrence = {}
+    if prior is not None and prior.get("lapsed_at"):
+        recurrence = {"recurred": int(prior.get("recurred") or 0) + 1,
+                      "previous_at": int(prior.get("ts") or 0)}
     ledger.append({
+        **recurrence,
         "key": key,
         "text": shaped["text"],
         "kind": kind,
@@ -1307,6 +1323,87 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
         "source_title": str(shaped.get("source_title") or "")[:120],
     })
     _write_settled(ledger[-MAX_SETTLED:])
+
+
+# Which settled answers stop a problem being raised again, and for how long.
+#
+# The ledger was permanent for every ending, and the reason given — "the
+# analyst would re-report next week the thing you answered today" — is true
+# of exactly one of them. `ignored` (Wrong) says the report was wrong about
+# this house, and that does not stop being true: it is permanent, and the
+# rule it wrote is permanent with it. `fixed` and `accepted` say the report
+# was RIGHT, and a problem that was real can come back — a battery runs low
+# again next year, a backup goes stale again next month, the disk fills
+# again. Suppressing the second occurrence because somebody dealt with the
+# first is how a house check went blind for the life of the install, and
+# several check texts are one sentence for the whole house ("The newest
+# backup is more than a week old"), so one press blinded a whole check.
+#
+# So a right answer suppresses while it is still the answer:
+#
+#   * for a house check, until a pass of that check RUNS and no longer
+#     reports it (`lapse_settled`) — the problem is over, so the next time
+#     it happens is news. A check that could not look lapses nothing,
+#     which is `clear_resolved`'s rule for the same reason;
+#   * for anything else that was fixed — an analyst's report, a Resident
+#     case — for `FIXED_LAPSE_DAYS`, because nothing re-runs a model's
+#     judgement to say the problem has gone, and a fix is a dated event.
+#     An `accepted` row that is not a check's is a chore still on the
+#     list, and it suppresses until the chore is done (which re-settles it
+#     as `fixed`, starting that clock).
+#
+# A lapsed entry is kept, not deleted: it is still a label for the
+# scorecard, still listed in the analyst's "already dealt with" block, and
+# the entry a recurrence is measured from (`_remember_settled`).
+FIXED_LAPSE_DAYS = 90
+RIGHT_KINDS = ("fixed", "accepted")
+
+
+def _suppresses(entry: dict, now: float) -> bool:
+    kind = entry.get("kind")
+    if kind not in RIGHT_KINDS:
+        return True          # Wrong, and anything this does not recognise
+    if entry.get("lapsed_at"):
+        return False
+    if str(entry.get("source") or "").startswith("check:"):
+        return True          # until a pass of the check stops reporting it
+    if kind == "fixed":
+        age = now - float(entry.get("ts") or 0)
+        return age < FIXED_LAPSE_DAYS * 86400
+    return True
+
+
+def suppressing_keys(now: float | None = None) -> set[str]:
+    """The settled keys that still stop a re-report. One derivation, read
+    by `add_many` and `is_known` alike, so the two cannot disagree."""
+    now = time.time() if now is None else float(now)
+    return {str(e.get("key") or "") for e in _load_settled()
+            if _suppresses(e, now)}
+
+
+def lapse_settled(sources: set[str], keep_keys: set[str],
+                  now: float | None = None) -> int:
+    """A check that ran and no longer reports a problem ends its answer.
+
+    For every `fixed`/`accepted` entry a check in ``sources`` filed whose
+    key that pass did NOT report: the problem is over, so the answer stops
+    suppressing it and the next occurrence files again. Only checks that
+    RAN, `clear_resolved`'s rule — "I could not look" is not "it went
+    away". Returns how many entries lapsed.
+    """
+    now = time.time() if now is None else float(now)
+    ledger = _load_settled()
+    lapsed = 0
+    for entry in ledger:
+        if (entry.get("kind") in RIGHT_KINDS
+                and not entry.get("lapsed_at")
+                and str(entry.get("source") or "") in sources
+                and str(entry.get("key") or "") not in keep_keys):
+            entry["lapsed_at"] = int(now)
+            lapsed += 1
+    if lapsed:
+        _write_settled(ledger)
+    return lapsed
 
 
 def _load_settled() -> list[dict]:
@@ -1412,7 +1509,7 @@ def merge_rows(rows: list[dict]) -> int:
     a row imported from another one."""
     items = _load()
     seen = {normalize(f.get("text", "")) for f in items}
-    seen |= {str(e.get("key") or "") for e in _load_settled()}
+    seen |= suppressing_keys()
     used = {int(f.get("ts") or 0) for f in items}
     added = 0
     for row in rows:
@@ -1727,9 +1824,56 @@ def clear_resolved(sources: set[str], keep_keys: set[str]) -> list[dict]:
     rows that were removed.
     """
     kept, gone = resolve_clear(_load(), sources, keep_keys)
-    if gone:
+    came = _came_back(kept, sources, keep_keys, time.time())
+    if gone or came:
         _write(kept)
+    # And the answers. The same pass that may clear a row it no longer
+    # reports may end an answer about one — see `_suppresses`.
+    lapse_settled(sources, keep_keys)
     return gone
+
+
+# How long after a brAIn fix ends before the check that filed the row may
+# call it back. A fix that restarts an integration or an add-on takes a
+# moment to be visible to a check, and a pass that happened to land inside
+# that moment would reopen a row brAIn had just fixed.
+FIX_SETTLE_S = 120
+CAME_BACK_RESULT = ("Came back: the check that reported this still reports "
+                    "it after brAIn's fix, so the fix did not hold.")
+
+
+def _came_back(items: list[dict], sources: set[str], keep_keys: set[str],
+               now: float) -> int:
+    """Reopen a row brAIn fixed that its own check still reports.
+
+    `fixed` is set from the fix run's own reading of what it did, and a row
+    in `fixed` is in no list a re-report can reach: `add_many` dedupes it,
+    `refresh_details` and `clear_resolved` skip it. So a card could sit
+    green while the check that filed it saw the fault every pass. The
+    check that RAN is the verification: still reported, past the settling
+    moment, is a fix that did not hold, and the row goes back to `open`
+    saying so — which is a different claim from a new report, and the
+    reason it is the same row rather than a second one.
+
+    Only a house check's row, only a row brAIn fixed (a `fix_ended` stamp),
+    and only a check that ran. Modifies ``items`` in place; returns how
+    many came back.
+    """
+    came = 0
+    for f in items:
+        if (f.get("status") != "fixed"
+                or f.get("source") not in sources
+                or not str(f.get("source") or "").startswith("check:")
+                or normalize(f.get("text", "")) not in keep_keys):
+            continue
+        ended = float(f.get("fix_ended") or 0)
+        if not ended or now - ended < FIX_SETTLE_S:
+            continue
+        f["status"] = "open"
+        f["came_back"] = int(now)
+        f["result"] = CAME_BACK_RESULT
+        came += 1
+    return came
 
 
 @_mutates
@@ -1772,8 +1916,15 @@ def restore(shaped: dict) -> dict | None:
 # Prompt injection
 # ---------------------------------------------------------------------------
 
-def prompt_block() -> str:
+def prompt_block(exclude_sources=()) -> str:
     """What the analyst needs to know about findings before it reports more.
+
+    ``exclude_sources`` leaves a producer's own live rows out, and exists
+    for one reader: a card's refresh gate, which must not read the rows the
+    card itself filed as news about the house. A card files its findings as
+    `triaging`, which this block does not list, and the moment the Resident
+    promoted one to `open` the next fingerprint differed — the card had
+    triggered its own refresh.
 
     Three lists, all cheap and all load-bearing: what is already reported
     (so three cards don't all raise the same dead battery), what the
@@ -1790,7 +1941,9 @@ def prompt_block() -> str:
     every report built on the same wrong assumption.
     """
     everything = list_all()
-    live = [f for f in everything if f["status"] in LIVE_STATUSES][:PROMPT_OPEN]
+    skip = {str(x) for x in exclude_sources or () if x}
+    live = [f for f in everything if f["status"] in LIVE_STATUSES
+            and f.get("source") not in skip][:PROMPT_OPEN]
 
     def _settled(kind: str, limit: int) -> list[tuple[str, str]]:
         seen: set[str] = set()

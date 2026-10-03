@@ -11,9 +11,8 @@ This module is dependency-free so the test suite can import it directly.
 """
 from __future__ import annotations
 
-import re
-
 import json
+import re
 
 # ---------------------------------------------------------------------------
 # Categories
@@ -189,6 +188,13 @@ CATEGORY_IDS = [c["id"] for c in CATEGORIES]
 # here — a user category, a typed question — reads every measurement,
 # because it could be about any of them, which is the same conservatism
 # `collect_bundle` applies to a question's entity slice.
+#
+# Every SHIPPED card is named, and that is a test (`test_card_refresh`):
+# `media` and `health` were missing, so they read every store and moved on
+# every rebuild, while the table carried `devices` and `maintenance` —
+# ids no shipped card has. Device Health reads no measurement at all: its
+# subject is what is unavailable, flat or out of date right now, which no
+# store measures, so an empty tuple is the honest entry rather than "all".
 CATEGORY_STORES: dict[str, tuple[str, ...]] = {
     "overview": ("rhythm", "baselines", "habits"),
     "energy": ("energy", "baselines", "appliances"),
@@ -196,9 +202,9 @@ CATEGORY_STORES: dict[str, tuple[str, ...]] = {
     "lighting": ("rhythm", "habits"),
     "security": ("closures", "rhythm"),
     "presence": ("rhythm", "habits"),
+    "media": ("rhythm", "habits"),
+    "health": (),
     "automations": ("habits", "rhythm"),
-    "devices": ("baselines", "appliances"),
-    "maintenance": ("baselines", "appliances", "thermal"),
 }
 
 
@@ -294,6 +300,28 @@ def house_block(snapshot: dict | None, limit: int = HOUSE_CHARS) -> str:
 MEMORY_HEAD = ("WHAT IS ALREADY KNOWN ABOUT THIS HOME — the homeowner's own "
                "standing facts and preferences. Do not contradict them, and "
                "do not repeat them back:")
+
+
+_MEMORY_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+
+
+def document_lines(document: str | None) -> list[str]:
+    """The FACT lines of a memory document: no headings, comments or blanks.
+
+    One answer to "does memory.md say anything yet", because the template
+    run.sh seeds is three hundred characters of headings and comments with
+    no fact in it — and the length test onboarding used read that as a
+    document full of study results from the moment the add-on started. The
+    facts store reads the same lines to tell what the document still
+    carries; two readers, one definition.
+    """
+    body = _MEMORY_COMMENT_RE.sub("", str(document or ""))
+    out = []
+    for line in body.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            out.append(line)
+    return out
 
 
 def memory_excerpt(text: str | None, limit: int = MEMORY_EXCERPT_CHARS) -> str:
@@ -472,11 +500,12 @@ You do NOT receive the home up front. You receive a MAP of it — how many entit
 
 HOW TO GATHER
 1. Read the map and the question, and decide what data would answer it. Name it to yourself before you fetch anything.
-2. Search, don't enumerate. `get_all_states` takes a `domain` and a `name_filter` substring — "hall", "battery", "dryer" — and returns matching entities with their states. Two or three targeted searches beat one broad sweep, and a broad sweep of a large home is truncated anyway.
-3. Go deeper on the few that matter rather than shallow on hundreds. `get_entity_state` gives one entity in full; `get_history` and `get_statistics` give it over time; `get_logbook` says what happened around a moment; `get_automation_trace` says why an automation did what it did. Trend data is the thing a snapshot cannot give you — use it.
+2. Ask brAIn's memory before the house. `recall` returns what the homeowner has taught brAIn about something — by `subject` (an entity id, `area:<id>`) or by a few words of the question — with who said it and when. Call it for the rooms and devices your answer is about before concluding anything about them: a `correction` is the homeowner saying brAIn had this wrong, and a fact there outranks a pattern you infer from the data. The prompt carries the standing facts and the ones about this card's kind of device; the rest is one call away.
+3. Search, don't enumerate. `get_all_states` takes a `domain` and a `name_filter` substring — "hall", "battery", "dryer" — and returns matching entities with their states. Two or three targeted searches beat one broad sweep, and a broad sweep of a large home is truncated anyway.
+4. Go deeper on the few that matter rather than shallow on hundreds. `get_entity_state` gives one entity in full; `get_history` and `get_statistics` give it over time; `get_logbook` says what happened around a moment; `get_automation_trace` says why an automation did what it did. Trend data is the thing a snapshot cannot give you — use it.
    Know which time tool answers which question. `get_history` is the recent fine grain and dies with the recorder's purge window (days). `get_statistics` is Home Assistant's long-term statistics — hourly/daily/weekly/monthly buckets, kept for months to years, surviving the purge — so it is THE tool for "compared to last week/month", seasonal patterns, and any energy total. Home Assistant already keeps those sums; fetch them rather than estimating from a few days, and never say "no long-term data" without having asked `get_statistics` with a `day` or `month` period and enough `days` back.
-4. STOP when you can answer. Every extra call costs the homeowner part of their Claude usage window, and a card built on twelve well-chosen entities beats one built on four hundred. Fetching everything is the failure mode this design exists to avoid.
-5. If a search comes back empty, try a different word before concluding the thing does not exist — homes name things unpredictably. If it genuinely is not there, say so in the summary rather than inventing it.
+5. STOP when you can answer. Every extra call costs the homeowner part of their Claude usage window, and a card built on twelve well-chosen entities beats one built on four hundred. Fetching everything is the failure mode this design exists to avoid.
+6. If a search comes back empty, try a different word before concluding the thing does not exist — homes name things unpredictably. If it genuinely is not there, say so in the summary rather than inventing it.
 
 You can only READ. There is no tool here that changes anything in the house, by design — if answering seems to need a change, that is a finding, not something you do.
 

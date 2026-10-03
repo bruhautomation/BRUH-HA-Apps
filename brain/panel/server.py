@@ -212,8 +212,9 @@ import weekly
 # the point, two spellings of one dependency.
 from categories import (ANALYST_SYSTEM, CARD_SCHEMA, CATEGORIES, SYSTEM_PROMPT,
                         _CARD_CONTRACT, _previous_block,
-                        build_orientation_prompt, build_prompt, get_category,
-                        house_block, inject_styles, memory_excerpt, stores_for)
+                        build_orientation_prompt, build_prompt,
+                        document_lines, get_category, house_block,
+                        inject_styles, memory_excerpt, stores_for)
 
 HERE = Path(__file__).resolve().parent
 INSIGHTS_DIR = Path(os.environ.get("BRAIN_DIR", "/data/insights"))
@@ -1805,7 +1806,13 @@ async def _weekly_state(now: float) -> dict:
     # the one thing to do.
     since = max(WEEKLY_STATE["last_sent"], now - weekly.WEEK_S)
     power = await _weekly_energy(now)
-    rows = await asyncio.to_thread(findings_store.list_all)
+    # The rows somebody can see, which is what "still open" means in a
+    # message to them. Unfiltered, the count took in `held` rows — the ones
+    # triage looked at and chose NOT to show — and `triaging` ones nothing
+    # has judged yet, so the report called rows brAIn had kept off the
+    # list "still open", and a week whose only material was held rows
+    # could spend a run saying so. The brief has always read "live".
+    rows = await asyncio.to_thread(findings_store.list_all, "live")
     settled = await asyncio.to_thread(findings_store.settled_listing)
     return weekly.gather(rows, settled, power, since, now=now)
 
@@ -2709,7 +2716,11 @@ async def _search_run(insight_id: str, cat: dict, framing: dict):
     """
     import ha_data
     try:
-        orientation = await ha_data.collect_orientation(question=framing["question"])
+        # The card's domains go in so memory retrieval can find the facts
+        # about its kind of device — and the question's words, which
+        # `collect_orientation` passes on as the retrieval query.
+        orientation = await ha_data.collect_orientation(
+            question=framing["question"], domains=cat.get("domains") or ())
     except Exception as exc:  # noqa: BLE001 — a failed map is a fallback, not an error
         log.warning("%s: could not collect the orientation map (%s)", insight_id, exc)
         return None, None, None
@@ -2800,7 +2811,9 @@ async def _current_inputs(cat_id: str, eff: dict) -> dict | None:
     direction for a gate that cannot see.
     """
     try:
-        findings_text = await asyncio.to_thread(findings_store.prompt_block)
+        # Without this card's own rows: see `findings_store.prompt_block`.
+        findings_text = await asyncio.to_thread(
+            findings_store.prompt_block, (cat_id,))
         snap = await _house_snapshot()
         return await asyncio.to_thread(
             _card_inputs, cat_id, eff, findings_text, snap)
@@ -2992,12 +3005,29 @@ async def _generate(insight_id: str) -> None:
             # drift from the one the budget actually uses.
             "meta": {**result.get("meta", {}), "cost": cost},
         }
+        # Learn the durable discoveries: store NEW ones in our own knowledge
+        # base (dedup by content) and hand those on to the home's shared
+        # memory. Already-known ones are silently swallowed — the model was
+        # told not to repeat them, this enforces it.
+        learned_now = 0
+        for fact in learned:
+            _, created = knowledge_store.add_fact(
+                fact, source="insights", category=cat["id"])
+            if created:
+                # With the run that learned it, so "See the run" on the
+                # Knowledge tab opens the card's own conversation.
+                await _submit_memory(fact, run_id=run_id or "")
+                learned_now += 1
         # What the next run will be compared against. Taken AFTER the run
         # rather than before it: the question the gate asks is "has
         # anything moved since this card was made", and a fingerprint
         # from before a run that itself filed findings would answer it
-        # about the wrong instant.
+        # about the wrong instant. And after this card's own learned facts
+        # have reached the facts store, for the same reason: they are what
+        # the run said, not something that happened to the house since.
         if question is None:
+            if learned_now:
+                await asyncio.to_thread(_ingest_facts)
             fingerprint = await _current_inputs(cat["id"], cat)
             if fingerprint:
                 insight["inputs_fingerprint"] = fingerprint
@@ -3025,17 +3055,6 @@ async def _generate(insight_id: str) -> None:
                        "hypotheses": _clean_strings(obj.get("hypotheses"), 3, 300),
                        "tags": tags, "html_bytes": len(html.encode())},
                 tokens=cost or {})
-        # Learn the durable discoveries: store NEW ones in our own knowledge
-        # base (dedup by content) and hand those on to the home's shared
-        # memory. Already-known ones are silently swallowed — the model was
-        # told not to repeat them, this enforces it.
-        for fact in learned:
-            _, created = knowledge_store.add_fact(
-                fact, source="insights", category=cat["id"])
-            if created:
-                # With the run that learned it, so "See the run" on the
-                # Knowledge tab opens the card's own conversation.
-                await _submit_memory(fact, run_id=run_id or "")
         _set_job(insight_id, state="done", error="")
         log.info("insight %s generated (%s)%s%s", insight_id, insight["title"],
                  f", {len(filed)} new finding(s)" if filed else "",
@@ -3196,6 +3215,12 @@ async def _run_fix(job_id: str) -> None:
             status = "failed"
         findings_store.set_status(ts, status, result=fixer.result_text(parsed),
                                   changed=parsed["changed"])
+        if status == "fixed":
+            # The run's own reading of what it did is not the check that
+            # filed the row: that check is asked again once the change has
+            # had a moment to land, and a fault it still sees reopens the
+            # row as having come back (`_verify_fix`).
+            _spawn_fix_verification(ts)
         # A change to the house is durable knowledge about it — the next
         # analysis must not rediscover a problem brAIn itself resolved.
         if status == "fixed" and parsed["changed"]:
@@ -3231,6 +3256,76 @@ async def _run_fix(job_id: str) -> None:
             ts, "failed",
             result=f"The fix run did not complete: {str(exc)[:400]}")
         _set_job(job_id, state="error", error=str(exc)[:500])
+
+
+# How long after a fix the check that filed the row is asked again. Past
+# `findings_store.FIX_SETTLE_S` on purpose: a row is only called back once
+# the change has had its settling moment.
+FIX_VERIFY_DELAY_S = 180
+_FIX_VERIFICATIONS: set = set()
+
+
+def _spawn_fix_verification(ts: int) -> None:
+    """Ask the originating check again, later, without holding anything up.
+
+    Kept in a set so the task is not collected mid-sleep (the loop holds
+    only a weak reference to a task), and dropped from it when done.
+    """
+    async def later() -> None:
+        try:
+            await asyncio.sleep(FIX_VERIFY_DELAY_S)
+            await _verify_fix(ts)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # noqa: BLE001 — a verification, not the fix
+            log.debug("could not verify the fix for %s: %s", ts, exc)
+    try:
+        task = asyncio.get_running_loop().create_task(later())
+    except RuntimeError:
+        return              # no loop: a caller outside the panel's own
+    _FIX_VERIFICATIONS.add(task)
+    task.add_done_callback(_FIX_VERIFICATIONS.discard)
+
+
+async def _verify_fix(ts: int) -> dict:
+    """Run the check that filed a row brAIn just fixed, and believe it.
+
+    What makes `fixed` a claim about the house rather than about a run.
+    Only a house check's row can be verified this way — a model's report
+    has no rule to re-run — and only a check that RAN may answer: a
+    snapshot key that would not fetch is "I could not look", which leaves
+    the row exactly as the fix left it. The answer goes through
+    `clear_resolved`, the same door the scheduled pass and "Check again"
+    use, so the reopen (`findings_store._came_back`) and the answer's
+    lapse are one rule with three callers rather than three rules.
+    """
+    finding = await asyncio.to_thread(findings_store.get, ts)
+    if finding is None or finding.get("status") != "fixed":
+        return {"checked": False, "why": "the row moved on"}
+    source = str(finding.get("source") or "")
+    check_id = source[6:] if source.startswith("check:") else ""
+    if (not check_id or checks.get_check(check_id) is None
+            or checks.is_shadow(check_id)):
+        return {"checked": False, "why": "not a house check's row"}
+    if CHECKS_STATE["running"]:
+        # That pass is about to answer the same question.
+        return {"checked": False, "why": "a checks pass is running"}
+    started = time.time()
+    snapshot = await checks.snapshot.collect(started)
+    result = checks.run_all(snapshot, started, only=[check_id])
+    if check_id not in result["ran"]:
+        return {"checked": False,
+                "why": (result["skipped"].get(check_id)
+                        or result["errors"].get(check_id)
+                        or "it could not run")}
+    keys = {findings_store.normalize(f["text"]) for f in result["findings"]}
+    await asyncio.to_thread(findings_store.clear_resolved,
+                            {checks.source_for(check_id)}, keys)
+    still = findings_store.normalize(finding.get("text", "")) in keys
+    if still:
+        log.info("finding %s came back: %s still reports it after the fix",
+                 ts, check_id)
+    return {"checked": True, "came_back": still}
 
 
 # ---------------------------------------------------------------------------
@@ -3326,6 +3421,21 @@ async def _run_milestone(job_id: str) -> None:
         card = await asyncio.to_thread(
             milestones.save_card, mile_id, obj, job.get("mark") or {},
             str(job.get("because") or ""))
+        # What the run says it learned, through the same door a card's
+        # `learned` goes: the knowledge ledger (so nothing is announced
+        # twice) and then the memory inbox. A milestone is the moment a
+        # measurement first has an answer, and the sentence the model
+        # wrote about that answer was requested by the contract and
+        # dropped on the floor. Its findings stay dropped on purpose —
+        # the milestone frame tells it never to turn this into a problem
+        # report.
+        run_id = capture.run_id_from(result.get("meta") or {})
+        for fact in _clean_strings(obj.get("learned"), 3, 500):
+            _, created = await asyncio.to_thread(
+                knowledge_store.add_fact, fact, "insights",
+                f"milestone:{mile_id}")
+            if created:
+                await _submit_memory(fact, run_id=run_id or "")
         _set_job(job_id, state="done", error="")
         log.info("milestone card written: %s (%s)", mile_id, card["title"])
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
@@ -3488,32 +3598,56 @@ def _sha1(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()[:16]
 
 
-def _memory_stamp() -> str:
-    """memory.md's mtime and size — never its contents.
+def _memory_stamp(domains=()) -> str:
+    """What this card would be TOLD about the house — as a digest.
 
-    The document is up to 32 KB and this is asked once per card per tick;
-    it is only ever compared against itself, so reading the file in to
-    answer a question about a timestamp buys a copy of somebody's home
-    for nothing. Same reasoning as `SetupTokenFlow`'s credential
-    fingerprint.
+    It used to be memory.md's mtime and size, and the consolidator rewrites
+    the document on every pass that had anything queued — including the
+    card's OWN learned facts — so the stamp moved daily whatever the
+    document now said, and the gate was a 24-hour timer with extra steps.
+    So: the facts store's retrieval for this card's domains (the set of
+    facts, by id — `facts_store.retrieval_fingerprint`), and where the
+    store has nothing to retrieve, the document's content, which is what
+    the run is handed instead. A digest either way; nothing of the house
+    leaves this function.
     """
     try:
-        stat = SHARED_MEMORY_FILE.stat()
+        facts = facts_store.retrieval_fingerprint(domains=domains)
+    except Exception:  # noqa: BLE001 — the document is the floor
+        facts = ""
+    if facts:
+        return "facts:" + facts
+    try:
+        text = SHARED_MEMORY_FILE.read_text(encoding="utf-8")
     except OSError:
         # A missing document is a state, and a stable one: "none" is not
         # the same string as any real stamp, so writing the first fact
         # counts as a change.
         return "none"
-    return f"{int(stat.st_mtime)}:{stat.st_size}"
+    return "doc:" + _sha1("\n".join(document_lines(text)))
 
 
 def _store_stamp(cat_id: str, snapshot: dict | None) -> str:
-    """The ready-state and build time of the measurements this card reads."""
+    """What this card's measurements SAY, never when they were last built.
+
+    It hashed each store's `updated_at`, which is a build stamp: baselines,
+    closures, appliances and thermal are rebuilt every night and rhythm is
+    re-stamped on every checks pass, so a card past its floor had always
+    "moved" — on a rebuild that changed nothing. Now a ready store is its
+    state and the sentence the prompt's house block reads
+    (`house_block`), and any other store is its state alone, because the
+    prompt reads nothing else of it.
+    """
     wanted = stores_for(cat_id)
     stores = (snapshot or {}).get("stores") or {}
-    rows = {name: [entry.get("state"), entry.get("updated_at")]
-            for name, entry in sorted(stores.items())
-            if isinstance(entry, dict) and (wanted is None or name in wanted)}
+    rows = {}
+    for name, entry in sorted(stores.items()):
+        if not isinstance(entry, dict) or (wanted is not None
+                                           and name not in wanted):
+            continue
+        state = entry.get("state")
+        rows[name] = ([state, " ".join(str(entry.get("summary") or "").split())]
+                      if state == "ready" else [state])
     return json.dumps(rows, sort_keys=True)
 
 
@@ -3530,7 +3664,7 @@ def _card_inputs(cat_id: str, eff: dict, findings_text: str,
         f["text"] for f in feedback_store.list_feedback(cat_id)]
     parts = {
         "findings": _sha1(findings_text or ""),
-        "memory": _memory_stamp(),
+        "memory": _memory_stamp(eff.get("domains") or ()),
         "stores": _sha1(_store_stamp(cat_id, snapshot)),
         "feedback": _sha1("\n".join(feedback)),
         "focus": _sha1(str(eff.get("focus") or "")),
@@ -3541,8 +3675,11 @@ def _card_inputs(cat_id: str, eff: dict, findings_text: str,
         # One number the sentence can be built from. Not part of the
         # hash — it is derived from the same text the `findings` part
         # already covers, and counting it twice would let a re-worded
-        # finding read as a new one.
-        "open_findings": len(findings_store.list_all()),
+        # finding read as a new one. The live rows another producer filed,
+        # for the `findings` part's own reason.
+        "open_findings": len([
+            f for f in findings_store.list_all("live")
+            if f.get("source") != cat_id]),
         "at": int(time.time() if now is None else now),
     }
 
@@ -3727,12 +3864,15 @@ async def _scheduler() -> None:
         shared: dict = {}
 
         async def _inputs_for(cat_id: str, eff: dict) -> dict:
-            if "findings" not in shared:
-                shared["findings"] = await asyncio.to_thread(
-                    findings_store.prompt_block)
+            if "house" not in shared:
                 shared["house"] = await _house_snapshot(now)
+            # Per card rather than shared: each one leaves its OWN rows
+            # out, or a card's findings promoted by the Resident read as
+            # news to the card that filed them (`prompt_block`).
+            findings_text = await asyncio.to_thread(
+                findings_store.prompt_block, (cat_id,))
             return await asyncio.to_thread(
-                _card_inputs, cat_id, eff, shared["findings"],
+                _card_inputs, cat_id, eff, findings_text,
                 shared["house"], now)
 
         for cat in all_categories():
@@ -4627,7 +4767,10 @@ async def _prompt_preview(cat: dict, mode: str) -> dict:
     ]
 
     if mode == "search":
-        orientation = await ha_data.collect_orientation(question=None)
+        # The same arguments `_search_run` passes, or the preview would
+        # show a memory block the run never sees.
+        orientation = await ha_data.collect_orientation(
+            question=framing.get("question"), domains=cat.get("domains") or ())
         prompt = build_orientation_prompt(cat, orientation, **framing)
         system = ANALYST_SYSTEM
         data_note = (f"A MAP of the home — {orientation.get('entity_count', 0)} "
@@ -7115,6 +7258,29 @@ async def _design_scenes(area: str) -> dict:
             SCENES_INFLIGHT.discard(key)
 
 
+def _scene_room_slugs(configs) -> set[str]:
+    """The rooms brAIn's mood scenes were written for, by slug.
+
+    An id is `brain_scene_<slug(room)>_<mood>`, and a room's slug may have
+    any number of underscores in it — `living_room`, `master_bedroom` — so
+    the mood is what comes off the END. Splitting on `_` and taking the
+    third piece cut every multi-word room to its first word, found none of
+    its four moods under that, and offered the commonest rooms nothing,
+    silently.
+    """
+    out: set[str] = set()
+    for cfg in configs or []:
+        if not isinstance(cfg, dict):
+            continue
+        cid = str(cfg.get("id") or "")
+        if not cid.startswith(scenes.ID_PREFIX):
+            continue
+        slug, _, mood = cid[len(scenes.ID_PREFIX):].rpartition("_")
+        if slug and mood in scenes.MOODS:
+            out.add(slug)
+    return out
+
+
 async def _offer_scene_schedule(snapshot: dict, now: float) -> int:
     """Offer the schedule for any room whose four scenes really exist.
 
@@ -7140,20 +7306,20 @@ async def _offer_scene_schedule(snapshot: dict, now: float) -> int:
     wake = rhythm.wake_minute(payload, when) if payload else None
     settle = rhythm.settle_minute(payload, when) if payload else None
 
-    areas = {str(cfg.get("id") or "").split("_")[2]
-             for cfg in (snapshot.get("scenes") or [])
-             if isinstance(cfg, dict)
-             and str(cfg.get("id") or "").startswith(scenes.ID_PREFIX)
-             and len(str(cfg.get("id") or "").split("_")) > 3}
+    areas = _scene_room_slugs(snapshot.get("scenes") or [])
+    house = scenes._house(snapshot)
+    known = set(house.areas.values()) | {
+        house.area_of(e) for e in (snapshot.get("states") or {})}
     offered = 0
     async with aiohttp.ClientSession() as session:
-        for slug in sorted(a for a in areas if a):
+        for slug in sorted(areas):
             # The area's own name, as the registries have it — the slug in
             # the id is what survives a rename and the name is what a card
-            # says.
-            house = scenes._house(snapshot)
-            name = next((a for a in {house.area_of(e)
-                                     for e in (snapshot.get("states") or {})}
+            # says. A room renamed since the scenes were written keeps its
+            # slug, and the slug alone finds the same four scenes
+            # (`existing_scenes` slugs what it is handed), so the schedule
+            # is still offered under the old name rather than not at all.
+            name = next((a for a in sorted(known)
                          if a and scenes._slug(a) == slug), slug)
             obj = await asyncio.to_thread(scenes.schedule, snapshot, name,
                                           wake, settle)
@@ -7227,9 +7393,23 @@ async def _offer_playbooks(snapshot: dict, now: float) -> int:
         log.warning("could not compose playbooks: %s", exc)
         return 0
 
+    # The paragraph is a Claude run, so it answers to the three gates
+    # every scheduled run answers to (`_offer_milestones`' rule): this is
+    # reached from the checks pass on a timer, and "automatic insights
+    # pause" is a promise a paused or over-budget house was still paying
+    # for here. The PROPOSAL is not gated — it is deterministic and costs
+    # nothing — so a gated pass offers the card with the sentence it was
+    # composed with, which is exactly what a failed run leaves.
+    settings = settings_store.load()
+    may_describe = (bool(engine.get_auth()) and settings["auto_enabled"]
+                    and not usage_store.budget_state(settings)["blocked"])
     offered = 0
     for obj in found:
         if await asyncio.to_thread(proposals.knows, obj):
+            continue
+        if not may_describe:
+            if await asyncio.to_thread(proposals.add, obj):
+                offered += 1
             continue
         try:
             result = await asyncio.to_thread(
@@ -7439,12 +7619,16 @@ async def run_checks(reason: str = "schedule") -> dict:
         # than awaited, because a look runs on its own five-second tick and
         # a pass that waited on one would be a checks pass whose duration
         # is a Claude run's (`h_baselines_run`'s clock).
+        # Two counts, and they were one variable: the signals handed to the
+        # Resident, and the proposals the producers below file. The second
+        # overwrote the first, so the summary reported the proposal total
+        # as both `offered` and `proposed` and the hand-off was never seen.
         try:
-            offered = _offer_findings(created, started)
-            offered += _resident_offer_many(
+            handed = _offer_findings(created, started)
+            handed += _resident_offer_many(
                 (snapshot.get("actions") or {}).get("overrides") or [],
                 signals.from_override, started, _signal_context())
-            offered += _measurement_signals(snapshot, started)
+            handed += _measurement_signals(snapshot, started)
             _resident_offer(signals.from_time(
                 f"checks pass ({reason})", started,
                 text=f"a house-checks pass ran and filed {len(created)} row(s)"))
@@ -7452,7 +7636,7 @@ async def run_checks(reason: str = "schedule") -> dict:
             # either way; a hand-off that fell over must not also take out
             # the pass that found them.
             log.warning("could not hand this pass's signals over: %s", exc)
-            offered = 0
+            handed = 0
         surfaced: list[dict] = []
         triaged = await asyncio.to_thread(
             findings_store.statuses, [f["ts"] for f in created])
@@ -7461,29 +7645,29 @@ async def run_checks(reason: str = "schedule") -> dict:
         # that could fail this pass would cost a house its list of what
         # is broken to make an offer nobody asked for.
         try:
-            offered = await _offer_routines(started)
+            proposed = await _offer_routines(started)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not offer routines: %s", exc)
-            offered = 0
+            proposed = 0
         # And the other producer: the automation brAIn would write for a
         # night nobody wants. Same store, same tab, same refusal to
         # enable anything on its own.
         try:
-            offered += await _offer_playbooks(snapshot, started)
+            proposed += await _offer_playbooks(snapshot, started)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not offer playbooks: %s", exc)
         # And the third: the condition an automation somebody keeps
         # undoing does not have. The finding already reports the fight;
         # this is the change that ends it.
         try:
-            offered += await _offer_conditions(snapshot, started)
+            proposed += await _offer_conditions(snapshot, started)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not offer conditions: %s", exc)
         # And the fourth: the schedule that walks a room through the four
         # scenes it now has. Only once they really exist — a schedule
         # naming a scene that is not there errors at 07:00 every morning.
         try:
-            offered += await _offer_scene_schedule(snapshot, started)
+            proposed += await _offer_scene_schedule(snapshot, started)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not offer a scene schedule: %s", exc)
         # And the fifth producer, which is not a proposal at all: the
@@ -7540,14 +7724,14 @@ async def run_checks(reason: str = "schedule") -> dict:
             # reading the study inbox and the event stream, so a pass that
             # filed nine and shows `waiting: 9` is a pass whose rows have
             # not been looked at YET rather than one nothing came back for.
-            "offered": offered,
+            "offered": handed,
             "surfaced": len(surfaced),
             "held": len([t for t, st in triaged.items() if st == "held"]),
             "waiting": len([t for t, st in triaged.items()
                             if st == "triaging"]),
             "refreshed": refreshed,
             "cleared": cleared,
-            "proposed": offered,
+            "proposed": proposed,
             "milestones": made,
             "trials_evaluated": graded,
             "intents_fired": fired,
@@ -10349,6 +10533,99 @@ async def _wait_for_entity(entity_id: str) -> bool:
         await asyncio.sleep(ACCEPT_POLL_S)
 
 
+# How long a single registry read may take before the answer is "I could
+# not look". A registry that will not answer must not hold a press open.
+REGISTRY_LOOKUP_S = 10
+
+
+async def _registry_entity_id(unique_id: str, platform: str = "automation"
+                              ) -> tuple[str, bool]:
+    """The entity id Core registered for this config id, and whether it
+    could look at all: ``(entity_id, looked)``.
+
+    An automation's registry entry is keyed on the `id` brAIn wrote into
+    its config (Core makes that the `unique_id`), and that is the one
+    question about it that is not a guess. The entity id is a CONSEQUENCE
+    — `automation.<slug of the alias>` while that slug is free, `_2` when
+    it is not, and Home Assistant transliterates where `slugify` here does
+    not — so reading it back is the doctor helper's rule
+    (`_ensure_helper`), applied to the automations brAIn writes.
+    ``("", False)`` is "the registry would not answer", and the caller
+    keeps its old behaviour rather than reading that as "not registered".
+    """
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    if not unique_id:
+        return "", False
+    try:
+        async with aiohttp.ClientSession() as session:
+            answer = await asyncio.wait_for(ha_data._ws_commands(
+                session, [{"type": "config/entity_registry/list"}]),
+                REGISTRY_LOOKUP_S)
+    except Exception as exc:  # noqa: BLE001 — "I could not look"
+        log.debug("entity registry unreadable: %s", exc)
+        return "", False
+    rows = answer[0] if answer else None
+    if not isinstance(rows, list):
+        return "", False
+    for row in rows:
+        if (isinstance(row, dict) and row.get("platform") == platform
+                and str(row.get("unique_id") or "") == str(unique_id)):
+            return str(row.get("entity_id") or ""), True
+    return "", True
+
+
+async def _wait_for_registration(unique_id: str) -> tuple[str, bool]:
+    """`_registry_entity_id`, polled until it appears or the ceiling.
+
+    A reload returns before Core has finished setting the automation up,
+    which is why `_wait_for_entity` polls; the registry entry is written by
+    the same setup. Stops asking the moment the registry will not answer,
+    because a ceiling spent polling something that cannot be read is a
+    press held open for nothing.
+    """
+    deadline = time.monotonic() + ACCEPT_VERIFY_S
+    while True:
+        eid, looked = await _registry_entity_id(unique_id)
+        if eid or not looked:
+            return eid, looked
+        if time.monotonic() >= deadline:
+            return "", True
+        await asyncio.sleep(ACCEPT_POLL_S)
+
+
+async def _drop_registry_entry(unique_id: str) -> str:
+    """Delete the entity registry entry brAIn's own automation left. "" or why.
+
+    Taking an automation out of the file leaves its registry entry, and
+    Core re-publishes that as an `unavailable`, `restored: true` orphan —
+    which kept the entity id, so the same sentence accepted again was
+    registered as `_2` while verification passed on the orphan and the
+    one-off's disarm switched the orphan off (`_registry_entity_id`).
+    `dev.restored` then filed a finding about brAIn's own leftover. Found
+    by the config id brAIn wrote, never by a guessed entity id: a guess is
+    exactly the thing that could name somebody else's automation.
+    """
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415
+
+    eid, looked = await _registry_entity_id(unique_id)
+    if not eid:
+        return "" if looked else "the entity registry could not be read"
+    try:
+        async with aiohttp.ClientSession() as session:
+            gone = await asyncio.wait_for(ha_data._ws_calls(
+                session, [{"type": "config/entity_registry/remove",
+                           "entity_id": eid}]), REGISTRY_LOOKUP_S)
+    except Exception as exc:  # noqa: BLE001
+        return f"{eid}'s registry entry could not be removed: {exc}"
+    if not gone or not gone[0].get("ok"):
+        return (f"{eid}'s registry entry could not be removed: "
+                f"{(gone[0].get('error') if gone else '') or 'refused'}")
+    return ""
+
+
 async def _apply_accepted(row: dict) -> tuple[dict | None, str]:
     """Write it, reload, and check it is really there. Or put it back.
 
@@ -10394,6 +10671,22 @@ async def _apply_accepted(row: dict) -> tuple[dict | None, str]:
     except Exception as exc:  # noqa: BLE001 — every way this fails is the
         # same answer to the person waiting: it did not take.
         failure = f"Home Assistant would not reload its {domain}s: {exc}"
+    if not failure and target == "automations" and not row.get("edits"):
+        # The entity id Core actually registered, read off the registry by
+        # the config id brAIn wrote — before anything waits on a guessed
+        # one. A guess passes on whatever already answers to that name: a
+        # restored orphan of an earlier accept, or somebody's own
+        # automation whose alias differs only in case. A registry that
+        # will not answer leaves the guess, which is what this did before.
+        real, looked = await _wait_for_registration(
+            str(written.get("automation_id") or ""))
+        if real:
+            written["entity_id"] = real
+            written["entity_ids"] = [real]
+        elif looked:
+            failure = ("it was written but Home Assistant never registered "
+                       "it, so it is not running — check the add-on log and "
+                       "Home Assistant's own")
     if not failure:
         # Every entity the write claimed, not the first: three scenes out
         # of four is a mood missing from a schedule nobody has written
@@ -10674,12 +10967,24 @@ async def h_intent_remove(request: web.Request) -> web.Response:
 
     written = None
     if row.get("status") != "refused" and row.get("automation_id"):
+        # The entity Core registered for the id brAIn wrote, when the
+        # registry will say: a row armed before that was read back carries
+        # a guessed id, and waiting for a guess to go is waiting on a name
+        # that may belong to something else.
+        real, _looked = await _registry_entity_id(row["automation_id"])
         written, failure = await _remove_automation(
-            row["automation_id"], row.get("entity_id") or "")
+            row["automation_id"], real or row.get("entity_id") or "")
         if failure:
             return web.json_response(
                 {"error": failure,
                  **await asyncio.to_thread(_proposals_payload)}, status=409)
+        # And its registry entry, which the file outlives. Not a failure of
+        # the removal when it cannot be done — the automation is gone and
+        # the row may go — but said in the log, because the orphan it
+        # leaves is one `dev.restored` will report.
+        why = await _drop_registry_entry(row["automation_id"])
+        if why:
+            log.warning("one-off %s removed, but %s", ts, why)
 
     dropped = await asyncio.to_thread(intents.drop, ts)
     payload = {"removed": bool(dropped),
@@ -10775,6 +11080,18 @@ async def h_undo(request: web.Request) -> web.Response:
             # way, and saying which half failed is the point.
             reloaded = False
             log.warning("could not reload after undoing an accept: %s", exc)
+        # An automation the accept APPENDED leaves a registry entry behind
+        # once the file is back, which Core keeps as a restored orphan
+        # under the very entity id the next accept of the same thing would
+        # want. An edit put somebody's own automation back, whose entry is
+        # theirs and stays.
+        if (reverted.get("ok") and reloaded
+                and written.get("target", "automations") == "automations"
+                and not (entry.get("proposal") or {}).get("edits")):
+            why = await _drop_registry_entry(
+                str(written.get("automation_id") or ""))
+            if why:
+                log.warning("accept undone, but %s", why)
 
         def put_back() -> tuple[bool, dict]:
             restored = proposals.reopen(entry["proposal"]) is not None
@@ -11815,9 +12132,11 @@ async def _run_ideas() -> None:
             log.warning("ideas: could not read the measurements (%s)", exc)
             measured = ""
 
+        answered, open_ideas = await asyncio.to_thread(ideas.prompt_context)
         result = await asyncio.to_thread(
             engine.run_analyst,
-            ideas.build_prompt(memory, orientation, have, measured),
+            ideas.build_prompt(memory, orientation, have, measured,
+                               answered=answered, open_ideas=open_ideas),
             ideas.system_prompt(), eff_model(),
             TIMEOUT_S, ANALYST_MAX_TURNS, "card", job="ideas")
         _record_usage(result, "ideas")
@@ -11906,9 +12225,17 @@ async def h_idea_accept(request: web.Request) -> web.Response:
 
 
 async def h_idea_dismiss(request: web.Request) -> web.Response:
-    """Not for this house. It is not offered again."""
+    """Not for this house. It is not offered again.
+
+    An optional ``{"reason": "..."}`` is kept and read back to the next
+    pass (`ideas.prompt_context`) — never required, because "not for us"
+    needs no essay.
+    """
     idea_id = request.match_info.get("idea_id")
-    if not await asyncio.to_thread(ideas.dismiss, idea_id):
+    body = await _json_body(request)
+    reason = str(body.get("reason") or "")
+    if not await asyncio.to_thread(
+            lambda: ideas.dismiss(idea_id, reason=reason)):
         raise web.HTTPConflict(text="that idea is not open")
     return web.json_response(await asyncio.to_thread(_ideas_payload))
 

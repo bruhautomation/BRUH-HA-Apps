@@ -1319,19 +1319,9 @@ RECONCILE_STATE_FILE = Path(os.environ.get(
 REFLECT_SHARE = 0.6
 ORPHAN_DAYS = 30
 
-_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
-
-
-def document_lines(document: str) -> list[str]:
-    """The fact lines of `memory.md`: no headings, no comments, no blanks."""
-    body = _COMMENT_RE.sub("", str(document or ""))
-    out = []
-    for line in body.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        out.append(line)
-    return out
+# What the document says, line by line — `categories.document_lines`, so
+# the facts store and onboarding agree on what a fact line is.
+document_lines = categories.document_lines
 
 
 def _reflected(tokens: set[str], index: dict[str, set[int]]) -> bool:

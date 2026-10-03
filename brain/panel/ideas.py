@@ -331,15 +331,28 @@ def add_many(items, *, run_id: str = "", now: float | None = None) -> dict:
             "full": full}
 
 
+# A dismissal's reason, in the homeowner's words. A sentence, not an essay:
+# it is read back to the run that writes the next ideas.
+MAX_REASON = 200
+# How many answered ideas the run is shown. The index keeps MAX_ANSWERED;
+# a prompt does not need four hundred titles to learn what this household
+# does not want, and the newest are the ones closest to what it would
+# propose next.
+PROMPT_ANSWERED = 60
+
+
 def _remember(data: dict, key: str, title: str, how: str,
-              now: float | None = None) -> None:
+              now: float | None = None, reason: str = "") -> None:
     """Record that this idea has been answered, so no pass offers it again."""
     if not key:
         return
     answered = [e for e in data.get("answered") or [] if isinstance(e, dict)]
     answered = [e for e in answered if e.get("key") != key]
-    answered.append({"key": key, "title": title, "how": how,
-                     "when": int(now if now is not None else time.time())})
+    entry = {"key": key, "title": title, "how": how,
+             "when": int(now if now is not None else time.time())}
+    if reason:
+        entry["reason"] = reason
+    answered.append(entry)
     # Oldest first out, the index's own rule: this is "do not offer this
     # again" and never a record of what somebody did.
     data["answered"] = answered[-MAX_ANSWERED:]
@@ -377,25 +390,57 @@ def accept(idea_id, *, now: float | None = None) -> dict | None:
     return created
 
 
-def dismiss(idea_id, *, now: float | None = None) -> bool:
+def dismiss(idea_id, *, reason: str = "", now: float | None = None) -> bool:
     """Take an idea off the page, and stop it being offered again.
 
     It writes no memory line and settles nothing about the house: this is
     a statement about an IDEA, not about the home — `clear_resolved`'s
     reason for writing nothing, and the mute's one store over.
+
+    ``reason`` is optional and is read back to the next pass
+    (`prompt_context`): "we don't care about standby power" rules out a
+    family of ideas where the title alone rules out one wording of one.
     """
     entry = get(idea_id)
     if not entry or entry["status"] != "open":
         return False
+    reason = " ".join(str(reason or "").split())[:MAX_REASON]
     data = _load()
     for row in data["ideas"]:
         if isinstance(row, dict) and int(row.get("id") or 0) == entry["id"]:
             row["status"] = "dismissed"
             row["ended_at"] = int(now if now is not None else time.time())
+            if reason:
+                row["reason"] = reason
     _remember(data, fingerprint(entry["title"]), entry["title"], "dismissed",
-              now)
+              now, reason=reason)
     _write(data)
     return True
+
+
+def prompt_context() -> tuple[list[dict], list[str]]:
+    """What the next pass must not propose again, in words it can read.
+
+    ``(answered, open)``: the ideas somebody has already accepted or
+    dismissed — newest last, each with how and, for a dismissal, why — and
+    the titles still on the page. The mechanical check (`add_many`) is an
+    exact title match, and the one component that can recognise a
+    rewording is the model writing the next idea; it was never shown any
+    of these, so "Heat pump share of winter usage" came back a week after
+    "Heat pump vs everything else" was dismissed.
+    """
+    data = _load()
+    answered = []
+    for e in (data.get("answered") or [])[-PROMPT_ANSWERED:]:
+        if isinstance(e, dict) and str(e.get("title") or "").strip():
+            answered.append({"title": str(e["title"]).strip(),
+                             "how": str(e.get("how") or ""),
+                             "reason": str(e.get("reason") or "")})
+    open_titles = [str(r.get("title") or "").strip()
+                   for r in data.get("ideas") or []
+                   if isinstance(r, dict) and r.get("status") == "open"
+                   and str(r.get("title") or "").strip()]
+    return answered, open_titles
 
 
 def record_run(count: int, *, error: str = "", now: float | None = None) -> None:
@@ -489,7 +534,8 @@ def system_prompt(cap: int = MAX_PER_RUN) -> str:
     return IDEAS_SYSTEM.replace("{{CAP}}", str(max(1, int(cap))))
 
 
-def build_prompt(memory: str, orientation, have, measured: str = "") -> str:
+def build_prompt(memory: str, orientation, have, measured: str = "",
+                 answered=None, open_ideas=None) -> str:
     """What one pass is given.
 
     `have` is the whole point of the block: without it the run proposes
@@ -497,6 +543,11 @@ def build_prompt(memory: str, orientation, have, measured: str = "") -> str:
     things to dismiss. It is passed as titles rather than as full
     definitions because what the run needs is "do not suggest this
     again", not the focus text of a card it is not being asked to edit.
+
+    `answered` and `open_ideas` are the same argument one step earlier: an
+    idea somebody already turned down, or one still waiting on the page,
+    is as much "do not propose this, or a rewording" as a card that exists
+    — and a dismissal's reason is the part that teaches.
     """
     parts = ["Propose insight cards worth adding to THIS home's dashboard.\n"]
     titles = [str(t).strip() for t in (have or []) if str(t or "").strip()]
@@ -506,6 +557,19 @@ def build_prompt(memory: str, orientation, have, measured: str = "") -> str:
                      + "\n".join(f"- {t}" for t in titles))
     else:
         parts.append("CARDS THIS HOME ALREADY HAS: none yet.")
+    lines = []
+    for e in answered or []:
+        how = e.get("how") or "answered"
+        said = f": {e['reason']}" if e.get("reason") else ""
+        lines.append(f"- {e['title']} ({how}{said})")
+    for t in open_ideas or []:
+        lines.append(f"- {t} (already suggested, still on the page)")
+    if lines:
+        parts.append("\nIDEAS ALREADY SUGGESTED — do not propose these, or a "
+                     "rewording of one. A dismissal is the homeowner telling "
+                     "you what this house does not want; where they said why, "
+                     "take that as ruling out the whole kind of card, not "
+                     "only the title:\n" + "\n".join(lines))
     if memory.strip():
         parts.append("\nWHAT BRAIN HAS LEARNED ABOUT THIS HOME:\n"
                      + memory.strip())
