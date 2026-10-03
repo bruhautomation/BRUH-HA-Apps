@@ -4690,3 +4690,29 @@ body.term-classic #termMode .ico-out { display: block; }
     .card-head .cardact { width: 44px; }
   }
 }
+
+/* ------------------------------------------------------------ the house now
+   One quiet line above the Findings feed (`renderHouseNow` in app.js): the
+   mode as a word, the sentence, what is coming up. Small on purpose — it is
+   context for the list under it, not a card. */
+.housenow {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.25));
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.4;
+  min-width: 0;
+}
+.housenow-top { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+.housenow-mode { font-weight: 600; white-space: nowrap; }
+.housenow-sentence { min-width: 0; overflow-wrap: anywhere; }
+.housenow-sentence.stale { opacity: 0.7; font-style: italic; }
+.housenow-reason, .housenow-coming { margin-top: 4px; opacity: 0.8; font-size: 13px; overflow-wrap: anywhere; }
+.housenow-cals { margin-top: 6px; font-size: 13px; }
+.housenow-cals > summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; opacity: 0.8; }
+.housenow-callist { display: grid; gap: 4px; padding: 4px 0 2px; }
+.housenow-cal { display: flex; gap: 8px; align-items: center; min-height: 32px; }
+@media (pointer: coarse) {
+  .housenow-cals > summary, .housenow-cal { min-height: 44px; }
+}

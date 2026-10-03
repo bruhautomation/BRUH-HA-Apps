@@ -147,6 +147,10 @@ async def async_setup_entry(
     # its whole job is to be readable at the moment nothing else is.
     entities.append(BrainHealthSensor(config_entry))
 
+    # What brAIn reads the house as doing right now. Same rule as the two
+    # above: it never goes unavailable, and a stale reading is `unknown`.
+    entities.append(BrainHouseSensor(config_entry))
+
     async_add_entities(entities, update_before_add=True)
 
 
@@ -589,6 +593,59 @@ class BrainHealthSensor(SensorEntity):
         # corrected leaves a stamp in the future, and a verdict that can
         # never go stale is a verdict nothing can correct.
         return data, max(0.0, (time.time() - stat.st_mtime) / 3600.0)
+
+
+# ---------------------------------------------------------------------------
+# What the house is doing now
+# ---------------------------------------------------------------------------
+
+class BrainHouseSensor(SensorEntity):
+    """`sensor.brain_house`: home, away, asleep, waking, guests or unknown.
+
+    The state is brAIn's reading of what the house is doing, and the
+    attributes carry the one sentence, the rooms in use, what is unusual
+    together and why. Everything is decided by the add-on and read here
+    (`house_state.read`), so the panel, the first look and an automation
+    built on this sensor answer "what is the house doing" with one reading.
+
+    It never goes unavailable, and a reading that has stopped being
+    refreshed is `unknown` with the reason — never the last mode it saw,
+    because an automation acting on a stale `away` is the one way this
+    sensor could do harm.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = True
+    _attr_name = "House"
+    _attr_icon = "mdi:home-search"
+    _attr_device_info = DeviceInfo(
+        identifiers={(DOMAIN, "brain_house")},
+        name="brAIn",
+        manufacturer="BRUH Automation",
+        model="House situation",
+    )
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        self._entry = config_entry
+        self._attr_unique_id = f"{DOMAIN}_house"
+        self._attr_native_value = "unknown"
+        self._attrs: dict[str, Any] = {}
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self._attrs
+
+    async def async_update(self) -> None:
+        from .house_state import SITUATION_FILENAME, read
+
+        path = self.hass.config.path(SHARED_DIR, SITUATION_FILENAME)
+        try:
+            state, attrs = await self.hass.async_add_executor_job(read, path)
+        except Exception:  # noqa: BLE001 — never take HA down over a sensor
+            _LOGGER.debug("could not read the house situation", exc_info=True)
+            state, attrs = "unknown", {"reason": "the reading could not be read"}
+        self._attr_native_value = state
+        self._attrs = attrs
 
 
 # ---------------------------------------------------------------------------
