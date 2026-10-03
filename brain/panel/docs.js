@@ -1333,6 +1333,17 @@ reporting an irrigation pump manifold as a room with a window open. Those
 readings are skipped now, and ⚙ Diagnostics names the sensor that was chosen
 — a reference nobody can check is a reference nobody can correct.
 
+**The reference is chosen on evidence, and you can overrule it.** A
+thermometer in an area you have not called outdoors (a garden, a patio, a
+porch…) is never the reference, whatever it is named. Among the rest brAIn
+prefers the one that reads what your weather entity reads, the one that comes
+from the same integration as your weather entity, one named or placed
+outdoors, and — after a month — the one that swings across the day the way
+outside air does; one named like a heat pump's coil, a pool or a pipe counts
+against itself. The Knowledge tab's thermal drill-down says which sensor won
+and why, lists the others, and lets you pick a different one; the rooms are
+re-measured against your choice straight away.
+
 **The measurement is taken at night on purpose.** A south-facing room warms
 with the heating off, and a fit that includes an afternoon reports a room that
 gains heat as it gets colder outside. Deep night has no sun and, in most

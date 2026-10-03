@@ -7960,8 +7960,21 @@ def _thermal_payload(store: dict) -> dict:
             "coolest": entry.get("coolest"),
             "hours_to_warm": None if warm is None else round(warm, 1),
         })
+    # The reference every `k` above was measured against, why it was the
+    # one, and what else could have been — so the tab can say it and the
+    # person who knows better can change it (`thermal_outdoor`). The
+    # choice is read live: it takes effect at the next nightly pass, and
+    # the tab has to be able to say a choice is waiting for one.
+    try:
+        chosen = settings_store.load().get("thermal_outdoor")
+    except Exception:  # noqa: BLE001 — a setting nobody could read is unset
+        chosen = None
     return {"outdoor": store.get("outdoor") or "",
             "unit": store.get("unit") or "",
+            "outdoor_source": store.get("outdoor_source") or "",
+            "outdoor_why": store.get("outdoor_why") or "",
+            "outdoor_candidates": list(store.get("outdoor_candidates") or []),
+            "outdoor_choice": chosen,
             "rooms": rooms}
 
 
@@ -8916,6 +8929,11 @@ def _diagnostics_payload() -> dict:
             "measured": len(_thermal_store.get("rooms") or {}),
             "asked": _thermal_store.get("asked", 0),
             "outdoor": _thermal_store.get("outdoor", ""),
+            # Why that sensor, and whether a person chose it: every room's
+            # model is measured against it, and a reference nobody can
+            # check is one nobody can correct.
+            "outdoor_source": _thermal_store.get("outdoor_source", ""),
+            "outdoor_why": _thermal_store.get("outdoor_why", ""),
             "coldest": _thermal_store.get("coldest"),
             "reason": _thermal_store.get("reason", ""),
         },
