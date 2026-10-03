@@ -2846,6 +2846,135 @@ async def _house_prompt_block(now: float | None = None) -> str:
     return house_block(snap)
 
 
+# ---------------------------------------------------------------------------
+# What a card says this house is missing, offered as an automation
+# ---------------------------------------------------------------------------
+#
+# A card could say "the patio light should come on when the back door opens
+# after dark" only as prose in its summary, which nothing parses — so the
+# improvement the Automations focus and the milestone frame explicitly ask
+# for was a dead end, and acting on it meant retyping it into the ask bar.
+# The contract has an `opportunities` field now: the sentence the homeowner
+# would say to ask for it, and the entities it names. Each one is handed to
+# the ask bar's own third verb (`intents.request`), so it is drafted,
+# replayed over the recorder, graded against what this household did and
+# offered on the Proposals tab exactly as a typed sentence is — one
+# implementation of "a rule from a sentence", whichever surface had it.
+#
+# It is an UNATTENDED producer — a card refreshes on a schedule and the
+# authoring run behind each sentence is a Claude run nobody pressed — so it
+# answers to the three gates every scheduled run does (`_resident_gate`),
+# is capped per card and per day, and never re-offers what the same card
+# offered on its previous run. A sentence it did not queue keeps the reason
+# on the card, and the card's ⋯ offers to put it in the ask bar instead.
+MAX_CARD_OPPORTUNITIES = 2
+MAX_CARD_OPPORTUNITY_CHARS = 300
+MAX_CARD_OPPORTUNITY_ENTITIES = 8
+# A runaway guard, not a budget (`triage.MAX_PER_DAY`'s kind): nine cards
+# refreshing on one evening must not become eighteen authoring runs.
+CARD_OPPORTUNITIES_PER_DAY = 4
+CARD_OPPS_STATE: dict = {"day": "", "count": 0}
+
+
+def _opportunity_key(text: str) -> str:
+    return " ".join(re.sub(r"[^\w\s]", " ", str(text or "").lower()).split())
+
+
+def _card_opportunities(raw) -> list[dict]:
+    """The model's ``opportunities``, cleaned: a sentence each, real
+    entity ids only, deduped, capped. Anything else is dropped."""
+    out: list[dict] = []
+    if not isinstance(raw, list):
+        return out
+    seen: set[str] = set()
+    for item in raw:
+        if isinstance(item, str):
+            item = {"text": item}
+        if not isinstance(item, dict):
+            continue
+        text = " ".join(str(item.get("text") or "").split())
+        text = text[:MAX_CARD_OPPORTUNITY_CHARS]
+        key = _opportunity_key(text)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append({"text": text, "entities": _clean_entity_ids(
+            item.get("entities"), MAX_CARD_OPPORTUNITY_ENTITIES)})
+        if len(out) >= MAX_CARD_OPPORTUNITIES:
+            break
+    return out
+
+
+def _opportunity_sentence(text: str) -> str:
+    """The card's sentence in the shape the ask bar's third verb reads, or
+    "" for one that is a question rather than a rule."""
+    text = str(text or "").strip()
+    if not text or INTENT_QUESTION_RE.match(text) or text.endswith("?"):
+        return ""
+    if INTENT_RE.match(text):
+        return text
+    lowered = text[:1].lower() + text[1:] if text[1:2].islower() else text
+    return f"From now on, {lowered}"
+
+
+async def _offer_card_opportunities(insight_id: str, found: list[dict],
+                                    previous=None) -> list[dict]:
+    """Queue what this card says the house is missing, behind the gates.
+
+    Returns the card's own record of each: its sentence, its entities,
+    whether it was queued, and the reason when it was not — so the card
+    can say "offered on Proposals" or "not offered: automatic runs are
+    paused" rather than going quiet. Never raises: a card that wrote
+    itself must not fail over the automations it suggested.
+    """
+    if not found:
+        return []
+    before = {_opportunity_key(o.get("text")) for o in previous or []
+              if isinstance(o, dict) and o.get("queued")}
+    try:
+        why = _resident_gate(settings_store.load())
+    except Exception as exc:  # noqa: BLE001 — "I could not tell" holds
+        why = f"brAIn could not read its own settings ({exc})"
+    day = time.strftime("%Y-%m-%d")
+    if CARD_OPPS_STATE["day"] != day:
+        CARD_OPPS_STATE.update(day=day, count=0)
+    out: list[dict] = []
+    for opp in found:
+        sentence = _opportunity_sentence(opp.get("text"))
+        # `sentence` rides on the row because the card's ⋯ puts it in the
+        # ask bar, and the ask bar routes on its opening words: the panel
+        # must be handed the shape that routes, not a second copy of the
+        # rule that makes it.
+        row = {**opp, "sentence": sentence, "queued": False, "why": ""}
+        if _opportunity_key(opp.get("text")) in before:
+            # Offered when this card last ran; whatever was answered on
+            # Proposals then is the answer, and asking again would spend
+            # an authoring run to be told so.
+            row.update(queued=True, why="offered on an earlier run")
+        elif not sentence:
+            row["why"] = "it reads as a question rather than a rule"
+        elif why:
+            row["why"] = why
+        elif CARD_OPPS_STATE["count"] >= CARD_OPPORTUNITIES_PER_DAY:
+            row["why"] = ("brAIn has already offered "
+                          f"{CARD_OPPORTUNITIES_PER_DAY} automations from "
+                          "cards today")
+        else:
+            try:
+                queued = await asyncio.to_thread(
+                    intents.request, sentence, f"card:{insight_id}"[:32])
+            except Exception as exc:  # noqa: BLE001
+                queued = ""
+                row["why"] = f"it could not be queued ({exc})"
+            if queued:
+                CARD_OPPS_STATE["count"] += 1
+                row["queued"] = True
+                log.info("card %s offered an automation: %s",
+                         log_safe(insight_id), log_safe(sentence))
+        out.append(row)
+    return out
+
+
 async def _generate(insight_id: str) -> None:
     job = JOBS.get(insight_id, {})
     question = job.get("question")
@@ -2873,11 +3002,13 @@ async def _generate(insight_id: str) -> None:
         # refining one revises it rather than starting from nothing.
         knowledge = knowledge_store.prompt_block()
         previous = None
+        previous_opportunities = []
         if question is None or refine or _insight_path(insight_id).exists():
             try:
                 prev = json.loads(_insight_path(insight_id).read_text(encoding="utf-8"))
                 previous = {k: prev.get(k) for k in
                             ("generated_at", "title", "summary", "highlights", "learned")}
+                previous_opportunities = prev.get("opportunities") or []
             except (OSError, ValueError):
                 # No previous run to diff against — which is what a first generation
                 # for this card looks like.
@@ -2966,6 +3097,9 @@ async def _generate(insight_id: str) -> None:
              "run_id": run_id}
             for f in model_findings]))
         tags = card_tags.clean_tags(_clean_strings(obj.get("tags"), 4, 24))
+        opportunities = await _offer_card_opportunities(
+            insight_id, _card_opportunities(obj.get("opportunities")),
+            previous_opportunities)
         insight = {
             "id": insight_id,
             "category": cat["id"] if question is None else "custom",
@@ -2988,6 +3122,9 @@ async def _generate(insight_id: str) -> None:
             # card is written, so a stored `html` cannot later ask the
             # panel for an entity its author never declared.
             "live": _clean_entity_ids(obj.get("live"), MAX_LIVE_ENTITIES),
+            # What it says this house is missing, and whether each was
+            # offered on Proposals (see `_offer_card_opportunities`).
+            "opportunities": opportunities,
             "html": html,
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             # Why this run happened, in the words the person who reads

@@ -414,6 +414,22 @@ CARD_SCHEMA = {
                 "additionalProperties": False,
             },
         },
+        # An automation the house is missing, as the sentence somebody
+        # would say to ask for it. The server hands each to the ask bar's
+        # own intent path, which drafts, replays and grades it before it is
+        # offered (`server._offer_card_opportunities`).
+        "opportunities": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "entities": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["text"],
+                "additionalProperties": False,
+            },
+        },
         "tags": {"type": "array", "items": {"type": "string"}},
         "live": {"type": "array", "items": {"type": "string"}},
         "html": {"type": "string"},
@@ -430,6 +446,7 @@ OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
  "highlights": [{"label": "Metric", "value": "42 kWh", "delta": "+12% vs avg (optional)", "status": "good|warning|serious|critical (optional)"}],
  "hypotheses": ["optional, usually none"], "learned": ["optional, max 3"],
  "findings": [{"text": "ONE sentence, under 120 chars", "detail": "the evidence", "fix": "the specific change", "severity": "info|warning|serious|critical", "fixable": true, "entity_id": "sensor.example (optional)"}],
+ "opportunities": [{"text": "optional, max 2", "entities": ["light.example"]}],
  "tags": ["2-4 lowercase topic tags"], "live": ["optional entity_ids to keep current"], "html": "one complete self-contained HTML document"}
 
 highlights: 3-6, each one specific, checkable data point with its unit, the entity/room/person it belongs to, and a time when relevant. "delta" compares against the period; "status" only when something genuinely deserves attention. Never pad with filler ("Overall status", "Things look normal") — fewer sharp highlights beat more dull ones. Escape the HTML correctly as a JSON string.
@@ -437,6 +454,7 @@ tags: what the card is actually ABOUT, not the category it was asked for — a l
 hypotheses: usually ZERO, never more than the prompt's stated budget. Not an open question — something you actually BELIEVE, phrased so the homeowner can answer yes or no in one tap ("The garage fridge is meant to run 24/7 — right?"). Only when you believe it, the data cannot settle it, and knowing would change how you read this home; never one already answered in the memory document. A confirmed guess becomes a remembered fact; a rejected one is a dead end never revisited.
 learned: durable NEW discoveries about this home (a pattern, a quirk, how something behaves — "The dryer draws about 3 kWh per cycle"), one plain factual sentence each, no advice, nothing broken. Never a KNOWN FACT restated, never the current snapshot ("3 lights are on" is a state).
 findings: things that are BROKEN and have an owner — a dead battery, a sensor that stopped reporting, an unavailable device, an automation that can never fire, a setting that contradicts itself. A work list, not observations. Something is actually WRONG (a high reading is not a finding; a value unchanged for six days is); it names the entity, the number and when it started; "fix" is concrete enough to act on; "fixable" is true ONLY when software could make the change (editing a config, renaming, calling a service — never batteries, unplugging, re-pairing). severity: critical = safety or data loss; serious = not working; warning = degraded or will break soon; info = worth tidying. Most runs find nothing wrong and an empty list is the honest answer. Never repeat a finding the prompt lists as reported or dismissed.
+opportunities: usually none. An automation this home clearly lacks, as the one sentence the homeowner would say to ask for it ("When the back door opens after sunset, turn on the patio light"), with the entity_ids it names. brAIn replays it before offering it. Never something broken (a finding).
 live: max 12 entity_ids whose CURRENT state the visualization should keep up to date, ONLY when watching it change is part of the story (a door that is open, a machine running, a temperature being held). brAIn injects `window.brainLive(callback)` into the page: register once and you are handed {entity_id: {state, attributes, unit, name}} immediately and on every refresh — but the page must render correctly with NO live data at all, so draw the snapshot values first and let the callback update them. Never poll or fetch. Omit the field for a period that has ended, which is most cards.
 
 THE HTML DOCUMENT:

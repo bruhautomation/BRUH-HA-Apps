@@ -1284,6 +1284,41 @@ function cardMenuButton(items) {
   return btn;
 }
 
+// "Make this an automation": what a card says the house is missing, from
+// its menu. The server already offered what it could on the Proposals tab
+// (`_offer_card_opportunities`) — this is the door for the rest: one it did
+// not send (paused, the day's cap, a question rather than a rule) goes into
+// the ask bar for a person to read and send, and a card with none still
+// offers the bar with "When " in it, because a person reading a card is the
+// moment they think of the rule. Never sent from here: the ask bar is where
+// somebody can read what they are about to ask for.
+function cardAutomationItems(shown) {
+  const opps = Array.isArray(shown.opportunities) ? shown.opportunities : [];
+  const items = opps.slice(0, 2).map((opp) => (opp.queued
+    ? ["⚡", "See the automation it suggested",
+      `On the Proposals tab: “${opp.text}”`,
+      () => switchView("proposals")]
+    : ["⚡", "Make this an automation",
+      `“${opp.text}”${opp.why ? ` — not offered yet: ${opp.why}` : ""}`,
+      () => seedAsk(opp.sentence || opp.text)]));
+  if (!opps.some((opp) => !opp.queued)) {
+    items.push(["⚡", "Make an automation from this",
+      "Describe it in the ask bar — brAIn replays it over your history "
+      + "before it offers it", () => seedAsk("When ")]);
+  }
+  return items;
+}
+
+function seedAsk(text) {
+  switchView("insights");
+  const input = $("#askInput");
+  if (!input) return;
+  input.value = text;
+  input.scrollIntoView({ block: "center", behavior: "smooth" });
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
 function makeCard(catInfo, insight, fallbackId) {
   const id = (insight && insight.id) || (catInfo && catInfo.id) || fallbackId;
   const job = jobFor(id);
@@ -1377,6 +1412,9 @@ function makeCard(catInfo, insight, fallbackId) {
   if (insight) {
     menu.push(["#", "Edit tags", "What this card can be filtered by",
       () => { state.editingTags = id; render(); }]);
+  }
+  if (shown && !active) {
+    cardAutomationItems(shown).forEach((item) => menu.push(item));
   }
   // ✕ deletes every card — including one whose only trace is a job, so a
   // failed Ask can be cleared away instead of sitting there forever.
