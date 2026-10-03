@@ -9,8 +9,8 @@ Covers the cross-cutting memory contract end to end:
   - the worker pool's get_memory cap/fallback, the system-prompt splice
     and its BRAIN_MEMORY_INJECTION gate, the transcript heuristic, and
     the reflection pass writing inbox facts
-  - the integration's _append_memory_fact / _append_question_answer
-    helpers (extracted from __init__.py, which can't be imported without
+  - the integration's _append_memory_fact
+    helper (extracted from __init__.py, which can't be imported without
     homeassistant installed)
 
 Contract (shared with bruh-insights):
@@ -1628,6 +1628,12 @@ def load_pool_module(tmp_path: Path, monkeypatch, **extra_env):
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "argv.log"))
     monkeypatch.setenv("BRAIN_MEMORY_DIR", str(tmp_path / "memory"))
     monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
+    # The voice tier's plan, the run journal and the usage nudge all have
+    # real /data paths as their defaults; a suite that wrote any of them on
+    # the machine running it would be a suite with a side effect.
+    monkeypatch.setenv("BRAIN_ENV_FILE", str(tmp_path / "brain_env"))
+    monkeypatch.setenv("BRAIN_JOURNAL_FILE", str(tmp_path / "journal.jsonl"))
+    monkeypatch.setenv("BRAIN_USAGE_NUDGE", str(tmp_path / "usage-nudge"))
     monkeypatch.delenv("FAKE_MODE", raising=False)
     for key, value in extra_env.items():
         monkeypatch.setenv(key, value)
@@ -1640,6 +1646,12 @@ def load_pool_module(tmp_path: Path, monkeypatch, **extra_env):
     for d in (mod.REQUESTS_DIR, mod.RESPONSES_DIR, mod.SESSIONS_DIR,
               mod.CACHE_DIR, mod.LOG_DIR):
         os.makedirs(d, exist_ok=True)
+    # A turn's journal row is written off the request thread through the
+    # panel's own `journal` module, which another test may already have
+    # imported against the real /data path — so it is recorded here, and
+    # driven for real in tests/test_voice_run_contract.py.
+    mod.journaled = []
+    mod.journal_turn = lambda *a, **kw: mod.journaled.append((a, kw))
     return mod
 
 
@@ -1843,10 +1855,7 @@ def load_integration_helpers():
     """Exec just the pure memory helpers from the real __init__.py source."""
     source = INTEGRATION_INIT.read_text()
     tree = ast.parse(source)
-    wanted = {
-        "_sanitize_source", "_append_memory_fact",
-        "_append_question_answer", "_read_text_capped",
-    }
+    wanted = {"_sanitize_source", "_append_memory_fact"}
     nodes = [
         n for n in tree.body
         if isinstance(n, (ast.FunctionDef,)) and n.name in wanted
@@ -1854,7 +1863,7 @@ def load_integration_helpers():
     assert {n.name for n in nodes} == wanted, "helper functions missing from __init__.py"
     namespace = {
         "os": os, "json": json, "time": time,
-        "MEMORY_INBOX_DIR": "inbox", "QUESTIONS_FILE": "questions.jsonl",
+        "MEMORY_INBOX_DIR": "inbox",
     }
     exec(  # noqa: S102 — executing our own source under test
         compile(ast.Module(body=nodes, type_ignores=[]), str(INTEGRATION_INIT), "exec"),
@@ -1888,38 +1897,13 @@ def test_integration_add_memory_helper(tmp_path):
     assert "/" not in last["source"] and ".." not in last["source"]
 
 
-def test_integration_answer_question_helper(tmp_path):
-    helpers = load_integration_helpers()
-    memory_dir = tmp_path / "memory"
-    helpers["_append_question_answer"](
-        str(memory_dir), "Holiday thermostat schedule?", "Like weekends", "service"
-    )
-    answers = [
-        json.loads(l)
-        for l in (memory_dir / "questions.jsonl").read_text().splitlines()
-    ]
-    assert len(answers) == 1
-    assert answers[0]["q"] == "Holiday thermostat schedule?"
-    assert answers[0]["a"] == "Like weekends"
-    assert answers[0]["source"] == "service"
-    assert isinstance(answers[0]["ts"], int)
-
-    record = assert_contract_line(inbox_lines(memory_dir)[0])
-    # The answer as a statement with the question as its subject — the
-    # same shape the panel's `_submit_answer` queues. A "Q: … → A: …" pair
-    # is what made memory.md a document of questions.
-    assert record["fact"] == "Holiday thermostat schedule: Like weekends"
-    assert not record["fact"].startswith("Q:")
-    assert "→ A:" not in record["fact"]
-    assert record["confidence"] == "high"
-
-
-def test_read_text_capped(tmp_path):
-    helpers = load_integration_helpers()
-    path = tmp_path / "memory.md"
-    path.write_text("x" * 5000)
-    assert helpers["_read_text_capped"](str(path), 2048) == "x" * 2048
-    assert helpers["_read_text_capped"](str(tmp_path / "missing"), 100) == ""
+# `brain.answer_question` no longer appends to a questions file nothing read
+# and no longer queues the typed answer as a fact: it drops a request the
+# panel applies through the Findings tab's own Yes and No, which is driven
+# end to end in tests/test_ha_answer_question.py. `_read_text_capped` went
+# with the insight jobs' byte-cut of memory.md — the listener puts the
+# panel's own retrieval block in front of an insight prompt now
+# (tests/test_ha_insight_jobs.py).
 
 
 def test_integration_registers_memory_services():
@@ -1929,9 +1913,11 @@ def test_integration_registers_memory_services():
     assert '"answer_question"' in content
     assert "ADD_MEMORY_SCHEMA" in content
     assert "ANSWER_QUESTION_SCHEMA" in content
-    # Memory context feeds insight runs
-    assert "Known about this home:" in content
+    # Insight runs carry the previous report themselves and ask the
+    # listener for what brAIn knows (`memory=True`), rather than cutting
+    # the first 2 KB of memory.md here.
     assert "Previous report" in content
+    assert "memory=True" in content
 
 
 # ---------------------------------------------------------------------------

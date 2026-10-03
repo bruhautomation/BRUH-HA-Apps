@@ -97,6 +97,15 @@ TODO_TEXT_MAX = 200
 # starting one is the panel's alone.
 CHECKS_KIND = "checks"
 
+# The fourth: an answer to one of brAIn's guesses, from `brain.answer_question`.
+# Yes or no and nothing else, because a guess is a yes/no question; the
+# reason a "no" may carry rides as the note, exactly as the tab's own No
+# takes one. Applied by `server._answer_hypothesis` — the code the Findings
+# tab's buttons run — so a guess answered from an automation teaches brAIn
+# what the same press on the tab would have.
+HYPOTHESIS_KIND = "hypothesis"
+HYPOTHESIS_ACTIONS = ("confirm", "reject")
+
 
 def parse(obj) -> dict | None:
     """A validated request, or None for anything that is not one.
@@ -116,6 +125,8 @@ def parse(obj) -> dict | None:
         return _parse_todo(obj)
     if kind == "checks":
         return _parse_checks(obj)
+    if kind == HYPOTHESIS_KIND:
+        return _parse_hypothesis(obj)
     ts = obj.get("ts")
     if isinstance(ts, bool) or not isinstance(ts, (int, float)):
         return None
@@ -178,6 +189,30 @@ def _parse_checks(obj: dict) -> dict:
     reason to drop somebody's press.
     """
     return {"kind": "checks", "via": str(obj.get("via") or "")[:32]}
+
+
+def _parse_hypothesis(obj: dict) -> dict | None:
+    """A validated answer to a guess, or None. Every field is another process's.
+
+    The id is an int or the request is dropped, the answer is one of two
+    words, and the note is capped where a typed note is capped — the same
+    three checks a finding's ending gets, for the same reason.
+    """
+    ts = obj.get("ts")
+    if isinstance(ts, bool) or not isinstance(ts, (int, float)) or not ts:
+        return None
+    action = str(obj.get("action") or "").strip().lower()
+    if action not in HYPOTHESIS_ACTIONS:
+        return None
+    return {
+        "kind": HYPOTHESIS_KIND,
+        "ts": int(ts),
+        "action": action,
+        # Only a "no" has anything to say: a yes files the guess's own claim.
+        "note": (str(obj.get("note") or "").strip()[:NOTE_MAX]
+                 if action == "reject" else ""),
+        "via": str(obj.get("via") or "")[:32],
+    }
 
 
 def verb_for(action: str) -> str:
@@ -265,7 +300,7 @@ def pending() -> int:
 
 
 __all__ = [
-    "ACTIONS", "CHECKS_KIND", "KEEP_S", "MAX_BYTES", "MAX_PER_PASS", "MAX_QUEUED",
+    "ACTIONS", "CHECKS_KIND", "HYPOTHESIS_ACTIONS", "HYPOTHESIS_KIND", "KEEP_S", "MAX_BYTES", "MAX_PER_PASS", "MAX_QUEUED",
     "NOTE_MAX", "REQUEST_DIR", "SNOOZE_DEFAULT_H", "SNOOZE_MAX_H",
     "TODO_ACTIONS", "TODO_TEXT_MAX",
     "collect", "parse", "pending", "verb_for",
