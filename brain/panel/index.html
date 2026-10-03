@@ -1232,8 +1232,8 @@
       <details class="setsec" id="setsecAdvanced" data-sec="advanced">
         <summary>
           <span class="setsecname">Advanced</span>
-          <span class="setsecsub">Diagnostics, problem reports, corpus capture, the deep check
-            and the rehearsal</span>
+          <span class="setsecsub">Diagnostics, problem reports, speaking up, corpus capture,
+            the deep check and the rehearsal</span>
         </summary>
         <div class="setsecbody">
           <h4 class="sethead first">Diagnostics</h4>
@@ -1257,6 +1257,17 @@
               else was happening. This asks the next one now. Unlike the rest of
               this dialog it costs a Claude turn, and it never asks twice about the
               same thing.">Ask why now</button>
+          </div>
+
+          <h4 class="sethead">Speak first</h4>
+          <div class="setrow top">
+            <label class="check bigcheck"><input id="setSpeakFirst" type="checkbox">
+              <span><b>Say urgent problems aloud</b><br>
+              <span class="subtext">Off by default. A serious problem is announced on the
+              voice satellite in the room somebody is in, then sent to the phone as usual.</span></span></label>
+            <button type="button" class="btn icon tiny"
+              aria-label="More about speaking first"
+              data-tip="Only a check's serious or critical finding that needs attention now is spoken, never during quiet hours, never when everybody is away, at most once per finding and once every half hour. A satellite you have protected is never used, and nothing a person is called is said aloud. The phone notification is sent either way.">?</button>
           </div>
 
           <h4 class="sethead">Problems</h4>

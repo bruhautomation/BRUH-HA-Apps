@@ -12091,6 +12091,10 @@ document.addEventListener("visibilitychange", () => {
 // skips a dialog with focus inside it, and a save re-renders only after
 // the change that triggered it has landed.
 function renderNotifyPolicy(settings) {
+  // Speaking first is strictly opt-in, so only an explicit true ticks it:
+  // a setting that arrived missing or malformed reads as off.
+  const speak = $("#setSpeakFirst");
+  if (speak) speak.checked = settings.speak_first === true;
   const box = $("#setNotifyPolicy");
   if (!box) return;
   if (document.activeElement !== box) box.value = settings.notify_policy || "";
@@ -12131,4 +12135,11 @@ function renderNotifyPolicy(settings) {
 $("#setNotifyPolicy").addEventListener("change", () =>
   saveSettings({ notify_policy: $("#setNotifyPolicy").value.trim() },
     "Saved — brAIn will time and word notifications by it"));
+
+$("#setSpeakFirst").addEventListener("change", () => {
+  const on = $("#setSpeakFirst").checked;
+  saveSettings({ speak_first: on }, on
+    ? "On — an urgent problem is said aloud where somebody is, then sent to the phone"
+    : "Off — problems go to the phone only");
+});
 

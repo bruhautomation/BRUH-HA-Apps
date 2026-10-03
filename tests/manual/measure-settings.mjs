@@ -66,7 +66,7 @@ const IDS = [
   'setModelCustom', 'setPlan', 'setRefresh', 'setRefreshMode', 'setSyncNote',
   'setTerminalUi', 'setTimeout', 'usageFill', 'usageMark', 'usageText',
   // The household's notification sentence and the lines learned beside it.
-  'setNotifyPolicy', 'setNotifyLearned',
+  'setNotifyPolicy', 'setNotifyLearned', 'setSpeakFirst',
 ];
 
 // The sections, and whether the shipped markup opens them. Account and
@@ -104,6 +104,7 @@ window.fetch = async (url, opts) => {
         timeout_minutes: 8, history_keep_runs: 20, history_keep_days: 30,
         model: 'claude-sonnet-4-5', onboarded: true,
         notify_policy: 'wake me for water or smoke; batteries can wait',
+        speak_first: true,
         notify_policy_learned: [{ id: 'a1b2c3d4', subject: 'Garden lights',
           clause: 'Notifications about Garden lights (light.garden) can wait '
                   + 'for the morning list, unless they are critical.', at: 1756000000 }],
@@ -325,6 +326,10 @@ for (const width of WIDTHS) {
   }
   const policy = await page.evaluate(() => document.querySelector('#setNotifyPolicy').value);
   if (!/water/.test(policy)) note(where, 'the notification sentence did not render what was saved');
+  // Speaking aloud is opt-in, so the box must show what was saved — a box
+  // that rendered unticked over a saved yes is one somebody ticks again.
+  const speak = await page.evaluate(() => document.querySelector('#setSpeakFirst').checked);
+  if (!speak) note(where, 'the speak-first box did not render the saved yes');
 
   // ---- the iOS floor, and the page's own width ---------------------------
   if (touch) {

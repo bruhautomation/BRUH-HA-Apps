@@ -166,6 +166,7 @@ import fixer
 import healing
 import health
 import house
+import household
 import habit_lookup
 import hypotheses
 import ideas
@@ -2729,6 +2730,10 @@ async def _announce_findings(created: list[dict]) -> None:
 
     if not once:
         return
+    # Said aloud in the room somebody is in, when it is switched on and the
+    # row is serious, urgent and a check's own sentence — before the phone,
+    # and never instead of it (`_speak_first`, off by default).
+    await _speak_first(once, now)
     # The dispatcher decides the notify tier's timing and words, AFTER the
     # escalating rows above have gone out — it never sees one. Whatever it
     # could not decide comes back and is sent exactly as below.
@@ -2953,7 +2958,100 @@ def _dispatch_diagnostics() -> dict:
                      "next_hold_at": int(notify_router.next_hold_at())},
         "deliveries": ledger,
         "suggestions": dict(NOTIFY_LEARN_STATE),
+        "speak_first": {
+            "enabled": bool(_speak_enabled()),
+            **{k: v for k, v in SPEAK_STATE.items() if k != "said"},
+            "last_at": int(SPEAK_STATE.get("last_at") or 0)},
     }
+
+
+# Speak first (W2D stretch): announce an urgent, serious house-check finding
+# on the satellite in the room somebody is in. Off by default; announce
+# only — see `household.py` for why it does not yet listen for an answer.
+SPEAK_STATE: dict = {"spoken": 0, "last_at": 0.0, "last_reason": "",
+                     "last_error": "", "said": {}}
+# A voice in the room is louder than a phone in a pocket, so it is rationed:
+# one announcement per this long, and one per finding ever.
+SPEAK_SPACING_S = 30 * 60
+SPEAK_SAID_MAX = 200
+
+
+def _speak_skip(reason: str) -> int:
+    SPEAK_STATE["last_reason"] = reason
+    return 0
+
+
+async def _speak_first(rows: list[dict], now: float) -> int:
+    """Say the first speakable row aloud. Returns how many were said.
+
+    Every refusal is `household.py`'s or one of three here — the switch,
+    the quiet hours, the spacing — and every failure is a line: the phone
+    goes out either way, so nothing here may raise or delay it by more than
+    the one bounded service call it makes.
+    """
+    try:
+        if not rows or not _speak_enabled():
+            return 0
+        _service, min_sev = _findings_notify_target()
+        said = SPEAK_STATE["said"]
+        cands = [r for r in rows
+                 if household.speakable(r, notify_router.tier_of(r, min_sev),
+                                        notify_router.urgency_of(r))
+                 and int(r.get("ts") or 0) not in said]
+        if not cands:
+            return 0
+        start, end = _quiet_hours()
+        tz, _name = baselines.house_timezone()
+        if notify_router.in_quiet_hours(now, start, end, tz):
+            return _speak_skip("inside the quiet hours")
+        if now - float(SPEAK_STATE["last_at"] or 0) < SPEAK_SPACING_S:
+            return _speak_skip("spoke less than half an hour ago")
+        import aiohttp
+        import ha_data
+        async with aiohttp.ClientSession() as session:
+            states = await ha_data._rest_get(session, "/states")
+            services = await ha_data._rest_get(session, "/services")
+        if not any(isinstance(d, dict) and d.get("domain") == "assist_satellite"
+                   and "announce" in (d.get("services") or {})
+                   for d in services or []):
+            return _speak_skip("this Home Assistant has no "
+                               "assist_satellite.announce")
+        areas = {eid: str(row.get("area") or "") for eid, row in _NAMES.items()
+                 if isinstance(row, dict)}
+        cast = household.roster(states if isinstance(states, list) else [],
+                                areas)
+        sat = household.pick_satellite(cast, household.occupied_areas(
+            states if isinstance(states, list) else [], areas, now))
+        if sat is None:
+            return _speak_skip("nobody is in a room with a voice satellite")
+        if automation_writer.is_protected(
+                sat["entity_id"], automation_writer.protected_patterns()):
+            return _speak_skip(f"{sat['entity_id']} is protected")
+        row = cands[0]
+        text = household.spoken_text(row, cast)
+        if not text:
+            return _speak_skip("its words name a person")
+        await ha_data.call_core_service(
+            "assist_satellite", "announce",
+            {"entity_id": sat["entity_id"], "message": text}, timeout=15)
+        said[int(row.get("ts") or 0)] = now
+        while len(said) > SPEAK_SAID_MAX:
+            said.pop(min(said, key=said.get), None)
+        SPEAK_STATE.update(last_at=now, last_reason="", last_error="",
+                           spoken=SPEAK_STATE["spoken"] + 1)
+        log.info("said a finding aloud on %s", sat["entity_id"])
+        return 1
+    except Exception as exc:  # noqa: BLE001 — the phone goes out regardless
+        SPEAK_STATE["last_error"] = str(exc)[:200]
+        log.warning("could not say a finding aloud: %s", exc)
+        return 0
+
+
+def _speak_enabled() -> bool:
+    try:
+        return settings_store.load().get("speak_first") is True
+    except Exception:  # noqa: BLE001 — unreadable is off
+        return False
 
 
 def _on_bus_event(event_type: str, data: dict) -> None:

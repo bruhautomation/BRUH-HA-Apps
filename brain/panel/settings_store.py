@@ -352,7 +352,7 @@ def save(fields: dict) -> dict:
             clean[key] = value
         elif key == "muted_sources":
             clean[key] = clean_sources(value)
-        elif key in NOTIFY_POLICY_KEYS:
+        elif key in NOTIFY_POLICY_KEYS or key == "speak_first":
             clean[key] = clean_notify_policy(key, value)
         elif key == "plan":
             if value not in PLANS:
@@ -481,7 +481,14 @@ NOTIFY_POLICY_KEYS = ("notify_policy", "notify_policy_learned")
 NOTIFY_POLICY_MAX = 400
 NOTIFY_LEARNED_MAX = 12
 NOTIFY_CLAUSE_MAX = 200
-DEFAULTS.update({"notify_policy": "", "notify_policy_learned": []})
+#   speak_first           — say a serious, urgent house-check finding out
+#                           loud on the voice satellite in the room somebody
+#                           is in, as well as sending it to the phone. OFF by
+#                           default: a voice in the room is louder than a
+#                           phone in a pocket, and nobody should meet it
+#                           without having asked for it (`household.py`).
+DEFAULTS.update({"notify_policy": "", "notify_policy_learned": [],
+                 "speak_first": False})
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
 
@@ -512,7 +519,11 @@ def _clean_clause(item) -> dict | None:
 
 
 def clean_notify_policy(key: str, value):
-    """The stored form of one of the two, or a ValueError."""
+    """The stored form of one of the three, or a ValueError."""
+    if key == "speak_first":
+        if not isinstance(value, bool):
+            raise ValueError("speak_first must be a boolean")
+        return value
     if key == "notify_policy":
         if value is None:
             return ""
@@ -547,6 +558,9 @@ def _load_notify_policy(data: dict, out: dict) -> None:
             out[key] = clean_notify_policy(key, data.get(key))
         except ValueError:
             out[key] = DEFAULTS[key] if key == "notify_policy" else []
+    # Anything but an explicit True is off: a value that could not be read
+    # must not start a voice in somebody's kitchen.
+    out["speak_first"] = data.get("speak_first") is True
 
 
 def notify_policy_text(settings: dict | None = None) -> str:
