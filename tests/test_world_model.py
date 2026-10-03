@@ -27,11 +27,9 @@ The load-bearing claims, each shown failing on the old behaviour first:
 import asyncio
 import importlib
 import json
-import os
 import re
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 

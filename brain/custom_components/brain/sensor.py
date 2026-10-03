@@ -37,6 +37,8 @@ from .const import (
     SHARED_DIR,
     SIGNAL_INSIGHT_UPDATE,
 )
+from .house_state import SITUATION_FILENAME
+from .house_state import read as read_house_state
 from .insight_format import build_card_yaml, make_preview
 
 _LOGGER = logging.getLogger(__name__)
@@ -636,11 +638,10 @@ class BrainHouseSensor(SensorEntity):
         return self._attrs
 
     async def async_update(self) -> None:
-        from .house_state import SITUATION_FILENAME, read
-
         path = self.hass.config.path(SHARED_DIR, SITUATION_FILENAME)
         try:
-            state, attrs = await self.hass.async_add_executor_job(read, path)
+            state, attrs = await self.hass.async_add_executor_job(
+                read_house_state, path)
         except Exception:  # noqa: BLE001 — never take HA down over a sensor
             _LOGGER.debug("could not read the house situation", exc_info=True)
             state, attrs = "unknown", {"reason": "the reading could not be read"}
