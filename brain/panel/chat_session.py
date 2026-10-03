@@ -2048,7 +2048,10 @@ def _open_in_terminal(session_id: str) -> bool:
     Returns whether the window was opened. Everything here is best effort:
     the file alone is enough to be correct, just not instant.
     """
-    payload = json.dumps({"session_id": session_id, "ts": int(time.time())})
+    stamp = int(time.time())
+    payload = json.dumps({"session_id": session_id, "ts": stamp})
+    _LAST_HANDOFF.clear()
+    _LAST_HANDOFF.update({"session_id": session_id, "ts": stamp})
     try:
         path = Path(HANDOFF_FILE)
         atomic_write.write_text(path, payload, mode=0o600)
@@ -2077,13 +2080,24 @@ def _open_in_terminal(session_id: str) -> bool:
         return False
 
 
+# The panel's own copy of the last handoff. The file is the terminal's
+# instruction and `brain-terminal-start` DELETES it when it takes it up —
+# which is the ordinary case, the window opening on the press — so by the
+# time somebody switches back the file is usually gone and "which
+# conversation did we hand over" would have no answer. In memory, because
+# it is only a tie-break over the transcripts' own times: a restart loses
+# it and adopt falls back to the newest of your conversations, which is
+# what it always did.
+_LAST_HANDOFF: dict = {}
+
+
 def read_handoff() -> dict:
     """The last handoff record: which conversation the chat gave the
     terminal, and when. ``{}`` when there is none or it cannot be read."""
     try:
         data = json.loads(Path(HANDOFF_FILE).read_text("utf-8"))
     except (OSError, ValueError):
-        return {}
+        data = dict(_LAST_HANDOFF)
     if not isinstance(data, dict):
         return {}
     sid = data.get("session_id")

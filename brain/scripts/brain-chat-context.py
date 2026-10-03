@@ -47,9 +47,13 @@ MAX_PROMPT = 4000
 MAX_CONTEXT = 4000
 
 
-def context_for(prompt: str) -> str:
-    """The panel's answer for this message, or "" for anything else."""
-    body = json.dumps({"prompt": str(prompt or "")[:MAX_PROMPT]}).encode()
+def context_for(prompt: str, session_id: str = "") -> str:
+    """The panel's answer for this message, or "" for anything else.
+
+    ``session_id`` is the CLI's, passed on so the panel hands one
+    conversation each fact once rather than with every message."""
+    body = json.dumps({"prompt": str(prompt or "")[:MAX_PROMPT],
+                       "session_id": str(session_id or "")[:128]}).encode()
     request = urllib.request.Request(
         f"{PANEL_URL}/api/chat/context", data=body, method="POST",
         headers={"Content-Type": "application/json"})
@@ -69,7 +73,7 @@ def main(stdin=None, stdout=None) -> int:
         prompt = event.get("prompt") if isinstance(event, dict) else ""
         if not isinstance(prompt, str) or not prompt.strip():
             return 0
-        text = context_for(prompt)
+        text = context_for(prompt, event.get("session_id") or "")
         if text.strip():
             stdout.write(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",

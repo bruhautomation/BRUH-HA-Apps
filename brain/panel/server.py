@@ -112,6 +112,7 @@ random token to keep the unauthenticated /local URLs unguessable.
 from __future__ import annotations
 
 import asyncio
+import collections
 import concurrent.futures
 import contextlib
 import fcntl
@@ -11025,7 +11026,11 @@ def _discuss_context(finding: dict) -> tuple[str, bool]:
     looked = (finding.get("triage") or {}).get("reason") or ""
     if looked:
         lines.append(f"What brAIn's first look said: {looked}")
-    run_id = ((finding.get("investigation") or {}).get("run_id")
+    # The row's own `run_id` is the investigation that wrote the case
+    # (`add_case`); a check's row carries none, and its triage
+    # conversation is the run that looked at it instead.
+    run_id = (finding.get("run_id")
+              or (finding.get("investigation") or {}).get("run_id")
               or (finding.get("triage") or {}).get("run_id") or "")
     if run_id:
         said = _investigation_said(run_id)
@@ -13065,7 +13070,39 @@ def _subjects_in(text: str) -> tuple[list[str], list[str]]:
     return entities, areas
 
 
-def _chat_context(prompt: str) -> str:
+# Which fact lines each conversation has already been handed, so a fact
+# rides into it once. The hook's context is added to the turn and stays in
+# the conversation, and `retrieval_block` leads with the house's core facts
+# every time — without this, a forty-message chat carries the same standing
+# preferences forty times, paid for on every turn after. In memory and
+# bounded: a restart hands each conversation its facts once more, which is
+# one repeat rather than one per message.
+CHAT_CONTEXT_SESSIONS = 32
+CHAT_CONTEXT_LINES_KEPT = 400
+_CHAT_CONTEXT_GIVEN: "collections.OrderedDict[str, set]" = collections.OrderedDict()
+
+
+def _not_yet_given(session_id: str, block: str) -> str:
+    """``block`` less the fact lines this conversation already has.
+
+    Keyed on the CLI's own session id, which the hook is handed on stdin;
+    a message with none (an older CLI) is told everything, which is what
+    the hook did before it could tell."""
+    sid = str(session_id or "")[:128]
+    if not sid or not block:
+        return block
+    given = _CHAT_CONTEXT_GIVEN.pop(sid, set())
+    _CHAT_CONTEXT_GIVEN[sid] = given
+    while len(_CHAT_CONTEXT_GIVEN) > CHAT_CONTEXT_SESSIONS:
+        _CHAT_CONTEXT_GIVEN.popitem(last=False)
+    fresh = [line for line in block.splitlines()
+             if line.startswith("- ") and line not in given]
+    if len(given) < CHAT_CONTEXT_LINES_KEPT:
+        given.update(fresh[:CHAT_CONTEXT_LINES_KEPT - len(given)])
+    return (facts_store.MEMORY_HEAD + "\n" + "\n".join(fresh)) if fresh else ""
+
+
+def _chat_context(prompt: str, session_id: str = "") -> str:
     """What brAIn remembers that bears on one message, or "".
 
     The facts store's own retrieval (`facts_store.retrieval_block`) over
@@ -13073,6 +13110,7 @@ def _chat_context(prompt: str) -> str:
     none — the same reader every scheduled run is handed, so the chat is
     told what the brief and the cards are told rather than a third copy of
     "what is relevant". Empty is an answer: the hook then adds nothing.
+    A line this conversation was already handed is not handed again.
     """
     text = str(prompt or "")[:CHAT_CONTEXT_PROMPT_CHARS]
     if not text.strip():
@@ -13099,6 +13137,9 @@ def _chat_context(prompt: str) -> str:
         return ""
     if len(block) > CHAT_CONTEXT_CHARS:
         block = block[:CHAT_CONTEXT_CHARS].rsplit("\n", 1)[0]
+    block = _not_yet_given(session_id, block)
+    if not block.strip():
+        return ""
     return ("What brAIn remembers that bears on this message — from its own "
             "facts store, so check anything that matters against the house "
             "before you rely on it:\n" + block)
@@ -13114,7 +13155,8 @@ async def h_chat_context(request: web.Request) -> web.Response:
     nothing and a message must never wait on this.
     """
     body = await _json_body(request)
-    text = await asyncio.to_thread(_chat_context, str(body.get("prompt") or ""))
+    text = await asyncio.to_thread(_chat_context, str(body.get("prompt") or ""),
+                                   str(body.get("session_id") or ""))
     return web.json_response({"context": text})
 
 
@@ -13389,9 +13431,29 @@ async def h_chat_adopt(request: web.Request) -> web.Response:
                       if s.session_id and s is not attached}
     recent = await asyncio.to_thread(
         conversations.listing, chat_session.WORK_DIR, 10, ("you",))
-    chosen = chat_session.pick_adopted(
-        recent, await asyncio.to_thread(chat_session.read_handoff),
-        held_elsewhere)
+    handoff = await asyncio.to_thread(chat_session.read_handoff)
+    chosen = chat_session.pick_adopted(recent, handoff, held_elsewhere)
+    if (chosen is not None and chosen["id"] == attached.session_id
+            and handoff.get("session_id") == chosen["id"]
+            and float(chosen.get("modified") or 0) > float(handoff.get("ts") or 0)
+            and not attached.alive() and attached.state != "busy"):
+        # The ordinary round trip: the chat handed this conversation to the
+        # terminal (stopping its own process, so it is still the one on
+        # screen) and the terminal carried it on. The id matches, which
+        # read as "nothing to take up" — and the pane went on showing the
+        # scrollback from before the handoff, with the terminal's turns
+        # missing. Nothing is running here to lose, so re-read it.
+        replay = await asyncio.to_thread(
+            conversations.transcript, chat_session.WORK_DIR, chosen["id"])
+        try:
+            out = await attached.resume(chosen["id"], replay)
+        except ValueError as exc:
+            raise web.HTTPBadRequest(reason=_refusal(exc))
+        except RuntimeError as exc:
+            raise web.HTTPConflict(reason=_refusal(exc))
+        return web.json_response({"ok": True, "adopted": True,
+                                  "session_id": out.get("session_id") or chosen["id"],
+                                  "title": chosen["title"]})
     if chosen is None or chosen["id"] == attached.session_id:
         # Already the same conversation (or there is nothing to take up):
         # switching is then just a change of renderer, which is the point.
