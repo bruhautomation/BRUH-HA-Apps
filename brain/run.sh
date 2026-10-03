@@ -546,6 +546,17 @@ setup_claude_user() {
     touch /data/run-sources.jsonl 2>/dev/null || true
     chown claude:claude /data/run-sources.jsonl 2>/dev/null || true
     chmod 664 /data/run-sources.jsonl 2>/dev/null || true
+    # The run journal and the usage nudge have the same two writers: the
+    # panel (root) and the shell half's runs, which record themselves with
+    # `journal.py record` from the process that ran the model — the
+    # consolidator and study as the claude user. Same arrangement, same
+    # reason: root can write a claude-owned file, not the reverse, and a
+    # failed append there is silent by design.
+    for f in /data/journal.jsonl /data/usage-nudge; do
+        touch "$f" 2>/dev/null || true
+        chown claude:claude "$f" 2>/dev/null || true
+        chmod 664 "$f" 2>/dev/null || true
+    done
     # The edit journal has the same two writers in the same two users: the
     # PreToolUse hook (`brain-edit-snapshot.py`, under the claude user
     # every Claude edit runs as) and the panel's automation_writer (root,

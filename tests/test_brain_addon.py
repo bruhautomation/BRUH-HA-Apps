@@ -1612,6 +1612,10 @@ class TestTurnBudgets(unittest.TestCase):
             # has to say where the panel is: in the image it is
             # /opt/panel, and here it is the checkout.
             "BRAIN_PANEL_DIR": str(PANEL),
+            # ...and a session records itself in the run journal through
+            # that panel, which must not be the real /data one.
+            "BRAIN_JOURNAL_FILE": str(root / "journal.jsonl"),
+            "BRAIN_USAGE_NUDGE": str(root / "usage-nudge"),
         })
         env.update(extra)
         proc = subprocess.run(["bash", str(SCRIPTS / script), *args],
@@ -1719,6 +1723,30 @@ class TestTurnBudgets(unittest.TestCase):
         self.assertFalse((root / "memory" / "inbox").exists())
         for word in ("BRAIN_LEARN_MAX_TURNS", "Raise it", "study_max_turns"):
             self.assertNotIn(word, proc.stderr)
+
+    def test_every_study_session_is_one_journal_row(self):
+        """Study drives the CLI from a shell, where `journal.record` cannot
+        be called — so it records itself through `journal.py record`, and
+        its failures, tokens and nudges count like any panel run's."""
+        landing = json.dumps({"report": "r", "facts": [], "findings": [],
+                              "hypotheses": []})
+        cases = [
+            ({}, "unparseable"),
+            ({"FAKE_MODE": "max_turns", "BRAIN_LEARN_MAX_TURNS": "5"}, "max_turns"),
+            ({"FAKE_MODE": "max_turns_then_land", "FAKE_LANDING_TEXT": landing,
+              "BRAIN_LEARN_MAX_TURNS": "5"}, "ok"),
+        ]
+        for extra, outcome in cases:
+            with self.subTest(outcome=outcome):
+                _, argvs, root = self._drive("brain-learn.sh", ["energy"], **extra)
+                rows = [json.loads(ln) for ln in
+                        (root / "journal.jsonl").read_text().splitlines()]
+                self.assertEqual([(r["source"], r["outcome"]) for r in rows],
+                                 [("study", outcome)])
+                self.assertEqual(rows[0]["run_id"],
+                                 self._after(argvs[0], "--session-id"))
+                self.assertTrue(rows[0]["extra"]["shell"])
+                self.assertTrue((root / "usage-nudge").exists())
 
     def test_study_timeout_default_is_generous(self):
         self.assertGreaterEqual(self.config["options"]["study_timeout_minutes"], 15)

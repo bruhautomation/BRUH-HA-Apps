@@ -371,8 +371,9 @@ claude_pass() {
     # failure — timeout, rate limit, a malformed prompt — report itself as
     # "not authenticated?", which sent people to re-do a sign-in that was
     # fine while the real cause stayed invisible.
-    local err_file rc=0
+    local err_file rc=0 started
     err_file=$(mktemp 2>/dev/null || echo "/tmp/brain-memory-err.$$")
+    started=$(date +%s)
     # shellcheck disable=SC2086
     printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" \
             $claude_cmd -p --disallowedTools "*" --max-turns 1 \
@@ -386,10 +387,21 @@ claude_pass() {
        && grep -qi "unknown option\|unrecognized option" "$err_file" 2>/dev/null; then
         log "this Claude CLI has no --session-id — running unlabelled"
         rc=0
+        session_id=""
         # shellcheck disable=SC2086
         printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" \
                 $claude_cmd -p --disallowedTools "*" --max-turns 1 \
                 --model "$CLAUDE_MODEL" >"$out_file" 2>"$err_file" || rc=$?
+    fi
+
+    # One journal row per pass, from the process that ran it: the panel
+    # books it (a report when it failed, its tokens into the breakdown)
+    # and the usage reading is nudged. Before the stderr is thrown away,
+    # because its last line is what a failure's row carries.
+    if command -v brain_journal_record > /dev/null 2>&1; then
+        brain_journal_record memory "$rc" --stderr "$err_file" \
+            --run-id "$session_id" --model "$CLAUDE_MODEL" \
+            --duration "$(( $(date +%s) - started ))"
     fi
 
     if [ "$rc" != 0 ]; then

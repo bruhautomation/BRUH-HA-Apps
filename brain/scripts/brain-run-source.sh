@@ -75,3 +75,24 @@ _brain_prune_sources() {
     rm -f "${BRAIN_RUN_SOURCES}.tmp" 2>/dev/null
     return 0
 }
+
+# Record one finished run in the panel's run journal — the shell half of
+# panel/journal.py's `record`, and the only route by which a run started
+# from a shell is counted, files a problem report when it fails, reaches the
+# usage breakdown, and nudges the usage reading:
+#
+#   brain_journal_record SOURCE EXIT [--stderr FILE] [--envelope FILE] \
+#       [--run-id ID] [--model M] [--duration S] [--error TEXT] [--extra k=v]
+#
+# Silent and always 0, this library's rule: bookkeeping about a run must
+# never be the reason a pass reports a failure.
+brain_journal_record() {
+    local source="$1" code="${2:-0}" panel="${BRAIN_PANEL_DIR:-/opt/panel}"
+    [ -n "$source" ] || return 0
+    shift 2 2>/dev/null || shift $#
+    [ -r "$panel/journal.py" ] || return 0
+    command -v python3 > /dev/null 2>&1 || return 0
+    { python3 "$panel/journal.py" record --source "$source" --exit "$code" "$@"; } \
+        > /dev/null 2>&1 || true
+    return 0
+}

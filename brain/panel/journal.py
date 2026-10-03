@@ -346,3 +346,331 @@ def summary(hours: float = 24.0, now: float | None = None) -> dict:
         "tokens": tokens,
         "failures": failures[-10:],
     }
+
+
+# ---------------------------------------------------------------------------
+# The shell half
+# ---------------------------------------------------------------------------
+#
+# Study, the memory consolidator, the automation listener and the memory
+# extractor all drive `claude -p` from a shell or a separate process, and
+# none of them could reach `record`: so their failures filed no problem
+# report, their runs nudged no usage reading, and their tokens were in
+# neither the breakdown nor the estimate the budget falls back to — while
+# CLAUDE.md said every Claude run of every kind recorded itself here.
+#
+# They reach it now through this file's own command line (`python3
+# journal.py record …`), which appends the row and nudges the tracker from
+# whichever process ran the model. What it cannot do from there is what
+# only the panel's listeners do — a problem report, the usage ledger, the
+# scheduler's rate-limit pause — so the row carries ``extra.shell`` and
+# the panel books every such row it has not booked yet (`book_shell_rows`)
+# on its scheduler tick, through the same listeners an in-process row
+# meets. One row, written once, read by both halves.
+
+# Beside the journal unless told otherwise, so anything that points the
+# journal somewhere else (a test, a dev checkout) moves the mark with it.
+SHELL_MARK_FILE = os.environ.get("BRAIN_SHELL_MARK_FILE", "")
+# On a first boot with no mark, rows older than this are history rather
+# than news: booking a week of them would file a week of reports at once.
+SHELL_BACKLOG_S = 3600
+# How far back the booking pass reads. A tick is a minute; a shell run is
+# minutes. Two hundred rows is hours of a busy house.
+SHELL_TAIL = 200
+_SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+_SHELL_MEMORY_MARK: dict = {"ts": None, "n": 0}
+
+
+def is_shell_row(row) -> bool:
+    """A row the command line wrote, which the panel's listeners never saw."""
+    return (isinstance(row, dict) and isinstance(row.get("extra"), dict)
+            and row["extra"].get("shell") is True)
+
+
+def _countable(usage) -> int:
+    """`usage_store.tokens_from_meta`'s arithmetic, asked of one usage
+    block. Imported rather than restated: two answers to "which fields
+    count" is the drift that module's docstring is about."""
+    try:
+        import usage_store
+        return int(usage_store.tokens_from_meta({"usage": usage}) or 0)
+    except Exception:  # noqa: BLE001 — accounting never fails a run
+        return 0
+
+
+def envelope_of(text: str) -> dict:
+    """The `--output-format json` result envelope out of a run's stdout,
+    or ``{}``. The CLI prints one object; a stream prints one per line,
+    and the result is the last of them."""
+    text = (text or "").strip()
+    if not text:
+        return {}
+    candidates = [text] + [line for line in reversed(text.splitlines())
+                           if line.strip().startswith("{")]
+    for chunk in candidates:
+        try:
+            obj = json.loads(chunk)
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and (obj.get("type") == "result"
+                                      or "is_error" in obj
+                                      or "subtype" in obj):
+            return obj
+    return {}
+
+
+def transcript_tokens(run_id: str, roots: list[str] | None = None) -> int:
+    """What a run with no envelope spent, read off the transcript the CLI
+    left behind (``projects/<dir>/<run id>.jsonl``). The consolidator and
+    study read their answer as text, so their runs carry no usage block —
+    but the CLI wrote one per model call into the transcript, and a run
+    nothing counted is a run the budget estimate reads as free.
+
+    One call is written as several lines (one per content block) carrying
+    the same message id and the same usage, so it is counted once per id.
+    ``0`` for anything that cannot be read: an uncounted run is the state
+    this was in before it existed.
+    """
+    if not run_id or not _SAFE_RUN_ID.match(run_id):
+        return 0
+    if roots is None:
+        roots = [os.environ.get("CLAUDE_CONFIG_DIR") or "",
+                 os.path.join(os.environ.get("HOME") or "", ".claude"),
+                 "/data/home/.claude"]
+    import glob
+    seen_roots: set[str] = set()
+    for root in roots:
+        if not root:
+            continue
+        real = os.path.realpath(root)
+        if real in seen_roots:
+            continue
+        seen_roots.add(real)
+        for path in glob.glob(os.path.join(real, "projects", "*", run_id + ".jsonl")):
+            usage_by_id: dict[str, dict] = {}
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                    for n, line in enumerate(fh):
+                        if n > 20000:
+                            break
+                        try:
+                            obj = json.loads(line)
+                        except ValueError:
+                            continue
+                        msg = obj.get("message") if isinstance(obj, dict) else None
+                        if (not isinstance(msg, dict) or obj.get("type") != "assistant"
+                                or not isinstance(msg.get("usage"), dict)):
+                            continue
+                        usage_by_id[str(msg.get("id") or n)] = msg["usage"]
+            except OSError:
+                continue
+            total = sum(_countable(u) for u in usage_by_id.values())
+            if total:
+                return total
+    return 0
+
+
+def record_shell(source: str, exit_code: int, *, envelope: dict | None = None,
+                 stderr_text: str = "", error: str = "",
+                 run_id: str = "", model: str = "",
+                 duration_s: float | None = None, extra: dict | None = None,
+                 timeout_exit: int = 124, roots: list[str] | None = None) -> dict:
+    """One shell run, judged the way `engine._run_cli` judges its own.
+
+    The envelope is the authority when there is one — its `is_error`,
+    `subtype`, `num_turns`, `session_id` and usage are the CLI's own
+    account — and the exit status when there is not. 124 is `timeout`'s
+    and says so by name, never "crash". A failure with no words of its
+    own carries the CLI's last stderr line, because "claude exited 1" is
+    the sentence that sends somebody to the wrong place. ``error`` is the
+    caller's own verdict on a run that exited 0 and still failed it — a
+    study session that answered with no JSON is `unparseable`, which no
+    exit status can say.
+    """
+    env = envelope if isinstance(envelope, dict) else {}
+    subtype = str(env.get("subtype") or "")
+    turns = None
+    tokens = 0
+    if env:
+        ok = (int(exit_code) == 0 and not env.get("is_error")
+              and subtype in ("", "success"))
+        err = "" if ok else str(env.get("result") or "")
+        if isinstance(env.get("num_turns"), int):
+            turns = env["num_turns"]
+        run_id = run_id or str(env.get("session_id") or "")
+        tokens = _countable(env.get("usage"))
+        if duration_s is None and isinstance(env.get("duration_ms"), (int, float)):
+            duration_s = env["duration_ms"] / 1000.0
+    else:
+        ok = int(exit_code) == 0
+        err = ""
+    if error:
+        ok, err = False, str(error)
+    if not ok and not err:
+        lines = [ln.strip() for ln in (stderr_text or "").splitlines() if ln.strip()]
+        err = lines[-1] if lines else ""
+    if not ok and int(exit_code) == int(timeout_exit):
+        outcome = "timeout"
+        err = err or f"timed out (exit {exit_code})"
+    else:
+        if not ok and not err:
+            err = f"claude exited {exit_code}"
+        outcome = classify({"ok": ok, "error": err, "meta": {"subtype": subtype}})
+    if not tokens and run_id:
+        tokens = transcript_tokens(run_id, roots)
+    row_extra = {"shell": True, "exit": int(exit_code)}
+    for key, value in (extra or {}).items():
+        if key not in row_extra and len(row_extra) < 8:
+            row_extra[key] = value
+    row = record(source, outcome, ok=ok, error=err, duration_s=duration_s,
+                 model=model, tokens=tokens or None, turns=turns,
+                 run_id=run_id if _SAFE_RUN_ID.match(run_id or "") else "",
+                 extra=row_extra)
+    if is_claude_run(row):
+        # The one listener that has to run where the model ran: the
+        # tracker asks again after a run, and nothing else would tell it.
+        try:
+            import usage_store
+            usage_store.nudge()
+        except Exception:  # noqa: BLE001 — a nudge is freshness, not a duty
+            pass
+    return row
+
+
+def _mark_path() -> str:
+    return SHELL_MARK_FILE or os.path.join(
+        os.path.dirname(JOURNAL_FILE) or ".", "journal-shell-mark.json")
+
+
+def _load_mark() -> tuple[int, int] | None:
+    path = _mark_path()
+    if not os.path.isdir(os.path.dirname(path) or "."):
+        mem = _SHELL_MEMORY_MARK
+        return None if mem["ts"] is None else (int(mem["ts"]), int(mem["n"]))
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            obj = json.load(fh)
+        return int(obj["ts"]), int(obj.get("n") or 0)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _save_mark(ts: int, n: int) -> None:
+    path = _mark_path()
+    if not os.path.isdir(os.path.dirname(path) or "."):
+        _SHELL_MEMORY_MARK.update(ts=ts, n=n)
+        return
+    try:
+        atomic_write.write_text(path, json.dumps({"ts": ts, "n": n}))
+    except OSError:
+        _SHELL_MEMORY_MARK.update(ts=ts, n=n)
+
+
+def book_shell_rows(handlers, now: float | None = None) -> int:
+    """Hand every shell row not booked yet to ``handlers``; how many.
+
+    The mark is the newest booked row's second and how many rows share
+    it, because `record` stamps whole seconds and two runs can finish in
+    one — a mark of the second alone would skip the second of them.
+    Kept on disk, so a restart books what landed while the panel was down
+    rather than either booking everything again (a report per old
+    failure, the usage ledger counted twice) or nothing. A first boot
+    starts `SHELL_BACKLOG_S` back. A handler that raises costs that
+    handler, never the pass or the mark.
+    """
+    now = time.time() if now is None else now
+    mark = _load_mark()
+    if mark is None:
+        mark = (int(now - SHELL_BACKLOG_S), 0)
+    mark_ts, mark_n = mark
+    rows = [r for r in tail(SHELL_TAIL) if is_shell_row(r)]
+    fresh: list[dict] = []
+    at_mark = 0
+    for row in rows:
+        ts = int(row.get("ts") or 0)
+        if ts < mark_ts:
+            continue
+        if ts == mark_ts:
+            at_mark += 1
+            if at_mark <= mark_n:
+                continue
+        fresh.append(row)
+    if not fresh:
+        if _load_mark() is None:
+            # A first boot: pin the backlog window where it started, or
+            # it slides forward a minute every tick until a row lands.
+            _save_mark(mark_ts, mark_n)
+        return 0
+    # Every row in the newest booked second is booked now, whichever pass
+    # booked it, so the mark is that second and all of them.
+    last_ts = max(int(r.get("ts") or 0) for r in fresh)
+    last_n = sum(1 for r in rows if int(r.get("ts") or 0) == last_ts)
+    for row in fresh:
+        for handler in handlers:
+            try:
+                handler(row)
+            except Exception:  # noqa: BLE001 — one handler, never the pass
+                logging.getLogger("brain.journal").debug(
+                    "shell row handler %r raised", handler, exc_info=True)
+    _save_mark(last_ts, last_n)
+    return len(fresh)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """``journal.py record --source S --exit N [...]`` — the shell half's
+    one door. Always exits 0 and prints nothing: this is bookkeeping about
+    a run, and it may never be the reason a pass reports a failure."""
+    import argparse
+    parser = argparse.ArgumentParser(prog="journal.py")
+    sub = parser.add_subparsers(dest="cmd")
+    rec = sub.add_parser("record")
+    rec.add_argument("--source", required=True)
+    rec.add_argument("--exit", type=int, default=0, dest="exit_code")
+    rec.add_argument("--envelope", default="",
+                     help="a file holding the run's JSON stdout")
+    rec.add_argument("--stderr", default="", help="a file holding its stderr")
+    rec.add_argument("--error", default="",
+                     help="the caller's own failure verdict on a run that exited 0")
+    rec.add_argument("--run-id", default="")
+    rec.add_argument("--model", default="")
+    rec.add_argument("--duration", type=float, default=None)
+    rec.add_argument("--timeout-exit", type=int, default=124)
+    rec.add_argument("--extra", action="append", default=[],
+                     help="key=value, carried on the row")
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        return 0
+    if args.cmd != "record":
+        return 0
+
+    def _read(path: str, limit: int = 2_000_000) -> str:
+        if not path:
+            return ""
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                return fh.read(limit)
+        except OSError:
+            return ""
+
+    extra: dict = {}
+    for pair in args.extra:
+        key, _, value = pair.partition("=")
+        if key.strip():
+            extra[key.strip()[:32]] = value[:120]
+    try:
+        record_shell(args.source, args.exit_code,
+                     envelope=envelope_of(_read(args.envelope)),
+                     stderr_text=_read(args.stderr, 200_000),
+                     error=args.error.strip()[:MAX_ERROR],
+                     run_id=args.run_id.strip(), model=args.model.strip(),
+                     duration_s=args.duration, extra=extra,
+                     timeout_exit=args.timeout_exit)
+    except Exception:  # noqa: BLE001 — never the reason a pass fails
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

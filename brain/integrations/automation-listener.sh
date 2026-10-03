@@ -232,6 +232,19 @@ claim_task_session() {
     return 0
 }
 
+# One journal row per task run, from this process (brain-run-source.sh's
+# brain_journal_record): the envelope is the CLI's own account of the run,
+# so the panel can file a report when it failed, put its tokens in the
+# usage breakdown, and the usage reading is nudged. Optional, like the
+# ledger: an image without the library records nothing, as before.
+journal_task() {
+    local code="$1" out_file="$2" err_file="$3" model="$4" secs="$5"
+    command -v brain_journal_record > /dev/null 2>&1 || return 0
+    brain_journal_record automation "$code" --envelope "$out_file" \
+        --stderr "$err_file" ${model:+--model "$model"} --duration "$secs"
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # Per-task tool scoping
 # ---------------------------------------------------------------------------
@@ -468,14 +481,14 @@ process_task() {
     # and .claude/settings.local.json for pre-approved tool permissions.
     # --max-turns prevents runaway agentic loops.
     # No --dangerously-skip-permissions: permissions come from settings.local.json.
-    local start_time
+    local start_time task_rc=0
     start_time=$(date +%s)
 
     # --output-format json: capture the structured result and pull .result,
     # instead of scraping verbose stdout (which now carries MCP/diagnostic
     # lines). See extract_claude_result().
     # shellcheck disable=SC2086
-    (cd /config && printf '%s' "$prompt" | timeout "$claude_limit" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || true
+    (cd /config && printf '%s' "$prompt" | timeout "$claude_limit" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
 
     # A task that ended on the turn cap is landed, not failed: resumed on
     # the session the envelope names, with two turns and a prompt to answer
@@ -493,6 +506,7 @@ process_task() {
         if (cd /config && brain_land "$land_sid" "$land_left" "$stderr_file" -- \
             ${CLAUDE_BIN} -p --output-format json ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "${output_file}.land"); then
             mv -f "${output_file}.land" "$output_file"
+            task_rc=0
         else
             rm -f "${output_file}.land"
         fi
@@ -506,6 +520,7 @@ process_task() {
     result=$(extract_claude_result "$output_file")
     task_data=$(extract_claude_data "$output_file")
     claim_task_session "$output_file"
+    journal_task "$task_rc" "$output_file" "$stderr_file" "$task_model" "$duration"
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
     rm -f "$output_file" "$stderr_file"
 
@@ -520,8 +535,9 @@ process_task() {
             output_file=$(mktemp)
             stderr_file=$(mktemp)
 
+            task_rc=0
             # shellcheck disable=SC2086
-            (cd /config && printf '%s' "$prompt" | timeout "$remaining" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || true
+            (cd /config && printf '%s' "$prompt" | timeout "$remaining" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
 
             end_time=$(date +%s)
             duration=$((end_time - start_time))
@@ -529,6 +545,7 @@ process_task() {
             result=$(extract_claude_result "$output_file")
             task_data=$(extract_claude_data "$output_file")
             claim_task_session "$output_file"
+            journal_task "$task_rc" "$output_file" "$stderr_file" "$task_model" "$duration"
             stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
             rm -f "$output_file" "$stderr_file"
             bashio::log.info "Retried task [$task_id] after /api/mcp cleanup"

@@ -3871,6 +3871,22 @@ def _journal_rate_listener(row: dict) -> None:
         RATE_LIMIT_STATE.update(streak=0, until=0.0, detail="")
 
 
+def _book_shell_usage(row: dict) -> None:
+    """A shell run's tokens, into the ledger the budget estimate and the
+    usage popover's breakdown read — the same `record_run` every panel run
+    passes through, under the row's own time."""
+    tokens = row.get("tokens")
+    if isinstance(tokens, int) and tokens > 0:
+        usage_store.record_run(tokens, str(row.get("source") or "shell"),
+                               now=float(row.get("ts") or time.time()))
+
+
+# What an in-process row meets on `journal.record`, less the nudge the
+# command line already sent from the process that ran the model.
+_SHELL_HANDLERS = (_book_shell_usage, _journal_report_listener,
+                   _journal_rate_listener)
+
+
 # Why the scheduler last held a card back, per category id. In memory
 # and written by the tick, because computing a fingerprint for nine
 # categories on every /api/status poll would be nine whole-house reads
@@ -3961,6 +3977,15 @@ async def _scheduler() -> None:
         # inbox, which is what makes one sweep cover voice, the chat, the
         # terminal, study, a correction and another add-on's line alike.
         await asyncio.to_thread(_ingest_facts)
+        # The shell half's runs — study, the consolidator, the automation
+        # listener, the memory extractor — wrote their journal rows from
+        # their own processes, where none of the panel's listeners are.
+        # They are booked here, through the same listeners, before any gate:
+        # a failed consolidation is a report whatever the insights face says.
+        try:
+            await asyncio.to_thread(journal.book_shell_rows, _SHELL_HANDLERS)
+        except Exception as exc:  # noqa: BLE001 — bookkeeping, never the tick
+            log.debug("booking shell runs failed: %s", exc)
         # The drain that used to live here is the Resident's first look
         # now (`_resident_loop`), which reads the same `awaiting_triage()`
         # queue on its own five-second tick — so a row a study session just
