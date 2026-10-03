@@ -1504,9 +1504,16 @@ class TestEditJournalOwnership(unittest.TestCase):
 class TestProjectSettingsAllowList(unittest.TestCase):
     """`setup_claude_settings()` lifted out of run.sh and run.
 
-    The allow-list it writes is what every headless run — voice, tasks,
-    the fixer, the chat — may do without a prompt. It shipped
-    pre-approving `mcp__claude_ai_Home_Assistant__*` and
+    It writes two files, and the split is the point. The PROJECT file
+    (`/config/.claude/settings.local.json`) is read by every Claude process
+    in /config — the interactive terminal and the chat as much as the
+    listeners — and it used to pre-approve Bash(*), Write, Edit and every
+    Home Assistant tool for all of them, so the terminal never asked and
+    the "permission prompts" option was close to a no-op. It now carries
+    only the analyst's reading tools. The HEADLESS file carries the old
+    list, for the runs that cannot be asked (claude-run adds it to them).
+
+    It shipped pre-approving `mcp__claude_ai_Home_Assistant__*` and
     `mcp__claude_ai_Vercel__*`: neither is a server this add-on declares,
     and a wildcard for a server somebody could later connect is an
     approval given in advance for tools nobody has read. The function is
@@ -1514,7 +1521,7 @@ class TestProjectSettingsAllowList(unittest.TestCase):
     add-on actually writes is the JSON that is asserted.
     """
 
-    EXPECTED_ALLOW = [
+    HEADLESS_ALLOW = [
         "mcp__home-assistant__*",
         "Bash(*)",
         "Read", "Write", "Edit", "Glob", "Grep", "Agent", "Skill",
@@ -1534,35 +1541,70 @@ class TestProjectSettingsAllowList(unittest.TestCase):
                       r"project settings written[^\n]*\n\}\n", run_sh, re.S | re.M)
         assert m, "setup_claude_settings() not found in run.sh"
         cls.tmp = tempfile.mkdtemp()
-        fn = m.group(0).replace('"/config/.claude"', f'"{cls.tmp}/.claude"')
-        # The function reads nothing else from outside itself; bashio is
-        # the one thing the harness has to supply.
-        script = "bashio::log.info() { :; }\n" + fn + "\nsetup_claude_settings\n"
-        proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        fn = (m.group(0).replace('"/config/.claude"', f'"{cls.tmp}/.claude"')
+              .replace('"/config/.brain"', f'"{cls.tmp}/.brain"'))
+        # The function reads nothing else from outside itself but the
+        # panel's tool lists; bashio is the one thing the harness supplies.
+        script = ("bashio::log.info() { :; }\nbashio::log.warning() { :; }\n"
+                  + fn + "\nsetup_claude_settings\n")
+        proc = subprocess.run(["bash", "-c", script], capture_output=True,
+                              text=True, env=dict(os.environ,
+                                                  BRAIN_PANEL_DIR=str(PANEL)))
         assert proc.returncode == 0, proc.stderr
         cls.settings = json.loads(
             (Path(cls.tmp) / ".claude" / "settings.local.json").read_text())
+        cls.headless = json.loads(
+            (Path(cls.tmp) / ".brain" / "headless_settings.json").read_text())
+        if str(PANEL) not in sys.path:
+            sys.path.insert(0, str(PANEL))
 
-    def test_the_allow_list_is_exactly_this(self):
-        self.assertEqual(self.settings["permissions"]["allow"], self.EXPECTED_ALLOW)
+    def test_the_project_file_pre_approves_only_reading(self):
+        import engine
+        self.assertEqual(self.settings["permissions"]["allow"],
+                         list(engine.ANALYST_TOOLS)
+                         + ["mcp__home-assistant__offer_resolutions"])
+        for acting in ("Bash(*)", "Write", "Edit", "mcp__home-assistant__*",
+                       "mcp__home-assistant__call_service"):
+            self.assertNotIn(acting, self.settings["permissions"]["allow"])
+
+    def test_the_headless_file_keeps_the_old_list(self):
+        self.assertEqual(self.headless["permissions"]["allow"], self.HEADLESS_ALLOW)
 
     def test_no_foreign_server_is_pre_approved(self):
-        for entry in self.settings["permissions"]["allow"]:
-            self.assertNotIn("claude_ai", entry, entry)
-        mcp = [e for e in self.settings["permissions"]["allow"] if e.startswith("mcp__")]
+        for doc in (self.settings, self.headless):
+            for entry in doc["permissions"]["allow"]:
+                self.assertNotIn("claude_ai", entry, entry)
+        mcp = [e for e in self.headless["permissions"]["allow"]
+               if e.startswith("mcp__")]
         self.assertEqual(mcp, ["mcp__home-assistant__*"],
                          "the only MCP server this add-on declares is home-assistant")
+
+    def test_both_refuse_the_platform_and_its_memory(self):
+        import engine
+        for doc in (self.settings, self.headless):
+            self.assertEqual(doc["crossSessionInbound"], "refuse")
+            self.assertIs(doc["autoMemoryEnabled"], False)
+            self.assertTrue(set(engine.PLATFORM_DENIED)
+                            <= set(doc["permissions"]["deny"]))
 
     def test_the_project_server_is_still_trusted(self):
         """The approval that makes HA tools load in a `-p` run is separate
         from the allow-list and must survive trimming it."""
-        self.assertTrue(self.settings["enableAllProjectMcpServers"])
-        self.assertEqual(self.settings["enabledMcpjsonServers"], ["home-assistant"])
+        for doc in (self.settings, self.headless):
+            self.assertTrue(doc["enableAllProjectMcpServers"])
+            self.assertEqual(doc["enabledMcpjsonServers"], ["home-assistant"])
 
-    def test_the_edit_snapshot_hook_is_still_installed(self):
-        hooks = self.settings["hooks"]["PreToolUse"]
-        self.assertEqual(hooks[0]["matcher"], "Write|Edit|MultiEdit|NotebookEdit")
-        self.assertIn("brain-edit-snapshot.py", hooks[0]["hooks"][0]["command"])
+    def test_the_hooks_are_installed_in_both(self):
+        """The fixer reads ONLY the headless file (`--setting-sources ""`),
+        so a hook missing there is a fix nobody can undo and a protected
+        entity a fix can write around."""
+        for doc in (self.settings, self.headless):
+            hooks = doc["hooks"]["PreToolUse"]
+            self.assertEqual(hooks[0]["matcher"], "Write|Edit|MultiEdit|NotebookEdit")
+            self.assertIn("brain-edit-snapshot.py", hooks[0]["hooks"][0]["command"])
+            self.assertEqual(hooks[1]["matcher"], "Bash|Write|Edit|MultiEdit")
+            self.assertIn("brain-protect-hook.py", hooks[1]["hooks"][0]["command"])
+            self.assertTrue((SCRIPTS / "brain-protect-hook.py").is_file())
 
     def test_the_slash_commands_land_beside_it(self):
         commands = Path(self.tmp) / ".claude" / "commands"
