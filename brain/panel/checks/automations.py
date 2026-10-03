@@ -8,8 +8,8 @@ or it is a copy of another one.
 
 All of these read the config files (``automations.yaml`` and friends), the
 entity registry, the automation entities' state and the traces Home
-Assistant keeps in ``.storage/trace.saved_traces``. None of them need the
-model.
+Assistant is holding right now (``trace/list`` over the WebSocket — see
+``snapshot.live_traces``). None of them need the model.
 """
 from __future__ import annotations
 
@@ -167,15 +167,85 @@ def dead_service(snap: dict, now: float) -> list[dict]:
 # Trace-based checks: errors, conditions that never pass, mode: single
 # ---------------------------------------------------------------------------
 
-def _traces_for(snap: dict, entity_id: str) -> list[dict]:
+def _traced(house: House) -> list[dict]:
+    """Every automation and script Core is running, keyed the way it traces.
+
+    Read off the STATES rather than `automations.yaml`, for two reasons.
+    Core keys a trace `automation.<config id>`, and the config id is on
+    every automation's state as its `id` attribute — so a lookup by entity
+    id, which is what this used to do, finds nothing for any automation
+    whose id is not its slug, and the UI writes a millisecond timestamp.
+    And an automation in a package or an `!include_dir_merge_list` split
+    is a running automation with traces like any other, which a walk of
+    one file cannot see. The YAML's alias is used where the file has the
+    entry, because it is what the person typed; otherwise the state's own
+    friendly name.
+
+    A script's trace key is its `unique_id` — the key it has in
+    `scripts.yaml` — read off the registry where the registry has it and
+    off the object id otherwise, which is what it is at creation.
+    """
+    aliases = {}
+    for cfg in house.snap.get("automations") or []:
+        if isinstance(cfg, dict) and cfg.get("id") is not None:
+            aliases[str(cfg["id"])] = str(cfg.get("alias") or "")
+    out = []
+    for eid, st in sorted(house.states.items()):
+        attrs = st.get("attributes") or {}
+        if eid.startswith("automation."):
+            cid = attrs.get("id")
+            if cid is None or str(cid) == "":
+                continue  # no id, no trace anybody can find
+            cid = str(cid)
+            out.append({"key": f"automation.{cid}", "entity_id": eid,
+                        "kind": "Automation",
+                        "alias": aliases.get(cid) or str(
+                            attrs.get("friendly_name") or eid)})
+        elif eid.startswith("script."):
+            reg = house.registry.get(eid) or {}
+            uid = str(reg.get("unique_id") or eid.split(".", 1)[1])
+            out.append({"key": f"script.{uid}", "entity_id": eid,
+                        "kind": "Script",
+                        "alias": str(attrs.get("friendly_name") or eid)})
+    return out
+
+
+def _short(row: dict) -> dict:
+    """One run as Core's `short_dict`, whichever wrapper it arrived in.
+
+    `trace/list` answers with the short dict itself. What Core STORES is
+    `BaseTrace.as_dict()` — `{"extended_dict": {...}, "short_dict":
+    {...}}` — and a row in that shape read at the top level has no
+    `script_execution`, no `error` and no `timestamp`, which is how three
+    checks were dead on every install while their tests passed on a
+    flattened guess. A snapshot captured from either is read the same.
+    """
+    inner = row.get("short_dict")
+    if isinstance(inner, dict):
+        return inner
+    inner = row.get("extended_dict")
+    if isinstance(inner, dict):
+        return inner
+    return row
+
+
+def _traces_for(snap: dict, key: str) -> list[dict]:
+    """The runs Core holds for one `domain.item_id` key, oldest first.
+
+    `not_triggered` rows are not runs (see `snapshot.live_traces`), and a
+    run still `running` has no verdict yet; both are dropped here as well
+    as at the fetch, so a snapshot captured by hand reads the same.
+    """
     traces = snap.get("traces") or {}
-    rows = traces.get(entity_id)
+    rows = traces.get(key)
     if isinstance(rows, dict):
         rows = list(rows.values())
     if not isinstance(rows, list):
         return []
-    rows = [r for r in rows if isinstance(r, dict)]
-    rows.sort(key=lambda r: str((r.get("timestamp") or {}).get("start") or ""))
+    rows = [_short(r) for r in rows if isinstance(r, dict)]
+    rows = [r for r in rows if not r.get("not_triggered")
+            and r.get("state") != "running"]
+    rows.sort(key=_trace_start)
     return rows
 
 
@@ -183,13 +253,15 @@ def _trace_start(trace: dict) -> str:
     return str((trace.get("timestamp") or {}).get("start") or "")
 
 
+def _label_of(item: dict) -> str:
+    return f"{item['kind']} '{item['alias']}'"
+
+
 def trace_error(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     out = []
-    for item in _automations(house) + _scripts(house):
-        if not item["entity_id"]:
-            continue
-        rows = _traces_for(snap, item["entity_id"])
+    for item in _traced(house):
+        rows = _traces_for(snap, item["key"])
         if not rows:
             continue
         last = rows[-1]
@@ -199,10 +271,9 @@ def trace_error(snap: dict, now: float) -> list[dict]:
             continue
         # Only the *latest* run counts: an error three runs ago that has
         # since run clean is history, not a finding.
-        kind = "Script" if item["entity_id"].startswith("script.") else "Automation"
         step = str(last.get("last_step") or "")
         out.append({
-            "text": f"{_label(kind, item)} failed the last time it ran",
+            "text": f"{_label_of(item)} failed the last time it ran",
             "detail": (f"On {when(_trace_start(last))}"
                        + (f", at step {step}" if step else "")
                        + (f": {str(error)[:300]}" if error else
@@ -216,14 +287,25 @@ def trace_error(snap: dict, now: float) -> list[dict]:
     return out
 
 
+# Core keeps five traces per automation by default, so a motion-triggered
+# rule with a night-only condition fills its whole window with daytime
+# `failed_conditions` runs in an hour — every one of them true, and the
+# automation working exactly as written. What says the condition really
+# never lets it act is `last_triggered`, which Core sets only once the
+# conditions have PASSED and the actions run (`action_script.
+# last_triggered`). A rule whose actions ran inside this window is a rule
+# whose condition passes; one quiet for longer than it is worth a sentence.
+CONDITION_PASSED_DAYS = 14
+
+
 def condition_never_passes(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     out = []
-    for item in _automations(house):
-        eid = item["entity_id"]
-        if not eid:
+    for item in _traced(house):
+        if item["kind"] != "Automation":
             continue
-        rows = _traces_for(snap, eid)
+        eid = item["entity_id"]
+        rows = _traces_for(snap, item["key"])
         if len(rows) < CONDITION_MIN_RUNS:
             continue
         if not all(str(r.get("script_execution") or "") == "failed_conditions"
@@ -232,12 +314,19 @@ def condition_never_passes(snap: dict, now: float) -> list[dict]:
         state = house.states.get(eid) or {}
         if state.get("state") == "off":
             continue
+        last_ran = (state.get("attributes") or {}).get("last_triggered")
+        ran_age = age_days(last_ran, now) if last_ran else None
+        if ran_age is not None and ran_age < CONDITION_PASSED_DAYS:
+            continue
         out.append({
-            "text": f"{_label('Automation', item)} triggers but its "
-                    "condition never passes",
+            "text": f"{_label_of(item)} triggers but its condition never "
+                    "passes",
             "detail": f"Every one of its last {len(rows)} runs (most "
                       f"recently {when(_trace_start(rows[-1]))}) stopped at "
-                      "the condition. It is alive and cannot act.",
+                      "the condition, and "
+                      + (f"its actions last ran on {when(last_ran)}."
+                         if last_ran else "its actions have never run.")
+                      + " It is alive and cannot act.",
             "fix": "Check the condition against the entities it tests — "
                    "it is probably comparing against a state or value that "
                    "never occurs.",
@@ -251,11 +340,11 @@ def condition_never_passes(snap: dict, now: float) -> list[dict]:
 def already_running(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     out = []
-    for item in _automations(house):
-        eid = item["entity_id"]
-        if not eid:
+    for item in _traced(house):
+        if item["kind"] != "Automation":
             continue
-        rows = _traces_for(snap, eid)
+        eid = item["entity_id"]
+        rows = _traces_for(snap, item["key"])
         recent = []
         for r in rows:
             if str(r.get("script_execution") or "") != "failed_single":
@@ -268,7 +357,7 @@ def already_running(snap: dict, now: float) -> list[dict]:
         if len(recent) < ALREADY_RUNNING_MIN:
             continue
         out.append({
-            "text": f"{_label('Automation', item)} keeps being skipped "
+            "text": f"{_label_of(item)} keeps being skipped "
                     "because it is already running",
             "detail": f"{len(recent)} triggers in the last day arrived "
                       "while a previous run was still going, and `mode: "
@@ -762,14 +851,13 @@ CHECKS = [
     {"id": "auto.dead_service", "title": "Automations calling missing services",
      "needs": ("services", "automations"), "run": dead_service},
     {"id": "auto.trace_error", "title": "Automations whose last run failed",
-     "needs": ("registry", "automations", "traces"), "run": trace_error},
+     "needs": ("states", "traces"), "run": trace_error},
     {"id": "auto.condition_never_passes",
      "title": "Automations whose condition never passes",
-     "needs": ("states", "registry", "automations", "traces"),
-     "run": condition_never_passes},
+     "needs": ("states", "traces"), "run": condition_never_passes},
     {"id": "auto.already_running",
      "title": "Automations dropping triggers on mode: single",
-     "needs": ("registry", "automations", "traces"), "run": already_running},
+     "needs": ("states", "traces"), "run": already_running},
     {"id": "auto.never_fired", "title": "Automations that have never fired",
      "needs": ("states", "registry", "automations"), "run": never_fired},
     {"id": "auto.forgotten_off", "title": "Automations left switched off",
