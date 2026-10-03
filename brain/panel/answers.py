@@ -75,6 +75,7 @@ SITUATIONS = (
     "battery", "unplugged", "stuck", "chore_check", "automation",
     "generic", "hands", "planned", "planning", "fixing", "change",
     "question", "opportunity", "chore", "chore_done", "watching",
+    "fix_failed",
 )
 
 # Which check ids read as which situation. Keyed on the id and never on
@@ -171,10 +172,26 @@ def situation(case: dict) -> str:
     source = str(case.get("source") or "")
     check = source[len("check:"):] if source.startswith("check:") else ""
     if check in CHECK_SITUATIONS:
-        return CHECK_SITUATIONS[check]
-    if check.startswith(AUTOMATION_PREFIX):
-        return "automation"
-    return "generic" if case.get("fixable") else "hands"
+        base = CHECK_SITUATIONS[check]
+    elif check.startswith(AUTOMATION_PREFIX):
+        base = "automation"
+    else:
+        base = "generic" if case.get("fixable") else "hands"
+    # A fix run has already been here, and what it concluded decides the
+    # first press more than the rule's own `fixable` does. `needs_you` is
+    # the fixer saying a person has to do this — `fixable` is the row's
+    # claim from before anybody looked, and leading with *Fix it* on it
+    # bought another plan run to reach the same conclusion — so it is a
+    # pair of hands, keeping the check's own situation (and the reason
+    # its box opens with) where that already was one. `failed` is a run
+    # that did not finish: trying again is a fair press, and it is behind
+    # the ⋯ rather than leading, because the second attempt is the one
+    # that should be read about first.
+    if fstatus == "needs_you":
+        return base if base in HANDS else "hands"
+    if fstatus == "failed" and base not in HANDS:
+        return "fix_failed"
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -197,9 +214,21 @@ def _wrong(case_id: str, prefill: str = "", label: str = "Not a problem") -> dic
         prefill=prefill, done="Noted — brAIn won't raise this again")
 
 
-def _dismiss(case_id: str) -> dict:
+def _dismiss(case_id: str, question: bool = False) -> dict:
     """The snooze. Off the list for now, nothing settled, nothing taught,
-    and brAIn picks when it comes back."""
+    and brAIn picks when it comes back.
+
+    A question says so in its own words, because what it does is
+    different in one way that matters: a guess is not "still true or
+    not", it is asked again — and while it is away it stops holding up
+    the next one (`hypotheses.snooze`)."""
+    if question:
+        return _answer(
+            "not_now", "Dismiss",
+            "Not now. brAIn asks again in a week, and asks something else "
+            "meanwhile — nothing is recorded either way.",
+            route=f"/api/case/{case_id}/not_now", request="snooze",
+            done="Asked again later")
     return _answer(
         "not_now", "Dismiss",
         "Off the list for now. Nothing is recorded — brAIn brings it back "
@@ -288,7 +317,7 @@ def answers(case: dict) -> list[dict]:
                     "reason retires every guess built on the same "
                     "misreading.", route=f"/api/case/{cid}/wrong",
                     note=True, done="Noted"),
-            _dismiss(cid),
+            _dismiss(cid, question=True),
         ]
 
     if sit == "opportunity":
@@ -341,7 +370,7 @@ def answers(case: dict) -> list[dict]:
     if sit == "chore_check":
         return [_done(key, primary=True), _dismiss(cid), _wrong(cid)]
     out: list[dict] = []
-    if sit not in HANDS and case.get("fixable"):
+    if sit not in HANDS and sit != "fix_failed" and case.get("fixable"):
         out.append(_fix(key))
     out.append(_todo(cid, primary=not out))
     out.append(_dismiss(cid))

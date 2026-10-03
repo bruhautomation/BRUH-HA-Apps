@@ -1945,7 +1945,8 @@ async def _apply_finding_requests() -> list[dict]:
         result = {"ts": ts, "action": action, "via": req.get("via", ""),
                   "ok": False, "why": "no such finding"}
         if action == "snooze":
-            until = int(time.time() + req["hours"] * 3600)
+            until = await asyncio.to_thread(_request_snooze_until, ts,
+                                            req.get("hours"))
             row = await asyncio.to_thread(findings_store.snooze, ts, until)
             result["ok"] = bool(row)
         elif action == "reply":
@@ -1990,6 +1991,24 @@ async def _apply_finding_requests() -> list[dict]:
     if asked:
         out.append(_start_requested_checks(asked))
     return out
+
+
+def _request_snooze_until(ts: int, hours: float | None) -> int:
+    """When a snooze asked for from Home Assistant should end.
+
+    One that names its hours gets them — Repairs' "Remind me tomorrow"
+    says 24 on the button. One that does not is a Dismiss, and a Dismiss
+    is the feed's own press: it buys what the feed would have bought for
+    this case (`cases.snooze_until`, keyed on how much it matters), so a
+    phone and the panel cannot disagree about when a card comes back.
+    """
+    now = time.time()
+    if hours:
+        return int(now + float(hours) * 3600)
+    case = cases.get(f"f:{int(ts)}", now)
+    if case is None:
+        return int(now + finding_requests.SNOOZE_DEFAULT_H * 3600)
+    return cases.snooze_until(case, now)
 
 
 def _start_requested_checks(asked: list[dict]) -> dict:
@@ -9347,7 +9366,10 @@ def _findings_payload() -> dict:
     on me", which is the only question a badge on a work list can be asked.
     """
     payload = findings_store.listing()
-    open_claims = hypotheses.list_all("open")
+    # Awake only: a guess somebody dismissed is still open and is not
+    # being asked. Listed here it came straight back onto the feed as a
+    # loose card beside the case list that had correctly hidden it.
+    open_claims = hypotheses.awake()
     payload["hypotheses"] = open_claims
     payload["open"] += len(open_claims)
     # How right each producer has been, from the endings people gave. It

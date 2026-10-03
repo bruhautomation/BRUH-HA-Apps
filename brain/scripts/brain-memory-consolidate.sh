@@ -172,12 +172,18 @@ sweep_share_inbox() {
 # consolidation runs at a time, and the writer this loses to is not a
 # consolidation. So the queue's own lock is taken, and it is the same lock
 # `atomic_write.locked` takes on the panel side.
+#
+# A guess somebody dismissed ages from when it comes BACK, not from when it
+# was proposed: `max(ts, snoozed_until)` is `hypotheses._asked_at`, and a
+# shell writer reading only `ts` retired it while the panel was promising
+# it would return.
 _retire_stale_hypotheses() {
     local now cutoff
     now=$(date +%s)
     cutoff=$((now - HYPOTHESIS_TTL_DAYS * 86400))
     if jq -c --argjson cutoff "$cutoff" \
-        'if .status == "open" and (.ts // 0) < $cutoff
+        'if .status == "open"
+            and ([(.ts // 0), (.snoozed_until // 0)] | max) < $cutoff
          then .status = "expired" else . end' \
         "$HYPOTHESES_FILE" > "${HYPOTHESES_FILE}.tmp" 2>/dev/null; then
         mv "${HYPOTHESES_FILE}.tmp" "$HYPOTHESES_FILE"

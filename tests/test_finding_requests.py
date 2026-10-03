@@ -120,8 +120,11 @@ class TestWhatCountsAsARequest(RequestCase):
         self.assertEqual(got["hours"], finding_requests.SNOOZE_MAX_H)
         floor = finding_requests.parse({"ts": 1, "action": "snooze", "hours": 0})
         self.assertEqual(floor["hours"], 1.0)
+        # A snooze that names no length is a Dismiss, and the panel gives
+        # it the feed's own stakes-based quiet — so the request carries
+        # None rather than inventing a flat day here.
         default = finding_requests.parse({"ts": 1, "action": "snooze"})
-        self.assertEqual(default["hours"], finding_requests.SNOOZE_DEFAULT_H)
+        self.assertIsNone(default["hours"])
 
     def test_a_request_names_the_tab_s_own_verb(self):
         # The two surfaces have to settle a finding through the same

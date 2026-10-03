@@ -194,9 +194,15 @@ pick_stalest() {
     echo "$best"
 }
 
+# Counted over the guesses somebody is being ASKED: one they dismissed is
+# still open — it comes back — and does not hold a slot while it sleeps,
+# which is `hypotheses.budget`'s count, so the panel and a study session
+# agree about how many more a run may propose.
 open_hypothesis_count() {
     [ -s "$HYPOTHESES_FILE" ] || { echo 0; return; }
-    jq -s '[.[] | select(.status == "open")] | length' "$HYPOTHESES_FILE" 2>/dev/null || echo 0
+    jq -s --argjson now "$(date +%s)" \
+        '[.[] | select(.status == "open" and ((.snoozed_until // 0) <= $now))] | length' \
+        "$HYPOTHESES_FILE" 2>/dev/null || echo 0
 }
 
 case "${1:-}" in

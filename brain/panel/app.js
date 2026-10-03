@@ -5069,7 +5069,17 @@ function makeCase(row) {
     card.appendChild(chip);
   }
 
-  if (row.fix) {
+  // What a fix run reported, where one has run. It REPLACES the fix
+  // sentence on a row the run finished (`fixed`) or handed back
+  // (`needs_you`), because a stale "How brAIn would fix it" under a run
+  // that already did — or already concluded it could not — is how you
+  // lose track of what the house looks like; the old Findings card held
+  // that rule and the feed lost it with the field.
+  const result = caseResultNode(row);
+  if (result) card.appendChild(result);
+  const ranItsCourse = result
+    && (row.finding_status === "fixed" || row.finding_status === "needs_you");
+  if (row.fix && !ranItsCourse) {
     const box = el("div", "findfix");
     box.appendChild(el("span", "findfixlabel", fixHeading(row.fixable)));
     const text = el("span", null, prettyText(row.fix));
@@ -5081,6 +5091,14 @@ function makeCase(row) {
     box.appendChild(text);
     card.appendChild(box);
   }
+
+  // A proposal's evidence, beside the button that accepts it: the replay,
+  // and a trial's grade once the week has started. The Proposals sub-tab
+  // always had both; the feed — which is where *Make the change* is
+  // pressed — had neither, so the whole argument for a trial never reached
+  // the screen the yes is given on.
+  const proof = caseProofNode(row);
+  if (proof) card.appendChild(proof);
 
   // The plan a read-only run wrote, above the Apply that would let it —
   // the one block on the card somebody is about to consent to, so it is
@@ -5136,6 +5154,58 @@ function makeCase(row) {
   }
   card.appendChild(actions);
   return card;
+}
+
+// The fixer's own report, headed by what kind of report it is. Absent
+// when nothing has run — a card does not grow a box to say so.
+const CASE_RESULT_HEADS = {
+  fixed: "What brAIn did",
+  needs_you: "brAIn looked — this one needs you",
+  failed: "The fix did not finish",
+};
+
+function caseResultNode(row) {
+  if (!row.result) return null;
+  const box = el("div", "findresult");
+  box.appendChild(el("span", "findfixlabel",
+    CASE_RESULT_HEADS[row.finding_status] || "Last time brAIn looked"));
+  String(row.result).split("\n\n").forEach((para) => {
+    if (para.trim()) box.appendChild(el("p", null, prettyText(para)));
+  });
+  if ((row.changed || []).length) {
+    const list = el("ul", "findchanged");
+    row.changed.slice(0, 8).forEach((c) => list.appendChild(el("li", null, prettyText(c))));
+    box.appendChild(list);
+  }
+  return box;
+}
+
+// An opportunity's evidence, in the Proposals tab's own sentences — the
+// same two helpers, handed the case in the shape they read, so the card
+// and the tab cannot word one trial two ways. A playbook and a scene have
+// no replay (no week had a smoke alarm in it; a mood is a picture), so the
+// card says where their evidence is rather than going quiet.
+function caseProofNode(row) {
+  if (row.kind !== "opportunity") return null;
+  const box = el("div", "caseproof");
+  const shaped = {
+    replay: row.replay, replay_before: row.replay_before,
+    trial_result: row.trial_result, trial_started_at: row.trial_started_at,
+    trial_ends_at: row.trial_ends_at,
+  };
+  let line = "";
+  if (row.case_line) line = row.case_line;
+  else if (row.replay) line = propReplayLine(shaped);
+  else if (row.playbook || row.scene) {
+    line = row.playbook
+      ? "What it would act on is listed on the Proposals tab, by name."
+      : "The four moods are drawn on the Proposals tab.";
+  }
+  if (line) box.appendChild(el("p", "propreplay", line));
+  if (row.proposal_status === "trialling") {
+    box.appendChild(el("p", "proptrial", propTrialLine(shaped)));
+  }
+  return box.childNodes.length ? box : null;
 }
 
 // Everything that makes the claim checkable, behind one disclosure: what
@@ -5288,12 +5358,13 @@ function renderFindings() {
   }
   const active = FIND_FILTERS.find((f) => f.id === state.findFilter) || FIND_FILTERS[0];
   const shown = state.findings.filter(active.match);
-  // Guesses go at the top of the live list. They are two taps against a
-  // finding's read-and-decide, and burying the cheap decisions under the
-  // expensive ones is how a queue capped at three sat unanswered for a
-  // fortnight and expired.
-  const claims = state.findFilter === "live" ? state.hypotheses : [];
   if (state.findFilter === "live") {
+    // Guesses sit near the top of the feed — under the problems that
+    // matter a lot, over everything else — and that order is the
+    // server's (`cases._BAND`), not this file's: a rule here used to say
+    // "guesses go at the top" over a list it no longer sorted, while the
+    // server put every guess under every warning.
+    const claims = state.hypotheses || [];
     // The feed: every case, then anything live that no case covers. On a
     // real install the second half is empty, because a case is derived
     // from exactly these rows — and when the derivation could not be read
@@ -5318,11 +5389,10 @@ function renderFindings() {
     paintResidentFoot();
     return;
   }
-  if (!shown.length && !claims.length) {
+  if (!shown.length) {
     list.appendChild(el("div", "findempty", "Nothing here yet."));
     return;
   }
-  claims.forEach((h) => list.appendChild(makeHypothesis(h)));
   shown.forEach((f) => list.appendChild(makeFinding(f)));
 }
 
