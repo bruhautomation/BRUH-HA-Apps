@@ -179,12 +179,24 @@ window.fetch = async (url) => {
         generated_at: '${NOW_ISO}', tags: [],
         made_because: '3 more finding(s) on the list',
         inputs_fingerprint: { parts: { findings: 'abc' } },
+        // A suggestion the server could not send (paused): the ⋯ offers to
+        // put it in the ask bar, and says why it was not offered.
+        opportunities: [{ text: 'When the back door opens after sunset, '
+            + 'turn on the patio light',
+          sentence: 'When the back door opens after sunset, turn on the '
+            + 'patio light',
+          entities: ['light.patio'], queued: false,
+          why: 'automatic runs are paused' }],
         meta: { duration_ms: 41000, cost: { total: 32100, input: 30000,
                                             output: 2100, cached: 0 } } },
       { id: 'due', category: 'due', title: 'How the rooms held heat',
         summary: 'The hall is the fast one.', highlights: [], html: '<p>c</p>',
         generated_at: '${NOW_ISO}', tags: [],
         made_because: 'you asked',
+        // One the server did send: the ⋯ points at Proposals instead.
+        opportunities: [{ text: 'Turn the porch light off at midnight',
+          sentence: 'From now on, turn the porch light off at midnight',
+          entities: [], queued: true, why: '' }],
         meta: { duration_ms: 22000, cost: { total: 18000, input: 17000,
                                             output: 1000, cached: 0 } } },
     ] });
@@ -283,8 +295,69 @@ for (const width of [390, 768, 1200]) {
     problems.push(`page scrolls sideways (${f.docWidth}px)`);
   }
 
+  // "Make this an automation" — what a card says the house is missing,
+  // from its ⋯. The menu is the panel's own (`cardAutomationItems`), and
+  // the press must land the routable sentence in the ask bar and leave it
+  // there for a person to read — never send it.
+  const menuOf = async (id) => page2.evaluate(async (cardId) => {
+    const card = document.querySelector(`.card[data-id="${cardId}"]`);
+    const more = card && [...card.querySelectorAll('.actions button')]
+      .find((b) => b.textContent.trim() === '⋯');
+    if (!more) return null;
+    more.click();
+    await new Promise((r) => setTimeout(r, 50));
+    return [...document.querySelectorAll('#chipPop .cardmenuitem')].map((row) => ({
+      label: (row.querySelector('b') || {}).textContent || '',
+      hint: (row.querySelector('small') || {}).textContent || '',
+    }));
+  }, id);
+  const pressMenu = (label) => page2.evaluate(async (want) => {
+    const row = [...document.querySelectorAll('#chipPop .cardmenuitem')]
+      .find((r) => (r.querySelector('b') || {}).textContent === want);
+    if (!row) return null;
+    row.click();
+    await new Promise((r) => setTimeout(r, 80));
+    const input = document.getElementById('askInput');
+    return {
+      value: input ? input.value : null,
+      focused: document.activeElement === input,
+      insights: !!document.querySelector('#viewInsights.active'),
+      proposals: !!document.querySelector('#viewProposals.active'),
+    };
+  }, label);
+
+  const heldMenu = await menuOf('held');
+  const make = (heldMenu || []).find((m) => m.label === 'Make this an automation');
+  if (!make) {
+    problems.push(`the held card's ⋯ has no "Make this an automation" (${JSON.stringify(heldMenu)})`);
+  } else {
+    if (!/patio light/.test(make.hint)) problems.push('the menu row does not say which automation');
+    if (!/automatic runs are paused/.test(make.hint)) {
+      problems.push('the menu row drops why it was not offered');
+    }
+    const after = await pressMenu('Make this an automation');
+    if (!after || !after.insights) problems.push('pressing it did not open the ask bar\'s pane');
+    if (!after || after.value !== 'When the back door opens after sunset, turn on the patio light') {
+      problems.push(`the ask bar holds "${after && after.value}"`);
+    }
+    if (!after || !after.focused) problems.push('the ask bar is not focused after the press');
+  }
+  await page2.evaluate(() => { document.getElementById('askInput').value = ''; });
+  const dueMenu = await menuOf('due');
+  const see = (dueMenu || []).find((m) => m.label === 'See the automation it suggested');
+  if (!see) {
+    problems.push(`a card whose suggestion was offered does not point at it (${JSON.stringify(dueMenu)})`);
+  } else {
+    const after = await pressMenu('See the automation it suggested');
+    if (!after || !after.proposals) problems.push('"See the automation" did not open Proposals');
+  }
+  if (!(dueMenu || []).some((m) => m.label === 'Make an automation from this')) {
+    problems.push('a card with nothing left to offer does not still offer the ask bar');
+  }
+
   console.log(`${problems.length ? 'FAIL' : 'ok  '} ${String(width).padStart(4)}px  `
-    + `foot: reason + ${held && held.holdSeen ? 'hold' : 'no hold'}`);
+    + `foot: reason + ${held && held.holdSeen ? 'hold' : 'no hold'}; `
+    + 'menu: automation');
   for (const p of problems) { console.log(`        - ${p}`); failures++; }
   await context.close();
 }

@@ -167,11 +167,47 @@ generate_context() {
         "  - \(.domain): \(.count) entities"
     ' 2>/dev/null || echo "  - Unable to retrieve entity counts")
 
-    # Get areas (via template rendering)
-    local areas
-    areas=$(api_get "/api/states" 2>/dev/null | jq -r '
-        [.[].attributes.friendly_name // empty] | unique | length
-    ' 2>/dev/null || echo "unknown")
+    # The area map: which entities are in which room. It used to be a
+    # count of distinct friendly names computed into a variable nothing
+    # printed, so the one fact a person's sentence leans on most ("the
+    # kitchen lights") was the one fact this file did not carry, and every
+    # chat turn about a room began with a lookup. Read through the MCP
+    # server's own `get_areas` (siblings in /opt, the dashboard inventory's
+    # arrangement) so there is one implementation of "which room is this
+    # in", bounded so a large house cannot crowd out the rest of the file,
+    # and a failed lookup says so rather than reading as a house with no
+    # rooms.
+    local area_map
+    area_map=$(python3 - 2>/dev/null <<'PYEOF'
+import sys
+sys.path.insert(0, "/opt/ha-mcp-server")
+MAX_AREAS, MAX_PER_AREA = 40, 10
+try:
+    from ha_mcp_server import get_areas
+    result = get_areas()
+    if not isinstance(result, dict) or "error" in result:
+        raise RuntimeError(result)
+    areas = sorted((a for a in result.get("areas") or [] if isinstance(a, dict)),
+                   key=lambda a: str(a.get("name") or a.get("area_id") or ""))
+    if not areas:
+        print("  - (no areas are set up in Home Assistant)")
+        sys.exit(0)
+    rows = []
+    for area in areas[:MAX_AREAS]:
+        ids = sorted(str(e) for e in area.get("entities") or [])
+        shown = ", ".join(ids[:MAX_PER_AREA])
+        more = " (+{} more)".format(len(ids) - MAX_PER_AREA) if len(ids) > MAX_PER_AREA else ""
+        rows.append("  - {} (`{}`): {}{}".format(
+            area.get("name") or area.get("area_id"), area.get("area_id"),
+            shown or "no entities", more))
+    if len(areas) > MAX_AREAS:
+        rows.append("  - ... and {} more areas (use the get_areas MCP tool)".format(
+            len(areas) - MAX_AREAS))
+    print("\n".join(rows))
+except Exception:
+    sys.exit(1)
+PYEOF
+) || area_map="  - (lookup failed — use the get_areas MCP tool)"
 
     # Get automations summary
     local automations
@@ -460,6 +496,10 @@ for the full list.
 There is no backup command. Home Assistant's own backups cover the config;
 \`brain undo\` covers the files you edit.
 
+## Areas
+
+${area_map}
+
 ## MCP Server
 
 The Home Assistant MCP server is active. You can use it to:
@@ -470,6 +510,33 @@ The Home Assistant MCP server is active. You can use it to:
 - Check error logs
 - Render Jinja2 templates
 - Reload configurations after YAML edits
+
+**What brAIn has already measured about this house — ask before guessing.**
+These read brAIn's own stores; a store that has not measured yet says so in
+a sentence rather than inventing a number.
+- \`what_is_normal\` - what an entity usually reads at this hour of the week, and how far it strays
+- \`room_physics\` - how fast a room loses and gains heat, and how long it takes to warm
+- \`appliance_status\` - a washer, dryer or dishwasher's own power shape: running, finished, idle
+- \`house_rhythm\` - when the house usually gets up and settles, weekdays and weekends apart
+- \`door_habits\` - how often a door or window is usually open at a given hour
+- \`habits\` - what somebody does by hand with an entity, and when
+- \`recall\` - the facts brAIn has filed about the home, with who taught them and when
+- \`explain_change\` / \`get_activity\` - who or what changed something, and what happened lately
+- \`get_findings\` - what brAIn has already raised and is waiting on somebody for
+- \`get_health\` - whether brAIn itself is working, and what is wrong if not
+- \`simulate_automation\` - replay an automation over the recorder's history: how often it
+  would have fired, and whether that agreed with what people actually did
+
+**Automations go through brAIn, not through automations.yaml.** To add a
+rule, call the \`brain.intent\` service (\`call_service\` with domain
+\`brain\`, service \`intent\`, data \`{"sentence": "..."}\`) with the rule
+in one plain sentence. brAIn drafts it, replays it over the recorder,
+grades it against what people did, checks the protected list, and offers it
+on the Proposals tab with that evidence — a one-off arms once and switches
+itself off; a standing rule can be tried for a week first. Run
+\`simulate_automation\` first if the person wants to see the numbers before
+asking. Edit \`automations.yaml\` by hand only when the person asks for that
+specifically, and then \`ha check\` it and \`ha reload automations\` after.
 
 ## Registry Management — BRUH Power Tools
 
@@ -552,8 +619,8 @@ safe-mode restart use core \`homeassistant.restart\` with \`safe_mode: true\`.
 ${protected_section}
 ## Important Notes
 
-- **Always run \`ha reload automations\` after editing automations.yaml**
-- **Always run \`ha reload scripts\` after editing scripts.yaml**
+- **Propose automations with \`brain.intent\`** rather than writing them into automations.yaml — it replays, grades and checks them first
+- **If you do edit automations.yaml or scripts.yaml by hand**, run \`ha check\` and then \`ha reload automations\` / \`ha reload scripts\`
 - **Never modify secrets.yaml directly**
 - **Edits are snapshotted before Claude makes them** — \`brain undo\` reviews and reverts them
 - **Test templates** using the \`render_template\` MCP tool before using them in automations

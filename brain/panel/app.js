@@ -1284,6 +1284,41 @@ function cardMenuButton(items) {
   return btn;
 }
 
+// "Make this an automation": what a card says the house is missing, from
+// its menu. The server already offered what it could on the Proposals tab
+// (`_offer_card_opportunities`) — this is the door for the rest: one it did
+// not send (paused, the day's cap, a question rather than a rule) goes into
+// the ask bar for a person to read and send, and a card with none still
+// offers the bar with "When " in it, because a person reading a card is the
+// moment they think of the rule. Never sent from here: the ask bar is where
+// somebody can read what they are about to ask for.
+function cardAutomationItems(shown) {
+  const opps = Array.isArray(shown.opportunities) ? shown.opportunities : [];
+  const items = opps.slice(0, 2).map((opp) => (opp.queued
+    ? ["⚡", "See the automation it suggested",
+      `On the Proposals tab: “${opp.text}”`,
+      () => switchView("proposals")]
+    : ["⚡", "Make this an automation",
+      `“${opp.text}”${opp.why ? ` — not offered yet: ${opp.why}` : ""}`,
+      () => seedAsk(opp.sentence || opp.text)]));
+  if (!opps.some((opp) => !opp.queued)) {
+    items.push(["⚡", "Make an automation from this",
+      "Describe it in the ask bar — brAIn replays it over your history "
+      + "before it offers it", () => seedAsk("When ")]);
+  }
+  return items;
+}
+
+function seedAsk(text) {
+  switchView("insights");
+  const input = $("#askInput");
+  if (!input) return;
+  input.value = text;
+  input.scrollIntoView({ block: "center", behavior: "smooth" });
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
 function makeCard(catInfo, insight, fallbackId) {
   const id = (insight && insight.id) || (catInfo && catInfo.id) || fallbackId;
   const job = jobFor(id);
@@ -1377,6 +1412,9 @@ function makeCard(catInfo, insight, fallbackId) {
   if (insight) {
     menu.push(["#", "Edit tags", "What this card can be filtered by",
       () => { state.editingTags = id; render(); }]);
+  }
+  if (shown && !active) {
+    cardAutomationItems(shown).forEach((item) => menu.push(item));
   }
   // ✕ deletes every card — including one whose only trace is a job, so a
   // failed Ask can be cleared away instead of sitting there forever.
@@ -4523,12 +4561,16 @@ function makeFinding(f) {
       again.addEventListener("click", () => recheckFinding(f, btns, again));
     }
 
-    // Talk about it before deciding. The discussion is read-only by
-    // construction — the prompt says so — because "explain this to me" and
-    // "go change my house" are different consents, and Fix it is the one
-    // that gives the second.
+    // Talk about it before deciding. "Explain this to me" and "go change
+    // my house" are different consents, and this used to promise the
+    // first with nothing but a sentence in the prompt holding it — the
+    // conversation had every acting tool pre-approved. It is the session
+    // that holds it now: a discussion's acting tools ask first
+    // (`chat_session.DISCUSS_ASK`), and a change it agrees on is offered
+    // as a plan for this card, which is Fix it's own path to Apply.
     const talk = add(el("button", "btn small", "💬  Discuss"));
-    tip(talk, "Ask brAIn about this one in the chat, without changing anything");
+    tip(talk, "Talk it through in the chat. Anything it would change asks you "
+      + "first, and a change you agree on becomes a plan on this card");
     talk.addEventListener("click", () => discussFinding(f, btns));
 
     // The two endings, in the words of what they mean rather than of what
@@ -4919,7 +4961,9 @@ function caseOverflow(row, btns) {
 function caseOverflowHint(item) {
   if (item.hint) return item.hint;
   if (item.verb === "mute") return "Stop this rule raising anything at all";
-  if (item.verb === "discuss") return "Talk about it in the chat, changing nothing";
+  if (item.verb === "discuss") {
+    return "Talk it through in the chat — any change asks you first";
+  }
   if (item.verb === "recheck") return "Run the check that found this, now";
   if (item.verb === "fix") return "Work out what it would change, and ask first";
   if (item.verb === "advice") return "Write what you'd do, onto the card";
@@ -5069,7 +5113,17 @@ function makeCase(row) {
     card.appendChild(chip);
   }
 
-  if (row.fix) {
+  // What a fix run reported, where one has run. It REPLACES the fix
+  // sentence on a row the run finished (`fixed`) or handed back
+  // (`needs_you`), because a stale "How brAIn would fix it" under a run
+  // that already did — or already concluded it could not — is how you
+  // lose track of what the house looks like; the old Findings card held
+  // that rule and the feed lost it with the field.
+  const result = caseResultNode(row);
+  if (result) card.appendChild(result);
+  const ranItsCourse = result
+    && (row.finding_status === "fixed" || row.finding_status === "needs_you");
+  if (row.fix && !ranItsCourse) {
     const box = el("div", "findfix");
     box.appendChild(el("span", "findfixlabel", fixHeading(row.fixable)));
     const text = el("span", null, prettyText(row.fix));
@@ -5081,6 +5135,14 @@ function makeCase(row) {
     box.appendChild(text);
     card.appendChild(box);
   }
+
+  // A proposal's evidence, beside the button that accepts it: the replay,
+  // and a trial's grade once the week has started. The Proposals sub-tab
+  // always had both; the feed — which is where *Make the change* is
+  // pressed — had neither, so the whole argument for a trial never reached
+  // the screen the yes is given on.
+  const proof = caseProofNode(row);
+  if (proof) card.appendChild(proof);
 
   // The plan a read-only run wrote, above the Apply that would let it —
   // the one block on the card somebody is about to consent to, so it is
@@ -5136,6 +5198,58 @@ function makeCase(row) {
   }
   card.appendChild(actions);
   return card;
+}
+
+// The fixer's own report, headed by what kind of report it is. Absent
+// when nothing has run — a card does not grow a box to say so.
+const CASE_RESULT_HEADS = {
+  fixed: "What brAIn did",
+  needs_you: "brAIn looked — this one needs you",
+  failed: "The fix did not finish",
+};
+
+function caseResultNode(row) {
+  if (!row.result) return null;
+  const box = el("div", "findresult");
+  box.appendChild(el("span", "findfixlabel",
+    CASE_RESULT_HEADS[row.finding_status] || "Last time brAIn looked"));
+  String(row.result).split("\n\n").forEach((para) => {
+    if (para.trim()) box.appendChild(el("p", null, prettyText(para)));
+  });
+  if ((row.changed || []).length) {
+    const list = el("ul", "findchanged");
+    row.changed.slice(0, 8).forEach((c) => list.appendChild(el("li", null, prettyText(c))));
+    box.appendChild(list);
+  }
+  return box;
+}
+
+// An opportunity's evidence, in the Proposals tab's own sentences — the
+// same two helpers, handed the case in the shape they read, so the card
+// and the tab cannot word one trial two ways. A playbook and a scene have
+// no replay (no week had a smoke alarm in it; a mood is a picture), so the
+// card says where their evidence is rather than going quiet.
+function caseProofNode(row) {
+  if (row.kind !== "opportunity") return null;
+  const box = el("div", "caseproof");
+  const shaped = {
+    replay: row.replay, replay_before: row.replay_before,
+    trial_result: row.trial_result, trial_started_at: row.trial_started_at,
+    trial_ends_at: row.trial_ends_at,
+  };
+  let line = "";
+  if (row.case_line) line = row.case_line;
+  else if (row.replay) line = propReplayLine(shaped);
+  else if (row.playbook || row.scene) {
+    line = row.playbook
+      ? "What it would act on is listed on the Proposals tab, by name."
+      : "The four moods are drawn on the Proposals tab.";
+  }
+  if (line) box.appendChild(el("p", "propreplay", line));
+  if (row.proposal_status === "trialling") {
+    box.appendChild(el("p", "proptrial", propTrialLine(shaped)));
+  }
+  return box.childNodes.length ? box : null;
 }
 
 // Everything that makes the claim checkable, behind one disclosure: what
@@ -5288,12 +5402,13 @@ function renderFindings() {
   }
   const active = FIND_FILTERS.find((f) => f.id === state.findFilter) || FIND_FILTERS[0];
   const shown = state.findings.filter(active.match);
-  // Guesses go at the top of the live list. They are two taps against a
-  // finding's read-and-decide, and burying the cheap decisions under the
-  // expensive ones is how a queue capped at three sat unanswered for a
-  // fortnight and expired.
-  const claims = state.findFilter === "live" ? state.hypotheses : [];
   if (state.findFilter === "live") {
+    // Guesses sit near the top of the feed — under the problems that
+    // matter a lot, over everything else — and that order is the
+    // server's (`cases._BAND`), not this file's: a rule here used to say
+    // "guesses go at the top" over a list it no longer sorted, while the
+    // server put every guess under every warning.
+    const claims = state.hypotheses || [];
     // The feed: every case, then anything live that no case covers. On a
     // real install the second half is empty, because a case is derived
     // from exactly these rows — and when the derivation could not be read
@@ -5318,11 +5433,10 @@ function renderFindings() {
     paintResidentFoot();
     return;
   }
-  if (!shown.length && !claims.length) {
+  if (!shown.length) {
     list.appendChild(el("div", "findempty", "Nothing here yet."));
     return;
   }
-  claims.forEach((h) => list.appendChild(makeHypothesis(h)));
   shown.forEach((f) => list.appendChild(makeFinding(f)));
 }
 
@@ -6865,11 +6979,64 @@ function drillThermal(box, payload) {
   ]);
   const ok = drillTable(box,
     ["Room", "Loss k /h", "τ hours", "Gain", "To warm"], rows);
-  if (ok && payload.outdoor) {
-    box.appendChild(el("div", "kfoot",
-      `Measured against ${payload.outdoor}${payload.unit ? ` (${payload.unit})` : ""}.`));
-  }
+  thermalReference(box, payload);
   return ok;
+}
+
+// Every room above is measured against ONE outdoor thermometer, so which
+// one, and why, is said under the table — and the person who knows better
+// can change it. A reference nobody can check is one nobody can correct.
+// Drawn even when no room was measured, because a wrong reference is the
+// likeliest reason none was. The choice is a panel setting
+// (`thermal_outdoor`) and takes effect at the next measuring pass, which
+// is started on the spot rather than left for tonight.
+function thermalReference(box, payload) {
+  const cands = Array.isArray(payload.outdoor_candidates)
+    ? payload.outdoor_candidates : [];
+  if (!payload.outdoor && !cands.length) return;
+  const wrap = el("div", "kref");
+  wrap.appendChild(el("div", "kfoot", payload.outdoor
+    ? `Measured against ${payload.outdoor}${payload.unit ? ` (${payload.unit})` : ""}.`
+    : "No outdoor reference yet."));
+  if (payload.outdoor_why) wrap.appendChild(el("div", "kfoot", payload.outdoor_why));
+  const choice = payload.outdoor_choice || "";
+  if (choice && choice !== payload.outdoor) {
+    wrap.appendChild(el("div", "kfoot",
+      `${choice} was chosen and is measured against from the next measuring pass.`));
+  }
+  if (cands.length) {
+    const label = el("label", "kreflabel", "Outdoor reference ");
+    const sel = el("select");
+    sel.appendChild(new Option("Let brAIn choose", ""));
+    const listed = new Set();
+    cands.forEach((c) => {
+      listed.add(c.entity_id);
+      sel.appendChild(new Option(
+        `${c.name || c.entity_id} (${c.entity_id})`
+        + (c.ruled_out ? ` — ${c.ruled_out}` : ""), c.entity_id));
+    });
+    if (choice && !listed.has(choice)) sel.appendChild(new Option(choice, choice));
+    sel.value = choice;
+    sel.addEventListener("change", async () => {
+      sel.disabled = true;
+      try {
+        await api("api/settings", {
+          method: "PUT", body: JSON.stringify({ thermal_outdoor: sel.value || null }) });
+        // A 409 is a pass already running, which will read the choice too.
+        await api("api/baselines/run", { method: "POST" }).catch(() => null);
+        toast(sel.value
+          ? `Re-measuring the rooms against ${sel.value} — a few minutes`
+          : "Re-measuring, with brAIn choosing the reference — a few minutes");
+      } catch (e) {
+        toast(e.message);
+      } finally {
+        sel.disabled = false;
+      }
+    });
+    label.appendChild(sel);
+    wrap.appendChild(label);
+  }
+  box.appendChild(wrap);
 }
 
 // ---- closures: how much of each hour of the week each door is open. A
@@ -10466,6 +10633,16 @@ const RESOLUTION_KINDS = {
     does: "Puts this on the card as what to do — the finding stays open",
     toast: "Updated what to do on the card",
   },
+  // The change the conversation agreed, made the way every change on a
+  // card is made: a read-only plan of exactly this, which waits on the
+  // card for Apply, and then an Undo. The conversation itself does not
+  // act — that is what makes it a conversation rather than a side door.
+  plan: {
+    does: "brAIn works out exactly this change for you to read — nothing "
+      + "changes until you press Apply on the card",
+    toast: "Working out exactly that — the steps land on the card, and "
+      + "nothing changes until you press Apply",
+  },
 };
 
 function chatResolutionsNode(ev) {
@@ -10518,6 +10695,27 @@ function chatResolutionsNode(ev) {
 async function chooseResolution(ev, option, finding, btns, paint) {
   const spec = RESOLUTION_KINDS[option.verb];
   if (!spec) return;
+  if (option.verb === "plan") {
+    // Not an ending either: the row moves to `planning`, and the plan
+    // lands on its card. The press is Fix it's own route with the agreed
+    // change as the run's brief — one plan path, whichever surface asked.
+    btns.forEach((b) => { b.disabled = true; });
+    try {
+      const data = await api(`api/finding/${finding.ts}/fix`, {
+        method: "POST", body: JSON.stringify({ change: option.label }) });
+      takeFindings(data);
+      syncFeed();
+      renderFindings();
+      refreshStatus().catch(() => {}); fastPoll();
+      toast(spec.toast);
+      chatState.chosen[ev.id] = option.label;
+      paint();
+    } catch (e) {
+      toast(e.message);
+      btns.forEach((b) => { b.disabled = false; });
+    }
+    return;
+  }
   if (option.verb === "advice") {
     // The one press here that ends nothing: the sentence goes onto the
     // card and the finding stays, so the strip stays too and the card
@@ -11203,9 +11401,12 @@ async function chatHandoff() {
 }
 
 // Coming back the other way. We can't ask the tmux Claude what it is doing,
-// but Claude Code writes every conversation as it goes, so the most recently
-// written one IS what the terminal was last on — the server picks it up and
-// resumes it here. That Claude is left running: it is somebody's shell.
+// but the handoff left a record and Claude Code writes every conversation
+// as it goes, so the server picks the conversation the chat handed over —
+// or the one the terminal has written to since — and never one a chat in
+// the background is still holding (`chat_session.pick_adopted`). It opens
+// it through the registry, so nothing here is stopped to make the switch.
+// That Claude is left running: it is somebody's shell.
 async function chatAdopt() {
   try {
     return await api("api/chat/adopt", { method: "POST" });

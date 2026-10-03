@@ -174,9 +174,23 @@ const DRILLS = {
     { entity_id: 'sensor.boiler_flow', name: 'Boiler flow',
       unit: '°C', flat: true, buckets_n: 0, trend: null },
   ],
-  // _thermal_payload()
+  // _thermal_payload() — the reference, why it won, the others it beat
+  // and the person's own choice (none yet).
   thermal: {
     outdoor: 'sensor.outside_temperature', unit: '°C',
+    outdoor_source: 'ranked',
+    outdoor_why: 'Outside temperature (sensor.outside_temperature) is in no '
+      + 'area and reads within 0.4°C of weather.home.',
+    outdoor_choice: null,
+    outdoor_candidates: [
+      { entity_id: 'sensor.outside_temperature', name: 'Outside temperature',
+        unit: '°C', score: 6, reasons: [], ruled_out: '', eligible: true },
+      { entity_id: 'sensor.heat_pump_outdoor_coil', name: 'Heat pump outdoor coil',
+        unit: '°C', score: 0, reasons: [], ruled_out: '', eligible: false },
+      { entity_id: 'sensor.ac_ambient', name: 'AC ambient', unit: '°C',
+        score: 1, reasons: [], ruled_out: 'is in the Lounge area, which is indoors',
+        eligible: false },
+    ],
     rooms: [
       { id: 'sensor.bedroom_temp', name: 'Bedroom', area: 'Bedroom',
         k: 0.081, tau_h: 12.3, gain: 1.9, warmest: 21.5, coolest: 16.1,
@@ -347,7 +361,12 @@ window.fetch = async (url, opts) => {
     });
   }
   if (p.includes('api/onboarding')) return answer({ onboarded: true });
-  if (p.includes('api/settings')) return answer({});
+  if (p.includes('api/settings')) {
+    if (opts && opts.method === 'PUT') {
+      (window.__settingsPuts = window.__settingsPuts || []).push(JSON.parse(opts.body));
+    }
+    return answer({});
+  }
   if (p.includes('api/insights')) return answer({ insights: [] });
   if (p.includes('api/findings')) {
     return answer({ findings: [], hypotheses: [], open: 0, settled: [] });
@@ -547,6 +566,36 @@ for (const width of WIDTHS) {
   // Sorted by τ: the fastest-losing room is the one somebody is looking for.
   if (thermalText.indexOf('Hall') > thermalText.indexOf('Bedroom')) {
     note(`${width}px`, 'thermal rooms are not sorted by time constant');
+  }
+  // Every room is measured against ONE outdoor thermometer, so the drill
+  // says which, says why, and lets somebody who knows better change it.
+  if (!/within 0\.4/.test(thermalText)) {
+    note(`${width}px`, 'the thermal drill-down does not say why that reference');
+  }
+  const picker = await page.evaluate(() => {
+    const sel = document.querySelector('.kdrill[data-store="thermal"] .kref select');
+    if (!sel) return null;
+    const box = sel.getBoundingClientRect();
+    return { options: [...sel.options].map((o) => o.value), value: sel.value,
+             right: box.right, width: window.innerWidth };
+  });
+  if (!picker) {
+    note(`${width}px`, 'the thermal drill-down has no outdoor reference picker');
+  } else {
+    if (picker.value !== '' || picker.options[0] !== ''
+        || !picker.options.includes('sensor.heat_pump_outdoor_coil')) {
+      note(`${width}px`, `the picker's options are wrong: ${JSON.stringify(picker)}`);
+    }
+    if (picker.right > picker.width + 0.5) {
+      note(`${width}px`, 'the outdoor reference picker runs off the page');
+    }
+    await page.selectOption('.kdrill[data-store="thermal"] .kref select',
+      'sensor.heat_pump_outdoor_coil');
+    await page.waitForTimeout(120);
+    const puts = await page.evaluate(() => window.__settingsPuts || []);
+    if (!puts.some((b) => b.thermal_outdoor === 'sensor.heat_pump_outdoor_coil')) {
+      note(`${width}px`, `choosing a reference saved nothing: ${JSON.stringify(puts)}`);
+    }
   }
 
   // A store with no rows says why, in its own words, rather than nothing.

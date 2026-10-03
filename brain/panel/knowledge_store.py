@@ -34,6 +34,7 @@ without the add-on runtime.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -46,6 +47,13 @@ import hypotheses
 KNOWLEDGE_FILE = os.environ.get("BRAIN_KNOWLEDGE_FILE", "/data/knowledge.json")
 
 MAX_FACTS = 200
+# How many announcements the ledger REMEMBERS, as opposed to how many it
+# keeps in full. The list above is what a person scrolls and is capped for
+# that; the dedup half is a set of short digests and has to outlive it, or
+# the 201st discovery pushes the first one out and the analyst announces it
+# again — the one thing this store exists to prevent. Ten times the list,
+# sixteen hex characters each: a few hundred kilobytes at the very most.
+MAX_SEEN = 2000
 MAX_QUESTIONS = 200
 MAX_TEXT_CHARS = 500
 MAX_ANSWER_CHARS = 1000
@@ -76,13 +84,25 @@ def _load() -> dict:
             data = json.load(f)
         facts = data.get("facts")
         questions = data.get("questions")
+        seen = data.get("seen")
         return {
             "facts": [f for f in facts if isinstance(f, dict)] if isinstance(facts, list) else [],
             "questions": [q for q in questions if isinstance(q, dict)]
             if isinstance(questions, list) else [],
+            "seen": [s for s in seen if isinstance(s, str)]
+            if isinstance(seen, list) else [],
         }
     except (OSError, ValueError, AttributeError, TypeError):
-        return {"facts": [], "questions": []}
+        return {"facts": [], "questions": [], "seen": []}
+
+
+def _digest(key: str) -> str:
+    """A normalised fact as the ledger remembers it once it has aged out.
+
+    Only ever compared against itself, so a short digest is enough and a
+    copy of the sentence would be the list again under another name.
+    """
+    return hashlib.sha256(key.encode("utf-8", "replace")).hexdigest()[:16]
 
 
 def _write(data: dict) -> None:
@@ -147,6 +167,12 @@ def add_fact(text: str, source: str = "insights", category: str = "") -> tuple[d
         for f in data["facts"]:
             if normalize(f.get("text", "")) == key:
                 return f, False
+        # Aged out of the list is not forgotten: the digest outlives the
+        # row. Nothing to return but the claim itself — the entry it was
+        # is gone, and inventing one would be a row nobody stored.
+        if _digest(key) in set(data["seen"]):
+            return {"text": text, "source": str(source or "insights")[:32],
+                    "category": str(category or "")[:64]}, False
         entry = {
             "ts": _unique_ts({int(f.get("ts") or 0) for f in data["facts"]}),
             "text": text,
@@ -154,7 +180,15 @@ def add_fact(text: str, source: str = "insights", category: str = "") -> tuple[d
             "category": str(category or "")[:64],
         }
         data["facts"].append(entry)
+        # The list is capped for the person reading it; what leaves it is
+        # remembered as a digest, which is what "nothing may be deleted
+        # from it" was always about (see MAX_SEEN).
+        overflow = data["facts"][:-MAX_FACTS]
         data["facts"] = data["facts"][-MAX_FACTS:]
+        if overflow:
+            seen = data["seen"] + [_digest(normalize(f.get("text", "")))
+                                   for f in overflow]
+            data["seen"] = list(dict.fromkeys(seen))[-MAX_SEEN:]
         _write(data)
     return entry, True
 

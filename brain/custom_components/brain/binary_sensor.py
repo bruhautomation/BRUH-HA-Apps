@@ -158,11 +158,18 @@ class BrainWantsInputSensor(BinarySensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         # The text is the point — an automation that only knows "something is
-        # pending" can't put the actual question on a lock screen.
+        # pending" can't put the actual question on a lock screen. The id is
+        # the other half: it is what `brain.answer_question` takes, so a
+        # notification's Yes/No can name the guess it was about rather than
+        # matching its sentence back.
         return {
             "pending": [h["text"] for h in self._pending],
+            "questions": [{"ts": h["ts"], "text": h["text"],
+                           "topic": h.get("topic") or ""}
+                          for h in self._pending],
             "count": len(self._pending),
             "oldest": self._pending[0]["text"] if self._pending else None,
+            "oldest_ts": self._pending[0]["ts"] if self._pending else None,
         }
 
     def update(self) -> None:

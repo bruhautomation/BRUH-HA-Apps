@@ -56,6 +56,10 @@ Behaviour switches via env:
   FAKE_CHAT_NOPROMPTFLAG  refuse --permission-prompt-tool at startup the way
                                    a CLI from before the stdio value exists:
                                    name the flag on stderr and die unspoken
+  FAKE_CHAT_REFUSE  a comma list of flags to refuse at startup the way a
+                                   CLI from before they existed does:
+                                   "error: unknown option '<flag>'" on
+                                   stderr, dying unspoken
   FAKE_CHAT_LOG   append each invocation's argv as a JSON line
 """
 
@@ -87,6 +91,11 @@ if os.environ.get("FAKE_CHAT_NOPROMPTFLAG") \
     print("Error: tool stdio (passed via --permission-prompt-tool) "
           "must be an MCP tool", file=sys.stderr)
     sys.exit(1)
+
+for _flag in filter(None, os.environ.get("FAKE_CHAT_REFUSE", "").split(",")):
+    if _flag in argv:
+        print(f"error: unknown option '{_flag}'", file=sys.stderr)
+        sys.exit(1)
 
 # Distinct per process, because several of these run at once now: two
 # fresh sessions reporting one id would look to the registry like one

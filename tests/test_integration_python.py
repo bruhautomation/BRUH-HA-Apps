@@ -263,8 +263,10 @@ class TestInitPy(unittest.TestCase):
         self.assertIn("vol.Range(min=10, max=600)", self.content)
 
     def test_handles_timeout_error(self):
-        """Service handlers should catch TimeoutError."""
-        self.assertIn("except TimeoutError", self.content)
+        """Service handlers should catch TimeoutError — and turn it into a
+        HomeAssistantError rather than a reply, which
+        tests/test_ha_service_failures.py drives."""
+        self.assertIn("except (BrainRunError, TimeoutError) as exc", self.content)
 
     def test_loaded_version_captured_at_import_time(self):
         """_LOADED_VERSION should be set at module level, not read from disk later."""
