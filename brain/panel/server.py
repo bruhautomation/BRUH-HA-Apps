@@ -11845,7 +11845,8 @@ async def _reply_to_finding(finding: dict, text: str) -> tuple[bool, str]:
         answer = ("brAIn could not look into that just now — open the panel "
                   "to carry on the conversation there.")
     title = f"brAIn: {str(finding.get('text') or 'your reply')[:60]}"
-    sent = await _send_notification([finding], message=(title, answer))
+    sent = await _send_notification([finding], message=(title, answer),
+                                    kind="reply")
     return sent, "" if sent else "the answer could not be delivered"
 
 

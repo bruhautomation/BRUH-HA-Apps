@@ -55,8 +55,10 @@ DELIVERIES_FILE = Path(os.environ.get("BRAIN_DELIVERIES",
 
 # What a message was. `notify` and `escalate` are `notify_router`'s tiers,
 # `held` is a queue release, `reminder` a rung of the ladder, `brief` and
-# `weekly` the two messages that are not about a problem.
-KINDS = ("notify", "escalate", "held", "reminder", "brief", "weekly")
+# `weekly` the two messages that are not about a problem, and `reply` the
+# answer to somebody's Reply — a message they asked for, which no learned
+# suggestion may count as one they did not want.
+KINDS = ("notify", "escalate", "held", "reminder", "brief", "weekly", "reply")
 # What happened to it, as `fold` reports it.
 OUTCOMES = ("answered", "cleared", "ignored", "pending", "failed")
 
