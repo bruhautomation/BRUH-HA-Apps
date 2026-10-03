@@ -40,10 +40,10 @@ class TestAShellServiceCall(unittest.TestCase):
             "ha service call lock.unlock --data '{\"entity_id\":\"lock.front_door\"}'",
             "ha-service call light.turn_on --data '{\"area_id\":\"hall\"}'",
             "/opt/scripts/ha-service.sh call script.bedtime",
-            "curl -s -X POST -H \"Authorization: Bearer $SUPERVISOR_TOKEN\" "
-            "http://supervisor/core/api/services/lock/unlock -d '{}'",
-            "python3 -c 'import websocket; ws.connect(\"ws://supervisor/core/websocket\");"
-            " ws.send({\"type\": \"call_service\"})'",
+            ("curl -s -X POST -H \"Authorization: Bearer $SUPERVISOR_TOKEN\" "
+             + "http://supervisor/core/api/services/lock/unlock -d '{}'"),
+            ("python3 -c 'import websocket; ws.connect(\"ws://supervisor/core/websocket\");"
+             + " ws.send({\"type\": \"call_service\"})'"),
         ]
         for command in commands:
             with self.subTest(command=command[:40]):

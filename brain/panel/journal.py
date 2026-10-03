@@ -261,7 +261,11 @@ def record(source: str, outcome: str, *, ok: bool | None = None,
         # The journal is a diagnostic, and a diagnostic that takes down the
         # thing it diagnoses is worse than a missing line.
         pass
-    _notify(row)
+    if not is_shell_row(row):
+        # A shell row meets the panel's handlers through `book_shell_rows`
+        # and nowhere else: notified here as well, one run would be booked,
+        # reported and counted twice.
+        _notify(row)
     return row
 
 

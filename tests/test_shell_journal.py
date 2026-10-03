@@ -299,9 +299,29 @@ class TestThePanelBooksThem(ShellCase):
         self.assertEqual(len(seen), 1)
         self.assertEqual(journal.book_shell_rows([seen.append]), 0)
 
+    def test_a_shell_row_meets_the_listeners_only_through_the_booking(self):
+        """Written in-process with listeners installed — the panel's own
+        test of itself — it must still be booked once, not twice."""
+        heard = []
+        journal.on_record(heard.append)
+        try:
+            self._shell("crash")
+            journal.record("insight", "ok")
+        finally:
+            journal.off_record(heard.append)
+        self.assertEqual([r["source"] for r in heard], ["insight"])
+        seen = []
+        self.assertEqual(journal.book_shell_rows([seen.append]), 1)
+        self.assertEqual([r["outcome"] for r in seen], ["crash"])
+
     def test_the_servers_handlers_report_count_and_hold(self):
         server = importlib.import_module("server")
-        import usage_store
+        # The copies the server's handlers read: other test files swap
+        # `journal` and `usage_store` in sys.modules, so whatever a bare
+        # import answers here may not be the module the server writes to.
+        jr, usage_store = server.journal, server.usage_store
+        old_files = (jr.JOURNAL_FILE, jr.SHELL_MARK_FILE)
+        jr.JOURNAL_FILE, jr.SHELL_MARK_FILE = str(self.journal_file), ""
         old_usage = usage_store.USAGE_FILE
         usage_store.USAGE_FILE = str(self.base / "usage.json")
         reported = []
@@ -310,11 +330,14 @@ class TestThePanelBooksThem(ShellCase):
         rate = dict(server.RATE_LIMIT_STATE)
         try:
             now = time.time()
-            self._shell("crash", now=now, tokens=1200, error="claude exited 1")
-            self._shell("rate_limited", now=now, tokens=40,
-                        error="You've hit your limit")
-            self._shell("ok", now=now, tokens=300)
-            self.assertEqual(journal.book_shell_rows(server._SHELL_HANDLERS), 3)
+            for outcome, tokens, error in (
+                    ("crash", 1200, "claude exited 1"),
+                    ("rate_limited", 40, "You've hit your limit"),
+                    ("ok", 300, "")):
+                jr.record("study", outcome, ok=outcome == "ok", run_id=SID,
+                          extra={"shell": True, "exit": 0}, now=now,
+                          tokens=tokens, error=error)
+            self.assertEqual(jr.book_shell_rows(server._SHELL_HANDLERS), 3)
             runs = json.loads((self.base / "usage.json").read_text())
             booked = runs.get("runs", runs) if isinstance(runs, dict) else runs
             self.assertEqual(sorted(r["tokens"] for r in booked), [40, 300, 1200])
@@ -323,6 +346,7 @@ class TestThePanelBooksThem(ShellCase):
             # The limit was met and then a run succeeded: the pause ended.
             self.assertEqual(server.RATE_LIMIT_STATE["until"], 0.0)
         finally:
+            jr.JOURNAL_FILE, jr.SHELL_MARK_FILE = old_files
             usage_store.USAGE_FILE = old_usage
             server._report_async = old_report
             server.RATE_LIMIT_STATE.clear()

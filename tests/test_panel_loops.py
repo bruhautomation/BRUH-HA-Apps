@@ -33,7 +33,6 @@ PANEL = Path(__file__).resolve().parent.parent / "brain" / "panel"
 sys.path.insert(0, str(PANEL))
 
 import health  # noqa: E402
-import journal  # noqa: E402
 
 
 class ServerCase(unittest.TestCase):
@@ -296,18 +295,22 @@ class TestAUsageLimitHoldsTheCards(ServerCase):
         """Through `journal.record` and its own listener list, because a
         row shape written down twice is a shape that drifts."""
         srv = self.server
+        # The server's own copy: other test files swap `journal` in
+        # sys.modules, and a listener registered on a copy nothing records
+        # through is a test of nothing.
+        jr = srv.journal
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        old = journal.JOURNAL_FILE
-        journal.JOURNAL_FILE = str(Path(tmp.name) / "journal.jsonl")
-        journal.on_record(srv._journal_rate_listener)
+        old = jr.JOURNAL_FILE
+        jr.JOURNAL_FILE = str(Path(tmp.name) / "journal.jsonl")
+        jr.on_record(srv._journal_rate_listener)
         try:
-            journal.record("card", "rate_limited", ok=False,
-                           error="You've hit your limit · resets 3pm",
-                           duration_s=1.2, turns=1)
+            jr.record("card", "rate_limited", ok=False,
+                      error="You've hit your limit · resets 3pm",
+                      duration_s=1.2, turns=1)
         finally:
-            journal.off_record(srv._journal_rate_listener)
-            journal.JOURNAL_FILE = old
+            jr.off_record(srv._journal_rate_listener)
+            jr.JOURNAL_FILE = old
         self.assertGreater(srv.RATE_LIMIT_STATE["until"], time.time())
         self.assertEqual(srv.RATE_LIMIT_STATE["streak"], 1)
 
