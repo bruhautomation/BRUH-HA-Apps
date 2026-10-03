@@ -203,6 +203,15 @@ class TestALedgerRowSaysWhoAsked(unittest.TestCase):
                 self.assertEqual(actions.find_overrides(mined), [])
                 self.assertEqual(len(actions.find_conflicts(mined)), 1)
 
+    def test_the_writer_never_makes_its_own_directory(self):
+        """run.sh makes /config/.brain; a writer that made it grew a stray
+        one on every machine the suite ran on, which the facts store then
+        read as a real install."""
+        missing = os.path.join(self.tmp.name, "no-such-dir", "actions.jsonl")
+        with patch.object(m, "ACTION_LEDGER", missing):
+            m.record_action("light", "turn_on", {"entity_id": "light.hall"})
+        self.assertFalse(os.path.exists(os.path.dirname(missing)))
+
     def test_the_nearest_call_explains_the_change(self):
         self.call(NOW + 45, BRAIN_CHANNEL="card")
         self.call(NOW + 59.5, BRAIN_CHANNEL="chat")

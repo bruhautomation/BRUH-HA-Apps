@@ -295,7 +295,13 @@ def record_action(domain, service, data, extra=()):
             # appended to. Losing the trim costs disk; refusing the append
             # would cost the timeline every action from here on.
             pass
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        # The directory is run.sh's to make (it creates /config/.brain before
+        # anything starts), never this writer's: `facts_store.writable`'s
+        # rule. A writer that made it grew a stray /config/.brain on every
+        # machine the suite ran on — which the facts store then read as a
+        # real install, and test_insights_addon's memory budget with it.
+        if not os.path.isdir(os.path.dirname(path) or "."):
+            return
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row) + "\n")
     except Exception:  # noqa: BLE001 - see docstring
