@@ -325,6 +325,134 @@ Resident can correct its own first look.**
   pre-approved. Both narrow scopes now refuse file reads outright; `full` is
   unchanged.
 
+### Memory, insights and what brAIn changes
+
+- **Forgetting something now reaches everything brAIn reads.** Since 2.2 most of
+  what brAIn writes (triage, the Resident, the morning brief, the weekly report,
+  cards) has read memory from a facts store underneath `memory.md`. Nothing you
+  did to correct memory reached that store. A `brain memory forget`, an edit to
+  `memory.md`, clearing memory, the ✕ on a queued fact and Undo all left the
+  fact being told to every run. They all reach it now. Each time memory is
+  filed, brAIn checks the store against the document: a fact you deleted from
+  `memory.md` is forgotten, a fact still waiting to be filed stays, and clearing
+  memory forgets everything that was filed.
+- **Facts about a room reach runs about that room, and the question you asked
+  picks what is remembered.** Facts tagged with a room were never handed to any
+  run, because nothing told memory which rooms a run was about. A card on the
+  default search mode also only ever got the house-wide facts. brAIn now works
+  out the rooms from the entities a run reads and passes them, the card's own
+  domains and your question to memory. Facts that share words with the question
+  come first. Facts about things the run did not name are capped at three per
+  subject, so one chatty device cannot fill the space. Cards are also told they
+  can look memory up themselves.
+- **Undo and "Let brAIn raise it again" take back the rule a Wrong made.**
+  Pressing Wrong on a house check teaches the check to stand down for that
+  entity. Undo, and "Let brAIn raise it again", put the finding back but left
+  the rule in place, so the check stayed silent. Both now remove the rule too.
+  Two different checks marked Wrong on the same sensor are now two rules rather
+  than one overwriting the other.
+- **Wrong on a Resident card is remembered against the things it was about.** A
+  correction on one of the Resident's own cards was filed as a house-wide note
+  that a later look at the same device might never see. It is now a rule on that
+  card's entities. The next time the Resident looks at them, it is shown that
+  you dismissed it before and why.
+- **Old device-health notes expire, and facts about removed devices go.** A note
+  like "the hall sensor's battery was at 12%" is true for a few weeks, not
+  forever. Notes of that kind now expire after thirty days. Facts about an
+  entity your house no longer has stop being used at once and are removed after
+  thirty days. If the entity comes back within that time, the facts come back
+  with it.
+- **A memory export now carries the facts store, including the rules your Wrong
+  presses made.** Exporting memory and importing it on another install brought
+  `memory.md` across but not the rules. So every check you had told "not here"
+  started reporting again on the new install. The export now includes the facts
+  store, and import merges it.
+- **The same fact said two ways is stored once.** Two writers describing one
+  thing in slightly different words used to create two facts, and both were told
+  to every run. Near-duplicates are now merged when they arrive. Facts that
+  differ by a "not" are kept apart.
+- **Analysis cards stop re-announcing things you have already seen.** The record
+  of what an insight run had already told you kept only the last 200 items.
+  Older ones were forgotten and could be announced again as new. It now
+  remembers far more and drops only what is very old.
+- **brAIn no longer pays for a question it then throws away.** When brAIn
+  wonders why you did something by hand, it spends a run working out a guess and
+  adds it to your list of open questions. If that list was already full, the
+  guess was dropped and the subject was marked done for good. That meant the
+  money was spent and the question was never asked. brAIn now checks for room
+  first and waits if there is none. A guess that was refused is kept and offered
+  again, at no cost, as soon as a slot frees. A confirmed guess is filed with
+  what it was about, so it reaches runs about that device.
+- **"I've fixed it" no longer silences a problem forever.** Ending a finding as
+  fixed, pressing "Got it" after brAIn fixed something, or finishing a to-do
+  made from one, used to stop that finding from ever being raised again. Only
+  Wrong is meant to do that. Now a fixed or accepted answer to a house check
+  lapses once the check runs and no longer reports the problem. If it comes back
+  later it is raised again, saying how long it stayed away. Any other fixed
+  answer lapses after ninety days.
+- **brAIn checks that its own fixes held.** Three minutes after brAIn makes a
+  fix, it runs the check that found the problem again. If the problem is still
+  there, the card comes back saying the fix did not hold, instead of sitting
+  under "fixed".
+- **Cards only refresh when what they read has changed.** In "refresh when
+  something changed" mode, a card was regenerated about once a day whether or
+  not anything had changed. It also partly triggered its own refresh. The check
+  compared timestamps that move every night, and it included the card's own
+  findings. It now compares what the card is actually told: the state of each
+  measurement brAIn keeps, the facts it would be given, and the findings it
+  reads, leaving out its own. The media and health cards are now included in
+  this check, and two cards that no longer exist were removed from it.
+- **Onboarding waits for real facts before recommending cards.** The recommend
+  step treated the empty memory template as enough to go on. So it proposed
+  cards before the home had been studied, and could not see what the study had
+  just found because that was still waiting to be filed. It now waits for real
+  fact lines, either in `memory.md` or waiting to be filed, and reads both when
+  recommending.
+- **The weekly report counts only the findings you can see.** "Still open" and
+  "open in total" included findings that triage had deliberately held back from
+  the Findings tab, so the report's numbers did not match the tab. They now do.
+- **Milestone cards look like the rest, and what they learn is kept.** The cards
+  on the Knowledge tab that appear when a measurement is ready were saved
+  without the shared stylesheet, so their charts used none of the panel's
+  colours. What the run learned about the house was also thrown away. Both are
+  fixed.
+- **Ideas you dismissed stay dismissed, even reworded.** An idea you dismissed
+  was blocked only under its exact title, and the run writing new ideas was
+  never told what you had already answered. So the same idea came back with
+  different wording. The run is now shown what was accepted, dismissed (with
+  your reason, if you gave one) and is still waiting.
+- **Scene schedules are offered for rooms with more than one word in the name.**
+  The "walk this room through its scenes each day" proposal was never offered
+  for a room like Living Room or Master Bedroom. It is now.
+- **A rule written from a sentence can restart its timer.** Rules brAIn drafted
+  from a sentence were always written so that a second trigger was ignored while
+  the first run was still going. That is wrong for "turn the light off ten
+  minutes after the last motion", where a second motion should restart the ten
+  minutes. The rule can now be written either way. Running several copies at
+  once is still refused.
+- **A one-off that you accept always switches itself off, and Remove leaves
+  nothing behind.** A one-off rule switches itself off after firing. It did that
+  by guessing its own entity name. On a house that already had an automation
+  with that name, the guess pointed at the other one, so the one-off kept firing
+  for ever. It now switches off whatever entity it is. Accepting a rule now
+  checks the entity Home Assistant actually registered. Removing a one-off, or
+  undoing an accept, now also removes its registry entry, so no "unavailable"
+  automation is left behind.
+- **Overnight repairs stop on a fault that keeps coming back.** With
+  self-healing on, an add-on that stopped every evening, or an integration that
+  failed to start every day, was put right at 3am every night for ever, and each
+  morning brief called it a fresh success. brAIn now remembers repairs across
+  nights. After the third repair of the same thing in fourteen days, it stops
+  and raises a finding saying the fault keeps coming back. The brief also says
+  when a repair is not the first.
+- **Emergency playbook descriptions follow the same rules as every other
+  scheduled run.** The plain-English paragraph on a smoke, leak or freeze
+  playbook card was written by a Claude run on the schedule, even while brAIn
+  was paused, signed out or over budget. It now waits like everything else, and
+  the card keeps its standard description until then.
+- **The deep check leaves nothing in memory.** The memory probe `brain doctor
+  --deep` files is now removed from the facts store as well as from `memory.md`.
+
 ## 2.10.1
 
 **The classic terminal on a phone: Paste works, the keyboard stops fighting you.**

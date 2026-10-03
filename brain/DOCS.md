@@ -187,7 +187,7 @@ the card afterwards. Overnight healing's closed playbook is unchanged.
 **The budget.** Looking is the cheap half and brAIn spends it freely — nothing
 stops a first look but your account's own usage window. Investigations are rationed
 per day and the `thinking` setting is the dial (*light* 4, *normal* 8, *generous*
-16); the top tier is rarer still and a deep review is only ever a press. What is
+16); the top tier is reserved for something you press, and nothing uses it yet. What is
 left over waits rather than being dropped, and the line under the Findings feed says
 what today cost:
 
@@ -581,6 +581,14 @@ check says it cannot wait.
 Everything below the floor is **quiet**: no message, and nothing lost — it is
 on the Findings feed, in the `todo.brain` list and in Home Assistant's Repairs.
 
+**Only "Not a problem" is for ever.** "I've fixed it", "Got it" after brAIn fixed
+something, and finishing a to-do made from a finding stop it being raised for as
+long as it stays fixed: a house check's problem is raised again if the check finds
+it again (the card says how long it stayed away), and anything else after ninety
+days. Three minutes after brAIn makes a fix it runs the check that found the
+problem again, and if the problem is still there the card comes back saying the
+fix did not hold rather than sitting under *fixed*.
+
 On the companion app a message about one finding carries buttons to answer it,
 and tapping the message opens brAIn's own panel rather than Home Assistant's
 front page. ⚙ → Diagnostics says what is currently being escalated and when the
@@ -670,6 +678,17 @@ never the whole document, which on a mature house is 30 KB of things that are tr
 and mostly beside the point. The Knowledge tab lists the ledger under **What brAIn
 knows**, with a ✕ on each row; a fact you forget there is gone from every future
 prompt, and the document is left for you to edit yourself.
+
+**The ledger follows the document.** Every time memory is filed, brAIn checks the
+ledger against `memory.md`: a line you deleted from the document, a `brain memory
+forget`, a cleared memory, the ✕ on a queued fact and an Undo all reach what runs
+are told, not just the file you can see. A fact still waiting to be filed is left
+alone until the consolidator has judged it, and your own corrections and the rules
+a Wrong made survive a document that does not quote them. Notes about a device's
+health ("the hall sensor's battery is at 12%") expire after thirty days, and facts
+about an entity the house no longer has are dropped thirty days after it goes. A
+memory export carries the ledger too, so the rules your Wrong presses made travel
+to a new install.
 
 **A correction reaches the rule, not just the wording.** Pressing ✕ Wrong on a
 finding from a house check writes an *exception* into the facts store — this
@@ -1610,6 +1629,10 @@ at an hour nobody set would be acting on a guess about when nobody is looking.
   rather than guessing.
 - **Never something you have already answered.** If you pressed *Fix it* or
   *Wrong* on that finding, it is yours.
+- **A fault that keeps coming back stops being repaired.** After the third repair
+  of the same thing inside fourteen days brAIn stops and files a finding saying it
+  keeps happening, because a fault fixed every night is a fault hidden every
+  night. The morning brief says when a repair was not the first.
 
 **Nothing here checks its own work, and that is deliberate.** A call the
 Supervisor accepted is not a working add-on. What proves a repair is the next
@@ -2381,7 +2404,7 @@ brAIn 2.0 plans every Claude run by **job** rather than by one global model:
 | **Haiku** | triage, scene naming, playbook text, milestones, the memory consolidator, the morning brief, auth check | A yes/no, a name or a sentence over material something else already gathered |
 | **Sonnet** | insight cards, fix plans, the weekly report, study, intents, curiosity, episode summaries, onboarding | Reading a house with tools and writing about it |
 | **Opus** | applying a fix | The one run that changes the house, at the highest effort |
-| **Fable** | a deep review you press for | Never from a timer — a scheduler cannot name it |
+| **Fable** | nothing yet — reserved for a review you press for | Never from a timer — a scheduler cannot name it |
 
 The **thinking** dial (⚙ → Insights, or `thinking` in `/api/settings`) is
 `light` / `normal` / `generous`. *Light* steps down only the jobs where a
