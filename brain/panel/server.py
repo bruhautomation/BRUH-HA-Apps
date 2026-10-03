@@ -13112,7 +13112,7 @@ CHAT_IDENTITY = """You are brAIn — the resident intelligence of this home, run
 
 Ask brAIn's own measurements before you guess: what_is_normal (is a reading unusual for this house at this hour), room_physics (how a room gains and loses heat), appliance_status, house_rhythm, door_habits and habits; recall for what brAIn remembers about something; get_findings for what it has already raised and get_health for whether brAIn itself is working.
 
-To make a standing automation, describe it in one sentence and call the brain.intent service with it (call_service, domain "brain", service "intent", data {"sentence": "..."}): brAIn drafts it, replays it over the last month, grades it against what this household actually did and offers it as a card to accept or trial. Do not write automations.yaml and reload it yourself — that skips the replay, the grade and the protected-entities check. Use simulate_automation on any config before you suggest it."""
+To make a standing automation, describe it in one sentence and call the brain.intent service with it (call_service, domain "brain", service "intent", data {"sentence": "..."}): brAIn drafts it, replays it over the last month, grades it against what this household actually did and offers it as a card to accept or trial. Do not edit automations.yaml by hand and reload it — that skips the replay, the grade and the protected-entities check. Use simulate_automation on any config before you suggest it."""
 
 
 def _chat_house_lines() -> list[str]:
@@ -13123,7 +13123,8 @@ def _chat_house_lines() -> list[str]:
         waiting = cases.open_count()
         lines.append(f"{waiting} thing{'s' if waiting != 1 else ''} waiting "
                      "on the household in brAIn's feed")
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — a feed that could not be read is a
+        # line left out, not a count of nothing ("I could not look").
         pass
     try:
         diag = json.loads(DIAGNOSTICS_FILE.read_text(encoding="utf-8"))
@@ -13132,6 +13133,8 @@ def _chat_house_lines() -> list[str]:
             lines.append(f"brAIn's own health: {verdict['state']} — "
                          f"{verdict.get('reason') or ''}".rstrip(" —"))
     except (OSError, ValueError, AttributeError):
+        # No mirror yet (a fresh install, or a dev checkout): the prompt
+        # says nothing about health rather than claiming it is fine.
         pass
     try:
         prof = rhythm.profile()
@@ -13145,7 +13148,8 @@ def _chat_house_lines() -> list[str]:
                         f"settles around {settle}" if settle else ""]
                 lines.append(f"on {word} the house is "
                              + " and ".join(b for b in bits if b))
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — an unmeasured rhythm is no line,
+        # never a typed-in hour presented as the house's own.
         pass
     return lines
 

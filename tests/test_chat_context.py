@@ -275,7 +275,7 @@ class TestTheAppendedPrompt(unittest.TestCase):
                      "get_findings", "get_health", "simulate_automation"):
             self.assertIn(tool, text)
         self.assertIn('service "intent"', text)
-        self.assertIn("Do not write automations.yaml", text)
+        self.assertIn("Do not edit automations.yaml by hand", text)
 
     def test_the_house_lines_are_labelled_as_a_snapshot(self):
         server = importlib.import_module("server")

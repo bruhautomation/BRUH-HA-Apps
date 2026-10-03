@@ -35,6 +35,7 @@ import categories  # noqa: E402
 import engine  # noqa: E402
 import intents  # noqa: E402
 import settings_store  # noqa: E402
+import usage_store  # noqa: E402
 
 from test_insights_knowledge import InsightsServerCase  # noqa: E402
 
@@ -60,9 +61,15 @@ class CardCase(InsightsServerCase):
         }
         self._olds_card = (self.ha_data.collect_bundle, engine.run_claude,
                            engine.get_auth, intents.REQUEST_DIR,
-                           dict(self.server.CARD_OPPS_STATE))
+                           dict(self.server.CARD_OPPS_STATE),
+                           usage_store.USAGE_FILE, usage_store.LIMITS_FILE,
+                           usage_store.budget_state)
         self.server.CARD_OPPS_STATE.update(day="", count=0)
         intents.REQUEST_DIR = Path(self.tmp.name) / "intent-requests"
+        # The budget is read off files under /data and /config that every
+        # other test on the machine may be spending into; this one's own.
+        usage_store.USAGE_FILE = str(Path(self.tmp.name) / "usage.json")
+        usage_store.LIMITS_FILE = str(Path(self.tmp.name) / "usage_limits.json")
 
         async def fake_collect(category, days, question=None):
             return {"entities": []}
@@ -77,7 +84,8 @@ class CardCase(InsightsServerCase):
 
     def tearDown(self):
         (self.ha_data.collect_bundle, engine.run_claude, engine.get_auth,
-         intents.REQUEST_DIR, old_state) = self._olds_card
+         intents.REQUEST_DIR, old_state, usage_store.USAGE_FILE,
+         usage_store.LIMITS_FILE, usage_store.budget_state) = self._olds_card
         self.server.CARD_OPPS_STATE.clear()
         self.server.CARD_OPPS_STATE.update(old_state)
         super().tearDown()
@@ -162,6 +170,22 @@ class TestItIsGatedLikeEveryUnattendedRun(CardCase):
         self.assertEqual(row["why"], "automatic runs are paused")
         # The sentence is still on the card: the ⋯ puts it in the ask bar.
         self.assertEqual(row["sentence"], PATIO)
+
+    def test_no_credential_holds_it(self):
+        engine.get_auth = lambda: None
+        card = self.generate()
+        self.assertEqual(self.queued(), [])
+        self.assertEqual(card["opportunities"][0]["why"],
+                         "there is no Claude credential")
+
+    def test_a_spent_budget_holds_it(self):
+        real = usage_store.budget_state
+        usage_store.budget_state = lambda settings: {**real(settings),
+                                                     "blocked": True}
+        card = self.generate()
+        self.assertEqual(self.queued(), [])
+        self.assertEqual(card["opportunities"][0]["why"],
+                         "the session usage budget is spent")
 
     def test_the_days_cap_holds_whatever_the_cards_say(self):
         self.server.CARD_OPPS_STATE.update(

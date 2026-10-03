@@ -515,7 +515,7 @@ def _from_proposal(row: dict, snoozes: dict[str, int]) -> dict:
     # gives it. The feed is where a proposal is accepted, and it used to
     # carry the title and the why and nothing else — so a trial's whole
     # argument ("you did the same on 4 of 6") reached the Proposals tab and
-    # never the card whose *Make the change* writes `automations.yaml`.
+    # never the card whose *Make the change* is the yes it rests on.
     # Only what the card renders: the replay (and the before-and-after a
     # condition carries), the trial's grade and its week, and the sentence
     # `authoring.case_line` already composed for a rule asked for in
