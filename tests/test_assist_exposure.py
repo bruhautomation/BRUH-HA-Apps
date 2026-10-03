@@ -60,6 +60,15 @@ EXPLICIT = {"light.explicitly_off": False, "lock.explicitly_on": True,
             "sensor.yaml_only": True}
 
 
+
+def service_posts(api):
+    """The calls that reached Core as a service call. The chokepoint also
+    reads each named entity's state first (the before-state the action
+    ledger records), and those GETs are not the call being asserted."""
+    return [c for c in api.call_args_list
+            if str(c.args[0] if c.args else c.kwargs.get("endpoint", ""))
+            .startswith("/api/services/")]
+
 class TestCoresDefaultRule(unittest.TestCase):
     """The lists are Core's; a lock is not exposed unless somebody says so."""
 
@@ -212,11 +221,11 @@ class TestTheGateInTheServer(GateCase):
     def test_an_exposed_one_still_works_and_a_room_target_is_refused(self, api):
         api.return_value = {"ok": True}
         ha_mcp_server.call_service("light", "turn_on", {"entity_id": "light.kitchen"})
-        api.assert_called_once()
+        self.assertEqual(len(service_posts(api)), 1)
         got = ha_mcp_server.call_service("light", "turn_off", {"area_id": "kitchen"})
         self.assertIn("error", got)
         self.assertIn("name the entity ids", got["error"])
-        api.assert_called_once()
+        self.assertEqual(len(service_posts(api)), 1)
 
     @patch("ha_mcp_server.ha_api_request")
     def test_the_control_tools_route_through_it(self, api):
@@ -256,7 +265,7 @@ class TestTheGateInTheServer(GateCase):
         ha_mcp_server.EXPOSED_ONLY = False
         api.return_value = {"ok": True}
         ha_mcp_server.call_service("lock", "unlock", {"entity_id": "lock.front_door"})
-        api.assert_called_once()
+        self.assertEqual(len(service_posts(api)), 1)
         api.return_value = [{"entity_id": "lock.front_door", "state": "locked", "attributes": {}}]
         self.assertEqual(len(ha_mcp_server.get_all_states()), 1)
 
