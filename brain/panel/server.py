@@ -2389,12 +2389,29 @@ async def run_healing(reason: str = "schedule") -> dict:
         snapshot = await checks.snapshot.collect(started)
         rows = await asyncio.to_thread(findings_store.list_all, "open")
         patterns = automation_writer.protected_patterns()
+        history = dict(store.get("history") or {})
         planned = await asyncio.to_thread(
             healing.plan, rows, snapshot, patterns, done,
-            healing.MAX_PER_NIGHT, started)
+            healing.MAX_PER_NIGHT, started, history)
 
         attempts = list(store["attempts"]) if store.get("night") == night else []
         skips = list(store["skips"]) if store.get("night") == night else []
+        # A target that keeps needing the same heal stops being healed and
+        # becomes a finding (`healing.plan`'s `chronic`). Filed through the
+        # gate every producer files through, so it is looked at before it
+        # is shown, and deduped on its text, so a target that stays chronic
+        # night after night is one row.
+        chronic = planned.get("chronic") or []
+        if chronic:
+            tz, _tzname = await asyncio.to_thread(baselines.house_timezone)
+            rows_for = [healing.chronic_finding(c, c.get("heals") or [], tz)
+                        for c in chronic]
+            # A direct call inside the thunk, so the sweep that holds every
+            # producer to the gate (`test_triage`) can see this one too.
+            await asyncio.to_thread(
+                lambda: findings_store.add_many(triage.gate(rows_for)))
+            log.info("healing: %d target(s) keep coming back — stopped and "
+                     "filed", len(chronic))
         for skipped in planned["skips"]:
             skips.append(skipped)
             journal.record("healing", healing.OUTCOME_SKIP, ok=False,
@@ -2410,7 +2427,10 @@ async def run_healing(reason: str = "schedule") -> dict:
                 row = {k: attempt.get(k) for k in
                        ("ts", "source", "remedy", "target", "label",
                         "sentence", "text")}
-                row.update({"ok": ok, "error": why, "at": int(time.time())})
+                at = int(time.time())
+                row.update({"ok": ok, "error": why, "at": at})
+                if ok:
+                    row["times"] = healing.record_heal(history, row, at)
                 attempts.append(row)
                 # Written after EVERY attempt, not at the end: a restart
                 # at three in the morning must not find a pass that made
@@ -2418,7 +2438,8 @@ async def run_healing(reason: str = "schedule") -> dict:
                 await asyncio.to_thread(
                     healing.save, {"night": night,
                                    "started_at": int(started),
-                                   "attempts": attempts, "skips": skips})
+                                   "attempts": attempts, "skips": skips,
+                                   "history": history})
                 journal.record(
                     "healing",
                     healing.OUTCOME_OK if ok else healing.OUTCOME_FAIL,
@@ -2431,7 +2452,11 @@ async def run_healing(reason: str = "schedule") -> dict:
 
         state = {"night": night, "started_at": int(started),
                  "finished_at": int(time.time()), "reason": reason,
-                 "attempts": attempts, "skips": skips}
+                 "attempts": attempts, "skips": skips, "history": history,
+                 "chronic": [{"target": c.get("target"),
+                              "remedy": c.get("remedy"),
+                              "heals": len(c.get("heals") or [])}
+                             for c in chronic]}
         await asyncio.to_thread(healing.save, state)
         HEAL_STATE["last"] = state
         log.info("healing pass (%s): %d attempted, %d skipped",
