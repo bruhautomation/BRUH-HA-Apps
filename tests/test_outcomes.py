@@ -384,6 +384,37 @@ class TestTheLogIsWrittenByTheLoop(OutcomesLoop):
         self.assertEqual(self.fs.get(row["ts"])["status"], "held")
 
 
+class TestTheLogIsCapped(unittest.TestCase):
+    """Capped by rewriting only when well past the cap, and through
+    `atomic_write` — the journal's arithmetic, driven."""
+
+    def test_the_oldest_rows_go_and_the_newest_stay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            olds = (outcomes.VERDICTS_FILE, outcomes.MAX_ROWS)
+            outcomes.VERDICTS_FILE = Path(tmp) / "v.jsonl"
+            outcomes.MAX_ROWS = 20
+            try:
+                for i in range(40):
+                    outcomes.note_undone(i, f"row {i}", now=1000 + i)
+                rows = outcomes.load_rows()
+                self.assertLessEqual(len(rows), 20 + 20 // 4)
+                self.assertEqual(rows[-1]["case_ts"], 39)
+                self.assertGreater(rows[0]["case_ts"], 0)
+            finally:
+                outcomes.VERDICTS_FILE, outcomes.MAX_ROWS = olds
+
+    def test_a_result_nobody_wrote_down_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old = outcomes.VERDICTS_FILE
+            outcomes.VERDICTS_FILE = Path(tmp) / "v.jsonl"
+            try:
+                self.assertFalse(outcomes.record_investigation(
+                    {"subject": "x"}, "maybe"))
+                self.assertEqual(outcomes.load_rows(), [])
+            finally:
+                outcomes.VERDICTS_FILE = old
+
+
 class TestAnUndoIsRecorded(OutcomesLoop):
     def test_the_unfix_route_writes_the_undone_event(self):
         """Through the real route: `unfix` puts the row back to `open` and
