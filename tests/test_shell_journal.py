@@ -303,12 +303,14 @@ class TestThePanelBooksThem(ShellCase):
         """Written in-process with listeners installed — the panel's own
         test of itself — it must still be booked once, not twice."""
         heard = []
+        listeners = list(journal._LISTENERS)
+        journal._LISTENERS[:] = []
         journal.on_record(heard.append)
         try:
             self._shell("crash")
             journal.record("insight", "ok")
         finally:
-            journal.off_record(heard.append)
+            journal._LISTENERS[:] = listeners
         self.assertEqual([r["source"] for r in heard], ["insight"])
         seen = []
         self.assertEqual(journal.book_shell_rows([seen.append]), 1)

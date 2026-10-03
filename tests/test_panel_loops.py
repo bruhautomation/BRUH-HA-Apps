@@ -303,13 +303,18 @@ class TestAUsageLimitHoldsTheCards(ServerCase):
         self.addCleanup(tmp.cleanup)
         old = jr.JOURNAL_FILE
         jr.JOURNAL_FILE = str(Path(tmp.name) / "journal.jsonl")
+        # Only this listener: a test that reloads `server` and starts its
+        # app leaves one registration per reload, every one of them writing
+        # this module's globals, and ten of them make a streak of ten.
+        listeners = list(jr._LISTENERS)
+        jr._LISTENERS[:] = []
         jr.on_record(srv._journal_rate_listener)
         try:
             jr.record("card", "rate_limited", ok=False,
                       error="You've hit your limit · resets 3pm",
                       duration_s=1.2, turns=1)
         finally:
-            jr.off_record(srv._journal_rate_listener)
+            jr._LISTENERS[:] = listeners
             jr.JOURNAL_FILE = old
         self.assertGreater(srv.RATE_LIMIT_STATE["until"], time.time())
         self.assertEqual(srv.RATE_LIMIT_STATE["streak"], 1)
