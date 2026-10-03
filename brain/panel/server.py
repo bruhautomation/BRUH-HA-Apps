@@ -1116,8 +1116,11 @@ async def _call_ha_service(service: str, data: dict) -> bool:
         return False
 
 
-async def _submit_memory(fact: str, source: str = "insights") -> None:
-    await asyncio.to_thread(_queue_memory_fact, fact, source)
+async def _submit_memory(fact: str, source: str = "insights", **about) -> None:
+    """Queue a fact off the loop. ``about`` is `_queue_memory_fact`'s
+    keywords — the subject a writer knows, the run that taught it."""
+    await asyncio.to_thread(
+        lambda: _queue_memory_fact(fact, source, **about))
 
 
 # What a run is told the house is like, and how much of the document that
@@ -1135,8 +1138,15 @@ MEMORY_HEAD_CHARS = 800
 
 def _memory_block(*, entities=(), areas=(), domains=(), query: str = "",
                   head_chars: int = MEMORY_HEAD_CHARS) -> str:
-    """The retrieval block for these subjects, over the document's head."""
+    """The retrieval block for these subjects, over the document's head.
+
+    The entities' own rooms are added here, once, for every caller: a
+    fact about a room is filed `area:<id>`, and a run about the lounge
+    thermometer that was never handed the lounge never saw it.
+    """
     facts = ""
+    areas = list(areas or ()) + [a for a in _areas_of(entities)
+                                 if a not in (areas or ())]
     try:
         facts = facts_store.retrieval_block(
             entities=entities, areas=areas, domains=domains, query=query)
@@ -3023,7 +3033,9 @@ async def _generate(insight_id: str) -> None:
             _, created = knowledge_store.add_fact(
                 fact, source="insights", category=cat["id"])
             if created:
-                await _submit_memory(fact)
+                # With the run that learned it, so "See the run" on the
+                # Knowledge tab opens the card's own conversation.
+                await _submit_memory(fact, run_id=run_id or "")
         _set_job(insight_id, state="done", error="")
         log.info("insight %s generated (%s)%s%s", insight_id, insight["title"],
                  f", {len(filed)} new finding(s)" if filed else "",
@@ -3187,10 +3199,13 @@ async def _run_fix(job_id: str) -> None:
         # A change to the house is durable knowledge about it — the next
         # analysis must not rediscover a problem brAIn itself resolved.
         if status == "fixed" and parsed["changed"]:
+            subjects = _finding_subjects(finding)
             await _submit_memory(
                 f"brAIn fixed this on {time.strftime('%Y-%m-%d')}: "
                 f"{finding['text']} — {'; '.join(parsed['changed'])}",
-                source="fix")
+                source="fix", subject=subjects[0] if subjects else "",
+                subjects=subjects[1:],
+                run_id=capture.run_id_from(result.get("meta") or {}))
         # Anything it noticed on the way in becomes its own finding rather
         # than an edit it was not asked to make — and goes through triage
         # like every other producer's, because "I saw this while I was in
@@ -5871,7 +5886,13 @@ def _signal_entities(signal: dict) -> list[str]:
 # fetched, never fetched for the tagger's own sake — it runs on the
 # minute over every queued line, and a registry read per minute is a
 # request nobody asked for.
-_FACTS_CTX: dict = {"entities": frozenset(), "areas": {}, "at": 0.0}
+_FACTS_CTX: dict = {"entities": frozenset(), "areas": {},
+                    "entity_areas": {}, "at": 0.0}
+# How old the registry the facts store reads may be before "this entity is
+# not in the house" stops being a claim it can make. Two checks passes at
+# the default interval: a registry read once and never again is a list
+# that was true on a Tuesday.
+FACTS_REGISTRY_FRESH_S = 13 * 3600
 
 # What every entity the last checks pass saw is CALLED, and where it is:
 # `{entity_id: {"name": ..., "area": ...}}`. The feed reads it so a card
@@ -5892,8 +5913,23 @@ def _note_registry(snapshot: dict) -> None:
         states = snapshot.get("states") or {}
         areas = {a["area_id"]: a.get("name") or a["area_id"]
                  for a in (snapshot.get("areas") or []) if a.get("area_id")}
+        # Which room each entity is in, by area ID — the key a fact about a
+        # room is filed under (`area:<id>`). A run is handed entities and
+        # asks for the facts about them, and "the lounge gets cold in the
+        # afternoon" is a fact about the lounge thermometer's room that no
+        # caller could reach: none of them passed an area, ever.
+        devices = {d["id"]: d.get("area_id") for d in
+                   (snapshot.get("devices") or []) if d.get("id")}
+        entity_areas: dict[str, str] = {}
+        for row in snapshot.get("entities") or []:
+            eid = row.get("entity_id")
+            if not eid:
+                continue
+            area = row.get("area_id") or devices.get(row.get("device_id") or "")
+            if area:
+                entity_areas[eid] = area
         _FACTS_CTX.update(entities=frozenset(states), areas=areas,
-                          at=time.time())
+                          entity_areas=entity_areas, at=time.time())
     except Exception as exc:  # noqa: BLE001
         log.debug("facts registry note failed: %s", exc)
     try:
@@ -5921,12 +5957,80 @@ def _entity_names_in(*texts: str) -> dict[str, dict]:
 
 def _ingest_facts() -> int:
     try:
-        return facts_store.ingest_inbox(
+        created = facts_store.ingest_inbox(
             MEMORY_INBOX_DIR, MEMORY_INBOX_DIR / "processed",
             known_entities=_FACTS_CTX["entities"], areas=_FACTS_CTX["areas"])
     except Exception as exc:  # noqa: BLE001
         log.debug("facts ingest failed: %s", exc)
         return 0
+    _reconcile_facts()
+    return created
+
+
+def _reconcile_facts(force: bool = False) -> dict:
+    """Make the facts store answer to the document and the registry.
+
+    On the minute, beside the ingest, and straight after the panel's own
+    editor saves — the store is what most runs read, and every way a
+    person corrects memory (an edit, `brain memory forget`, `clear`,
+    `undo`) changes the document. A document that would not read is
+    passed as None, which skips the curation half rather than reading
+    every fact as gone (`facts_store.reconcile`).
+    """
+    try:
+        document = SHARED_MEMORY_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        document = ""
+    except OSError:
+        document = None
+    fresh = (bool(_FACTS_CTX["entities"])
+             and time.time() - float(_FACTS_CTX["at"]) < FACTS_REGISTRY_FRESH_S)
+    try:
+        return facts_store.reconcile(
+            document, MEMORY_INBOX_DIR,
+            known_entities=_FACTS_CTX["entities"], registry_fresh=fresh,
+            force=force)
+    except Exception as exc:  # noqa: BLE001 — accounting, not a run
+        log.debug("facts reconcile failed: %s", exc)
+        return {}
+
+
+def _areas_of(entities) -> list[str]:
+    """The rooms these entities are in, by area id, from the last pass."""
+    where = _FACTS_CTX.get("entity_areas") or {}
+    out: list[str] = []
+    for eid in entities or ():
+        area = where.get(str(eid or ""))
+        if area and area not in out:
+            out.append(area)
+    return out
+
+
+def _finding_subjects(finding: dict, limit: int = 4) -> list[str]:
+    """What a finding is about, as the facts store's subjects.
+
+    The row's own entity first — a check knows exactly which one — then
+    the entities a case says it read, because a Resident row carries no
+    `entity_id` (its claim is written for a person, in friendly names)
+    and its evidence is the only machine-readable answer to "about what".
+    Only strings shaped like an entity id: an evidence row names what was
+    read, and a sentence there is not a subject.
+    """
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    out: list[str] = []
+    eid = str(finding.get("entity_id") or "").strip()
+    if ha_data.is_entity_id(eid):
+        out.append(eid)
+    for row in finding.get("evidence") or []:
+        if not isinstance(row, dict):
+            continue
+        ent = str(row.get("entity") or "").strip()
+        if ent not in out and ha_data.is_entity_id(ent):
+            out.append(ent)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _open_case_rows(limit: int = 12) -> list[str]:
@@ -6592,6 +6696,17 @@ async def _ask_why(now: float, reason: str = "schedule") -> int:
         return 0
     if usage_store.budget_state(settings)["blocked"]:
         return 0
+    # A guess a full queue turned away earlier is re-proposed for nothing
+    # the moment there is room — before anything new is paid for.
+    await asyncio.to_thread(_repropose_deferred, now)
+    # And nothing is spent while the queue is full. A guess is one of the
+    # three answers a run can give, and the one that needs a slot: a run
+    # that answered "guess" into a full queue used to pay for the
+    # reasoning, throw the guess away and close the subject for good,
+    # which is the outcome worse than not asking. The other two producers
+    # of guesses already asked (`brain-learn.sh`, the analyst's budget).
+    if hypotheses.budget() <= 0:
+        return 0
     try:
         tz, _name = await asyncio.to_thread(baselines.house_timezone)
         ledger = await asyncio.to_thread(manual_ledger.load)
@@ -6659,13 +6774,53 @@ async def _run_curiosity(candidate: dict, ledger: dict, tz,
             "the reply was not the shape the contract asked for", now)
         return "", "unparseable"
 
-    filed = await asyncio.to_thread(_file_curiosity, candidate, answer)
+    filed = await asyncio.to_thread(
+        _file_curiosity, candidate, answer,
+        capture.run_id_from(result.get("meta") or {}))
     await asyncio.to_thread(curiosity.record_answer, candidate["subject"],
                             answer, filed, "", now)
     return filed, ""
 
 
-def _file_curiosity(candidate: dict, answer: dict) -> str:
+def _repropose_deferred(now: float) -> int:
+    """Put guesses a full queue turned away onto it, while there is room.
+
+    Free: the run that wrote them has already been paid for, and the claim
+    is on the entry (`curiosity.record_answer` keeps `because` and `ask`).
+    Never raises — this sits in front of a scheduled run and an empty
+    answer here must not stop it.
+    """
+    moved = 0
+    try:
+        for entry in curiosity.deferred():
+            if hypotheses.budget() <= 0:
+                break
+            if _propose_curiosity(entry, entry):
+                curiosity.mark_reproposed(entry["subject"], now)
+                moved += 1
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not re-propose a deferred guess: %s", exc)
+    return moved
+
+
+def _propose_curiosity(candidate: dict, answer: dict) -> dict | None:
+    """One guess onto the hypothesis queue, carrying what it is about.
+
+    The claim reads as it always has — the reason and the question
+    together, because a question with no reasoning under it is one nobody
+    can answer well — and `fact` is the reason alone, which is what a yes
+    files: "the sprinklers run at seven because the lawn is in full sun
+    until six", not the same sentence with a question mark on the end.
+    """
+    name = candidate.get("name") or candidate.get("entity_id") or ""
+    claim = f"{answer['because']} — {answer['ask']}"
+    return hypotheses.propose(
+        claim[:hypotheses.MAX_TEXT_CHARS], topic=f"why: {name}",
+        subject=str(candidate.get("entity_id") or ""),
+        fact=str(answer.get("because") or ""))
+
+
+def _file_curiosity(candidate: dict, answer: dict, run_id: str = "") -> str:
     """Put one answer where it belongs, and say where that was.
 
     Three answers, three places that already exist, and no new surface:
@@ -6685,19 +6840,24 @@ def _file_curiosity(candidate: dict, answer: dict) -> str:
       would be filing a fact about brAIn into a document about a home.
     """
     if answer["confidence"] == "explained" and answer["fact"]:
+        # Filed under the entity the run was asked about, with the run that
+        # worked it out: tagged by scanning the sentence, "the sprinklers
+        # run late because the lawn is in sun until six" names no id and no
+        # room, and became a fact about the whole house.
         _queue_memory_fact(answer["fact"], source="curiosity",
-                           confidence="medium")
+                           confidence="medium",
+                           subject=str(candidate.get("entity_id") or ""),
+                           run_id=run_id)
         return "memory"
     if answer["confidence"] == "guess" and answer["ask"]:
-        name = candidate.get("name") or candidate.get("entity_id") or ""
-        claim = f"{answer['because']} — {answer['ask']}"
-        if hypotheses.propose(claim[:hypotheses.MAX_TEXT_CHARS],
-                              topic=f"why: {name}"):
+        if _propose_curiosity(candidate, answer):
             return "hypothesis"
         # The cap, the TTL or a near-duplicate refused it. Not an error:
         # three open questions is the whole design of that queue, and a
-        # fourth waiting behind them is what it exists to prevent.
-        return "hypothesis-refused"
+        # fourth waiting behind them is what it exists to prevent. Kept on
+        # the curiosity entry as `deferred` and re-proposed when a slot
+        # frees (`_repropose_deferred`), rather than settled as asked.
+        return curiosity.REFUSED
     return ""
 
 
@@ -8129,8 +8289,10 @@ def _doctor_hooks() -> "doctor.Hooks":
         end_finding=_end_finding,
         undo_finding=lambda entry: asyncio.to_thread(_undo_finding, entry),
         queue_memory=_queue_memory_fact,
-        drop_memory=lambda source, fact: _drop_from_inbox(
-            _inbox_id(source, fact)),
+        # The queue AND the facts store: the deep check's probe is read
+        # into the store within the minute, and a cleanup that took it out
+        # of the inbox and the document left a fact behind every run read.
+        drop_memory=_unqueue_fact,
         inbox_pending=_inbox_pending,
         memory_text=_read_shared_memory,
         consolidate=_consolidate_now,
@@ -9156,10 +9318,7 @@ def _case_end_finding(key, word: str, note: str):
         if finding is None:
             return {"error": "no such finding"}
         payload, fact = await _end_finding(finding, spec, note)
-        payload["undo"] = undo_store.record(
-            "finding", finding=finding,
-            key=findings_store.normalize(finding["text"]),
-            fact=fact, fact_source=spec.get("source", "homeowner"))
+        payload["undo"] = _ending_undo(finding, spec, fact, payload)
         return payload
     return run
 
@@ -9515,9 +9674,7 @@ async def h_finding_verb(request: web.Request) -> web.Response:
     # reason this exists: they sit next to each other and mean opposite
     # things, so a mis-tap is not hypothetical and there is nothing to put
     # back by hand.
-    payload["undo"] = undo_store.record(
-        "finding", finding=finding, key=findings_store.normalize(finding["text"]),
-        fact=fact, fact_source=spec.get("source", "homeowner"))
+    payload["undo"] = _ending_undo(finding, spec, fact, payload)
     # "Wrong — and stop raising these." The box on the Wrong form, for the
     # row that is the fourth of its kind: the ending above is about this
     # row, and the mute is about the rule that filed it. Only Wrong offers
@@ -9566,10 +9723,19 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
     # `memory` is what stops a note silently costing the memory line.
     template = spec["noted"] if note and spec.get("noted") else spec["memory"]
     fact = ""
+    subjects = _finding_subjects(finding)
     if template:
         fact = template.format(text=finding["text"], note=note,
                                date=time.strftime("%Y-%m-%d"))
-        await _submit_memory(fact, source=spec.get("source", "homeowner"))
+        # Filed under what the finding is about, and with the run that
+        # raised it. A correction tagged by scanning its sentence lands on
+        # the whole house — the report is written in friendly names — and
+        # the next look at that very sensor is the run least likely to be
+        # shown a house-wide fact (`_finding_subjects`).
+        await _submit_memory(
+            fact, source=spec.get("source", "homeowner"),
+            subject=subjects[0] if subjects else "", subjects=subjects[1:],
+            run_id=str(finding.get("run_id") or ""))
     # And the rule it corrects. Wrong on a check's row is the homeowner
     # saying this rule has this entity wrong — the sensor is not stuck, it
     # is a contact on a cupboard nobody opens — and until 2.2 that landed
@@ -9579,27 +9745,71 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
     # note is the fact's text where there is one, because it is the
     # sentence a person will want to read back beside the rule it muted.
     if spec.get("kind") == "ignored":
-        await asyncio.to_thread(_record_exception, finding, note)
+        written = await asyncio.to_thread(_record_exception, finding, note)
+        if written:
+            # Private to the press that made it: the route turns it into
+            # the undo token and takes it off the payload (`_ending_undo`).
+            payload["_exception_ids"] = written
     return payload, fact
 
 
-def _record_exception(finding: dict, note: str) -> None:
-    """Best effort, `file_incident`'s rule: an ending must not fail on it."""
+def _ending_undo(finding: dict, spec: dict, fact: str, payload: dict) -> str:
+    """The undo token for an ending, carrying every effect it had.
+
+    The rule a Wrong press wrote is one of those effects, and the toast's
+    Undo promises to put back all of them — "half of any of them is worse
+    than none". A mis-tapped Wrong followed by Undo used to restore the row
+    and leave the check muted for that entity until somebody found the
+    rule on the Knowledge tab.
+    """
+    ids = payload.pop("_exception_ids", None) or []
+    return undo_store.record(
+        "finding", finding=finding,
+        key=findings_store.normalize(finding["text"]),
+        fact=fact, fact_source=spec.get("source", "homeowner"),
+        exception=list(ids))
+
+
+# Which producers' Wrong becomes a rule, and under what name. A check names
+# itself; the Resident is one producer whose judgements are all its own,
+# so its rule is `exception:resident` on the entities the case was about —
+# what a later look at those entities is shown as "already dismissed here"
+# (the reason it is retrievable by subject at all). An analyst card's row
+# writes none: it names an entity it noticed on the way past rather than
+# one it was asked about, and a rule on the wrong entity is worse than none.
+def _exception_rule(finding: dict) -> tuple[str, list[str]]:
     source = str(finding.get("source") or "")
-    entity_id = str(finding.get("entity_id") or "")
-    if not source.startswith("check:") or not entity_id:
-        return
-    check_id = source[len("check:"):]
-    text = note.strip() if note else (
-        f'"{finding.get("text", "")}" was reported and marked wrong')
+    if source.startswith("check:"):
+        entity_id = str(finding.get("entity_id") or "")
+        return (source[len("check:"):], [entity_id] if entity_id else [])
+    if source == findings_store.RESIDENT_SOURCE:
+        return "resident", _finding_subjects(finding)
+    return "", []
+
+
+def _record_exception(finding: dict, note: str) -> list[str]:
+    """Best effort, `file_incident`'s rule: an ending must not fail on it.
+
+    Returns the ids of the facts it wrote, which the undo token carries.
+    """
+    rule, subjects = _exception_rule(finding)
+    if not rule or not subjects:
+        return []
+    report = str(finding.get("claim") or finding.get("text") or "")
+    text = note.strip() if note else f'"{report}" was reported and marked wrong'
     try:
-        facts_store.add(
-            text, subject=entity_id, source="correction",
-            predicate=facts_store.EXCEPTION_PREFIX + check_id,
-            run_id=str(finding.get("run_id") or ""), confidence=0.95)
+        row, _created = facts_store.add(
+            text, subject=subjects[0], extra_subjects=subjects[1:],
+            source="correction",
+            predicate=facts_store.EXCEPTION_PREFIX + rule,
+            run_id=str(finding.get("run_id") or ""), confidence=0.95,
+            about=report,
+            finding_key=findings_store.normalize(finding.get("text") or ""))
     except Exception as exc:  # noqa: BLE001
         log.debug("could not record the exception for %s: %s",
-                  log_safe(entity_id), exc)
+                  log_safe(subjects[0]), exc)
+        return []
+    return [row["id"]] if row else []
 
 
 # ---------------------------------------------------------------------------
@@ -9809,7 +10019,10 @@ async def _complete_todo(item: dict, note: str) -> tuple[dict | None, str]:
     template = spec["noted"] if note else spec["memory"]
     fact = template.format(text=item["text"], note=note,
                            date=time.strftime("%Y-%m-%d"))
-    await _submit_memory(fact, source=spec["source"])
+    subjects = _finding_subjects(item)
+    await _submit_memory(fact, source=spec["source"],
+                         subject=subjects[0] if subjects else "",
+                         run_id=str(item.get("run_id") or ""))
     if item.get("run_id"):
         await asyncio.to_thread(
             capture.add_label, item["run_id"],
@@ -10566,8 +10779,7 @@ async def h_undo(request: web.Request) -> web.Response:
         def put_back() -> tuple[bool, dict]:
             restored = proposals.reopen(entry["proposal"]) is not None
             if entry.get("fact"):
-                _drop_from_inbox(
-                    _inbox_id(entry["fact_source"], entry["fact"]))
+                _unqueue_fact(entry["fact_source"], entry["fact"])
             return restored, _proposals_payload()
 
         restored, payload = await asyncio.to_thread(put_back)
@@ -10687,7 +10899,7 @@ def _undo_todo(entry: dict) -> tuple[bool, dict]:
     # The memory line has not been consolidated — the token is younger than
     # any pass — so it comes out of the inbox the way a queued fact does.
     if restored and entry.get("fact"):
-        _drop_from_inbox(_inbox_id(entry["fact_source"], entry["fact"]))
+        _unqueue_fact(entry["fact_source"], entry["fact"])
     payload = _todo_payload()
     payload["findings"] = findings_store.listing()["findings"]
     return restored, payload
@@ -10708,6 +10920,15 @@ def _undo_finding(entry: dict) -> tuple[bool, dict]:
         restored = findings_store.restore(entry["finding"]) is not None
         if entry.get("key"):
             findings_store.unsettle(entry["key"])
+        # And the rule, which is the effect that reaches code: a Wrong on
+        # a check's row muted that check for that entity, and an Undo that
+        # left it would put the card back under a rule that will never let
+        # the same report through again. A token minted before the ids
+        # rode on it finds the rule by the report it was written about.
+        if "exception" in entry:
+            facts_store.forget_ids(entry.get("exception") or [])
+        elif entry.get("key"):
+            facts_store.forget_exceptions(entry["key"])
     else:
         restored = hypotheses.reopen(entry["ts"]) is not None
         # A rejected guess also went into the ask-history as a dead end.
@@ -10720,9 +10941,10 @@ def _undo_finding(entry: dict) -> tuple[bool, dict]:
                 knowledge_store.remove_question(q["ts"])
     # The memory line has not been consolidated (the token is younger
     # than any pass), so it is still a line in the inbox and comes out
-    # the same way a queued fact does from the Memory tab.
+    # the same way a queued fact does from the Memory tab — and out of
+    # the facts store, which read it within the minute.
     if entry.get("fact"):
-        _drop_from_inbox(_inbox_id(entry["fact_source"], entry["fact"]))
+        _unqueue_fact(entry["fact_source"], entry["fact"])
     return restored, _findings_payload()
 
 
@@ -10741,7 +10963,15 @@ async def h_finding_unsettle(request: web.Request) -> web.Response:
 
     def undo() -> tuple[bool, dict]:
         ok = findings_store.unsettle(key)
-        return ok, _findings_payload()
+        # The rule goes with the wording. "Let brAIn raise it again" on a
+        # report somebody once marked Wrong released the key and left the
+        # `exception:` fact standing the check down for that entity, so
+        # the one press whose whole meaning is "tell me about this again"
+        # could never bring the report back for the four checks that read
+        # exceptions. Counted as an answer either way: a rule with no
+        # ledger entry (the key aged out) is still a rule to release.
+        forgot = facts_store.forget_exceptions(key)
+        return ok or forgot > 0, _findings_payload()
 
     ok, payload = await asyncio.to_thread(undo)
     if not ok:
@@ -11196,21 +11426,43 @@ def _write_shared_memory(text: str) -> None:
 
 
 def _queue_memory_fact(fact: str, source: str = "panel",
-                      confidence: str = "medium") -> None:
+                      confidence: str = "medium", *, subject: str = "",
+                      subjects=(), run_id: str = "",
+                      expires: str = "") -> None:
     """Append a candidate fact to the memory inbox.
 
     The panel does NOT write memory.md. One writer owns that document —
     the consolidator — which is what lets the terminal, voice, insights,
     and study sessions all feed the same memory without a lock between
     them. Everything here is a queue.
+
+    ``subject``/``subjects`` are what the writer KNOWS the fact is about —
+    the finding's entity, a case's evidence, the device a curiosity run
+    asked about. Without them the facts store could only tag a line by
+    finding a literal entity id or a room's name in it, and a sentence
+    written for a person carries neither: a correction about "the porch
+    sensor" landed as a fact about the whole house, which the next look
+    at that sensor may never be shown. ``run_id`` is the conversation
+    that taught it, which is what the Knowledge tab's "See the run" opens.
+    Absent keys are not written, so a line from a writer that knows none
+    of this is the line it always was.
     """
     try:
         MEMORY_INBOX_DIR.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(
-            {"ts": int(time.time()), "source": source, "fact": fact,
-             "confidence": confidence},
-            ensure_ascii=False,
-        )
+        record = {"ts": int(time.time()), "source": source, "fact": fact,
+                  "confidence": confidence}
+        named = [str(s).strip() for s in ([subject] + list(subjects or ()))
+                 if str(s or "").strip()]
+        named = list(dict.fromkeys(named))
+        if named:
+            record["subject"] = named[0]
+            if len(named) > 1:
+                record["subjects"] = named[1:facts_store.MAX_SUBJECTS]
+        if run_id:
+            record["run_id"] = str(run_id)[:64]
+        if expires:
+            record["expires"] = str(expires)[:10]
+        line = json.dumps(record, ensure_ascii=False)
         path = MEMORY_INBOX_DIR / f"{int(time.time())}-{source}.jsonl"
         with open(path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
@@ -11852,14 +12104,24 @@ def _drop_from_inbox(item_id: str) -> bool:
     with _consolidator_held_shared():
         kept: dict[Path, list[dict]] = {}
         dropped: set[Path] = set()
+        lines: set[tuple[str, str]] = set()
         for path, obj in _inbox_lines():
-            if _inbox_id(str(obj.get("source") or ""),
-                         str(obj["fact"]).strip()) == item_id:
+            source, fact = str(obj.get("source") or ""), str(obj["fact"]).strip()
+            if _inbox_id(source, fact) == item_id:
                 dropped.add(path)
+                lines.add((source, fact))
             else:
                 kept.setdefault(path, []).append(obj)
         if not dropped:
             return False
+        # The facts store read this line within a minute of it being
+        # queued, so "never filed" stopped being true of an inbox line the
+        # day that store existed: the ✕ and every Undo that comes through
+        # here took the line out of the queue and left the fact asserting
+        # it to every run. Forgotten from the store first, because that
+        # half cannot race the consolidator.
+        for source, fact in lines:
+            _forget_queued_fact(source, fact)
         before = {path: _inbox_fingerprint(path) for path in dropped}
         # Only the files that actually held it are rewritten. Rewriting the
         # rest would drop any torn line they carry, which _inbox_lines skips
@@ -11887,6 +12149,29 @@ def _drop_from_inbox(item_id: str) -> bool:
         # on: it is not in the queue any more, whether this rewrote the file
         # or a pass took the whole thing while we were reading it.
         return True
+
+
+def _forget_queued_fact(source: str, fact: str) -> None:
+    """Take the facts store's copy of one queued line out. Never raises."""
+    try:
+        facts_store.forget_text(fact, source=source)
+    except Exception as exc:  # noqa: BLE001 — the queue half is the press
+        log.debug("could not forget the filed copy of a queued line: %s", exc)
+
+
+def _unqueue_fact(source: str, fact: str) -> bool:
+    """An undo's memory half: out of the queue AND out of the store.
+
+    The queue half finds nothing when a pass has already filed the line
+    (the token outlives a pass now and then), and the store's copy has to
+    go either way — a store still asserting the ending an Undo reversed is
+    the same press counted as half undone. Returns whether the line was
+    still in the queue, which is `_drop_from_inbox`'s own answer.
+    """
+    if _drop_from_inbox(_inbox_id(source, fact)):
+        return True
+    _forget_queued_fact(source, fact)
+    return False
 
 
 def _memory_state() -> dict:
@@ -12294,10 +12579,14 @@ async def _answer_hypothesis(ts: int, verb: str,
         settled = await asyncio.to_thread(hypotheses.confirm, ts)
         if not settled:
             return None
-        await _submit_memory(settled["text"], source="confirmed")
+        # The statement a guess was built on when it carries one (a
+        # curiosity guess's reason), and the claim itself otherwise.
+        fact = settled.get("fact") or settled["text"]
+        await _submit_memory(fact, source="confirmed",
+                             subject=settled.get("subject") or "")
         payload = await asyncio.to_thread(_findings_payload)
         payload["undo"] = undo_store.record("hypothesis", ts=ts,
-                                            fact=settled["text"],
+                                            fact=fact,
                                             fact_source="confirmed")
         return payload
 
@@ -12316,7 +12605,8 @@ async def _answer_hypothesis(ts: int, verb: str,
     if note:
         fact = (f'brAIn guessed: "{settled["text"]}". The homeowner says that '
                 f"is wrong, because: {note}")
-        await _submit_memory(fact, source="correction")
+        await _submit_memory(fact, source="correction",
+                             subject=settled.get("subject") or "")
     payload = await asyncio.to_thread(_findings_payload)
     # `question` is the ledger entry reject() also wrote, so undo can retire
     # the dead-end record too rather than leaving the claim un-askable.
@@ -12386,15 +12676,21 @@ async def h_memory_put(request: web.Request) -> web.Response:
         # can act on. The log is the right place for both.
         log.warning("memory write failed: %s", exc)
         raise web.HTTPInternalServerError(text="could not write memory file")
+    # A line deleted here is a fact somebody wants gone, and the facts
+    # store — what most runs read — would otherwise go on asserting it
+    # until the minute tick noticed. Now, while the person is looking.
+    await asyncio.to_thread(_reconcile_facts, True)
     return web.json_response({"saved": True})
 
 
 # What an export IS: the durable knowledge, portable. The memory document,
-# the findings work list, the settled ledger and the facts ledger are the
-# four things a rebuilt or second install cannot rediscover cheaply — the
-# rest (inbox, hypotheses, questions) is in-flight dialogue state that will
-# regenerate, and exporting state that import ignores just invites people
-# to expect it back.
+# the findings work list, the settled ledger, the facts ledger and the
+# facts store are the five things a rebuilt or second install cannot
+# rediscover cheaply — the rest (inbox, hypotheses, questions) is in-flight
+# dialogue state that will regenerate, and exporting state that import
+# ignores just invites people to expect it back. The facts store came
+# last and was missed: it is where a Wrong press's RULE lives, so an export
+# without it moved every correction's wording and none of its effect.
 EXPORT_VERSION = 1
 
 
@@ -12406,6 +12702,9 @@ def _export_payload() -> dict:
         "findings": findings_store.list_all(),
         "settled": findings_store.settled_listing(),
         "knowledge_facts": knowledge_store.list_facts(),
+        # A key an older import does not read is a key it ignores, which
+        # is why this is additive rather than a new EXPORT_VERSION.
+        "facts": facts_store.export_rows(),
     }
 
 
@@ -12469,12 +12768,16 @@ async def h_memory_import(request: web.Request) -> web.Response:
                 category=str(fact.get("category") or ""))
             added += int(created)
         result["knowledge_facts"] = added
+        stored = body.get("facts")
+        result["facts"] = facts_store.merge_rows(
+            stored if isinstance(stored, list) else [])
         return result
 
     result = await asyncio.to_thread(fold)
-    log.info("import: memory %s, %d finding(s), %d settled, %d fact(s)",
+    log.info("import: memory %s, %d finding(s), %d settled, %d fact(s), "
+             "%d stored fact(s) and rule(s)",
              result["memory"], result["findings"], result["settled"],
-             result["knowledge_facts"])
+             result["knowledge_facts"], result["facts"])
     return web.json_response(result)
 
 
