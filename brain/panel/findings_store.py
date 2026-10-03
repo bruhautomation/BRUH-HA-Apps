@@ -96,12 +96,19 @@ SETTLED_FILE = Path(os.environ.get(
 # diffs; it is derived, never read back, and republished on every write.
 STATE_FILE = Path(os.environ.get(
     "BRAIN_FINDINGS_STATE", "/config/.brain/findings_state.json"))
-# Plenty for a sensor attribute; the panel remains the place to work a list.
-STATE_MAX_ROWS = 50
 # Per-row cap on the prose in the mirror. See `_publish_state`.
 STATE_MAX_PROSE = 240
 
 MAX_FINDINGS = 200
+# The mirror carries the WHOLE live list, which the store already caps.
+# It was the newest 50, which was plenty for a sensor attribute and wrong
+# for everything else that reads the file: Repairs raises the OLDEST rows
+# waiting on somebody and could never see them on a busy house, and a row
+# falling off the cut read to the integration's watcher as a case that had
+# ended — `brain_case_ended`, then `brain_case` again when a newer row
+# was settled and it came back on. Bounded by the store's own cap rather
+# than by a second number, so the two cannot disagree about what is live.
+STATE_MAX_ROWS = MAX_FINDINGS
 # Far more than the list, because it is one short line each and losing the
 # oldest entry is how a problem you answered in spring comes back in autumn.
 MAX_SETTLED = 1000
@@ -291,6 +298,15 @@ def _publish_state(items: list[dict]) -> None:
     shaped.sort(key=lambda f: f["ts"], reverse=True)
     live = [s for s in shaped
             if s["status"] in LIVE_STATUSES and not is_snoozed(s, now)]
+    # Snoozed rows ride in a key of their own rather than in `findings`.
+    # Every reader of `findings` — the open count, the to-do list, Repairs —
+    # is right to leave a dismissed row out, and a reader that predates the
+    # key never sees one; what needs them is the watcher, which otherwise
+    # reads Dismiss as the case ENDING (`brain_case_ended`) and the row's
+    # return a day later as a brand-new problem (`brain_case` and
+    # `brain_finding` again, ringing whatever an automation hung off them).
+    snoozed = [s for s in shaped
+               if s["status"] in LIVE_STATUSES and is_snoozed(s, now)]
     open_rows = [s for s in live if s["status"] in UNSETTLED_STATUSES]
     try:
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -325,6 +341,16 @@ def _publish_state(items: list[dict]) -> None:
                  "answers": answers.request_answers(s),
                  **{k: s[k] for k in ("kind", "claim") if s.get(k)}}
                 for s in live[:STATE_MAX_ROWS]
+            ],
+            # The same compact shape the watcher's events are built from,
+            # plus when each comes back. No answers: a dismissed row is not
+            # asking anything until it returns to `findings`.
+            "snoozed": [
+                {**{k: s[k] for k in ("ts", "text", "severity", "status",
+                                      "entity_id", "fixable", "source_title")},
+                 "snoozed_until": int(s.get("snoozed_until") or 0),
+                 **{k: s[k] for k in ("kind", "claim") if s.get(k)}}
+                for s in snoozed[:STATE_MAX_ROWS]
             ],
         })
     except OSError as exc:
