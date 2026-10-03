@@ -53,13 +53,17 @@ OUTCOMES = (
     "healed",        # an overnight remediation made its one call
     "heal_failed",   # it made it and the call came back a failure
     "heal_skipped",  # it was refused before any call was made
+    "rate_limited",  # the account's usage limit (or the API's rate limit) said wait
     "error",         # anything else
 )
 
-# Which of those is a PROBLEM. Five of the fourteen non-`ok` outcomes are
+# Which of those is a PROBLEM. Six of the fifteen non-`ok` outcomes are
 # not: `applied` and `healed` are successes, `heal_skipped` and `denied`
-# are refusals doing their job, and `fallback` is a quieter path that
-# still produced a card.
+# are refusals doing their job, `fallback` is a quieter path that still
+# produced a card, and `rate_limited` is the account saying "not now" —
+# a window that resets, answered by the scheduler backing off rather than
+# by a problem report per run, forty of which about one spent window is
+# how the reports folder stops being opened.
 #
 # :func:`summary` used to decide this with ``outcome != "ok"``, and a
 # successful overnight heal therefore arrived in ``failures`` — where
@@ -136,6 +140,18 @@ _SECRET_RE = re.compile(
     r"|eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,})")
 
 
+# How the CLI says the account cannot run anything right now: the
+# subscription's "You've hit your limit · resets 3pm", its older "usage
+# limit reached", the monthly spend cap, and the API's own 429 /
+# `rate_limit_error` — including "Server is temporarily limiting
+# requests", which is the API's limit and not the account's and is
+# answered the same way, by waiting. A 529 is deliberately not here: an
+# overloaded service is retried once inside the run (`engine.overloaded`).
+_RATE_LIMITED_RE = re.compile(
+    r"hit your (?:[a-z\- ]*?)limit|usage limit|rate[ _-]?limit|"
+    r"\b429\b|limiting requests|spend limit", re.IGNORECASE)
+
+
 def scrub(text: str) -> str:
     """Error text with anything credential-shaped replaced."""
     return _SECRET_RE.sub("[redacted]", str(text or ""))
@@ -160,6 +176,11 @@ def classify(result: dict, timeout_message: str = "") -> str:
         return "max_turns"
     if "cli not found" in low:
         return "no_cli"
+    # Before the auth words: "usage limit" and "429" are a window, not a
+    # credential, and the remedy for one is to wait — `_RATE_LIMITED_RE`
+    # is the CLI's own wordings, the subscription's and the API's.
+    if _RATE_LIMITED_RE.search(err):
+        return "rate_limited"
     if ("authenticat" in low or "oauth" in low or "401" in low
             or "not logged in" in low or "invalid api key" in low):
         return "auth"

@@ -716,7 +716,29 @@ RESIDENT_INFLIGHT: set[int] = set()
 # The budget, per local day, per tier. On disk: a restart is the first thing
 # anybody does after changing an option, and an in-memory count makes
 # "twice a day" mean "twice per restart".
-LEDGER = resident.Ledger()
+#
+# The day is the HOUSE's: the reader is handed over rather than a zone,
+# because this is built at import and a zone read then is UTC for the life
+# of the process — the midnight-UTC day the class exists not to keep.
+LEDGER = resident.Ledger(tz=lambda: baselines.house_timezone()[0])
+
+
+def _resident_tier(job: str, thinking: str) -> str:
+    """The tier a Resident run of `job` is about to be charged to.
+
+    The plan as the dial and a typed model actually move it, never the
+    table's tier: `resident.tier_for` answers what a job is PLANNED at,
+    and a ledger asked about that let `generous` run investigations on
+    Opus against the Sonnet allowance, and a typed Opus run first looks
+    on Opus against nothing at all.
+    """
+    return model_plan.run_tier(job, thinking, eff_model())
+
+
+def _ran_tier(result: dict, job: str) -> str:
+    """The tier a finished run RAN on, read off the model the engine sent."""
+    sent = (result.get("meta") or {}).get("model") if isinstance(result, dict) else ""
+    return model_plan.tier_of(sent or "") or resident.tier_for(job)
 # The subscription. Built in `on_startup`, because it needs a loop.
 EVENT_BUS: eventbus.EventBus | None = None
 
@@ -6116,7 +6138,7 @@ async def _resident_pass(now: float) -> dict:
 
     thinking = str(settings.get("thinking") or model_plan.DEFAULT_THINKING)
     allowed, why = LEDGER.allows(
-        resident.tier_for(resident.JOB_FIRST_LOOK), thinking, now=now)
+        _resident_tier(resident.JOB_FIRST_LOOK, thinking), thinking, now=now)
     if not allowed:
         return {**out, "held": why}
     return await _resident_look(now, settings, thinking, len(surfaced))
@@ -6193,7 +6215,8 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         result = {"ok": False, "error": str(exc), "meta": {}}
     run_id = str((result.get("meta") or {}).get("session_id") or "")
     cost = await asyncio.to_thread(_record_usage, result, "resident-look")
-    LEDGER.record(resident.JOB_FIRST_LOOK, int(cost.get("total") or 0), now)
+    LEDGER.record(resident.JOB_FIRST_LOOK, int(cost.get("total") or 0), now,
+                  tier=_ran_tier(result, resident.JOB_FIRST_LOOK))
 
     if not result.get("ok"):
         return await _resident_run_failed(batch, run_id, now, surfaced)
@@ -6380,7 +6403,7 @@ async def _resident_investigations(queued: list[dict], now: float,
             held.append(signal)
             continue
         allowed, why = LEDGER.allows(
-            resident.tier_for(resident.JOB_INVESTIGATE), thinking, now=now)
+            _resident_tier(resident.JOB_INVESTIGATE, thinking), thinking, now=now)
         if not allowed:
             RESIDENT_STATE["last_error"] = why
             held.append(signal)
@@ -6421,7 +6444,8 @@ async def _resident_investigate(signal: dict, now: float,
         "resident", job=resident.JOB_INVESTIGATE, schema=resident.CASE_SCHEMA)
     run_id = str((result.get("meta") or {}).get("session_id") or "")
     cost = await asyncio.to_thread(_record_usage, result, "resident-investigate")
-    LEDGER.record(resident.JOB_INVESTIGATE, int(cost.get("total") or 0), now)
+    LEDGER.record(resident.JOB_INVESTIGATE, int(cost.get("total") or 0), now,
+                  tier=_ran_tier(result, resident.JOB_INVESTIGATE))
     if not result.get("ok"):
         log.info("an investigation of %s came back empty: %s",
                  signal.get("subject"), result.get("error") or "no answer")
@@ -6489,7 +6513,7 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
     it was not escalated, because a claim that was worth filing is worth
     filing at the confidence it has.
     """
-    allowed, why = LEDGER.allows(resident.tier_for(ESCALATE_JOB),
+    allowed, why = LEDGER.allows(_resident_tier(ESCALATE_JOB, thinking),
                                  thinking, now=now)
     if not allowed:
         case["detail"] = (case.get("detail", "") + "\n\nbrAIn was unsure "
@@ -6507,7 +6531,8 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
         "resident", job=ESCALATE_JOB, schema=resident.CASE_SCHEMA)
     cost = await asyncio.to_thread(_record_usage, result, "resident-escalate")
-    LEDGER.record(ESCALATE_JOB, int(cost.get("total") or 0), now)
+    LEDGER.record(ESCALATE_JOB, int(cost.get("total") or 0), now,
+                  tier=_ran_tier(result, ESCALATE_JOB))
     if not result.get("ok"):
         return case
     stronger = resident.parse_case(
