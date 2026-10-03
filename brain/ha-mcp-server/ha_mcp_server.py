@@ -2957,21 +2957,108 @@ def get_device_registry():
     return {"error": "Could not retrieve device information"}
 
 
+# Home Assistant's entity-id shape, the panel's `ha_data.ENTITY_ID_RE`. The
+# MCP server cannot import the panel (a different process, a different
+# user), so the rule is written here and the two are held together by
+# tests/test_mcp_history_query.py driving this one against a real server.
+ENTITY_ID_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+
+
+def _query(params):
+    """A query string out of params — every value percent-encoded.
+
+    Core's valueless flags (`minimal_response`, `no_attributes`) are sent
+    with an empty value, which Core reads as present: the same spelling the
+    panel's `history_params` sends through aiohttp. A `+` in a timestamp is
+    encoded too, where pasted into a URL it would arrive as a space.
+    """
+    return urllib.parse.urlencode(params)
+
+
+def _history_query(entity_id, end):
+    """Core's `/history/period/<start>` query for one entity, as the panel's
+    `ha_data.history_params` builds it.
+
+    **`end` is required, because Core's default is not now.** With no
+    `end_time`, `/history/period/<start>` answers with start plus ONE DAY —
+    so `hours=72` came back as the day that ended two days ago, labelled as
+    the last three days, with its `last`, `min` and `max` describing that
+    old day. The panel learned this from `closures.fetch_history`; this copy
+    never did, because a mock that accepts whatever endpoint it is handed
+    cannot see a parameter that is not there.
+    """
+    return _query({"filter_entity_id": entity_id, "end_time": end.isoformat(),
+                   "minimal_response": "", "no_attributes": ""})
+
+
+# How many logbook rows one call hands back. The NEWEST: Core answers a
+# window oldest first, and a tool asked "what happened" that kept the first
+# fifty of a busy hour dropped exactly the part that was being asked about.
+MAX_LOGBOOK_ROWS = 50
+
+
+def _trim_logbook_row(row):
+    """A logbook row as the five things a reader acts on.
+
+    What changed and when, its name, the state (or the logbook's message
+    for a row that is an event rather than a state), and what Core's
+    context chain says caused it — never the context ids, which cost a
+    reader tokens and say nothing a person or a model can use.
+    """
+    out = {"when": row.get("when"), "entity_id": row.get("entity_id"),
+           "name": row.get("name")}
+    if row.get("state") is not None:
+        out["state"] = row.get("state")
+    elif row.get("message"):
+        out["message"] = row.get("message")
+    by = row.get("context_entity_id")
+    if by:
+        out["by"] = by
+        name = row.get("context_entity_id_name") or row.get("context_name")
+        if name and name != by:
+            out["by_name"] = name
+    elif row.get("context_domain") == "conversation":
+        out["by"] = "a voice assistant"
+    elif row.get("context_user_id"):
+        out["by"] = "someone signed in"
+    return {k: v for k, v in out.items() if v not in (None, "")}
+
+
 def get_logbook(hours=1, entity_id=None):
-    """Get logbook entries."""
+    """The newest logbook entries in a window, newest first.
+
+    For WHY something changed, `explain_change` reads the same logbook and
+    adds what brAIn did; for a whole-house timeline with a cause on every
+    row, `get_activity`.
+    """
     from datetime import datetime, timedelta, timezone
     try:
         hours = max(0.1, min(float(hours or 1), 24))  # Clamp between 0.1 and 24
     except (TypeError, ValueError):
         hours = 1
-    start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-    endpoint = f"/api/logbook/{start}"
+    now = datetime.now(timezone.utc)
+    start = (now - timedelta(hours=hours)).isoformat()
+    params = {"end_time": now.isoformat()}
     if entity_id:
-        endpoint += f"?entity={entity_id}"
-    result = ha_api_request(endpoint)
-    if isinstance(result, list):
-        return result[:50]  # Limit to 50 entries
-    return result
+        # Refused rather than escaped: an id that is not an id names
+        # nothing, and the panel's own logbook fetch draws the line here.
+        if not ENTITY_ID_RE.match(str(entity_id)):
+            return {"error": f"{entity_id!r} is not an entity id "
+                             "(domain.object_id, lower case)."}
+        params["entity"] = entity_id
+    result = ha_api_request(f"/api/logbook/{start}?{_query(params)}")
+    if not isinstance(result, list):
+        return result
+    rows = [_trim_logbook_row(r) for r in result if isinstance(r, dict)]
+    newest = rows[-MAX_LOGBOOK_ROWS:][::-1]
+    out = {"hours": hours, "order": "newest first", "total": len(rows),
+           "returned": len(newest), "entries": newest}
+    if len(rows) > len(newest):
+        out["note"] = (f"The {len(rows) - len(newest)} oldest entries in this "
+                       "window are not shown — ask for fewer hours or name an "
+                       "entity_id. For what caused a change use explain_change; "
+                       "for the whole house with causes, get_activity.")
+    return out
 
 
 def get_history(entity_id, hours=24):
@@ -2979,15 +3066,17 @@ def get_history(entity_id, hours=24):
     from datetime import datetime, timedelta, timezone
     if not _entity_exposed(entity_id):
         return {"error": UNEXPOSED_READ.format(eid=entity_id)}
+    if not ENTITY_ID_RE.match(str(entity_id or "")):
+        return {"error": f"{entity_id!r} is not an entity id "
+                         "(domain.object_id, lower case)."}
     try:
         hours = max(1, min(int(hours), 168))
     except (TypeError, ValueError):
         hours = 24
-    start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    now = datetime.now(timezone.utc)
+    start = (now - timedelta(hours=hours)).isoformat()
     result = ha_api_request(
-        f"/api/history/period/{start}"
-        f"?filter_entity_id={entity_id}&minimal_response&no_attributes"
-    )
+        f"/api/history/period/{start}?{_history_query(entity_id, now)}")
     if isinstance(result, dict) and "error" in result:
         return result
     if not isinstance(result, list) or not result or not result[0]:
@@ -3077,13 +3166,43 @@ def get_statistics(entity_id, period="hour", days=7):
         return value
 
     stats = [
-        {k: (_iso(r.get(k)) if k == "start" else r.get(k))
+        {k: (_iso(r.get(k)) if k == "start" else _round_stat(r.get(k)))
          for k in ("start", "mean", "min", "max", "sum") if r.get(k) is not None}
         for r in rows
     ]
-    if len(stats) > 200:
-        stats = stats[-200:]
-    return {"entity_id": entity_id, "period": period, "days": days, "stats": stats}
+    out = {"entity_id": entity_id, "period": period, "days": days}
+    if len(stats) > MAX_STAT_ROWS:
+        # Said, never silent: a week of hourly rows is 168 and a month is
+        # 720, and the last 200 of a month reported as the month is the
+        # same lie get_history's missing end_time told.
+        out["note"] = (f"Showing the newest {MAX_STAT_ROWS} of {len(stats)} "
+                       f"{period} rows — the first {len(stats) - MAX_STAT_ROWS} "
+                       "are not shown. Ask for period 'day' (or fewer days) "
+                       "to see the whole window.")
+        stats = stats[-MAX_STAT_ROWS:]
+    out["stats"] = stats
+    return out
+
+
+MAX_STAT_ROWS = 200
+
+
+def _round_stat(value):
+    """A statistic to the precision anybody reads it at.
+
+    The recorder hands back means like 21.437916666666667, which is
+    seventeen characters of noise per row and a few thousand rows a month.
+    Three decimals keeps a cumulative `sum` exact enough to difference and
+    a temperature exact to the thousandth; a value under 0.01 keeps three
+    significant figures instead, so a small reading is not rounded to 0.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return value
+    if value != value or value in (float("inf"), float("-inf")):  # NaN, inf
+        return value
+    if value == 0 or abs(value) >= 0.01:
+        return round(value, 3)
+    return float(f"{value:.3g}")
 
 
 def get_weather_forecast(entity_id, forecast_type="daily"):
@@ -4900,7 +5019,14 @@ TOOLS = [
     },
     {
         "name": "get_logbook",
-        "description": "Get recent logbook entries from Home Assistant. Shows state changes and events.",
+        "description": (
+            "The newest logbook entries (state changes and events) in the "
+            "last N hours, newest first, at most 50 — each with when, the "
+            "entity, its name, the state and what Home Assistant says caused "
+            "it. For WHY one entity changed (including what brAIn did) use "
+            "explain_change; for a whole-house timeline with causes use "
+            "get_activity."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {

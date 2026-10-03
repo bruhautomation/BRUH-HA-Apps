@@ -169,11 +169,19 @@ class TestEdgeCaseLogbook(unittest.TestCase):
         self.assertIn("entity=light.test", called_endpoint)
 
     @patch("ha_mcp_server.ha_api_request")
-    def test_logbook_limits_results(self, mock_api):
-        """Logbook should limit results to 50 entries."""
-        mock_api.return_value = [{"entity_id": f"test.{i}"} for i in range(100)]
+    def test_logbook_limits_results_to_the_newest(self, mock_api):
+        """Fifty entries, and WHICH fifty: Core answers oldest first, and the
+        old `[:50]` kept the start of the window — this asserted only the
+        count, which both cuts satisfy, and so held nothing."""
+        mock_api.return_value = [{"entity_id": f"test.e{i}", "state": "on"}
+                                 for i in range(100)]
         result = ha_mcp_server.get_logbook()
-        self.assertLessEqual(len(result), 50)
+        self.assertEqual(result["returned"], 50)
+        self.assertEqual(result["total"], 100)
+        self.assertEqual(result["order"], "newest first")
+        self.assertEqual(result["entries"][0]["entity_id"], "test.e99")
+        self.assertEqual(result["entries"][-1]["entity_id"], "test.e50")
+        self.assertIn("50 oldest", result["note"])
 
 
 class TestEdgeCaseErrorLog(unittest.TestCase):
