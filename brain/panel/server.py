@@ -2012,7 +2012,10 @@ async def _apply_finding_requests() -> list[dict]:
         elif action == "reply":
             finding = await asyncio.to_thread(findings_store.get, ts)
             if finding:
-                ok, why = await _reply_to_finding(finding, req.get("note", ""))
+                # Started, never awaited: a reply is a Claude run of up to
+                # REPLY_TIMEOUT_S, and an ending given in the same burst —
+                # or the next one, fifteen seconds on — must not wait for it.
+                ok, why = _start_reply(finding, req.get("note", ""))
                 result["ok"] = ok
                 if not ok:
                     result["why"] = why
@@ -11335,6 +11338,51 @@ Change nothing."""
 REPLY_TIMEOUT_S = 180
 REPLY_MAX_TURNS = 24
 REPLY_MAX_CHARS = 600
+
+
+# Replies typed into a notification, being answered off the request drain.
+# Held so the loop cannot collect a task mid-run (`_SAFETY_TASKS`' reason).
+_REPLY_TASKS: set = set()
+
+
+def _start_reply(finding: dict, text: str) -> tuple[bool, str]:
+    """Start answering a reply and hand back at once.
+
+    The drain runs every fifteen seconds and applies a burst in order, so
+    awaiting the reply's run there held every Done, Wrong and To-do given
+    after it — in the same burst and in the next — for as long as the run
+    took. An empty reply is refused here, synchronously, because it is not
+    a turn and spends nothing; everything after that is the task's, and a
+    reply that could not be answered or delivered is logged by
+    `_reply_settled` rather than reported to a drain that has moved on.
+    """
+    said = str(text or "").strip()
+    if not said:
+        return False, "the reply was empty"
+    task = asyncio.get_running_loop().create_task(_reply_to_finding(finding, said))
+    _REPLY_TASKS.add(task)
+    task.add_done_callback(_reply_settled)
+    return True, ""
+
+
+def _reply_settled(task) -> None:
+    _REPLY_TASKS.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.warning("a reply from a notification could not be answered: %s", exc)
+        return
+    ok, why = task.result()
+    if not ok:
+        log.warning("a reply from a notification was not answered: %s", why)
+
+
+async def _settle_replies(timeout: float | None = None) -> None:
+    """Wait for the replies in flight — what a test of the drain awaits
+    before it reads what was sent."""
+    if _REPLY_TASKS:
+        await asyncio.wait(set(_REPLY_TASKS), timeout=timeout)
 
 
 async def _reply_to_finding(finding: dict, text: str) -> tuple[bool, str]:

@@ -383,6 +383,50 @@ class TestBothFrontDoorsSettleTheSame(RequestCase):
         self.addCleanup(setattr, self.server, "_send_notification", self._old_send)
         return prompts, sent
 
+    async def drain_and_answer(self):
+        """The drain starts a reply and moves on; the answer is the task's,
+        so a test of what was sent waits for it in the same loop."""
+        got = await self.server._apply_finding_requests()
+        await self.server._settle_replies(timeout=30)
+        return got
+
+    def test_a_slow_reply_holds_no_ending_behind_it(self):
+        # A reply is a Claude run of up to three minutes. Awaited in the
+        # drain, it held a Done given in the same burst for all of it.
+        import threading
+        gate = threading.Event()
+        prompts, sent = self._stub_reply_run()
+        stub = self.server.engine.run_analyst
+
+        def slow(*a, **kw):
+            gate.wait(30)
+            return stub(*a, **kw)
+
+        self.server.engine.run_analyst = slow
+        asked = self.a_finding("The hall sensor has not reported since Tuesday")
+        done = self.a_finding("The porch light is unavailable")
+        self.drop("001.json", {"ts": asked["ts"], "action": "reply",
+                               "note": "why does this matter?"})
+        self.drop("002.json", {"ts": done["ts"], "action": "fixed"})
+
+        async def go():
+            got = await self.server._apply_finding_requests()
+            # The ending landed while the reply's run is still waiting.
+            remaining = [r["ts"] for r in findings_store.list_all()]
+            in_flight = len(self.server._REPLY_TASKS)
+            gate.set()
+            await self.server._settle_replies(timeout=30)
+            return got, remaining, in_flight
+
+        got, remaining, in_flight = asyncio.run(go())
+        self.assertEqual([r["ok"] for r in got], [True, True])
+        self.assertEqual(remaining, [asked["ts"]])
+        self.assertEqual(in_flight, 1)
+        # And the reply was still answered, once, about its own row.
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual([[r["ts"] for r in rows] for rows, _m in sent],
+                         [[asked["ts"]]])
+
     def test_a_reply_is_answered_by_push_and_settles_nothing(self):
         # The Reply button is the case's conversation reached from a lock
         # screen: what was typed goes to the Resident under the finding
@@ -394,7 +438,7 @@ class TestBothFrontDoorsSettleTheSame(RequestCase):
         self.drop("001.json", {"ts": entry["ts"], "action": "reply",
                                "note": "why does this matter?",
                                "via": "notification"})
-        got = asyncio.run(self.server._apply_finding_requests())
+        got = asyncio.run(self.drain_and_answer())
 
         self.assertEqual(len(got), 1)
         self.assertTrue(got[0]["ok"], got[0])
@@ -424,7 +468,7 @@ class TestBothFrontDoorsSettleTheSame(RequestCase):
         entry = self.a_finding()
         self.drop("001.json", {"ts": entry["ts"], "action": "reply",
                                "note": "is it still off?"})
-        got = asyncio.run(self.server._apply_finding_requests())
+        got = asyncio.run(self.drain_and_answer())
         self.assertTrue(got[0]["ok"])
         self.assertEqual(len(sent), 1)
         self.assertIn("could not look", sent[0][1][1])
@@ -435,7 +479,7 @@ class TestBothFrontDoorsSettleTheSame(RequestCase):
         entry = self.a_finding()
         self.drop("001.json", {"ts": entry["ts"], "action": "reply",
                                "note": "   "})
-        got = asyncio.run(self.server._apply_finding_requests())
+        got = asyncio.run(self.drain_and_answer())
         self.assertFalse(got[0]["ok"])
         self.assertIn("empty", got[0]["why"])
         self.assertEqual(prompts, [])
