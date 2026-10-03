@@ -2249,6 +2249,12 @@ def _appliance_summary() -> dict:
         # profiled sensors and no chores means nothing here is named
         # like a machine somebody has to empty.
         "chore_capable": named,
+        # And what the nightly cap left unread, by count and by a sample of
+        # names: a washer the pass never read is a silence nothing else
+        # on any surface could explain.
+        "eligible": store.get("eligible", store.get("asked", 0)),
+        "cut": store.get("cut_count", 0),
+        "cut_sample": list(store.get("cut") or []),
     }
 
 

@@ -73,9 +73,19 @@ BUCKET_S = 300.0
 MIN_DRAWS = 3
 # The floor, as a percentile of the readings rather than the minimum.
 IDLE_PCT = 20.0
-# What "running" looks like, likewise: the top of the distribution
-# without the one spike that would set it.
-BUSY_PCT = 95.0
+# What "running" looks like: the middle of the readings the machine spent
+# RUNNING — those above the noise floor (see `noise_floor`) — and never a
+# percentile of the whole window. A 95th percentile of ten days is the
+# idle level for any machine that ran less than half a day of them, so a
+# washer doing six 90-minute loads a week read busy == idle and was
+# reported as "not an appliance", which is the commonest washer and dryer
+# there is. Measured against the shipped arithmetic: 1 W idle, 500 W
+# running, ten days — nothing up to eight 90-minute cycles, a profile at
+# nine. The median of the running readings, because a quarter of the
+# typical running draw is what separates idle from running: the peak (a
+# heater's 2 kW) would put the threshold above the motor phase that is
+# just as much the machine working.
+BUSY_PCT = 50.0
 # Bimodal or nothing. A sensor whose busy level is not clearly above its
 # floor is a constant draw, and a threshold through the middle of one
 # would report a router as an appliance running all week.
@@ -98,8 +108,17 @@ MIN_RUN_MIN = 8.0
 # all afternoon.
 MIN_SETTLE_MIN = 10.0
 MAX_SETTLE_MIN = 45.0
-# Past this a finish is history rather than a chore.
+# How many power sensors one nightly pass reads, because five-minute
+# statistics are many rows per sensor and this runs on a Pi. Past the cap
+# what goes first is NOT what the chore exists for: a sensor named as a
+# washer, a dryer or a dishwasher is ranked ahead of the rest (`select`),
+# because an inverter's twelve circuits sorting ahead of `sensor.washer_
+# power` is how chore.waiting went silent on exactly the houses with the
+# most power monitoring. What the cap cut is recorded and reported.
 MAX_ENTITIES = 40
+# How many of the cut ids ride in the store, for the diagnostics. The
+# count is always there; the names are a sample.
+CUT_SAMPLE = 20
 
 
 # ---------------------------------------------------------------------------
@@ -126,12 +145,30 @@ def is_power(eid: str, attrs: dict) -> bool:
     return attrs.get("state_class") == "measurement"
 
 
-def candidates(states: dict) -> list[str]:
-    """Power sensors worth asking about, in a stable order.
+def _chore_kind(eid: str, st: dict) -> str:
+    """Which of the three chore machines this sensor is named as, or "".
 
-    Sorted before the cap for `baselines.candidates`' reason: an
-    arbitrary set that changed nightly would give half the house a
-    profile that keeps appearing and disappearing.
+    `checks.chores.kind_of` and nothing else, read on the friendly name
+    AND the id (a plug called "Utility Plug" with an id of
+    `sensor.washer_power` is a washer), so the cap's ranking and the
+    check's gate cannot disagree about which sensors those are.
+    """
+    try:
+        from checks import chores  # noqa: PLC0415 — panel-local
+    except Exception:  # noqa: BLE001 — a ranking, never a reason to fail
+        return ""
+    name = str(((st or {}).get("attributes") or {}).get("friendly_name") or "")
+    return chores.kind_of(f"{name} {eid}")
+
+
+def select(states: dict) -> dict:
+    """The power sensors to read tonight, and what the cap left out.
+
+    `{"ids": [...], "eligible": n, "cut": [...]}`. A washer, dryer or
+    dishwasher by name is ranked first; the rest are sorted by id, for
+    `baselines.candidates`' reason — an arbitrary set that changed
+    nightly would give half the house a profile that keeps appearing and
+    disappearing.
     """
     out = []
     for eid, st in (states or {}).items():
@@ -141,8 +178,15 @@ def candidates(states: dict) -> list[str]:
             continue
         if st.get("state") in ("unavailable", "unknown", None):
             continue
-        out.append(eid)
-    return sorted(out)[:MAX_ENTITIES]
+        out.append((0 if _chore_kind(eid, st) else 1, eid))
+    ranked = [eid for _rank, eid in sorted(out)]
+    return {"ids": ranked[:MAX_ENTITIES], "eligible": len(ranked),
+            "cut": sorted(ranked[MAX_ENTITIES:])}
+
+
+def candidates(states: dict) -> list[str]:
+    """The ids `select` reads, in the order it reads them."""
+    return select(states)["ids"]
 
 
 def _readings(points: list) -> list[tuple[float, float]]:
@@ -209,6 +253,17 @@ def settle_minutes(runs: list[tuple[float, float]]) -> float | None:
     return gaps[at]
 
 
+def noise_floor(idle: float) -> float:
+    """The least a reading has to be to count as the machine running.
+
+    Both bimodality floors at once (`MIN_SPAN_W` above idle and
+    `MIN_SPAN_RATIO` times it), which is what keeps a phone charger's
+    3 W to 9 W and a router's steady draw out: neither ever reads above
+    it, so neither has a running level to measure.
+    """
+    return max(idle + MIN_SPAN_W, idle * MIN_SPAN_RATIO)
+
+
 def profile(points: list, now: float | None = None) -> dict | None:
     """What this sensor's own history says about it, or None.
 
@@ -222,11 +277,14 @@ def profile(points: list, now: float | None = None) -> dict | None:
         return None
     watts = [v for _t, v in readings]
     idle = percentile(watts, IDLE_PCT)
-    busy = percentile(watts, BUSY_PCT)
-    span = busy - idle
-    # Bimodal or nothing: see MIN_SPAN_W.
-    if span < MIN_SPAN_W or busy < idle * MIN_SPAN_RATIO:
+    # Bimodal or nothing: the busy level is read off the readings that
+    # clear the noise floor, however few of the window they are. See
+    # BUSY_PCT for why it is not a percentile of the whole window.
+    running = [w for w in watts if w >= noise_floor(idle)]
+    if not running:
         return None
+    busy = percentile(running, BUSY_PCT)
+    span = busy - idle
 
     threshold = idle + span * THRESHOLD_FRACTION
     runs = [r for r in segments(readings, threshold)
@@ -348,6 +406,7 @@ def progress(payload: dict | None = None, path: str | None = None,
     entities = payload.get("entities") or {}
     built = int(payload.get("built_at") or 0) or None
     asked = int(payload.get("asked") or 0)
+    cut = int(payload.get("cut_count") or 0)
     chores = 0
     try:
         from checks import chores as chore_check  # noqa: PLC0415
@@ -357,7 +416,8 @@ def progress(payload: dict | None = None, path: str | None = None,
     except Exception as exc:  # noqa: BLE001 — the narrower count is a detail
         log.debug("could not count chore machines: %s", exc)
     common = {"unit": "machines", "need": 1, "have": len(entities),
-              "detail": {"profiled": len(entities), "chore_capable": chores},
+              "detail": {"profiled": len(entities), "chore_capable": chores,
+                         "cut": cut},
               "updated_at": built, "per_unit_s": baselines.PROGRESS_UNIT_S,
               "now": now}
 
@@ -386,6 +446,10 @@ def progress(payload: dict | None = None, path: str | None = None,
             summary=(f"Measured {house.days_ago(built, now)} — the nightly "
                      "pass has not run since."),
             **common)
+    # The cap's cut, in words, wherever a sentence is said: a machine the
+    # pass never read is the one silence nothing else could explain.
+    beyond = (f" ({cut} more power sensors were past the nightly cap of "
+              f"{MAX_ENTITIES} and were not read)" if cut else "")
     if entities:
         said = (f"{house.plural(len(entities), 'machine')} measured of "
                 f"{asked} power sensors")
@@ -393,14 +457,15 @@ def progress(payload: dict | None = None, path: str | None = None,
                  if chores else
                  " · none of them named as a washer, dryer or dishwasher, so "
                  "no chore is raised")
-        return house.progress(state=house.READY, summary=said + ".", **common)
+        return house.progress(state=house.READY, summary=said + beyond + ".",
+                              **common)
     return house.progress(
         state=house.COLLECTING,
-        reason=(f"{asked} power sensors read, none with {MIN_DRAWS} separate "
-                "draws yet"),
-        summary=(f"{house.plural(asked, 'power sensor')} read, none with the "
-                 f"{MIN_DRAWS} separate runs it takes to tell a machine's "
-                 "idle from its busy."),
+        reason=(f"{asked} power sensors read, none that ran "
+                f"{MIN_DRAWS} separate times above its own idle yet"),
+        summary=(f"{house.plural(asked, 'power sensor')} read, none that has "
+                 f"run {MIN_DRAWS} separate times above its own idle in the "
+                 f"last {HISTORY_DAYS} days{beyond}."),
         **common)
 
 
@@ -457,9 +522,15 @@ async def build(session, states: dict, now: float | None = None,
     import baselines  # noqa: PLC0415
 
     now = time.time() if now is None else now
-    ids = candidates(states)
+    chosen = select(states)
+    ids = chosen["ids"]
     payload: dict = {"built_at": int(now), "days": HISTORY_DAYS,
-                     "asked": len(ids), "entities": {}}
+                     "asked": len(ids), "eligible": chosen["eligible"],
+                     "cut_count": len(chosen["cut"]),
+                     "cut": chosen["cut"][:CUT_SAMPLE], "entities": {}}
+    if chosen["cut"]:
+        log.info("appliances: %d power sensors past the cap of %d were not "
+                 "read", len(chosen["cut"]), MAX_ENTITIES)
     if not ids:
         save(payload, path)
         return payload
@@ -490,6 +561,6 @@ __all__ = [
     "MAX_ENTITIES", "MAX_SETTLE_MIN", "MIN_DRAWS", "MIN_RUN_MIN",
     "MIN_SETTLE_MIN", "MIN_SPAN_RATIO", "MIN_SPAN_W", "RUNNING", "STORE",
     "THRESHOLD_FRACTION", "age_days", "build", "candidates", "fetch",
-    "is_power", "load", "percentile", "profile", "progress", "save",
-    "segments", "settle_minutes", "state_at",
+    "is_power", "load", "noise_floor", "percentile", "profile", "progress",
+    "save", "segments", "select", "settle_minutes", "state_at",
 ]
