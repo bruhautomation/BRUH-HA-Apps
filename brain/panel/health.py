@@ -137,6 +137,8 @@ LOOPS = {
     "evening": ("the bedtime checks pass", "degraded"),
     "healing": ("overnight healing", "degraded"),
     "weekly": ("the weekly report", "degraded"),
+    "maintainer": ("the maintainer (tidy-ups, upgrade notes, the house book)",
+                   "degraded"),
     "requests": ("answers given in Home Assistant", "degraded"),
     "resident": ("the attention loop", "degraded"),
     "options": ("the add-on options poll", "degraded"),

@@ -151,6 +151,13 @@ jobs:
       - name: Measure the resolutions card
         run: node tests/manual/measure-chatres.mjs
 
+      # Upkeep: a house book sentence with no source reads like a cited
+      # one, a tidy row with no tick or a room move that does not name the
+      # automation it changes is a review nobody can do, and an upgrade
+      # verdict without both quotes is an opinion.
+      - name: Measure the Upkeep pane
+        run: node tests/manual/measure-upkeep.mjs
+
       # A card nothing checked must not read like one something did.
       - name: Measure the triage view
         run: node tests/manual/measure-triage.mjs

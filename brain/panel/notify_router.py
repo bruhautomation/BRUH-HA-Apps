@@ -125,6 +125,12 @@ PRODUCER_URGENCY = {
     "check:base.": "whenever",
     "check:reg.": "whenever",
     "check:auto.": "whenever",
+    # Who can reach the house. A lock a cloud speaker can open is as true
+    # at 08:00 as at 03:00, and a ban that already happened is history.
+    "check:sec.": "whenever",
+    # A question for the house book is never urgent — it is somebody being
+    # asked where the stopcock is, which keeps until they are up.
+    "house_book": "whenever",
 }
 
 # A queue that has grown past this is a notifier nobody has read for

@@ -99,6 +99,14 @@ SOURCES: dict[str, dict[str, str]] = {
     # measurement and none of it is a conversation anybody had.
     "replay": {"label": "Replay", "blurb": "a corpus run, scoring a prompt",
                "store": "engine"},
+    # Home Assistant's own maintainer: names and rooms proposed for
+    # review, the house book, the overnight health check, an upgrade
+    # verdict and the access review. Probes over a digest, never a
+    # conversation anybody had — and the one whose transcript a person may
+    # open on purpose, to see what an upgrade verdict actually read.
+    "maintenance": {"label": "Upkeep",
+                    "blurb": "tidying, the house book, health and updates",
+                    "store": "engine"},
 }
 
 # The sources whose transcripts live in the engine's project directory

@@ -108,6 +108,46 @@ class TestProjectFlags(unittest.TestCase):
         settings = json.loads(self._after(argv, "--settings"))
         self.assertNotIn("allow", settings.get("permissions", {}))
 
+    def _every_argv(self) -> list[list[str]]:
+        return [json.loads(ln) for ln in self.log.read_text().splitlines()
+                if ln.startswith("[")]
+
+    def _once_each(self, argv: list[str]) -> None:
+        for flag in ("--mcp-config", "--add-dir", "--settings",
+                     "--allowedTools", "--disallowedTools",
+                     "--append-system-prompt"):
+            self.assertLessEqual(argv.count(flag), 1, f"{flag} twice: {argv}")
+
+    def test_no_project_flag_is_sent_twice_on_any_path(self):
+        """A flag sent twice leaves the CLI to pick one, and `--settings`
+        is the permission file — "which of two did it read" is not a
+        question an unattended run should be left to answer. Every path
+        that re-spawns rebuilds the argv (the overload retry, the landing),
+        so each invocation is checked, not just the last."""
+        for runner in (engine.run_agent, engine.run_analyst, engine.run_claude):
+            runner("p", "s", timeout=30, max_turns=1)
+        once = Path(self.tmp.name) / "once"
+        with unittest.mock.patch.dict(os.environ, {
+                "FAKE_MODE": "overloaded_then_ok", "FAKE_ONCE_FILE": str(once)}), \
+                unittest.mock.patch.object(engine, "OVERLOAD_RETRY_S", 0), \
+                unittest.mock.patch.object(engine, "LANDING_MIN_S", 0):
+            engine.run_agent("p", "s", timeout=30, max_turns=1)
+        with unittest.mock.patch.dict(os.environ, {"FAKE_MODE": "max_turns_then_land"}), \
+                unittest.mock.patch.object(engine, "LANDING_MIN_S", 0):
+            engine.run_agent("p", "s", timeout=30, max_turns=1)
+        argvs = self._every_argv()
+        # Three plain runs, the 529 and its retry, the capped run and its
+        # landing: seven spawns, and the retry and the landing both happened.
+        self.assertEqual(len(argvs), 7)
+        self.assertTrue(any("--resume" in a for a in argvs))
+        for argv in argvs:
+            self._once_each(argv)
+        # Every engine run takes its settings by flag (`isolation_flags`):
+        # the isolation JSON for a run that reads, the headless allow-list
+        # file — which carries the same keys — for the agent that acts. So
+        # every one of the seven carries `--settings`, and once.
+        self.assertEqual(sum("--settings" in a for a in argvs), 7)
+
 
 if __name__ == "__main__":
     unittest.main()

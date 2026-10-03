@@ -4933,12 +4933,15 @@ async function runAnswer(row, answer, btns, note) {
 function askThenRun(row, answer, btns) {
   openNoteForm(btns.card, btns.actions,
     (text, formBtns) => runAnswer(row, answer, btns.concat(formBtns), text), {
-      hint: answer.verb === "no"
+      // `ask`/`placeholder` are the answer's own words where it has them —
+      // a house book question wants an answer, not a reason.
+      hint: answer.ask || (answer.verb === "no"
         ? "Say why if you can — the reason retires every guess built on "
           + "the same misreading. Optional."
         : "Optional. Say why, and brAIn learns from the reason rather than "
-          + "just dropping the card.",
-      placeholder: answer.prefill || "That sensor always reads on — it's not stuck.",
+          + "just dropping the card."),
+      placeholder: answer.placeholder || answer.prefill
+        || "That sensor always reads on — it's not stuck.",
       send: answer.label,
       prefill: answer.prefill || "",
     });
@@ -9347,6 +9350,7 @@ function switchView(name) {
     });
   }
   if (name === "memory") renderKnowledge();
+  if (name === "upkeep") { renderUpkeep(); refreshUpkeep().then(renderUpkeep); }
   if (name === "docs") renderDocs();
   // Re-fetched on every entry rather than kept: the window ends "now", and
   // a timeline showing the state of the house when you last looked is the
@@ -12277,3 +12281,369 @@ document.addEventListener("visibilitychange", () => {
     if (["starting", "awaiting_code", "working"].includes(st.phase)) pollSetup();
   } catch (e) { /* ignore */ }
 })();
+
+// --------------------------------------------------------------- upkeep
+// Home Assistant's own maintainer: the house book, names and rooms, the
+// upgrade advisor and the overnight check. Five GETs read what each has;
+// every press STARTS a run and the section polls its own GET until the run
+// is no longer `running` — a run is minutes, and ingress will not hold a
+// request that long. Drawn from what we have, then again once the fetch
+// lands, so opening the tab is never a blank frame.
+const upState = {
+  tidy: null, upgrades: null, sre: null, book: null, access: null,
+  ticked: new Set(), polls: {},
+};
+
+async function refreshUpkeep() {
+  const get = (path) => api(path).catch((e) => ({ fetch_error: e.message }));
+  const [tidy, upgrades, sre, book, access] = await Promise.all([
+    get("api/tidy"), get("api/upgrades"), get("api/sre"),
+    get("api/house_book"), get("api/access")]);
+  Object.assign(upState, { tidy, upgrades, sre, book, access });
+  // A new proposal ticks every row by default: the table is a review, and
+  // untick-what-you-disagree-with is one press per objection.
+  const rows = ((tidy && tidy.proposal) || {}).rows || [];
+  const ids = new Set(rows.map((r) => r.id));
+  if (![...upState.ticked].every((i) => ids.has(i)) || !upState.ticked.size) {
+    upState.ticked = ids;
+  }
+}
+
+function renderUpkeep() {
+  renderUpBook();
+  renderUpTidy();
+  renderUpUpdates();
+  renderUpHealth();
+}
+
+// Poll one section's GET while its run is in flight.
+function upWatch(key, path) {
+  clearTimeout(upState.polls[key]);
+  const tick = async () => {
+    try {
+      upState[key] = await api(path);
+    } catch (e) { /* keep what we had */ }
+    renderUpkeep();
+    if (upState[key] && upState[key].running && currentView === "upkeep") {
+      upState.polls[key] = setTimeout(tick, 3000);
+    } else if (key === "tidy") {
+      await refreshUpkeep();
+      renderUpkeep();
+    }
+  };
+  upState.polls[key] = setTimeout(tick, 1500);
+}
+
+async function upPress(btn, key, path, body, done) {
+  btn.disabled = true;
+  try {
+    const data = await api(path, {
+      method: "POST", ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    if (data && typeof data === "object" && key) upState[key] = { ...upState[key], ...data };
+    if (done) toast(done(data));
+    renderUpkeep();
+    if (data && data.running) upWatch(key, `api/${key === "book" ? "house_book" : key}`);
+    return data;
+  } catch (e) {
+    toast(e.message || "that didn't work");
+    btn.disabled = false;
+    return null;
+  }
+}
+
+function upLine(text, cls) {
+  return el("p", "upline" + (cls ? " " + cls : ""), text);
+}
+
+function upStatus(state, runningText) {
+  const box = el("div", "upstatus");
+  if (!state) return box;
+  if (state.fetch_error) box.appendChild(upLine("Could not ask the add-on: " + state.fetch_error, "warn"));
+  if (state.running) box.appendChild(upLine(runningText, "busy"));
+  if (state.last_error) box.appendChild(upLine("The last run did not finish: " + state.last_error, "warn"));
+  if (state.held) box.appendChild(upLine("Not run on its schedule: " + state.held, "muted"));
+  return box;
+}
+
+function upButton(label, hint, primary) {
+  const b = el("button", "btn small" + (primary ? " primary" : ""), label);
+  if (hint) tip(b, hint);
+  return b;
+}
+
+// -- the house book
+function renderUpBook() {
+  const host = $("#upBook");
+  if (!host) return;
+  const st = upState.book || {};
+  host.textContent = "";
+  host.appendChild(upStatus(st, "Writing the house book…"));
+  const book = st.book;
+  const actions = el("div", "upactions");
+  const run = upButton(book ? "Rewrite it now" : "Write the house book",
+    "One Claude run over your automations, scripts, scenes and what brAIn has learned.",
+    !book);
+  run.disabled = !!st.running;
+  run.addEventListener("click", () => upPress(run, "book", "api/house_book/run", null,
+    () => "Writing — it takes a minute or two"));
+  actions.appendChild(run);
+  if (book && !st.published) {
+    const pub = upButton("Publish a link",
+      "Puts a copy at a private address Home Assistant serves, for a sitter's phone. Codes are never in it.");
+    pub.addEventListener("click", () => upPress(pub, "book", "api/house_book/publish", null,
+      () => "Published — the link is below"));
+    actions.appendChild(pub);
+  }
+  host.appendChild(actions);
+  if (st.published) {
+    const wrap = el("div", "uplink");
+    const url = location.origin + st.published.path;
+    wrap.appendChild(el("span", null, "Published at "));
+    const a = el("a", null, url);
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    wrap.appendChild(a);
+    const revoke = upButton("Take the link down",
+      "Deletes the copy and changes the address, so the old link stops working even for somebody who saved it.");
+    revoke.addEventListener("click", () => upPress(revoke, "book", "api/house_book/revoke", null,
+      () => "Taken down — that link is dead"));
+    wrap.appendChild(revoke);
+    host.appendChild(wrap);
+  }
+  if (!book) {
+    if (!st.running) host.appendChild(upLine("No house book yet. Writing one costs a single run; after that brAIn rewrites it weekly, and only when your automations or what it knows have changed.", "muted"));
+    return;
+  }
+  const when = book.at ? timeAgo(new Date(book.at * 1000).toISOString()) : "";
+  const count = (book.sections || []).reduce((n, s) => n + (s.entries || []).length, 0);
+  host.appendChild(upLine(`Written ${when} · ${count} entr${count === 1 ? "y" : "ies"}`
+    + (book.uncited ? ` · ${book.uncited} sentence${book.uncited === 1 ? " was" : "s were"} left out for citing nothing brAIn could check` : ""), "muted"));
+  for (const section of book.sections || []) {
+    const sec = el("div", "upbooksec");
+    sec.appendChild(el("h3", null, section.title));
+    const ul = el("ul", "upbooklist");
+    for (const entry of section.entries || []) {
+      const li = el("li");
+      li.appendChild(el("span", null, entry.text));
+      const chips = el("span", "upchips");
+      for (const src of entry.sources || []) chips.appendChild(el("span", "upchip", src.label));
+      li.appendChild(chips);
+      ul.appendChild(li);
+    }
+    sec.appendChild(ul);
+    host.appendChild(sec);
+  }
+}
+
+// -- names, rooms and aliases
+const UP_KIND_WORDS = { name: "Rename", area: "Room", alias: "Alias" };
+
+function upTidyRow(row) {
+  const label = el("label", "uprow");
+  const box = el("input");
+  box.type = "checkbox";
+  box.checked = upState.ticked.has(row.id);
+  box.addEventListener("change", () => {
+    if (box.checked) upState.ticked.add(row.id); else upState.ticked.delete(row.id);
+    renderUpTidy();
+  });
+  label.appendChild(box);
+  const body = el("span", "uprowbody");
+  const head = el("span", "uprowhead");
+  head.appendChild(el("span", "upchip kind", UP_KIND_WORDS[row.kind] || row.kind));
+  const after = row.kind === "area" ? row.area_name : row.value;
+  const before = row.kind === "area" ? (row.from_area || "no room") : row.label;
+  head.appendChild(el("span", null, row.kind === "alias"
+    ? `${row.label}: also answer to “${after}”`
+    : `${before} → ${after}`));
+  body.appendChild(head);
+  if (row.kind === "area" && row.label) body.appendChild(el("span", "upwhy", row.label));
+  if (row.why) body.appendChild(el("span", "upwhy", row.why));
+  for (const r of row.reach || []) {
+    body.appendChild(el("span", "upreach", `Changes what “${r.alias}” reaches: it ${r.change} (${r.area}).`));
+  }
+  label.appendChild(body);
+  return label;
+}
+
+function renderUpTidy() {
+  const host = $("#upTidy");
+  if (!host) return;
+  const st = upState.tidy || {};
+  host.textContent = "";
+  host.appendChild(upStatus(st, "Looking through the registries…"));
+  if (st.unreadable) host.appendChild(upLine("brAIn could not read its own tidy store, so it is not offering anything to apply or undo.", "warn"));
+  const proposal = st.proposal;
+  const rows = (proposal && proposal.rows) || [];
+  const actions = el("div", "upactions");
+  const run = upButton(rows.length ? "Suggest again" : "Suggest names and rooms",
+    "One Claude run over the registries. Nothing changes until you tick rows and press Apply.",
+    !rows.length);
+  run.disabled = !!st.running;
+  run.addEventListener("click", () => upPress(run, "tidy", "api/tidy/run", null,
+    () => "Suggesting — the table appears here"));
+  actions.appendChild(run);
+  if (rows.length) {
+    const ticked = rows.filter((r) => upState.ticked.has(r.id)).map((r) => r.id);
+    const apply = upButton(`Apply ${ticked.length} ticked`,
+      "Writes the ticked rows into Home Assistant's registries. Undo puts them back for 30 days.", true);
+    apply.disabled = !ticked.length || !!st.running;
+    apply.addEventListener("click", async () => {
+      const data = await upPress(apply, "tidy", "api/tidy/apply", { ids: ticked });
+      if (data && data.result) {
+        const n = data.result.applied.length;
+        const skipped = data.result.skipped.length;
+        toast(`Applied ${n}` + (skipped ? ` · ${skipped} not taken` : ""));
+      }
+    });
+    actions.appendChild(apply);
+    const discard = upButton("Discard", "Throw this table away. Nothing was changed.");
+    discard.addEventListener("click", () => upPress(discard, "tidy", "api/tidy/discard", null,
+      () => "Discarded"));
+    actions.appendChild(discard);
+  }
+  host.appendChild(actions);
+  if (proposal && !rows.length && !st.running) {
+    host.appendChild(upLine(st.last_note || "Nothing left to suggest.", "muted"));
+  }
+  if (rows.length) {
+    const list = el("div", "uplist");
+    rows.forEach((r) => list.appendChild(upTidyRow(r)));
+    host.appendChild(list);
+  }
+  const refused = (proposal && proposal.refused) || [];
+  if (refused.length) {
+    const det = el("details", "uprefused");
+    det.appendChild(el("summary", null, `${refused.length} suggestion${refused.length === 1 ? "" : "s"} brAIn refused`));
+    for (const r of refused) {
+      det.appendChild(upLine(`${UP_KIND_WORDS[r.kind] || r.kind} ${r.label || r.subject} → ${r.value}: ${r.refused}`, "muted"));
+    }
+    host.appendChild(det);
+  }
+  for (const batch of st.batches || []) {
+    const row = el("div", "upbatch");
+    const when = timeAgo(new Date(batch.at * 1000).toISOString());
+    row.appendChild(el("span", null, `Applied ${when} · ${batch.entries.length} change${batch.entries.length === 1 ? "" : "s"}`));
+    const undo = upButton("Undo", "Puts back each field that still holds what brAIn wrote. A field you changed since is left alone.");
+    undo.addEventListener("click", async () => {
+      const data = await upPress(undo, "tidy", `api/tidy/undo/${batch.id}`);
+      if (data && data.result) {
+        const kept = data.result.kept.length;
+        toast(`Put back ${data.result.restored.length}` + (kept ? ` · ${kept} left as you changed them` : ""));
+      }
+    });
+    row.appendChild(undo);
+    host.appendChild(row);
+  }
+}
+
+// -- updates
+const UP_VERDICT_WORDS = { safe_tonight: "Safe tonight", wait: "Wait", unknown: "Can't tell" };
+
+function renderUpUpdates() {
+  const host = $("#upUpdates");
+  if (!host) return;
+  const st = upState.upgrades || {};
+  host.textContent = "";
+  host.appendChild(upStatus(st, "Reading the release notes against your configuration…"));
+  if (st.readable === false) {
+    host.appendChild(upLine("Home Assistant did not answer for its update entities, so brAIn could not look. This is not the same as being up to date.", "warn"));
+    return;
+  }
+  const updates = st.updates || [];
+  if (!updates.length) {
+    if (st.readable) host.appendChild(upLine("Nothing is waiting to be installed.", "muted"));
+    return;
+  }
+  for (const u of updates) {
+    const card = el("div", "upupdate");
+    const head = el("div", "upupdatehead");
+    head.appendChild(el("strong", null, u.title));
+    head.appendChild(el("span", "upwhy", `${u.installed || "?"} → ${u.latest || "?"}`));
+    card.appendChild(head);
+    const advice = u.advice;
+    const busy = st.running && st.subject === u.entity_id;
+    const ask = upButton(advice ? "Check again" : "Is it safe tonight?",
+      "One Claude run reads this update's notes against your config. It never installs anything.",
+      !advice);
+    ask.disabled = !!st.running;
+    ask.addEventListener("click", () => upPress(ask, "upgrades", "api/upgrades/advise",
+      { entity_id: u.entity_id }, () => "Reading the notes…"));
+    if (busy) card.appendChild(upLine("Reading the notes…", "busy"));
+    if (advice) {
+      const verdict = el("div", "upverdict " + advice.verdict);
+      verdict.appendChild(el("span", "upchip verdict", UP_VERDICT_WORDS[advice.verdict] || advice.verdict));
+      verdict.appendChild(el("span", null, advice.reason || ""));
+      card.appendChild(verdict);
+      if (advice.note_quote) {
+        const q = el("blockquote", "upquote");
+        q.appendChild(el("span", "upwhy", "From the release notes"));
+        q.appendChild(el("span", null, advice.note_quote));
+        card.appendChild(q);
+      }
+      if (advice.config_quote) {
+        const q = el("blockquote", "upquote");
+        q.appendChild(el("span", "upwhy", "From your configuration"));
+        q.appendChild(el("code", null, advice.config_quote));
+        card.appendChild(q);
+      }
+      if (advice.edit) {
+        const det = el("details", "upedit");
+        det.appendChild(el("summary", null, "The change brAIn would make first"));
+        det.appendChild(el("pre", null, advice.edit));
+        card.appendChild(det);
+      }
+    }
+    card.appendChild(ask);
+    host.appendChild(card);
+  }
+}
+
+// -- overnight health and the access review
+function renderUpHealth() {
+  const host = $("#upHealth");
+  if (!host) return;
+  host.textContent = "";
+  const sre = upState.sre || {};
+  host.appendChild(el("h3", null, "Overnight health check"));
+  host.appendChild(upStatus(sre, "Reading the log and the mesh…"));
+  const last = sre.last;
+  if (last) {
+    const when = timeAgo(new Date(last.at * 1000).toISOString());
+    host.appendChild(upLine(last.note
+      ? `Last run ${when}: ${last.note}.`
+      : `Last run ${when}: ${last.records} record${last.records === 1 ? "" : "s"} read, `
+        + `${last.causes} cause${last.causes === 1 ? "" : "s"} found, ${last.filed} new on Findings, `
+        + `${last.cleared} cleared.`, last.note ? "muted" : ""));
+  } else if (!sre.running) {
+    host.appendChild(upLine("It runs once a night, after 03:00, and costs nothing on a night with nothing in the log or the mesh worth a look.", "muted"));
+  }
+  const runSre = upButton("Run the check now",
+    "Reads the system log, the Zigbee mesh and Z-Wave statistics, and files one finding per root cause.");
+  runSre.disabled = !!sre.running;
+  runSre.addEventListener("click", () => upPress(runSre, "sre", "api/sre/run", null,
+    () => "Checking — anything it finds lands on Findings"));
+  const a1 = el("div", "upactions");
+  a1.appendChild(runSre);
+  host.appendChild(a1);
+
+  const access = upState.access || {};
+  host.appendChild(el("h3", null, "Who can reach the house"));
+  host.appendChild(upStatus(access, "Reviewing…"));
+  if (access.sentence) {
+    host.appendChild(el("p", "upsentence", access.sentence));
+    if (access.at) host.appendChild(upLine("Reviewed " + timeAgo(new Date(access.at * 1000).toISOString()), "muted"));
+  } else if (!access.running) {
+    host.appendChild(upLine("A sentence once a week about users, what voice assistants can reach, add-on privileges and brAIn's own settings.", "muted"));
+  }
+  if (access.open) host.appendChild(upLine(`${access.open} security finding${access.open === 1 ? "" : "s"} open on Findings.`));
+  const runAccess = upButton("Review now", "One short Claude run over what the last checks pass read.");
+  runAccess.disabled = !!access.running;
+  runAccess.addEventListener("click", () => upPress(runAccess, "access", "api/access/run", null,
+    () => "Reviewing…"));
+  const a2 = el("div", "upactions");
+  a2.appendChild(runAccess);
+  host.appendChild(a2);
+}

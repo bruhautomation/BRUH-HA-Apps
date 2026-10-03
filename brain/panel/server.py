@@ -210,6 +210,12 @@ import unfix
 import usage_store
 import user_categories
 import weekly
+# Home Assistant's own maintainer: names and rooms, the house book, the
+# overnight health check and the upgrade advisor.
+import house_book
+import sre
+import tidy
+import upgrades
 # `_CARD_CONTRACT` and `_previous_block` are reached into deliberately, by
 # the prompt preview, which reports the size of every block a run is sent:
 # a second copy of the contract or of the previous-run renderer here would
@@ -5886,6 +5892,622 @@ async def h_card_info(request: web.Request) -> web.Response:
     })
 
 
+# ---------------------------------------------------------------------------
+# Home Assistant's own maintainer — tidy, the upgrade advisor, the overnight
+# health check, the house book and the access review
+# ---------------------------------------------------------------------------
+# Every one of these is a run brAIn spends on Home Assistant ITSELF rather
+# than on what the house is doing, and they share one shape, so they share
+# one in-flight state. A press STARTS a run and never awaits it — each is
+# minutes of work and ingress will not hold a request that long
+# (`h_baselines_run`'s clock) — the flag is flipped synchronously
+# (`start_auth_check`'s rule: `create_task` only schedules, so two presses in
+# one tick would both pass a guard their own task had not set yet), and the
+# page reads the outcome back off its GET. A pressed run answers to the
+# credential only; a scheduled one to the three gates every scheduled run
+# answers to (`_resident_gate`), and a gate that holds says so in
+# diagnostics, because "it did not run" and "it ran and found nothing" are
+# different silences.
+
+MAINT_JOBS = ("tidy", "upgrades", "sre", "book", "access")
+MAINT_STATE: dict = {
+    name: {"running": False, "started_at": 0.0, "finished_at": 0.0,
+           "last_error": "", "last_note": "", "held": "", "subject": ""}
+    for name in MAINT_JOBS}
+# Held so the loop cannot collect a task nobody awaits.
+_MAINT_TASKS: set = set()
+MAINT_POLL_S = 600
+MAINT_FIRST_DELAY_S = 900
+# The overnight pass runs in the first poll after this local hour, once a
+# night; the weekly ones once every seven days.
+SRE_HOUR = 3
+SRE_STAMP_KEY = "sre_last"
+ACCESS_STAMP_KEY = "access_last"
+ACCESS_TEXT_KEY = "access_review"
+# When the scheduled review was last STARTED. The stamp above is written
+# only by a review that landed, so without this one a review failing for
+# a reason that does not clear (a CLI too old for the schema, an account
+# that will not answer) was re-run on every poll — a paid run every ten
+# minutes for ever. A guard that refuses has to change the next attempt.
+ACCESS_TRIED_KEY = "access_tried"
+ACCESS_RETRY_S = 6 * 3600
+MAINT_WEEK_S = 7 * 86400
+# The last checks pass's view of who can reach the house, kept so the
+# weekly review needs no snapshot of its own — `_note_registry`'s
+# arrangement, one hook over.
+ACCESS_DIGEST: dict = {"digest": None, "at": 0.0}
+
+
+def _note_access(snapshot: dict, now: float) -> None:
+    """Called by `run_checks` with the snapshot it already fetched."""
+    try:
+        ACCESS_DIGEST["digest"] = checks.security.review_digest(snapshot, now)
+        ACCESS_DIGEST["at"] = now
+    except Exception as exc:  # noqa: BLE001 — a digest must not fail a pass
+        log.debug("could not keep the access digest: %s", exc)
+
+
+def _maint_start(name: str, factory) -> bool:
+    """Start one maintainer run unless one is in flight. True if started."""
+    state = MAINT_STATE[name]
+    if state["running"]:
+        return False
+    state["running"] = True
+    state["started_at"] = time.time()
+    state["last_error"] = ""
+
+    async def run() -> None:
+        try:
+            await factory()
+        except Exception as exc:  # noqa: BLE001 — a run's failure is a sentence
+            state["last_error"] = str(exc)[:300] or type(exc).__name__
+            log.warning("%s run failed: %s", name, state["last_error"])
+        finally:
+            state["running"] = False
+            state["finished_at"] = time.time()
+
+    task = asyncio.create_task(run())
+    _MAINT_TASKS.add(task)
+    task.add_done_callback(_MAINT_TASKS.discard)
+    return True
+
+
+def _maint_pressed_refusal() -> str:
+    """Why a PRESS may not spend a run right now, or ''. The budget is not
+    asked: asking by hand always runs."""
+    return "" if engine.get_auth() else (
+        "brAIn has no Claude sign-in yet — sign in under ⚙ first.")
+
+
+def _run_id(result: dict) -> str:
+    return str((result.get("meta") or {}).get("session_id") or "")[:64]
+
+
+def _maint_status(name: str) -> dict:
+    s = MAINT_STATE[name]
+    return {"running": s["running"], "last_error": s["last_error"],
+            "last_note": s["last_note"], "held": s["held"],
+            "finished_at": int(s["finished_at"]), "subject": s["subject"]}
+
+
+# -- tidy: names, rooms and aliases -------------------------------------------
+
+async def _run_tidy() -> None:
+    snap = await checks.snapshot.collect_rooms(time.time())
+    dig = tidy.digest(snap)
+    if not dig["entities"] and not dig["devices"]:
+        await asyncio.to_thread(tidy.save_proposal, {"rows": []})
+        MAINT_STATE["tidy"]["last_note"] = ("Nothing here needs a new name, a "
+                                            "room or an alias.")
+        return
+    result = await _claude(
+        engine.run_claude, tidy.frame(dig), tidy.SYSTEM, "", tidy.TIMEOUT_S,
+        4, "maintenance", job="tidy", schema=tidy.SCHEMA)
+    if not result.get("ok"):
+        raise RuntimeError(str(result.get("error") or "no reply"))
+    answer = _answer(result)
+    if answer is None:
+        raise RuntimeError("the reply could not be read")
+    parsed = tidy.parse(answer, dig, snap, automation_writer.protected_patterns())
+    await asyncio.to_thread(tidy.save_proposal, parsed, run_id=_run_id(result))
+    MAINT_STATE["tidy"]["last_note"] = (
+        f"{len(parsed['rows'])} suggestion(s) to review"
+        + (f", {len(parsed['refused'])} refused" if parsed["refused"] else ""))
+
+
+def _tidy_payload() -> dict:
+    data = tidy.load()
+    return {**_maint_status("tidy"), "proposal": data["proposal"],
+            "batches": tidy.undoable(data["batches"], time.time()),
+            "undo_days": tidy.UNDO_DAYS, "unreadable": data["unreadable"]}
+
+
+async def h_tidy(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_tidy_payload))
+
+
+async def h_tidy_run(request: web.Request) -> web.Response:
+    excuse = _maint_pressed_refusal()
+    if excuse:
+        raise web.HTTPBadRequest(text=excuse)
+    started = _maint_start("tidy", _run_tidy)
+    return web.json_response({**await asyncio.to_thread(_tidy_payload),
+                              "started": started})
+
+
+async def h_tidy_apply(request: web.Request) -> web.Response:
+    import aiohttp  # noqa: PLC0415 — deferred, as every Core call here is
+    body = await _json_body(request)
+    ids = [str(i) for i in (body.get("ids") or []) if isinstance(i, str)][:tidy.MAX_ROWS]
+    async with aiohttp.ClientSession() as session:
+        result = await tidy.apply(session, ids)
+    if not result["applied"]:
+        raise web.HTTPConflict(text=result["error"] or (
+            "Home Assistant took none of it: "
+            + "; ".join(f"{s['subject']}: {s['why']}" for s in result["skipped"])))
+    log.info("tidy: applied %d change(s), %d skipped", len(result["applied"]),
+             len(result["skipped"]))
+    return web.json_response({**await asyncio.to_thread(_tidy_payload),
+                              "result": result})
+
+
+async def h_tidy_discard(request: web.Request) -> web.Response:
+    await asyncio.to_thread(tidy.discard)
+    return web.json_response(await asyncio.to_thread(_tidy_payload))
+
+
+async def h_tidy_undo(request: web.Request) -> web.Response:
+    import aiohttp  # noqa: PLC0415
+    batch_id = request.match_info["batch"]
+    if not re.fullmatch(r"b\d{1,20}", batch_id):
+        raise web.HTTPNotFound(text="no such batch")
+    async with aiohttp.ClientSession() as session:
+        result = await tidy.undo(session, batch_id)
+    if result["error"]:
+        raise web.HTTPConflict(text=result["error"])
+    return web.json_response({**await asyncio.to_thread(_tidy_payload),
+                              "result": result})
+
+
+# -- the upgrade advisor ------------------------------------------------------
+
+async def _pending_updates() -> list[dict] | None:
+    """What is waiting, read live — or None when Core would not answer,
+    which the page says rather than reading as "you are up to date"."""
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415
+    try:
+        async with aiohttp.ClientSession() as session:
+            raw = await ha_data._rest_get(session, "/states", timeout=30)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not read the update entities: %s", exc)
+        return None
+    return upgrades.pending(raw if isinstance(raw, list) else [])
+
+
+def _advise_run(prompt: str, system: str, schema: dict) -> dict:
+    """The upgrade advisor's one Claude call: no tools at all, so a run
+    reading release notes cannot be talked by them into reaching anything
+    — and nothing here could install the update if it were."""
+    return engine.run_claude(prompt, system, "", upgrades.TIMEOUT_S, 4,
+                             "maintenance", job="upgrade_advice",
+                             schema=schema)
+
+
+async def _run_advice(update: dict) -> None:
+    import aiohttp  # noqa: PLC0415
+
+    async def run(prompt: str, system: str, schema: dict) -> dict:
+        return await _claude(_advise_run, prompt, system, schema)
+
+    async with aiohttp.ClientSession() as session:
+        verdict = await upgrades.advise(session, update, run)
+    await asyncio.to_thread(upgrades.remember, verdict)
+    MAINT_STATE["upgrades"]["last_note"] = (
+        f"{update['title']}: {upgrades.VERDICT_WORDS[verdict['verdict']]}")
+
+
+async def h_upgrades(request: web.Request) -> web.Response:
+    updates = await _pending_updates()
+    payload = _maint_status("upgrades")
+    if updates is None:
+        return web.json_response({**payload, "updates": [], "readable": False})
+    rows = await asyncio.to_thread(upgrades.listing, updates)
+    return web.json_response({**payload, "updates": rows, "readable": True})
+
+
+async def h_upgrades_advise(request: web.Request) -> web.Response:
+    excuse = _maint_pressed_refusal()
+    if excuse:
+        raise web.HTTPBadRequest(text=excuse)
+    body = await _json_body(request)
+    entity_id = str(body.get("entity_id") or "")
+    updates = await _pending_updates()
+    if updates is None:
+        raise web.HTTPConflict(text="Home Assistant did not answer for its "
+                                    "update entities, so there is nothing to check.")
+    update = next((u for u in updates if u["entity_id"] == entity_id), None)
+    if update is None:
+        raise web.HTTPNotFound(text="that update is not waiting any more")
+    started = _maint_start("upgrades", lambda: _run_advice(update))
+    if started:
+        MAINT_STATE["upgrades"]["subject"] = entity_id
+    return web.json_response({**_maint_status("upgrades"), "started": started})
+
+
+# -- the overnight health check (SRE) -----------------------------------------
+
+async def _run_sre(reason: str = "schedule") -> None:
+    import aiohttp  # noqa: PLC0415
+    now = time.time()
+    async with aiohttp.ClientSession() as session:
+        collected = await sre.collect(session)
+    dig = sre.digest(collected, now)
+    state = await asyncio.to_thread(sre.load)
+    summary = {"at": int(now), "reason": reason,
+               "records": len(dig["records"]), "available": dig["available"],
+               "ran": False, "causes": 0, "filed": 0, "cleared": 0,
+               "refused": 0, "invented": 0, "note": ""}
+    if not dig["available"].get("log"):
+        # "I could not look" at the log is not a healthy night: nothing is
+        # judged and nothing is cleared.
+        summary["note"] = ("the system log could not be read, so nothing was "
+                           "judged and nothing was cleared")
+        state["last"] = summary
+        await asyncio.to_thread(sre.save, state)
+        MAINT_STATE["sre"]["last_note"] = summary["note"]
+        return
+    rows: list[dict] = []
+    if sre.worth_a_run(dig):
+        result = await _claude(
+            engine.run_claude, sre.frame(dig), sre.SYSTEM, "", sre.TIMEOUT_S,
+            4, "maintenance", job="sre", schema=sre.SCHEMA)
+        if not result.get("ok"):
+            raise RuntimeError(str(result.get("error") or "no reply"))
+        answer = _answer(result)
+        if answer is None:
+            raise RuntimeError("the reply could not be read")
+        parsed = sre.parse_causes(answer, dig)
+        rows = sre.rows(parsed["causes"], dig, state, now)
+        summary.update(ran=True, causes=len(parsed["causes"]),
+                       refused=parsed["refused"], invented=parsed["invented"],
+                       run_id=_run_id(result))
+    else:
+        summary["note"] = "nothing in the log or the mesh worth a run"
+
+    def apply() -> tuple[list[dict], list[dict]]:
+        # Filed as waiting to be looked at, like every producer's rows.
+        created = findings_store.add_many(triage.gate(rows))
+        findings_store.refresh_details(rows)
+        open_rows = [f for f in findings_store.list_all()
+                     if f.get("source") == sre.SOURCE]
+        keep = ({findings_store.normalize(r["text"]) for r in rows}
+                | sre.keep_keys(open_rows, state, dig["available"]))
+        cleared = findings_store.clear_resolved({sre.SOURCE}, keep)
+        return created, cleared
+
+    created, cleared = await asyncio.to_thread(apply)
+    summary.update(filed=len(created), cleared=len(cleared))
+    state["last"] = summary
+    await asyncio.to_thread(sre.save, state)
+    if created:
+        _offer_findings(created, now)
+    MAINT_STATE["sre"]["last_note"] = (
+        f"{summary['records']} record(s) read, {summary['causes']} cause(s), "
+        f"{len(created)} new, {len(cleared)} cleared")
+    journal.record("sre", "ok", extra={"records": summary["records"],
+                                       "causes": summary["causes"],
+                                       "filed": len(created)})
+
+
+def _sre_payload() -> dict:
+    return {**_maint_status("sre"), "last": sre.load().get("last")}
+
+
+async def h_sre(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_sre_payload))
+
+
+async def h_sre_run(request: web.Request) -> web.Response:
+    excuse = _maint_pressed_refusal()
+    if excuse:
+        raise web.HTTPBadRequest(text=excuse)
+    started = _maint_start("sre", lambda: _run_sre("pressed"))
+    return web.json_response({**await asyncio.to_thread(_sre_payload),
+                              "started": started})
+
+
+# -- the house book -----------------------------------------------------------
+
+async def _book_snapshot() -> dict:
+    snap = await checks.snapshot.collect_rooms(time.time())
+    cfg = checks.snapshot.load_configs()
+    snap["scripts"] = cfg.get("scripts") or {}
+    return snap
+
+
+async def _run_book(reason: str = "pressed", snap: dict | None = None) -> None:
+    now = time.time()
+    snap = snap if snap is not None else await _book_snapshot()
+    dig = house_book.digest(snap)
+    fp = house_book.fingerprint(snap)
+    result = await _claude(
+        engine.run_claude, house_book.frame(dig), house_book.SYSTEM, "",
+        house_book.TIMEOUT_S, 4, "maintenance", job="house_book",
+        schema=house_book.SCHEMA)
+    if not result.get("ok"):
+        raise RuntimeError(str(result.get("error") or "no reply"))
+    answer = _answer(result)
+    if answer is None:
+        raise RuntimeError("the reply could not be read")
+    parsed = house_book.parse(answer, dig)
+
+    def store() -> list[dict]:
+        state = house_book.load()
+        state["book"] = {"at": int(now), "reason": reason,
+                         "sections": parsed["sections"],
+                         "uncited": parsed["uncited"],
+                         "redacted": parsed["redacted"],
+                         "run_id": _run_id(result)}
+        state["fingerprint"] = fp
+        state["opted_in"] = True
+        state["held"] = ""
+        state["last_error"] = ""
+        open_count = sum(1 for f in findings_store.list_all()
+                         if f.get("source") == house_book.SOURCE)
+        rows = house_book.question_rows(parsed["questions"],
+                                        state.get("asked") or [], open_count)
+        for row in rows:
+            state.setdefault("asked", []).append(row.pop("_subject"))
+        created = findings_store.add_many(triage.gate(rows))
+        # A published book is kept current: the person already chose to
+        # put it on the URL, and a stale copy there is the one they shared.
+        if state.get("published"):
+            try:
+                state["published"] = {
+                    "at": int(now),
+                    "path": house_book.publish(state["book"], WWW_CARD_DIR)}
+            except OSError as exc:
+                log.warning("could not republish the house book: %s", exc)
+        house_book.save(state)
+        return created
+
+    created = await asyncio.to_thread(store)
+    if created:
+        _offer_findings(created, now)
+    MAINT_STATE["book"]["last_note"] = (
+        f"{sum(len(s['entries']) for s in parsed['sections'])} entries"
+        + (f", {parsed['uncited']} dropped for citing nothing"
+           if parsed["uncited"] else "")
+        + (f", {len(created)} question(s) filed" if created else ""))
+
+
+def _book_payload() -> dict:
+    state = house_book.load()
+    return {**_maint_status("book"), "book": state.get("book"),
+            "published": state.get("published"),
+            "opted_in": bool(state.get("opted_in")),
+            "held": state.get("held") or MAINT_STATE["book"]["held"],
+            "unreadable": bool(state.get("unreadable"))}
+
+
+async def h_book(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_book_payload))
+
+
+async def h_book_run(request: web.Request) -> web.Response:
+    excuse = _maint_pressed_refusal()
+    if excuse:
+        raise web.HTTPBadRequest(text=excuse)
+    started = _maint_start("book", lambda: _run_book("pressed"))
+    return web.json_response({**await asyncio.to_thread(_book_payload),
+                              "started": started})
+
+
+async def h_book_publish(request: web.Request) -> web.Response:
+    def publish() -> dict:
+        state = house_book.load()
+        if not state.get("book"):
+            raise web.HTTPConflict(text="There is no house book to publish yet.")
+        try:
+            path = house_book.publish(state["book"], WWW_CARD_DIR)
+        except OSError as exc:
+            raise web.HTTPConflict(
+                text=f"brAIn could not write to /config/www ({exc}).") from exc
+        state["published"] = {"at": int(time.time()), "path": path}
+        house_book.save(state)
+        return _book_payload()
+
+    return web.json_response(await asyncio.to_thread(publish))
+
+
+async def h_book_revoke(request: web.Request) -> web.Response:
+    def revoke() -> dict:
+        removed = house_book.revoke(WWW_CARD_DIR)
+        state = house_book.load()
+        state["published"] = None
+        house_book.save(state)
+        return {**_book_payload(), "removed": removed}
+
+    return web.json_response(await asyncio.to_thread(revoke))
+
+
+async def h_book_answer(request: web.Request) -> web.Response:
+    """A gap question answered. The answer is required — "where is the
+    stopcock" with nothing typed is not an answer — and it goes through
+    the one door every ending uses, so the memory line, the settled key
+    and the capture label are what any other Yes would have written."""
+    finding = _finding_or_404(request)
+    if finding.get("source") != house_book.SOURCE:
+        raise web.HTTPConflict(text="that is not a house book question")
+    body = await _json_body(request)
+    note = str(body.get("note") or "").strip()[:findings_store.MAX_NOTE]
+    if not note:
+        raise web.HTTPBadRequest(text="Type the answer first.")
+    payload, _fact = await _end_finding(finding, FINDING_VERBS["confirm"],
+                                        house_book.redact_text(note))
+    return web.json_response({**payload, **await asyncio.to_thread(
+        _cases_payload, time.time())})
+
+
+# -- the access review --------------------------------------------------------
+
+async def _run_access(reason: str = "pressed") -> None:
+    digest = ACCESS_DIGEST["digest"]
+    if digest is None:
+        snap = await checks.snapshot.collect(time.time())
+        _note_access(snap, time.time())
+        digest = ACCESS_DIGEST["digest"]
+    open_rows = [f["text"] for f in findings_store.list_all()
+                 if str(f.get("source") or "").startswith("check:sec.")]
+    prompt = ("DIGEST:\n" + json.dumps(digest, ensure_ascii=False, default=str)
+              + "\n\nOPEN SECURITY FINDINGS:\n"
+              + json.dumps(open_rows, ensure_ascii=False))
+    result = await _claude(
+        engine.run_claude, prompt, checks.security.REVIEW_SYSTEM, "", 180, 4,
+        "maintenance", job="access_review",
+        schema=checks.security.REVIEW_SCHEMA)
+    if not result.get("ok"):
+        raise RuntimeError(str(result.get("error") or "no reply"))
+    sentence = checks.security.review_sentence(_answer(result))
+    if not sentence:
+        raise RuntimeError("the review came back too short to show")
+    await asyncio.to_thread(schedule_store.set_text, ACCESS_TEXT_KEY, sentence)
+    await asyncio.to_thread(schedule_store.set, ACCESS_STAMP_KEY, time.time())
+    MAINT_STATE["access"]["last_note"] = reason
+
+
+def _access_payload() -> dict:
+    return {**_maint_status("access"),
+            "sentence": schedule_store.get_text(ACCESS_TEXT_KEY),
+            "at": int(schedule_store.get(ACCESS_STAMP_KEY)),
+            "open": sum(1 for f in findings_store.list_all()
+                        if str(f.get("source") or "").startswith("check:sec."))}
+
+
+async def h_access(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_access_payload))
+
+
+async def h_access_run(request: web.Request) -> web.Response:
+    excuse = _maint_pressed_refusal()
+    if excuse:
+        raise web.HTTPBadRequest(text=excuse)
+    started = _maint_start("access", lambda: _run_access("pressed"))
+    return web.json_response({**await asyncio.to_thread(_access_payload),
+                              "started": started})
+
+
+# -- the schedule: overnight, and weekly --------------------------------------
+
+async def _maint_tick(now: float) -> list[str]:
+    """One pass of the maintainer's schedule. Returns what it started."""
+    started: list[str] = []
+    settings = await asyncio.to_thread(settings_store.load)
+    local = _local_now(now)
+    excuse = _resident_gate(settings)
+
+    # The overnight health check: once a night, after SRE_HOUR.
+    last = await asyncio.to_thread(schedule_store.get, SRE_STAMP_KEY)
+    in_window = SRE_HOUR <= local.hour < SRE_HOUR + 3
+    done_tonight = bool(last) and _local_now(last).date() == local.date()
+    if in_window and not done_tonight:
+        if excuse:
+            MAINT_STATE["sre"]["held"] = excuse
+        elif _maint_start("sre", lambda: _run_sre("schedule")):
+            MAINT_STATE["sre"]["held"] = ""
+            await asyncio.to_thread(schedule_store.set, SRE_STAMP_KEY, now)
+            started.append("sre")
+
+    # The access review: weekly, off the last checks pass's digest.
+    last = await asyncio.to_thread(schedule_store.get, ACCESS_STAMP_KEY)
+    tried = await asyncio.to_thread(schedule_store.get, ACCESS_TRIED_KEY)
+    if (ACCESS_DIGEST["digest"] is not None and now - last >= MAINT_WEEK_S
+            and now - tried >= ACCESS_RETRY_S):
+        if excuse:
+            MAINT_STATE["access"]["held"] = excuse
+        elif _maint_start("access", lambda: _run_access("schedule")):
+            MAINT_STATE["access"]["held"] = ""
+            await asyncio.to_thread(schedule_store.set, ACCESS_TRIED_KEY, now)
+            started.append("access")
+
+    # The house book: weekly, only once somebody has asked for one, and
+    # only when what it reads has moved.
+    state = await asyncio.to_thread(house_book.load)
+    if state.get("opted_in") and now - float(state.get("last_weekly") or 0) >= MAINT_WEEK_S:
+        snap = await _book_snapshot()
+        fp = await asyncio.to_thread(house_book.fingerprint, snap)
+        changed, why = house_book.moved(state.get("fingerprint"), fp)
+        state["last_weekly"] = int(now)
+        if not changed:
+            state["held"] = why
+            MAINT_STATE["book"]["held"] = why
+        elif excuse:
+            state["held"] = excuse
+            MAINT_STATE["book"]["held"] = excuse
+        elif _maint_start("book", lambda: _run_book("weekly: " + why, snap)):
+            state["held"] = ""
+            started.append("book")
+        await asyncio.to_thread(house_book.save, state)
+    return started
+
+
+async def _maint_loop() -> None:
+    await asyncio.sleep(MAINT_FIRST_DELAY_S)
+    while True:
+        try:
+            started = await _maint_tick(time.time())
+            if started:
+                log.info("maintainer: started %s", ", ".join(started))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
+            log.warning("maintainer pass failed: %s", exc)
+        await asyncio.sleep(MAINT_POLL_S)
+
+
+def _maintainer_diagnostics() -> dict:
+    """Whether each of the five has run, is held, or failed — a scheduled
+    run nobody can see is one that silently stopped."""
+    out = {name: _maint_status(name) for name in MAINT_JOBS}
+    try:
+        data = tidy.load()
+        out["tidy"]["pending_rows"] = len((data["proposal"] or {}).get("rows") or [])
+        out["tidy"]["undoable_batches"] = len(tidy.undoable(data["batches"], time.time()))
+        out["upgrades"]["verdicts"] = len(upgrades.load()["verdicts"])
+        out["sre"]["last"] = sre.load().get("last")
+        book = house_book.load()
+        out["book"].update(
+            opted_in=bool(book.get("opted_in")),
+            built_at=int((book.get("book") or {}).get("at") or 0),
+            uncited=int((book.get("book") or {}).get("uncited") or 0),
+            published=bool(book.get("published")))
+        out["access"]["digest_at"] = int(ACCESS_DIGEST["at"])
+        out["access"]["reviewed_at"] = int(schedule_store.get(ACCESS_STAMP_KEY))
+    except Exception as exc:  # noqa: BLE001 — diagnostics must not fail on one reader
+        out["error"] = str(exc)[:200]
+    return out
+
+
+def _maint_routes(app: web.Application) -> None:
+    app.router.add_get("/api/tidy", h_tidy)
+    app.router.add_post("/api/tidy/run", h_tidy_run)
+    app.router.add_post("/api/tidy/apply", h_tidy_apply)
+    app.router.add_post("/api/tidy/discard", h_tidy_discard)
+    app.router.add_post("/api/tidy/undo/{batch}", h_tidy_undo)
+    app.router.add_get("/api/upgrades", h_upgrades)
+    app.router.add_post("/api/upgrades/advise", h_upgrades_advise)
+    app.router.add_get("/api/sre", h_sre)
+    app.router.add_post("/api/sre/run", h_sre_run)
+    app.router.add_get("/api/house_book", h_book)
+    app.router.add_post("/api/house_book/run", h_book_run)
+    app.router.add_post("/api/house_book/publish", h_book_publish)
+    app.router.add_post("/api/house_book/revoke", h_book_revoke)
+    app.router.add_post("/api/house_book/question/{ts}/answer", h_book_answer)
+    app.router.add_get("/api/access", h_access)
+    app.router.add_post("/api/access/run", h_access_run)
+
+
 # -- a card on a dashboard, put there by brAIn --------------------------------
 # The ▦ dialog used to end at "here is some YAML, go and paste it into the
 # card editor" — four steps in another app for something brAIn can do in
@@ -9122,6 +9744,7 @@ async def run_checks(reason: str = "schedule") -> dict:
     try:
         snapshot = await checks.snapshot.collect(started)
         _note_registry(snapshot)
+        _note_access(snapshot, started)
         # Filed BEFORE the checks run, so this pass's own overrides count
         # toward the pattern the check is about to read. The ledger is
         # deduped on the event, which is what makes that safe: passes run
@@ -10818,6 +11441,9 @@ def _diagnostics_payload() -> dict:
         # sent because nothing was worth reporting reads, from outside,
         # exactly like one whose loop died in March.
         "weekly": _weekly_diagnostics(),
+        # Tidy, the upgrade advisor, the overnight health check, the house
+        # book and the access review: run, held (and why), or failed.
+        "maintainer": _maintainer_diagnostics(),
         # Answers given in the To-do app or on a notification, on
         # their way back to the one store that owns them.
         "finding_requests": _requests_diagnostics(),
@@ -16225,6 +16851,8 @@ def make_app() -> web.Application:
     esphome.setup(app)
     # Music Assistant: players, providers, queues and settings, over its API.
     music_assistant.setup(app)
+    # Home Assistant's own maintainer: tidy, upgrades, health, the book.
+    _maint_routes(app)
 
     async def on_startup(app: web.Application) -> None:
         # Startup is the one moment we know nothing is in flight, so it is
@@ -16302,6 +16930,7 @@ def make_app() -> web.Application:
         app["evening"] = _supervise("evening", _evening_loop())
         app["healing"] = _supervise("healing", _heal_loop())
         app["weekly"] = _supervise("weekly", _weekly_loop())
+        app["maintainer"] = _supervise("maintainer", _maint_loop())
         app["requests"] = _supervise("requests", _requests_loop())
         # The first thing in brAIn that is watched rather than polled, and
         # the loop that reads it. The bus files nothing and asks nothing —

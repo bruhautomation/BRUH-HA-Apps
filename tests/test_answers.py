@@ -68,6 +68,8 @@ SHAPES = {
     # attempt is behind the ⋯ rather than leading the row.
     "fix_failed": case(source="resident", fixable=True,
                        finding_status="failed"),
+    "tidy": case(source="check:reg.hardware_name", fixable=True),
+    "gap": case(kind="question", source="house_book"),
 }
 
 
@@ -78,9 +80,11 @@ class TestTheSituationIsAClosedVocabulary(unittest.TestCase):
             self.assertEqual(answers.situation(shape), name, name)
 
     def test_a_check_nobody_classified_is_generic_or_hands_by_fixable(self):
-        self.assertEqual(answers.situation(case(source="check:reg.no_area",
+        # reg.no_area is classified now (its Fix it is the tidy run), so
+        # the unclassified example is the registry check that is not.
+        self.assertEqual(answers.situation(case(source="check:reg.orphan_device",
                                                 fixable=True)), "generic")
-        self.assertEqual(answers.situation(case(source="check:reg.no_area",
+        self.assertEqual(answers.situation(case(source="check:reg.orphan_device",
                                                 fixable=False)), "hands")
         self.assertEqual(answers.situation(case(source="check:auto.dead_ref")),
                          "automation")

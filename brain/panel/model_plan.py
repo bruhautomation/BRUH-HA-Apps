@@ -59,6 +59,8 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     "consolidate":     ("haiku",  "low",    False, False),
     "reflect":         ("haiku",  "low",    False, False),
     "auth_check":      ("haiku",  "low",    False, False),
+    # One sentence over a deterministic digest of who can reach the house.
+    "access_review":   ("haiku",  "low",    False, False),
     # Thinks — reasoning with tools where a wrong answer costs a card.
     "card":            ("sonnet", "medium", True,  True),
     "ask":             ("sonnet", "medium", True,  True),
@@ -78,6 +80,15 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     "fix_plan":        ("sonnet", "high",   False, True),
     "voice":           ("sonnet", "low",    True,  False),
     "task":            ("sonnet", "medium", False, True),
+    # Home Assistant's own maintainer (tidy, the house book, the nightly
+    # SRE pass, the upgrade advisor). Naming in a house's own style and a
+    # manual are cheap to get slightly wrong — every row is reviewed or
+    # cited — so they may step down; an upgrade verdict is the one that
+    # decides whether somebody installs tonight, so it may not.
+    "tidy":            ("sonnet", "low",    True,  False),
+    "house_book":      ("sonnet", "medium", True,  False),
+    "sre":             ("sonnet", "medium", True,  True),
+    "upgrade_advice":  ("sonnet", "high",   False, True),
     # Acts — changes a house or decides what a person acts on.
     "fix_apply":       ("opus",   "xhigh",  False, False),
     "intent":          ("opus",   "high",   False, False),

@@ -98,8 +98,10 @@ def hardware_name(snap: dict, now: float) -> list[dict]:
                   + join_names(shown, limit=6)
                   + ". A name like that is unfindable in a picker and "
                     "unsayable to Assist.",
-        "fix": "Rename them in Settings > Devices & services > Entities — "
-               "or ask brAIn to suggest names from where each one is.",
+        "fix": "Press Fix it and brAIn suggests a name for each, in the "
+               "style the rest of the house uses, for you to tick through "
+               "under House → Upkeep — or rename them in Settings > "
+               "Devices & services > Entities.",
         "severity": "info",
         "fixable": True,
         "entity_id": hits[0][0],
@@ -134,7 +136,10 @@ def no_area(snap: dict, now: float) -> list[dict]:
                   + ". Anything not in an area is invisible to \"turn off "
                     "the kitchen\", to area cards, and to every automation "
                     "that targets a room.",
-        "fix": "Assign each one in Settings > Devices & services > Devices.",
+        "fix": "Press Fix it and brAIn suggests a room for each, saying "
+               "which automations a move changes, for you to tick through "
+               "under House → Upkeep — or assign them in Settings > "
+               "Devices & services > Devices.",
         "severity": "info",
         "fixable": True,
         "entity_id": sorted(by_device[sorted(by_device)[0]])[0],

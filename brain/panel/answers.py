@@ -76,6 +76,9 @@ SITUATIONS = (
     "generic", "hands", "planned", "planning", "fixing", "change",
     "question", "opportunity", "chore", "chore_done", "watching",
     "fix_failed",
+    # A registry tidy-up brAIn can propose for review (`tidy.py`), and a
+    # question the house book needs a person to answer (`house_book.py`).
+    "tidy", "gap",
 )
 
 # Which check ids read as which situation. Keyed on the id and never on
@@ -92,7 +95,15 @@ CHECK_SITUATIONS = {
     "base.unusual": "stuck",
     "chore.waiting": "chore_check",
     "evening.left_open": "chore_check",
+    # Names and rooms are what `tidy` proposes, so "Fix it" on these two is
+    # the tidy run — a table to tick through — rather than a plan run that
+    # would rename forty entities one tool call at a time.
+    "reg.hardware_name": "tidy",
+    "reg.no_area": "tidy",
 }
+# The house book files its gap questions under this source; their answer is
+# typed, never a bare Yes.
+HOUSE_BOOK_SOURCE = "house_book"
 # Every `auto.*` check is an automation problem, whatever its id.
 AUTOMATION_PREFIX = "auto."
 
@@ -154,6 +165,8 @@ def situation(case: dict) -> str:
 
     if store == "todo":
         return "chore_done" if status == "done" else "chore"
+    if kind == "question" and case.get("source") == HOUSE_BOOK_SOURCE:
+        return "gap"
     if kind == "question" or store == "hypotheses":
         return "question"
     # An opportunity is a PROPOSAL — a config brAIn wrote and Accept puts
@@ -179,6 +192,9 @@ def situation(case: dict) -> str:
     check = source[len("check:"):] if source.startswith("check:") else ""
     if check in CHECK_SITUATIONS:
         base = CHECK_SITUATIONS[check]
+        # A tidy-up a person said needs their own hands is theirs.
+        if base == "tidy" and not case.get("fixable"):
+            base = "hands"
     elif check.startswith(AUTOMATION_PREFIX):
         base = "automation"
     else:
@@ -313,6 +329,26 @@ def answers(case: dict) -> list[dict]:
                 "listed, not reversed.", route=f"/api/finding/{key}/unfix",
                 done="Put back — read what it says"))
         return out
+
+    if sit == "gap":
+        answer = _answer(
+            "answer", "Answer", "Say where it is or what it does. It goes "
+            "into memory, and the house book uses it next time.",
+            route=f"/api/house_book/question/{key}/answer", primary=True,
+            note=True, done="Filed into memory for the house book")
+        answer["ask"] = ("Your answer goes into memory exactly as you write "
+                         "it — never type a code or a password here.")
+        answer["placeholder"] = "Behind the boiler, the red lever."
+        return [answer, _dismiss(cid),
+                _wrong(cid, label="Doesn't apply")]
+
+    if sit == "tidy":
+        return [_answer(
+            "fix", "Fix it", "brAIn suggests names, rooms and aliases in "
+            "this house's own style. Nothing changes until you tick them "
+            "under House → Upkeep and press Apply.", route="/api/tidy/run",
+            primary=True, done="Suggesting — review them under House → Upkeep"),
+            _todo(cid), _dismiss(cid), _wrong(cid)]
 
     if sit == "question":
         return [
