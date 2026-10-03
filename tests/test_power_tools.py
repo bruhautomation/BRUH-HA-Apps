@@ -152,11 +152,10 @@ class TestInitWiring(unittest.TestCase):
         cls.source = Path(INTEGRATION_DIR, "__init__.py").read_text(encoding="utf-8")
 
     def test_imports_power_tools(self):
-        self.assertIn(
-            "from .power_tools import POWER_TOOL_SERVICES, "
-            "async_register_power_tools",
-            self.source,
-        )
+        self.assertIn("from .power_tools import (", self.source)
+        for name in ("POWER_TOOL_SERVICES", "async_register_power_tools",
+                     "async_require_admin"):
+            self.assertIn(f"    {name},", self.source)
 
     def test_registers_power_tools(self):
         self.assertIn("async_register_power_tools(hass)", self.source)
@@ -176,7 +175,11 @@ class TestPowerToolsModuleShape(unittest.TestCase):
     def test_admin_gate_present(self):
         """Every handler goes through the admin gate wrapper."""
         self.assertIn("def _admin_gated", self.source)
-        self.assertIn("Unauthorized(context=call.context)", self.source)
+        # The check itself is `async_require_admin`, shared with the core
+        # services that reach a shell or memory; tests/test_ha_admin_gates.py
+        # drives it with a real non-admin context.
+        self.assertIn("await async_require_admin(hass, call.context)", self.source)
+        self.assertIn("raise Unauthorized(context=context)", self.source)
         self.assertIn("_admin_gated(hass, tool)", self.source)
 
     def test_orphan_cleanup_defaults_to_dry_run(self):

@@ -372,7 +372,10 @@ def pool_env(tmp: str, env: dict) -> dict:
             "BRAIN_ASSIST_WORKDIR": tmp,
             "BRAIN_CLAUDE_BIN": f"{sys.executable} {FAKE_CLAUDE}",
             "FAKE_CLAUDE_LOG": os.path.join(tmp, "argv.log"),
-            "BRAIN_RUN_SOURCES": os.path.join(tmp, "run-sources.jsonl"), **env}
+            "BRAIN_RUN_SOURCES": os.path.join(tmp, "run-sources.jsonl"),
+            # The plan's voice tier is read off this file at call time; a
+            # test must not read the machine's own /data.
+            "BRAIN_ENV_FILE": os.path.join(tmp, "brain_env"), **env}
 
 
 def load_pool(tmp: str, env: dict) -> object:
@@ -386,6 +389,11 @@ def load_pool(tmp: str, env: dict) -> object:
     for d in (mod.REQUESTS_DIR, mod.RESPONSES_DIR, mod.SESSIONS_DIR,
               mod.CACHE_DIR, mod.LOG_DIR):
         os.makedirs(d, exist_ok=True)
+    # A turn's journal row is written off the request thread, after this
+    # environment is gone, through the panel's journal at its real /data
+    # path — so it is not written at all here (driven in
+    # tests/test_voice_run_contract.py).
+    mod.journal_turn = lambda *a, **kw: None
     return mod
 
 

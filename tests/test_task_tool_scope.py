@@ -269,6 +269,7 @@ class TestTheBridgeWritesIt(unittest.TestCase):
             "time": __import__("time"),
             "timeout": 300, "notify_entity": None,
             "model": None, "tools": None, "schema": None,
+            "memory": False, "scheduled": False,
         }
         scope.update(kw)
         exec(compile(snippet.replace("\n        ", "\n"), "<bridge>", "exec"),
@@ -292,6 +293,19 @@ class TestTheBridgeWritesIt(unittest.TestCase):
         self.assertNotIn("schema", self._task(schema=None))
         self.assertNotIn("schema", self._task(schema={}))
         self.assertNotIn("schema", self._task(schema="not a dict"))
+
+    def test_an_insight_job_asks_for_memory_and_says_it_was_scheduled(self):
+        """The insight jobs' two flags ride only when set, so every other
+        task file is the JSON it always was: `memory` asks the listener for
+        the retrieval block, `scheduled` subjects the run to the pause and
+        the budget the panel's own scheduled runs answer to."""
+        plain = self._task()
+        self.assertNotIn("memory", plain)
+        self.assertNotIn("scheduled", plain)
+        job = self._task(memory=True, scheduled=True, tools="read_only")
+        self.assertIs(job["memory"], True)
+        self.assertIs(job["scheduled"], True)
+        self.assertEqual(job["tools"], "read_only")
 
 
 class TestTheListenerAsksForTheShape(unittest.TestCase):

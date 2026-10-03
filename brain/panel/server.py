@@ -1968,6 +1968,9 @@ async def _apply_finding_requests() -> list[dict]:
         if req.get("kind") == "todo":
             out.append(await _apply_todo_request(req))
             continue
+        if req.get("kind") == finding_requests.HYPOTHESIS_KIND:
+            out.append(await _apply_hypothesis_request(req))
+            continue
         ts, action = req["ts"], req["action"]
         result = {"ts": ts, "action": action, "via": req.get("via", ""),
                   "ok": False, "why": "no such finding"}
@@ -2056,6 +2059,37 @@ def _start_requested_checks(asked: list[dict]) -> dict:
     REQUESTS_STATE["last"] = time.time()
     log.info("running the house checks — asked for by %s", via)
     return {**result, "ok": True, "why": ""}
+
+
+async def _apply_hypothesis_request(req: dict) -> dict:
+    """An answer to one of brAIn's guesses, given in Home Assistant.
+
+    Through `_answer_hypothesis`, the code the Findings tab's own Yes and
+    No run, so `brain.answer_question` closes the guess exactly as a press
+    would: a yes files the claim as memory, a no records the dead end and
+    files the reason as a correction. A guess that is no longer open — it
+    expired, or somebody answered it on the tab a moment earlier — is the
+    ordinary race every request here allows for, and is dropped and
+    logged rather than retried.
+
+    The undo token `_answer_hypothesis` records is never handed to
+    anybody: there is no toast on an automation, and it lapses on its own.
+    """
+    ts, action = req["ts"], req["action"]
+    result = {"kind": finding_requests.HYPOTHESIS_KIND, "ts": ts,
+              "action": action, "via": req.get("via", ""),
+              "ok": False, "why": "no such open guess"}
+    payload = await _answer_hypothesis(ts, action, req.get("note", ""))
+    if payload is not None:
+        result["ok"], result["why"] = True, ""
+        REQUESTS_STATE["applied"] += 1
+    else:
+        REQUESTS_STATE["missed"] += 1
+    REQUESTS_STATE["last"] = time.time()
+    log.info("guess %s: %s from %s%s", ts, action,
+             result["via"] or "elsewhere",
+             "" if result["ok"] else f" — {result['why']}")
+    return result
 
 
 async def _apply_todo_request(req: dict) -> dict:
