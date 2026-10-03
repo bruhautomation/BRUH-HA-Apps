@@ -393,11 +393,18 @@ class NotifyCase(StoreCase):
             self.payloads.append(data)
 
         self.ha_data.send_notification = record
+        # Every send is written to the delivery ledger, whose default is the
+        # real /data — which exists on a shared machine, so a notify test
+        # that does not point it here writes into it.
+        self.deliveries = self.server.deliveries
+        self._old_deliveries = self.deliveries.DELIVERIES_FILE
+        self.deliveries.DELIVERIES_FILE = Path(self.tmp.name) / "deliveries.jsonl"
         os.environ.pop("BRAIN_FINDINGS_NOTIFY", None)
         os.environ.pop("BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY", None)
 
     def tearDown(self):
         self.ha_data.send_notification = self._old_send
+        self.deliveries.DELIVERIES_FILE = self._old_deliveries
         os.environ.pop("BRAIN_FINDINGS_NOTIFY", None)
         os.environ.pop("BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY", None)
         super().tearDown()
