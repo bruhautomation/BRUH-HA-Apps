@@ -479,6 +479,8 @@ def book_token(path: Path | None = None) -> str:
         if len(token) >= 16:
             return token
     except OSError:
+        # No token yet, or one that will not read: minting a fresh one is
+        # the answer either way, and it is what the line below does.
         pass
     return rotate_token(path)
 
@@ -491,6 +493,9 @@ def rotate_token(path: Path | None = None) -> str:
     try:
         path.chmod(0o600)
     except OSError:
+        # A filesystem that keeps no modes (a dev checkout on FAT) still
+        # holds the token; failing the mint over a mode would end the
+        # publish that needed it.
         pass
     return token
 
@@ -503,15 +508,15 @@ def render_page(book: dict) -> str:
              "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
              "<meta name=\"robots\" content=\"noindex\">",
              "<title>House book</title><style>",
-             ":root{color-scheme:light dark;--ink:#0a1622;--ink3:#5b7185;"
-             "--chip:#eef4f9}@media (prefers-color-scheme:dark){:root{"
-             "--ink:#fff;--ink3:#8ea5b8;--chip:#15293f}}body{margin:0;"
-             "background:Canvas;color:var(--ink);font:16px/1.55 system-ui,"
-             "-apple-system,'Segoe UI',sans-serif}main{max-width:720px;"
-             "margin:0 auto;padding:20px 16px 48px}h1{font-size:24px;margin:0 0 4px}"
-             "h2{font-size:18px;margin:28px 0 8px}.sub{color:var(--ink3);"
-             "font-size:14px}li{margin:0 0 10px}.src{display:inline-block;"
-             "font-size:12px;color:var(--ink3);background:var(--chip);"
+             ":root{color-scheme:light dark;--ink:#0a1622;--ink3:#5b7185;" +
+             "--chip:#eef4f9}@media (prefers-color-scheme:dark){:root{" +
+             "--ink:#fff;--ink3:#8ea5b8;--chip:#15293f}}body{margin:0;" +
+             "background:Canvas;color:var(--ink);font:16px/1.55 system-ui," +
+             "-apple-system,'Segoe UI',sans-serif}main{max-width:720px;" +
+             "margin:0 auto;padding:20px 16px 48px}h1{font-size:24px;margin:0 0 4px}" +
+             "h2{font-size:18px;margin:28px 0 8px}.sub{color:var(--ink3);" +
+             "font-size:14px}li{margin:0 0 10px}.src{display:inline-block;" +
+             "font-size:12px;color:var(--ink3);background:var(--chip);" +
              "border-radius:6px;padding:1px 6px;margin:2px 4px 0 0}",
              "</style></head><body><main><h1>House book</h1>",
              f"<p class=\"sub\">Written by brAIn from this house's own "
@@ -539,6 +544,8 @@ def publish(book: dict, www_dir: Path, token_path: Path | None = None) -> str:
             try:
                 stale.unlink()
             except OSError:
+                # A stale copy that will not delete is under a token that
+                # is no longer handed out; the new edition still goes up.
                 pass
     atomic_write.write_text(folder / f"house-book-{token}.html", render_page(book))
     return f"/local/{www_dir.name}/book/house-book-{token}.html"
@@ -555,6 +562,8 @@ def revoke(www_dir: Path, token_path: Path | None = None) -> int:
             path.unlink()
             removed += 1
         except OSError:
+            # Not counted, and the rotation below still kills the URL it
+            # was published under, which is what a revoke promises.
             pass
     rotate_token(token_path)
     return removed

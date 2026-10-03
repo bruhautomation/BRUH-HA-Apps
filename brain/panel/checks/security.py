@@ -72,10 +72,10 @@ POSTURE_FLAGS = {
     "dangerously_skip_permissions": (
         "brAIn's terminal runs Claude with its permission prompts switched off",
         "Anything Claude decides to do in the Terminal tab runs without "
-        "asking first — edits to /config, shell commands, calls into Home "
-        "Assistant. It is meant for a session where you are watching it.",
+        + "asking first — edits to /config, shell commands, calls into Home "
+        + "Assistant. It is meant for a session where you are watching it.",
         "Turn dangerously_skip_permissions off on the add-on's "
-        "Configuration tab when you are not using it."),
+        + "Configuration tab when you are not using it."),
 }
 
 

@@ -206,6 +206,8 @@ def integrations(root: str | None = None) -> list[str]:
             if isinstance(entry, dict) and entry.get("domain"):
                 domains.add(str(entry["domain"]))
     except (OSError, ValueError, AttributeError):
+        # The integration list is a hint for which notes lines matter;
+        # without it the configuration.yaml read below still answers.
         pass
     try:
         with open(os.path.join(root, "configuration.yaml"), "r",
@@ -215,6 +217,8 @@ def integrations(root: str | None = None) -> list[str]:
                 if match:
                     domains.add(match.group(1))
     except OSError:
+        # No configuration.yaml to read is fewer terms, not a failure:
+        # the config quote is still checked against what WAS read.
         pass
     return sorted(d for d in domains if len(d) >= 3)
 
