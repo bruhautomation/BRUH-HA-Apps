@@ -526,6 +526,105 @@ Resident can correct its own first look.**
     - **See the automation it suggested**, once the suggestion is on Proposals.
     - **Make an automation from this**, which starts the ask bar with "When ".
 
+### The engine, the run queue and what each session may do
+
+- **Insight cards and the Resident's first look answer in the shape they were
+  asked for again.** The quick, tool-free Claude run blocked every tool,
+  including the one the CLI uses to hand back a structured answer. So each first
+  look and each snapshot card spent four to six turns asking for a tool it could
+  not have. About two runs in five then gave up and answered in prose, and the
+  look was read as "nothing decided". These runs now load no tools, and the
+  structured answer comes back on the first turn.
+- **Unattended runs no longer carry Claude Code's whole toolbox.** The read-only
+  house analyst runs cards, investigations, fix plans, curiosity questions, the
+  brief, the weekly report and replies. Each of those runs carried Claude Code's
+  file, search, agent and to-do tools, about 22,000 tokens of instructions it
+  never used. It now gets Home Assistant's reading tools and nothing else.
+- **A retry after "overloaded" actually retries.** When Anthropic's service was
+  overloaded, brAIn waited and tried the run once more under the same
+  conversation id. Claude Code refused that id as "already in use", so the retry
+  failed before it asked anything. Every retry now gets a fresh id. If Claude
+  Code reports an id clash, the run is retried once more with a new one.
+- **A usage limit pauses the scheduled cards instead of failing them every
+  minute.** A run that meets your Claude plan's usage limit is now recorded as
+  "rate limited", not as a crash, and files no problem report. While the limit
+  holds, scheduled cards wait. The wait starts at 30 minutes and doubles up to 4
+  hours, and it ends at the first run that succeeds. Cards you ask for by hand
+  still run.
+- **A card that keeps failing waits longer each time.** A scheduled card that
+  failed used to be queued again on the next minute's tick, for ever. Each
+  attempt also ran a second, snapshot-based try. Now each failure doubles the
+  wait, from 15 minutes up to 12 hours, and the next success clears it. The
+  snapshot fallback is skipped when the search failed because of your sign-in, a
+  usage limit or an overloaded service, since it would fail the same way.
+  Pressing Regenerate is never held.
+- **Several Claude runs at once, in order of who is waiting.** A run you started
+  by pressing something no longer queues behind scheduled work. Claude runs now
+  have their own small queue, three at a time by default. A safety alert goes
+  first, then anything you pressed, then scheduled work, and one place is always
+  kept free of scheduled work. Long runs also no longer share threads with the
+  panel's own file reads, so the panel stays responsive while cards are being
+  made.
+- **If part of brAIn stops, brAIn says so.** The queue that makes cards and runs
+  fixes could stop for good if a failed fix also failed to record its failure.
+  When that happened, cards and fixes queued for ever while the health check
+  said all was well. That queue now marks the one job as failed and carries on.
+  Every background loop in the panel also reports when it last ran. A loop that
+  has stopped makes the health check say which one: a stopped card queue is
+  "failed", the others "degraded".
+- **The status poll no longer slows the panel.** While a card is being made, the
+  panel asks for its status every few seconds. That request used to read and
+  parse every stored card on the panel's main thread. It now runs in the
+  background and remembers each card's date until the file changes.
+- **Study, memory filing, automation tasks and the terminal's memory extraction
+  count like every other run.** These runs happen outside the panel, so their
+  failures filed no problem report. Their tokens were missing from the usage
+  estimate and the usage popover's breakdown, and they never prompted the usage
+  sensor to refresh. Each one now records itself in the run journal, and the
+  panel books it within a minute. Voice turns, which start recording
+  themselves in this release, are booked the same way, so a voice turn that
+  fails files a problem report too.
+- **The terminal and the chat ask before acting.** The file that told Claude
+  Code what it may do without asking also applied to the terminal and the chat.
+  So with "dangerously skip permissions" off, the terminal still ran shell
+  commands, edited files and called Home Assistant services without asking, and
+  the chat's approval card never appeared. That file now pre-approves only
+  reading Home Assistant. Background runs that cannot ask keep their full list
+  in a file only they are given. The option's description now says what off and
+  on each mean.
+- **Protected entities are protected in the terminal and the chat too.** With
+  `protected_entities` set, brAIn refuses any Home Assistant service call typed
+  as a shell command (`ha service call`, a curl to the services API, a WebSocket
+  `call_service`), because a command line cannot be checked for its targets. It
+  also refuses a YAML edit that names a protected entity. The refusal names the
+  Home Assistant tool to use instead, which can be checked.
+- **No session can be messaged by another, and Claude Code keeps no second
+  memory.** Claude Code's cross-session messaging, scheduling and notification
+  tools are now blocked for every brAIn session, and each session refuses
+  messages from other sessions. Claude Code's own "auto memory" is switched off,
+  so what you teach brAIn ends up in `memory.md` and nowhere else. A model
+  "advisor" saved from the terminal is not attached to unattended runs.
+- **Choosing Fable in Settings no longer puts it on timers.** A typed model
+  still overrides every job. The exception is a Fable model on a job nobody
+  pressed for: that job runs on its own planned model, and the log says why. The
+  Resident's daily allowances are now charged to the model each run really used
+  and counted by your house's local day, not UTC.
+- **The model picker offers the current models.** Settings → Claude model now
+  lists Opus 5.5 and Sonnet 5.5 first. The 5.0 versions are under "Previous
+  generation".
+- **The terminal's memory extraction is cheaper and reads each message once.**
+  After each turn, a small run looks for anything you taught brAIn. It used to
+  load the whole `/config` CLAUDE.md and the Home Assistant connection, and from
+  the second turn on it ran after nearly every message over overlapping windows.
+  It now runs with its own short instructions and no tools. It reads only what
+  was said since the last time it looked, and needs either two new messages or
+  one that teaches.
+- **Replying to a notification no longer delays your other answers.** A Reply
+  typed into a brAIn notification starts a Claude run that can take up to three
+  minutes. Done, Wrong and To-do answers given from your phone or the To-do app
+  used to wait behind it. The reply is now answered in the background and the
+  other answers are applied at once.
+
 ## 2.10.1
 
 **The classic terminal on a phone: Paste works, the keyboard stops fighting you.**

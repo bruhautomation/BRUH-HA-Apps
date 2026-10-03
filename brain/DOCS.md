@@ -699,6 +699,12 @@ and mostly beside the point. The Knowledge tab lists the ledger under **What brA
 knows**, with a ✕ on each row; a fact you forget there is gone from every future
 prompt, and the document is left for you to edit yourself.
 
+What you teach the terminal or the chat is picked up by a small run after each
+turn. It reads only what was said since it last looked, runs with no tools and
+its own short instructions, and needs either two new messages or one that
+plainly teaches something. Claude Code's own "auto memory" is switched off for
+every brAIn session, so there is one memory and you can read all of it.
+
 **The ledger follows the document.** Every time memory is filed, brAIn checks the
 ledger against `memory.md`: a line you deleted from the document, a `brain memory
 forget`, a cleared memory, the ✕ on a queued fact and an Undo all reach what runs
@@ -2443,7 +2449,12 @@ The **thinking** dial (⚙ → Insights, or `thinking` in `/api/settings`) is
 wrong answer is cheap (a card, a question) and never the apply run;
 *generous* steps up only the reasoning jobs, never a naming call. A typed
 `model` on the Configuration tab still overrides every job, exactly as it
-did before 2.0.
+did before 2.0 — except a **Fable** model on a job nobody pressed for, which
+runs on its own planned model instead and says so in the log, because a timer
+must never spend the press-only tier. The Resident's daily allowances are
+charged to the model each run really used and counted by your house's day.
+The picker in ⚙ leads with the current Opus and Sonnet; the previous
+generation sits under its own heading.
 
 Under the hood each run carries `--model` and `--effort`, and structured
 jobs carry `--json-schema`. A CLI that does not know a flag has it dropped
@@ -2721,6 +2732,14 @@ there — a token, an MCP handshake, the panel, the daemons, the three stores a
 sign-in is read from — and calls Claude never. It also warns about anything a
 `--rehearse` run left behind. `--json` gives the same report as one object,
 which is what `brain report` bundles.
+
+Every background loop inside the panel reports when it last went round
+(`loops` in ⚙ → Diagnostics), and one that has stopped is named by the health
+verdict: a stopped card queue is **failed**, any other loop **degraded**. The
+runs made outside the panel — study, memory filing, automation tasks, voice and
+the terminal's memory extraction — record themselves in the same run journal
+as the panel's own, so they show in the usage breakdown and a failed one files
+a report like any other.
 
 ### `brain doctor --deep`
 
@@ -3044,7 +3063,7 @@ the Ask tab itself), because it changes nothing about how the add-on runs.
 | `auto_generate_context` | bool | `true` | Regenerate `/config/CLAUDE.md` with your HA system context at startup. |
 | `enable_ha_mcp_server` | bool | `true` | Give Claude native HA access (states, services, history, statistics, registries, dashboards, logs, templates). |
 | `enable_mobile_ui` | bool | `true` | Splice the mobile toolbar and iOS dictation fix into ttyd's UI. |
-| `dangerously_skip_permissions` | bool | `false` | Skip Claude Code's tool-permission prompts in the interactive terminal. Background listeners never use this. |
+| `dangerously_skip_permissions` | bool | `false` | Off: the terminal and the chat ask before running a command, editing a file or calling a service. On: the terminal stops asking. Never reaches the chat, cards, voice or automation tasks, which keep their own list. |
 
 ### Voice and automation
 
@@ -3132,7 +3151,7 @@ the Ask tab itself), because it changes nothing about how the add-on runs.
 | --- | --- | --- | --- |
 | `checks_interval_hours` | 0–168 | `6` | How often the deterministic house checks run. They read Home Assistant and the Supervisor directly and never call Claude, so they cost nothing. `0` means never on a timer; `brain check` and the tab's button still run them. |
 | `self_healing` | bool | `false` | Let brAIn make up to three repairs a night, inside your quiet hours: start an add-on that was set to run at boot, ping a dead Z-Wave node, reload an integration that failed to set up. Nothing else, never on a protected entity, and never on a finding you have already answered. See **The house acts**. |
-| `protected_entities` | list | `[]` | Entity ids (`lock.front_door`) or whole domains (`alarm_control_panel.*`) that brAIn may never act on. Enforced at the one place every Home Assistant tool call passes through, so it covers voice, automations, insight runs, the fixer, the overnight healer and anything the panel writes into `automations.yaml`; a call aimed at an area or device containing one is refused too, and so is a label or floor target, which cannot be resolved there. The check reads every entity a call names, a scene's `entities` map included, and running a scene, script or automation is refused when one of its members is protected — or, while the list is non-empty, when Home Assistant cannot say what it contains. A shell command or a file edit does not go through that chokepoint — the terminal, the chat and Fix it are *told* the list instead. Protected entities can always be looked at. |
+| `protected_entities` | list | `[]` | Entity ids (`lock.front_door`) or whole domains (`alarm_control_panel.*`) that brAIn may never act on. Enforced at the one place every Home Assistant tool call passes through, so it covers voice, automations, insight runs, the fixer, the overnight healer and anything the panel writes into `automations.yaml`; a call aimed at an area or device containing one is refused too, and so is a label or floor target, which cannot be resolved there. The check reads every entity a call names, a scene's `entities` map included, and running a scene, script or automation is refused when one of its members is protected — or, while the list is non-empty, when Home Assistant cannot say what it contains. A shell command or a file edit does not go through that chokepoint, so a second guard refuses a service call typed as a shell command and a YAML edit naming a protected entity, and names the tool to use instead. Protected entities can always be looked at. |
 
 ### Undo and access
 
@@ -3173,6 +3192,16 @@ To keep it from eating the plan you also use for your own work:
   one Claude Code itself calls only from its `/usage` screen, on demand, and it
   answers a caller that polls it hard with `429` while your account still has plenty
   of quota left. If the pill has not moved, nothing has run.
+- **A usage limit pauses the timer rather than failing against it.** When your
+  plan's limit refuses a run, scheduled cards wait — 30 minutes, doubling to 4
+  hours — and the first run that succeeds ends the wait. A card that keeps
+  failing for any other reason waits longer each time too, 15 minutes doubling to
+  12 hours. Neither files a problem report about the limit, and **Regenerate is
+  never held**.
+- **Runs take turns.** At most three Claude runs are in flight at once
+  (`BRAIN_CLAUDE_SLOTS` changes it), a tripped safety detector goes first, then
+  anything you pressed, then scheduled work, and one place is always kept free of
+  scheduled work — so a press never waits behind the timer.
 - Fixed daily times ("07:00, 19:00") cost far fewer tokens than a short refresh
   interval, and cards you never look at can simply be deleted.
 
@@ -3271,16 +3300,38 @@ That is the point of it, and it is worth knowing where the edges are.
   house through whatever automations listen for it, and which ones do cannot
   be checked from there), and so is a `homeassistant.turn_on`/`turn_off`/
   `toggle` that names no target at all, which addresses every entity there is.
-  **What it cannot gate is a shell.** The terminal, the chat and **Fix it**
-  hold Bash and file editing, and a shell command or a file edit does not go
-  through that chokepoint. Those three are *told* the list instead — it is in
-  the fixer's own instructions and in the generated `/config/CLAUDE.md`, which
-  is rewritten after every consolidation pass — and the rule there is Claude
-  keeping it rather than a gate enforcing it. If that distinction matters to
-  you, leave `dangerously_skip_permissions` off, which is the default.
-- **`dangerously_skip_permissions` does what it says.** Off by default. On,
-  Claude stops asking before it edits a file or runs a command in the
-  interactive terminal.
+  **A shell has a second gate, and it is a narrower one.** The terminal, the
+  chat and **Fix it** hold Bash and file editing, and a shell command or a file
+  edit does not go through that chokepoint. So while the list is non-empty a
+  hook in front of every Claude Code tool refuses the two routes that would
+  walk round it: a Home Assistant service call typed as a shell command (`ha
+  service call`, a `curl` to the services API, a WebSocket `call_service`),
+  because a command line cannot be checked for its targets, and a YAML edit
+  whose new text names a protected entity. The refusal names the Home
+  Assistant tool to use instead, which can be checked. Anything subtler than
+  that — a script written to a file and run later, say — is still Claude
+  keeping a rule it has been *told* (it is in the fixer's instructions and in
+  the generated `/config/CLAUDE.md`) rather than a gate enforcing it. If that
+  distinction matters to you, leave `dangerously_skip_permissions` off, which
+  is the default and makes the terminal and the chat ask first.
+- **`dangerously_skip_permissions` does what it says.** Off by default, and
+  off means the terminal and the chat **ask** before they run a shell
+  command, edit a file or call a Home Assistant service; on, the terminal
+  stops asking. It has never reached the chat, the cards, voice or automation
+  tasks. Until 2.11 "off" was close to a no-op: the project's own settings
+  file pre-approved Bash, edits and every Home Assistant tool, and the
+  terminal and the chat read that file too. Now
+  `/config/.claude/settings.local.json` pre-approves only *reading* Home
+  Assistant, and the runs that have nobody to ask — the automation listener,
+  study, the consolidator, a full-access voice agent, `brain ask` — get their
+  own list from `/config/.brain/headless_settings.json`. If you added your
+  own allows to the project file, they now apply to the terminal and the
+  chat only.
+- **Every brAIn session is closed to the others.** Claude Code's
+  cross-session messaging, scheduling and notification tools are blocked for
+  every session brAIn starts, each one refuses messages from other sessions,
+  and Claude Code's own "auto memory" is off — so what you teach brAIn ends up
+  in `memory.md` and nowhere else.
 - **The panel's rating is 6/6** in the add-on store — the highest the
   Supervisor gives, and it is worth knowing that `hassio_role: admin` costs
   two points that ingress and AppArmor pay back. brAIn needs that role

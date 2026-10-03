@@ -184,7 +184,10 @@ class TestAFailureIsWrittenAsOne(ClassicCase):
                 if line.strip()]
         self.assertEqual([r["source"] for r in rows], ["voice", "voice"])
         self.assertEqual([r["outcome"] for r in rows], ["ok", "auth"])
-        self.assertEqual(rows[0]["extra"], {"mode": "classic"})
+        # `shell` is what makes the panel book the row (problem report,
+        # usage ledger, rate-limit pause): the listener's process has none
+        # of the panel's listeners, so a row without it is counted nowhere.
+        self.assertEqual(rows[0]["extra"], {"shell": True, "mode": "classic"})
 
 
 if __name__ == "__main__":
