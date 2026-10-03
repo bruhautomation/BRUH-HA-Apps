@@ -31,7 +31,7 @@ sys.path.insert(0, str(BASE_DIR / "tests"))
 
 import ha_data  # noqa: E402
 import tidy  # noqa: E402
-from fake_core_ws import FakeCore, ok, refused  # noqa: E402
+from fake_core_ws import FakeCore, drive_app, ok, refused  # noqa: E402
 
 
 def house() -> dict:
@@ -388,17 +388,11 @@ class TestThePress(unittest.TestCase):
     def test_a_press_without_a_credential_spends_nothing(self):
         self.server.engine.get_auth = lambda: None
 
-        async def go():
-            from aiohttp.test_utils import TestClient, TestServer
-            client = TestClient(TestServer(self.server.make_app()))
-            await client.start_server()
-            try:
-                res = await client.post("/api/tidy/run")
-                return res.status
-            finally:
-                await client.close()
+        async def go(client):
+            res = await client.post("/api/tidy/run")
+            return res.status
 
-        self.assertEqual(asyncio.new_event_loop().run_until_complete(go()), 400)
+        self.assertEqual(drive_app(self.server.make_app, go), 400)
         self.assertEqual(self.prompts, [])
 
     def test_two_presses_in_one_tick_start_one_run(self):

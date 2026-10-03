@@ -14,7 +14,6 @@ opened whatever it contains, and a credential's value is blanked before it
 can be quoted.
 """
 
-import asyncio
 import json
 import os
 import sys

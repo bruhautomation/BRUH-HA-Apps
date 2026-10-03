@@ -75,3 +75,38 @@ def refused(message: str = "Unauthorized") -> dict:
 
 
 Answer = Callable[[dict], dict]
+
+
+def drive_app(make_app, fn):
+    """Run `fn(client)` against the real panel app on a loop of its own,
+    and put the loop down properly afterwards.
+
+    `make_app()`'s startup creates the panel's background loops; left
+    pending when the test's loop is dropped they are destroyed at garbage
+    collection with a page of "Task was destroyed" noise attributed to
+    nothing. Cancelled and awaited here, the way `_settle` waits a bridge's
+    pumps out.
+    """
+    import asyncio
+
+    from aiohttp.test_utils import TestClient, TestServer
+
+    async def go():
+        client = TestClient(TestServer(make_app()))
+        await client.start_server()
+        try:
+            return await fn(client)
+        finally:
+            await client.close()
+
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(go())
+    finally:
+        pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending,
+                                                   return_exceptions=True))
+        loop.close()
