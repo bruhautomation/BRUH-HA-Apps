@@ -189,7 +189,7 @@
         },
         "tools": {
           "name": "Tools",
-          "description": "What this task is allowed to touch. full (default) keeps today's behaviour: the shell, file edits, web access and every Home Assistant tool. house drops the shell, file edits and the web and leaves every Home Assistant tool. read_only is the same list the scheduled analyst runs with — it can look at anything and change nothing. Anything wider than read_only needs a Home Assistant administrator (an automation runs as the system and may ask for any)."
+          "description": "What this task is allowed to touch. full (default) keeps today's behaviour: the shell, file edits, web access and every Home Assistant tool. house drops the shell, file reads and edits, and the web, and leaves every Home Assistant tool. read_only is the same list the scheduled analyst runs with — it can look at anything in Home Assistant and change nothing, and it cannot read files. Anything wider than read_only needs a Home Assistant administrator (an automation runs as the system and may ask for any)."
         }
       }
     },

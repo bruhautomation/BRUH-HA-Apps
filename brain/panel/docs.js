@@ -1035,8 +1035,8 @@ The \`tools\` field is that way, and it has three values:
 | \`tools\` | What the task can reach |
 | --- | --- |
 | \`full\` **(default)** | Everything, exactly as before: the shell, file edits, web access, and every Home Assistant tool. |
-| \`house\` | Every Home Assistant tool — it can read your house and act on it — with no shell, no file edits and no web access. |
-| \`read_only\` | The same list brAIn's own scheduled analysis runs with: it can look at anything and change nothing. |
+| \`house\` | Every Home Assistant tool — it can read your house and act on it — with no shell, no file reads or edits, and no web access. |
+| \`read_only\` | The same list brAIn's own scheduled analysis runs with: it can look at anything in Home Assistant and change nothing. It cannot read files in \`/config\` either, so \`secrets.yaml\` stays out of reach of an automation that only asked a question. |
 
 \`full\` is the default on purpose, so nothing you have already written
 changes. Narrow it per call:

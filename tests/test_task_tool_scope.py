@@ -46,6 +46,8 @@ sys.path.insert(0, str(PANEL_DIR))
 
 import engine  # noqa: E402
 
+FILE_READS = ("Read", "Glob", "Grep", "LS", "NotebookRead")
+
 
 def lift(name: str) -> str:
     """The named function, out of the real listener."""
@@ -103,7 +105,19 @@ class TestTheNarrowerScopes(unittest.TestCase):
     def test_read_only_is_the_analysts_own_pair(self):
         allow, deny = self._pairs("read_only")
         self.assertEqual(allow, list(engine.ANALYST_TOOLS))
-        self.assertEqual(deny, list(engine.ANALYST_DENIED))
+        self.assertEqual(deny[:len(engine.ANALYST_DENIED)],
+                         list(engine.ANALYST_DENIED))
+
+    def test_neither_narrow_scope_can_read_a_file(self):
+        """A task runs in /config with settings.local.json pre-approving
+        Read, so the analyst's own pair (which runs from CLAUDE_HOME and
+        never sees /config) handed a read-only task secrets.yaml — and a
+        non-admin may still ask for read_only through brain.ask."""
+        for mode in ("read_only", "house"):
+            allow, deny = self._pairs(mode)
+            for tool in FILE_READS:
+                self.assertIn(tool, deny, f"{mode} can still {tool}")
+                self.assertNotIn(tool, allow)
 
     def test_read_only_cannot_reach_a_shell_or_a_file(self):
         allow, deny = self._pairs("read_only")

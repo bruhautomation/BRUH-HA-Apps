@@ -302,6 +302,14 @@ except Exception:
 allow, deny = list(engine.ANALYST_TOOLS), list(engine.ANALYST_DENIED)
 if not allow or not deny:
     raise SystemExit(1)
+# The analyst runs from CLAUDE_HOME with no --add-dir and no project
+# settings, so it cannot reach a file in /config by construction. A task
+# runs IN /config with settings.local.json pre-approving Read, so the same
+# pair would hand a read-only task secrets.yaml. What the analyst never had
+# is denied here by name, for both narrow scopes.
+for tool in ("Read", "Glob", "Grep", "LS", "NotebookRead"):
+    if tool not in deny:
+        deny.append(tool)
 seen, house_allow = set(), []
 for tool in allow + deny:
     if tool.startswith("mcp__") and tool not in seen:
