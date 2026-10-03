@@ -32,10 +32,7 @@ sys.path.insert(0, str(PANEL_DIR))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import categories  # noqa: E402
-import engine  # noqa: E402
-import intents  # noqa: E402
 import settings_store  # noqa: E402
-import usage_store  # noqa: E402
 
 from test_insights_knowledge import InsightsServerCase  # noqa: E402
 
@@ -45,6 +42,13 @@ PATIO = "When the back door opens after sunset, turn on the patio light"
 class CardCase(InsightsServerCase):
     def setUp(self):
         super().setUp()
+        # The modules the server actually holds: other test files pop and
+        # re-import ``intents`` and friends, so the copy this file imported
+        # at collection can be a different object from the one ``_generate``
+        # writes through by the time this runs.
+        self.intents = self.server.intents
+        self.engine = self.server.engine
+        self.usage_store = self.server.usage_store
         settings_store.save({"onboarded": True, "auto_enabled": True,
                              "gather_mode": "snapshot"})
         self.reply = {
@@ -59,17 +63,17 @@ class CardCase(InsightsServerCase):
             ],
             "html": "<!DOCTYPE html><html><body>ok</body></html>",
         }
-        self._olds_card = (self.ha_data.collect_bundle, engine.run_claude,
-                           engine.get_auth, intents.REQUEST_DIR,
+        self._olds_card = (self.ha_data.collect_bundle, self.engine.run_claude,
+                           self.engine.get_auth, self.intents.REQUEST_DIR,
                            dict(self.server.CARD_OPPS_STATE),
-                           usage_store.USAGE_FILE, usage_store.LIMITS_FILE,
-                           usage_store.budget_state)
+                           self.usage_store.USAGE_FILE, self.usage_store.LIMITS_FILE,
+                           self.usage_store.budget_state)
         self.server.CARD_OPPS_STATE.update(day="", count=0)
-        intents.REQUEST_DIR = Path(self.tmp.name) / "intent-requests"
+        self.intents.REQUEST_DIR = Path(self.tmp.name) / "intent-requests"
         # The budget is read off files under /data and /config that every
         # other test on the machine may be spending into; this one's own.
-        usage_store.USAGE_FILE = str(Path(self.tmp.name) / "usage.json")
-        usage_store.LIMITS_FILE = str(Path(self.tmp.name) / "usage_limits.json")
+        self.usage_store.USAGE_FILE = str(Path(self.tmp.name) / "usage.json")
+        self.usage_store.LIMITS_FILE = str(Path(self.tmp.name) / "usage_limits.json")
 
         async def fake_collect(category, days, question=None):
             return {"entities": []}
@@ -79,13 +83,13 @@ class CardCase(InsightsServerCase):
                     "meta": {"duration_ms": 5}}
 
         self.ha_data.collect_bundle = fake_collect
-        engine.run_claude = fake_run
-        engine.get_auth = lambda: {"type": "oauth", "value": "x"}
+        self.engine.run_claude = fake_run
+        self.engine.get_auth = lambda: {"type": "oauth", "value": "x"}
 
     def tearDown(self):
-        (self.ha_data.collect_bundle, engine.run_claude, engine.get_auth,
-         intents.REQUEST_DIR, old_state, usage_store.USAGE_FILE,
-         usage_store.LIMITS_FILE, usage_store.budget_state) = self._olds_card
+        (self.ha_data.collect_bundle, self.engine.run_claude, self.engine.get_auth,
+         self.intents.REQUEST_DIR, old_state, self.usage_store.USAGE_FILE,
+         self.usage_store.LIMITS_FILE, self.usage_store.budget_state) = self._olds_card
         self.server.CARD_OPPS_STATE.clear()
         self.server.CARD_OPPS_STATE.update(old_state)
         super().tearDown()
@@ -96,7 +100,7 @@ class CardCase(InsightsServerCase):
             return json.load(f)
 
     def queued(self):
-        return intents.collect() if intents.REQUEST_DIR.exists() else []
+        return self.intents.collect() if self.intents.REQUEST_DIR.exists() else []
 
 
 class TestACardsSuggestionIsOffered(CardCase):
@@ -145,7 +149,7 @@ class TestACardsSuggestionIsOffered(CardCase):
         would spend an authoring run to be told so."""
         self.generate()
         self.assertEqual(len(self.queued()), 1)
-        intents.collect()            # the drain took it
+        self.intents.collect()            # the drain took it
         card = self.generate()
         self.assertEqual(self.queued(), [])
         row = card["opportunities"][0]
@@ -172,15 +176,15 @@ class TestItIsGatedLikeEveryUnattendedRun(CardCase):
         self.assertEqual(row["sentence"], PATIO)
 
     def test_no_credential_holds_it(self):
-        engine.get_auth = lambda: None
+        self.engine.get_auth = lambda: None
         card = self.generate()
         self.assertEqual(self.queued(), [])
         self.assertEqual(card["opportunities"][0]["why"],
                          "there is no Claude credential")
 
     def test_a_spent_budget_holds_it(self):
-        real = usage_store.budget_state
-        usage_store.budget_state = lambda settings: {**real(settings),
+        real = self.usage_store.budget_state
+        self.usage_store.budget_state = lambda settings: {**real(settings),
                                                      "blocked": True}
         card = self.generate()
         self.assertEqual(self.queued(), [])
@@ -196,7 +200,7 @@ class TestItIsGatedLikeEveryUnattendedRun(CardCase):
         self.assertIn("today", card["opportunities"][0]["why"])
 
     def test_a_drop_that_cannot_be_written_is_a_reason_not_a_failed_card(self):
-        intents.REQUEST_DIR = Path("/proc/brain-nowhere/requests")
+        self.intents.REQUEST_DIR = Path("/proc/brain-nowhere/requests")
         card = self.generate()
         self.assertEqual(card["title"], "Evening lights")
         row = card["opportunities"][0]
