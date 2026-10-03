@@ -1223,24 +1223,16 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
                   when: float | None = None) -> list[dict]:
     """Write what looked at a batch, and move each row to where it belongs.
 
-    ``verdicts`` is ``{ts: (verdict, reason)}`` or ``{ts: (verdict,
-    reason, fix)}``. An ``elevated`` or ``untriaged`` row becomes ``open``
-    — the second because nothing looked, which surfaces exactly like the
-    first and says so on the card — and a ``held`` row becomes ``held``.
+    ``verdicts`` is ``{ts: (verdict, reason)}``. An ``elevated`` or
+    ``untriaged`` row becomes ``open`` — the second because nothing looked,
+    which surfaces exactly like the first and says so on the card — and a
+    ``held`` row becomes ``held``.
 
-    **An elevated row that came with a ``fix`` takes it as its own.** The
-    rule that filed the row wrote the same sentence it writes for every
-    row of its kind ("check its power and its connection… then reload its
-    integration"), which is what the card showed under *What you'd need to
-    do* and what a person reading it called generic and useless. The run
-    that elevated the row has looked at the entity, its integration and
-    its area, so what it says to do is about THIS device in THIS house,
-    and the card carries that instead. The generic sentence is not kept:
-    it says nothing the check's own docs do not, and a second field for it
-    would be one more thing to render. ``refresh_details`` never touches
-    ``fix``, so a re-report on the next pass does not put the generic
-    sentence back. An empty ``fix`` leaves whatever was there — the run
-    wrote none, and the card is then the card it always was.
+    It writes no ``fix``. The retired triage drain could hand one over, and
+    the run that writes a specific "what you'd need to do" now is the
+    Resident's investigation, through :func:`refine` — the first look that
+    calls this answers one word and a sentence, and a sentence about
+    whether a row is real is not advice about what to do with it.
 
     Only a row still in ``triaging`` is touched. Everything else is a row
     a person or the fixer has already moved on from, and a verdict
@@ -1257,18 +1249,13 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
         ts = int(entry.get("ts") or 0)
         if ts not in verdicts or entry.get("status") != "triaging":
             continue
-        verdict, reason, *rest = verdicts[ts]
+        verdict, reason = verdicts[ts][:2]
         if verdict not in triage.VERDICTS:
             continue
-        fix = str(rest[0] if rest else "").strip()[:MAX_FIX]
-        wrote_fix = bool(fix) and verdict == "elevated"
-        if wrote_fix:
-            entry["fix"] = fix
-            entry["fix_by"] = "triage"
         entry["status"] = "held" if verdict == "held" else "open"
         entry["triage"] = _clean_triage({
             "verdict": verdict, "reason": reason,
-            "run_id": run_id, "at": stamp, "wrote_fix": wrote_fix})
+            "run_id": run_id, "at": stamp, "wrote_fix": False})
         changed.append(_shape(entry))
     if changed:
         _write(items)

@@ -33,7 +33,7 @@ class TestTheTable(TestCase):
             self.assertIn(effort, model_plan.EFFORTS, job)
 
     def test_the_tiers_are_what_the_page_says(self):
-        self.assertEqual(model_plan.resolve("triage"), ("haiku", "low"))
+        self.assertEqual(model_plan.resolve("first_look"), ("haiku", "low"))
         self.assertEqual(model_plan.resolve("card")[0], "sonnet")
         self.assertEqual(model_plan.resolve("fix_apply"), ("opus", "xhigh"))
         self.assertEqual(model_plan.resolve("consolidate")[0], "haiku")
@@ -243,7 +243,7 @@ class TestTheEngineCarriesTheJob(TestCase):
 
     def test_a_job_becomes_model_and_effort_on_the_argv(self):
         self._use("plain")
-        result = engine.run_claude("hi", "sys", job="triage")
+        result = engine.run_claude("hi", "sys", job="first_look")
         self.assertTrue(result["ok"], result)
         argv = self._argvs()[0]
         self.assertIn("--model", argv)
@@ -252,7 +252,7 @@ class TestTheEngineCarriesTheJob(TestCase):
 
     def test_an_explicit_model_still_wins_over_the_job(self):
         self._use("plain")
-        engine.run_claude("hi", "sys", model="claude-opus-5", job="triage")
+        engine.run_claude("hi", "sys", model="claude-opus-5", job="first_look")
         argv = self._argvs()[0]
         self.assertEqual(argv[argv.index("--model") + 1], "claude-opus-5")
 

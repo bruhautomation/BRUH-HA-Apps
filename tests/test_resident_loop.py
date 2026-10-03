@@ -324,8 +324,8 @@ class TestWhenTheLookHappens(LoopCase):
 class TestAGateHoldsAndLosesNothing(LoopCase):
     """Three gates, one rule: no run is spawned and no signal is lost.
 
-    This is the opposite of what `_triage_findings` does with the same three
-    — that one surfaced the whole queue — and deliberately: triage was about
+    This is the opposite of what the retired triage drain did with the same
+    three — that one surfaced the whole queue — and deliberately: triage was about
     to hide a row, this is about to look at one, and `triage.STALE_S` is
     what makes the wait bounded.
     """

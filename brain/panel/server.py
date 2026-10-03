@@ -650,16 +650,14 @@ def _rebind_resident_queue() -> None:
 # summary of the last one — which is what /api/checks, `brain check list`
 # and the diagnostics bundle read.
 CHECKS_STATE: dict = {"running": False, "last": None}
-# Whether a triage drain is in flight. A dict for `CHECKS_STATE`'s reason
-# rather than a module-level flag rebound through `global`: the two are
-# the same guard three lines apart in `run_checks`, and one of them
-# spelled differently is the drift a second idiom always produces.
-# `day`/`runs` are the per-day runaway guard (`triage.MAX_PER_DAY`):
+# The first look's per-day runaway guard. A dict for `CHECKS_STATE`'s
+# reason rather than module-level counters rebound through `global`.
+# `day`/`runs` count looks against `triage.MAX_PER_DAY`:
 # counted per local day and reset with it. In memory on purpose — it is a
 # guard against a loop and not a budget, and a restart that forgets it
 # costs at most one more day's worth of runs, where a guard that survived
 # a restart would need a store nothing else reads.
-TRIAGE_STATE: dict = {"running": False, "day": "", "runs": 0}
+TRIAGE_STATE: dict = {"day": "", "runs": 0}
 
 
 def _triage_runs_today(now: float) -> int:
@@ -4066,9 +4064,10 @@ async def _scheduler() -> None:
         # queue on its own five-second tick — so a row a study session just
         # filed reaches a judgement in seconds rather than at the top of
         # the next minute, and the one run that judges it also judges the
-        # state changes and the overrides beside it. `_triage_findings` is
-        # still here and still callable; what changed is that nothing
-        # schedules it.
+        # state changes and the overrides beside it. The triage drain itself
+        # is gone: nothing scheduled it once the Resident took its queue,
+        # and a second judge kept only for its own tests is a second
+        # vocabulary for one decision.
         # The face is off: nothing is queued, ever. Checked before the
         # auth gate on purpose — a switched-off face is the answer to "why
         # are my cards not updating" whatever the sign-in says.
@@ -5782,171 +5781,6 @@ def _record_manual(snapshot: dict, now: float) -> int:
         return 0
 
 
-async def _triage_findings(now: float) -> list[dict]:
-    """Look at the rows nothing has looked at yet, and move them.
-
-    Returns the rows that are on the list afterwards — the ones a run
-    elevated plus the ones nothing could judge — because that is exactly
-    the set `_announce_findings` is owed and deriving it a second time
-    from the store would be a second answer to the same question.
-
-    **It reads what is WAITING, not what a caller just filed.** Five
-    producers gate now (`triage.gate`) and one of them is a tab fetch
-    that must not spend a Claude run, so a drain that could only judge
-    its own caller's rows would leave that producer's findings to the
-    stale sweep an hour later. Taking the queue from the store instead
-    makes the drain callable from anywhere: whoever runs next picks up
-    whatever is there.
-
-    **Every failure surfaces.** No credential, the automatic switch off,
-    the budget spent, the run failed, the reply unparseable, a row the
-    reply did not mention: each of those ends with the finding on the tab
-    carrying an `untriaged` verdict. A triage that could not look must
-    never be able to hide a problem, which is `clear_resolved`'s rule
-    moved one step earlier. What does NOT surface immediately is the
-    surplus past `MAX_BATCH` — it is at the front of the next drain a
-    minute later, and the stale sweep is the promise that a queue which
-    stopped draining is still shown.
-
-    The stale sweep is here rather than in a loop of its own for the same
-    reason, and `STALE_S` is best read as **the longest a finding may be
-    invisible**: a queue that is draining clears in minutes, so a row that
-    has waited an hour waited it because nothing was coming back — a panel
-    that died mid-judgement, or one that was off. It surfaces saying so
-    rather than taking its turn, because it has already been invisible for
-    the hour and another minute is not what it is owed.
-
-    Two drains at once would spend two runs on one queue and race over
-    the same rows, so the flag is set SYNCHRONOUSLY before the first
-    await — `start_auth_check`'s rule, for its reason: `create_task` and
-    `await` both only schedule, and a guard reading a state its own call
-    has not set yet is no guard. A caller that loses is not an error and
-    files nothing: its rows are in the queue the winner is draining, or
-    in the one the next minute drains.
-    """
-    if TRIAGE_STATE["running"]:
-        return []
-    TRIAGE_STATE["running"] = True
-    try:
-        return await _triage_drain(now)
-    finally:
-        TRIAGE_STATE["running"] = False
-
-
-async def _triage_drain(now: float) -> list[dict]:
-    """`_triage_findings` with the in-flight guard already held."""
-    # Anything left waiting past the hour, whether or not this drain has
-    # a batch of its own. Promoted first, so a row that has already waited
-    # that long does not queue behind rows filed since.
-    stale = await asyncio.to_thread(findings_store.stale_triaging,
-                                    now - triage.STALE_S)
-    surfaced: list[dict] = []
-    if stale:
-        log.warning("triage: %d finding(s) were left unjudged and are being "
-                    "shown as they are", len(stale))
-        surfaced += await asyncio.to_thread(
-            findings_store.record_triage,
-            {ts: ("untriaged", triage.UNJUDGED) for ts in stale},
-            "", now)
-
-    # Oldest first, and everything that is waiting rather than everything
-    # this caller filed. The stale rows above have already left the queue
-    # by the time it is read, so they cannot be judged twice.
-    pending = await asyncio.to_thread(findings_store.awaiting_triage)
-    if not pending:
-        return surfaced
-
-    # What does not fit waits for the next drain. Surfacing it unjudged
-    # would spend the cap on exactly the rows this exists to catch, and
-    # on the busiest houses first; waiting is only silence if nothing
-    # comes back, and `STALE_S` is what says something does.
-    batch = pending[:triage.MAX_BATCH]
-
-    # One clock up from `MAX_BATCH`: a day that has spent `MAX_PER_DAY`
-    # runs waits for tomorrow rather than surfacing unjudged, for the
-    # same reason, and `STALE_S` is still the promise that a queue which
-    # stopped draining is shown. Said once per day, or a busy house logs
-    # the same line every minute until midnight.
-    if _triage_runs_today(now) >= triage.MAX_PER_DAY:
-        if not TRIAGE_STATE.get("capped_said"):
-            TRIAGE_STATE["capped_said"] = True
-            log.warning("triage has spent its %d runs for today; %d rows wait "
-                        "for tomorrow's drain", triage.MAX_PER_DAY, len(pending))
-        return surfaced
-    TRIAGE_STATE["capped_said"] = False
-
-    # The three gates every scheduled Claude run answers to (`_ask_why`'s
-    # rule): a credential, the automatic switch, and the usage budget.
-    # Failing one is not a reason to hide anything — it is a reason to
-    # show everything, which is what the sentence on the card says.
-    settings = settings_store.load()
-    if not engine.get_auth():
-        excuse = triage.NO_CREDENTIAL
-    elif not settings["auto_enabled"]:
-        excuse = triage.PAUSED
-    elif usage_store.budget_state(settings)["blocked"]:
-        excuse = triage.NO_BUDGET
-    else:
-        excuse = ""
-    if excuse:
-        # Over the WHOLE queue rather than this batch: the cap is what one
-        # run may read, and a gate that answered before any run started
-        # has nothing to ration. Rationing it would leave the rest waiting
-        # on a drain that will give the identical answer next minute.
-        return surfaced + await asyncio.to_thread(
-            findings_store.record_triage,
-            {int(f["ts"]): ("untriaged", excuse) for f in pending}, "", now)
-
-    prompt = triage.frame(
-        batch,
-        house=await _house_prompt_block(now),
-        # The load-bearing half. "That contact is on a cupboard nobody
-        # opens" is exactly the kind of thing a homeowner has already
-        # said once, and a triage run that cannot read it re-litigates
-        # every correction they have ever made.
-        memory=await asyncio.to_thread(
-            _memory_block,
-            entities=[r.get("entity_id") for r in batch if r.get("entity_id")]),
-    )
-    TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
-    try:
-        result = await asyncio.to_thread(
-            engine.run_analyst, prompt, triage.SYSTEM, eff_model(),
-            triage.TIMEOUT_S, triage.MAX_TURNS, "triage",
-            job="triage", schema=triage.SCHEMA)
-    except Exception as exc:  # noqa: BLE001 — the findings are already
-        # filed; what is at stake here is only whether anything looked.
-        log.warning("a triage run failed: %s", exc)
-        result = {"ok": False, "error": str(exc)}
-    run_id = str((result.get("meta") or {}).get("session_id") or "")
-    if not result.get("ok"):
-        return surfaced + await asyncio.to_thread(
-            findings_store.record_triage,
-            {int(f["ts"]): ("untriaged", triage.RUN_FAILED)
-             for f in batch}, run_id, now)
-
-    verdicts = triage.parse(_answer(result), len(batch))
-    decided: dict[int, tuple[str, str]] = {}
-    for i, row in enumerate(batch, 1):
-        ts = int(row["ts"])
-        if i in verdicts:
-            decided[ts] = verdicts[i]
-        else:
-            # A row the reply skipped. The default is the finding, not
-            # the silence: "it was not mentioned" is not "it is not real".
-            decided[ts] = ("untriaged", triage.NOT_MENTIONED)
-    moved = await asyncio.to_thread(
-        findings_store.record_triage, decided, run_id, now)
-    held = [f for f in moved if f["status"] == "held"]
-    # No journal line of its own: `engine._run_cli` already writes one per
-    # invocation under the source it was given, and a second row for the
-    # same run is two answers to "how many triage runs happened".
-    log.info("triage: %d looked at, %d held back, %d shown, %d still waiting",
-             len(batch), len(held), len(moved) - len(held),
-             max(len(pending) - len(batch), 0))
-    return surfaced + [f for f in moved if f["status"] != "held"]
-
-
 # ---------------------------------------------------------------------------
 # The Resident — signals in, one cheap look, a case
 # ---------------------------------------------------------------------------
@@ -6715,8 +6549,8 @@ def _resident_gate(settings: dict) -> str:
 
     The three gates every scheduled Claude run answers to (`_ask_why`'s
     rule). Failing one HOLDS the batch rather than surfacing it, which is
-    the opposite of what `_triage_findings` did with the same three — and
-    deliberately: triage was about to hide a row, where this is about to
+    the opposite of what the retired triage drain did with the same three —
+    and deliberately: triage was about to hide a row, where this is about to
     look at one and the row is on `triaging` either way. `triage.STALE_S`
     is what makes the wait bounded, and the sweep at the top of every pass
     is what makes it visible.
@@ -7407,8 +7241,8 @@ async def _resident_loop() -> None:
 
     The tick is short because a hot signal must not wait out an interval,
     and a tick with an empty queue is one `qsize()` and a comparison. The
-    watch list is expired here rather than on a timer of its own for
-    `_triage_drain`'s reason: one loop, one place a queue is answered for.
+    watch list is expired here rather than on a timer of its own: one
+    loop, one place a queue is answered for.
     """
     await asyncio.sleep(RESIDENT_FIRST_DELAY_S)
     expired_at = 0.0

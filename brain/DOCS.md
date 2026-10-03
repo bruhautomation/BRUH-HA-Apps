@@ -551,17 +551,18 @@ A held finding is **held, not deleted**. The row stays, which is what stops
 the next pass filing the same thing again every six hours, and it clears
 itself exactly as an open one does when the check stops reporting it.
 
-The rule under all of it: **triage can only hold something back by saying
-so.** If brAIn is not signed in, if automatic runs are paused, if the usage
-budget is spent, if the run fails or answers something unreadable, if it
-skips a row — the finding is on the list, saying *Not checked first* and
-why. "I could not look" and "it is not real" are different claims, and only
-the second may keep a problem off your screen.
+The rule under all of it: **the look can only hold something back by saying
+so.** If the look fails, answers something unreadable or skips a row, the
+finding is on the list, saying *Not checked first* and why. If brAIn cannot
+look at all — it is not signed in, automatic runs are paused, the usage
+budget is spent — the findings wait for the next look rather than being
+shown unchecked. "I could not look" and "it is not real" are different
+claims, and only the second may keep a problem off your screen.
 
-One look covers ten findings, and when more than that are waiting the rest
-go to the front of the next one rather than being shown unchecked — showing
-them would spend the whole idea on exactly the houses with the most to
-look at. Anything that has waited an hour with nothing coming back for it
+One look covers up to thirty things, and when more than that are waiting the
+rest go to the front of the next one rather than being shown unchecked —
+showing them would spend the whole idea on exactly the houses with the most
+to look at. Anything that has waited an hour with nothing coming back for it
 is shown anyway, saying so. ⚙ → Diagnostics reports how long the oldest
 waiting one has waited.
 
@@ -2433,7 +2434,7 @@ brAIn 2.0 plans every Claude run by **job** rather than by one global model:
 
 | Tier | Jobs | Why |
 |---|---|---|
-| **Haiku** | triage, scene naming, playbook text, milestones, the memory consolidator, the morning brief, auth check | A yes/no, a name or a sentence over material something else already gathered |
+| **Haiku** | the first look at every finding and signal, scene naming, playbook text, milestones, the memory consolidator, the morning brief, auth check | A yes/no, a name or a sentence over material something else already gathered |
 | **Sonnet** | insight cards, fix plans, the weekly report, study, intents, curiosity, episode summaries, onboarding | Reading a house with tools and writing about it |
 | **Opus** | applying a fix | The one run that changes the house, at the highest effort |
 | **Fable** | nothing yet — reserved for a review you press for | Never from a timer — a scheduler cannot name it |
