@@ -173,6 +173,64 @@ def replay_analyst(entry: dict, model: str, timeout: int,
 
 
 # ---------------------------------------------------------------------------
+# First looks: the free guard half, and the costed replay
+# ---------------------------------------------------------------------------
+
+def _adversary(batch: list) -> dict:
+    """The worst reply a model can give: `ignore` for every signal."""
+    return {"verdicts": [{"id": i, "verdict": "ignore",
+                          "why": "adversary: nothing here matters"}
+                         for i in range(1, len(batch) + 1)]}
+
+
+def replay_first_look(entry: dict, model: str = "", timeout: int = 0,
+                      *, adversary: bool = False) -> dict:
+    """One first-look batch, rebuilt with the current prompt builder.
+
+    ``adversary`` is the free half: no model is asked, every verdict comes
+    back `ignore`, and what is checked is the GUARD — every label marked
+    `guard` names a floor the code applies after any reply, so it must
+    hold whatever the model said. That is the one claim about a first look
+    CI can make without a token, and it is the claim a leak depends on.
+    The costed half asks a real model through `engine.run_claude` with the
+    look's own job, schema and system prompt, under the `replay` source.
+    """
+    import outcomes  # noqa: PLC0415 — panel-local, imported after the path
+    import resident  # noqa: PLC0415
+
+    batch = entry.get("batch") or []
+    if adversary:
+        def ask(_prompt):
+            return _adversary(batch), 0
+    else:
+        import engine  # noqa: PLC0415
+        import usage_store  # noqa: PLC0415
+
+        def ask(prompt):
+            result = engine.run_claude(
+                prompt, resident.FIRST_LOOK_SYSTEM, model,
+                timeout or resident.TIMEOUT_S, resident.MAX_TURNS, SOURCE,
+                job=resident.JOB_FIRST_LOOK, schema=resident.FIRST_LOOK_SCHEMA)
+            cost = usage_store.split_from_meta(result.get("meta") or {})
+            if not result.get("ok"):
+                return None, cost.get("total", 0)
+            data = result.get("data")
+            if not isinstance(data, dict):
+                data = engine.extract_json(result.get("text") or "")
+            return data or {}, cost.get("total", 0)
+
+    row = outcomes.replay_look(entry, ask)
+    guards = [lab for lab in entry.get("labels") or [] if lab.get("guard")]
+    verdicts = {r["signal"]: r for r in row.get("rows") or []}
+    held = sum(1 for lab in guards
+               if verdicts.get(lab.get("signal"), {}).get("ok"))
+    return {**row, "id": entry.get("id"), "kind": "first_look",
+            "title": entry.get("title", ""), "model": model,
+            "adversary": adversary, "guard_labels": len(guards),
+            "guard_held": held}
+
+
+# ---------------------------------------------------------------------------
 # The report
 # ---------------------------------------------------------------------------
 
@@ -217,6 +275,18 @@ def render(report: dict) -> str:
         if row.get("error"):
             lines.append(f"  ✗ {row['id']}: {row['error']}")
             continue
+        if row.get("kind") == "first_look":
+            ok = (row.get("guard_held") == row.get("guard_labels")
+                  and row.get("safety_held") == row.get("safety"))
+            who = ("adversary — every verdict `ignore`"
+                   if row.get("adversary") else "model")
+            lines.append(f"  {'✓' if ok else '✗'} {row['id']} ({who}): "
+                         f"{row.get('agreed', 0)}/{row.get('labels', 0)} "
+                         f"labels agree, guard "
+                         f"{row.get('guard_held', 0)}/"
+                         f"{row.get('guard_labels', 0)}, safety "
+                         f"{row.get('safety_held', 0)}/{row.get('safety', 0)}")
+            continue
         mark = "✓" if row["found"] == row["planted"] and not row["extra"] \
             else "✗"
         line = (f"  {mark} {row['id']}: {row['found']}/{row['planted']} found"
@@ -245,6 +315,13 @@ def render(report: dict) -> str:
                  f"{total['extra']} extra — "
                  f"recall {total['recall']:.0%}, "
                  f"precision {total['precision']:.0%}")
+    looks = report.get("first_look") or {}
+    if looks.get("batches"):
+        agreement = looks.get("agreement")
+        lines.append(f"  first looks: {looks['agreed']}/{looks['labels']} "
+                     "labels agree"
+                     + (f" ({agreement:.0%})" if agreement is not None else "")
+                     + f", safety {looks['safety_held']}/{looks['safety']}")
     for title, bucket in (("by category", report.get("by_category") or {}),
                           ("by model", report.get("by_model") or {})):
         if not bucket:
@@ -271,6 +348,11 @@ def run(entries: list[dict], *, model: str = "", max_entries: int = 0,
             results.append(replay_checks(entry))
             done += 1
             continue
+        if kind == "first_look" and checks_only:
+            # Free: the guard against an adversary, no model asked.
+            results.append(replay_first_look(entry, adversary=True))
+            done += 1
+            continue
         if checks_only:
             results.append({"id": entry.get("id"), "kind": "analyst",
                             "skipped": "the free half only (--checks-only)"})
@@ -278,17 +360,25 @@ def run(entries: list[dict], *, model: str = "", max_entries: int = 0,
         # Checked BEFORE the run, not after: a cap that stops once it has
         # been passed has already spent the run that passed it.
         if spent >= max_tokens:
-            results.append({"id": entry.get("id"), "kind": "analyst",
+            results.append({"id": entry.get("id"), "kind": kind,
                             "skipped": f"the {max_tokens} token budget is "
                                        f"spent ({spent} used)"})
             continue
-        row = replay_analyst(entry, model, timeout, with_tools)
+        if kind == "first_look":
+            row = replay_first_look(entry, model, timeout)
+        else:
+            row = replay_analyst(entry, model, timeout, with_tools)
         spent += int(row.get("tokens") or 0)
         results.append(row)
         done += 1
     scored = [r for r in results
-              if not entry_skipped(r) and not r.get("error")]
+              if not entry_skipped(r) and not r.get("error")
+              and r.get("kind") != "first_look"]
+    looks = [r for r in results
+             if r.get("kind") == "first_look" and not entry_skipped(r)]
+    import outcomes  # noqa: PLC0415 — panel-local
     return {
+        "first_look": outcomes.summarise_replay(looks),
         "generated_at": int(time.time()),
         "entries": len(results),
         "tokens": spent,
@@ -342,7 +432,7 @@ def main(argv: list[str] | None = None) -> int:
     # claims, and only the second is worth starting a costed run on — so
     # the refusal happens before anything is asked rather than as five
     # identical auth failures in a report.
-    needs_model = any((e.get("kind") or "checks") == "analyst"
+    needs_model = any((e.get("kind") or "checks") in ("analyst", "first_look")
                       for e in entries) and not args.checks_only
     if needs_model:
         import engine  # noqa: PLC0415
