@@ -135,18 +135,30 @@ def _words(*parts: str) -> set[str]:
     return {w for w in out if w}
 
 
-def measures_something_hot(eid: str, name: str) -> bool:
+def _hot_by_name(eid: str, name: str) -> bool:
+    words = _words(eid, name)
+    if words & _HOT_WORDS:
+        return True
+    return bool(words & _HOT_WHEN_PAIRED and words & _PAIR_WORDS)
+
+
+def measures_something_hot(eid: str, name: str, world=None) -> bool:
     """Whether this sensor plainly measures something other than room air.
 
     Public because `base.unusual` stands down for what `dev.implausible`
     claims, and the two have to agree about which sensors those are —
     the same reason `out_of_range` is shared and `_zwave_dead_devices`
     is.
+
+    `world` is the snapshot's entity readings (`world_model`): a
+    confident reading of `heater` or `room_air` answers in any language,
+    and the word list above answers whenever there is no reading or it
+    was unsure — which is exactly how this answered before.
     """
-    words = _words(eid, name)
-    if words & _HOT_WORDS:
-        return True
-    return bool(words & _HOT_WHEN_PAIRED and words & _PAIR_WORDS)
+    import world_model  # noqa: PLC0415 — panel-local, a leaf
+
+    return world_model.measures_heat(world, eid,
+                                     lambda: _hot_by_name(eid, name))
 
 
 # brAIn's own integration. Its entities are readings ABOUT this add-on — the
@@ -278,6 +290,43 @@ def _is_battery(st: dict) -> bool:
         "unit_of_measurement") == "%"
 
 
+# A battery somebody charges rather than replaces. Matched on the device's
+# own maker, model and name — the commonest battery in a house that reports
+# its level is a phone's, and "Replace the battery" under somebody's phone
+# is advice nobody can take. The fallback for when `world_model` has no
+# confident reading, and like every list here a guess made where being
+# wrong is cheap: a missed one keeps the old sentence.
+RECHARGEABLE_WORDS = frozenset("""
+phone iphone ipad tablet pixel galaxy android watch laptop macbook
+vacuum roomba roborock robot mower automower car vehicle ev tesla
+toothbrush headphones airpods earbuds kindle
+""".split())
+
+
+def battery_kind(house: House, eid: str) -> str:
+    """`rechargeable`, `replaceable` or `unknown` for a battery sensor.
+
+    Shared with `forecast.battery`, which gives the same advice about the
+    same battery three weeks earlier — two answers to "do you charge
+    this" is one too many.
+    """
+    import world_model  # noqa: PLC0415
+
+    def by_name() -> str:
+        dev = house.device_of(eid) or {}
+        words = _words(eid, house.name(eid), dev.get("name") or "",
+                       dev.get("model") or "", dev.get("manufacturer") or "")
+        return "rechargeable" if words & RECHARGEABLE_WORDS else "unknown"
+
+    return world_model.battery_kind(house.world, eid, by_name)
+
+
+def battery_fix(house: House, eid: str) -> str:
+    if battery_kind(house, eid) == "rechargeable":
+        return "Charge it."
+    return "Replace the battery."
+
+
 def battery_low(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     out = []
@@ -292,7 +341,7 @@ def battery_low(snap: dict, now: float) -> list[dict]:
                 "text": f"{who} battery is low",
                 "detail": f"{level:g}% as of {when(st.get('last_updated'))}"
                           f"{house.where(eid)}.",
-                "fix": "Replace the battery.",
+                "fix": battery_fix(house, eid),
                 "severity": "warning" if level > 5 else "serious",
                 "fixable": False,
                 "entity_id": eid,
@@ -324,7 +373,7 @@ def battery_low(snap: dict, now: float) -> list[dict]:
 # dev.implausible — a reading no sensor should give
 # ---------------------------------------------------------------------------
 
-def out_of_range(state: dict, entity_id: str = "") -> bool:
+def out_of_range(state: dict, entity_id: str = "", world=None) -> bool:
     """True when a reading is outside what its kind of sensor can produce.
 
     Shared with `base.unusual`, which stands down for exactly these: a
@@ -348,7 +397,8 @@ def out_of_range(state: dict, entity_id: str = "") -> bool:
     # and every oven, kettle, boiler and print head in the house.
     if (attrs.get("device_class") == "temperature"
             and measures_something_hot(entity_id,
-                                       attrs.get("friendly_name") or "")):
+                                       attrs.get("friendly_name") or "",
+                                       world)):
         return False
     return not bounds[0] <= value <= bounds[1]
 
@@ -366,7 +416,7 @@ def implausible(snap: dict, now: float) -> list[dict]:
         if value is None:
             continue
         lo, hi = bounds
-        if not out_of_range(st, eid):
+        if not out_of_range(st, eid, house.world):
             continue
         if house.excepted(eid, "dev.implausible"):
             continue

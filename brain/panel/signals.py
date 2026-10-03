@@ -340,15 +340,23 @@ class RegistryContext:
     own attributes, which is why they take one.
     """
 
-    __slots__ = ("protected", "known", "built_at")
+    __slots__ = ("protected", "known", "built_at", "added_safety")
 
     def __init__(self, protected: list[str] | None = None,
                  known: set[str] | frozenset[str] | None = None,
-                 built_at: float = 0.0):
+                 built_at: float = 0.0,
+                 added_safety: dict[str, str] | None = None):
         self.protected = [str(p).strip().lower()
                           for p in (protected or []) if str(p).strip()]
         self.known = frozenset(known or ())
         self.built_at = float(built_at or 0.0)
+        # Safety classes a confident `world_model` reading ADDED to a
+        # binary sensor that carries none (`world_model.added_safety`).
+        # Only ever consulted after the entity's own device class, so a
+        # reading can make a sensor louder and never quieter.
+        self.added_safety = {
+            str(k): str(v) for k, v in (added_safety or {}).items()
+            if str(v) in HOT_SAFETY_CLASSES}
 
     def is_protected(self, entity_id: str) -> bool:
         """`automation_writer.is_protected`, never a second matcher.
@@ -389,6 +397,22 @@ class RegistryContext:
         """
         klass = str((attrs or {}).get("device_class") or "").strip().lower()
         return klass if klass in HOT_SAFETY_CLASSES else ""
+
+    def safety_class_of(self, entity_id: str, attrs: dict | None = None) -> str:
+        """The entity's own safety class, else one a reading added.
+
+        The order IS the guardrail: Home Assistant's device class is asked
+        first and answers whatever a reading says, so `world_model` can
+        put a sensor HA never classified on the watch list and can never
+        take a classified one off it. The deterministic safety lane does
+        not read this — it pages through quiet hours with no model and no
+        gate, so what may start it is the device class and nothing a
+        model filed.
+        """
+        own = self.safety_class(attrs)
+        if own:
+            return own
+        return self.added_safety.get(str(entity_id or ""), "")
 
 
 def domain_of(entity_id: str) -> str:
@@ -584,7 +608,7 @@ def from_state_change(event: dict, ctx: RegistryContext, now: float,
     ctx = ctx or EMPTY_CONTEXT
     protected = ctx.is_protected(entity)
     person = ctx.is_person(entity)
-    safety_class = ctx.safety_class(attrs)
+    safety_class = ctx.safety_class_of(entity, attrs)
     closure = ctx.is_closure(entity, attrs)
     known = ctx.is_known(entity)
     if not (protected or person or safety_class or closure or known):

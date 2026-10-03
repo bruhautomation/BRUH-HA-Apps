@@ -12,6 +12,7 @@ lives in ``detail`` so the finding refreshes rather than re-files.
 from __future__ import annotations
 
 from . import baseline as baseline_check
+from . import devices
 from ._util import DAY, House, num
 
 # A runway shorter than this is worth a row; longer is not yet news.
@@ -97,8 +98,12 @@ def battery_runway(snap: dict, now: float) -> list[dict]:
                       f"current rate: {level:g}% now, losing "
                       f"{-slope:.1f}% a day over the last {round(span)} "
                       f"days{house.where(eid)}.",
-            "fix": "Have a replacement ready; it will need changing before "
-                   "the automations that depend on it notice.",
+            "fix": (("Charge it soon; it will run flat before the "
+                     "automations that depend on it notice.")
+                    if devices.battery_kind(house, eid) == "rechargeable"
+                    else ("Have a replacement ready; it will need changing "
+                          "before the automations that depend on it "
+                          "notice.")),
             "severity": "warning",
             "fixable": False,
             "entity_id": eid,

@@ -193,10 +193,16 @@ class EventBus:
     def __init__(self, on_signal, *, on_event=None, known_ids=None,
                  protected=None, session_factory=None,
                  event_types=EVENT_TYPES, clock=time.time,
-                 rhythm_payload=None, tz=None):
+                 rhythm_payload=None, tz=None, safety_roles=None):
         self._on_signal = on_signal
         self._on_event = on_event
         self._known_ids = known_ids
+        # `{entity_id: device class}` for the binary sensors a confident
+        # `world_model` reading made safety sensors, as a callable for
+        # `known_ids`' reason. It can only ADD: a device class Home
+        # Assistant gave a sensor is read off the event itself and wins
+        # whatever this answers (`RegistryContext.safety_class_of`).
+        self._safety_roles = safety_roles
         self._protected = protected
         self._session_factory = session_factory
         self._event_types = tuple(event_types)
@@ -323,7 +329,15 @@ class EventBus:
             except (OSError, ValueError, TypeError) as exc:
                 log.debug("event bus could not read the known entities: %s", exc)
                 known = self._ctx.known
-        self._ctx = signals.RegistryContext(patterns, known, built_at=now)
+        added: dict[str, str] = {}
+        if callable(self._safety_roles):
+            try:
+                added = dict(self._safety_roles() or {})
+            except (OSError, ValueError, TypeError) as exc:
+                log.debug("event bus could not read the safety roles: %s", exc)
+                added = dict(self._ctx.added_safety)
+        self._ctx = signals.RegistryContext(patterns, known, built_at=now,
+                                            added_safety=added)
         self._ctx_at = now
         return self._ctx
 

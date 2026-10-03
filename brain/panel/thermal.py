@@ -607,23 +607,55 @@ def _name_of(eid: str, st: dict) -> str:
             + " " + eid).lower()
 
 
-def _looks_outdoor(eid: str, st: dict) -> bool:
-    name = _name_of(eid, st)
-    return any(word in name for word in OUTDOOR_WORDS)
+def _looks_outdoor(eid: str, st: dict, world=None) -> bool:
+    """Named outdoors, or read as outdoors by `world_model`.
+
+    The reading answers first when it is confident — `buiten` is outside
+    in Dutch and no list here will ever say so — and the words answer
+    whenever it has nothing to say."""
+    import world_model  # noqa: PLC0415 — a leaf
+
+    def by_name() -> bool:
+        name = _name_of(eid, st)
+        return any(word in name for word in OUTDOOR_WORDS)
+
+    return world_model.is_outdoor(world, eid, by_name)
 
 
-def is_derived(eid: str, st: dict) -> bool:
+def is_derived(eid: str, st: dict, world=None) -> bool:
     """A temperature-classed reading that is not the air temperature.
 
     Checked BEFORE the outdoor words rather than after them, because
     "Outdoor Dew Point" satisfies both and only one of them decides
-    whether the number means what the model needs it to mean.
+    whether the number means what the model needs it to mean. A
+    confident `world_model` reading of `derived_index` answers it in any
+    language (`dauwpunt`); the words are the fallback.
     """
-    name = _name_of(eid, st)
-    return any(word in name for word in DERIVED_WORDS)
+    import world_model  # noqa: PLC0415
+
+    def by_name() -> bool:
+        name = _name_of(eid, st)
+        return any(word in name for word in DERIVED_WORDS)
+
+    return world_model.is_derived(world, eid, by_name)
 
 
-def pick_outdoor(states: dict, areas: dict | None = None) -> tuple[str, str]:
+def _world_for(states: dict, registries: dict | None) -> dict:
+    """The current entity readings for these states and registries."""
+    try:
+        import world_model  # noqa: PLC0415
+        reg = registries or {}
+        snap = {"states": states, "entities": reg.get("entities") or [],
+                "devices": reg.get("devices") or [],
+                "areas": reg.get("areas") or []}
+        return world_model.view(world_model.load(),
+                                world_model.candidates(snap))
+    except Exception:  # noqa: BLE001 — a reading is optional; the build is not
+        return {}
+
+
+def pick_outdoor(states: dict, areas: dict | None = None,
+                 world=None) -> tuple[str, str]:
     """The outdoor reference, and its unit. `("", "")` when there is none.
 
     Named first, because a sensor somebody called "Outside temperature" is
@@ -643,9 +675,9 @@ def pick_outdoor(states: dict, areas: dict | None = None) -> tuple[str, str]:
     named: list[tuple[str, str]] = []
     unplaced: list[tuple[str, str]] = []
     for eid, st, unit in _temperature_sensors(states):
-        if is_derived(eid, st):
+        if is_derived(eid, st, world):
             continue
-        if _looks_outdoor(eid, st):
+        if _looks_outdoor(eid, st, world):
             named.append((eid, unit))
         elif not areas.get(eid):
             unplaced.append((eid, unit))
@@ -657,7 +689,7 @@ def pick_outdoor(states: dict, areas: dict | None = None) -> tuple[str, str]:
 
 
 def room_candidates(states: dict, outdoor: str, unit: str,
-                    areas: dict | None = None) -> list[str]:
+                    areas: dict | None = None, world=None) -> list[str]:
     """Indoor thermometers worth a model, in a stable order.
 
     The unit has to match the reference's — ``k`` is only unit-free while
@@ -668,11 +700,11 @@ def room_candidates(states: dict, outdoor: str, unit: str,
     areas = areas or {}
     out = []
     for eid, st, own in _temperature_sensors(states):
-        if eid == outdoor or own != unit or _looks_outdoor(eid, st):
+        if eid == outdoor or own != unit or _looks_outdoor(eid, st, world):
             continue
         # A dew point sitting in a room's area reads inside the band and
         # carries the class, so the band alone lets one through as a room.
-        if is_derived(eid, st):
+        if is_derived(eid, st, world):
             continue
         try:
             value = float(st.get("state"))
@@ -807,22 +839,31 @@ async def fetch_hourly(session, ids: list[str], now: float,
 
 
 async def build(session, states: dict, registries: dict | None = None,
-                now: float | None = None, path: str | None = None) -> dict:
+                now: float | None = None, path: str | None = None,
+                world: dict | None = None) -> dict:
     """Measure every room and write the store. Returns the payload.
 
     A fetch the recorder refused writes nothing and hands back the
     previous store with `error` beside it (`baselines.refused`). A house
     with nothing to measure still writes, with `reason` saying why.
+
+    `world` is the entity readings (`world_model`); left out, the store
+    is read here and matched against the registries this pass fetched,
+    so a renamed sensor's old reading is never what picks the outdoor
+    reference. A store that cannot be read is `{}` and the word lists
+    answer, which is this module before the readings existed.
     """
     import baselines  # noqa: PLC0415
 
+    if world is None:
+        world = _world_for(states, registries)
     now = time.time() if now is None else now
     tz, tz_name = baselines.house_timezone()
     areas = area_map(registries)
     payload = _empty()
     payload.update({"built_at": int(now), "tz": tz_name, "days": HISTORY_DAYS})
 
-    outdoor, unit = pick_outdoor(states, areas)
+    outdoor, unit = pick_outdoor(states, areas, world)
     payload["outdoor"] = outdoor
     payload["unit"] = unit
     if not outdoor:
@@ -835,7 +876,7 @@ async def build(session, states: dict, registries: dict | None = None,
         save(payload, path)
         return payload
 
-    ids = room_candidates(states, outdoor, unit, areas)
+    ids = room_candidates(states, outdoor, unit, areas, world)
     payload["asked"] = len(ids)
     if not ids:
         payload["reason"] = (

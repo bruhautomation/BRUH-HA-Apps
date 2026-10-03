@@ -528,6 +528,20 @@ async def collect(now: float | None = None) -> dict:
         snap["facts"] = {}
         _mark("facts", False, f"the facts store could not be read: {exc}")
 
+    # What each entity IS (`world_model`): the readings whose fingerprint
+    # still matches the registry this pass fetched. Read, never built —
+    # the nightly pass reads the house and a checks pass picks up what it
+    # left. Unreadable is an EMPTY map, which every reader answers with
+    # today's word list: "I could not look" must not become a role.
+    try:
+        import world_model  # noqa: PLC0415
+        snap["world"] = world_model.view(world_model.load(),
+                                         world_model.candidates(snap))
+        _mark("world", True, "")
+    except Exception as exc:  # noqa: BLE001
+        snap["world"] = {}
+        _mark("world", False, f"the entity readings could not be read: {exc}")
+
     recorder = load_recorder()
     snap["recorder"] = recorder or {}
     _mark("recorder", recorder is not None,
