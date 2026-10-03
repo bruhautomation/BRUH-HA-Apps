@@ -83,40 +83,189 @@ ACTION_LEDGER = os.environ.get("BRAIN_ACTION_LEDGER",
 ACTION_LEDGER_MAX_BYTES = 2 * 1024 * 1024
 
 
-def _call_entities(data):
-    """The entity ids a service call names, at either of the two places.
+# ---------------------------------------------------------------------------
+# What a service call names, wherever it names it
+# ---------------------------------------------------------------------------
+#
+# Every guard at the chokepoint below used to read `entity_id` and `target`
+# and nothing else, and Home Assistant has services that take their
+# entities under other keys: `scene.apply` and `scene.create` take an
+# `entities` map that Core hands to each domain's reproduce_state — which
+# will unlock a lock or open a cover — `scene.create` a `snapshot_entities`
+# list, `media_player.join` its `group_members`, `tts.speak` its
+# `media_player_entity_id`. A protected lock named in `entities` passed the
+# protected list, the deny-list and the voice exposure gate in one call.
+# So the payload is walked whole: anything under a key that holds entities
+# by definition is NAMED, and any other string (or dict key) that is
+# exactly an entity id's shape is LOOSE — the second is what catches a
+# protected entity passed to a script as a variable, and is asked only the
+# questions a wrong guess cannot turn into a refusal of ordinary text.
+_ENTITY_KEYS = frozenset({"entity_id", "entity_ids", "entities",
+                          "snapshot_entities", "group_members"})
+_ENTITY_TOKEN_RE = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z0-9_]+$")
+_SCOPE_KEYS = ("area_id", "device_id", "label_id", "floor_id")
+# A payload is somebody's JSON; a walk with no floor is a walk a hostile one
+# can make arbitrarily deep.
+_SCAN_DEPTH = 12
 
-    A call may put `entity_id` at the top level or inside `target`, and
-    either may be a string or a list. Area, device, label and floor
-    targets are recorded under `target` and deliberately not resolved:
-    resolving one needs the registries as they were at the time of the
-    call, and a wrong expansion would attribute somebody else's change to
-    brAIn — which is the one mistake this ledger exists to prevent.
-    """
-    out = []
-    for source in (data or {}, (data or {}).get("target") or {}):
-        if not isinstance(source, dict):
-            continue
-        value = source.get("entity_id")
-        if isinstance(value, str):
-            value = [value]
-        if isinstance(value, list):
-            out.extend(str(v) for v in value if isinstance(v, str) and "." in v)
+
+def _entity_key(key):
+    key = str(key).lower()
+    return (key in _ENTITY_KEYS or key.endswith("_entity_id")
+            or key.endswith("_entity_ids"))
+
+
+def _entity_values(value):
+    """The ids in a field that holds entities: a string, a comma list, a
+    list, or a map keyed by entity id (scene.apply's `entities`)."""
+    if isinstance(value, str):
+        return [x.strip() for x in value.split(",") if x.strip()]
+    if isinstance(value, (list, tuple)):
+        out = []
+        for item in value:
+            if isinstance(item, str):
+                out.extend(x.strip() for x in item.split(",") if x.strip())
+        return out
+    if isinstance(value, dict):
+        return [str(k).strip() for k in value if str(k).strip()]
+    return []
+
+
+def _dedupe(items):
     seen = set()
-    return [e for e in out if not (e in seen or seen.add(e))]
+    return [i for i in items if not (i in seen or seen.add(i))]
 
 
-def record_action(domain, service, data):
+def _payload_entities(payload):
+    """(named, loose): every entity id a service payload names.
+
+    `named` is everything under an entity-holding key at any depth —
+    `entity_id`, `entities` (list or map), `snapshot_entities`,
+    `group_members`, `*_entity_id`. `loose` is every other string that is
+    exactly an entity id's shape, and every dict key that is, minus what is
+    already named. Neither is lowercased: the guards that read them do
+    their own case-folding, and the ledger records what was asked for.
+    """
+    named, loose = [], []
+
+    def walk(node, depth):
+        if depth > _SCAN_DEPTH:
+            return
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if _entity_key(key):
+                    named.extend(_entity_values(value))
+                    if isinstance(value, dict):
+                        walk(list(value.values()), depth + 1)
+                    continue
+                if isinstance(key, str) and _ENTITY_TOKEN_RE.match(key.strip().lower()):
+                    loose.append(key.strip())
+                walk(value, depth + 1)
+        elif isinstance(node, (list, tuple)):
+            for item in node:
+                walk(item, depth + 1)
+        elif isinstance(node, str):
+            for part in node.split(","):
+                token = part.strip()
+                if _ENTITY_TOKEN_RE.match(token.lower()):
+                    loose.append(token)
+
+    walk(payload if isinstance(payload, (dict, list)) else {}, 0)
+    named = _dedupe(named)
+    lowered = {n.lower() for n in named}
+    return named, _dedupe(t for t in loose if t.lower() not in lowered)
+
+
+def _target_ids(payload):
+    """The service's own target: `entity_id` at the top or under `target`."""
+    payload = payload if isinstance(payload, dict) else {}
+    out = []
+    for scope in (payload, payload.get("target")):
+        if isinstance(scope, dict):
+            out.extend(_entity_values(scope.get("entity_id")))
+    return _dedupe(out)
+
+
+def _top_named(payload):
+    """Entities the service itself is handed — every entity-holding key at
+    the top level or under `target`, never inside a script's `variables` or
+    a notification's `data`, which are the payload's passengers."""
+    payload = payload if isinstance(payload, dict) else {}
+    out = []
+    for scope in (payload, payload.get("target")):
+        if isinstance(scope, dict):
+            for key, value in scope.items():
+                if _entity_key(key):
+                    out.extend(_entity_values(value))
+    return _dedupe(out)
+
+
+def _call_entities(data, extra=()):
+    """The entity ids a service call names, for the ledger.
+
+    Every NAMED id, wherever the payload put it — a scene applied with an
+    `entities` map changes those entities, and a ledger that did not list
+    them would file brAIn's change as somebody else's. Loose strings are
+    not recorded: the ledger's whole job is not to claim a change brAIn
+    did not make. Area, device, label and floor targets are recorded under
+    `target` and deliberately not resolved: resolving one needs the
+    registries as they were at the time of the call, and a wrong expansion
+    would attribute somebody else's change to brAIn — which is the one
+    mistake this ledger exists to prevent.
+    """
+    named, _loose = _payload_entities(data or {})
+    out = [str(v) for v in list(named) + list(extra)
+           if isinstance(v, str) and "." in v]
+    return _dedupe(out)
+
+
+# Which face of brAIn this process serves. The launcher says so in
+# BRAIN_CHANNEL; until every launcher does, the voice launchers are known by
+# what they already set (the pool sets BRAIN_ASSIST_ACCESS, the classic
+# listener sets BRAIN_EXPOSED_ONLY to 0 or 1, and nothing else sets either),
+# and anything else is unknown — "" — which the action miner reads as brAIn
+# acting on its own, the answer it gave every row before this existed. That
+# is the safe direction: an unattended run filed as a person would invent
+# overrides and habits, where a person filed as brAIn only loses one.
+CHANNEL_RE = re.compile(r"[^a-z0-9_-]")
+
+
+def _channel():
+    word = CHANNEL_RE.sub("", os.environ.get("BRAIN_CHANNEL", "").strip().lower())[:32]
+    if word:
+        return word
+    if os.environ.get("BRAIN_ASSIST_ACCESS") or "BRAIN_EXPOSED_ONLY" in os.environ:
+        return "voice"
+    return ""
+
+
+def _run_id():
+    """The conversation this process is serving, when the CLI said.
+
+    Claude Code puts its session id in every stdio MCP server's environment
+    as CLAUDE_CODE_SESSION_ID; it is the same id `run_sources` and the
+    panel's "See the run" key on.
+    """
+    value = os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip()
+    return value[:64] if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value) else ""
+
+
+def record_action(domain, service, data, extra=()):
     """Append one service call to the ledger. Never raises.
 
     Accounting must not fail the call it is accounting for — the same rule
     the panel's run journal follows. A ledger this cannot write costs the
     timeline an attribution; a ledger that raises costs somebody their
     lights.
+
+    The row carries the CHANNEL that asked (`voice`, `chat`, `terminal`, an
+    unattended job's name, or nothing when it cannot be told): a person
+    saying "turn the hall light back on" through brAIn is a person, and
+    `actions.classify` can only file it as one if the row says who asked.
     """
     try:
         target = {}
-        for key in ("area_id", "device_id", "label_id", "floor_id"):
+        for key in _SCOPE_KEYS:
             for source in (data or {}, (data or {}).get("target") or {}):
                 if isinstance(source, dict) and source.get(key):
                     target[key] = source[key]
@@ -124,8 +273,14 @@ def record_action(domain, service, data):
             "ts": time.time(),
             "domain": domain,
             "service": service,
-            "entities": _call_entities(data),
+            "entities": _call_entities(data, extra),
         }
+        channel = _channel()
+        if channel:
+            row["channel"] = channel
+        run_id = _run_id()
+        if run_id:
+            row["run_id"] = run_id
         if target:
             row["target"] = target
         path = ACTION_LEDGER
@@ -207,6 +362,32 @@ def _meta_call_denied(payload):
     return None
 
 
+# `scene.apply` and `scene.create` are the meta-services' problem one layer
+# over: Core reproduces each entity's state through that entity's own domain,
+# so `scene.apply {"entities": {"lock.front_door": "unlocked"}}` is a
+# lock.unlock that no deny pattern names. Same answer, same conservatism:
+# a named entity whose domain appears in a denied pattern refuses the call.
+_REPRODUCE_SERVICES = (("scene", "apply"), ("scene", "create"))
+
+
+def _reproduce_denied(domain, service, payload):
+    """Why a state-reproducing call is refused by the deny-list, or None."""
+    if not DENIED_SERVICES:
+        return None
+    if (str(domain).lower(), str(service).lower()) not in _REPRODUCE_SERVICES:
+        return None
+    named, _loose = _payload_entities(payload or {})
+    denied_domains = {p.split(".", 1)[0] for p in DENIED_SERVICES}
+    if "*" in denied_domains and named:
+        return "it sets entity states, and every service is restricted here"
+    for eid in named:
+        edomain = eid.split(".", 1)[0].lower()
+        if edomain in denied_domains:
+            return (f"it sets the state of {eid}, and {edomain} services are "
+                    "restricted for this assistant")
+    return None
+
+
 def _entity_protected(entity_id):
     """True if this entity id matches the protected list."""
     target = str(entity_id or "").strip().lower()
@@ -233,34 +414,85 @@ def _protected_scopes():
     Unreadable registry → empty sets, and the caller fails closed on any
     area/device target while a protected list exists.
     """
-    import time as _time
-    now = _time.time()
+    if not _refresh_registry():
+        return set(), set(), False
+    return _PROTECTED_SCOPES["areas"], _PROTECTED_SCOPES["devices"], True
+
+
+def _refresh_registry():
+    """Read the entity and device registries into the shared cache.
+
+    One read serves two questions: which areas and devices hold a protected
+    entity (`_protected_scopes`), and which device and area each entity
+    lives in (`_registry_maps`, for working out what a script or scene
+    reaches). True when the cache is fresh, False when the registry could
+    not be read — and a failure is never cached, so the next call asks
+    again rather than serving "I could not look" for a minute.
+    """
+    now = time.time()
     if now - _PROTECTED_SCOPES["at"] < _PROTECTED_SCOPES_TTL:
-        return _PROTECTED_SCOPES["areas"], _PROTECTED_SCOPES["devices"], True
-    areas, devices, ok = set(), set(), False
+        return True
     try:
         entities = _ws_command({"type": "config/entity_registry/list"})
         device_rows = _ws_command({"type": "config/device_registry/list"})
-        if isinstance(entities, list) and isinstance(device_rows, list):
-            device_area = {d.get("id"): d.get("area_id") for d in device_rows
-                           if isinstance(d, dict)}
-            for e in entities:
-                if not isinstance(e, dict) or not _entity_protected(e.get("entity_id")):
-                    continue
-                if e.get("device_id"):
-                    devices.add(e["device_id"])
-                area = e.get("area_id") or device_area.get(e.get("device_id"))
-                if area:
-                    areas.add(area)
-            ok = True
-    except Exception:  # noqa: BLE001 — an unreadable registry fails closed below
-        ok = False
-    if ok:
-        _PROTECTED_SCOPES.update(at=now, areas=areas, devices=devices)
-    return areas, devices, ok
+    except Exception:  # noqa: BLE001 — an unreadable registry fails closed in the callers
+        return False
+    if not (isinstance(entities, list) and isinstance(device_rows, list)):
+        return False
+    device_area = {d.get("id"): d.get("area_id") for d in device_rows
+                   if isinstance(d, dict) and d.get("id")}
+    entity_map = {}
+    areas, devices = set(), set()
+    for e in entities:
+        if not isinstance(e, dict) or not e.get("entity_id"):
+            continue
+        eid = str(e["entity_id"]).lower()
+        entity_map[eid] = {
+            "device_id": e.get("device_id"),
+            "area_id": e.get("area_id") or device_area.get(e.get("device_id")),
+            "labels": [str(x) for x in e.get("labels") or []],
+        }
+        if not _entity_protected(eid):
+            continue
+        if e.get("device_id"):
+            devices.add(e["device_id"])
+        area = entity_map[eid]["area_id"]
+        if area:
+            areas.add(area)
+    _PROTECTED_SCOPES.update(at=now, areas=areas, devices=devices,
+                             entities=entity_map, device_area=device_area)
+    return True
 
 
-def _protected_target(payload, empty_is_all=False):
+def _registry_maps():
+    """(entity → {device_id, area_id, labels}, device → area_id), or None."""
+    if not _refresh_registry():
+        return None
+    return (_PROTECTED_SCOPES.get("entities") or {},
+            _PROTECTED_SCOPES.get("device_area") or {})
+
+
+_AREA_FLOORS = {"at": 0.0, "floors": {}}
+
+
+def _area_floors():
+    """area_id → floor_id, or None when the area registry cannot be read."""
+    now = time.time()
+    if now - _AREA_FLOORS["at"] < _PROTECTED_SCOPES_TTL:
+        return _AREA_FLOORS["floors"]
+    try:
+        rows = _ws_command({"type": "config/area_registry/list"})
+    except Exception:  # noqa: BLE001 — the caller fails closed on None
+        return None
+    if not isinstance(rows, list):
+        return None
+    floors = {r.get("area_id"): r.get("floor_id") for r in rows
+              if isinstance(r, dict) and r.get("area_id")}
+    _AREA_FLOORS.update(at=now, floors=floors)
+    return floors
+
+
+def _protected_target(payload, empty_is_all=False, extra=()):
     """Why a service call's targets touch a protected entity, or None.
 
     ``empty_is_all`` is the meta-service rule: a ``homeassistant.turn_off``
@@ -271,21 +503,23 @@ def _protected_target(payload, empty_is_all=False):
     because most services legitimately take no entity target at all
     (notify, reload, the brain.* registry services), and refusing those
     while a protected list exists would take the add-on's own tooling away.
+
+    Every entity the payload names is asked about, wherever it names it
+    (`_payload_entities`) — and so is every loose string that is exactly an
+    entity id, because a protected id passed to a script as a variable is
+    the same protected id. ``extra`` is a target the payload does not spell
+    out: `script.<object_id>` called as a service runs that script.
     """
     if not PROTECTED_ENTITIES:
         return None
     payload = payload if isinstance(payload, dict) else {}
     target = payload.get("target")
     scopes = [payload] + ([target] if isinstance(target, dict) else [])
-    entity_ids = []
+    named, loose = _payload_entities(payload)
+    entity_ids = list(named) + [str(x) for x in extra]
     area_ids = []
     device_ids = []
     for scope in scopes:
-        raw = scope.get("entity_id")
-        if isinstance(raw, str):
-            entity_ids.extend(x.strip() for x in raw.split(",") if x.strip())
-        elif isinstance(raw, list):
-            entity_ids.extend(str(x) for x in raw)
         for key, bucket in (("area_id", area_ids), ("device_id", device_ids)):
             val = scope.get(key)
             if isinstance(val, str):
@@ -303,6 +537,9 @@ def _protected_target(payload, empty_is_all=False):
             return "it addresses all entities, including protected ones"
         if _entity_protected(eid):
             return f"{eid} is a protected entity"
+    for eid in loose:
+        if _entity_protected(eid):
+            return f"it names {eid}, a protected entity"
     if area_ids or device_ids:
         areas, devices, ok = _protected_scopes()
         if not ok:
@@ -373,9 +610,53 @@ UNEXPOSED_READ = (
     "assistant cannot see it. Tell the user it can be exposed under "
     "Settings → Voice assistants; do not retry."
 )
+UNEXPOSED_ACT = (
+    "{what} is refused because {why}. Tell the user it can be exposed under "
+    "Settings → Voice assistants, or this agent's access raised in its brAIn "
+    "settings; do not retry or look for another route."
+)
+PROTECTED_REFUSAL = (
+    "{what} is refused because {why}. The homeowner keeps a protected list, "
+    "and nothing brAIn does may act on what is on it. Tell the user; do not "
+    "retry or look for another route."
+)
 
 
-def _exposure_refusal(payload):
+# The domains Home Assistant keeps entities in. A LOOSE string is asked
+# about exposure only when it is plausibly an entity — in the snapshot's
+# registry, or under one of these — because `song.mp3` handed to BRight is
+# the shape of an entity id and no entity at all, and refusing it as "not
+# exposed" would be a voice refusal invented out of a file name. A named
+# field is always asked: something under `entities` is an entity by the
+# service's own definition.
+ENTITY_DOMAINS = frozenset({
+    "ai_task", "air_quality", "alarm_control_panel", "alert",
+    "assist_satellite", "automation", "binary_sensor", "button", "calendar",
+    "camera", "climate", "conversation", "counter", "cover", "date",
+    "datetime", "device_tracker", "event", "fan", "geo_location", "group",
+    "humidifier", "image", "image_processing", "input_boolean",
+    "input_button", "input_datetime", "input_number", "input_select",
+    "input_text", "lawn_mower", "light", "lock", "media_player", "notify",
+    "number", "person", "plant", "proximity", "remote", "scene", "schedule",
+    "script", "select", "sensor", "siren", "stt", "sun", "switch", "tag",
+    "text", "time", "timer", "todo", "tts", "update", "vacuum", "valve",
+    "wake_word", "water_heater", "weather", "zone",
+})
+
+
+def _plausible_entity(token, snap):
+    token = str(token or "").strip().lower()
+    if not token or "." not in token:
+        return False
+    if isinstance(snap, dict):
+        for key in ("_exposed_set", "_hidden_set", "exposed", "hidden"):
+            known = snap.get(key)
+            if known and token in known:
+                return True
+    return token.split(".", 1)[0] in ENTITY_DOMAINS
+
+
+def _exposure_refusal(payload, extra=()):
     """Why a service call's targets reach something voice cannot see, or None.
 
     Only entity targets can be checked against the exposure list; an area,
@@ -384,32 +665,278 @@ def _exposure_refusal(payload):
     hidden entity reached through its room is the bypass. The area map
     voice is shown lists the exposed ids per area, so the model can name
     them — which is what the sentence asks for.
+
+    Every entity the payload names is asked, wherever it names it — an
+    `entities` map on scene.apply, `group_members` on media_player.join, a
+    speaker in `media_player_entity_id` — and so is any loose string that
+    is plausibly an entity (`_plausible_entity`).
     """
     if not EXPOSED_ONLY:
         return None
     payload = payload if isinstance(payload, dict) else {}
     target = payload.get("target")
     scopes = [payload] + ([target] if isinstance(target, dict) else [])
-    entity_ids = []
     for scope in scopes:
-        raw = scope.get("entity_id")
-        if isinstance(raw, str):
-            entity_ids.extend(x.strip() for x in raw.split(",") if x.strip())
-        elif isinstance(raw, list):
-            entity_ids.extend(str(x) for x in raw)
-        for key in ("area_id", "device_id", "label_id", "floor_id"):
+        for key in _SCOPE_KEYS:
             if scope.get(key):
                 return ("it targets an area, device, label or floor, and voice "
                         "may only act on the entities Home Assistant exposes "
                         "to it — name the entity ids instead")
-    if _exposure() is None:
+    named, loose = _payload_entities(payload)
+    snap = _exposure()
+    if snap is None:
         return ("Home Assistant's exposure settings could not be read, and "
                 "voice may only act on what is exposed to it")
-    for eid in entity_ids:
+    for eid in list(named) + [str(x) for x in extra]:
         if eid.lower() == "all":
             return "it addresses all entities, including ones not exposed to voice"
         if not _entity_exposed(eid):
             return f"{eid} is not exposed to voice assistants in Home Assistant"
+    for eid in loose:
+        if _plausible_entity(eid, snap) and not _entity_exposed(eid):
+            return f"it names {eid}, which is not exposed to voice assistants in Home Assistant"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# The voice level scopes SERVICES as well as entities
+# ---------------------------------------------------------------------------
+#
+# The exposure gate above asks about the entities a call names, and a call
+# that names none passed it — with the Supervisor's admin token behind it.
+# So a default "Voice assistant" agent, the one a kitchen satellite talks
+# to, could be talked into `homeassistant.restart`, `hassio.host_shutdown`,
+# `update.install` or `brain.create_user` with `admin: true`, while the
+# same `reload_config` was refused as a tool. Home Assistant's own Assist
+# can only run intents on exposed entities; the voice level is meant to be
+# no wider. Three rules, all at the chokepoint so a tool added later is
+# covered by being a service call:
+#
+#  - a call that names no entity (and no area, which the exposure gate
+#    refuses with its own sentence) is refused unless its service is on
+#    `VOICE_UNTARGETED` — a notification, and the BRUH add-ons' play
+#    services that voice's own tools already use;
+#  - a call that does name entities may only name its own domain's —
+#    `light.turn_on` on a light — unless the service is one whose whole job
+#    is to act across domains (`VOICE_CROSS_DOMAIN`: the meta-services, a
+#    TTS announcement, Music Assistant playing on a speaker, a scene applied
+#    inline). That is what keeps `brain.delete_entity {entity_id: light.x}`
+#    and `zwave_js.set_config_parameter` on an exposed lock out of reach;
+#  - and `VOICE_REFUSED_DOMAINS` is the one domain whose same-domain service
+#    is administration: `update.install` on an update entity.
+#
+# An allow-list rather than a deny-list of admin domains, because a deny
+# list is a list of the admin services somebody thought of, and every
+# integration installed afterwards brings more.
+VOICE_UNTARGETED = {
+    "notify": None,                       # every notifier: send_notification's route
+    "persistent_notification": frozenset({"create"}),
+    "bruh_minecraft": frozenset({
+        "get_status", "teleport", "set_gamemode", "give", "set_time",
+        "set_weather", "say", "list_addons", "search_addons"}),
+    "bruh_print": frozenset({"get_status", "print_text", "print_template"}),
+    "bright": frozenset({"get_status", "start_show", "start_party",
+                         "party_mode", "stop_show"}),
+    "music_assistant": frozenset({"search", "get_library"}),
+}
+VOICE_CROSS_DOMAIN = {
+    "homeassistant": frozenset({"turn_on", "turn_off", "toggle", "update_entity"}),
+    "tts": None,
+    "music_assistant": frozenset({"play_media", "play_announcement",
+                                  "transfer_queue", "get_queue"}),
+    "scene": frozenset({"apply", "create"}),
+}
+VOICE_REFUSED_DOMAINS = frozenset({"update"})
+VOICE_SERVICE_REFUSAL = (
+    "{what} is refused because {why}. This voice agent is set to 'Voice "
+    "assistant', which reaches only the entities Home Assistant exposes to "
+    "Assist. Tell the user it needs an agent set to 'Whole house' or 'Full "
+    "admin' (Settings → Devices & services → brAIn → the agent → "
+    "Configure); do not retry or look for another route."
+)
+
+
+def _listed(table, domain, service):
+    if domain not in table:
+        return False
+    allowed = table[domain]
+    return allowed is None or service in allowed
+
+
+def _voice_service_refusal(domain, service, payload, extra=()):
+    """Why a voice-level agent may not make this call at all, or None."""
+    if not EXPOSED_ONLY:
+        return None
+    d, s = str(domain).lower(), str(service).lower()
+    if d in VOICE_REFUSED_DOMAINS:
+        return f"{d} services administer Home Assistant itself"
+    payload = payload if isinstance(payload, dict) else {}
+    untargeted_ok = _listed(VOICE_UNTARGETED, d, s)
+    # The service's OWN targets, never an entity riding in a payload's
+    # passengers: `hassio.addon_stop` with a light tucked into `data` names
+    # no target, and reading the light as one would be the bypass again.
+    targets = list(_top_named(payload)) + [str(x) for x in extra]
+    scoped = any(isinstance(scope, dict) and any(scope.get(k) for k in _SCOPE_KEYS)
+                 for scope in (payload, payload.get("target")))
+    if not (targets or scoped or untargeted_ok):
+        return ("it names no entity, and a service with no target reaches "
+                "past the entities exposed to voice — it can restart Home "
+                "Assistant, change a user or a backup")
+    if untargeted_ok or _listed(VOICE_CROSS_DOMAIN, d, s):
+        return None
+    for eid in targets:
+        edomain = eid.split(".", 1)[0].lower()
+        if eid.lower() != "all" and edomain != d:
+            return (f"it acts on {eid} through a {d} service rather than "
+                    f"one of {edomain}'s own")
+    return None
+
+
+# ---------------------------------------------------------------------------
+# What a script, a scene or an automation reaches
+# ---------------------------------------------------------------------------
+#
+# `fire_event` has been refused while anything is protected since the list
+# existed, because an event reaches the house through whatever listens for
+# it and nothing here can see which. `scene.turn_on`, `script.turn_on` and
+# `automation.trigger` reach it the same indirect way and were checked only
+# as the scene, the script or the automation — so a scene holding the
+# protected front door lock was one `activate_scene` away, and on the voice
+# channel a default-exposed script was the way round an unexposed lock that
+# REACH_EXPOSED only asked the model not to take. These are not opaque the
+# way an event is: Home Assistant's own `search/related` answers what each
+# one references, scenes and nested scripts unwrapped. So it is asked, and
+# a protected member refuses the run on every channel and an unexposed one
+# refuses it on voice. A container whose members cannot be read is refused
+# while the protected list is non-empty — the label/floor rule — and on
+# voice; with neither in force nothing is looked up at all.
+#
+# What `search/related` returns is a reference graph and not a target list,
+# and the difference is load-bearing: it adds the AREA and DEVICE of every
+# referenced entity, and the floor of every area, so a script that turns on
+# the hall light lists the hall — and refusing on that would refuse every
+# script that touches anything in a room with a protected lock in it. So
+# areas, devices and floors are asked about only when they are not
+# explained by a referenced entity (`_direct_scopes`): what is left is what
+# the script or automation targets by area, device, label or floor itself.
+_RUNS_MEMBERS = {
+    "script": frozenset({("script", "turn_on"), ("script", "toggle"),
+                         ("homeassistant", "turn_on"), ("homeassistant", "toggle")}),
+    "scene": frozenset({("scene", "turn_on"), ("homeassistant", "turn_on"),
+                        ("homeassistant", "toggle")}),
+    "automation": frozenset({("automation", "trigger")}),
+}
+# The services of the script domain itself; any other `script.<name>` is
+# the script of that object id, run directly.
+_SCRIPT_OWN_SERVICES = frozenset({"turn_on", "turn_off", "toggle", "reload"})
+
+
+def _script_service_target(domain, service):
+    """`script.<object_id>` called as a service is a run of that script."""
+    d, s = str(domain).lower(), str(service).lower()
+    if d != "script" or s in _SCRIPT_OWN_SERVICES or not re.fullmatch(r"[a-z0-9_]+", s):
+        return None
+    return f"script.{s}"
+
+
+def _containers(domain, service, payload, extra=()):
+    """The scripts, scenes and automations this call would RUN."""
+    pair = (str(domain).lower(), str(service).lower())
+    out = [str(x).lower() for x in extra]
+    for eid in _target_ids(payload):
+        kind = eid.split(".", 1)[0].lower()
+        if pair in _RUNS_MEMBERS.get(kind, ()):
+            out.append(eid.lower())
+    return _dedupe(out)
+
+
+def _related(item_id):
+    """What Home Assistant says this script/scene/automation references, or
+    None when it would not answer. Never cached: a guard that answered from
+    a minute ago would answer for the script as it was before the edit."""
+    kind = item_id.split(".", 1)[0]
+    try:
+        result = _ws_command({"type": "search/related", "item_type": kind,
+                              "item_id": item_id})
+    except Exception:  # noqa: BLE001 — None is "could not look"
+        return None
+    if not isinstance(result, dict) or "error" in result:
+        return None
+    return {str(k): [str(x) for x in v] for k, v in result.items()
+            if isinstance(v, (list, tuple, set))}
+
+
+def _direct_scopes(container, related):
+    """(areas, devices, labels, floors) the container targets ITSELF, or None
+    when the registries that tell those from resolved-up ones are unreadable."""
+    wanted = any(related.get(k) for k in ("area", "device", "label", "floor"))
+    if not wanted:
+        return set(), set(), set(), set()
+    maps = _registry_maps()
+    if maps is None:
+        return None
+    entity_map, device_area = maps
+    entities = [e.lower() for e in related.get("entity", [])]
+    explained_devices = {entity_map[e]["device_id"] for e in entities
+                         if e in entity_map and entity_map[e]["device_id"]}
+    devices = set(related.get("device", [])) - explained_devices
+    explained_areas = {entity_map[e]["area_id"] for e in entities
+                       if e in entity_map and entity_map[e]["area_id"]}
+    explained_areas |= {device_area.get(d) for d in devices if device_area.get(d)}
+    areas = set(related.get("area", [])) - explained_areas
+    own = (entity_map.get(container) or {}).get("labels") or []
+    labels = set(related.get("label", [])) - set(own)
+    floors = set(related.get("floor", []))
+    if floors:
+        area_floor = _area_floors()
+        if area_floor is None:
+            return None
+        floors -= {area_floor.get(a) for a in related.get("area", [])}
+    return areas, devices, labels, floors
+
+
+def _member_refusal(domain, service, payload, extra=()):
+    """("protected" | "exposure", why) when a script, scene or automation
+    this call runs reaches something it may not, else None."""
+    if not (PROTECTED_ENTITIES or EXPOSED_ONLY):
+        return None
+    kind = "protected" if PROTECTED_ENTITIES else "exposure"
+    for container in _containers(domain, service, payload, extra):
+        related = _related(container)
+        if related is None:
+            return kind, (f"what {container} acts on could not be read from "
+                          "Home Assistant, so it cannot be checked")
+        entities = [e.lower() for e in related.get("entity", [])]
+        for eid in entities:
+            if _entity_protected(eid):
+                return "protected", f"{container} acts on {eid}, a protected entity"
+        if EXPOSED_ONLY:
+            for eid in entities:
+                if not _entity_exposed(eid):
+                    return "exposure", (f"{container} reaches {eid}, which is not "
+                                        "exposed to voice assistants in Home Assistant")
+        direct = _direct_scopes(container, related)
+        if direct is None:
+            return kind, (f"the registry could not be read to see which areas "
+                          f"and devices {container} acts on")
+        areas, devices, labels, floors = direct
+        if PROTECTED_ENTITIES and (areas or devices or labels or floors):
+            if labels or floors:
+                return "protected", (f"{container} targets a label or floor, whose "
+                                     "members cannot be checked against the protected list")
+            p_areas, p_devices, ok = _protected_scopes()
+            if not ok:
+                return "protected", (f"the registry could not be read to check what "
+                                     f"{container} reaches")
+            for a in sorted(areas):
+                if a in p_areas:
+                    return "protected", f"{container} targets area {a}, which contains a protected entity"
+            for d in sorted(devices):
+                if d in p_devices:
+                    return "protected", f"{container} targets device {d}, a protected entity's device"
+        if EXPOSED_ONLY and (areas or devices or labels or floors):
+            return "exposure", (f"{container} acts through an area, device, label or "
+                                "floor, and voice may only reach the entities exposed to it")
     return None
 
 
@@ -567,10 +1094,22 @@ def call_service(domain, service, data=None, return_response=False):
     from brain.create_area, or the orphan list from
     brain.delete_orphaned_entities).
     """
+    domain, service = str(domain or ""), str(service or "")
     if _service_denied(domain, service):
         return {"error": (
             f"Service {domain}.{service} is not permitted for this assistant. "
             "Tell the user this action is restricted; do not retry."
+        )}
+    # `script.<object_id>` runs that script exactly as `script.turn_on` on it
+    # does, with no entity id anywhere in the payload — so every check below
+    # was looking at an empty target. It is checked as the script it runs.
+    script = _script_service_target(domain, service)
+    extra = [script] if script else []
+    if script and _service_denied("script", "turn_on"):
+        return {"error": (
+            f"Service {domain}.{service} runs {script}, and script.turn_on is "
+            "not permitted for this assistant. Tell the user this action is "
+            "restricted; do not retry."
         )}
     if domain.lower() == "homeassistant" and service.lower() in _META_SERVICES:
         reason = _meta_call_denied(data)
@@ -581,28 +1120,39 @@ def call_service(domain, service, data=None, return_response=False):
                 "if that is also refused, tell the user the action is "
                 "restricted and do not retry."
             )}
+    reproduce = _reproduce_denied(domain, service, data)
+    if reproduce:
+        return {"error": (
+            f"{domain}.{service} is not permitted here because {reproduce}. "
+            "Tell the user the action is restricted; do not retry."
+        )}
     protected = _protected_target(
         data,
         empty_is_all=(domain.lower() == "homeassistant"
-                      and service.lower() in _META_SERVICES))
+                      and service.lower() in _META_SERVICES),
+        extra=extra)
     if protected:
-        return {"error": (
-            f"{domain}.{service} is refused because {protected}. The "
-            "homeowner has put it on brAIn's protected list, and nothing "
-            "brAIn does may act on it. Tell the user; do not retry or "
-            "look for another route."
-        )}
+        return {"error": PROTECTED_REFUSAL.format(
+            what=f"{domain}.{service}", why=protected)}
     if EXPOSED_ONLY and (domain.lower(), service.lower()) in VOICE_ADMIN_SERVICES:
         return {"error": ADDON_VOICE_REFUSAL.format(what=f"{domain}.{service}")}
-    unexposed = _exposure_refusal(data)
+    # Exposure first: "that lock is not exposed" is the sentence a person can
+    # act on, and the service rule's sentence is for what is left after it.
+    unexposed = _exposure_refusal(data, extra)
     if unexposed:
-        return {"error": (
-            f"{domain}.{service} is refused because {unexposed}. Tell the "
-            "user it can be exposed under Settings → Voice assistants; do "
-            "not retry or look for another route."
-        )}
+        return {"error": UNEXPOSED_ACT.format(
+            what=f"{domain}.{service}", why=unexposed)}
+    voice = _voice_service_refusal(domain, service, data, extra)
+    if voice:
+        return {"error": VOICE_SERVICE_REFUSAL.format(
+            what=f"{domain}.{service}", why=voice)}
+    members = _member_refusal(domain, service, data, extra)
+    if members:
+        kind, why = members
+        template = PROTECTED_REFUSAL if kind == "protected" else UNEXPOSED_ACT
+        return {"error": template.format(what=f"{domain}.{service}", why=why)}
     payload = data or {}
-    record_action(domain, service, payload)
+    record_action(domain, service, payload, extra)
     if return_response:
         try:
             result = _ws_command({
