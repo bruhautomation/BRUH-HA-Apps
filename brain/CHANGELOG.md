@@ -2,6 +2,62 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.11.0
+
+**A leak, smoke or gas alarm reaches you whatever brAIn is doing, and the
+Resident can correct its own first look.**
+
+- **Leak, smoke, CO and gas alarms are sent the moment they trip.** brAIn files
+  a critical card naming the sensor and the time and sends it straight away —
+  through quiet hours, with reminders behind it — without waiting for any AI to
+  look at it, and without needing a Claude sign-in, the automatic switch or any
+  usage budget. Before, a leak reached your phone only if a model happened to
+  answer exactly "act"; a paused add-on or a spent budget silenced it, and quiet
+  hours held it until morning. With no notification service set, it lands in
+  Home Assistant's own notifications instead.
+- **A second leak is a second alert.** Each trip is its own card. Dismissing
+  Tuesday's leak used to silence every later trip of the same sensor for good.
+  A detector chattering on and off within five minutes is still one card.
+- **When the sensor reports dry, the card says so and the reminders stop.** The
+  card stays until you answer it — something still caused it — but your phone
+  stops being told about a sensor that says it is over.
+- **The deeper look corrects the first one.** When the Resident investigates a
+  card that is already on your list, it now rewrites that card — a specific fix
+  for this house instead of the rule's generic sentence — or holds it back with
+  its reason, instead of filing a second card beside it. It sees the signal's
+  own sentence, why it was sent to look, and the time of day.
+- **A stronger second opinion can say "no".** When an investigation was unsure
+  about something important and a stronger model looks again, that model is
+  shown the first conclusion and can withdraw it. Before, it re-ran the same
+  prompt blind and its "nothing here" was ignored.
+- **Real evidence is no longer thrown away.** The guard that refuses invented
+  readings now reads what the investigation actually looked at through its
+  tools, not its closing paragraph — which either refused genuine cases or let
+  anything through, depending on the Claude version.
+- **The Resident's questions and suggestions can be answered.** "Yes", "No" and
+  "Add to list" on a question or suggestion the Resident filed used to fail with
+  "already answered". "Yes" now files what the card said it would teach, and a
+  suggestion goes onto your To-do list. **Stop raising these** is no longer
+  offered on the Resident's cards or on safety cards — it deleted every open
+  Resident card, safety ones included, while muting nothing.
+- **Watching means watching.** Something the Resident decided to keep an eye on
+  comes back after it happens three more times, counted across days; it was
+  effectively a fortnight's mute. A batch the model failed to answer no longer
+  mutes everything in it.
+- **The Resident's cards age out.** One nobody answers leaves the list after a
+  week, a fortnight or a month depending on how much it matters. Safety cards
+  never expire on their own.
+- **A held row comes back when it gets worse.** A finding the first look held
+  back (a battery at 30%) is looked at again when its severity rises (the same
+  battery at 4%).
+- **Smaller fixes.** The first look sees your local time and weekday, each row's
+  severity, and why it decided to watch something before; "the small hours" now
+  means your small hours rather than UTC's; investigations the budget cannot pay
+  for wait in their own queue instead of being re-judged by a paid look every
+  minute; a day's look allowance never holds back a tripped safety sensor; a
+  flood of events never drops a safety trip; and investigations are handed the
+  memory about every entity in their evidence, not just the first.
+
 ## 2.10.1
 
 **The classic terminal on a phone: Paste works, the keyboard stops fighting you.**

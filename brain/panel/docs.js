@@ -158,6 +158,30 @@ which is a good answer and costs nobody anything; a claim whose evidence names
 something the run never read is refused whole, because the conclusion was reasoned
 from it.
 
+**Leaks, smoke and gas do not wait for any of this.** The moment a moisture,
+smoke, carbon-monoxide or gas sensor **trips** — goes from clear to detected — brAIn
+files a **critical** card naming the sensor and the time, and sends it straight
+away, through quiet hours, with the reminder ladder behind it. No model is asked
+first, and none of the things that pause brAIn's thinking can hold it back: not
+being signed in, automatic runs being paused, the usage budget being spent. With
+no notification service set, it appears in Home Assistant's own notifications
+instead. Each trip is its own card — dismissing Tuesday's leak does not silence
+Friday's — and a detector chattering on and off within five minutes is one card.
+When the sensor reports clear again the card says so and the reminders stop, but
+the card stays until you answer it: water that dried by itself still came from
+somewhere. The Resident looks afterwards and may add what it finds to the card;
+it never decides whether you hear about it.
+
+**When it looks deeper, it corrects itself.** An investigation sent to look at a
+card that is already on your list rewrites that card — its sentence, what to do
+about **this** device in **this** house, and the readings it was based on — or, if it
+finds nothing worth your attention, holds it back with its reason, where you can
+still see it and put it back. It never files a second card beside the first. When
+it is unsure about something that matters and a stronger model looks again, that
+model is shown the first conclusion and may withdraw it. A card the Resident filed
+that nobody answers leaves the list on its own after a week, a fortnight or a
+month, depending on how much it matters; safety cards never do.
+
 **What it never does on its own.** \`act\` does not mean brAIn touches your house. It
 means a case is filed and your phone is told, through quiet hours, on the ladder a
 \`critical\` finding already earns. The only route from a model to your \`/config\` is
@@ -516,6 +540,9 @@ it offers that as an option beside the endings, and pressing it puts the
 sentence on the card (**from your conversation**) while the finding stays open.
 
 **Stop raising these** is the press for a rule that is wrong about your house.
+It is not offered on the Resident's own cards or on safety cards: the Resident is
+not one rule but a judgement about each thing it looked at, and what you mean on
+one of its cards is **Not a problem**, with the reason.
 The line under the filters says how right each producer has been; one that has
 been wrong three times and right never offers the button, and the box on the
 **Wrong** form offers the same thing for the row in front of you. Muting a

@@ -2883,9 +2883,18 @@ class TestMemoryContext(unittest.TestCase):
         self._old = (self.ha_data.CONTEXT_FILE, self.ha_data.MEMORY_FILE)
         self.ha_data.CONTEXT_FILE = os.path.join(self.tmp.name, "CLAUDE.md")
         self.ha_data.MEMORY_FILE = os.path.join(self.tmp.name, "memory.md")
+        # And the facts store `_memory_for` retrieves from first. Its default
+        # is the real `/config/.brain/memory/facts.json`, so on any machine
+        # where something has created that file these tests read a house
+        # that is not theirs — the `MEMORY_INBOX_DIR` leak `facts_store.
+        # writable` was written for, from the reading side.
+        self.facts = importlib.import_module("facts_store")
+        self._old_facts = self.facts.FACTS_FILE
+        self.facts.FACTS_FILE = Path(self.tmp.name) / "facts.json"
 
     def tearDown(self):
         (self.ha_data.CONTEXT_FILE, self.ha_data.MEMORY_FILE) = self._old
+        self.facts.FACTS_FILE = self._old_facts
         self.tmp.cleanup()
 
     def _write(self, path, text):
