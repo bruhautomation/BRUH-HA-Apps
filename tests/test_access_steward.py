@@ -248,5 +248,76 @@ class TestTheReviewDigest(unittest.TestCase):
         self.assertEqual(digest["users"]["admins"], ["Ben"])
 
 
+class TestTheWeeklyReview(unittest.TestCase):
+    """The sentence, off the last checks pass's digest — the CLI stubbed,
+    the schedule store real."""
+
+    def setUp(self):
+        import server
+        import settings_store
+        self.server = server
+        self.settings_store = settings_store
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self._old = (server.schedule_store.STORE, settings_store.SETTINGS_FILE,
+                     server.engine.run_claude, server.engine.get_auth,
+                     dict(server.ACCESS_DIGEST), server._maint_start)
+        server.schedule_store.STORE = str(root / "schedule.json")
+        settings_store.SETTINGS_FILE = str(root / "settings.json")
+        settings_store.save({"onboarded": True, "auto_enabled": True})
+        self.replies: list[dict] = []
+        self.calls: list[dict] = []
+
+        def run_claude(prompt, system, *a, **k):
+            self.calls.append({"prompt": prompt, **k})
+            return self.replies.pop(0) if self.replies else {
+                "ok": False, "error": "no reply"}
+
+        server.engine.run_claude = run_claude
+        server.engine.get_auth = lambda: {"type": "oauth", "value": "x"}
+        server._note_access(house(users=[
+            {"id": "u1", "name": "Ben", "admin": True, "owner": True,
+             "active": True, "system": False, "local_only": False}]), NOW)
+
+    def tearDown(self):
+        s = self.server
+        (s.schedule_store.STORE, self.settings_store.SETTINGS_FILE,
+         s.engine.run_claude, s.engine.get_auth, digest, s._maint_start) = self._old
+        s.ACCESS_DIGEST.clear()
+        s.ACCESS_DIGEST.update(digest)
+        self.tmp.cleanup()
+
+    def test_the_sentence_is_stored_and_the_digest_is_what_was_sent(self):
+        import asyncio
+        self.replies.append({"ok": True, "data": {
+            "sentence": "**One** person can administer this house and nothing "
+                        "that opens it is exposed to a cloud speaker."}})
+        asyncio.run(self.server._run_access("pressed"))
+        payload = self.server._access_payload()
+        self.assertTrue(payload["sentence"].startswith("One person"))
+        self.assertNotIn("*", payload["sentence"])
+        self.assertEqual(self.calls[0]["job"], "access_review")
+        self.assertIn('"admins": ["Ben"]', self.calls[0]["prompt"])
+
+    def test_a_too_short_review_is_not_a_review(self):
+        import asyncio
+        self.replies.append({"ok": True, "data": {"sentence": "All fine."}})
+        with self.assertRaises(RuntimeError):
+            asyncio.run(self.server._run_access("pressed"))
+        self.assertEqual(self.server._access_payload()["sentence"], "")
+
+    def test_the_weekly_tick_holds_on_a_closed_gate(self):
+        import asyncio
+        started = []
+        self.server._maint_start = lambda name, factory: started.append(name) or True
+        self.settings_store.save({"onboarded": True, "auto_enabled": False})
+        asyncio.run(self.server._maint_tick(NOW))
+        self.assertNotIn("access", started)
+        self.assertIn("paused", self.server.MAINT_STATE["access"]["held"])
+        self.settings_store.save({"onboarded": True, "auto_enabled": True})
+        asyncio.run(self.server._maint_tick(NOW))
+        self.assertIn("access", started)
+
+
 if __name__ == "__main__":
     unittest.main()
