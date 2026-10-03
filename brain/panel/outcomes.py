@@ -442,11 +442,19 @@ def grade(rows: list[dict], findings: list[dict], settled: list[dict],
         entry = by_key.get(key) if key else None
         if entry is not None and int(entry.get("ts") or 0) < at - SETTLE_SLACK_S:
             entry = None
+        # A row's id is a second-resolution stamp the store mints past what
+        # is LIVE, so once a row is settled and gone its id can be handed to
+        # the next one. Where the verdict knows its row's text, the text is
+        # what says it is the same row; the id alone is the fallback.
         current = live.get(row_ts) if row_ts else None
-        if row_ts and undone.get(row_ts, -1) >= at or (
-                key and undone_keys.get(key, -1) >= at):
+        if current is not None and key and findings_store.normalize(
+                current.get("text") or "") != key:
+            current = None
+        undone_at = (undone_keys.get(key, -1) if key
+                     else undone.get(row_ts, -1) if row_ts else -1)
+        if undone_at >= at:
             outcome = "undone"
-            ended_at = undone.get(row_ts) or undone_keys.get(key) or 0
+            ended_at = undone_at
         elif entry is not None:
             outcome = ("confirmed" if entry.get("kind") in CONFIRMED_KINDS
                        else "wrong" if entry.get("kind") in WRONG_KINDS
@@ -501,10 +509,15 @@ def items(graded: list[dict]) -> list[dict]:
             order.append(key)
         groups[key].append(row)
 
-    for g in sorted(graded, key=lambda r: int(r.get("at") or 0)):
+    def row_key(g: dict) -> str:
+        """The row a verdict is about: its id AND its text's key, because
+        the store hands a settled row's id to the next row it files."""
         row_ts = int(g.get("case_ts") or 0) or int(g.get("finding_ts") or 0)
-        if row_ts:
-            place(f"row:{row_ts}", g)
+        return f"row:{row_ts}:{g.get('key') or ''}" if row_ts else ""
+
+    for g in sorted(graded, key=lambda r: int(r.get("at") or 0)):
+        if row_key(g):
+            place(row_key(g), g)
             continue
         if g.get("class") == "sent":
             at = int(g.get("at") or 0)
@@ -513,9 +526,7 @@ def items(graded: list[dict]) -> list[dict]:
                         and inv.get("subject") == g.get("subject")
                         and at <= int(inv.get("at") or 0) <= at + LINK_S):
                     claimed.add(str(inv.get("id")))
-                    inv_ts = (int(inv.get("case_ts") or 0)
-                              or int(inv.get("finding_ts") or 0))
-                    place(f"row:{inv_ts}" if inv_ts else f"v:{inv.get('id')}", g)
+                    place(row_key(inv) or f"v:{inv.get('id')}", g)
                     break
             else:
                 place(f"v:{g.get('id')}", g)
