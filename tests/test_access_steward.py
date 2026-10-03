@@ -318,6 +318,20 @@ class TestTheWeeklyReview(unittest.TestCase):
         asyncio.run(self.server._maint_tick(NOW))
         self.assertIn("access", started)
 
+    def test_a_review_that_failed_is_not_rerun_on_every_poll(self):
+        """Only a review that LANDED writes the weekly stamp, so a failure
+        that does not clear used to be a paid run every ten minutes."""
+        import asyncio
+        started = []
+        self.server._maint_start = lambda name, factory: started.append(name) or True
+        asyncio.run(self.server._maint_tick(NOW))
+        # The run failed: nothing wrote ACCESS_STAMP_KEY. The next poll —
+        asyncio.run(self.server._maint_tick(NOW + self.server.MAINT_POLL_S))
+        self.assertEqual(started.count("access"), 1)
+        # — and once the retry wait is over, it is asked again.
+        asyncio.run(self.server._maint_tick(NOW + self.server.ACCESS_RETRY_S + 1))
+        self.assertEqual(started.count("access"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5136,6 +5136,13 @@ SRE_HOUR = 3
 SRE_STAMP_KEY = "sre_last"
 ACCESS_STAMP_KEY = "access_last"
 ACCESS_TEXT_KEY = "access_review"
+# When the scheduled review was last STARTED. The stamp above is written
+# only by a review that landed, so without this one a review failing for
+# a reason that does not clear (a CLI too old for the schema, an account
+# that will not answer) was re-run on every poll — a paid run every ten
+# minutes for ever. A guard that refuses has to change the next attempt.
+ACCESS_TRIED_KEY = "access_tried"
+ACCESS_RETRY_S = 6 * 3600
 MAINT_WEEK_S = 7 * 86400
 # The last checks pass's view of who can reach the house, kept so the
 # weekly review needs no snapshot of its own — `_note_registry`'s
@@ -5626,11 +5633,14 @@ async def _maint_tick(now: float) -> list[str]:
 
     # The access review: weekly, off the last checks pass's digest.
     last = await asyncio.to_thread(schedule_store.get, ACCESS_STAMP_KEY)
-    if ACCESS_DIGEST["digest"] is not None and now - last >= MAINT_WEEK_S:
+    tried = await asyncio.to_thread(schedule_store.get, ACCESS_TRIED_KEY)
+    if (ACCESS_DIGEST["digest"] is not None and now - last >= MAINT_WEEK_S
+            and now - tried >= ACCESS_RETRY_S):
         if excuse:
             MAINT_STATE["access"]["held"] = excuse
         elif _maint_start("access", lambda: _run_access("schedule")):
             MAINT_STATE["access"]["held"] = ""
+            await asyncio.to_thread(schedule_store.set, ACCESS_TRIED_KEY, now)
             started.append("access")
 
     # The house book: weekly, only once somebody has asked for one, and
