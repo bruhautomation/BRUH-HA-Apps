@@ -243,9 +243,13 @@ def excerpt(notes: str, corpus: list[tuple[str, int, str]],
     wanted = terms(notes, domains, corpus_text)
     lines: list[str] = []
     for term in wanted:
+        # An integration is a word (`mqtt` must not match `mqtt_room`); a
+        # code span from the notes is matched as written, because it was
+        # chosen BECAUSE it occurs in this config — `white_value` inside
+        # `white_value_template` is exactly the line the notes are about.
         pattern = (re.compile(rf"(?<![a-z0-9_]){re.escape(term)}(?![a-z0-9_])",
                               re.IGNORECASE)
-                   if re.fullmatch(r"[a-z0-9_]+", term) else None)
+                   if term in domains else None)
         found = 0
         for rel, num, line in corpus:
             hit = pattern.search(line) if pattern else term in line
