@@ -45,6 +45,14 @@ and so cannot clear anything):
                     itself up. Unavailable when Core would not answer, which
                     is a different claim from a house with nothing failing
     recorder       {db_bytes, db_path, purge_keep_days}
+    users          [{id, name, admin, owner, active, system, local_only}] —
+                    `config/auth/list`, an admin command; unavailable when
+                    the token cannot run it (checks/security.py)
+    exposure       {entity_id: {assistant: bool}} — what Home Assistant
+                    exposes to which voice assistant, explicitly
+    posture        this add-on's own options that change what it may do
+    ip_bans        [{ip, banned_at}] from /config/ip_bans.yaml — an absent
+                    file is an empty list, an unparsable one unavailable
     closures       how much of each hour of the week each door, window,
                     lock and cover is normally open, as `panel/closures.py`
                     last measured it. Unavailable until the first nightly
@@ -484,6 +492,12 @@ async def collect(now: float | None = None) -> dict:
             snap["thermal"] = {"rooms": {}, "recent": {}, "built_at": 0}
             _mark("thermal", False, str(exc))
 
+        # The access steward's keys — users, what is exposed to which voice
+        # assistant, this add-on's own posture and the login bans — each
+        # its own attempt inside `security.collect`, which never raises.
+        from . import security as _security
+        await _security.collect(session, snap, _mark)
+
         try:
             mined = await actions.collect(
                 session, now - LOGBOOK_HOURS * 3600, now,
@@ -654,7 +668,12 @@ async def _addon_details(session, addons: list) -> list:
         extra = info.get(str(row.get("slug") or ""))
         if extra:
             row = {**row, **{k: extra[k] for k in
-                             ("boot", "state", "watchdog", "startup")
+                             ("boot", "state", "watchdog", "startup",
+                              # What the access steward reads: an explicit
+                              # False is protection mode off, and a row
+                              # without the key is "I could not look".
+                              "protected", "full_access", "docker_api",
+                              "host_network")
                              if k in extra}}
         out.append(row)
     return out

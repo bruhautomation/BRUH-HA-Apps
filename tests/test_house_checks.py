@@ -56,7 +56,10 @@ def house(**over) -> dict:
             "states", "registry", "services", "automations", "traces",
             "stats", "battery_stats", "dashboards", "supervisor",
             "updates", "recorder", "zha_devices", "config_entries", "actions",
-                          "baselines", "closures", "appliances", "thermal")},
+                          "baselines", "closures", "appliances", "thermal",
+            # The access steward's keys (checks/security.py): read, and
+            # nothing in them anybody has to look at twice.
+            "users", "exposure", "posture", "ip_bans")},
         "errors": {},
         "blueprints_dir": "",
         "states": {
@@ -250,6 +253,14 @@ def house(**over) -> dict:
                 {"start": NOW - (45 - i * 5) * 60, "mean": 2.0}
                 for i in range(10)]},
         },
+        # One owner, a light exposed to Assist and nothing that opens the
+        # house exposed anywhere, the terminal asking before it acts, and no
+        # address banned — the house `sec.*` must say nothing about.
+        "users": [{"id": "u1", "name": "Ben", "admin": True, "owner": True,
+                   "active": True, "system": False, "local_only": False}],
+        "exposure": {"light.kitchen": {"conversation": True}},
+        "posture": {"dangerously_skip_permissions": False},
+        "ip_bans": [],
         # A day of the house behaving: an automation acted, a person acted,
         # and nobody undid anybody.
         "actions": {
