@@ -384,6 +384,35 @@ def _agree(klass: str, outcome: str):
     return None
 
 
+def _answer_for(entry: dict | None, at: int) -> tuple[str, int, str] | None:
+    """The settled answer that ended a verdict made at ``at``, as
+    ``(kind, ended_at, note)``, or None when the ledger holds none for it.
+
+    The ledger keeps ONE entry per key, and an answer is not for ever: a
+    right one (`fixed`/`accepted`) lapses once the problem is over
+    (`findings_store._suppresses`), and when the same problem comes back
+    and is answered again the new entry REPLACES the lapsed one, carrying
+    `previous_at` — the stamp of the answer before it. A lapsed entry is
+    still the evidence it always was. And every answer a recurrence
+    replaces was a right one, because only right answers lapse — so a
+    verdict made before `previous_at` was confirmed by it, whatever the
+    later answer says: that answer is about a later occurrence. Reading the
+    replacement alone graded a report from March by a Wrong pressed in
+    July about the problem coming back, which is a recurrence and not a
+    verdict on March. Only a chain of right answers can be replaced, so
+    one `previous_at` is enough however many times it has come back.
+    """
+    if entry is None:
+        return None
+    ts = int(entry.get("ts") or 0)
+    previous = int(entry.get("previous_at") or 0)
+    if previous and at - SETTLE_SLACK_S <= previous:
+        return CONFIRMED_KINDS[0], previous, ""
+    if ts < at - SETTLE_SLACK_S:
+        return None
+    return str(entry.get("kind") or ""), ts, str(entry.get("note") or "")
+
+
 def grade(rows: list[dict], findings: list[dict], settled: list[dict],
           now: float | None = None) -> list[dict]:
     """Every verdict row with what happened next. Pure over its inputs.
@@ -427,10 +456,13 @@ def grade(rows: list[dict], findings: list[dict], settled: list[dict],
                                     set()).add(str(f["entity_id"]))
     confirmed_at: dict[str, list[int]] = {}
     for key, entry in by_key.items():
-        if entry.get("kind") not in CONFIRMED_KINDS:
-            continue
+        # A recurrence's `previous_at` is a right answer the replacement
+        # wrote over (`_answer_for`), so it confirmed its subject too.
+        stamps = [int(entry.get("previous_at") or 0)]
+        if entry.get("kind") in CONFIRMED_KINDS:
+            stamps.append(int(entry.get("ts") or 0))
         for subject in key_subjects.get(key, ()):
-            confirmed_at.setdefault(subject, []).append(int(entry.get("ts") or 0))
+            confirmed_at.setdefault(subject, []).extend(t for t in stamps if t)
 
     out: list[dict] = []
     for row in verdicts:
@@ -439,9 +471,7 @@ def grade(rows: list[dict], findings: list[dict], settled: list[dict],
         row_ts = int(row.get("case_ts") or 0) or int(row.get("finding_ts") or 0)
         key = str(row.get("key") or "")
         outcome, ended_at, note = "pending", 0, ""
-        entry = by_key.get(key) if key else None
-        if entry is not None and int(entry.get("ts") or 0) < at - SETTLE_SLACK_S:
-            entry = None
+        answer = _answer_for(by_key.get(key) if key else None, at)
         # A row's id is a second-resolution stamp the store mints past what
         # is LIVE, so once a row is settled and gone its id can be handed to
         # the next one. Where the verdict knows its row's text, the text is
@@ -455,12 +485,12 @@ def grade(rows: list[dict], findings: list[dict], settled: list[dict],
         if undone_at >= at:
             outcome = "undone"
             ended_at = undone_at
-        elif entry is not None:
-            outcome = ("confirmed" if entry.get("kind") in CONFIRMED_KINDS
-                       else "wrong" if entry.get("kind") in WRONG_KINDS
+        elif answer is not None:
+            kind, ended_at, note = answer
+            outcome = ("confirmed" if kind in CONFIRMED_KINDS
+                       else "wrong" if kind in WRONG_KINDS
                        else "pending")
-            ended_at = int(entry.get("ts") or 0)
-            note = str(entry.get("note") or "")[:MAX_NOTE]
+            note = note[:MAX_NOTE]
         elif current is not None:
             triaged = current.get("triage") or {}
             if klass == "dismissed" and triaged.get("elevated_by_person"):

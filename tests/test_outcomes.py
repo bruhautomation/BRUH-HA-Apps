@@ -30,6 +30,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -395,6 +396,78 @@ class TestTheLogIsWrittenByTheLoop(OutcomesLoop):
         out = self.tick(time.time())
         self.assertTrue(out["ok"], out)
         self.assertEqual(self.fs.get(row["ts"])["status"], "held")
+
+
+class TestAnAnswerThatLapsed(OutcomesLoop):
+    """A right answer lapses once its problem is over, and a recurrence
+    REPLACES the ledger entry with `recurred`/`previous_at`.
+
+    Driven through the real store and the real ending, because the
+    ledger's shape is the store's and writing it down here a second time
+    would only agree with itself.
+    """
+
+    TEXT = "The pantry contact has not changed in 9 days"
+    SOURCE = "check:dev.frozen"
+    ENTITY = "binary_sensor.pantry"
+
+    def verdict(self, at: float, row: dict, rid: str) -> dict:
+        return look_row(at=int(at), id=rid, key=self.fs.normalize(self.TEXT),
+                        finding_ts=row["ts"], verdict="investigate",
+                        subject=self.ENTITY, entity=self.ENTITY,
+                        source=self.SOURCE)
+
+    def entry(self) -> dict:
+        key = self.fs.normalize(self.TEXT)
+        [entry] = [e for e in self.fs.settled_listing() if e["key"] == key]
+        return entry
+
+    def test_a_lapsed_fix_is_still_the_evidence_it_was(self):
+        row = self.file_row(self.TEXT, entity=self.ENTITY)
+        before = time.time() - 600
+        self.end(row["ts"], "done")
+        self.assertEqual(self.fs.lapse_settled({self.SOURCE}, set()), 1)
+        self.assertTrue(self.entry().get("lapsed_at"))
+        [g] = self.out.grade([self.verdict(before, row, "v")],
+                             self.fs.list_all(), self.fs.settled_listing(),
+                             time.time())
+        self.assertEqual((g["outcome"], g["agree"]), ("confirmed", True))
+
+    def recur(self):
+        """Fixed, lapsed, back three days later and marked Wrong."""
+        first = self.file_row(self.TEXT, entity=self.ENTITY)
+        t0 = time.time()
+        self.end(first["ts"], "done")
+        self.fs.lapse_settled({self.SOURCE}, set())
+        later = t0 + 3 * DAY
+        with mock.patch("time.time", return_value=later):
+            second = self.file_row(self.TEXT, entity=self.ENTITY)
+            self.end(second["ts"], "wrong", "it is a cupboard")
+        entry = self.entry()
+        self.assertEqual((entry["kind"], entry["recurred"]), ("ignored", 1))
+        return first, second, t0, later, entry
+
+    def test_a_recurrence_marked_wrong_does_not_regrade_the_first_report(self):
+        first, second, t0, later, entry = self.recur()
+        rows = [self.verdict(t0 - 600, first, "before"),
+                self.verdict(later - 600, second, "after")]
+        graded = {g["id"]: g for g in self.out.grade(
+            rows, self.fs.list_all(), self.fs.settled_listing(), later + 60)}
+        self.assertEqual(graded["before"]["outcome"], "confirmed")
+        self.assertEqual(graded["before"]["ended_at"], entry["previous_at"])
+        self.assertEqual(graded["after"]["outcome"], "wrong")
+        self.assertEqual(graded["after"]["note"], "it is a cupboard")
+
+    def test_the_replaced_answer_still_counts_as_a_confirmation_of_its_subject(self):
+        first, _second, t0, later, _entry = self.recur()
+        passed = look_row(at=int(t0) - 3600, id="passed", key="",
+                          finding_ts=0, kind="state", source="eventbus",
+                          verdict="ignore", subject=self.ENTITY,
+                          entity=self.ENTITY)
+        rows = [passed, self.verdict(t0 - 600, first, "before")]
+        graded = {g["id"]: g for g in self.out.grade(
+            rows, self.fs.list_all(), self.fs.settled_listing(), later + 60)}
+        self.assertEqual(graded["passed"]["outcome"], "missed")
 
 
 class TestTheLogIsCapped(unittest.TestCase):
