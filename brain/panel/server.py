@@ -8508,9 +8508,11 @@ async def h_checks_run(request: web.Request) -> web.Response:
 # auth re-check follows for the same reason: a real Claude turn spent on a
 # question nobody is asking is a turn spent forever.
 #
-# It rides the generation queue like a fix run does, because a deep run is
-# several Claude invocations and one at a time across the whole add-on is
-# what keeps a subscription's rate limit intact.
+# It rides the generation queue like a fix run does, so one deep run is in
+# flight at a time. Its stages call the engine from `doctor.py` directly
+# rather than through `run_queue` — a press somebody made, a handful of
+# short runs — so they take no seat there; the queue's bound is on what
+# the server itself starts.
 DOCTOR_JOB = "doctor-deep"
 DOCTOR_STATE: dict = {"running": False, "started_at": 0,
                       "stages": [], "last": None, "kind": ""}
