@@ -100,8 +100,11 @@ PUT  /api/memory             — save a manual edit of the memory file {text}
 Runs on 0.0.0.0:8099. The HA Supervisor proxies the ingress URL into
 /api/hassio_ingress/<token>/...; we therefore use only relative links in the
 HTML and let aiohttp serve at /. Generation jobs run through a single-worker
-queue so only one Claude invocation is in flight at a time (subscription
-rate-limit friendly).
+queue, and every Claude run the server starts — that worker's and every
+other — takes a seat on the bounded, prioritised run queue (`run_queue`):
+safety, then a person's press, then scheduled work, with one seat always
+kept free of scheduled work. That queue, not the worker, is what keeps
+the subscription's rate limit and the box's memory safe.
 
 Dashboard cards are served by HA itself via a /local mirror: insight HTML is
 copied to /config/www/brain/ (created on first use of the ▦ dialog,
@@ -116,6 +119,7 @@ import collections
 import concurrent.futures
 import contextlib
 import fcntl
+import functools
 import hashlib
 import json
 import logging
@@ -187,6 +191,7 @@ import reports
 import resident
 import rhythm
 import routines
+import run_queue
 import run_sources
 import scenes
 import schedule_store
@@ -727,7 +732,29 @@ RESIDENT_PARKED_MAX = 50
 # The budget, per local day, per tier. On disk: a restart is the first thing
 # anybody does after changing an option, and an in-memory count makes
 # "twice a day" mean "twice per restart".
-LEDGER = resident.Ledger()
+#
+# The day is the HOUSE's: the reader is handed over rather than a zone,
+# because this is built at import and a zone read then is UTC for the life
+# of the process — the midnight-UTC day the class exists not to keep.
+LEDGER = resident.Ledger(tz=lambda: baselines.house_timezone()[0])
+
+
+def _resident_tier(job: str, thinking: str) -> str:
+    """The tier a Resident run of `job` is about to be charged to.
+
+    The plan as the dial and a typed model actually move it, never the
+    table's tier: `resident.tier_for` answers what a job is PLANNED at,
+    and a ledger asked about that let `generous` run investigations on
+    Opus against the Sonnet allowance, and a typed Opus run first looks
+    on Opus against nothing at all.
+    """
+    return model_plan.run_tier(job, thinking, eff_model())
+
+
+def _ran_tier(result: dict, job: str) -> str:
+    """The tier a finished run RAN on, read off the model the engine sent."""
+    sent = (result.get("meta") or {}).get("model") if isinstance(result, dict) else ""
+    return model_plan.tier_of(sent or "") or resident.tier_for(job)
 # The subscription. Built in `on_startup`, because it needs a loop.
 EVENT_BUS: eventbus.EventBus | None = None
 
@@ -1189,6 +1216,40 @@ def _tok(n: int) -> str:
     return f"{n / 1000:.1f}k" if n >= 1000 else str(int(n))
 
 
+# The engine's three runners. A run made through `_claude` with one of these
+# is told whether a person asked for it, which is the one thing that lets a
+# typed model reach a job a timer may not run on it (`model_plan`).
+def _engine_runners() -> tuple:
+    return (engine.run_claude, engine.run_analyst, engine.run_agent)
+
+
+async def _claude(fn, *args, priority: int = run_queue.SCHEDULED, **kwargs):
+    """Run one engine call on the Claude run queue, in its turn.
+
+    Every `engine.run_*` the server makes goes through here rather than
+    `asyncio.to_thread`: the default thread pool is where every store read
+    runs, and minutes-long Claude processes sharing it with them — fourteen
+    call sites, no limit and no order — is what let a Done pressed in Home
+    Assistant wait behind two investigations and a Reply. See `run_queue`.
+    `priority` is SAFETY, PRESS or SCHEDULED; a press is also `pressed`
+    to the engine.
+    """
+    if fn in _engine_runners() and "pressed" not in kwargs:
+        kwargs["pressed"] = priority == run_queue.PRESS
+    return await run_queue.run(fn, *args, priority=priority, **kwargs)
+
+
+def _job_priority(job_id: str) -> int:
+    """A queued job's priority: the scheduler's own runs say why they are
+    here (`because`), and everything else got here because somebody
+    pressed something — `_because_of`'s two kinds."""
+    job = JOBS.get(job_id) or {}
+    if job.get("kind") in ("fix", "plan", "doctor", "rehearse", "sweep"):
+        return run_queue.PRESS
+    return run_queue.SCHEDULED if str(job.get("because") or "").strip() \
+        else run_queue.PRESS
+
+
 def _record_usage(result: dict, insight_id: str) -> dict:
     """Book a finished Claude invocation's tokens against the session budget,
     and say out loud what it cost.
@@ -1592,7 +1653,7 @@ async def _send_brief(now: float) -> str:
     state["house"] = await _house_prompt_block(now)
     state["memory"] = await asyncio.to_thread(_memory_block)
 
-    result = await asyncio.to_thread(
+    result = await _claude(
         engine.run_analyst, brief.frame(reasons, state), brief.SYSTEM,
         eff_model(), brief.TIMEOUT_S, brief.MAX_TURNS,
         "brief", job="brief")
@@ -1875,7 +1936,7 @@ async def _send_weekly(now: float) -> str:
         log.info("weekly report: nothing to report, not sent")
         return ""
 
-    result = await asyncio.to_thread(
+    result = await _claude(
         engine.run_analyst, weekly.frame(state), weekly.SYSTEM,
         eff_model(), weekly.TIMEOUT_S, weekly.MAX_TURNS, "weekly",
         job="weekly")
@@ -2000,7 +2061,10 @@ async def _apply_finding_requests() -> list[dict]:
         elif action == "reply":
             finding = await asyncio.to_thread(findings_store.get, ts)
             if finding:
-                ok, why = await _reply_to_finding(finding, req.get("note", ""))
+                # Started, never awaited: a reply is a Claude run of up to
+                # REPLY_TIMEOUT_S, and an ending given in the same burst —
+                # or the next one, fifteen seconds on — must not wait for it.
+                ok, why = _start_reply(finding, req.get("note", ""))
                 result["ok"] = ok
                 if not ok:
                     result["why"] = why
@@ -2206,11 +2270,11 @@ async def _one_intent(req: dict, now: float) -> dict | None:
     # presumed the answer.
     started = time.time()
     try:
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_analyst, authoring.prompt(sentence, orientation),
             authoring.SYSTEM, eff_model(), intents.TIMEOUT_S,
             intents.MAX_TURNS, "intent", job="automation",
-            schema=authoring.SCHEMA)
+            schema=authoring.SCHEMA, priority=run_queue.PRESS)
     except Exception as exc:  # noqa: BLE001
         result = {"ok": False, "error": str(exc)}
     journal.record("intent", "ok" if result.get("ok") else "error",
@@ -2845,10 +2909,10 @@ async def _search_run(insight_id: str, cat: dict, framing: dict):
              "(~%s tokens in) — searching", insight_id,
              orientation.get("entity_count", 0), len(orientation.get("domains") or {}),
              len(prompt), _tok(len(prompt) // CHARS_PER_TOKEN))
-    result = await asyncio.to_thread(
+    result = await _claude(
         engine.run_analyst, prompt, ANALYST_SYSTEM, eff_model(),
         eff_timeout_s(), ANALYST_MAX_TURNS, "card",
-        job="card", schema=CARD_SCHEMA,
+        job="card", schema=CARD_SCHEMA, priority=_job_priority(insight_id),
     )
     return result, _record_usage(result, insight_id), {
         "gather_mode": "search", "bundle": orientation,
@@ -2879,9 +2943,10 @@ async def _snapshot_run(insight_id: str, cat: dict, framing: dict):
     log.info("snapshot for %s: %d entities, %d bundle chars, %d prompt chars "
              "(~%s tokens in)", insight_id, n_entities, len(json.dumps(bundle)),
              len(prompt), _tok(len(prompt) // CHARS_PER_TOKEN))
-    result = await asyncio.to_thread(
+    result = await _claude(
         engine.run_claude, prompt, SYSTEM_PROMPT, eff_model(), eff_timeout_s(),
         source="card", job="card", schema=CARD_SCHEMA,
+        priority=_job_priority(insight_id),
     )
     return result, _record_usage(result, insight_id), {
         "gather_mode": "snapshot", "bundle": bundle, "prompt_chars": len(prompt)}
@@ -3141,6 +3206,15 @@ async def _generate(insight_id: str) -> None:
         result = cost = sent = None
         if eff_gather_mode() == "search":
             result, cost, sent = await _search_run(insight_id, cat, framing)
+        if result is not None and _no_fallback(result):
+            # The snapshot is the floor under a search that could not FIND
+            # its answer — tools that misbehaved, turns that ran out. It
+            # is no floor under a search the account or the service
+            # refused: a rejected credential, a usage limit and an
+            # overloaded API refuse the snapshot exactly the same way, so
+            # running it bought a second refusal at the snapshot's price
+            # and held the queue for both.
+            raise RuntimeError(result.get("error") or "the search run failed")
         if result is None or not result["ok"]:
             # The snapshot path is the floor, not a mode: whatever the setting
             # says, a failed search must still produce a card. It costs more
@@ -3304,6 +3378,7 @@ async def _generate(insight_id: str) -> None:
                        "hypotheses": _clean_strings(obj.get("hypotheses"), 3, 300),
                        "tags": tags, "html_bytes": len(html.encode())},
                 tokens=cost or {})
+        CARD_FAILURES.pop(insight_id, None)
         _set_job(insight_id, state="done", error="")
         log.info("insight %s generated (%s)%s%s", insight_id, insight["title"],
                  f", {len(filed)} new finding(s)" if filed else "",
@@ -3312,7 +3387,18 @@ async def _generate(insight_id: str) -> None:
         log.warning("insight %s failed: %s", insight_id, exc)
         journal.record("insight", journal.classify({"ok": False, "error": str(exc)}),
                        error=str(exc), extra={"id": insight_id})
+        # The scheduler backs off from this card until a run succeeds.
+        _note_card_failure(insight_id, str(exc))
         _set_job(insight_id, state="error", error=str(exc)[:500])
+
+
+def _no_fallback(result: dict) -> bool:
+    """Did a search run fail in a way the snapshot would fail too?"""
+    if result.get("ok"):
+        return False
+    if engine.overloaded(result):
+        return True
+    return journal.classify(result) in ("auth", "rate_limited")
 
 
 # ---------------------------------------------------------------------------
@@ -3340,10 +3426,11 @@ async def _run_plan(job_id: str) -> None:
     rather than by instruction, because a prompt that says "change
     nothing" is a promise a model keeps and a tool list is a promise the
     CLI keeps. It claims the `fix` run source like the run it precedes,
-    since the Chats rail reads them as one face, and it rides the
-    generation queue for the fix's own reason: one Claude invocation in
-    flight across the add-on is what keeps a subscription's rate limit
-    intact.
+    since the Chats rail reads them as one face. It rides the generation
+    queue, and the run itself takes a PRESS seat on the Claude run queue
+    (`run_queue`) — the bound across every run the panel makes, which is
+    what protects a subscription's rate limit now that the generation
+    worker is no longer the only thing that spawns one.
 
     Every ending leaves the row somewhere a person can act: a plan that
     parsed lands on the card as `planned`, and a run that failed puts the
@@ -3365,10 +3452,10 @@ async def _run_plan(job_id: str) -> None:
             finding, memory=memory,
             protected=automation_writer.protected_patterns(),
             context=(PLAN_AGREED.format(change=change) if change else ""))
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_analyst, prompt, fixer.PLAN_SYSTEM, eff_model(),
             PLAN_TIMEOUT_S, PLAN_MAX_TURNS, "fix",
-            job="fix_plan", schema=fixer.PLAN_SCHEMA)
+            job="fix_plan", schema=fixer.PLAN_SCHEMA, priority=run_queue.PRESS)
         _record_usage(result, job_id)
         if not result["ok"]:
             raise RuntimeError(result["error"] or "the plan run failed")
@@ -3391,9 +3478,17 @@ async def _run_plan(job_id: str) -> None:
         # run whatever happened to it, and a second one would count this
         # failure twice — `_run_fix`'s arrangement, for its reason.
         log.warning("planning finding %s failed: %s", ts, exc)
-        await asyncio.to_thread(
-            findings_store.set_status, ts, "open",
-            f"brAIn could not work out what to change: {str(exc)[:400]}")
+        # Best-effort, and that is load-bearing: this is the error path,
+        # and a store write that raised here (a full or read-only /data —
+        # `atomic_write` re-raises the OSError) used to escape it and take
+        # the generation worker down with it. The job still says why.
+        try:
+            await asyncio.to_thread(
+                findings_store.set_status, ts, "open",
+                f"brAIn could not work out what to change: {str(exc)[:400]}")
+        except Exception as store_exc:  # noqa: BLE001 — see above
+            log.warning("could not put finding %s back to open: %s",
+                        ts, store_exc)
         _set_job(job_id, state="error", error=str(exc)[:500])
 
 
@@ -3418,9 +3513,11 @@ def _close_fix_window(ts: int, started: float, ended: float) -> None:
 async def _run_fix(job_id: str) -> None:
     """Fix one finding, agentically, because somebody pressed Apply on a plan.
 
-    Shares the generation queue on purpose: one Claude invocation at a time
-    across the whole add-on is what keeps a subscription's rate limit
-    intact, and a fix run is far too expensive to let race a card refresh.
+    It rides the generation queue, and its run takes a PRESS seat on the
+    Claude run queue (`run_queue`): there is no longer one invocation at a
+    time across the add-on — the Resident, triage, a Reply and the brief
+    all spawn runs of their own — so the bound and the order live there,
+    and a press is never queued behind scheduled work.
 
     The run is told to carry out the steps a person read rather than to
     work out its own — and the window it ran in is stamped on the row
@@ -3453,10 +3550,11 @@ async def _run_fix(job_id: str) -> None:
         started = time.time()
         await asyncio.to_thread(findings_store.set_fix_window, ts,
                                 started, None)
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_agent, prompt, fixer.FIX_SYSTEM, eff_model(),
             FIX_TIMEOUT_S, FIX_MAX_TURNS, "fix",
-            job="fix_apply", schema=fixer.RESULT_SCHEMA)
+            job="fix_apply", schema=fixer.RESULT_SCHEMA,
+            priority=run_queue.PRESS)
         # Counted here and stored, rather than on every fetch of the tab:
         # see `findings_store.set_fix_window`. This is also the last moment
         # at which the count is certainly about this run and nothing else.
@@ -3510,10 +3608,16 @@ async def _run_fix(job_id: str) -> None:
         # a question nothing can answer afterwards — the row will say
         # `failed` rather than offering the Undo, but what the run touched
         # is still bounded on disk for `brain undo` and for a report.
-        findings_store.set_fix_window(ts, None, time.time())
-        findings_store.set_status(
-            ts, "failed",
-            result=f"The fix run did not complete: {str(exc)[:400]}")
+        # Both best-effort, for `_run_plan`'s reason: a store write that
+        # raises on the error path is what used to kill the worker.
+        try:
+            findings_store.set_fix_window(ts, None, time.time())
+            findings_store.set_status(
+                ts, "failed",
+                result=f"The fix run did not complete: {str(exc)[:400]}")
+        except Exception as store_exc:  # noqa: BLE001 — see above
+            log.warning("could not record the failed fix on finding %s: %s",
+                        ts, store_exc)
         _set_job(job_id, state="error", error=str(exc)[:500])
 
 
@@ -3656,10 +3760,10 @@ async def _offer_milestones(now: float) -> int:
 async def _run_milestone(job_id: str) -> None:
     """One milestone card: the store's numbers, one analyst turn, one file.
 
-    It shares the generation queue like a fix run, because one Claude
-    invocation in flight across the add-on is what keeps a subscription's
-    rate limit intact — and it uses `run_analyst` (reading tools only)
-    for the reason every unattended run does.
+    It shares the generation queue like a fix run, and its run takes a
+    SCHEDULED seat on the Claude run queue (`run_queue`), which is the
+    bound across every run the panel makes — and it uses `run_analyst`
+    (reading tools only) for the reason every unattended run does.
     """
     job = JOBS.get(job_id, {})
     mile_id = str(job.get("milestone") or "")
@@ -3669,7 +3773,7 @@ async def _run_milestone(job_id: str) -> None:
         return
     try:
         _set_job(job_id, state="generating", error="")
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_analyst, job.get("prompt") or "", ANALYST_SYSTEM,
             eff_model(), eff_timeout_s(), ANALYST_MAX_TURNS, "card",
             job="milestone", schema=CARD_SCHEMA)
@@ -3710,32 +3814,166 @@ async def _run_milestone(job_id: str) -> None:
         _set_job(job_id, state="error", error=str(exc)[:500])
 
 
+# ---------------------------------------------------------------------------
+# The panel's own loops, and whether each is still going
+# ---------------------------------------------------------------------------
+# Every long-lived task the panel starts is created through `_supervise`,
+# which hangs a done-callback on it: a loop that raised, or returned, is a
+# loop that has stopped for good, and the only trace it used to leave was
+# an unretrieved-exception line at some later garbage collection — while
+# `/api/status` went on saying "queued" about cards nothing would ever
+# generate and the health verdict said ok. The worker and the loops that
+# beat (`_beat`) also say when they last went round, so one that is alive
+# and stuck is told apart from one that is fine. Read by
+# `_loop_health` into `/api/diagnostics`, where `health.problems` turns a
+# dead or stalled one into a state and a sentence.
+LOOPS: dict[str, dict] = {}
+# The job the generation worker is on, and since when. An idle worker
+# blocks on its queue for hours and that is health; one on the same job for
+# hours longer than any run is allowed is a worker that is stuck.
+WORKER_STATE: dict = {"job": None, "since": 0.0}
+
+
+def _supervise(name: str, coro, stall_after_s: float | None = None):
+    """Start one long-lived loop, and find out if it ever stops."""
+    now = time.time()
+    task = asyncio.create_task(coro)
+    LOOPS[name] = {"started_at": now, "beat_at": now, "alive": True,
+                   "stall_after_s": stall_after_s, "error": "",
+                   "task": task}
+    task.add_done_callback(functools.partial(_loop_ended, name))
+    return task
+
+
+def _loop_ended(name: str, task: asyncio.Task) -> None:
+    """A supervised loop finished. Cancelled is a shutdown; anything else is
+    a loop that is never coming back, and it is said at warning with its
+    reason rather than left to an unretrieved-exception line."""
+    row = LOOPS.get(name)
+    if row is None or row.get("task") is not task:
+        # A loop from an earlier app ending after a new one took its name.
+        return
+    row["alive"] = False
+    row["ended_at"] = time.time()
+    if task.cancelled():
+        row["stopped"] = True
+        return
+    exc = task.exception()
+    if exc is not None:
+        row["error"] = f"{type(exc).__name__}: {exc}"[:300]
+        log.warning("the %s loop died: %s", name, row["error"],
+                    exc_info=(type(exc), exc, exc.__traceback__))
+    else:
+        row["error"] = "it returned, and it is meant to run for ever"
+        log.warning("the %s loop stopped: %s", name, row["error"])
+
+
+def _beat(name: str) -> None:
+    """A supervised loop went round. Cheap on purpose: one dict write."""
+    row = LOOPS.get(name)
+    if row is not None:
+        row["beat_at"] = time.time()
+
+
+def _worker_busy_limit_s() -> float:
+    """Longer than any job the worker runs may legitimately take.
+
+    A card is a search and then possibly a snapshot, each on the
+    generation timeout; a fix is its own timeout and its plan before it.
+    Twice the longest of those, plus room for the checks around them, is
+    a job that is not coming back.
+    """
+    try:
+        gen = float(eff_timeout_s())
+    except Exception:  # noqa: BLE001 — a diagnostics read, not a run
+        gen = 480.0
+    return 2 * max(2 * gen, FIX_TIMEOUT_S + PLAN_TIMEOUT_S) + 600
+
+
+def _loop_health(now: float | None = None) -> dict:
+    """Every supervised loop: alive or not, when it last went round, and
+    (for the worker) what it is on. The numbers `health.problems` reads."""
+    now = time.time() if now is None else now
+    out: dict = {}
+    for name, row in list(LOOPS.items()):
+        task = row.get("task")
+        if task is not None and task.get_loop().is_closed():
+            # A loop from an app whose event loop has gone — a test, the
+            # demo panel's first boot — says nothing about this one.
+            continue
+        entry = {
+            "alive": bool(row.get("alive")),
+            "stopped": bool(row.get("stopped")),
+            "error": journal.scrub(row.get("error") or ""),
+            "beat_age_s": int(now - float(row.get("beat_at") or now)),
+            "stall_after_s": row.get("stall_after_s"),
+        }
+        if name == "worker":
+            since = float(WORKER_STATE.get("since") or 0)
+            entry["busy_s"] = int(now - since) if since else 0
+            entry["busy_limit_s"] = int(_worker_busy_limit_s())
+            entry["queued"] = QUEUE.qsize()
+        out[name] = entry
+    return out
+
+
+async def _dispatch(job_id: str) -> None:
+    kind = JOBS.get(job_id, {}).get("kind")
+    if kind == "fix":
+        await _run_fix(job_id)
+    elif kind == "plan":
+        await _run_plan(job_id)
+    elif kind == "milestone":
+        await _run_milestone(job_id)
+    elif kind == "doctor":
+        await _run_doctor_deep(job_id)
+    elif kind == "rehearse":
+        await _run_rehearsal(job_id)
+    elif kind == "sweep":
+        await _run_sweep(job_id)
+    else:
+        await _generate(job_id)
+
+
 async def _worker() -> None:
+    """The generation queue's one consumer, which must outlive its jobs.
+
+    It had no `except`, so a handler that raised past its own error state
+    ended the loop — and `_run_fix` and `_run_plan` write the findings
+    store from inside their except blocks, where `atomic_write` re-raises
+    an OSError: a full or read-only /data during one failed fix killed the
+    worker for good, and cards, fixes and plans then queued for ever while
+    `/api/status` said "queued" and health said ok. Now a handler that
+    raises costs its own job and nothing else: the job is marked errored
+    with the reason, the log says so at warning, and the next job runs.
+    """
     while True:
         job_id = await QUEUE.get()
+        WORKER_STATE.update(job=job_id, since=time.time())
+        _beat("worker")
         try:
-            kind = JOBS.get(job_id, {}).get("kind")
-            if kind == "fix":
-                await _run_fix(job_id)
-            elif kind == "plan":
-                await _run_plan(job_id)
-            elif kind == "milestone":
-                await _run_milestone(job_id)
-            elif kind == "doctor":
-                await _run_doctor_deep(job_id)
-            elif kind == "rehearse":
-                await _run_rehearsal(job_id)
-            elif kind == "sweep":
-                await _run_sweep(job_id)
-            else:
-                await _generate(job_id)
+            await _dispatch(job_id)
+        except Exception as exc:  # noqa: BLE001 — one job, never the worker
+            log.warning("the %s job %s failed outside its own handling: %s",
+                        JOBS.get(job_id, {}).get("kind") or "insight",
+                        job_id, exc, exc_info=True)
+            try:
+                _set_job(job_id, state="error",
+                         error=f"brAIn could not finish this: {exc}"[:500])
+            except Exception:  # noqa: BLE001 — bookkeeping on the way out
+                log.debug("could not mark %s errored", job_id, exc_info=True)
         finally:
             QUEUE.task_done()
+            WORKER_STATE.update(job=None, since=0.0)
+            _beat("worker")
             # `_set_job` sweeps every ordinary ending; this covers the one
             # that is not ordinary — a handler that raised past its own
             # error state — so nothing can leave a row behind by failing in
             # a way nobody wrote down.
-            _prune_jobs()
+            try:
+                _prune_jobs()
+            except Exception:  # noqa: BLE001 — a prune is housekeeping
+                log.debug("could not prune finished jobs", exc_info=True)
 
 
 def _parse_generated_at(generated_at: str) -> float | None:
@@ -3801,6 +4039,12 @@ def _next_due(eff: dict, generated_at: str, now: float) -> float | None:
     # keep arriving and keep not happening.
     if eff_refresh_mode() == "never" or REFRESH_HOLDS.get(eff.get("id")):
         return None
+    # A failing card's next run is its backoff's end at the earliest —
+    # the same question `_refresh_due` asks first, asked "when".
+    backoff = _card_backoff_until(str(eff.get("id") or ""))
+    if backoff > now:
+        due = _next_due({**eff, "id": ""}, generated_at, backoff)
+        return None if due is None else max(due, backoff)
     schedule = eff.get("schedule")
     if isinstance(schedule, list) and schedule:
         if _schedule_due(schedule, generated_at, now):
@@ -3978,6 +4222,87 @@ def _inputs_change(stored: dict | None, current: dict) -> dict:
             "fingerprint": current}
 
 
+# A card whose last scheduled run FAILED, per category id: how many times
+# in a row, when, and how. A failing card used to be due again on the very
+# next tick — no stamp, no backoff — so a card that fails fast failed every
+# minute and one that fails slowly (an eight-minute search timeout, then
+# the snapshot fallback) held the generation queue sixteen minutes in every
+# seventeen, both spending each session window's budget until every other
+# automatic run, the Resident included, paused behind it. So a scheduled
+# run backs off exponentially from its last failure; a press is never held
+# by this (`_refresh_due` is the scheduler's question, not the button's),
+# and the first success clears it. In memory on purpose: a restart is a
+# person acting, and the thing they most often did first is fix the cause.
+CARD_FAILURES: dict[str, dict] = {}
+CARD_BACKOFF_BASE_S = 15 * 60
+CARD_BACKOFF_MAX_S = 12 * 3600
+
+
+def _card_backoff_until(card_id: str) -> float:
+    """When a failing card may next be run by the scheduler, or 0.0."""
+    row = CARD_FAILURES.get(card_id)
+    if not row:
+        return 0.0
+    count = max(1, int(row.get("count") or 1))
+    wait = min(CARD_BACKOFF_BASE_S * 2 ** (count - 1), CARD_BACKOFF_MAX_S)
+    return float(row.get("at") or 0) + wait
+
+
+def _note_card_failure(card_id: str, error: str, now: float | None = None) -> None:
+    now = time.time() if now is None else now
+    row = CARD_FAILURES.get(card_id) or {"count": 0}
+    CARD_FAILURES[card_id] = {
+        "count": int(row.get("count") or 0) + 1, "at": now,
+        "outcome": journal.classify({"ok": False, "error": error}),
+        "error": journal.scrub(error)[:200]}
+
+
+# The account said "not now". Every scheduled card run waits this out
+# rather than asking again on the next tick: a usage limit is a window that
+# resets, and a card queued into it spends nothing and answers nothing —
+# but it does write a failure, ask again a minute later, and keep the
+# window from ever looking quiet. It escalates 30 min, 1 h, 2 h, 4 h across
+# a streak, and the first Claude run of any kind that succeeds ends it,
+# because that is the account answering again. Fed by the journal (every
+# run records itself there), so the chat or voice meeting the limit holds
+# the cards too.
+RATE_LIMIT_STATE: dict = {"until": 0.0, "streak": 0, "detail": ""}
+RATE_LIMIT_PAUSE_S = 30 * 60
+RATE_LIMIT_MAX_S = 4 * 3600
+
+
+def _journal_rate_listener(row: dict) -> None:
+    # Only rows a model actually ran for: `_generate` writes a second,
+    # summary row about the same failure, and counting both would make
+    # every limit a streak of two.
+    if not isinstance(row, dict) or not journal.is_claude_run(row):
+        return
+    if row.get("outcome") == "rate_limited":
+        streak = int(RATE_LIMIT_STATE.get("streak") or 0) + 1
+        wait = min(RATE_LIMIT_PAUSE_S * 2 ** (streak - 1), RATE_LIMIT_MAX_S)
+        RATE_LIMIT_STATE.update(
+            streak=streak, until=float(row.get("ts") or time.time()) + wait,
+            detail=str(row.get("error") or "")[:160])
+    elif row.get("ok") and journal.is_claude_run(row):
+        RATE_LIMIT_STATE.update(streak=0, until=0.0, detail="")
+
+
+def _book_shell_usage(row: dict) -> None:
+    """A shell run's tokens, into the ledger the budget estimate and the
+    usage popover's breakdown read — the same `record_run` every panel run
+    passes through, under the row's own time."""
+    tokens = row.get("tokens")
+    if isinstance(tokens, int) and tokens > 0:
+        usage_store.record_run(tokens, str(row.get("source") or "shell"),
+                               now=float(row.get("ts") or time.time()))
+
+
+# What an in-process row meets on `journal.record`, less the nudge the
+# command line already sent from the process that ran the model.
+_SHELL_HANDLERS = (_book_shell_usage, _journal_report_listener,
+                   _journal_rate_listener)
+
+
 # Why the scheduler last held a card back, per category id. In memory
 # and written by the tick, because computing a fingerprint for nine
 # categories on every /api/status poll would be nine whole-house reads
@@ -4015,6 +4340,12 @@ def _refresh_due(eff: dict, generated_at: str, now: float,
     mode = mode or eff_refresh_mode()
     if mode == "never":
         return False
+    # A card that failed last time waits out its backoff before the
+    # scheduler tries it again (see CARD_FAILURES). Asked first, because
+    # it is the cheapest question and the one that is about the run
+    # rather than about the card.
+    if now < _card_backoff_until(str(eff.get("id") or "")):
+        return False
     schedule = eff.get("schedule")
     if isinstance(schedule, list) and schedule:
         if not _schedule_due(schedule, generated_at, now):
@@ -4043,6 +4374,7 @@ async def _scheduler() -> None:
     budget_logged = False
     while True:
         await asyncio.sleep(60)
+        _beat("scheduler")
         # Fold in what the CLI side found. This belongs on the tick rather
         # than on the Findings tab's own request: study sessions are the
         # other producer, and the badge that tells you to go look is served
@@ -4061,6 +4393,15 @@ async def _scheduler() -> None:
         # inbox, which is what makes one sweep cover voice, the chat, the
         # terminal, study, a correction and another add-on's line alike.
         await asyncio.to_thread(_ingest_facts)
+        # The shell half's runs — study, the consolidator, the automation
+        # listener, the memory extractor — wrote their journal rows from
+        # their own processes, where none of the panel's listeners are.
+        # They are booked here, through the same listeners, before any gate:
+        # a failed consolidation is a report whatever the insights face says.
+        try:
+            await asyncio.to_thread(journal.book_shell_rows, _SHELL_HANDLERS)
+        except Exception as exc:  # noqa: BLE001 — bookkeeping, never the tick
+            log.debug("booking shell runs failed: %s", exc)
         # The drain that used to live here is the Resident's first look
         # now (`_resident_loop`), which reads the same `awaiting_triage()`
         # queue on its own five-second tick — so a row a study session just
@@ -4101,6 +4442,12 @@ async def _scheduler() -> None:
                 budget_logged = True
             continue
         budget_logged = False
+        if time.time() < float(RATE_LIMIT_STATE.get("until") or 0):
+            _set_gate("rate_limited",
+                      "the account's usage limit said wait; cards resume at "
+                      + time.strftime("%H:%M", time.localtime(
+                          RATE_LIMIT_STATE["until"])))
+            continue
         _set_gate(None)
         # The weekly top-up, past every gate above on purpose: proposing
         # cards for a house whose insights are switched off, whose
@@ -4230,7 +4577,7 @@ async def _options_poller() -> None:
 
 async def _check_auth_bg() -> None:
     try:
-        result = await asyncio.to_thread(engine.validate_auth)
+        result = await _claude(engine.validate_auth, priority=run_queue.PRESS)
         AUTH_CHECK.update(
             state="ok" if result["ok"] else "failed",
             error=result["error"],
@@ -4484,34 +4831,82 @@ async def _today(now: float | None = None) -> dict:
     return state
 
 
-async def h_status(request: web.Request) -> web.Response:
+# `generated_at` per stored card, keyed on the file's own (mtime, size).
+# `/api/status` is polled every few seconds by every viewer while a job
+# runs, and it used to answer by JSON-parsing every stored card — up to
+# 400 KB of HTML each — to read one timestamp out of each. A save rewrites
+# the file and moves its mtime, which is the invalidation.
+_GENERATED_AT_CACHE: dict[str, tuple[tuple[int, int], str | None]] = {}
+
+
+def _generated_at(card_id: str) -> str | None:
+    path = _insight_path(card_id)
+    try:
+        st = path.stat()
+    except OSError:
+        _GENERATED_AT_CACHE.pop(card_id, None)
+        return None
+    stamp = (st.st_mtime_ns, st.st_size)
+    cached = _GENERATED_AT_CACHE.get(card_id)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    obj = _read_json(path)
+    value = obj.get("generated_at") if obj else None
+    _GENERATED_AT_CACHE[card_id] = (stamp, value)
+    return value
+
+
+def _status_payload() -> tuple[dict | None, dict]:
+    """Everything `/api/status` reads off disk, in one call off the loop.
+
+    The credential stores, the settings file, the usage files, every
+    category definition, a timestamp per card and four stores for the
+    badge — synchronous reads all, and on an SD card each one is time the
+    event loop is not serving the chat's stream or the terminal proxy.
+    """
     auth = engine.get_auth()
+    cats = all_categories()
+    insights = {c["id"]: _generated_at(c["id"]) for c in cats}
+    settings = settings_store.load()
+    return auth, {
+        "settings": settings,
+        "usage": usage_store.budget_state(settings),
+        "model": eff_model() or "default",
+        "refresh_hours": eff_refresh_hours(),
+        "history_days": eff_history_days(),
+        "categories": [_category_status(c, insights) for c in cats],
+        "findings_open": cases.open_count(),
+    }
+
+
+async def h_status(request: web.Request) -> web.Response:
+    auth, read = await asyncio.to_thread(_status_payload)
     # Re-earn a verdict that has gone stale. Lazy on purpose — see
     # AUTH_RECHECK_S: this is the one path a person looking at the panel
     # already drives, so the cost lands where somebody is asking and
     # nowhere else. `start_auth_check` is the guard against the poll
-    # spawning a second check over an unfinished one.
+    # spawning a second check over an unfinished one — and it stays on
+    # the loop, because it flips its guard synchronously.
     if auth and _auth_verdict_is_stale():
         start_auth_check(announce=False)
-    insights = {i["id"]: i.get("generated_at") for i in load_insights()}
-    settings = settings_store.load()
+    settings = read["settings"]
     return web.json_response({
         "version": ADDON_VERSION,
         "authenticated": bool(auth),
         "auth_type": auth["type"] if auth else None,
         "auth_source": auth.get("source") if auth else None,
         "auth_check": AUTH_CHECK,
-        "model": eff_model() or "default",
-        "refresh_hours": eff_refresh_hours(),
-        "history_days": eff_history_days(),
+        "model": read["model"],
+        "refresh_hours": read["refresh_hours"],
+        "history_days": read["history_days"],
         "settings": settings,
-        "usage": usage_store.budget_state(settings),
+        "usage": read["usage"],
         # Why auto-refresh is idle, when it is — the same gates the chips
         # and the pill's dot report, readable as one field.
         "auto": dict(AUTO_STATE),
         # `enable_insights` off hides the Insights and Proposals tabs.
         "insights_enabled": insights_enabled(),
-        "categories": [_category_status(c, insights) for c in all_categories()],
+        "categories": read["categories"],
         # The Findings tab's badge: everything still waiting on a decision —
         # problems to settle and guesses to confirm, which are one list now.
         # Counted here rather than off _findings_payload() because /api/status
@@ -4523,7 +4918,7 @@ async def h_status(request: web.Request) -> web.Response:
         # disagrees while somebody is looking. `cases.open_count` is that
         # derivation, and it spans the proposals and the accepted chores
         # the old sum did not.
-        "findings_open": cases.open_count(),
+        "findings_open": read["findings_open"],
         # What brAIn did last and what it will do next. On the poll every
         # viewer already makes, because "is this thing working" is asked
         # of the top bar and not of a tab.
@@ -5910,7 +6305,7 @@ async def _triage_drain(now: float) -> list[dict]:
     )
     TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
     try:
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_analyst, prompt, triage.SYSTEM, eff_model(),
             triage.TIMEOUT_S, triage.MAX_TURNS, "triage",
             job="triage", schema=triage.SCHEMA)
@@ -6853,7 +7248,7 @@ async def _resident_pass(now: float) -> dict:
     TRIAGE_STATE["capped_said"] = False
 
     allowed, why = LEDGER.allows(
-        resident.tier_for(resident.JOB_FIRST_LOOK), thinking, now=now)
+        _resident_tier(resident.JOB_FIRST_LOOK, thinking), thinking, now=now)
     if not allowed:
         return {**out, "held": why}
     return await _resident_look(now, settings, thinking, len(surfaced))
@@ -6936,17 +7331,22 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         # whether a signal deserves another thought, which is answerable
         # from a sentence — and a cheap tier that could reach for history
         # would stop being the cheap tier.
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_claude, prompt, resident.FIRST_LOOK_SYSTEM, eff_model(),
             resident.TIMEOUT_S, resident.MAX_TURNS, "resident",
-            job=resident.JOB_FIRST_LOOK, schema=resident.FIRST_LOOK_SCHEMA)
+            job=resident.JOB_FIRST_LOOK, schema=resident.FIRST_LOOK_SCHEMA,
+            # A batch holding a hot signal — a leak, smoke, a safety device
+            # — takes the seat a press would, ahead of every card refresh.
+            priority=(run_queue.SAFETY if any(s.get("hot") for s in batch)
+                      else run_queue.SCHEDULED))
     except Exception as exc:  # noqa: BLE001 — the signals are already in
         # hand; what is at stake is only whether anything looked at them.
         log.warning("a first look failed: %s", exc)
         result = {"ok": False, "error": str(exc), "meta": {}}
     run_id = str((result.get("meta") or {}).get("session_id") or "")
     cost = await asyncio.to_thread(_record_usage, result, "resident-look")
-    LEDGER.record(resident.JOB_FIRST_LOOK, int(cost.get("total") or 0), now)
+    LEDGER.record(resident.JOB_FIRST_LOOK, int(cost.get("total") or 0), now,
+                  tier=_ran_tier(result, resident.JOB_FIRST_LOOK))
 
     if not result.get("ok"):
         return await _resident_run_failed(batch, run_id, now, surfaced)
@@ -7182,7 +7582,7 @@ async def _resident_investigations(queued: list[tuple[dict, str, int]],
             held.append(item)
             continue
         allowed, reason = LEDGER.allows(
-            resident.tier_for(resident.JOB_INVESTIGATE), thinking, now=now)
+            _resident_tier(resident.JOB_INVESTIGATE, thinking), thinking, now=now)
         if not allowed:
             RESIDENT_STATE["last_error"] = reason
             held.append(item)
@@ -7235,13 +7635,16 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
         await asyncio.to_thread(_open_case_rows, exclude=exclude),
         signal_row=rows[0] if rows else "", why=why, refining=refining,
         now_line=_now_line(now))
-    result = await asyncio.to_thread(
+    result = await _claude(
         engine.run_analyst, prompt, resident.INVESTIGATE_SYSTEM, eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
-        "resident", job=resident.JOB_INVESTIGATE, schema=resident.CASE_SCHEMA)
+        "resident", job=resident.JOB_INVESTIGATE, schema=resident.CASE_SCHEMA,
+        priority=(run_queue.SAFETY if signal.get("hot")
+                  else run_queue.SCHEDULED))
     run_id = str((result.get("meta") or {}).get("session_id") or "")
     cost = await asyncio.to_thread(_record_usage, result, "resident-investigate")
-    LEDGER.record(resident.JOB_INVESTIGATE, int(cost.get("total") or 0), now)
+    LEDGER.record(resident.JOB_INVESTIGATE, int(cost.get("total") or 0), now,
+                  tier=_ran_tier(result, resident.JOB_INVESTIGATE))
     if not result.get("ok"):
         log.info("an investigation of %s came back empty: %s",
                  signal.get("subject"), result.get("error") or "no answer")
@@ -7360,7 +7763,7 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
     unsure case, so the one answer an escalation exists to be able to give
     ("no, that is not right") was the one it could not.
     """
-    allowed, reason = LEDGER.allows(resident.tier_for(ESCALATE_JOB),
+    allowed, reason = LEDGER.allows(_resident_tier(ESCALATE_JOB, thinking),
                                     thinking, now=now)
     if not allowed:
         case["detail"] = (case.get("detail", "") + "\n\nbrAIn was unsure "
@@ -7369,7 +7772,7 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
         return case
     exclude = {str((refining or {}).get(k) or "") for k in ("claim", "text")}
     rows = signals.prompt_rows([signal], now, numbered=False)
-    result = await asyncio.to_thread(
+    result = await _claude(
         engine.run_analyst,
         resident.investigate_prompt(
             signal,
@@ -7381,9 +7784,12 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
             prior_case=case, now_line=_now_line(now)),
         resident.INVESTIGATE_SYSTEM, eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
-        "resident", job=ESCALATE_JOB, schema=resident.CASE_SCHEMA)
+        "resident", job=ESCALATE_JOB, schema=resident.CASE_SCHEMA,
+        priority=(run_queue.SAFETY if signal.get("hot")
+                  else run_queue.SCHEDULED))
     cost = await asyncio.to_thread(_record_usage, result, "resident-escalate")
-    LEDGER.record(ESCALATE_JOB, int(cost.get("total") or 0), now)
+    LEDGER.record(ESCALATE_JOB, int(cost.get("total") or 0), now,
+                  tier=_ran_tier(result, ESCALATE_JOB))
     if not result.get("ok"):
         return case
     answer = _answer(result)
@@ -7549,7 +7955,7 @@ async def _run_curiosity(candidate: dict, ledger: dict, tz,
             entities=[r.get("entity_id") for r in rows if r.get("entity_id")]),
         recent=list(reversed(rows)),
     )
-    result = await asyncio.to_thread(
+    result = await _claude(
         engine.run_analyst, prompt, curiosity.SYSTEM, eff_model(),
         curiosity.TIMEOUT_S, curiosity.MAX_TURNS, "curiosity",
         job="curiosity", schema=curiosity.SCHEMA)
@@ -7826,10 +8232,10 @@ async def _name_and_offer(obj: dict, area: str) -> None:
     the plain names, which are a perfectly good answer.
     """
     try:
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_claude, scenes.name_prompt(area), scenes.SYSTEM,
             eff_model(), scenes.NAME_TIMEOUT_S, scenes.NAME_MAX_TURNS,
-            "scene", job="scene_names")
+            "scene", job="scene_names", priority=run_queue.PRESS)
         names = scenes.read_names(result.get("text")
                                   or result.get("raw") or "")
     except Exception as exc:  # noqa: BLE001 — the card renders from the
@@ -8061,7 +8467,7 @@ async def _offer_playbooks(snapshot: dict, now: float) -> int:
                 offered += 1
             continue
         try:
-            result = await asyncio.to_thread(
+            result = await _claude(
                 engine.run_claude, playbooks.describe_prompt(obj),
                 playbooks.SYSTEM, eff_model(),
                 playbooks.DESCRIBE_TIMEOUT_S, playbooks.DESCRIBE_MAX_TURNS,
@@ -8441,7 +8847,10 @@ async def _checks_loop() -> None:
             elif time.time() - DIAG_STATE["published_at"] >= DIAGNOSTICS_PUBLISH_S:
                 await asyncio.to_thread(publish_diagnostics)
         except Exception as exc:  # noqa: BLE001 — never let this kill the loop
-            log.debug("checks loop: %s", exc)
+            # Warning, not debug: a pass that fails every tick is the house
+            # checks stopping, and debug is a level nobody runs at.
+            log.warning("checks loop: %s", exc)
+        _beat("checks")
         await asyncio.sleep(CHECKS_TICK_S)
 
 
@@ -8608,7 +9017,8 @@ async def _baseline_loop() -> None:
             if age is None or age * 86400 >= BASELINE_INTERVAL_S:
                 await build_baselines("schedule")
         except Exception as exc:  # noqa: BLE001
-            log.debug("baseline loop: %s", exc)
+            log.warning("baseline loop: %s", exc)
+        _beat("baselines")
         await asyncio.sleep(3600)
 
 
@@ -9124,9 +9534,11 @@ async def h_checks_run(request: web.Request) -> web.Response:
 # auth re-check follows for the same reason: a real Claude turn spent on a
 # question nobody is asking is a turn spent forever.
 #
-# It rides the generation queue like a fix run does, because a deep run is
-# several Claude invocations and one at a time across the whole add-on is
-# what keeps a subscription's rate limit intact.
+# It rides the generation queue like a fix run does, so one deep run is in
+# flight at a time. Its stages call the engine from `doctor.py` directly
+# rather than through `run_queue` — a press somebody made, a handful of
+# short runs — so they take no seat there; the queue's bound is on what
+# the server itself starts.
 DOCTOR_JOB = "doctor-deep"
 DOCTOR_STATE: dict = {"running": False, "started_at": 0,
                       "stages": [], "last": None, "kind": ""}
@@ -9670,10 +10082,10 @@ async def h_activity_summary(request: web.Request) -> web.Response:
         raise web.HTTPConflict(
             text="Nothing happened in this window, so there is nothing to "
                  "say about it.")
-    result = await asyncio.to_thread(
+    result = await _claude(
         engine.run_analyst, prompt, episodes.SUMMARY_SYSTEM, eff_model(),
         episodes.SUMMARY_TIMEOUT_S, episodes.SUMMARY_MAX_TURNS, "activity",
-        job="episode_summary")
+        job="episode_summary", priority=run_queue.PRESS)
     text = str(result.get("text") or "").strip()
     if not result.get("ok"):
         raise web.HTTPBadGateway(
@@ -9982,6 +10394,14 @@ def _diagnostics_payload() -> dict:
                      {"connected": False,
                       "idle_reason": "the event bus has not been started"}),
         "daemons": _daemon_rollcall(),
+        # The panel's own loops — the generation worker, the scheduler, the
+        # checks — alive or not, and when each last went round. A dead
+        # worker is cards and fixes queued for ever with every other
+        # surface saying "queued", which `health.problems` now names.
+        "loops": _loop_health(),
+        # Every Claude run the server starts takes a seat here; who holds
+        # one and who waits is what tells "brAIn is busy" from "stuck".
+        "claude_runs": run_queue.stats(),
         "usage": {
             **{k: usage.get(k) for k in ("source", "used_percent", "limits")},
             # When a finished run last told the tracker to ask. The
@@ -12325,6 +12745,51 @@ REPLY_MAX_TURNS = 24
 REPLY_MAX_CHARS = 600
 
 
+# Replies typed into a notification, being answered off the request drain.
+# Held so the loop cannot collect a task mid-run (`_SAFETY_TASKS`' reason).
+_REPLY_TASKS: set = set()
+
+
+def _start_reply(finding: dict, text: str) -> tuple[bool, str]:
+    """Start answering a reply and hand back at once.
+
+    The drain runs every fifteen seconds and applies a burst in order, so
+    awaiting the reply's run there held every Done, Wrong and To-do given
+    after it — in the same burst and in the next — for as long as the run
+    took. An empty reply is refused here, synchronously, because it is not
+    a turn and spends nothing; everything after that is the task's, and a
+    reply that could not be answered or delivered is logged by
+    `_reply_settled` rather than reported to a drain that has moved on.
+    """
+    said = str(text or "").strip()
+    if not said:
+        return False, "the reply was empty"
+    task = asyncio.get_running_loop().create_task(_reply_to_finding(finding, said))
+    _REPLY_TASKS.add(task)
+    task.add_done_callback(_reply_settled)
+    return True, ""
+
+
+def _reply_settled(task) -> None:
+    _REPLY_TASKS.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.warning("a reply from a notification could not be answered: %s", exc)
+        return
+    ok, why = task.result()
+    if not ok:
+        log.warning("a reply from a notification was not answered: %s", why)
+
+
+async def _settle_replies(timeout: float | None = None) -> None:
+    """Wait for the replies in flight — what a test of the drain awaits
+    before it reads what was sent."""
+    if _REPLY_TASKS:
+        await asyncio.wait(set(_REPLY_TASKS), timeout=timeout)
+
+
 async def _reply_to_finding(finding: dict, text: str) -> tuple[bool, str]:
     """Answer a reply typed into a notification, as the next notification.
 
@@ -12348,9 +12813,10 @@ async def _reply_to_finding(finding: dict, text: str) -> tuple[bool, str]:
               "Answer that.")
     started = time.time()
     try:
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_analyst, prompt, REPLY_SYSTEM, eff_model(),
-            REPLY_TIMEOUT_S, REPLY_MAX_TURNS, "resident", job="investigate")
+            REPLY_TIMEOUT_S, REPLY_MAX_TURNS, "resident", job="investigate",
+            priority=run_queue.PRESS)
     except Exception as exc:  # noqa: BLE001
         result = {"ok": False, "error": str(exc), "text": ""}
     journal.record("reply", "ok" if result.get("ok") else "error",
@@ -12858,11 +13324,12 @@ async def h_onboarding_recommend(request: web.Request) -> web.Response:
             # fallback, not an error.
             log.warning("onboarding: could not collect the map (%s)", exc)
             return None
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_analyst,
             onboarding.build_orientation_prompt(memory, orientation),
             onboarding.RECOMMEND_SYSTEM, eff_model(),
-            TIMEOUT_S, ANALYST_MAX_TURNS, "card", job="onboarding")
+            TIMEOUT_S, ANALYST_MAX_TURNS, "card", job="onboarding",
+            priority=run_queue.PRESS)
         return result
 
     async def snapshot() -> dict:
@@ -12880,10 +13347,10 @@ async def h_onboarding_recommend(request: web.Request) -> web.Response:
             # do.
             log.warning("onboarding bundle failed: %s", exc, exc_info=True)
             raise web.HTTPBadGateway(text="could not read Home Assistant")
-        return await asyncio.to_thread(
+        return await _claude(
             engine.run_claude, onboarding.build_prompt(memory, bundle),
             onboarding.RECOMMEND_SYSTEM, eff_model(), TIMEOUT_S, 8, "card",
-            job="onboarding")
+            job="onboarding", priority=run_queue.PRESS)
 
     def read(result: dict | None) -> dict | None:
         """The reply as recommendations, or None for "that did not work"."""
@@ -12998,7 +13465,7 @@ async def _run_ideas() -> None:
             measured = ""
 
         answered, open_ideas = await asyncio.to_thread(ideas.prompt_context)
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_analyst,
             ideas.build_prompt(memory, orientation, have, measured,
                                answered=answered, open_ideas=open_ideas),
@@ -15289,6 +15756,8 @@ def make_app() -> web.Application:
         # And every run that spent something tells the usage tracker, which
         # is asking on a 30-minute heartbeat rather than every 5 minutes.
         journal.on_record(_journal_usage_listener)
+        # And a usage limit met by any run holds the scheduled cards.
+        journal.on_record(_journal_rate_listener)
         # The work queue belongs to the loop the worker runs on, and it
         # is a module global — so the first loop to touch it owns it for
         # the life of the process. In the add-on that is one loop and one
@@ -15304,16 +15773,28 @@ def make_app() -> web.Application:
         # request rather than on it — off the loop, where every read of them
         # now happens.
         await asyncio.to_thread(_warm_static)
-        app["worker"] = asyncio.create_task(_worker())
-        app["scheduler"] = asyncio.create_task(_scheduler())
-        app["checks"] = asyncio.create_task(_checks_loop())
-        app["baselines"] = asyncio.create_task(_baseline_loop())
-        app["notify_flush"] = asyncio.create_task(_notify_flush_loop())
-        app["brief"] = asyncio.create_task(_brief_loop())
-        app["evening"] = asyncio.create_task(_evening_loop())
-        app["healing"] = asyncio.create_task(_heal_loop())
-        app["weekly"] = asyncio.create_task(_weekly_loop())
-        app["requests"] = asyncio.create_task(_requests_loop())
+        # Waiters from a loop that has gone (a test, a second app) can
+        # never be woken; the run queue drops them, `_rebind_queue`'s rule.
+        run_queue.QUEUE.reset()
+        # Every long-lived loop is supervised: a done-callback says at
+        # warning when one stops, and `/api/diagnostics` carries whether
+        # each is alive and when the ones that beat last went round —
+        # which `health.problems` reads. The stall windows are several of
+        # each loop's own ticks, plus a pass's own length.
+        app["worker"] = _supervise("worker", _worker())
+        app["scheduler"] = _supervise("scheduler", _scheduler(),
+                                      stall_after_s=600)
+        app["checks"] = _supervise("checks", _checks_loop(),
+                                   stall_after_s=CHECKS_FIRST_DELAY_S + 3600)
+        app["baselines"] = _supervise("baselines", _baseline_loop(),
+                                      stall_after_s=BASELINE_FIRST_DELAY_S
+                                      + 3 * 3600)
+        app["notify_flush"] = _supervise("notify_flush", _notify_flush_loop())
+        app["brief"] = _supervise("brief", _brief_loop())
+        app["evening"] = _supervise("evening", _evening_loop())
+        app["healing"] = _supervise("healing", _heal_loop())
+        app["weekly"] = _supervise("weekly", _weekly_loop())
+        app["requests"] = _supervise("requests", _requests_loop())
         # The first thing in brAIn that is watched rather than polled, and
         # the loop that reads it. The bus files nothing and asks nothing —
         # its only output is a signal on the queue — and `_resident_loop`
@@ -15336,9 +15817,9 @@ def make_app() -> web.Application:
             # and one at 03:00 was not.
             tz=baselines.house_timezone()[0])
         await EVENT_BUS.start()
-        app["resident"] = asyncio.create_task(_resident_loop())
+        app["resident"] = _supervise("resident", _resident_loop())
         if addon_options.available():
-            app["options"] = asyncio.create_task(_options_poller())
+            app["options"] = _supervise("options", _options_poller())
         if engine.get_auth():
             start_auth_check()
 

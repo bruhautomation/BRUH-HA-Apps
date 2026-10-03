@@ -485,3 +485,133 @@ class TestAStudySessionIsScopedLikeTheAnalyst(unittest.TestCase):
                             "an unscopeable study session still ran")
         self.assertIn("refusing", (proc.stderr or "").lower())
         self.assertFalse(log.exists(), "claude was invoked anyway")
+
+
+def _heredoc(run_sh: str, opener: str, marker: str) -> str:
+    start = run_sh.index(opener)
+    body_start = run_sh.index("\n", start) + 1
+    end = run_sh.index("\n" + marker + "\n", body_start)
+    return run_sh[body_start:end]
+
+
+class TestThePlatformCannotActOnItsOwn(unittest.TestCase):
+    """Claude Code ships tools that act OUTSIDE a run with no prompt —
+    messaging a peer session, a remote trigger, a push to somebody's phone,
+    a scheduled job, a watched process — and cross-session messaging on by
+    default. Every brAIn process, the read-only analyst and the shell-less
+    voice worker included, could reach them. They are denied by name in
+    every settings file run.sh writes and in every engine run, inbound
+    messages are refused, and Claude Code's own auto-memory is off (brAIn
+    has one memory, and it is memory.md)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import json
+        import sys
+        sys.path.insert(0, os.path.join(ADDON_DIR, "panel"))
+        import engine
+        cls.engine = engine
+        cls.run_sh = read_file(os.path.join(ADDON_DIR, "run.sh"))
+        cls.files = {
+            "settings.local.json": json.loads(_heredoc(
+                cls.run_sh, 'settings.local.json" << \'SETTINGS\'', "SETTINGS")),
+            "headless_settings.json": json.loads(_heredoc(
+                cls.run_sh, "headless_settings.json\" << 'HEADLESS'", "HEADLESS")),
+            "assist_settings.json": json.loads(_heredoc(
+                cls.run_sh, "assist_settings.json << 'SCOPE'", "SCOPE")),
+        }
+
+    def test_the_analyst_is_denied_the_platform(self):
+        for tool in self.engine.PLATFORM_DENIED:
+            self.assertIn(tool, self.engine.ANALYST_DENIED, tool)
+
+    def test_the_named_tools_are_in_the_list(self):
+        for tool in ("SendMessage", "ListAgents", "RemoteTrigger",
+                     "PushNotification", "CronCreate", "Monitor"):
+            self.assertIn(tool, self.engine.PLATFORM_DENIED)
+
+    def test_every_settings_file_denies_them_and_refuses_messages(self):
+        for name, doc in self.files.items():
+            with self.subTest(file=name):
+                deny = set(doc["permissions"]["deny"])
+                missing = sorted(set(self.engine.PLATFORM_DENIED) - deny)
+                self.assertEqual(missing, [], f"{name} does not deny {missing}")
+                self.assertEqual(doc["crossSessionInbound"], "refuse")
+                self.assertIs(doc["autoMemoryEnabled"], False)
+
+    def test_a_voice_worker_keeps_its_device_tools(self):
+        """The project file pre-approves only reading now, and a voice
+        worker cannot be asked: its own scoping file has to carry them."""
+        voice = self.files["assist_settings.json"]
+        self.assertEqual(voice["permissions"]["allow"], ["mcp__home-assistant__*"])
+        for tool in ("Bash", "Write", "Read", "WebFetch"):
+            self.assertIn(tool, voice["permissions"]["deny"])
+
+    def test_every_claude_process_is_told_to_keep_no_memory_of_its_own(self):
+        env_block = _heredoc(self.run_sh, 'cat > "$env_file" << ENVEOF', "ENVEOF")
+        self.assertIn("export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1", env_block)
+        env = self.engine._claude_env()
+        self.assertEqual(env.get("CLAUDE_CODE_DISABLE_AUTO_MEMORY"), "1")
+
+
+class TestTheWrapperGivesHeadlessRunsTheirList(unittest.TestCase):
+    """`claude-run`, lifted out of run.sh and run against a recorder.
+
+    The project file pre-approves only reading, so the terminal and the
+    chat are asked; a run that cannot be asked — `-p` with no settings of
+    its own and no prompt tool — is handed the headless allow-list, and
+    nothing else is."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.log = base / "argv.log"
+        fake = base / "claude"
+        fake.write_text("#!/bin/bash\n"
+                        f"printf '%s\\n' \"$*\" \"ADVISOR=$CLAUDE_CODE_DISABLE_ADVISOR_TOOL\""
+                        f" > {self.log}\n")
+        fake.chmod(0o755)
+        self.headless = base / "headless_settings.json"
+        self.headless.write_text("{}")
+        body = _heredoc(read_file(os.path.join(ADDON_DIR, "run.sh")),
+                        "cat > /usr/local/bin/claude-run << 'WRAPPER'", "WRAPPER")
+        body = (body.replace("/data/.brain_env", str(base / "no-env"))
+                .replace("/opt/scripts/brain-auth-env.sh", str(base / "no-auth"))
+                .replace('if [ "$(id -u)" = "0" ]; then', "if false; then")
+                .replace("/root/.local/bin/claude", str(fake)))
+        self.wrapper = base / "claude-run"
+        self.wrapper.write_text(body)
+        self.wrapper.chmod(0o755)
+
+    def run_wrapper(self, *args, headless=True):
+        env = dict(os.environ)
+        env.pop("CLAUDE_CODE_DISABLE_ADVISOR_TOOL", None)
+        env["BRAIN_HEADLESS_SETTINGS"] = (str(self.headless) if headless
+                                          else str(Path(self.tmp.name) / "none"))
+        subprocess.run([str(self.wrapper), *args], env=env, check=True,
+                       capture_output=True, timeout=30)
+        argv, advisor = self.log.read_text().splitlines()
+        return argv, advisor
+
+    def test_a_headless_run_with_nothing_of_its_own_gets_the_list(self):
+        argv, advisor = self.run_wrapper("-p", "--max-turns", "30")
+        self.assertEqual(argv, f"--settings {self.headless} -p --max-turns 30")
+        self.assertEqual(advisor, "ADVISOR=1")
+
+    def test_everything_else_is_left_exactly_as_it_asked(self):
+        cases = [
+            ("--dangerously-skip-permissions",),                 # the terminal
+            ("-p", "--permission-prompt-tool", "stdio"),         # the chat
+            ("-p", "--settings", "/config/.brain/assist_settings.json"),
+            ("--print", "--settings=/x.json"),
+        ]
+        for args in cases:
+            with self.subTest(args=args):
+                argv, advisor = self.run_wrapper(*args)
+                self.assertEqual(argv, " ".join(args))
+                self.assertEqual(advisor, "ADVISOR=")
+
+    def test_no_file_no_flag(self):
+        argv, _ = self.run_wrapper("-p", headless=False)
+        self.assertEqual(argv, "-p")

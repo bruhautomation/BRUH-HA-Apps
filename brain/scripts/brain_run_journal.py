@@ -19,12 +19,15 @@ reader that matters (`journal.summary`, `journal.is_claude_run`) is the
 panel's — and does the two things a panel run gets for free: the row, and
 the nudge when a model actually ran.
 
-What it does NOT get is the panel's in-process listeners: a voice turn
-that fails is a row in the journal, counted in the summary and rendered in
-the fault list, but it writes no problem-report file, because that writer
-is a callback inside the panel process. That is deliberate rather than an
-oversight: the report writer needs the panel's diagnostics, and a second
-copy of it here would be the drift this module exists to avoid.
+What it cannot do from here is what only the panel's listeners do — a
+problem report, the usage ledger, the scheduler's rate-limit pause — so
+every row it writes carries ``extra.shell``, and the panel books each such
+row on its scheduler tick through the same listeners an in-process row
+meets (`journal.book_shell_rows`, the arrangement `journal.py record`
+gives study and the consolidator). The report writer needs the panel's
+diagnostics, and a second copy of it here would be the drift this module
+exists to avoid; booking the row there is how a failed voice turn files
+its report without one.
 
 Never raises, and never fails the run it is accounting for: a journal that
 cannot be written is a missing line, which is the state these runs were in
@@ -96,6 +99,12 @@ def record_run(source: str, outcome: str, *, duration_s: float | None = None,
         journal, usage_store = mods
         meta = envelope if isinstance(envelope, dict) else {}
         turns = meta.get("num_turns")
+        # `shell` first, so a caller's own keys cannot take its place: it is
+        # what makes the panel book this row (`journal.is_shell_row`).
+        row_extra = {"shell": True}
+        for key, value in (extra or {}).items():
+            if key not in row_extra:
+                row_extra[key] = value
         row = journal.record(
             source, outcome,
             error=error or "",
@@ -105,7 +114,7 @@ def record_run(source: str, outcome: str, *, duration_s: float | None = None,
             turns=turns if isinstance(turns, int) and not isinstance(turns, bool)
             else None,
             run_id=str(meta.get("session_id") or run_id or "")[:64],
-            extra=extra,
+            extra=row_extra,
         )
         # The panel's usage listener, done here because it cannot hear a
         # row written in another process: the account's figure moves when a

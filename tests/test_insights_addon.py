@@ -2402,6 +2402,34 @@ class TestGenerateFlow(InsightsServerCase):
         self.assertEqual([c[0] for c in self.calls], ["snapshot"])
         self.assertEqual(self.server.JOBS["custom-79"]["state"], "done")
 
+    def test_a_refused_search_does_not_pay_for_a_second_refusal(self):
+        """The snapshot is the floor under a search that could not FIND
+        its answer, never under one the account or the service refused:
+        a usage limit, a dead credential and an overloaded API refuse the
+        snapshot identically, so falling back bought a second refusal at
+        the snapshot's price and held the queue for both."""
+        refusals = ("You've hit your limit · resets 3pm (UTC)",
+                    "Failed to authenticate: OAuth session expired",
+                    "API Error: 529 Overloaded. try again in a moment.")
+        for n, error in enumerate(refusals):
+            with self.subTest(error=error):
+                self._stub_search(result={"ok": False, "text": "", "meta": {},
+                                          "error": error})
+                card = f"custom-9{n}"
+                self.server.CARD_FAILURES.pop(card, None)
+                self.server._set_job(card, state="queued", question="Why cold?")
+                asyncio.run(self.server._generate(card))
+                self.assertEqual([c[0] for c in self.calls], ["analyst"])
+                self.assertEqual(self.server.JOBS[card]["state"], "error")
+                # ...and the scheduler now backs off from it.
+                self.assertIn(card, self.server.CARD_FAILURES)
+
+    def test_a_card_that_succeeds_clears_its_backoff(self):
+        self.server.CARD_FAILURES["energy"] = {"count": 3, "at": time.time()}
+        asyncio.run(self.server._generate("energy"))
+        self.assertEqual(self.server.JOBS["energy"]["state"], "done")
+        self.assertNotIn("energy", self.server.CARD_FAILURES)
+
     def test_snapshot_mode_never_searches(self):
         """The setting is honoured, not merely preferred."""
         settings_store.save({"gather_mode": "snapshot"})

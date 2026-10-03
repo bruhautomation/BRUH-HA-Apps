@@ -644,14 +644,14 @@ ${prompt}"
     # and .claude/settings.local.json for pre-approved tool permissions.
     # --max-turns prevents runaway agentic loops.
     # No --dangerously-skip-permissions: permissions come from settings.local.json.
-    local start_time
+    local start_time task_rc=0
     start_time=$(date +%s)
 
     # --output-format json: capture the structured result and pull .result,
     # instead of scraping verbose stdout (which now carries MCP/diagnostic
     # lines). See extract_claude_result().
     # shellcheck disable=SC2086
-    (cd /config && printf '%s' "$prompt" | timeout "$claude_limit" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || true
+    (cd /config && printf '%s' "$prompt" | timeout "$claude_limit" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
 
     # A task that ended on the turn cap is landed, not failed: resumed on
     # the session the envelope names, with two turns and a prompt to answer
@@ -669,6 +669,7 @@ ${prompt}"
         if (cd /config && brain_land "$land_sid" "$land_left" "$stderr_file" -- \
             ${CLAUDE_BIN} -p --output-format json ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "${output_file}.land"); then
             mv -f "${output_file}.land" "$output_file"
+            task_rc=0
         else
             rm -f "${output_file}.land"
         fi
@@ -695,13 +696,14 @@ ${prompt}"
         bashio::log.error "Detected /api/mcp auth error in task [$task_id] — cleaning and retrying"
         verify_mcp_config_full
 
-        local remaining=$((claude_limit - duration))
+        local remaining=$((claude_limit - duration)) first_duration="$duration"
         if [ "$remaining" -ge 30 ]; then
             output_file=$(mktemp)
             stderr_file=$(mktemp)
 
+            task_rc=0
             # shellcheck disable=SC2086
-            (cd /config && printf '%s' "$prompt" | timeout "$remaining" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || true
+            (cd /config && printf '%s' "$prompt" | timeout "$remaining" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
 
             end_time=$(date +%s)
             duration=$((end_time - start_time))
@@ -710,8 +712,14 @@ ${prompt}"
             task_data=$(extract_claude_data "$output_file")
             claim_task_session "$output_file"
             stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
-            # The retry's envelope is the one that answers the task.
-            [ -n "$envelope_file" ] && rm -f "$envelope_file"
+            # The retry's envelope is the one that answers the task. The
+            # first run was a run too — it spent tokens and failed — so it
+            # is journaled on its own before its envelope goes (journal_task
+            # removes the file once it has read it).
+            if [ -n "$envelope_file" ]; then
+                journal_task error "$first_duration" "$envelope_file" "${task_model:-}" \
+                    "the MCP connection failed and the task was retried" "$task_scheduled"
+            fi
             envelope_file="${output_file}.envelope"
             mv -f "$output_file" "$envelope_file" 2>/dev/null || envelope_file=""
             rm -f "$stderr_file"

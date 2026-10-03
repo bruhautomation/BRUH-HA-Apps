@@ -965,7 +965,22 @@ class Ledger:
 
     def __init__(self, path=None, tz=None):
         self.path = Path(path) if path else LEDGER_FILE
+        # A zone, or a CALLABLE returning one. The server's ledger is built
+        # at import, before anything has read the house's timezone cache —
+        # and a zone frozen then is UTC for the life of the process, which
+        # is the day this class's own docstring says it does not keep. So
+        # the server hands over the reader and the day is asked each time.
         self.tz = tz or dt.timezone.utc
+
+    def _zone(self):
+        """The zone the day is kept in. A reader that fails is UTC — the
+        same fallback `baselines.house_timezone` takes and says out loud."""
+        if callable(self.tz):
+            try:
+                return self.tz() or dt.timezone.utc
+            except Exception:  # noqa: BLE001 — a clock must not fail a run
+                return dt.timezone.utc
+        return self.tz
 
     # -- storage ---------------------------------------------------------
     def _load(self) -> dict:
@@ -988,12 +1003,18 @@ class Ledger:
                tier: str = "") -> None:
         """Charge one run to today. Never raises: accounting must not be
         able to fail the run it is accounting for — `journal.record`'s
-        rule, and this one is read by a budget rather than by a report."""
+        rule, and this one is read by a budget rather than by a report.
+
+        `tier` is the tier the run actually RAN on, which the server reads
+        off the model the engine sent (`model_plan.tier_of`). The job's
+        table tier is only the fallback: charging by it let a `generous`
+        dial put investigations on Opus against the Sonnet allowance and
+        a typed Opus put first looks on Opus against nothing at all."""
         now = time.time() if now is None else now
         try:
             tier = tier or tier_for(job)
             days = self._load()
-            day = days.setdefault(_day_key(now, self.tz),
+            day = days.setdefault(_day_key(now, self._zone()),
                                   {"jobs": {}, "tiers": {}})
             jobs = day.setdefault("jobs", {})
             jobs[job] = int(jobs.get(job) or 0) + 1
@@ -1011,7 +1032,7 @@ class Ledger:
     # -- reading ---------------------------------------------------------
     def today(self, now: float | None = None) -> dict:
         now = time.time() if now is None else now
-        return self._load().get(_day_key(now, self.tz),
+        return self._load().get(_day_key(now, self._zone()),
                                 {"jobs": {}, "tiers": {}})
 
     def spent(self, tier: str, now: float | None = None) -> int:
@@ -1073,7 +1094,7 @@ class Ledger:
         jobs = day.get("jobs") or {}
         tiers = day.get("tiers") or {}
         return {
-            "day": _day_key(now, self.tz),
+            "day": _day_key(now, self._zone()),
             "looked": int(jobs.get(JOB_FIRST_LOOK) or 0),
             "investigated": int(jobs.get(JOB_INVESTIGATE) or 0),
             "acted": sum(int(jobs.get(job) or 0) for job in ACT_JOBS),

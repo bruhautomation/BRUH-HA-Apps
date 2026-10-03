@@ -250,6 +250,39 @@ class TestTheThingsThatMatter(unittest.TestCase):
         self.assertIn("usage", ids(health.problems(snap, now=NOW)))
 
 
+class TestThePanelsOwnLoops(unittest.TestCase):
+    """The panel's loops ride in the payload as `loops`
+    (`server._loop_health`); a dead one is a state and a sentence, where
+    it used to be an unretrieved-exception line and an `ok`."""
+
+    def test_a_dead_generation_worker_fails_the_verdict(self):
+        got = health.verdict(diag(loops={"worker": {
+            "alive": False, "stopped": False,
+            "error": "OSError: [Errno 30] Read-only file system",
+            "beat_age_s": 40, "busy_s": 0, "busy_limit_s": 3000}}), now=NOW)
+        self.assertEqual(got["state"], "failed")
+        self.assertIn("loop:worker", ids(got["problems"]))
+        self.assertIn("Read-only file system", got["fix"])
+
+    def test_a_dead_side_loop_degrades_it(self):
+        got = health.verdict(diag(loops={
+            "worker": {"alive": True, "beat_age_s": 20, "busy_s": 0,
+                       "busy_limit_s": 3000},
+            "weekly": {"alive": False, "error": ""}}), now=NOW)
+        self.assertEqual(got["state"], "degraded")
+        self.assertEqual(ids(got["problems"]), {"loop:weekly"})
+        self.assertIn("add-on log", got["fix"])
+
+    def test_live_loops_and_a_shutdown_are_silent(self):
+        got = health.verdict(diag(loops={
+            "worker": {"alive": True, "beat_age_s": 20, "busy_s": 0,
+                       "busy_limit_s": 3000},
+            "scheduler": {"alive": True, "beat_age_s": 30,
+                          "stall_after_s": 600},
+            "brief": {"alive": False, "stopped": True}}), now=NOW)
+        self.assertEqual(got["state"], "ok")
+
+
 class TestTheWorstThingWins(unittest.TestCase):
     def test_the_reason_is_the_worst_problem_not_the_first_found(self):
         snap = diag(auth={"state": "error"},

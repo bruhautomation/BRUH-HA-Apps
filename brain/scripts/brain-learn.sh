@@ -439,7 +439,18 @@ if [ -n "$learn_session" ] && command -v brain_hit_turn_cap > /dev/null 2>&1 \
         rc=0
     fi
 fi
+# One journal row per session, from the process that ran it (see
+# brain-run-source.sh): what makes a study run count, report when it fails
+# and nudge the usage reading. A session that exited 0 and answered no JSON
+# is recorded below, where that is known.
+study_journal() {
+    command -v brain_journal_record > /dev/null 2>&1 || return 0
+    brain_journal_record study "$1" --stderr "$err_file" \
+        --run-id "$learn_session" ${MODEL:+--model "$MODEL"} \
+        --duration "$(( $(date +%s) - study_started ))" "${@:2}"
+}
 if [ "$rc" -ne 0 ]; then
+    study_journal "$rc"
     if [ "$rc" -eq 124 ]; then
         echo -e "${RED}Study session ran past its ${TIMEOUT}s limit and was stopped.${NC}" >&2
         echo -e "${DIM}Nothing was written. Raise BRAIN_LEARN_TIMEOUT for deeper sessions.${NC}" >&2
@@ -451,16 +462,19 @@ if [ "$rc" -ne 0 ]; then
     rm -f "$err_file"
     exit 1
 fi
-rm -f "$err_file"
 
 # Tolerate a stray code fence even though we asked for none.
 json=$(printf '%s' "$output" | sed -e 's/^```\(json\)\?$//' -e 's/^```$//' \
     | jq -c 'if type == "object" then . else empty end' 2>/dev/null | head -1)
 
 if [ -z "$json" ]; then
+    study_journal 0 --error "unparseable: the session answered with no JSON object"
+    rm -f "$err_file"
     echo -e "${RED}Study session returned something unparseable — nothing written.${NC}" >&2
     exit 1
 fi
+study_journal 0
+rm -f "$err_file"
 
 report=$(printf '%s' "$json" | jq -r '.report // ""')
 mapfile -t facts < <(printf '%s' "$json" | jq -r '(.facts // [])[]' 2>/dev/null)

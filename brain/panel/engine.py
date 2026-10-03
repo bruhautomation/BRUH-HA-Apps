@@ -157,12 +157,21 @@ MODEL_CHOICES = [
      "label": "Sonnet", "hint": "balanced speed and smarts"},
     {"id": "haiku", "group": "Always the latest",
      "label": "Haiku", "hint": "fastest, cheapest"},
-    {"id": "claude-opus-5", "group": "Pinned versions",
-     "label": "Claude Opus 5", "hint": "deepest analysis, most tokens"},
-    {"id": "claude-sonnet-5", "group": "Pinned versions",
-     "label": "Claude Sonnet 5", "hint": "great default for insights"},
+    # The current generation first. The top pin used to be Opus 5 labelled
+    # "deepest analysis" — a release behind what the `opus` alias already
+    # resolves to, and dearer per token than it — and a pin in this list
+    # is a GLOBAL override (it moves every job off the plan), so the stale
+    # pin moved a whole install onto the older, pricier model.
+    {"id": "claude-opus-5-5", "group": "Pinned versions",
+     "label": "Claude Opus 5.5", "hint": "deepest analysis, most tokens"},
+    {"id": "claude-sonnet-5-5", "group": "Pinned versions",
+     "label": "Claude Sonnet 5.5", "hint": "great default for insights"},
     {"id": "claude-haiku-4-5", "group": "Pinned versions",
      "label": "Claude Haiku 4.5", "hint": "cheapest runs"},
+    {"id": "claude-opus-5", "group": "Previous generation",
+     "label": "Claude Opus 5", "hint": ""},
+    {"id": "claude-sonnet-5", "group": "Previous generation",
+     "label": "Claude Sonnet 5", "hint": ""},
     {"id": "claude-opus-4-8", "group": "Previous generation",
      "label": "Claude Opus 4.8", "hint": ""},
     {"id": "claude-sonnet-4-6", "group": "Previous generation",
@@ -606,6 +615,15 @@ def _claude_argv() -> list[str]:
 def _claude_env() -> dict[str, str]:
     env = dict(os.environ)
     env["HOME"] = CLAUDE_HOME
+    # Claude Code keeps a memory of its own beside brAIn's, and it was on in
+    # every session: "remember that" in the chat was written to the CLI's
+    # MEMORY.md under the config dir as well as queued to brAIn's inbox, and
+    # the CLI's copy was never consolidated, never shown on the Memory tab,
+    # never reached by a correction or a forget — and went on loading into
+    # every later session, where it could contradict memory.md. memory.md is
+    # the only thing that is memory; the second one is switched off here and
+    # in /data/.brain_env, which is every route a Claude process has.
+    env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
     # Never let a stale interactive login interfere; inject our credential.
     auth = get_auth()
     if auth:
@@ -633,22 +651,37 @@ def run_claude(
     job: str = "",
     effort: str = "",
     schema: dict | None = None,
+    pressed: bool = False,
 ) -> dict:
     """Run `claude -p` headlessly. Returns {'ok', 'text', 'error', 'meta'}.
 
-    Tools are disallowed outright: insights are pure generation over the data
-    bundle in the prompt. Without this, the model sometimes attempted tool
-    calls that non-interactive mode denies, burning through --max-turns and
-    dying with "max number of turns" instead of producing the insight. The
-    max_turns margin covers any residual multi-turn behavior.
+    No tools: insights are pure generation over the data bundle in the
+    prompt. Without that, the model sometimes attempted tool calls that
+    non-interactive mode denies, burning turns and dying with "max number
+    of turns" instead of producing the insight.
+
+    **`--tools ""`, never `--disallowedTools "*"`, and the difference is the
+    whole first look.** `--tools ""` takes the built-in set off the table;
+    a `*` deny refuses every call the model makes — including the CLI's own
+    StructuredOutput tool, which is how a `--json-schema` run hands its
+    answer back. So every Resident first look and every snapshot card that
+    carried a schema asked for that tool, was refused, asked again, and
+    spent four to six turns at several times the price before giving up in
+    prose — with no `structured_output`, and in roughly two runs of five no
+    JSON in the prose either. A look that cannot be read sends its whole
+    batch to `watch`, which is how a tripped leak sensor never reached
+    `act`. The deny survives only as the fallback for a CLI too old to know
+    `--tools`, where it is exactly what shipped.
 
     `job`, `effort` and `schema` are the 2.0 additions shared by all three
     runners — see `_run_cli`.
     """
     return _run_cli(
-        prompt, ["--disallowedTools", "*", "--system-prompt", system_prompt],
+        prompt, ["--tools", "", "--strict-mcp-config",
+                 "--system-prompt", system_prompt] + isolation_flags(),
         model, timeout, max_turns, f"Claude timed out after {timeout}s",
-        source, job=job, effort=effort, schema=schema)
+        source, job=job, effort=effort, schema=schema, pressed=pressed,
+        fallbacks={"tools": ["--disallowedTools", "*"]})
 
 
 # The analyst's tools: reading the home, and nothing else.
@@ -682,12 +715,84 @@ MCP = "mcp__home-assistant__"
 # purpose, and a file pre-approving Bash and Write would widen it.
 HA_PROJECT = os.environ.get("BRAIN_CHAT_WORKDIR", "/config")
 
+# The headless allow-list: what an unattended run that cannot ask anybody
+# may do without a prompt. run.sh writes it beside the shared project file
+# and it is handed over by `--settings`, never loaded by being in /config —
+# see `setup_claude_settings` in run.sh for why it left
+# /config/.claude/settings.local.json, which is the file the interactive
+# terminal and the chat load too.
+def headless_settings_file() -> str:
+    """Where that file is: `BRAIN_HEADLESS_SETTINGS`, else beside the
+    project in `.brain/`. A function rather than a constant so it follows
+    `HA_PROJECT` wherever a test or a dev checkout points it."""
+    return (os.environ.get("BRAIN_HEADLESS_SETTINGS")
+            or os.path.join(HA_PROJECT, ".brain", "headless_settings.json"))
 
-def project_flags(*, settings: bool, files: bool) -> list[str]:
+# Built-in tools that act OUTSIDE the run without a permission prompt:
+# messaging a peer session, listing the sessions there are to message,
+# firing a remote trigger, pushing a notification to somebody's phone,
+# scheduling a job, watching a process, waking a session later. Claude Code
+# ships them enabled and brAIn installs `latest`, so every brAIn process —
+# a read-only analyst, a study run, a voice worker whose shell is denied —
+# could message the chat or the always-alive spare voice worker, whose
+# pre-approved tools would then act on the house on its behalf. That walks
+# round "an unattended run can change nothing" and "voice cannot reach a
+# shell" at once, with nothing but a prompt in the way.
+#
+# One list, read three ways: the engine denies it on every run (in
+# ANALYST_DENIED and in `isolation_flags`), and run.sh writes the same
+# names into the shared project file, the headless allow-list file and the
+# voice scope — `tests/test_security.py` holds the shell copies to this
+# one, because two answers to "what may a session reach outside itself" is
+# how one face keeps a door the others closed.
+PLATFORM_DENIED = [
+    "SendMessage", "ListAgents", "ListPeers", "RemoteTrigger",
+    "PushNotification", "SendUserMessage", "CronCreate", "CronDelete",
+    "CronList", "ScheduleWakeup", "Monitor", "TeamCreate", "TeamDelete",
+]
+
+
+def isolation_settings() -> dict:
+    """What every engine run is told about the platform around it.
+
+    `crossSessionInbound: refuse` opts the session out of receiving a
+    peer's messages; `autoMemoryEnabled: false` is the setting half of
+    `CLAUDE_CODE_DISABLE_AUTO_MEMORY`; and the platform tools are denied
+    by name. No `allow` at all — this is the floor every run stands on,
+    and what a run may do is its runner's flags and nothing here.
+    """
+    return {
+        "crossSessionInbound": "refuse",
+        "autoMemoryEnabled": False,
+        "permissions": {"deny": list(PLATFORM_DENIED)},
+    }
+
+
+def isolation_flags(settings_file: str = "") -> list[str]:
+    """`--setting-sources` and `--settings` for one engine run.
+
+    **No setting source is loaded, and that is deliberate rather than
+    tidy.** The engine runs from CLAUDE_HOME, and there the user settings
+    file and the "project" one are the same file — the one a terminal
+    `/advisor opus` writes to — so `project,local` would have kept exactly
+    the leak it was meant to close: an Opus advisor attached to every
+    scheduled card, look and investigation, which nothing in the Resident's
+    ledger counts. So every setting an engine run has is named here, by
+    flag: the isolation JSON for a run that reads, and the headless
+    allow-list file for the one that acts (which carries the same keys).
+    """
+    return ["--setting-sources", "",
+            "--settings", settings_file or json.dumps(
+                isolation_settings(), separators=(",", ":"))]
+
+
+def project_flags(*, files: bool) -> list[str]:
     """Flags that lend a CLAUDE_HOME run the Home Assistant project.
 
     Each is added only when its target exists: `--mcp-config` on a missing
-    file is a refused run, and a dev checkout has no /config at all.
+    file is a refused run, and a dev checkout has no /config at all. The
+    project's permission file is no longer one of them — see
+    `headless_settings_file` and `run_agent`.
     """
     flags: list[str] = []
     mcp = os.path.join(HA_PROJECT, ".mcp.json")
@@ -695,9 +800,6 @@ def project_flags(*, settings: bool, files: bool) -> list[str]:
         flags += ["--mcp-config", mcp]
     if files and os.path.isdir(HA_PROJECT):
         flags += ["--add-dir", HA_PROJECT]
-    local = os.path.join(HA_PROJECT, ".claude", "settings.local.json")
-    if settings and os.path.isfile(local):
-        flags += ["--settings", local]
     return flags
 ANALYST_TOOLS = [
     f"{MCP}get_all_states",       # the search: by domain, by name substring
@@ -799,6 +901,12 @@ ANALYST_DENIED = [
     f"{MCP}minecraft_world", f"{MCP}minecraft_command",
     f"{MCP}minecraft_server", f"{MCP}minecraft_addons",
     f"{MCP}print_label", f"{MCP}bright_show",
+    # The platform's own reach past the run — a peer session, a phone, a
+    # timer. `--tools ""` already takes the built-ins off an analyst run;
+    # they are named here as well because this list is what a study
+    # session and a `house`/`read_only` automation task are scoped by, and
+    # those keep the built-in set.
+    *PLATFORM_DENIED,
 ]
 
 
@@ -813,6 +921,7 @@ def run_analyst(
     job: str = "",
     effort: str = "",
     schema: dict | None = None,
+    pressed: bool = False,
 ) -> dict:
     """Run `claude -p` with READ-ONLY Home Assistant tools. Same envelope.
 
@@ -832,16 +941,26 @@ def run_analyst(
     ``--append-system-prompt``, not ``--system-prompt``: replacing the CLI's
     own prompt strips what it knows about calling tools, which is the entire
     point of this path.
+
+    ``--tools ""`` takes Claude Code's own agentic harness off the run —
+    Agent, TodoWrite, Read, Glob, Grep and the rest, about 22k tokens of
+    tool definitions a read-only house analyst never calls — while the MCP
+    server's tools stay, because they are not built-ins. ``--strict-mcp-config``
+    is what keeps it to that one server: a user-scope server or a plugin
+    the terminal installed would otherwise load into every unattended run,
+    with its tools in context and its own reach.
     """
     return _run_cli(
         prompt,
         ["--append-system-prompt", system_prompt,
+         "--tools", "",
          "--allowedTools", ",".join(ANALYST_TOOLS),
          "--disallowedTools", ",".join(ANALYST_DENIED)]
-        + project_flags(settings=False, files=False),
+        + project_flags(files=False) + ["--strict-mcp-config"]
+        + isolation_flags(),
         model, timeout, max_turns,
         f"the analysis passed its {timeout}s limit and was stopped", source,
-        job=job, effort=effort, schema=schema)
+        job=job, effort=effort, schema=schema, pressed=pressed)
 
 
 def run_agent(
@@ -855,6 +974,7 @@ def run_agent(
     job: str = "",
     effort: str = "",
     schema: dict | None = None,
+    pressed: bool = False,
 ) -> dict:
     """Run `claude -p` WITH its tools. Same envelope as ``run_claude``.
 
@@ -863,19 +983,30 @@ def run_agent(
 
     * no ``--disallowedTools``, so the Home Assistant MCP tools and file
       access are available. Which of them may run without a prompt is
-      governed by /config/.claude/settings.local.json, written at startup —
-      the same permissions the Assist and Automation listeners run under, so
-      there is one answer to "what may Claude do here" rather than two.
+      governed by the headless allow-list file run.sh writes
+      (`headless_settings_file`) — the same permissions the Assist and
+      Automation listeners run under, so there is one answer to "what may
+      an unattended Claude do here" rather than two. It used to be the
+      shared project file, which the interactive terminal and the chat
+      load too, and that is the reason it moved: a person at a prompt
+      should be asked.
     * ``--append-system-prompt`` rather than ``--system-prompt``: replacing
       the CLI's own system prompt strips everything it knows about using its
       tools, which is precisely what this run needs.
+
+    The headless file also carries the PreToolUse hooks — the edit
+    snapshot `unfix` reverses out of, and the protected-entity guard —
+    which is why it is handed over whole rather than as a bare allow-list.
     """
+    headless = headless_settings_file()
+    headless = headless if os.path.isfile(headless) else ""
     return _run_cli(
         prompt, ["--append-system-prompt", system_prompt]
-        + project_flags(settings=True, files=True),
+        + project_flags(files=True) + ["--strict-mcp-config"]
+        + isolation_flags(headless),
         model, timeout, max_turns,
         f"the fix run passed its {timeout}s limit and was stopped", source,
-        job=job, effort=effort, schema=schema)
+        job=job, effort=effort, schema=schema, pressed=pressed)
 
 
 # There is NO turn cap on a panel run. `_run_cli` sends no `--max-turns`
@@ -934,44 +1065,81 @@ def overloaded(result: dict) -> bool:
             and bool(_OVERLOADED_RE.search(str(result.get("error") or ""))))
 
 
-# The flags the 2.0 runners add that an older CLI may not know. Each is
+# The flags the runners add that an older CLI may not know. Each is
 # optional in the same sense `--session-id` is: the CLI names an unknown
 # flag on stderr and dies unspoken, and the run is retried without it.
 # What is NOT optional is the run — a job planned for `--effort low` on
 # a CLI that predates effort still runs, at the CLI's default depth.
-_OPTIONAL_FLAG_WORDS = ("effort", "json-schema", "session-id")
+#
+# The value is how many argv entries follow the flag: `--strict-mcp-config`
+# takes none, and removing "its value" would take the next flag with it.
+_OPTIONAL_FLAGS = {
+    "effort": 1, "json-schema": 1, "session-id": 1, "tools": 1,
+    "strict-mcp-config": 0, "setting-sources": 1, "settings": 1,
+}
+# The arg parser's own sentence, and the only thing read: the name is
+# taken out of "unknown option '--tools'" rather than searched for as a
+# word, because a word search found "tools" in every error that mentioned
+# an allow-list and "effort" in any reply that used the word.
+_UNKNOWN_OPTION_RE = re.compile(r"unknown option ['\"]?--([A-Za-z][\w-]*)",
+                                re.IGNORECASE)
+# Claude Code refuses to start a second conversation under an id whose
+# transcript already exists — before any request, so the refusal costs
+# nothing and answers nothing. `_run_cli` mints a fresh id per spawn so it
+# should never be seen; when it is, the run gets one fresh id and goes
+# again rather than ending on a sentence about bookkeeping.
+_SESSION_IN_USE_RE = re.compile(r"session id\b.*\balready in use", re.IGNORECASE)
 
 
 def _rejected_flag(result: dict) -> str | None:
     """Which optional flag a failed run's stderr names, if any."""
     if result.get("ok"):
         return None
-    err = str(result.get("error") or "")
-    for word in _OPTIONAL_FLAG_WORDS:
-        if word in err:
-            return word
+    match = _UNKNOWN_OPTION_RE.search(str(result.get("error") or ""))
+    if match and match.group(1) in _OPTIONAL_FLAGS:
+        return match.group(1)
     return None
 
 
+def session_in_use(result: dict) -> bool:
+    """Did the CLI refuse the run because its session id was taken?"""
+    return (not result.get("ok")
+            and bool(_SESSION_IN_USE_RE.search(str(result.get("error") or ""))))
+
+
 def _without(argv: list[str], flag: str) -> list[str]:
-    """`argv` with `--<flag>` and its value removed."""
+    """`argv` with `--<flag>` and its value(s) removed."""
+    arity = _OPTIONAL_FLAGS.get(flag, 1)
     out: list[str] = []
-    skip = False
+    skip = 0
     for item in argv:
         if skip:
-            skip = False
+            skip -= 1
             continue
         if item == f"--{flag}":
-            skip = True
+            skip = arity
             continue
         out.append(item)
     return out
 
 
+def _mint(source: str) -> str:
+    """A fresh session id, claimed for `source` before anything runs.
+
+    Claimed first because a run that times out or crashes still leaves a
+    transcript behind and it should still be labelled as the run it was.
+    """
+    session_id = str(uuid.uuid4())
+    if source:
+        run_sources.record(session_id, source)
+    return session_id
+
+
 def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
              max_turns: int, timeout_message: str, source: str = "",
              *, job: str = "", effort: str = "",
-             schema: dict | None = None) -> dict:
+             schema: dict | None = None, pressed: bool = False,
+             fallbacks: dict | None = None) -> dict:
     """Invoke `claude -p` and parse its envelope.
 
     Three 2.0 additions ride on every runner and are resolved here, once:
@@ -980,7 +1148,8 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
       When the caller passed no `model`, the model and the effort come
       from `model_plan.resolve(job, …)` — the tiering the design page
       calls "Haiku looks, Sonnet thinks, Opus acts". An explicit `model`
-      still wins, because a caller that named one meant it.
+      still wins, because a caller that named one meant it — up to the
+      one tier a timer may never reach (`model_plan.guard_override`).
     * `effort` becomes `--effort`, a depth request the CLI may not know.
     * `schema` becomes `--json-schema`: the CLI validates the reply against
       it and returns the object as `structured_output`, which lands in
@@ -988,27 +1157,50 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
       and `data` is then whatever `extract_json` can read out of the
       text, so callers keep one code path and one fallback.
 
+    `pressed` says a person asked for this run. It is what lets a typed
+    model reach a job a timer may not run on it, and nothing else.
+
+    `fallbacks` names what replaces an optional flag the installed CLI
+    refuses, where dropping it alone would widen the run: `run_claude`
+    trades a refused `--tools ""` for the `--disallowedTools "*"` that
+    shipped before it, rather than for no restriction at all.
+
     The su-exec drop to the non-root user, the credential injection, and the
     working directory are the fiddly parts, and they must not have two
     copies: a fix applied to one and not the other is how the tool-enabled
     path quietly stops authenticating the way the analysis path does.
 
-    Every run mints a ``--session-id`` before it starts. ``source`` claims
-    it for a face ("card", "fix") the way every other background caller
-    does — recorded in run_sources *before* the run, because a run that
-    times out or crashes still left a transcript behind and it should still
-    be labelled as the run it was; an unclaimed one (the auth self-check)
-    is simply not listed. The same fallback the consolidator has: a CLI
-    that rejects the flag names it on stderr and dies unspoken, and then
-    the run is retried without it — the label is optional, the run is not.
+    **Every spawn mints its own ``--session-id``**, claimed for ``source``
+    before it starts (the label is optional, the run is not: a CLI that
+    rejects the flag gets the run without it). Reusing one id across
+    re-spawns was the bug: an attempt that reached the API — a 529, a flag
+    the API rather than the arg parser refused — has already written a
+    transcript under that id, and the CLI refuses a second conversation
+    under it with "Session ID … is already in use" before any request. So
+    the documented overload retry could never retry: it waited its pause,
+    spent a spawn, replaced the real 529 with a sentence about bookkeeping,
+    and the journal still said the run was retried.
 
     A run that ends on the turn cap is landed (see LANDING_PROMPT) on the
     id the CLI reports for it, and the landed answer is the run's result;
     the journal line says so (``extra.landed``). A landing that also fails
     leaves the ordinary error, which names no setting — there is none.
     """
-    if job and not model:
-        model, planned_effort = planned(job)
+    refused_override = ""
+    if job and model:
+        # A model the caller named is, in every server.py call site, the
+        # global override handed down — so the override's one guard is
+        # asked here too, not only where the plan reads it.
+        thinking = _thinking()
+        model, refused_override = model_plan.guard_override(
+            job, model, thinking, pressed=pressed)
+        if refused_override:
+            log.warning("%s: %s", job, refused_override)
+            model, planned_effort = model_plan.resolve(
+                job, thinking, "", pressed=pressed)
+            effort = effort or planned_effort
+    elif job:
+        model, planned_effort = planned(job, pressed=pressed)
         effort = effort or planned_effort
     base = _claude_argv() + ["-p", "--output-format", "json"]
     if model:
@@ -1020,31 +1212,37 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
     # No `--max-turns`: see the note above LANDING_TURNS. The argument is
     # kept so every runner and every caller keeps its shape.
     del max_turns
-    argv = base + flags
+    fallbacks = dict(fallbacks or {})
     started = time.monotonic()
-    session_id = str(uuid.uuid4())
-    if source:
-        run_sources.record(session_id, source)
-    result = _spawn_cli(argv + ["--session-id", session_id],
-                        prompt, timeout, timeout_message)
-    # An optional flag the installed CLI does not know: drop it and go
-    # again, at most once per flag, so a run never fails over a request.
     dropped: list[str] = []
+
+    def spawn(limit: int) -> tuple[dict, str]:
+        sid = "" if "session-id" in dropped else _mint(source)
+        tail = ["--session-id", sid] if sid else []
+        return _spawn_cli(base + flags + tail, prompt, limit,
+                          timeout_message), sid
+
+    result, session_id = spawn(timeout)
+    # An optional flag the installed CLI does not know: drop it (or trade
+    # it for its fallback) and go again, at most once per flag, so a run
+    # never fails over a request.
     while (flag := _rejected_flag(result)) and flag not in dropped:
         dropped.append(flag)
         base = _without(base, flag)
-        argv = base + flags
-        tail = [] if "session-id" in dropped else ["--session-id", session_id]
-        result = _spawn_cli(argv + tail, prompt, timeout, timeout_message)
+        flags = _without(flags, flag) + fallbacks.pop(flag, [])
+        result, session_id = spawn(timeout)
+    if session_in_use(result) and "session-id" not in dropped:
+        # Should be unreachable with an id minted per spawn; when it is
+        # reached anyway (a clock collision, a store restored from a
+        # backup), one fresh id is the whole remedy.
+        result, session_id = spawn(timeout)
     retried = False
     if overloaded(result):
         remaining = int(timeout - (time.monotonic() - started))
         if remaining > OVERLOAD_RETRY_S + LANDING_MIN_S:
             time.sleep(OVERLOAD_RETRY_S)
-            tail = [] if "session-id" in dropped else ["--session-id", session_id]
-            again = _spawn_cli(argv + tail, prompt,
-                               remaining - OVERLOAD_RETRY_S, timeout_message)
-            result, retried = again, True
+            result, session_id = spawn(remaining - OVERLOAD_RETRY_S)
+            retried = True
     if schema and result.get("ok") and "data" not in result:
         # The CLI ran without --json-schema (too old, or it was dropped
         # above): read the object out of the text so callers see one shape.
@@ -1056,13 +1254,18 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
         resume_id = str((result.get("meta") or {}).get("session_id")
                         or session_id)
         remaining = int(timeout - (time.monotonic() - started))
-        if remaining >= LANDING_MIN_S:
+        if resume_id and remaining >= LANDING_MIN_S:
             landing = _spawn_cli(
                 base + ["--max-turns", str(LANDING_TURNS)] + flags
                 + ["--resume", resume_id],
                 LANDING_PROMPT, remaining, timeout_message)
             if landing["ok"]:
                 result, landed = landing, True
+    # The model actually sent, on the result: the Resident's ledger charges
+    # a run to the tier it RAN on (`model_plan.tier_of`), and a card's
+    # capture names it. Empty when the CLI chose — the account's default.
+    result.setdefault("meta", {})
+    result["meta"]["model"] = model or ""
     extra: dict = {}
     if landed:
         extra["landed"] = True
@@ -1074,19 +1277,33 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
         extra["effort"] = effort
     if dropped:
         extra["dropped_flags"] = dropped
+    if refused_override:
+        extra["refused_override"] = True
     _journal(source or "engine", result, model, timeout_message,
-             time.monotonic() - started, extra=extra or None)
+             time.monotonic() - started, extra=extra or None,
+             run_id=session_id)
     return result
 
 
-def planned(job: str) -> tuple[str, str]:
+def _thinking() -> str:
+    """The `thinking` dial as saved, or the default. Never raises."""
+    try:
+        value = str(settings_store.load().get("thinking") or "")
+    except Exception:  # noqa: BLE001 - a settings file that will not read is the defaults
+        value = ""
+    return value if value in model_plan.THINKING else model_plan.DEFAULT_THINKING
+
+
+def planned(job: str, *, pressed: bool = False) -> tuple[str, str]:
     """`(model, effort)` the model plan gives a job on this install.
 
     The global `model` option (the add-on's Configuration tab, or the
     panel's override of it) wins when set — a person who typed a model
     meant every run — and the `thinking` setting scales the tiers. Read
     at call time rather than at import, the way `insights_enabled()` is,
-    so a change in ⚙ reaches the next run.
+    so a change in ⚙ reaches the next run. The one exception is the
+    override's own guard: a typed Fable on a job nobody pressed for falls
+    back to the job's own tier (`model_plan.guard_override`).
     """
     try:
         settings = settings_store.load()
@@ -1094,11 +1311,17 @@ def planned(job: str) -> tuple[str, str]:
         settings = {}
     override = str(settings.get("model") or os.environ.get("BRAIN_MODEL", "") or "")
     thinking = str(settings.get("thinking") or model_plan.DEFAULT_THINKING)
-    return model_plan.resolve(job, thinking, override)
+    if override:
+        override, refused = model_plan.guard_override(
+            job, override, thinking, pressed=pressed)
+        if refused:
+            log.warning("%s: %s", job, refused)
+    return model_plan.resolve(job, thinking, override, pressed=pressed)
 
 
 def _journal(source: str, result: dict, model: str, timeout_message: str,
-             duration_s: float, extra: dict | None = None) -> None:
+             duration_s: float, extra: dict | None = None,
+             run_id: str = "") -> None:
     """One journal line per invocation, whatever happened to it.
 
     Best effort by construction (journal.record never raises), and kept
@@ -1113,9 +1336,25 @@ def _journal(source: str, result: dict, model: str, timeout_message: str,
         model=model or "",
         tokens=usage_store.tokens_from_meta(meta),
         turns=meta.get("num_turns") if isinstance(meta.get("num_turns"), int) else None,
-        run_id=str(meta.get("session_id") or "")[:64],
+        # The CLI's own id first; the one this spawn was minted under when
+        # the envelope carried none (plain output, an older shape).
+        run_id=str(meta.get("session_id") or run_id or "")[:64],
         extra=extra,
     )
+
+
+def _engine_env() -> dict[str, str]:
+    """`_claude_env` plus what only an unattended engine run is told.
+
+    No advisor. A `/advisor opus` typed in the terminal is saved to the
+    shared user settings and the CLI attaches that advisor to every run
+    that loads them; `isolation_flags` loads none, and this is the second
+    lock on the same door, because nothing in `model_plan` plans an
+    advisor and nothing in the Resident's ledger would count one.
+    """
+    env = _claude_env()
+    env["CLAUDE_CODE_DISABLE_ADVISOR_TOOL"] = "1"
+    return env
 
 
 def _spawn_cli(argv: list[str], prompt: str, timeout: int,
@@ -1127,7 +1366,7 @@ def _spawn_cli(argv: list[str], prompt: str, timeout: int,
             capture_output=True,
             text=True,
             timeout=timeout,
-            env=_claude_env(),
+            env=_engine_env(),
             cwd=CLAUDE_HOME if os.path.isdir(CLAUDE_HOME) else None,
         )
     except subprocess.TimeoutExpired:

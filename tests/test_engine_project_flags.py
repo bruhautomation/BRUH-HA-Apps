@@ -28,6 +28,11 @@ class TestProjectFlags(unittest.TestCase):
         (self.project / ".claude").mkdir(parents=True)
         (self.project / ".mcp.json").write_text("{}")
         (self.project / ".claude" / "settings.local.json").write_text("{}")
+        # The headless allow-list run.sh writes beside the project, which
+        # is what the fixer is lent now instead of the shared file.
+        (self.project / ".brain").mkdir()
+        self.headless = self.project / ".brain" / "headless_settings.json"
+        self.headless.write_text('{"permissions": {"allow": ["Bash(*)"]}}')
         self.log = Path(self.tmp.name) / "argv.log"
         shim = Path(self.tmp.name) / "claude"
         shim.write_text(f"#!/bin/sh\nexec {sys.executable} {FAKE} \"$@\"\n")
@@ -36,6 +41,7 @@ class TestProjectFlags(unittest.TestCase):
             "BRAIN_CLAUDE_BIN": str(shim), "FAKE_CLAUDE_LOG": str(self.log),
             "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-" + "x" * 30})
         self.env.start()
+        os.environ.pop("BRAIN_HEADLESS_SETTINGS", None)
         self.proj = unittest.mock.patch.object(engine, "HA_PROJECT", str(self.project))
         self.proj.start()
 
@@ -54,23 +60,37 @@ class TestProjectFlags(unittest.TestCase):
         return argv[argv.index(flag) + 1] if flag in argv else None
 
     def test_the_fixer_is_lent_the_server_the_files_and_the_permissions(self):
+        """The permissions are the HEADLESS file now, not the shared
+        project one: the shared file is what the interactive terminal and
+        the chat load too, and a person at a prompt should be asked."""
         engine.run_agent("p", "s", timeout=30, max_turns=1)
         argv = self._argv()
         self.assertEqual(self._after(argv, "--mcp-config"),
                          str(self.project / ".mcp.json"))
         self.assertEqual(self._after(argv, "--add-dir"), str(self.project))
-        self.assertEqual(self._after(argv, "--settings"),
-                         str(self.project / ".claude" / "settings.local.json"))
+        self.assertEqual(self._after(argv, "--settings"), str(self.headless))
+        self.assertIn("--strict-mcp-config", argv)
+        # No setting SOURCE: from CLAUDE_HOME the user file and the
+        # "project" one are the same file, which is the one /advisor
+        # writes to.
+        self.assertEqual(self._after(argv, "--setting-sources"), "")
 
     def test_the_analyst_gets_the_server_and_nothing_that_widens_it(self):
         engine.run_analyst("p", "s", timeout=30, max_turns=1)
         argv = self._argv()
         self.assertEqual(self._after(argv, "--mcp-config"),
                          str(self.project / ".mcp.json"))
-        # Its allow-list is the whole answer; the project's permission file
-        # pre-approves Bash and Write, which an unattended run may not have.
-        self.assertNotIn("--settings", argv)
+        # Its allow-list is the whole answer: the settings it is handed
+        # are the isolation floor and grant nothing.
+        settings = json.loads(self._after(argv, "--settings"))
+        self.assertNotIn("allow", settings.get("permissions", {}))
+        self.assertEqual(settings["crossSessionInbound"], "refuse")
+        self.assertIs(settings["autoMemoryEnabled"], False)
         self.assertNotIn("--add-dir", argv)
+        # The built-in harness is off the run and only the one server loads.
+        self.assertEqual(self._after(argv, "--tools"), "")
+        self.assertIn("--strict-mcp-config", argv)
+        self.assertEqual(self._after(argv, "--setting-sources"), "")
 
     def test_a_snapshot_run_starts_no_server(self):
         engine.run_claude("p", "s", timeout=30)
@@ -81,8 +101,12 @@ class TestProjectFlags(unittest.TestCase):
                                str(Path(self.tmp.name) / "nowhere")):
             engine.run_agent("p", "s", timeout=30, max_turns=1)
         argv = self._argv()
-        for flag in ("--mcp-config", "--add-dir", "--settings"):
+        for flag in ("--mcp-config", "--add-dir"):
             self.assertNotIn(flag, argv)
+        # With no headless file to lend, the fixer stands on the same
+        # isolation floor every other run does — and is granted nothing.
+        settings = json.loads(self._after(argv, "--settings"))
+        self.assertNotIn("allow", settings.get("permissions", {}))
 
 
 if __name__ == "__main__":

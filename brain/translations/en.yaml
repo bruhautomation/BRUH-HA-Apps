@@ -52,10 +52,12 @@ configuration:
   dangerously_skip_permissions:
     name: Skip permission prompts in the terminal
     description: >-
-      Stop Claude asking before it edits a file or runs a command in the
-      interactive terminal. Convenient, and exactly as risky as it sounds
-      — everything brAIn can reach, it can then change without asking.
-      Background listeners ignore this and use their own allow-list.
+      Off (the default), the interactive terminal asks before Claude runs a
+      command, edits a file or calls a Home Assistant service; only reading
+      Home Assistant is pre-approved. On, it asks before nothing — everything
+      brAIn can reach, it can then change without asking. The chat asks with
+      its own approval cards either way, background listeners use their own
+      allow-list, and protected entities stay refused either way.
   assist_fast_mode:
     name: Fast voice responses
     description: >-
@@ -232,7 +234,8 @@ configuration:
       chat, Fix it, voice and automations. One entity id per line
       (lock.front_door), or a whole domain (alarm_control_panel.*). They can
       still be looked at; a service call that targets one, or an area or
-      device that contains one, is refused.
+      device that contains one, is refused, and while the list is set Claude
+      may not call services from a shell or write YAML that names one.
   edit_journal_days:
     name: Keep undo history for
     description: >-
