@@ -112,6 +112,11 @@ class House:
             e["entity_id"]: e for e in self.entities if e.get("entity_id")}
         self.known_domains = (
             {domain_of(e) for e in self.states} | _CORE_DOMAINS)
+        # What each entity IS, as `world_model` read it — `{}` when the
+        # snapshot carries no reading, which is every word list answering
+        # exactly as it did before a reading existed.
+        world = snap.get("world")
+        self.world: dict = world if isinstance(world, dict) else {}
 
     # -- names -------------------------------------------------------------
     def name(self, entity_id: str) -> str:

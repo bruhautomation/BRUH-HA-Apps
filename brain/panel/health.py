@@ -141,6 +141,7 @@ LOOPS = {
                    "degraded"),
     "requests": ("answers given in Home Assistant", "degraded"),
     "resident": ("the attention loop", "degraded"),
+    "situation": ("the reading of what the house is doing now", "degraded"),
     "options": ("the add-on options poll", "degraded"),
 }
 

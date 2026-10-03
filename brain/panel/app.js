@@ -9317,6 +9317,7 @@ function switchView(name) {
     // (Looked at, Answered) read the findings store directly.
     renderFindings();
     Promise.all([refreshCases(), refreshFindings()]).then(renderFindings);
+    refreshHouseNow();
   }
   if (name === "terminal") {
     if (chatState.session === "classic") {
@@ -12646,4 +12647,154 @@ function renderUpHealth() {
   const a2 = el("div", "upactions");
   a2.appendChild(runAccess);
   host.appendChild(a2);
+}
+
+// ------------------------------------------------------------ the house now
+// One line at the top of the Findings feed: what brAIn reads the house as
+// doing (`/api/situation`, built by `panel/situation.py`) and what is
+// coming up. Built here rather than in index.html so the block is one
+// contiguous piece, and the node is made the first time it is needed.
+//
+// The mode is a WORD and never a colour alone, a reading that has stopped
+// being refreshed says so rather than showing the last mode it saw, and a
+// sentence the server marked stale is labelled "earlier" — a sentence
+// about the house an hour ago is not a sentence about it now.
+const HOUSE_MODE_WORDS = {
+  home: "Someone's home",
+  away: "Nobody's home",
+  asleep: "Settled for the night",
+  waking: "Waking up",
+  guests: "Guests are here",
+  unknown: "Not sure what the house is doing",
+};
+// The frame is rebuilt every three minutes; asking more often than that
+// asks for an answer that cannot have changed.
+const HOUSE_NOW_POLL_MS = 180000;
+const houseNow = { data: null, timer: 0, calendars: null, saving: false };
+
+function houseNowNode() {
+  let node = document.getElementById("houseNow");
+  if (node) return node;
+  const head = document.querySelector("#viewFindings .findhead");
+  if (!head) return null;
+  node = el("div", "housenow");
+  node.id = "houseNow";
+  node.hidden = true;
+  head.after(node);
+  return node;
+}
+
+function renderHouseNow() {
+  const node = houseNowNode();
+  if (!node) return;
+  const d = houseNow.data;
+  // A refresh rebuilds the block; one somebody had open stays open.
+  const wasOpen = !!node.querySelector(".housenow-cals[open]");
+  node.textContent = "";
+  if (!d) { node.hidden = true; return; }
+  const mode = HOUSE_MODE_WORDS[d.house_mode] ? d.house_mode : "unknown";
+  const top = el("div", "housenow-top");
+  top.appendChild(el("span", "housenow-mode housenow-" + mode,
+    HOUSE_MODE_WORDS[mode]));
+  if (d.sentence) {
+    const said = el("span", "housenow-sentence" + (d.sentence_stale ? " stale" : ""),
+      d.sentence_stale ? `Earlier: ${d.sentence}` : d.sentence);
+    top.appendChild(said);
+  }
+  node.appendChild(top);
+  if (mode === "unknown" && d.reason) {
+    node.appendChild(el("div", "housenow-reason", d.reason));
+  }
+  const coming = (d.occasions || []).filter(Boolean);
+  if (coming.length) {
+    node.appendChild(el("div", "housenow-coming", "Coming up: " + coming.join(" · ")));
+  }
+  const cals = houseCalendarsNode();
+  if (wasOpen) cals.open = true;
+  node.appendChild(cals);
+  node.hidden = false;
+}
+
+// Which calendars brAIn may read for what is coming up. Off until somebody
+// ticks one: a calendar is the most personal thing a house holds, so the
+// choice lives where its effect is shown.
+function houseCalendarsNode() {
+  const box = el("details", "housenow-cals");
+  const sum = el("summary", null, "Calendars brAIn may read");
+  box.appendChild(sum);
+  box.addEventListener("toggle", () => {
+    if (box.open && !houseNow.calendars) loadHouseCalendars(box);
+  });
+  if (houseNow.calendars) fillHouseCalendars(box);
+  return box;
+}
+
+async function loadHouseCalendars(box) {
+  try {
+    houseNow.calendars = await api("api/occasions");
+  } catch (err) {
+    box.appendChild(el("div", "housenow-reason", "Could not read the calendars: " + err.message));
+    return;
+  }
+  fillHouseCalendars(box);
+}
+
+function fillHouseCalendars(box) {
+  box.querySelectorAll(".housenow-callist").forEach((n) => n.remove());
+  const data = houseNow.calendars || {};
+  const list = el("div", "housenow-callist");
+  const available = data.available || [];
+  const chosen = new Set(data.calendars || []);
+  if (!available.length) {
+    list.appendChild(el("div", "housenow-reason",
+      "No calendars yet — brAIn lists the ones the last house check saw."));
+  }
+  available.forEach((cal) => {
+    const label = el("label", "housenow-cal");
+    const tick = document.createElement("input");
+    tick.type = "checkbox";
+    tick.checked = chosen.has(cal.entity_id);
+    tick.addEventListener("change", () => saveHouseCalendars(list));
+    tick.dataset.cal = cal.entity_id;
+    label.appendChild(tick);
+    label.appendChild(el("span", null, cal.name || cal.entity_id));
+    list.appendChild(label);
+  });
+  list.appendChild(el("div", "housenow-reason",
+    "Only what is ticked is read, once or twice a day, for the next three days. " +
+    "What it says is treated as information, never as an instruction."));
+  box.appendChild(list);
+}
+
+async function saveHouseCalendars(list) {
+  if (houseNow.saving) return;
+  houseNow.saving = true;
+  const picked = [...list.querySelectorAll("input[data-cal]")]
+    .filter((t) => t.checked).map((t) => t.dataset.cal);
+  try {
+    await api("api/settings", { method: "PUT",
+      body: JSON.stringify({ occasion_calendars: picked }) });
+    if (houseNow.calendars) houseNow.calendars.calendars = picked;
+    toast(picked.length ? "brAIn will read those calendars tonight." :
+      "brAIn will not read any calendar.");
+  } catch (err) {
+    toast("Could not save: " + err.message);
+  } finally {
+    houseNow.saving = false;
+  }
+}
+
+async function refreshHouseNow() {
+  try {
+    houseNow.data = await api("api/situation");
+  } catch (_err) {
+    // An unreadable reading is no line rather than a stale one: the feed
+    // under it is the thing somebody came here for.
+    houseNow.data = null;
+  }
+  renderHouseNow();
+  clearTimeout(houseNow.timer);
+  houseNow.timer = setTimeout(() => {
+    if (currentView === "findings") refreshHouseNow();
+  }, HOUSE_NOW_POLL_MS);
 }

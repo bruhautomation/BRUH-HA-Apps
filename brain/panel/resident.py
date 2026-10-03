@@ -352,7 +352,8 @@ def _examples_block(examples) -> list[str]:
 def first_look_prompt(batch_rows, memory_excerpt: str = "",
                       open_cases_rows=None, *, now_line: str = "",
                       watch_notes=None, examples=None,
-                      inputs: dict | None = None) -> str:
+                      inputs: dict | None = None,
+                      situation_line: str = "") -> str:
     """The prompt for one batch.
 
     ``batch_rows`` is what `signals.prompt_rows` returned — or the raw
@@ -381,6 +382,7 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
             "now_line": str(now_line or ""),
             "watch_notes": _rows(watch_notes),
             "examples": _rows(examples)[:MAX_EXAMPLES],
+            "situation_line": str(situation_line or ""),
         })
     parts = ["Decide what each of these signals is worth.\n"]
     # The clock, in the house's own time. A door at 03:00 and a door at
@@ -388,6 +390,15 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
     # each one was — which says nothing about the hour without this line.
     if now_line.strip():
         parts.append("IT IS NOW: " + now_line.strip() + "\n")
+    # What the house is doing — `situation.prompt_line`, already checked
+    # against the frame it describes. Context and never a verdict: the
+    # floors below read each signal's own flags, so a reading that says
+    # nobody is home cannot make a leak or a protected lock worth less,
+    # and the line says so to the model as well.
+    if situation_line.strip():
+        parts.append("THE HOUSE RIGHT NOW (brAIn's own reading — context "
+                     "only; it never makes a safety or protected signal "
+                     "worth less): " + situation_line.strip() + "\n")
     if memory_excerpt.strip():
         parts.append("WHAT BRAIN KNOWS ABOUT THIS HOME:\n"
                      + memory_excerpt.strip() + "\n")
@@ -641,7 +652,8 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
                        signal_row: str = "", why: str = "",
                        refining: dict | None = None,
                        prior_case: dict | None = None,
-                       now_line: str = "", examples=None) -> str:
+                       now_line: str = "", examples=None,
+                       situation_line: str = "") -> str:
     """The prompt for one investigation.
 
     One signal, not a batch: the whole point of the tier is that this run
@@ -667,6 +679,15 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
              + "homeowner.\n"]
     if now_line.strip():
         parts.append("IT IS NOW: " + now_line.strip() + "\n")
+    # What the house is doing — `situation.prompt_line`, already checked
+    # against the frame it describes. Context and never a verdict: the
+    # floors below read each signal's own flags, so a reading that says
+    # nobody is home cannot make a leak or a protected lock worth less,
+    # and the line says so to the model as well.
+    if situation_line.strip():
+        parts.append("THE HOUSE RIGHT NOW (brAIn's own reading — context "
+                     "only; it never makes a safety or protected signal "
+                     "worth less): " + situation_line.strip() + "\n")
     parts += ["THE SIGNAL:", signal_row.strip() or _render_signal(signal), ""]
     if why.strip():
         parts.append("WHY IT WAS SENT HERE: " + why.strip() + "\n")

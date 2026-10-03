@@ -162,6 +162,13 @@ OUTDOOR_AREA_WORDS = ("outdoor", "outside", "exterior", "garden", "yard",
 NOT_AIR_WORDS = ("coil", "discharge", "compressor", "evaporator",
                  "condenser", "pool", "water", "pipe", "flow", "return",
                  "supply", "tank", "soil", "probe")
+# The same claim as a `world_model` reading rather than a word, which is
+# how it is made about a house that does not name things in English. A
+# confident reading REPLACES the name's evidence in `rank_outdoor` — the
+# words answer only where the reading has nothing to say — and never the
+# area, the integration, the weather entity or the swing, which are not
+# words and need no reading.
+NOT_AIR_READINGS = ("heater", "cold_storage", "appliance_power")
 # A sensor within this of a weather entity's own current temperature is
 # reading the same air; one this far from it is not. Celsius; scaled for
 # a Fahrenheit house.
@@ -643,20 +650,60 @@ def _name_of(eid: str, st: dict) -> str:
             + " " + eid).lower()
 
 
-def _looks_outdoor(eid: str, st: dict) -> bool:
-    name = _name_of(eid, st)
-    return any(word in name for word in OUTDOOR_WORDS)
+def _read_measures(world, eid: str) -> str | None:
+    """What a confident `world_model` reading says this sensor measures,
+    or None — below the floor, `unknown` and no reading all read alike."""
+    import world_model  # noqa: PLC0415 — a leaf
+
+    value = world_model.attribute(world, eid, "measures", None)
+    return value if isinstance(value, str) else None
 
 
-def is_derived(eid: str, st: dict) -> bool:
+def _looks_outdoor(eid: str, st: dict, world=None) -> bool:
+    """Named outdoors, or read as outdoors by `world_model`.
+
+    The reading answers first when it is confident — `buiten` is outside
+    in Dutch and no list here will ever say so — and the words answer
+    whenever it has nothing to say."""
+    import world_model  # noqa: PLC0415 — a leaf
+
+    def by_name() -> bool:
+        name = _name_of(eid, st)
+        return any(word in name for word in OUTDOOR_WORDS)
+
+    return world_model.is_outdoor(world, eid, by_name)
+
+
+def is_derived(eid: str, st: dict, world=None) -> bool:
     """A temperature-classed reading that is not the air temperature.
 
     Checked BEFORE the outdoor words rather than after them, because
     "Outdoor Dew Point" satisfies both and only one of them decides
-    whether the number means what the model needs it to mean.
+    whether the number means what the model needs it to mean. A
+    confident `world_model` reading of `derived_index` answers it in any
+    language (`dauwpunt`); the words are the fallback.
     """
-    name = _name_of(eid, st)
-    return any(word in name for word in DERIVED_WORDS)
+    import world_model  # noqa: PLC0415
+
+    def by_name() -> bool:
+        name = _name_of(eid, st)
+        return any(word in name for word in DERIVED_WORDS)
+
+    return world_model.is_derived(world, eid, by_name)
+
+
+def _world_for(states: dict, registries: dict | None) -> dict:
+    """The current entity readings for these states and registries."""
+    try:
+        import world_model  # noqa: PLC0415
+        reg = registries or {}
+        snap = {"states": states, "entities": reg.get("entities") or [],
+                "devices": reg.get("devices") or [],
+                "areas": reg.get("areas") or []}
+        return world_model.view(world_model.load(),
+                                world_model.candidates(snap))
+    except Exception:  # noqa: BLE001 — a reading is optional; the build is not
+        return {}
 
 
 def _area_is_outdoors(area: str) -> bool:
@@ -696,7 +743,7 @@ def _to_unit(value: float, have: str, want: str) -> float:
 
 
 def rank_outdoor(states: dict, areas: dict | None = None,
-                 entities: list | None = None) -> list[dict]:
+                 entities: list | None = None, world=None) -> list[dict]:
     """Every thermometer that could be the outdoor reference, best first.
 
     It used to be the alphabetically first sensor whose name held an
@@ -731,7 +778,7 @@ def rank_outdoor(states: dict, areas: dict | None = None,
                          if platform.get(w[0])}
     out = []
     for eid, st, unit in _temperature_sensors(states):
-        if is_derived(eid, st):
+        if is_derived(eid, st, world):
             continue
         name = str(((st.get("attributes") or {}).get("friendly_name"))
                    or eid)
@@ -751,17 +798,33 @@ def rank_outdoor(states: dict, areas: dict | None = None,
             reasons.append("is in no area, which is how a weather "
                            "service's own sensor arrives")
         named = 0
-        if any(word in text for word in STRONG_OUTDOOR_WORDS):
+        read = _read_measures(world, eid)
+        if read == "outdoor":
+            # A confident reading counts like a name that says outside —
+            # and is what makes `buiten` count at all.
             named = 2
-            reasons.append("is named as outdoors")
-        elif any(word in text for word in OUTDOOR_WORDS):
-            named = 1
-            reasons.append("has a name that suggests outdoors")
-        score += named
-        if any(word in text for word in NOT_AIR_WORDS):
+            reasons.append("was read by brAIn as measuring the outdoor air")
+        elif read in NOT_AIR_READINGS:
             score -= 3
-            reasons.append("is named like a reading of a machine or of "
-                           "water rather than of the air")
+            reasons.append("was read by brAIn as a reading of a machine or "
+                           "of water rather than of the air")
+        elif read == "room_air":
+            score -= 2
+            reasons.append("was read by brAIn as a room's air rather than "
+                           "the outdoor air")
+        else:
+            # No confident reading: the words answer, exactly as before.
+            if any(word in text for word in STRONG_OUTDOOR_WORDS):
+                named = 2
+                reasons.append("is named as outdoors")
+            elif any(word in text for word in OUTDOOR_WORDS):
+                named = 1
+                reasons.append("has a name that suggests outdoors")
+            if any(word in text for word in NOT_AIR_WORDS):
+                score -= 3
+                reasons.append("is named like a reading of a machine or of "
+                               "water rather than of the air")
+        score += named
         source = platform.get(eid, "")
         if source and source in weather_platforms:
             score += 3
@@ -807,7 +870,7 @@ def _why(candidate: dict) -> str:
 
 def choose_outdoor(states: dict, areas: dict | None = None,
                    entities: list | None = None,
-                   override: str | None = None) -> dict:
+                   override: str | None = None, world=None) -> dict:
     """The outdoor reference, why, and what else could have been.
 
     `{"entity_id", "unit", "source", "why", "candidates"}`. `source` is
@@ -818,7 +881,7 @@ def choose_outdoor(states: dict, areas: dict | None = None,
     against nothing. "" with no entity is a house with no plausible
     reference, and `why` says so.
     """
-    ranked = rank_outdoor(states, areas, entities)
+    ranked = rank_outdoor(states, areas, entities, world)
     listed = ranked[:OUTDOOR_LISTED]
     note = ""
     if override:
@@ -846,7 +909,8 @@ def choose_outdoor(states: dict, areas: dict | None = None,
 
 
 def pick_outdoor(states: dict, areas: dict | None = None,
-                 entities: list | None = None) -> tuple[str, str]:
+                 entities: list | None = None,
+                 world=None) -> tuple[str, str]:
     """The outdoor reference, and its unit. `("", "")` when there is none.
 
     `choose_outdoor`'s answer without the reasons. It is **recorded in the
@@ -859,7 +923,7 @@ def pick_outdoor(states: dict, areas: dict | None = None,
     not the air temperature, and a dew point that sorts before the real
     reading is how one house had every room measured against humidity.
     """
-    chosen = choose_outdoor(states, areas, entities)
+    chosen = choose_outdoor(states, areas, entities, world=world)
     return chosen["entity_id"], chosen["unit"]
 
 
@@ -918,7 +982,7 @@ def _settled_outdoor(choice: dict, rows: dict, tz: dt.tzinfo) -> dict:
 
 
 def room_candidates(states: dict, outdoor: str, unit: str,
-                    areas: dict | None = None) -> list[str]:
+                    areas: dict | None = None, world=None) -> list[str]:
     """Indoor thermometers worth a model, in a stable order.
 
     The unit has to match the reference's — ``k`` is only unit-free while
@@ -929,11 +993,11 @@ def room_candidates(states: dict, outdoor: str, unit: str,
     areas = areas or {}
     out = []
     for eid, st, own in _temperature_sensors(states):
-        if eid == outdoor or own != unit or _looks_outdoor(eid, st):
+        if eid == outdoor or own != unit or _looks_outdoor(eid, st, world):
             continue
         # A dew point sitting in a room's area reads inside the band and
         # carries the class, so the band alone lets one through as a room.
-        if is_derived(eid, st):
+        if is_derived(eid, st, world):
             continue
         try:
             value = float(st.get("state"))
@@ -1072,15 +1136,24 @@ async def fetch_hourly(session, ids: list[str], now: float,
 
 
 async def build(session, states: dict, registries: dict | None = None,
-                now: float | None = None, path: str | None = None) -> dict:
+                now: float | None = None, path: str | None = None,
+                world: dict | None = None) -> dict:
     """Measure every room and write the store. Returns the payload.
 
     A fetch the recorder refused writes nothing and hands back the
     previous store with `error` beside it (`baselines.refused`). A house
     with nothing to measure still writes, with `reason` saying why.
+
+    `world` is the entity readings (`world_model`); left out, the store
+    is read here and matched against the registries this pass fetched,
+    so a renamed sensor's old reading is never what picks the outdoor
+    reference. A store that cannot be read is `{}` and the word lists
+    answer, which is this module before the readings existed.
     """
     import baselines  # noqa: PLC0415
 
+    if world is None:
+        world = _world_for(states, registries)
     now = time.time() if now is None else now
     tz, tz_name = baselines.house_timezone()
     areas = area_map(registries)
@@ -1095,7 +1168,8 @@ async def build(session, states: dict, registries: dict | None = None,
         # is a choice not made, which is the ranked pick.
         log.debug("thermal: could not read the outdoor choice: %s", exc)
     choice = choose_outdoor(states, areas,
-                            (registries or {}).get("entities"), override)
+                            (registries or {}).get("entities"), override,
+                            world=world)
     outdoor, unit = choice["entity_id"], choice["unit"]
     payload["outdoor"] = outdoor
     payload["unit"] = unit
@@ -1112,7 +1186,7 @@ async def build(session, states: dict, registries: dict | None = None,
         save(payload, path)
         return payload
 
-    ids = room_candidates(states, outdoor, unit, areas)
+    ids = room_candidates(states, outdoor, unit, areas, world)
     payload["asked"] = len(ids)
     if not ids:
         payload["reason"] = (

@@ -61,6 +61,14 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     "auth_check":      ("haiku",  "low",    False, False),
     # One sentence over a deterministic digest of who can reach the house.
     "access_review":   ("haiku",  "low",    False, False),
+    # Understanding the house: reading what an entity IS, saying what the
+    # house is doing now, and noting what is coming up. All three are
+    # closed vocabularies validated in code, so the cheapest tier and no
+    # stepping in either direction — a stronger model would read the same
+    # names into the same words at a higher price.
+    "entity_model":    ("haiku",  "low",    False, False),
+    "situation":       ("haiku",  "low",    False, False),
+    "occasions":       ("haiku",  "low",    False, False),
     # Thinks — reasoning with tools where a wrong answer costs a card.
     "card":            ("sonnet", "medium", True,  True),
     "ask":             ("sonnet", "medium", True,  True),

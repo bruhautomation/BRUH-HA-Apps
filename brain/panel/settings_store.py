@@ -189,12 +189,41 @@ DEFAULTS = {
     # See the module docstring. A panel setting because it is chosen while
     # looking at the reference brAIn picked and the reasons it gave.
     "thermal_outdoor": None,
+    # The calendars brAIn may read for what is coming up (`occasions.py`),
+    # as entity ids. EMPTY by default and only ever what somebody ticked:
+    # a calendar is the most personal thing a house holds, and "brAIn read
+    # my calendar" has to be a thing a person chose.
+    "occasion_calendars": [],
 }
 
 # An entity id, and nothing else: this one is read by the nightly pass
 # and compared against the states, so it has no business holding prose.
 _ENTITY_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 MAX_ENTITY_CHARS = 255
+
+MAX_CALENDARS = 10
+_CALENDAR_RE = re.compile(r"^calendar\.[a-z0-9_]{1,120}$")
+
+
+def clean_calendars(value) -> list[str]:
+    """A list of calendar entity ids — checked, deduped, capped — or a
+    ValueError. An id that is not a calendar's is refused rather than
+    dropped: a typo silently reading nothing is the failure to avoid."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("occasion_calendars must be a list of calendar ids")
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not _CALENDAR_RE.match(item.strip()):
+            raise ValueError(f"{str(item)[:60]!r} is not a calendar entity id")
+        item = item.strip()
+        if item not in out:
+            out.append(item)
+    if len(out) > MAX_CALENDARS:
+        raise ValueError(f"at most {MAX_CALENDARS} calendars")
+    return out
+
 
 # How many producers may be muted. There are about forty checks and a
 # handful of categories; a list past this is a Findings tab switched off
@@ -283,6 +312,13 @@ def load() -> dict:
             and lo <= sessions <= hi:
         out["chat_max_sessions"] = sessions
     try:
+        out["occasion_calendars"] = clean_calendars(
+            data.get("occasion_calendars"))
+    except ValueError:
+        # Unreadable is NONE: the wrong direction here reads a calendar
+        # nobody chose.
+        pass
+    try:
         out["muted_sources"] = clean_sources(data.get("muted_sources"))
     except ValueError:
         # A list that cannot be read mutes nothing: the wrong direction
@@ -367,6 +403,8 @@ def save(fields: dict) -> dict:
             clean[key] = value
         elif key == "muted_sources":
             clean[key] = clean_sources(value)
+        elif key == "occasion_calendars":
+            clean[key] = clean_calendars(value)
         elif key == "plan":
             if value not in PLANS:
                 raise ValueError(f"plan must be one of {', '.join(PLANS)}")
