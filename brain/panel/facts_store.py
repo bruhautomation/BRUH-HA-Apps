@@ -1398,17 +1398,21 @@ def reconcile(document: str | None, inbox_dir, *,
     try:
         pending = _pending_keys(inbox_dir) if document is not None else None
         lines = document_lines(document) if document is not None else []
-        try:
-            facts_stamp = str(os.stat(FACTS_FILE).st_mtime_ns)
-        except OSError:
-            facts_stamp = "none"
-        digest = hashlib.sha256("\x00".join([
-            hashlib.sha256(str(document).encode("utf-8", "replace")).hexdigest(),
-            ",".join(sorted(pending)) if pending is not None else "?",
-            facts_stamp,
-            str(len(known_entities)) if registry_fresh else "-",
-            _day(now),
-        ]).encode("utf-8", "replace")).hexdigest()
+        def inputs_digest() -> str:
+            try:
+                facts_stamp = str(os.stat(FACTS_FILE).st_mtime_ns)
+            except OSError:
+                facts_stamp = "none"
+            return hashlib.sha256("\x00".join([
+                hashlib.sha256(str(document).encode("utf-8", "replace"))
+                .hexdigest(),
+                ",".join(sorted(pending)) if pending is not None else "?",
+                facts_stamp,
+                str(len(known_entities)) if registry_fresh else "-",
+                _day(now),
+            ]).encode("utf-8", "replace")).hexdigest()
+
+        digest = inputs_digest()
         state = _read_reconcile_state()
         if not force and state.get("digest") == digest:
             out["skipped"] = True
@@ -1475,6 +1479,10 @@ def reconcile(document: str | None, inbox_dir, *,
                 final.append(row)
             if changed:
                 _write(final)
+                # The pass's own write moves the store's stamp, and a
+                # digest taken before it would make the next tick repeat
+                # a pass that has nothing left to do.
+                digest = inputs_digest()
         try:
             atomic_write.write_json(RECONCILE_STATE_FILE, {
                 "digest": digest, "at": int(now),
