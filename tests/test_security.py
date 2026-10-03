@@ -129,12 +129,19 @@ class TestNoCommandInjection(unittest.TestCase):
         self.assertIn("metacharacters", content.lower())
 
     def test_no_eval_in_scripts(self):
-        """No script should use eval."""
+        """No script should use eval.
+
+        `brain eval` is a subcommand's NAME — the dispatcher's usage text
+        and the script behind it say it in prose — and is not the shell
+        builtin, so that one spelling is taken out of the line before it is
+        searched; a real `eval` anywhere else on it still fails.
+        """
         for script in get_all_shell_scripts():
             content = read_file(script)
             name = os.path.basename(script)
             for i, line in enumerate(content.split("\n"), 1):
-                if "eval " in line and not line.strip().startswith("#"):
+                code = line.replace("brain eval ", "brain-subcommand ")
+                if "eval " in code and not line.strip().startswith("#"):
                     self.fail(f"{name}:{i} contains eval: {line.strip()}")
 
     def test_integration_listeners_use_jq_for_json(self):

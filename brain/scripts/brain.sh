@@ -20,6 +20,7 @@
 #   brain doctor --rehearse        Plant defects, score the checks, clean up
 #   brain doctor --sweep           Take out what a rehearsal left behind
 #   brain report                   One redacted text file for a bug report
+#   brain eval <what>              How brAIn's own judgement has held up
 #   brain help                     This help
 
 set -uo pipefail
@@ -86,6 +87,13 @@ Usage:
   brain doctor --sweep           Take out anything named brain_test_* a
                                  rehearsal left behind. Creates nothing and
                                  spends nothing
+  brain eval <what>              How brAIn's own judgement has held up
+      outcomes                   What the Resident decided and what you did
+                                 next, per producer and entity — free
+      first_look                 Replay captured first looks against today's
+                                 prompt and report agreement with what you
+                                 did. Spends Claude runs, capped; changes
+                                 nothing
   brain report [--no-names]      Write one redacted text file to
                                  /share/brain/reports (also under ⚙ → Problems)
   brain login [--status|--share] Sign in to Claude, and share that login with
@@ -142,6 +150,7 @@ case "$action" in
         esac
         ;;
     report)     delegate brain-report.sh "$@" ;;
+    eval)       delegate brain-eval.sh "$@" ;;
     login)      delegate ha-share-login.sh "$@" ;;
     help|--help|-h) usage ;;
     *)

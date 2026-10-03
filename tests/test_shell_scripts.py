@@ -93,17 +93,33 @@ class TestNoDangerousPatterns(unittest.TestCase):
                 f"{name} contains dangerous 'rm -rf /' pattern"
             )
 
+    @staticmethod
+    def _uses_eval(line):
+        """Whether a line calls the shell's `eval`.
+
+        `brain eval` is a subcommand's NAME — the dispatcher's usage text and
+        the script behind it say it in prose — and is not the builtin, so that
+        one spelling is taken out of the line before it is searched; a real
+        `eval` anywhere else on the same line still counts.
+        """
+        if line.strip().startswith("#"):
+            return False
+        return "eval " in line.replace("brain eval ", "brain-subcommand ")
+
+    def test_the_eval_filter_still_sees_a_real_eval(self):
+        self.assertTrue(self._uses_eval('eval "$REPLY"'))
+        self.assertTrue(self._uses_eval('brain eval outcomes; eval "$x"'))
+        self.assertFalse(self._uses_eval("  brain eval <what>   Grade it"))
+        self.assertFalse(self._uses_eval("# eval is dangerous"))
+
     def test_no_eval_on_user_input(self):
         """No script should eval user-controlled input."""
         for script in get_all_shell_scripts():
             content = read_file(script)
             name = os.path.basename(script)
-            # eval is dangerous - flag if present
-            if "eval " in content:
-                # Allow eval only with known-safe patterns
-                for line in content.split("\n"):
-                    if "eval " in line and not line.strip().startswith("#"):
-                        self.fail(f"{name} contains eval: {line.strip()}")
+            for line in content.split("\n"):
+                if self._uses_eval(line):
+                    self.fail(f"{name} contains eval: {line.strip()}")
 
     def test_no_unquoted_variable_expansions_in_critical_commands(self):
         """Critical commands should use quoted variables."""

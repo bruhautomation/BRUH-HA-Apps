@@ -152,6 +152,13 @@ class LoopCase(unittest.TestCase):
                    STATE_FILE=root / "config" / ".brain" / "todo.json")
         self.point("cases", SNOOZE_FILE=root / "cases-snooze.json")
         self.point("resident", WATCH_FILE=root / "resident-watch.json")
+        # Every look and investigation writes a verdict row, and the next
+        # look reads the graded log back as worked examples — so the log is
+        # this test's own, or one test's verdicts become the next one's
+        # prompt.
+        self.point("outcomes",
+                   VERDICTS_FILE=root / "resident-verdicts.jsonl",
+                   STATE_FILE=root / "resident-outcomes.json")
         settings_store.SETTINGS_FILE = os.path.join(self.tmp.name, "settings.json")
         settings_store.save({"onboarded": True, "auto_enabled": True})
         srv.LEDGER = resident.Ledger(root / "resident-ledger.json")
