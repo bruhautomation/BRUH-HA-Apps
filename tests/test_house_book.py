@@ -232,6 +232,10 @@ class BookPassCase(unittest.TestCase):
         fs.STATE_FILE = root / "config" / ".brain" / "state.json"
         self._book = house_book.STORE
         house_book.STORE = str(root / "book.json")
+        # The tick also stamps the overnight check when it lands in its
+        # window; that stamp belongs in this test's directory, not /data.
+        self._schedule = server.schedule_store.STORE
+        server.schedule_store.STORE = str(root / "schedule.json")
         self._settings = settings_store.SETTINGS_FILE
         settings_store.SETTINGS_FILE = str(root / "settings.json")
         settings_store.save({"onboarded": True, "auto_enabled": True})
@@ -262,6 +266,7 @@ class BookPassCase(unittest.TestCase):
         for k, v in self._fs.items():
             setattr(fs, k, v)
         house_book.STORE = self._book
+        self.server.schedule_store.STORE = self._schedule
         self.settings_store.SETTINGS_FILE = self._settings
         (self.server.engine.run_claude, self.server.engine.get_auth,
          self.server._book_snapshot, self.server._offer_findings,

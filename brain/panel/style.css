@@ -4690,3 +4690,111 @@ body.term-classic #termMode .ico-out { display: block; }
     .card-head .cardact { width: 44px; }
   }
 }
+
+/* ---------------------------------------------------------------- upkeep
+   The House → Upkeep pane: the house book, names and rooms, updates and the
+   overnight check. One block, appended; it borrows `.findhead`, `.ksec` and
+   `.btn` and adds only what those do not have. */
+.upwrap { max-width: 900px; }
+.upbody { display: grid; gap: 10px; }
+.upbody h3 { margin: 12px 0 0; font-size: 15px; }
+.upactions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.upline { margin: 0; font-size: 14px; color: var(--ink); max-width: 72ch; }
+.upline.muted { color: var(--ink-2); }
+.upline.busy { color: var(--accent-2); }
+.upline.warn {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 16%, var(--surface));
+}
+.upstatus { display: grid; gap: 6px; }
+.upstatus:empty { display: none; }
+.uplist { display: grid; gap: 8px; }
+.uprow {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  min-width: 0;
+}
+.uprow input[type="checkbox"] { width: 22px; height: 22px; margin: 1px 0 0; flex: none; }
+.uprowbody { display: grid; gap: 4px; min-width: 0; }
+.uprowhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+             overflow-wrap: anywhere; }
+.upchip {
+  display: inline-block;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 1px 7px;
+}
+.upchip.kind { font-weight: 600; }
+.upwhy { font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere; }
+.upreach {
+  font-size: 13px;
+  color: var(--ink);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning) 14%, var(--surface));
+}
+.uprefused summary, .upedit summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.upbatch { display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+           font-size: 14px; }
+.uplink { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+          font-size: 14px; overflow-wrap: anywhere; min-width: 0; }
+.uplink a { color: var(--accent-2); word-break: break-all; }
+.upbooksec h3 { margin: 14px 0 6px; }
+.upbooklist { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.upbooklist li { font-size: 14.5px; line-height: 1.5; }
+.upchips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.upupdate {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  justify-items: start;
+}
+.upupdatehead { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.upverdict { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+             font-size: 14px; }
+/* The verdict is a word, and the colour only repeats it. */
+.upverdict.safe_tonight .upchip.verdict {
+  color: var(--ink); background: color-mix(in srgb, var(--good) 22%, var(--surface)); }
+.upverdict.wait .upchip.verdict {
+  color: var(--ink); background: color-mix(in srgb, var(--serious) 24%, var(--surface)); }
+.upquote {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--grid);
+  display: grid;
+  gap: 2px;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 100%;
+}
+.upquote code { white-space: pre-wrap; }
+.upedit pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px;
+              margin: 0; }
+.upsentence { margin: 0; font-size: 15px; max-width: 68ch; }
+
+@media (pointer: coarse) {
+  .upsec .btn { min-height: 44px; }
+}
