@@ -202,13 +202,18 @@ def forecast_days(daily, hourly, *, now: float, tz, unit: str = "°C") -> list[d
     describe takes the colder low and the hotter high.
     """
     end = now + WINDOW_H * 3600
+    today = _date(now, tz)
     days: dict[str, dict] = {}
 
     def fold(row: dict) -> None:
         when = _ts(row.get("datetime"))
-        if when is None or when > end or when < now - 12 * 3600:
+        if when is None or when > end:
             return
+        # A daily row is stamped at the start of its day, so today's is
+        # hours in the past by the evening and is still today's forecast.
         date = _date(when, tz)
+        if date < today:
+            return
         day = days.setdefault(date, {"date": date, "low": None, "high": None,
                                      "rain_mm": 0.0, "wind": None,
                                      "condition": ""})
