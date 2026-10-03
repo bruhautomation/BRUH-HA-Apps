@@ -494,6 +494,8 @@ class TestMCPProtocol(unittest.TestCase):
             "get_camera_snapshot",
             # System tools
             "get_automations", "get_automation_trace", "get_ha_config",
+            # The definition a trace ran, and what an item relates to
+            "get_automation_config", "search_related",
             "get_services", "get_device_registry", "get_areas", "get_logbook",
             "get_history", "get_statistics", "get_weather_forecast",
             # Activity — what caused a change

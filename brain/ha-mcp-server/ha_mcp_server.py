@@ -2805,120 +2805,301 @@ def get_camera_snapshot(entity_id, max_dim=1024):
 # ============================================================================
 
 def get_automations():
-    """List all automations with their states."""
+    """List all automations with their states — and each one's config `id`,
+    which is the key its traces and its definition are filed under (a
+    UI-made automation's is a timestamp, nothing like its entity id)."""
     states = ha_api_request("/api/states")
     if isinstance(states, list):
         automations = [s for s in states if s.get("entity_id", "").startswith("automation.")]
         return [
-            {
+            {k: v for k, v in {
                 "entity_id": a.get("entity_id"),
+                "id": (a.get("attributes") or {}).get("id"),
                 "state": a.get("state"),
-                "friendly_name": a.get("attributes", {}).get("friendly_name", ""),
-                "last_triggered": a.get("attributes", {}).get("last_triggered"),
-            }
+                "friendly_name": (a.get("attributes") or {}).get("friendly_name", ""),
+                "last_triggered": (a.get("attributes") or {}).get("last_triggered"),
+            }.items() if v is not None}
             for a in automations
         ]
     return states
 
 
-# Cap on the stored-trace payload: one trace of a complex automation can
-# carry every step's changed variables and dwarf the rest of the response.
+# Cap on one trace's payload: a complex automation's run carries every
+# step's changed variables and can dwarf the rest of the response.
 MAX_TRACE_BYTES = 60_000
+MAX_TRACE_RUNS = 5
+# A config id (what `trace/get` and `config/automation/config` key on):
+# UI-made ones are a millisecond timestamp, YAML ones whatever was typed.
+_CONFIG_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 
 
-def get_automation_trace(automation_id):
-    """Get recent traces for an automation.
+def _trace_subject(automation_id):
+    """What `trace/list` keys this automation or script under, or an error.
 
-    The trace API is WebSocket-only (no REST endpoint).  This function
-    combines the automation's entity state (last_triggered, mode, etc.)
-    with stored trace data read from HA's .storage directory.
+    Core files a trace under `<domain>.<config id>` — an automation's
+    `unique_id`, which for a UI-made automation is a timestamp and never
+    its entity id. The tool used to look traces up by entity id in the
+    shutdown-time file and so found nothing for every UI-made automation;
+    the config id is read off the entity's own `id` attribute, and a bare
+    config id is accepted as given.
     """
-    # Normalise entity_id
-    entity_id = automation_id
-    if not entity_id.startswith("automation."):
-        entity_id = f"automation.{entity_id}"
-
-    output = {}
-
-    # 1. Always-available: entity state from REST API
+    raw = str(automation_id or "").strip()
+    if raw.startswith("script."):
+        domain, entity_id = "script", raw
+    elif raw.startswith("automation."):
+        domain, entity_id = "automation", raw
+    elif _CONFIG_ID_RE.match(raw):
+        # A bare config id: find the automation that carries it.
+        states = ha_api_request("/api/states")
+        if not isinstance(states, list):
+            return None, states
+        for s in states:
+            if (str(s.get("entity_id", "")).startswith("automation.")
+                    and str((s.get("attributes") or {}).get("id")) == raw):
+                return {"domain": "automation", "item_id": raw,
+                        "entity_id": s["entity_id"], "state": s}, None
+        return None, {"error": (f"No automation has the id {raw!r} — "
+                                "get_automations lists each one's id.")}
+    else:
+        return None, {"error": "Name an automation or script by entity id "
+                               "(automation.x, script.x) or its config id."}
+    if not ENTITY_ID_RE.match(entity_id):
+        return None, {"error": f"{entity_id!r} is not an entity id."}
     state = ha_api_request(f"/api/states/{entity_id}")
-    if isinstance(state, dict) and "error" not in state:
-        attrs = state.get("attributes", {})
-        output["entity_id"] = state.get("entity_id", entity_id)
-        output["state"] = state.get("state")
-        output["last_triggered"] = attrs.get("last_triggered")
-        output["last_changed"] = state.get("last_changed")
-        output["mode"] = attrs.get("mode")
-        output["current"] = attrs.get("current", 0)
-        output["friendly_name"] = attrs.get("friendly_name")
+    if not isinstance(state, dict) or "error" in state:
+        return None, {"error": f"{entity_id} was not found in Home Assistant."}
+    if domain == "script":
+        item_id = entity_id.split(".", 1)[1]
     else:
-        output["entity_state_error"] = state
+        item_id = (state.get("attributes") or {}).get("id")
+        if not item_id:
+            return None, {"error": (
+                f"{entity_id} has no id: in its YAML, so Home Assistant keeps "
+                "no traces for it. Adding an id: line to its definition is "
+                "what makes it traceable.")}
+    return {"domain": domain, "item_id": str(item_id),
+            "entity_id": entity_id, "state": state}, None
 
-    # 2. Try reading stored traces from disk (HA saves them in .storage)
-    traces = _read_stored_traces(automation_id, entity_id)
-    if traces:
-        # Stored traces can be arbitrarily large (every step's changed
-        # variables) — cap the payload like the other listing tools do.
-        while (len(traces) > 1
-               and len(json.dumps(traces, default=str)) > MAX_TRACE_BYTES):
-            traces = traces[1:]  # drop oldest first
-        if len(json.dumps(traces, default=str)) > MAX_TRACE_BYTES:
-            newest = traces[-1]
-            traces = [{
-                k: newest.get(k)
-                for k in ("run_id", "state", "script_execution", "timestamp",
-                          "error", "last_step")
-                if isinstance(newest, dict) and newest.get(k) is not None
-            }]
-            output["traces_note"] = (
-                "Trace detail truncated (payload too large) — summary of the "
-                "most recent run only. Full traces: Settings > Automations > "
-                "(automation) > Traces in the HA UI."
-            )
-        output["traces"] = traces
-    else:
-        output["traces_note"] = (
-            "No stored traces found on disk. Traces are available in the "
-            "HA UI under Settings > Automations > (select automation) > Traces."
-        )
 
+def _trace_time(row):
+    stamp = row.get("timestamp") if isinstance(row, dict) else None
+    return str((stamp or {}).get("start") or "") if isinstance(stamp, dict) else ""
+
+
+def _run_summary(row):
+    """A `trace/list` row (Core's short dict) as one line of a run list."""
+    stamp = row.get("timestamp") or {}
+    out = {"run_id": row.get("run_id"), "start": stamp.get("start"),
+           "finish": stamp.get("finish"), "state": row.get("state"),
+           "script_execution": row.get("script_execution"),
+           "trigger": row.get("trigger"), "last_step": row.get("last_step"),
+           "error": row.get("error")}
+    return {k: v for k, v in out.items() if v not in (None, "")}
+
+
+def _trim_trace(trace, detail=True):
+    """`trace/get`'s extended dict, as the steps and their results.
+
+    The definition is left out (get_automation_config returns it), and so
+    is the automation's own state in every step's variables (`this`), which
+    is the same few hundred bytes repeated at every step.
+    """
+    out = {k: trace.get(k) for k in ("run_id", "state", "script_execution",
+                                     "timestamp", "trigger", "error", "last_step")
+           if trace.get(k) not in (None, "")}
+    user = (trace.get("context") or {}).get("user_id") if isinstance(
+        trace.get("context"), dict) else None
+    if user:
+        out["started_by_user"] = user
+    steps = {}
+    for path, elements in (trace.get("trace") or {}).items():
+        if not isinstance(elements, list):
+            continue
+        rows = []
+        for el in elements:
+            if not isinstance(el, dict):
+                continue
+            row = {k: el.get(k) for k in ("timestamp", "result", "error",
+                                          "template_errors", "child_id")
+                   if el.get(k) not in (None, "", {}, [])}
+            if detail and isinstance(el.get("changed_variables"), dict):
+                variables = {k: v for k, v in el["changed_variables"].items()
+                             if k != "this"}
+                if variables:
+                    row["changed_variables"] = variables
+            rows.append(row)
+        steps[path] = rows
+    out["steps"] = steps
+    return out
+
+
+def get_automation_trace(automation_id, run_id=None):
+    """Why an automation (or script) did what it did: its recent runs, and
+    one run's trigger, conditions and steps with their results.
+
+    Read live over the WebSocket API (`trace/list`, `trace/get`) — what the
+    Traces screen reads. The old version read `.storage/trace.saved_traces`,
+    which Core writes only at shutdown, so no run since the last restart was
+    ever visible, and looked it up by entity id where Core keys it by config
+    id. The definition the run executed is get_automation_config's.
+    """
+    subject, error = _trace_subject(automation_id)
+    if error:
+        return error
+    state = subject["state"]
+    attrs = state.get("attributes") or {}
+    output = {k: v for k, v in {
+        "entity_id": subject["entity_id"],
+        "id": subject["item_id"],
+        "state": state.get("state"),
+        "friendly_name": attrs.get("friendly_name"),
+        "last_triggered": attrs.get("last_triggered"),
+        "mode": attrs.get("mode"),
+        "current": attrs.get("current"),
+    }.items() if v is not None}
+    try:
+        listed = _ws_command({"type": "trace/list", "domain": subject["domain"],
+                              "item_id": subject["item_id"]})
+    except ImportError:
+        return {"error": "websockets package not available in this environment"}
+    except Exception as e:  # noqa: BLE001
+        return {**output, "error": f"Home Assistant's traces could not be read: {e}"}
+    if isinstance(listed, dict) and "error" in listed:
+        return {**output, "error": f"Home Assistant's traces could not be read: "
+                                   f"{listed['error']}"}
+    rows = [r for r in (listed or []) if isinstance(r, dict)]
+    rows.sort(key=_trace_time, reverse=True)
+    runs = [r for r in rows if not r.get("not_triggered")]
+    skipped = len(rows) - len(runs)
+    output["runs"] = [_run_summary(r) for r in runs[:MAX_TRACE_RUNS]]
+    if skipped:
+        # A trigger that fired and a condition that said no is a "not
+        # triggered" trace in current Core; the count is the answer to
+        # "why didn't it run" more often than any single trace is.
+        output["not_triggered"] = skipped
+    if not rows:
+        output["note"] = (
+            "Home Assistant holds no traces for this — it has not run since "
+            "Home Assistant started keeping them (it keeps the last few runs "
+            "of each, and restores saved ones at startup).")
+        return output
+    wanted = str(run_id).strip() if run_id else (runs or rows)[0].get("run_id")
+    try:
+        trace = _ws_command({"type": "trace/get", "domain": subject["domain"],
+                             "item_id": subject["item_id"], "run_id": wanted})
+    except Exception as e:  # noqa: BLE001
+        return {**output, "error": f"Trace {wanted} could not be read: {e}"}
+    if not isinstance(trace, dict) or "error" in trace:
+        return {**output, "error": f"Trace {wanted} could not be read: "
+                                   f"{(trace or {}).get('error') if isinstance(trace, dict) else trace}"}
+    detail = _trim_trace(trace)
+    if len(json.dumps(detail, separators=(",", ":"), default=str)) > MAX_TRACE_BYTES:
+        detail = _trim_trace(trace, detail=False)
+        output["note"] = ("The run's changed variables were left out to fit — "
+                          "its steps and their results are all here.")
+    if len(json.dumps(detail, separators=(",", ":"), default=str)) > MAX_TRACE_BYTES:
+        detail = {k: v for k, v in detail.items() if k != "steps"}
+        detail["steps_omitted"] = True
+        output["note"] = ("This run's steps are too large to return; the Traces "
+                          "screen in Home Assistant shows them.")
+    output["run"] = detail
     return output
 
 
-def _read_stored_traces(automation_id, entity_id):
-    """Read stored automation traces from HA's .storage directory."""
-    import os
-    storage_path = "/config/.storage/trace.saved_traces"
-    if not os.path.isfile(storage_path):
-        return None
+MAX_CONFIG_BYTES = 100_000
+
+
+def get_automation_config(entity_id):
+    """The definition an automation or script runs, as Home Assistant holds it.
+
+    Over the WebSocket's `automation/config` / `script/config`, which answer
+    for every automation — UI-made, YAML, a package — by entity id. A bare
+    config id is read through the REST editor endpoint, which knows only
+    the automations in automations.yaml. Unattended runs have no file
+    access, so without this they debugged automations they could not read.
+    """
+    raw = str(entity_id or "").strip()
+    if "." in raw and raw.split(".", 1)[0] in ("automation", "script"):
+        if not ENTITY_ID_RE.match(raw):
+            return {"error": f"{raw!r} is not an entity id."}
+        domain = raw.split(".", 1)[0]
+        try:
+            result = _ws_command({"type": f"{domain}/config", "entity_id": raw})
+        except ImportError:
+            return {"error": "websockets package not available in this environment"}
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)}
+        if not isinstance(result, dict) or "error" in result:
+            return {"error": f"{raw} has no definition Home Assistant will "
+                             f"show: {(result or {}).get('error') if isinstance(result, dict) else result}"}
+        config = result.get("config")
+        out = {"entity_id": raw, "config": config}
+    elif _CONFIG_ID_RE.match(raw):
+        result = ha_api_request(
+            f"/api/config/automation/config/{urllib.parse.quote(raw, safe='')}")
+        if not isinstance(result, dict) or "error" in result:
+            return {"error": (f"No automation in automations.yaml has the id "
+                              f"{raw!r}. Pass its entity id instead — that "
+                              "reaches YAML and package automations too.")}
+        out = {"id": raw, "config": result}
+    else:
+        return {"error": "Name an automation or script by entity id "
+                         "(automation.x, script.x) or an automation's config id."}
+    if len(json.dumps(out, separators=(",", ":"), default=str)) > MAX_CONFIG_BYTES:
+        config = out.get("config") if isinstance(out.get("config"), dict) else {}
+        return {k: v for k, v in out.items() if k != "config"} | {
+            "note": "The definition is too large to return whole.",
+            "keys": sorted(config)}
+    return out
+
+
+# Core's search/related item types (homeassistant/components/search ItemType).
+RELATED_ITEM_TYPES = (
+    "area", "automation", "automation_blueprint", "config_entry", "device",
+    "entity", "floor", "group", "integration", "label", "person", "scene",
+    "script", "script_blueprint",
+)
+MAX_RELATED = 100
+
+
+def search_related(item_type, item_id):
+    """Everything Home Assistant relates to one thing — what the Related tab
+    in its own UI shows: the entities a script or scene touches, the
+    automations that reference an entity, the devices in an area.
+
+    It is a reference graph, not a list of what is acted on: it adds the
+    area and device of every entity it finds, so a script that turns on the
+    hall light lists the hall.
+    """
+    item_type = str(item_type or "").strip()
+    if item_type not in RELATED_ITEM_TYPES:
+        return {"error": "item_type must be one of " + ", ".join(RELATED_ITEM_TYPES)}
+    item_id = str(item_id or "").strip()
+    if not item_id or len(item_id) > 255:
+        return {"error": "Give the item's id (an entity id, area_id, device_id, ...)."}
     try:
-        with open(storage_path) as fh:
-            store = json.load(fh)
-        data = store.get("data", {})
-
-        # Try both the entity_id and the bare automation id as keys
-        traces = data.get(entity_id)
-        if traces is None:
-            traces = data.get(automation_id)
-        if traces is None:
-            # HA may nest under domain key: data.automation.{id}
-            auto_data = data.get("automation", {})
-            bare_id = entity_id.replace("automation.", "", 1)
-            traces = auto_data.get(entity_id) or auto_data.get(bare_id)
-
-        if not traces:
-            return None
-
-        # Return the most recent traces (limit to 5)
-        if isinstance(traces, list):
-            return traces[-5:]
-        if isinstance(traces, dict):
-            # Some versions store as dict keyed by run_id
-            items = sorted(traces.values(), key=lambda t: t.get("timestamp", {}).get("start", ""), reverse=True)
-            return items[:5]
-        return traces
-    except (OSError, json.JSONDecodeError, KeyError, TypeError):
-        return None
+        result = _ws_command({"type": "search/related", "item_type": item_type,
+                              "item_id": item_id})
+    except ImportError:
+        return {"error": "websockets package not available in this environment"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+    if not isinstance(result, dict) or "error" in result:
+        return result if isinstance(result, dict) else {"error": str(result)}
+    related, counts = {}, {}
+    for kind, values in sorted(result.items()):
+        if not isinstance(values, (list, tuple, set)):
+            continue
+        values = sorted(str(v) for v in values)
+        counts[kind] = len(values)
+        related[kind] = values[:MAX_RELATED]
+    out = {"item_type": item_type, "item_id": item_id, "related": related}
+    if any(n > MAX_RELATED for n in counts.values()):
+        out["counts"] = counts
+        out["note"] = f"Lists over {MAX_RELATED} are cut; counts are whole."
+    if not related:
+        out["note"] = "Home Assistant relates nothing to this."
+    return out
 
 
 def get_config():
@@ -4962,7 +5143,7 @@ TOOLS = [
     # ------------------------------------------------------------------
     {
         "name": "get_automations",
-        "description": "List all automations with their current state (on/off), friendly name, and last triggered time.",
+        "description": "List all automations with their current state (on/off), friendly name, last triggered time and config id (the key their traces and definition are filed under).",
         "inputSchema": {
             "type": "object",
             "properties": {}
@@ -4970,16 +5151,73 @@ TOOLS = [
     },
     {
         "name": "get_automation_trace",
-        "description": "Get state info and recent execution traces for a specific automation. Returns last_triggered time, current state, and stored trace data when available. Useful for debugging why an automation did or didn't fire.",
+        "description": (
+            "Why an automation or script did (or did not) do something: its "
+            "recent runs (start, trigger, how it ended, any error, plus how "
+            "many times a trigger fired but a condition stopped it), and one "
+            "run in full — each step's path and result. Live from Home "
+            "Assistant, including runs since the last restart. Pair with "
+            "get_automation_config to read the definition the run executed."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "automation_id": {
                     "type": "string",
-                    "description": "The automation entity ID (e.g., 'automation.turn_on_lights')"
+                    "description": "The automation or script entity id (e.g. 'automation.hall_lights', 'script.goodnight'), or an automation's config id from get_automations"
+                },
+                "run_id": {
+                    "type": "string",
+                    "description": "Optional: which run to return in full (from the runs list). Default: the newest."
                 }
             },
             "required": ["automation_id"]
+        }
+    },
+    {
+        "name": "get_automation_config",
+        "description": (
+            "The definition of an automation or script — triggers, "
+            "conditions, actions, mode — as Home Assistant holds it, for "
+            "UI-made, YAML and package automations alike. Read-only. Use it "
+            "with get_automation_trace to say why one did what it did and "
+            "what the smallest change would be."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "automation.x or script.x — or an automation's config id from get_automations"
+                }
+            },
+            "required": ["entity_id"]
+        }
+    },
+    {
+        "name": "search_related",
+        "description": (
+            "Everything Home Assistant relates to one item — the entities, "
+            "devices and areas a script, scene or automation references; the "
+            "automations and scripts that use an entity; what is in an area. "
+            "The same answer as the Related tab in Home Assistant's UI. It is "
+            "a reference graph: the area and device of every entity found are "
+            "included too."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "item_type": {
+                    "type": "string",
+                    "enum": list(RELATED_ITEM_TYPES),
+                    "description": "What kind of item item_id is"
+                },
+                "item_id": {
+                    "type": "string",
+                    "description": "Its id: an entity id for entity/automation/script/scene/group/person, else the area_id, device_id, floor_id, label_id, config entry id or integration domain"
+                }
+            },
+            "required": ["item_type", "item_id"]
         }
     },
     # ------------------------------------------------------------------
@@ -5568,6 +5806,8 @@ TOOL_IMPLEMENTATIONS = {
     # System tools
     "get_automations": "get_automations",
     "get_automation_trace": "get_automation_trace",
+    "get_automation_config": "get_automation_config",
+    "search_related": "search_related",
     "get_ha_config": "get_config",
     "get_services": "get_services",
     "get_device_registry": "get_device_registry",
@@ -5662,7 +5902,8 @@ _TOOL_SPECS = {
 # names is exposed and it names them literally.
 VOICE_REFUSED_TOOLS = frozenset({
     "get_registry", "get_device_registry", "list_dashboards", "get_dashboard",
-    "get_automations", "get_automation_trace", "get_activity",
+    "get_automations", "get_automation_trace", "get_automation_config",
+    "search_related", "get_activity",
     "get_house_model", "room_physics", "simulate_automation", "get_findings",
     "get_health", "get_error_log", "fire_event", "get_supervisor_info",
     "reload_config", "offer_resolutions",

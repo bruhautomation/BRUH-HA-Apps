@@ -729,6 +729,8 @@ ANALYST_TOOLS = [
     f"{MCP}get_registry",
     f"{MCP}get_automations",
     f"{MCP}get_automation_trace",
+    f"{MCP}get_automation_config",  # the definition a trace ran — runs have no files
+    f"{MCP}search_related",         # what a script or scene touches, what uses an entity
     f"{MCP}get_ha_config",
     f"{MCP}get_weather_forecast",
     # The rest of the MCP server's reads. Every tool the server registers is
