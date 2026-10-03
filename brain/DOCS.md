@@ -1429,13 +1429,21 @@ offering something you already answered, and it will not be offered again.
 `POST /api/replay` takes an automation and a window and reports when it would
 have fired.
 
-It covers **`time`, `state`, `numeric_state` and `template`** triggers — the
-four Home Assistant's recorder can reconstruct. Anything else is refused **in as
-many words**, and refused *whole*: an automation with a state trigger *and* a
-webhook trigger is not replayed for the half that can be read, because
-reporting "this would have fired twice" about something whose webhook fires
-forty times a day is a confident wrong number that looks exactly like a right
-one.
+It covers **`time`, `state`, `numeric_state` and `template`** triggers, and
+the simple state triggers Home Assistant's automation editor writes by default
+since 2026.7 — `light.turned_on`, `occupancy.detected`, `door.opened`,
+`climate.started_heating`, `media_player.started_playing` and their siblings —
+replayed as the state changes Home Assistant itself fires them on, with the
+entities named under `target:`. A target that is a whole area, floor, label or
+device is refused, because which entities those were at the time is something
+brAIn would have to guess. Anything else is refused **in as many words**, and
+refused *whole*: an automation with a state trigger *and* a webhook trigger is
+not replayed for the half that can be read, because reporting "this would have
+fired twice" about something whose webhook fires forty times a day is a
+confident wrong number that looks exactly like a right one. The refusal says
+which kind of no it is: a webhook or an event really is not in the recorder,
+while a `sun` trigger or a brightness threshold is one brAIn does not know how
+to replay yet.
 
 A template is replayed only when every entity it names has recorded history, and
 only using a named set of Home Assistant's own helpers. Rendering against a
@@ -1446,7 +1454,8 @@ Three details decide whether a number is right, and each is tested against the
 version that gets it wrong:
 
 - **`for:` is a promise about a stretch of time.** A three-minute door blip does
-  not clear a ten-minute hold.
+  not clear a ten-minute hold — and a light dimmed halfway through an hour is
+  still a light that stayed on for the hour.
 - **`numeric_state` is a crossing, never a level.** Home Assistant fires on the
   way in, not for every sample spent inside the range.
 - **An area or device target is recorded and not resolved.** Expanding one needs
