@@ -3301,6 +3301,8 @@ def _spawn_fix_verification(ts: int) -> None:
             await asyncio.sleep(FIX_VERIFY_DELAY_S)
             await _verify_fix(ts)
         except asyncio.CancelledError:
+            # The panel is shutting down; the next scheduled pass of the
+            # same check is the verification this one would have been.
             pass
         except Exception as exc:  # noqa: BLE001 — a verification, not the fix
             log.debug("could not verify the fix for %s: %s", ts, exc)

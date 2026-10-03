@@ -206,16 +206,16 @@ MAX_HISTORY_TARGETS = 100
 CHRONIC_SAYS = {
     "addon.start": ("{label} keeps stopping",
                     "Read the {label} add-on's log for why it stops — brAIn "
-                    "has stopped starting it every night, because that "
-                    "hides the reason."),
+                    + "has stopped starting it every night, because that "
+                    + "hides the reason."),
     "zwave.ping": ("{label} keeps dropping off the Z-Wave network",
                    "Check its power and how far it is from the nearest "
-                   "powered node — brAIn has stopped pinging it every "
-                   "night, because that hides the reason."),
+                   + "powered node — brAIn has stopped pinging it every "
+                   + "night, because that hides the reason."),
     "entry.reload": ("{label} keeps failing to set up",
                      "Look at the {label} integration's log for why setup "
-                     "fails — brAIn has stopped reloading it every night, "
-                     "because that hides the reason."),
+                     + "fails — brAIn has stopped reloading it every night, "
+                     + "because that hides the reason."),
 }
 CHRONIC_SOURCE = "healing"
 
@@ -262,7 +262,7 @@ def chronic_finding(candidate: dict, heals: list[int], tz=None) -> dict:
     text, fix = CHRONIC_SAYS.get(remedy, (
         "{label} keeps needing to be fixed overnight",
         "Find out why it keeps happening — brAIn has stopped fixing it "
-        "every night, because that hides the reason."))
+        + "every night, because that hides the reason."))
     days = ", ".join(dt.datetime.fromtimestamp(t, tz or dt.timezone.utc)
                      .strftime("%d %b") for t in heals[-CHRONIC_HEALS:])
     return {
