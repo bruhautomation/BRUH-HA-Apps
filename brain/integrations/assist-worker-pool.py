@@ -420,6 +420,10 @@ def journal_turn(error: str, duration: float, envelope: dict | None,
 # because the deaths this counts are consecutive ones.
 PARTIAL_MESSAGES_OK = True
 PARTIAL_DISABLE_AFTER = int(os.environ.get("BRAIN_PARTIAL_DISABLE_AFTER", "2"))
+# How young a worker has to be for its death to count as dying AT SPAWN —
+# the shape a CLI that rejects --include-partial-messages makes. A worker
+# that answered for a while and then died says nothing about the flag.
+EARLY_DEATH_S = float(os.environ.get("BRAIN_EARLY_DEATH_S", "5"))
 PARTIAL_RETRY_AFTER_S = float(os.environ.get("BRAIN_PARTIAL_RETRY_AFTER_S",
                                              str(15 * 60)))
 # Consecutive early deaths of workers spawned WITH the flag, and the instant
@@ -1496,7 +1500,7 @@ class Pool:
                 run_id = worker.session_id or ""
                 ran_model = worker.model
                 if response is None and not worker.alive() and \
-                        time.time() - worker.created < 5 and worker.partial:
+                        time.time() - worker.created < EARLY_DEATH_S and worker.partial:
                     # CLI may predate --include-partial-messages — or this
                     # may be one bad spawn. Counted rather than concluded
                     # from; the fallback answers this request either way.

@@ -723,6 +723,11 @@ def test_the_count_is_kept_by_the_real_request_path(tmp_path, monkeypatch):
     notice keys on (`worker.partial`) is set where the argv is built."""
     mod = load_pool_module(tmp_path, monkeypatch)
     monkeypatch.setenv("FAKE_MODE", "crash")
+    # What is asked is whether a death at spawn is NOTICED, not how fast
+    # this machine spawns: on a loaded runner a crashing spawn has taken
+    # longer than the production window to be read as dead, which failed
+    # this test for a reason that has nothing to do with the pool.
+    monkeypatch.setattr(mod, "EARLY_DEATH_S", 120.0)
     pool = mod.Pool()
     try:
         # Cold-spawned on purpose, both times. "Died at SPAWN" is measured
