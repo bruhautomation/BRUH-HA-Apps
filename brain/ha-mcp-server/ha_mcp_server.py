@@ -2993,11 +2993,11 @@ def get_automation_trace(automation_id, run_id=None):
         return {**output, "error": f"Trace {wanted} could not be read: "
                                    f"{(trace or {}).get('error') if isinstance(trace, dict) else trace}"}
     detail = _trim_trace(trace)
-    if len(json.dumps(detail, separators=(",", ":"), default=str)) > MAX_TRACE_BYTES:
+    if len(_compact(detail)) > MAX_TRACE_BYTES:
         detail = _trim_trace(trace, detail=False)
         output["note"] = ("The run's changed variables were left out to fit — "
                           "its steps and their results are all here.")
-    if len(json.dumps(detail, separators=(",", ":"), default=str)) > MAX_TRACE_BYTES:
+    if len(_compact(detail)) > MAX_TRACE_BYTES:
         detail = {k: v for k, v in detail.items() if k != "steps"}
         detail["steps_omitted"] = True
         output["note"] = ("This run's steps are too large to return; the Traces "
@@ -3045,7 +3045,7 @@ def get_automation_config(entity_id):
     else:
         return {"error": "Name an automation or script by entity id "
                          "(automation.x, script.x) or an automation's config id."}
-    if len(json.dumps(out, separators=(",", ":"), default=str)) > MAX_CONFIG_BYTES:
+    if len(_compact(out)) > MAX_CONFIG_BYTES:
         config = out.get("config") if isinstance(out.get("config"), dict) else {}
         return {k: v for k, v in out.items() if k != "config"} | {
             "note": "The definition is too large to return whole.",
@@ -3120,8 +3120,15 @@ def get_services():
     return result
 
 
-def get_device_registry():
-    """Get device registry summary from entity states."""
+def get_entity_counts():
+    """How many entities of each domain there are.
+
+    It shipped as `get_device_registry`, a name that promised the device
+    registry and delivered a per-domain tally of states — and a name wins a
+    model's choice over the description under it, so asking for devices
+    reached for this rather than get_registry('devices'). The old name is
+    still answered (`TOOL_ALIASES`) and listed nowhere.
+    """
     states = ha_api_request("/api/states")
     if isinstance(states, list):
         domains = {}
@@ -3845,7 +3852,9 @@ def get_dashboard(url_path=None, view_index=None):
         }
 
     payload = {**_dashboard_named(url_path, result), "config": result}
-    if len(json.dumps(payload)) > MAX_DASHBOARD_BYTES:
+    # Measured the way it is sent: the cap was checked on one encoding and
+    # the payload emitted in a fatter one.
+    if len(_compact(payload)) > MAX_DASHBOARD_BYTES:
         return {
             **_dashboard_named(url_path, result),
             "note": (f"Config too large to return whole (> {MAX_DASHBOARD_BYTES} "
@@ -5240,8 +5249,8 @@ TOOLS = [
         }
     },
     {
-        "name": "get_device_registry",
-        "description": "Get a count summary of entities grouped by domain (total entities and a per-domain tally). NOTE: this is derived from entity states, not the HA device registry. For area/room groupings use get_areas.",
+        "name": "get_entity_counts",
+        "description": "How many entities there are, in total and per domain (light, sensor, ...) — an orientation tally from the entity states. For the devices themselves use get_registry('devices'); for rooms, get_areas.",
         "inputSchema": {
             "type": "object",
             "properties": {}
@@ -5810,7 +5819,7 @@ TOOL_IMPLEMENTATIONS = {
     "search_related": "search_related",
     "get_ha_config": "get_config",
     "get_services": "get_services",
-    "get_device_registry": "get_device_registry",
+    "get_entity_counts": "get_entity_counts",
     "get_areas": "get_areas",
     "get_logbook": "get_logbook",
     "get_history": "get_history",
@@ -5901,7 +5910,7 @@ _TOOL_SPECS = {
 # entities if it is about one, and a template only when every entity it
 # names is exposed and it names them literally.
 VOICE_REFUSED_TOOLS = frozenset({
-    "get_registry", "get_device_registry", "list_dashboards", "get_dashboard",
+    "get_registry", "get_entity_counts", "list_dashboards", "get_dashboard",
     "get_automations", "get_automation_trace", "get_automation_config",
     "search_related", "get_activity",
     "get_house_model", "room_physics", "simulate_automation", "get_findings",
@@ -5976,6 +5985,76 @@ def _voice_refusal(name, kwargs):
     return None
 
 
+# Names a tool used to have. Answered and listed nowhere: a conversation
+# resumed from before a rename, or a prompt nobody has rewritten, still gets
+# the tool it asked for, while tools/list stops offering the misleading name.
+TOOL_ALIASES = {"get_device_registry": "get_entity_counts"}
+
+# What a voice-level process is not shown at all. The dispatcher refuses all
+# of these anyway (`_voice_refusal`, the in-function refusals) and stays the
+# backstop; listing them cost every voice turn ~37 schemas it could only be
+# refused for, and a long overlapping tool list is also a worse choice of tool.
+VOICE_HIDDEN_TOOLS = frozenset({
+    "minecraft_command", "minecraft_server",   # refused for voice in full
+})
+VOICE_HIDDEN_PREFIXES = ("music_assistant_",)  # MA_VOICE_REFUSAL, every one
+
+# The tools a voice turn acts with, marked so Claude Code never defers them
+# behind tool search: deferral is the default for MCP tools now, and a voice
+# worker told to act in its FIRST response could not until a ToolSearch turn
+# had loaded the schema it needed — the extra model turn the pre-warmed
+# workers and the area map exist to save. The rest stay deferrable, which is
+# the point of tool search on a server this size.
+ALWAYS_LOAD_TOOLS = frozenset({
+    "control_light", "control_climate", "control_media_player",
+    "control_cover", "control_fan", "control_switch", "control_lock",
+    "control_alarm", "control_vacuum", "activate_scene", "run_script",
+    "call_service", "get_entity_state", "get_all_states",
+})
+for _tool in TOOLS:
+    if _tool["name"] in ALWAYS_LOAD_TOOLS:
+        _tool["_meta"] = {"anthropic/alwaysLoad": True}
+
+
+def tools_for_channel():
+    """What tools/list offers this process: everything, or on the voice
+    channel everything voice is not refused outright."""
+    if not EXPOSED_ONLY:
+        return TOOLS
+    return [t for t in TOOLS
+            if t["name"] not in VOICE_REFUSED_TOOLS
+            and t["name"] not in VOICE_HIDDEN_TOOLS
+            and not t["name"].startswith(VOICE_REFUSED_PREFIXES)
+            and not t["name"].startswith(VOICE_HIDDEN_PREFIXES)]
+
+
+# What the server tells the client at initialize. Claude Code shows server
+# instructions to the model up front and leans on them to choose what to
+# load from tool search, so they say which tool answers which question —
+# briefly, because they ride every turn of every conversation.
+INSTRUCTIONS = (
+    "Home Assistant, through brAIn. Find entities with get_all_states (domain, "
+    "name_filter) or get_areas; one in full with get_entity_state. Act with the "
+    "control_* tools, activate_scene, run_script, or call_service. Over time: "
+    "get_history (state changes, up to 7 days), get_statistics (long-term), "
+    "get_logbook (newest events). Why something changed: explain_change, "
+    "get_activity. What is normal: what_is_normal, get_baseline. Automations: "
+    "get_automations, get_automation_config (the definition), "
+    "get_automation_trace (why a run did what it did), search_related (what a "
+    "script or scene touches). Memory: recall; remember_fact for a durable "
+    "household fact. A refusal is the homeowner's policy — a protected "
+    "entity, a blocked service, what is exposed to voice: tell the user and "
+    "do not look for another route."
+)
+VOICE_INSTRUCTIONS = (
+    "Home Assistant, for a voice assistant. Act on the entity ids in your "
+    "area map directly — control_* tools, activate_scene, run_script, "
+    "call_service — in your first response. You reach only what Home "
+    "Assistant exposes to Assist; a refusal is final: say so in one sentence "
+    "and do not look for another route."
+)
+
+
 def handle_tool_call(name, arguments):
     """Dispatch a tool call.
 
@@ -5983,6 +6062,7 @@ def handle_tool_call(name, arguments):
     passed as keyword args to the implementation (looked up late via
     globals() so tests can patch implementations on the module).
     """
+    name = TOOL_ALIASES.get(name, name)
     fn_name = TOOL_IMPLEMENTATIONS.get(name)
     spec = _TOOL_SPECS.get(name)
     if fn_name is None or spec is None:
@@ -5999,6 +6079,14 @@ def handle_tool_call(name, arguments):
         return globals()[fn_name](**kwargs)
     except Exception as e:
         return {"error": str(e)}
+
+
+def _compact(value):
+    """JSON with no padding. A result is read by a model, not a person, and
+    `indent=2` was a fifth to a third of every bulky one — a states list, a
+    registry, an hour-by-hour statistics window — re-read on every later
+    turn of the conversation it lands in."""
+    return json.dumps(value, separators=(",", ":"), default=str)
 
 
 def build_tool_response(result):
@@ -6020,11 +6108,11 @@ def build_tool_response(result):
         if meta:
             content.append({
                 "type": "text",
-                "text": json.dumps(meta, indent=2, default=str),
+                "text": _compact(meta),
             })
         return {"content": content}
 
-    result_text = json.dumps(result, indent=2, default=str)
+    result_text = _compact(result)
     response_obj = {
         "content": [{"type": "text", "text": result_text}],
     }
@@ -6044,7 +6132,7 @@ def send_response(response_id, result):
         "id": response_id,
         "result": result,
     }
-    msg = json.dumps(response)
+    msg = _compact(response)
     sys.stdout.write(msg + "\n")
     sys.stdout.flush()
 
@@ -6056,7 +6144,7 @@ def send_error(response_id, code, message):
         "id": response_id,
         "error": {"code": code, "message": message},
     }
-    msg = json.dumps(response)
+    msg = _compact(response)
     sys.stdout.write(msg + "\n")
     sys.stdout.flush()
 
@@ -6088,6 +6176,7 @@ def main():
                     "name": "home-assistant",
                     "version": "1.0.0",
                 },
+                "instructions": VOICE_INSTRUCTIONS if EXPOSED_ONLY else INSTRUCTIONS,
             })
 
         elif method == "notifications/initialized":
@@ -6101,7 +6190,7 @@ def main():
             send_response(req_id, {"prompts": []})
 
         elif method == "tools/list":
-            send_response(req_id, {"tools": TOOLS})
+            send_response(req_id, {"tools": tools_for_channel()})
 
         elif method == "tools/call":
             tool_name = params.get("name", "")

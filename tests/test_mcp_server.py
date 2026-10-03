@@ -277,7 +277,7 @@ class TestToolImplementations(unittest.TestCase):
         self.assertIn("turn_on", result[0]["services"])
 
     @patch("ha_mcp_server.ha_api_request")
-    def test_get_device_registry(self, mock_api):
+    def test_get_entity_counts(self, mock_api):
         """Test getting device registry."""
         mock_api.return_value = [
             {"entity_id": "light.a", "state": "on"},
@@ -285,7 +285,7 @@ class TestToolImplementations(unittest.TestCase):
             {"entity_id": "sensor.c", "state": "22"},
         ]
 
-        result = ha_mcp_server.get_device_registry()
+        result = ha_mcp_server.get_entity_counts()
         self.assertEqual(result["total_entities"], 3)
         self.assertIn("light", result["domains"])
         self.assertEqual(result["domains"]["light"], 2)
@@ -496,7 +496,7 @@ class TestMCPProtocol(unittest.TestCase):
             "get_automations", "get_automation_trace", "get_ha_config",
             # The definition a trace ran, and what an item relates to
             "get_automation_config", "search_related",
-            "get_services", "get_device_registry", "get_areas", "get_logbook",
+            "get_services", "get_entity_counts", "get_areas", "get_logbook",
             "get_history", "get_statistics", "get_weather_forecast",
             # Activity — what caused a change
             "explain_change", "get_activity",

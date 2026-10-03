@@ -459,13 +459,13 @@ class TestGetServices(unittest.TestCase):
 
 
 class TestDeviceRegistry(unittest.TestCase):
-    """Test get_device_registry edge cases."""
+    """Test get_entity_counts (once get_device_registry) edge cases."""
 
     @patch("ha_mcp_server.ha_api_request")
     def test_device_registry_empty(self, mock_api):
         """Empty states should return zero counts."""
         mock_api.return_value = []
-        result = ha_mcp_server.get_device_registry()
+        result = ha_mcp_server.get_entity_counts()
         self.assertEqual(result["total_entities"], 0)
         self.assertEqual(result["domains"], {})
 
@@ -475,7 +475,7 @@ class TestDeviceRegistry(unittest.TestCase):
         mock_api.return_value = [
             {"entity_id": "nodot", "state": "on"},
         ]
-        result = ha_mcp_server.get_device_registry()
+        result = ha_mcp_server.get_entity_counts()
         # The entity_id split logic handles this with "unknown" fallback
         self.assertEqual(result["total_entities"], 1)
 

@@ -740,7 +740,7 @@ ANALYST_TOOLS = [
     # it, which is not the same guarantee and reads like a broken tool.
     f"{MCP}get_services",
     f"{MCP}get_service_details",
-    f"{MCP}get_device_registry",
+    f"{MCP}get_entity_counts",
     f"{MCP}list_dashboards",
     f"{MCP}get_dashboard",
     f"{MCP}get_error_log",
