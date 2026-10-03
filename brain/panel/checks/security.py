@@ -37,6 +37,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 
 from ._util import House, domain_of, join_names, parse_ts
 
@@ -386,5 +387,49 @@ def review_digest(snap: dict, now: float) -> dict:
     }
 
 
-__all__ = ["CHECKS", "SNAPSHOT_KEYS", "collect", "review_digest",
+# ---------------------------------------------------------------------------
+# The weekly review — one sentence over the digest, checked before it stands
+# ---------------------------------------------------------------------------
+
+REVIEW_SYSTEM = """You review who and what can reach one Home Assistant house.
+
+You are given a digest: how many people can log in and which are
+administrators, what is exposed to which voice assistant, which add-ons run
+with extra privileges, this add-on's own posture, recent login bans, and the
+open security findings. Anything marked "unread" could not be read: say so
+rather than treating it as nothing.
+
+Write ONE plain sentence (two at most, under 60 words) a homeowner reads
+once a week: the thing most worth their attention, or that nothing changed
+and nothing needs doing. No greeting, no markdown, no lists. Never invent a
+user, an add-on or a number that is not in the digest.
+
+Answer with JSON only: {"sentence": "..."}
+"""
+
+REVIEW_SCHEMA = {"type": "object",
+                 "properties": {"sentence": {"type": "string"}},
+                 "required": ["sentence"]}
+REVIEW_MAX = 400
+REVIEW_MIN = 20
+
+
+def review_sentence(answer) -> str:
+    """The sentence as it may be shown, or '' when it may not.
+
+    One sentence, no markdown, capped — and too short is not an answer,
+    the brief's rule: a four-word review is worse than the silence it
+    replaced, and the page says the review did not finish instead.
+    """
+    if not isinstance(answer, dict):
+        return ""
+    text = str(answer.get("sentence") or "")
+    text = re.sub(r"[*_`#>]+", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) < REVIEW_MIN:
+        return ""
+    return text[:REVIEW_MAX]
+
+
+__all__ = ["CHECKS", "REVIEW_SCHEMA", "REVIEW_SYSTEM", "review_sentence", "SNAPSHOT_KEYS", "collect", "review_digest",
            "cloud_exposed", "recent_bans", "read_ip_bans", "read_options"]

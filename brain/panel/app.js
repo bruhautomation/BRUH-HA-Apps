@@ -4891,12 +4891,15 @@ async function runAnswer(row, answer, btns, note) {
 function askThenRun(row, answer, btns) {
   openNoteForm(btns.card, btns.actions,
     (text, formBtns) => runAnswer(row, answer, btns.concat(formBtns), text), {
-      hint: answer.verb === "no"
+      // `ask`/`placeholder` are the answer's own words where it has them —
+      // a house book question wants an answer, not a reason.
+      hint: answer.ask || (answer.verb === "no"
         ? "Say why if you can — the reason retires every guess built on "
           + "the same misreading. Optional."
         : "Optional. Say why, and brAIn learns from the reason rather than "
-          + "just dropping the card.",
-      placeholder: answer.prefill || "That sensor always reads on — it's not stuck.",
+          + "just dropping the card."),
+      placeholder: answer.placeholder || answer.prefill
+        || "That sensor always reads on — it's not stuck.",
       send: answer.label,
       prefill: answer.prefill || "",
     });
