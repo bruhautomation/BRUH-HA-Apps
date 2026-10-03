@@ -168,7 +168,7 @@ class TestTheWordsMayNameOnlyWhatTheRowIsAbout(unittest.TestCase):
                          "6° warmer than a month ago — check the door seal.")
         self.assertEqual(got["words"], ("Garage freezer is warming",
                                         "6° warmer than a month ago — check "
-                                        "the door seal."))
+                                        + "the door seal."))
 
     def test_another_entity_by_name_is_refused_and_the_timing_kept(self):
         got = self.words("Garage freezer is warming",
@@ -282,7 +282,8 @@ class DispatchCase(LoopCase):
         import usage_store
         real = usage_store.budget_state
         self._restore.append((usage_store, "budget_state", real))
-        usage_store.budget_state = lambda s: {**real(s), "blocked": False}
+        usage_store.budget_state = lambda s, *a, **k: {**real(s, *a, **k),
+                                                       "blocked": False}
 
     def tearDown(self):
         srv = self.server
@@ -400,7 +401,8 @@ class TestSilenceIsTheDeterministicPath(DispatchCase):
 
         def budget_spent():
             old = self._budget_state
-            usage_store.budget_state = lambda s: {**old(s), "blocked": True}
+            usage_store.budget_state = lambda s, *a, **k: {
+                **old(s, *a, **k), "blocked": True}
 
         def run_failed():
             self.looks.append({"ok": False, "error": "529 Overloaded",
@@ -428,10 +430,19 @@ class TestSilenceIsTheDeterministicPath(DispatchCase):
                 (outside_vocabulary, True), (every_row_refused, True)]
 
     def check(self, quiet: bool):
+        # The setUp's open budget, put back after every mode — and never
+        # through addCleanup, which runs AFTER LoopCase's tearDown has put
+        # the real function back and would leave this lambda behind for
+        # every test the worker runs next.
         import usage_store
         self._budget_state = usage_store.budget_state
-        self.addCleanup(setattr, usage_store, "budget_state",
-                        self._budget_state)
+        try:
+            self._check(quiet)
+        finally:
+            usage_store.budget_state = self._budget_state
+
+    def _check(self, quiet: bool):
+        import usage_store
         expected = self.baseline(quiet)
         self.assertTrue(expected[0] or expected[1], "the baseline sent nothing")
         for i, (mode, runs) in enumerate(self.failure_modes()):
@@ -442,8 +453,7 @@ class TestSilenceIsTheDeterministicPath(DispatchCase):
                 settings_store.save({"auto_enabled": True})
                 # Never blocked unless the mode says so: what the budget
                 # reads on this box is not this test's business.
-                usage_store.budget_state = lambda s: {
-                    **self._budget_state(s), "blocked": False}
+                usage_store.budget_state = self._budget_state
                 self.looks.clear()
                 self.look_calls.clear()
                 self.sent.clear()
