@@ -278,11 +278,80 @@ def _is_battery(st: dict) -> bool:
         "unit_of_measurement") == "%"
 
 
+# Batteries somebody CHARGES rather than replaces. A phone sits under 15%
+# most evenings and is plugged in at bedtime; an EV, a home battery and a
+# UPS run their charge down and back up by design; a robot vacuum goes
+# back to its dock. Every one of them carries `device_class: battery` in
+# percent, so `dev.battery_low` filed "Replace the battery." about a
+# phone — the wrong remedy on a row that was never a fault, and a fresh
+# one on every dip, because the row clears the moment it recharges.
+#
+# Decided by the integration that provides the battery and by what else
+# the device is, never by its name. The platforms are the ones whose
+# battery is the rechargeable kind by construction: the companion app
+# (phones, watches, tablets, laptops), UPS monitors, home batteries and
+# inverters, EVs, and robot vacuums and mowers. An integration that
+# covers both kinds (Xiaomi's, Gardena's — a vacuum and a water timer on
+# AA cells) is deliberately absent and decided by what else the device is.
+RECHARGEABLE_PLATFORMS = frozenset({
+    "mobile_app",
+    "nut", "apcupsd",
+    "powerwall", "enphase_envoy", "solaredge", "fronius", "growatt_server",
+    "goodwe", "solax", "huawei_solar", "sonnen", "victron_remote_monitoring",
+    "tesla_fleet", "teslemetry", "tessie", "renault", "bmw_connected_drive",
+    "volvo", "nissan_leaf", "mercedes_me", "kia_uvo", "smartcar",
+    "polestar", "audiconnect", "volkswagen_carnet", "ohme", "zappi",
+    "roborock", "ecovacs", "roomba", "neato", "sharkiq", "dreame",
+    "husqvarna_automower",
+})
+# And a device that IS one of these, whoever provides its battery: a
+# vacuum or a mower docks to charge, and anything that reports itself
+# charging is charged.
+RECHARGEABLE_DOMAINS = frozenset({"vacuum", "lawn_mower"})
+
+
+def rechargeable(house: House, eid: str) -> bool:
+    """Whether this battery is charged rather than replaced.
+
+    Shared with `forecast.battery`, whose remedy ("have a replacement
+    ready") is wrong in the same way, so the two cannot disagree about
+    which batteries those are.
+    """
+    reg = house.registry.get(eid) or {}
+    if str(reg.get("platform") or "") in RECHARGEABLE_PLATFORMS:
+        return True
+    device = reg.get("device_id")
+    if not device:
+        return False
+    for row in house.entities:
+        if row.get("device_id") != device or not row.get("entity_id"):
+            continue
+        other = str(row["entity_id"])
+        if domain_of(other) in RECHARGEABLE_DOMAINS:
+            return True
+        attrs = (house.states.get(other) or {}).get("attributes") or {}
+        cls = (attrs.get("device_class") or row.get("device_class")
+               or row.get("original_device_class"))
+        if domain_of(other) == "binary_sensor" and cls == "battery_charging":
+            return True
+    return False
+
+
 def battery_low(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     out = []
     for eid, st in _live_hardware(house):
         if not _is_battery(st):
+            continue
+        # Charged, not replaced: see RECHARGEABLE_PLATFORMS. Both halves
+        # of this check are about a cell somebody has to go and change,
+        # and neither is true of a phone at 9% or an app that has not
+        # reported since it was uninstalled.
+        if rechargeable(house, eid):
+            continue
+        # Wrong on one of these rows writes an exception fact, and the
+        # check has to read it, or it files the same row in new words.
+        if house.excepted(eid, "dev.battery_low"):
             continue
         level = num(st.get("state"))
         dev = house.device_of(eid)
