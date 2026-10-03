@@ -3058,6 +3058,14 @@ async def _generate(insight_id: str) -> None:
 # Fix workers — the plan, and the one path that lets Claude change the house
 # ---------------------------------------------------------------------------
 
+# The brief a plan run is handed when a conversation agreed the change.
+PLAN_CHANGE_MAX = 600
+PLAN_AGREED = (
+    "WHAT THE HOMEOWNER AGREED TO, in a conversation with you about this "
+    "finding — plan exactly this change, or say plainly why it cannot or "
+    "should not be made:\n{change}")
+
+
 async def _run_plan(job_id: str) -> None:
     """Work out what fixing one finding WOULD change, and change nothing.
 
@@ -3091,9 +3099,11 @@ async def _run_plan(job_id: str) -> None:
         # the route already claimed it on disk — this is the in-memory half
         _set_job(job_id, state="planning", error="")
         memory = await asyncio.to_thread(_read_shared_memory)
+        change = str(job.get("change") or "").strip()
         prompt = fixer.build_plan_prompt(
             finding, memory=memory,
-            protected=automation_writer.protected_patterns())
+            protected=automation_writer.protected_patterns(),
+            context=(PLAN_AGREED.format(change=change) if change else ""))
         result = await asyncio.to_thread(
             engine.run_analyst, prompt, fixer.PLAN_SYSTEM, eff_model(),
             PLAN_TIMEOUT_S, PLAN_MAX_TURNS, "fix",
@@ -10900,10 +10910,25 @@ async def h_finding_snooze(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(settle))
 
 
-# What the chat is handed when you press Discuss. It says "look, don't
-# touch": the discussion is for understanding the thing, and Fix it is still
-# the only button that authorises a change — which stays on screen while you
-# talk, so agreeing to it is one press away rather than a trip back.
+# What the chat is handed when you press Discuss.
+#
+# It used to say "look, don't touch" and that sentence was the whole of the
+# guarantee, while the conversation it opened held every acting tool the
+# project pre-approves. The guarantee is the session's now (a discussion's
+# acting tools ASK — `chat_session.DISCUSS_ASK`), and the prompt says what
+# the honest way to change something is: a `plan` option, which is the
+# plan → Apply → Undo path every other change on the card already takes.
+#
+# It also used to send the finding's sentence and nothing else, so a
+# Resident case — whose investigation had already read the entities, put
+# numbers and times on them and weighed how sure it was — was discussed by
+# a chat told to "check the current state and the history" from scratch,
+# paying again for what the investigation had already paid for, and on a
+# case that names no single entity it was not even told which ones. The
+# evidence, the confidence, what the case said could be done and where the
+# investigation's own transcript is now ride in the prompt
+# (`_discuss_context`), and the chat is told to start from them.
+#
 # The first line is load-bearing twice over: it is what the chat bubble
 # leads with, and — because a conversation's title is its first genuine
 # user message — it is what the Chats rail calls the conversation. The old
@@ -10912,12 +10937,21 @@ async def h_finding_snooze(request: web.Request) -> web.Response:
 # of the same sentence with the finding buried mid-message.
 DISCUSS_PROMPT = """Discussing: {text}
 {detail}{fix}{entity}
-Severity: {severity}
+Severity: {severity}{context}
+You flagged this in my home. Tell me what is actually going on, and say
+plainly whether you think it is really a problem here. {look}"""
 
-You flagged this as broken in my home. Look into it and tell me what is
-actually going on — check the current state and the history before you
-answer, and say plainly whether you think it is really a problem here.
-Do not change anything yet; I will decide.
+# What only the conversation in the chat is told — a reply from a phone
+# runs read-only and offers nothing, so it is handed the context above
+# without this.
+DISCUSS_OFFER = """
+
+Anything that would change my house from this conversation asks me first —
+that is how this conversation is set up — so do not try to make a change
+here. If we agree something should change, offer it as a `plan` option
+below whose label says exactly what to change: pressing it has brAIn work
+out those steps for me to read and Apply, with an undo, and nothing changes
+before I press Apply.
 
 Then end your answer by calling offer_resolutions with the ways this could
 actually be settled, so they are buttons I can press here. Offer only what
@@ -10927,6 +10961,103 @@ worked out what I should actually DO about it — which hub to power-cycle,
 which automation to open, which setting to change — offer that as an
 `advice` option too: pressing it puts your sentence on the card as what to
 do, and leaves the finding open."""
+
+# How much of the investigation's own words ride along. Enough for its
+# conclusion, never its whole working: the evidence rows are the facts,
+# and this is only the reasoning that joined them.
+DISCUSS_RUN_CHARS = 700
+DISCUSS_EVIDENCE_ROWS = 8
+
+_CONFIDENCE_WORDS = ((0.8, "confident"), (0.5, "fairly sure"), (0.0, "not sure"))
+
+
+def _investigation_said(run_id: str) -> str:
+    """The last things the investigation said in prose, bounded.
+
+    Read out of the engine's own project directory, where the run lives
+    (`run_sources`' `store: "engine"`). Its closing reply is the case JSON
+    — already on the row — so what is worth carrying is the prose it wrote
+    on the way there. Never raises: a transcript that could not be read is
+    a prompt without this paragraph, not a refused Discuss.
+    """
+    if not run_id:
+        return ""
+    try:
+        events = conversations.transcript(engine.CLAUDE_HOME, run_id)
+    except Exception:  # noqa: BLE001
+        return ""
+    said = [str(e.get("text") or "").strip() for e in events
+            if e.get("type") == "text"]
+    said = [t for t in said if t and not t.lstrip().startswith(("{", "```"))]
+    text = " ".join(" ".join(said[-2:]).split())
+    if len(text) > DISCUSS_RUN_CHARS:
+        text = "…" + text[-DISCUSS_RUN_CHARS:]
+    return text
+
+
+def _discuss_context(finding: dict) -> tuple[str, bool]:
+    """What the row already knows, as prompt lines — and whether there is
+    evidence enough that the chat should start from it rather than look
+    again from nothing."""
+    lines: list[str] = []
+    confidence = finding.get("confidence")
+    if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+        word = next(w for floor, w in _CONFIDENCE_WORDS if confidence >= floor)
+        lines.append(f"How sure brAIn was: {word}")
+    stakes = {"high": "a lot", "medium": "somewhat",
+              "low": "a little"}.get(finding.get("stakes") or "")
+    if stakes:
+        lines.append(f"How much it matters if right: {stakes}")
+    evidence = [e for e in finding.get("evidence") or [] if isinstance(e, dict)]
+    if evidence:
+        lines.append("What the investigation read:")
+        for row in evidence[:DISCUSS_EVIDENCE_ROWS]:
+            when = f" ({row['when']})" if row.get("when") else ""
+            lines.append(f"- {row.get('entity') or '?'}: "
+                         f"{row.get('value') or '?'}{when}")
+    acts = [a for a in finding.get("actions") or [] if isinstance(a, dict)]
+    if acts:
+        lines.append("What it said could be done:")
+        for act in acts[:4]:
+            ask = "would ask me first" if act.get("consent") else "brAIn could do it"
+            detail = f" — {act['detail']}" if act.get("detail") else ""
+            lines.append(f"- {act.get('label') or '?'} ({ask}){detail}")
+    looked = (finding.get("triage") or {}).get("reason") or ""
+    if looked:
+        lines.append(f"What brAIn's first look said: {looked}")
+    run_id = ((finding.get("investigation") or {}).get("run_id")
+              or (finding.get("triage") or {}).get("run_id") or "")
+    if run_id:
+        said = _investigation_said(run_id)
+        lines.append(f"The run that raised this is {run_id}"
+                     + (f"; in its own words: {said}" if said else "."))
+    return ("\n" + "\n".join(lines) + "\n") if lines else "\n", bool(evidence)
+
+
+def _discuss_prompt(finding: dict, offer: bool = True) -> str:
+    """The Discuss opener for one finding. ``offer`` is the chat's; a reply
+    typed into a notification runs read-only and offers nothing."""
+    context, has_evidence = _discuss_context(finding)
+    entity = finding.get("entity_id") or ""
+    if not entity:
+        named = [str(e.get("entity")) for e in finding.get("evidence") or []
+                 if isinstance(e, dict) and e.get("entity")]
+        entity_line = (f"\nEntities it read: {', '.join(named[:6])}\n"
+                       if named else "")
+    else:
+        entity_line = f"\nEntity: {entity}\n"
+    look = ("Start from what was already read above — look again only at "
+            "what has changed since, or at what it does not settle."
+            if has_evidence else
+            "Check the current state and the history before you answer.")
+    prompt = DISCUSS_PROMPT.format(
+        text=finding.get("claim") or finding.get("text") or "",
+        detail=f"\n{finding['detail']}\n" if finding.get("detail") else "\n",
+        fix=f"\nWhat you suggested: {finding['fix']}\n" if finding.get("fix") else "",
+        entity=entity_line,
+        severity=finding.get("severity") or "warning",
+        context=context, look=look)
+    return prompt + (DISCUSS_OFFER if offer else "")
 
 
 REPLY_SYSTEM = """You are brAIn, answering a message somebody typed into a
@@ -10960,14 +11091,9 @@ async def _reply_to_finding(finding: dict, text: str) -> tuple[bool, str]:
     said = str(text or "").strip()
     if not said:
         return False, "the reply was empty"
-    prompt = (DISCUSS_PROMPT.split("\nThen end your answer", 1)[0].format(
-        text=finding["text"],
-        detail=f"\n{finding['detail']}\n" if finding.get("detail") else "\n",
-        fix=f"\nWhat you suggested: {finding['fix']}\n" if finding.get("fix") else "",
-        entity=f"\nEntity: {finding['entity_id']}\n" if finding.get("entity_id") else "",
-        severity=finding.get("severity") or "warning")
-        + f"\n\nThey replied from their phone: \u201c{said[:500]}\u201d\n"
-        "Answer that.")
+    prompt = (await asyncio.to_thread(_discuss_prompt, finding, False)
+              + f"\n\nThey replied from their phone: \u201c{said[:500]}\u201d\n"
+              "Answer that.")
     started = time.time()
     try:
         result = await asyncio.to_thread(
@@ -10990,30 +11116,34 @@ async def _reply_to_finding(finding: dict, text: str) -> tuple[bool, str]:
 
 
 async def h_finding_discuss(request: web.Request) -> web.Response:
-    """Open this finding as a conversation in the chat terminal."""
+    """Open this finding as a conversation in the chat terminal.
+
+    A finding is its own conversation — landing it in whichever chat was
+    open put "the garage lights" under a half-finished question about the
+    heating — and it is opened through the REGISTRY, never by resetting
+    the attached session. The reset killed that session's process whatever
+    it was doing, so pressing Discuss while a chat was mid-answer threw the
+    answer and its approval card away with no warning, which is the one
+    thing holding several conversations exists to prevent. `new` leaves a
+    busy conversation answering in the background (and reuses an empty
+    one rather than spending a slot), and the only refusal left is the
+    cap's own sentence when every live chat is busy.
+
+    The subject is handed to `new` rather than set afterwards, because it
+    decides the process's argv (`chat_session.DISCUSS_ASK`): a discussion
+    is spawned asking before it acts, not respawned into it.
+    """
     finding = _finding_or_404(request)
-    prompt = DISCUSS_PROMPT.format(
-        text=finding["text"],
-        detail=f"\n{finding['detail']}\n" if finding["detail"] else "\n",
-        fix=f"\nWhat you suggested: {finding['fix']}\n" if finding["fix"] else "",
-        entity=f"\nEntity: {finding['entity_id']}\n" if finding["entity_id"] else "",
-        severity=finding["severity"],
-    )
-    session = _chat()
-    # A finding is its own conversation. Landing it in whichever chat
-    # happens to be open put "the garage lights" under a half-finished
-    # question about the heating, and the reply answered both at once.
+    prompt = await asyncio.to_thread(_discuss_prompt, finding)
+    registry = _chat_registry()
     try:
-        await session.reset()
-        # After the reset, which clears it: this is what every resolution
-        # card in this conversation will be stamped with, and the model is
-        # never asked for it — so it cannot offer to settle a finding other
-        # than the one on screen.
-        session.finding_ts = int(finding["ts"])
+        await registry.new(finding_ts=int(finding["ts"]))
+        session = _chat()
         await session.send(prompt)
     except RuntimeError as exc:
-        raise web.HTTPConflict(reason=str(exc))
-    return web.json_response({"ok": True, "finding": finding})
+        raise web.HTTPConflict(reason=_refusal(exc))
+    return web.json_response({"ok": True, "finding": finding,
+                              "session_id": session.session_id})
 
 
 async def h_finding_fix(request: web.Request) -> web.Response:
@@ -11029,12 +11159,20 @@ async def h_finding_fix(request: web.Request) -> web.Response:
     finding = _finding_or_404(request)
     if not engine.get_auth():
         raise web.HTTPBadRequest(text="connect your Claude account first")
+    # What a conversation about this finding agreed to change, when the
+    # press came from a `plan` resolution in the chat. It is the plan
+    # run's brief and nothing more: the run is still read-only, what it
+    # writes is still a plan on the card, and the change still waits for
+    # Apply — which is the whole reason the chat offers this rather than
+    # acting itself.
+    body = await _json_body(request)
+    change = " ".join(str(body.get("change") or "").split())[:PLAN_CHANGE_MAX]
     job_id = f"{PLAN_JOB_PREFIX}{finding['ts']}"
     # The in-memory job is the authority on "a run is going" — it is what
     # actually knows. The stored status is the copy the browser renders, and
     # any left behind by a dead process is reconciled at startup.
     if finding["status"] in ("planning", "fixing") or not _enqueue(
-            job_id, kind="plan", finding_ts=finding["ts"]):
+            job_id, kind="plan", finding_ts=finding["ts"], change=change):
         raise web.HTTPConflict(text="already being looked at")
 
     def claim() -> dict:
@@ -12819,6 +12957,167 @@ async def h_health(request: web.Request) -> web.Response:
 # character grid. See chat_session.py.
 # ---------------------------------------------------------------------------
 
+# What the chat is told before anybody types: who it is here, which of
+# brAIn's own tools answer which question, how an automation is proposed
+# rather than written, and — as of the moment the conversation starts —
+# what brAIn is already worried about. Short on purpose: it is appended to
+# Claude Code's own prompt on every spawn, and a current CLI records it
+# once and replays it on every resume, which is why the house half is
+# stamped "when this conversation started" and the model is pointed at
+# `get_findings`/`get_health` for now. The per-message half is the
+# `UserPromptSubmit` hook (`h_chat_context`).
+CHAT_IDENTITY = """You are brAIn — the resident intelligence of this home, running inside its Home Assistant. The person you are talking with lives here.
+
+Ask brAIn's own measurements before you guess: what_is_normal (is a reading unusual for this house at this hour), room_physics (how a room gains and loses heat), appliance_status, house_rhythm, door_habits and habits; recall for what brAIn remembers about something; get_findings for what it has already raised and get_health for whether brAIn itself is working.
+
+To make a standing automation, describe it in one sentence and call the brain.intent service with it (call_service, domain "brain", service "intent", data {"sentence": "..."}): brAIn drafts it, replays it over the last month, grades it against what this household actually did and offers it as a card to accept or trial. Do not write automations.yaml and reload it yourself — that skips the replay, the grade and the protected-entities check. Use simulate_automation on any config before you suggest it."""
+
+
+def _chat_house_lines() -> list[str]:
+    """The house as of now, in a few lines. Never raises; a store that
+    cannot be read is a line that is not there."""
+    lines: list[str] = []
+    try:
+        waiting = cases.open_count()
+        lines.append(f"{waiting} thing{'s' if waiting != 1 else ''} waiting "
+                     "on the household in brAIn's feed")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        diag = json.loads(DIAGNOSTICS_FILE.read_text(encoding="utf-8"))
+        verdict = (diag or {}).get("health") or {}
+        if verdict.get("state"):
+            lines.append(f"brAIn's own health: {verdict['state']} — "
+                         f"{verdict.get('reason') or ''}".rstrip(" —"))
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        prof = rhythm.profile()
+        for half, word in ((rhythm.WEEKDAY, "weekdays"),
+                           (rhythm.WEEKEND, "weekends")):
+            part = prof.get(half) or {}
+            wake = (part.get("wakes") or {}).get("at")
+            settle = (part.get("settles") or {}).get("at")
+            if wake or settle:
+                bits = [f"up around {wake}" if wake else "",
+                        f"settles around {settle}" if settle else ""]
+                lines.append(f"on {word} the house is "
+                             + " and ".join(b for b in bits if b))
+    except Exception:  # noqa: BLE001
+        pass
+    return lines
+
+
+def _chat_system_prompt(session) -> str:
+    """The appended system prompt for one chat spawn (see CHAT_IDENTITY)."""
+    lines = _chat_house_lines()
+    if not lines:
+        return CHAT_IDENTITY
+    return (CHAT_IDENTITY + "\n\nWhen this conversation started: "
+            + "; ".join(lines) + ". That is a snapshot — ask get_findings "
+            "and get_health for how things stand now.")
+
+
+chat_session.PROMPT_PROVIDER = _chat_system_prompt
+
+# What the context hook may hand one message, and how hard it looks.
+CHAT_CONTEXT_CHARS = 1500
+CHAT_CONTEXT_ENTITIES = 12
+CHAT_CONTEXT_PROMPT_CHARS = 4000
+# A friendly name shorter than this is a word that turns up in sentences
+# about anything ("tv", "fan") and is not evidence the message is about it.
+CHAT_CONTEXT_MIN_NAME = 4
+
+
+def _subjects_in(text: str) -> tuple[list[str], list[str]]:
+    """The entities and areas a message names, off the last checks pass.
+
+    People type "the kitchen light", not `light.kitchen`, so an id written
+    out counts and so does a friendly name appearing as whole words. Both
+    come off `_NAMES`/`_FACTS_CTX` — the snapshot the pass already read —
+    and an entity nothing has seen is not guessed at. Deterministic and
+    bounded: this runs synchronously ahead of every chat message.
+    """
+    low = " ".join(str(text or "").lower().split())
+    entities: list[str] = []
+
+    def take(eid: str) -> None:
+        if eid not in entities and len(entities) < CHAT_CONTEXT_ENTITIES:
+            entities.append(eid)
+
+    for m in _ENTITY_IN_TEXT_RE.finditer(low):
+        if m.group(0) in _NAMES:
+            take(m.group(0))
+    for eid, row in list(_NAMES.items()):
+        if len(entities) >= CHAT_CONTEXT_ENTITIES:
+            break
+        name = str((row or {}).get("name") or "").strip().lower()
+        if len(name) < CHAT_CONTEXT_MIN_NAME or name not in low:
+            continue
+        if re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", low):
+            take(eid)
+    areas = []
+    for area_id, name in (_FACTS_CTX.get("areas") or {}).items():
+        label = str(name or "").strip().lower()
+        if len(label) >= 3 and label in low and re.search(
+                r"(?<!\w)" + re.escape(label) + r"(?!\w)", low):
+            areas.append(area_id)
+    return entities, areas
+
+
+def _chat_context(prompt: str) -> str:
+    """What brAIn remembers that bears on one message, or "".
+
+    The facts store's own retrieval (`facts_store.retrieval_block`) over
+    the subjects the message names, plus a lexical recall when it names
+    none — the same reader every scheduled run is handed, so the chat is
+    told what the brief and the cards are told rather than a third copy of
+    "what is relevant". Empty is an answer: the hook then adds nothing.
+    """
+    text = str(prompt or "")[:CHAT_CONTEXT_PROMPT_CHARS]
+    if not text.strip():
+        return ""
+    entities, areas = _subjects_in(text)
+    try:
+        block = facts_store.retrieval_block(
+            entities=entities, areas=areas, query=text,
+            limit_chars=CHAT_CONTEXT_CHARS)
+    except Exception as exc:  # noqa: BLE001 — a store that will not read
+        log.debug("chat context retrieval failed: %s", exc)
+        block = ""
+    if not entities and not areas:
+        try:
+            extra = [r for r in facts_store.recall(query=text, limit=6)
+                     if r.get("text") and r["text"] not in block]
+        except Exception:  # noqa: BLE001
+            extra = []
+        if extra:
+            more = "\n".join(f"- {r['text']}" for r in extra)
+            block = (block + "\n" + more) if block else (
+                facts_store.MEMORY_HEAD + "\n" + more)
+    if not block.strip():
+        return ""
+    if len(block) > CHAT_CONTEXT_CHARS:
+        block = block[:CHAT_CONTEXT_CHARS].rsplit("\n", 1)[0]
+    return ("What brAIn remembers that bears on this message — from its own "
+            "facts store, so check anything that matters against the house "
+            "before you rely on it:\n" + block)
+
+
+async def h_chat_context(request: web.Request) -> web.Response:
+    """The chat's `UserPromptSubmit` hook asks here, once per message.
+
+    One implementation of retrieval, on the side that has the registry the
+    last checks pass saw (`scripts/brain-chat-context.py` is a few lines of
+    plumbing). Answers ``{"context": ""}`` rather than an error for
+    anything it cannot use, because the hook turns any failure into
+    nothing and a message must never wait on this.
+    """
+    body = await _json_body(request)
+    text = await asyncio.to_thread(_chat_context, str(body.get("prompt") or ""))
+    return web.json_response({"context": text})
+
+
 def _chat_registry() -> "chat_session.SessionRegistry":
     """The registry, told which model a session spawned now should run.
 
@@ -13066,45 +13365,53 @@ async def h_chat_adopt(request: web.Request) -> web.Response:
     resume. Coming back, there is nothing to ask: the tmux Claude is not
     ours, it has no API, and it will not tell us what it is in the middle of.
 
-    What it does leave behind is its transcript, which Claude Code writes as
-    it goes. The most recently written conversation in this project
-    directory IS what the terminal was last doing, so that is what we pick
-    up — by resuming it, which starts our own process from that history.
-    The terminal's Claude is left completely alone: it is somebody's shell
+    What it does leave behind is the handoff record and its transcript,
+    which Claude Code writes as it goes, and `chat_session.pick_adopted`
+    reads both: the conversation the chat handed over, or the one the
+    terminal has written to since — never a conversation a chat session
+    in the registry is already holding. "The most recently written" was the
+    whole rule once, and a background chat that was still answering IS the
+    most recently written, so switching back resumed that chat a second
+    time beside the session holding it. The consolidator, voice and the
+    automation listener write here too, which is why only a person's own
+    conversations are candidates at all.
+
+    It goes through the REGISTRY (`open`), so the cap is applied and a
+    conversation already held is attached rather than spawned twice, and
+    nothing is stopped to make the switch: a chat mid-answer goes on
+    answering in the background, which is why this no longer refuses one.
+    The terminal's Claude is left completely alone — it is somebody's shell
     and killing it is not ours to do.
-
-    Refused mid-turn, because adopting stops the chat's process and losing
-    an answer being written is worse than making you wait for it.
-
-    "Most recently written" has to mean most recent conversation *of
-    yours*. The consolidator, voice and the automation listener all write
-    transcripts into this same directory on their own schedule, so on a
-    busy house the newest file was routinely a machine's — and switching
-    back from the terminal adopted the memory consolidator's prompt instead
-    of what you had been doing.
     """
-    session = _chat()
-    if session.state == "busy":
-        raise web.HTTPConflict(reason="finish or stop the current answer first")
+    registry = _chat_registry()
+    attached = _chat()
+    held_elsewhere = {s.session_id for s in registry.sessions()
+                      if s.session_id and s is not attached}
     recent = await asyncio.to_thread(
-        conversations.listing, chat_session.WORK_DIR, 1, ("you",))
-    newest = recent[0] if recent else None
-    if newest is None or newest["id"] == session.session_id:
+        conversations.listing, chat_session.WORK_DIR, 10, ("you",))
+    chosen = chat_session.pick_adopted(
+        recent, await asyncio.to_thread(chat_session.read_handoff),
+        held_elsewhere)
+    if chosen is None or chosen["id"] == attached.session_id:
         # Already the same conversation (or there is nothing to take up):
         # switching is then just a change of renderer, which is the point.
         return web.json_response({"ok": True, "adopted": False,
-                                  "session_id": session.session_id})
-    replay = await asyncio.to_thread(
-        conversations.transcript, chat_session.WORK_DIR, newest["id"])
+                                  "session_id": attached.session_id})
+    replay = []
+    if registry.get(chosen["id"]) is None:
+        replay = await asyncio.to_thread(
+            conversations.transcript, chat_session.WORK_DIR, chosen["id"])
     try:
-        await session.resume(newest["id"], replay)
-    except RuntimeError:
-        # A turn started between the busy check above and here — the same
-        # refusal, in the same words.
-        raise web.HTTPConflict(reason="finish or stop the current answer first")
+        out = await registry.open(chosen["id"], replay)
+    except ValueError as exc:
+        raise web.HTTPBadRequest(reason=_refusal(exc))
+    except RuntimeError as exc:
+        # The cap, and only the cap: every live chat is busy and there is
+        # no idle one to pause. Its own sentence says so.
+        raise web.HTTPConflict(reason=_refusal(exc))
     return web.json_response({"ok": True, "adopted": True,
-                              "session_id": newest["id"],
-                              "title": newest["title"]})
+                              "session_id": out.get("session_id") or chosen["id"],
+                              "title": chosen["title"]})
 
 
 async def h_chat_model(request: web.Request) -> web.Response:
@@ -13528,6 +13835,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/handoff", h_chat_handoff)
     app.router.add_get("/api/chat/conversations", h_chat_conversations)
     app.router.add_post("/api/chat/adopt", h_chat_adopt)
+    app.router.add_post("/api/chat/context", h_chat_context)
     app.router.add_post("/api/chat/resume", h_chat_resume)
     app.router.add_post("/api/chat/model", h_chat_model)
     app.router.add_post("/api/chat/permission", h_chat_permission)

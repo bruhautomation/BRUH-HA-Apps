@@ -4523,12 +4523,16 @@ function makeFinding(f) {
       again.addEventListener("click", () => recheckFinding(f, btns, again));
     }
 
-    // Talk about it before deciding. The discussion is read-only by
-    // construction — the prompt says so — because "explain this to me" and
-    // "go change my house" are different consents, and Fix it is the one
-    // that gives the second.
+    // Talk about it before deciding. "Explain this to me" and "go change
+    // my house" are different consents, and this used to promise the
+    // first with nothing but a sentence in the prompt holding it — the
+    // conversation had every acting tool pre-approved. It is the session
+    // that holds it now: a discussion's acting tools ask first
+    // (`chat_session.DISCUSS_ASK`), and a change it agrees on is offered
+    // as a plan for this card, which is Fix it's own path to Apply.
     const talk = add(el("button", "btn small", "💬  Discuss"));
-    tip(talk, "Ask brAIn about this one in the chat, without changing anything");
+    tip(talk, "Talk it through in the chat. Anything it would change asks you "
+      + "first, and a change you agree on becomes a plan on this card");
     talk.addEventListener("click", () => discussFinding(f, btns));
 
     // The two endings, in the words of what they mean rather than of what
@@ -4919,7 +4923,9 @@ function caseOverflow(row, btns) {
 function caseOverflowHint(item) {
   if (item.hint) return item.hint;
   if (item.verb === "mute") return "Stop this rule raising anything at all";
-  if (item.verb === "discuss") return "Talk about it in the chat, changing nothing";
+  if (item.verb === "discuss") {
+    return "Talk it through in the chat — any change asks you first";
+  }
   if (item.verb === "recheck") return "Run the check that found this, now";
   if (item.verb === "fix") return "Work out what it would change, and ask first";
   if (item.verb === "advice") return "Write what you'd do, onto the card";
@@ -10536,6 +10542,16 @@ const RESOLUTION_KINDS = {
     does: "Puts this on the card as what to do — the finding stays open",
     toast: "Updated what to do on the card",
   },
+  // The change the conversation agreed, made the way every change on a
+  // card is made: a read-only plan of exactly this, which waits on the
+  // card for Apply, and then an Undo. The conversation itself does not
+  // act — that is what makes it a conversation rather than a side door.
+  plan: {
+    does: "brAIn works out exactly this change for you to read — nothing "
+      + "changes until you press Apply on the card",
+    toast: "Working out exactly that — the steps land on the card, and "
+      + "nothing changes until you press Apply",
+  },
 };
 
 function chatResolutionsNode(ev) {
@@ -10588,6 +10604,27 @@ function chatResolutionsNode(ev) {
 async function chooseResolution(ev, option, finding, btns, paint) {
   const spec = RESOLUTION_KINDS[option.verb];
   if (!spec) return;
+  if (option.verb === "plan") {
+    // Not an ending either: the row moves to `planning`, and the plan
+    // lands on its card. The press is Fix it's own route with the agreed
+    // change as the run's brief — one plan path, whichever surface asked.
+    btns.forEach((b) => { b.disabled = true; });
+    try {
+      const data = await api(`api/finding/${finding.ts}/fix`, {
+        method: "POST", body: JSON.stringify({ change: option.label }) });
+      takeFindings(data);
+      syncFeed();
+      renderFindings();
+      refreshStatus().catch(() => {}); fastPoll();
+      toast(spec.toast);
+      chatState.chosen[ev.id] = option.label;
+      paint();
+    } catch (e) {
+      toast(e.message);
+      btns.forEach((b) => { b.disabled = false; });
+    }
+    return;
+  }
   if (option.verb === "advice") {
     // The one press here that ends nothing: the sentence goes onto the
     // card and the finding stays, so the strip stays too and the card
@@ -11273,9 +11310,12 @@ async function chatHandoff() {
 }
 
 // Coming back the other way. We can't ask the tmux Claude what it is doing,
-// but Claude Code writes every conversation as it goes, so the most recently
-// written one IS what the terminal was last on — the server picks it up and
-// resumes it here. That Claude is left running: it is somebody's shell.
+// but the handoff left a record and Claude Code writes every conversation
+// as it goes, so the server picks the conversation the chat handed over —
+// or the one the terminal has written to since — and never one a chat in
+// the background is still holding (`chat_session.pick_adopted`). It opens
+// it through the registry, so nothing here is stopped to make the switch.
+// That Claude is left running: it is somebody's shell.
 async function chatAdopt() {
   try {
     return await api("api/chat/adopt", { method: "POST" });
