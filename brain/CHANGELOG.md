@@ -7,6 +7,8 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 **A leak, smoke or gas alarm reaches you whatever brAIn is doing, and the
 Resident can correct its own first look.**
 
+### Safety and the Resident
+
 - **Leak, smoke, CO and gas alarms are sent the moment they trip.** brAIn files
   a critical card naming the sensor and the time and sends it straight away —
   through quiet hours, with reminders behind it — without waiting for any AI to
@@ -57,6 +59,184 @@ Resident can correct its own first look.**
   minute; a day's look allowance never holds back a tripped safety sensor; a
   flood of events never drops a safety trip; and investigations are handed the
   memory about every entity in their evidence, not just the first.
+
+### Voice, tools and what brAIn may touch
+
+- **A "Voice assistant" agent can no longer restart Home Assistant, shut down
+  the host, or create an admin login.** The default voice level was scoped by
+  the entities a request named, so a request that named none got straight
+  through. That covered `homeassistant.restart`, `hassio.host_shutdown`,
+  `update.install` and `brain.create_user` with `admin: true`, and Home
+  Assistant accepted all of them because brAIn's token is an admin's. A misheard
+  sentence, a guest or the TV could reach them. A voice-level agent now checks
+  the service itself:
+  - A request that names no entity is refused, unless it is a notification or
+    one of the BRUH play services (Minecraft play actions, a label print, a
+    BRight show).
+  - A request that names entities may only use those entities' own services
+    (`light.turn_on` on a light). The exceptions are the services built to work
+    across domains: the `homeassistant.turn_on/off/toggle` meta-services,
+    text-to-speech, Music Assistant playing on a speaker, and a scene applied
+    inline.
+  - `update.install` is refused even on an update entity.
+
+  Agents set to "Whole house" or "Full admin" are unchanged.
+- **New agents start with the administration services blocked.** The first
+  agent, a discovered agent and any agent you add now begin with these services
+  already ticked in **Blocked services**: restart and stop, host reboot and
+  shutdown, `update.install`, `recorder.purge`, `shell_command.*`,
+  `backup.create` and the `brain.*` registry tools. You can untick any of them.
+  Opening blinds, unlocking and running scripts stay one click away in the list
+  rather than ticked. Agents you already have are not changed.
+- **A protected lock can't be unlocked through a scene any more.** `scene.apply`
+  and `scene.create` take their entities in an `entities` map, and Home
+  Assistant applies each entity's state there. That will unlock a lock or open a
+  cover. brAIn's protected list, each agent's Blocked services and the voice
+  exposure check all looked only at `entity_id` and `target`, so a protected
+  lock named inside a scene passed all three. brAIn now reads every entity a
+  request names, wherever it names it: scene maps, `snapshot_entities`,
+  `group_members`, a speaker in `media_player_entity_id`, and a protected entity
+  passed to a script as a variable.
+- **Running a scene, script or automation now checks what is inside it.**
+  `scene.turn_on`, `script.turn_on`, `automation.trigger`, and a script called
+  by its own name (`script.unlock_door`) used to be checked as the scene or
+  script and nothing more. brAIn now asks Home Assistant what each one
+  references:
+  - If any of those entities is on your protected list, the run is refused, on
+    every agent.
+  - On a "Voice assistant" agent, the run is also refused if any of them is not
+    exposed to Assist.
+
+  A script that only touches the hall light is not refused just because the
+  protected front-door lock is in the same room.
+- **Multi-day history questions get the whole window.** brAIn's history tool
+  asked Home Assistant for "since 3 days ago" without saying "until now". Home
+  Assistant then answers with a single day, so a three-day question was answered
+  from the day that ended two days ago, labelled as the last three days. The
+  query now runs to now.
+- **"What just happened" reads the end of the logbook, not the start.** The
+  logbook tool kept the first 50 entries of a window that Home Assistant lists
+  oldest first. Those are the entries furthest from "just now". It now returns
+  the newest 50, newest first, says how many it left out, and trims each entry
+  to what changed, when, and what caused it.
+- **Long statistics windows say when they are cut, and the numbers are
+  rounded.** A month of hourly statistics was quietly cut to its last 200 rows.
+  The tool now says so and suggests the daily view, and it rounds 17-digit means
+  to three decimals.
+- **brAIn can see why an automation did (or didn't) run, including since the
+  last restart.** Automation traces were read from a file Home Assistant only
+  writes when it shuts down, and they were looked up under the wrong name. So
+  nothing since the last restart was visible, and automations made in the UI had
+  no traces at all. Traces are now read live from Home Assistant: the recent
+  runs, how many times a trigger fired but a condition stopped it, and one run
+  step by step. Two new read-only tools sit alongside:
+  - `get_automation_config` returns the definition of any automation or script:
+    UI-made, YAML or package.
+  - `search_related` gives what a script or scene touches, or what uses an
+    entity: the same answer as Home Assistant's Related tab.
+
+  Scheduled cards and investigations can now read an automation they are asked
+  about.
+  - Voice agents are no longer sent about 40 tools they would only be refused
+    for: 43 tools in 27.7 KB instead of 84 in 52.5 KB.
+  - Every tool result is sent without padding, a fifth to a third smaller.
+  - The light, climate, cover and other control tools, plus scenes and scripts,
+    are marked so Claude Code never defers them behind tool search. A voice
+    command can act in its first turn instead of first spending one loading the
+    tool.
+  - The server now tells Claude which tool answers which question.
+- **Voice turns start faster and cost less.**
+- **A misleading tool was renamed.** `get_device_registry` returned a count of
+  entities per domain, not devices. It is now `get_entity_counts`, and the old
+  name still works.
+- **Memory remembers who taught it.** Every fact brAIn was told through any of
+  its faces was filed as taught by voice, with no link back to the conversation.
+  Facts now record whether they came from voice, the chat or the terminal (once
+  the launchers say which; see §4), plus the conversation they came from. A
+  voice agent can no longer file a fact about an entity it isn't allowed to see.
+- **Telling a brAIn voice assistant to undo an automation now counts as you
+  overriding it.** "Turn the hall light back on" said through brAIn was filed as
+  brAIn's own automated action. So it never counted as you overriding the motion
+  rule, and after a couple of rounds brAIn could report that the rule and brAIn
+  "keep undoing each other". Changes asked for through voice, the chat or the
+  terminal are now filed as yours. They feed overrides, habits and curiosity,
+  and they no longer produce that false conflict. Corrections you speak to Home
+  Assistant's own Assist now count as overrides too.
+
+### Checks and measurements
+
+- **Automation traces are read from Home Assistant directly, so the trace checks
+  can finally fire.** "Ran and errored", "never gets past its conditions" and
+  "still running when it was triggered again" read a file Home Assistant writes
+  only when it shuts down. They also looked runs up by the wrong key, so on a
+  real house they never found one. brAIn now asks Home Assistant for the recent
+  runs of every automation and script, keyed the way Home Assistant keys them.
+  UI-made automations and ones in packages are included. If Home Assistant will
+  not answer, the three checks say they could not look rather than reporting a
+  clean house. "Never gets past its conditions" also waits until the
+  automation's actions have not run for two weeks, so a night-only motion rule
+  failing its conditions all day is no longer reported.
+- **brAIn no longer suggests deleting your smoke alarm automation because it has
+  not fired.** "Has not run in 30 days" was what a healthy smoke, leak, CO or
+  gas response looks like, and that includes the emergency playbooks brAIn
+  writes. The check now leaves those alone: any automation watching a smoke,
+  gas, moisture, carbon monoxide or safety sensor, any alarm panel, and anything
+  brAIn wrote itself.
+- **Automations built in the new editor are understood.** Since Home Assistant
+  2026.7 the automation editor writes triggers such as "When a light turns on"
+  and "When a door opens", with the device under a target. brAIn could not
+  replay these, so they had no "would have fired" numbers, could not be trialled
+  for a week, and showed no evidence on condition suggestions. It now replays
+  the common ones: lights, switches, fans, motion and occupancy, locks, doors,
+  windows, covers, climate, media players and alarm panels. It also replays the
+  matching conditions. A trigger aimed at a whole area, floor or label is still
+  refused, with the reason. A kind brAIn does not know yet now says exactly
+  that, instead of claiming the recorder does not keep it. The "unavailable
+  trigger" check also sees these new triggers. One more fix: a "for 10 minutes"
+  condition is no longer cut short when a light is merely dimmed.
+- **A late night is measured as a late night.** If your household goes to bed
+  after midnight, brAIn used to read it as waking at 00:40 and settling at
+  22:00. The morning brief, the bedtime door check and the overnight repairs
+  then ran at the wrong ends of the night. A day now runs from 04:00 to 04:00,
+  so 00:40 is that night's bedtime. A voice command counts as somebody being up,
+  just as a press of a switch does. Earlier rows recorded the old way are
+  dropped once on the next read and are re-measured over the following nights.
+- **Washers and dryers that run a few times a week are recognised.** A machine
+  had to run for about twelve hours in ten days before brAIn could see its "on"
+  level. Most washers and dryers fell short, so "the washing is done" never
+  appeared for them. The on level is now read from the time the machine is
+  actually running. On a house with many power sensors, washers, dryers and
+  dishwashers are measured first, not whichever sorts first alphabetically. If
+  some sensors are past the nightly limit, the Knowledge tab says how many.
+- **The outdoor thermometer is chosen on evidence, and you can choose it
+  yourself.** Every room's heat-loss figure is measured against one outdoor
+  thermometer. brAIn used to take the first one alphabetically with an
+  outdoor-sounding name. That could be a heat pump's coil sensor, an outdoor
+  pool, or an "ambient" reading in the lounge. It now prefers:
+  - a sensor in an outdoor area or no area;
+  - a sensor from the same integration as your weather entity;
+  - a sensor reading what your weather entity reads;
+  - a sensor whose readings swing through the day the way outside air does.
+
+  It never uses a sensor in an indoor room. The Knowledge tab's heating
+  drill-down says which sensor it chose and why, and lets you pick another.
+  Picking one re-measures straight away.
+- **Your phone at 9% is not a battery to replace.** The low-battery check and
+  the battery forecast no longer report batteries you charge rather than change.
+  That covers phones and tablets from the companion app, robot vacuums and
+  mowers, electric cars, home batteries, UPSs, and anything that reports when it
+  is charging. Pressing "Not a problem" on a battery card now stops that battery
+  being reported again.
+- **Every sensor brAIn measures overnight is one it can use.** The nightly "what
+  is normal here" pass reads at most 400 sensors. It used to spend those places
+  alphabetically on energy totals and settings-page sensors, and could build a
+  baseline for neither. On a big house that meant sensors later in the alphabet,
+  such as upstairs thermometers and water flow, were never measured. Only
+  sensors it can use now take a place. If the limit still cuts some, the
+  Knowledge tab and Diagnostics say how many. Two smaller fixes are in the same
+  check. "Far outside its usual range" no longer says "from 650 weeks of
+  readings" when it means hourly readings. A reading must also move by an amount
+  that matters in its own unit, such as 20 W rather than half a watt.
 
 ## 2.10.1
 

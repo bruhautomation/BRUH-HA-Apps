@@ -436,6 +436,9 @@ ordinary findings under a "check" label, with no Claude run at all.
   own battery, which a threshold never notices; impossible readings; sensors
   frozen on one value for a week; entities left behind by a removed
   integration.
+  Batteries you charge — phones and tablets from the companion app, robot
+  vacuums and mowers, electric cars, home batteries, UPSs, anything that
+  reports charging — are not reported as needing replacement.
 - **An automation whose trigger has died** — the failure with no symptom at
   all: the automation is switched on, nothing errors, no trace is written,
   and it can never fire again, because the entity in its trigger has been
@@ -786,6 +789,17 @@ Assistants and talk to it from any Assist pipeline, satellite or the app.
   admin can edit your configuration from a misheard sentence — give it only to an
   agent you alone talk to.
 
+  A **Voice assistant** agent is limited by **service** as well as by entity: it
+  may call a service only on the entities you expose, using that entity's own
+  services, plus notifications and the BRUH add-ons' play actions. Anything that
+  names no entity, or administers Home Assistant — a restart, an update, a backup,
+  a user, brAIn's registry tools — needs an agent set to Whole house or Full admin.
+  New agents also start with those administration services ticked under
+  **Blocked services**; untick them for an agent you alone use. A scene, script or
+  automation is checked by what it contains: running one that reaches a protected
+  entity is refused on every agent, and on a voice agent so is one that reaches an
+  entity you have not exposed.
+
   Each agent is also **told** its level in its instructions: a voice-level agent
   knows an unexposed entity is off-limits and says where to change that rather than
   hunting for another way in; a whole-house agent knows it can reach every entity
@@ -1071,6 +1085,14 @@ running at night, a freezer drifting, a boiler on for twice as long as it
 usually is. Until there is a number behind it, every rule that uses it is a
 threshold somebody guessed.
 
+**It only measures what it can use.** The nightly pass reads up to 400
+sensors, and only sensors whose readings vary and that are not settings-page
+sensors (signal strength, uptime) take a place, so a big house's upstairs
+thermometers are not crowded out by energy totals. If the limit still leaves
+some out, ⚙ → Diagnostics and the Knowledge tab say how many. A reading also has
+to move by an amount that matters in its own unit — 20 W, 2%, half a degree —
+before it is called unusual.
+
 So brAIn measures your house. Overnight, for every numeric sensor, it works
 out what that sensor normally reads **at this hour of this day of the week**
 and how much it normally varies, from a month of Home Assistant's own
@@ -1163,6 +1185,8 @@ Tuesday in the same home. So brAIn measures it instead: the first thing a
 **person** does each day is the house waking up, and the last is it settling.
 Not a motion sensor (which fires for a cat and for the heating) and not a
 light (an automation does that at dawn) — somebody actually doing something.
+A day runs from 04:00 to 04:00, so a household that goes to bed after midnight
+is measured as settling then, and a voice command counts as somebody being up.
 
 It keeps two numbers a day and nothing else, and it will not answer until it
 has **10 separate days** of them. Weekdays and weekends are measured apart,
@@ -1285,6 +1309,9 @@ rather than a plausible-looking drop.
 Nothing in Home Assistant says a cycle ended. A smart plug reports watts, and
 every rule written on one is a number typed into a box — \`> 10 W\` is a running
 dishwasher in one house and a phone charger in the next.
+A machine's "running" level is read from the times it is actually running, so a
+washer used a few times a week is recognised; washers, dryers and dishwashers are
+measured first when a house has more power sensors than the nightly limit.
 
 So brAIn measures each machine instead, overnight, from ten days of its own
 five-minute history. What it looks for is a **shape**: hours near a floor,
@@ -3266,7 +3293,7 @@ the Ask tab itself), because it changes nothing about how the add-on runs.
 | --- | --- | --- | --- |
 | \`checks_interval_hours\` | 0–168 | \`6\` | How often the deterministic house checks run. They read Home Assistant and the Supervisor directly and never call Claude, so they cost nothing. \`0\` means never on a timer; \`brain check\` and the tab's button still run them. |
 | \`self_healing\` | bool | \`false\` | Let brAIn make up to three repairs a night, inside your quiet hours: start an add-on that was set to run at boot, ping a dead Z-Wave node, reload an integration that failed to set up. Nothing else, never on a protected entity, and never on a finding you have already answered. See **The house acts**. |
-| \`protected_entities\` | list | \`[]\` | Entity ids (\`lock.front_door\`) or whole domains (\`alarm_control_panel.*\`) that brAIn may never act on. Enforced at the one place every Home Assistant tool call passes through, so it covers voice, automations, insight runs, the fixer, the overnight healer and anything the panel writes into \`automations.yaml\`; a call aimed at an area or device containing one is refused too, and so is a label or floor target, which cannot be resolved there. A shell command or a file edit does not go through that chokepoint — the terminal, the chat and Fix it are **told** the list instead. Protected entities can always be looked at. |
+| \`protected_entities\` | list | \`[]\` | Entity ids (\`lock.front_door\`) or whole domains (\`alarm_control_panel.*\`) that brAIn may never act on. Enforced at the one place every Home Assistant tool call passes through, so it covers voice, automations, insight runs, the fixer, the overnight healer and anything the panel writes into \`automations.yaml\`; a call aimed at an area or device containing one is refused too, and so is a label or floor target, which cannot be resolved there. The check reads every entity a call names, a scene's \`entities\` map included, and running a scene, script or automation is refused when one of its members is protected — or, while the list is non-empty, when Home Assistant cannot say what it contains. A shell command or a file edit does not go through that chokepoint — the terminal, the chat and Fix it are **told** the list instead. Protected entities can always be looked at. |
 
 ## Undo and access
 
