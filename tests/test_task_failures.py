@@ -91,7 +91,7 @@ class ListenerCase(unittest.TestCase):
             # The event and the notification, captured rather than posted.
             # One line per call, the pretty-printed payload folded into it.
             'curl() { printf "%s" "$*" | tr "\\n" " " >> "$CURL_LOG";'
-            ' echo >> "$CURL_LOG"; }',
+            + ' echo >> "$CURL_LOG"; }',
             f'TASKS_DIR="{self.tmp}/tasks"', f'RESULTS_DIR="{self.tmp}/results"',
             f'LOG_DIR="{self.tmp}/logs"', f'SHARED_DIR="{self.tmp}"',
             'MAX_TURNS=200', 'CLAUDE_TIMEOUT=300', 'TIMEOUT_MARGIN=15',
