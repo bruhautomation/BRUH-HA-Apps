@@ -61,7 +61,7 @@ run_task:
         text: null
     timeout:
       name: Timeout
-      description: Maximum seconds to wait for the task to complete (default 120).
+      description: Maximum seconds to wait for the task to complete (default 300).
       selector:
         number:
           min: 10
@@ -73,7 +73,8 @@ run_task:
         behaviour: the shell, file edits, web access and every Home Assistant tool.
         house drops the shell, file edits and the web and leaves every Home Assistant
         tool. read_only is the same list the scheduled analyst runs with — it can look
-        at anything and change nothing.'
+        at anything and change nothing. Anything wider than read_only needs a Home
+        Assistant administrator (an automation runs as the system and may ask for any).'
       default: full
       selector:
         select:
@@ -116,6 +117,9 @@ study:
         naming, presence, energy, climate, devices, automations, lighting. Any other text
         is studied as a one-off.
       required: false
+      example: energy
+      selector:
+        text:
 
 ask:
   name: Ask a question
@@ -185,9 +189,6 @@ intent:
       example: Turn the porch light off when the front door has been shut for ten minutes
       selector:
         text:
-      example: energy
-      selector:
-        text:
 
 add_todo:
   name: Add to the to-do list
@@ -228,7 +229,8 @@ add_memory:
           multiline: true
     source:
       name: Source
-      description: Where this fact came from (defaults to "service").
+      description: Where this fact came from (defaults to "service"). correction, confirmed
+        and person are kept for the homeowner's own answers and are refused.
       selector:
         text: null
     confidence:
@@ -241,21 +243,36 @@ add_memory:
           - medium
           - low
 answer_question:
-  name: Answer memory question
-  description: Answer an open question from Claude's memory system. The answer is recorded and also
-    queued as a memory fact.
+  name: Answer one of brAIn's guesses
+  description: >-
+    Answer one of the guesses brAIn is waiting on, yes or no — the same as pressing Yes or
+    No on the Findings tab. A yes files the guess as something brAIn knows; a no closes it,
+    and a reason after the no is kept as a correction. The open guesses and their ids are
+    on the "Waiting on you" sensor. Needs a Home Assistant administrator.
   fields:
+    ts:
+      name: Guess id
+      description: The guess's id, from the "Waiting on you" sensor's questions. Use this or
+        the question.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 9999999999
+          mode: box
     question:
       name: Question
-      description: The open question being answered (as shown by brain memory hypotheses).
-      required: true
+      description: The guess being answered, as it is worded (or enough of it to pick out
+        just one). Use this or the id.
+      required: false
       selector:
         text:
           multiline: true
     answer:
       name: Answer
-      description: Your answer.
+      description: Start with yes or no. Anything after a no is kept as the reason.
       required: true
+      example: No — that plug is the chest freezer
       selector:
         text:
           multiline: true

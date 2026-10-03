@@ -696,7 +696,19 @@ Assistants and talk to it from any Assist pipeline, satellite or the app.
   most commands skip lookup turns entirely.
 - **It knows your house.** The same memory, spliced into every voice prompt. "Turn on
   the beacon" works if you once told it what the beacon is.
-- **It follows a conversation.** Follow-up turns resume the same session.
+- **It follows a conversation.** Follow-up turns resume the same session, and when
+  brAIn's answer asks you something ("Which bedroom?") the satellite keeps listening
+  for the reply.
+- **It knows which room you are in, and who is talking.** A request from a satellite
+  or a voice device carries the room and floor it is in, so "turn off the lights" said
+  to the kitchen satellite means the kitchen; a request from a signed-in user carries
+  their person, so a preference you state by voice ("I like the bedroom at 19") is
+  filed as yours rather than everyone's. An automation's `extra_system_prompt`, and
+  anything Home Assistant said in the conversation before brAIn was asked — the
+  question an `assist_satellite.start_conversation` announced, say — reach brAIn too,
+  so your "yes" knows what it is a yes to. None of it is sent when there is nothing
+  to say, and none of it is mistaken for your words: it rides as a short note in
+  front of them.
 - **Each agent has its own reach.** Add as many agents as you like (Settings →
   Devices & services → brAIn → **Add service**), and each one chooses **What this
   agent can reach** — on creation, and later under **Configure**:
@@ -708,7 +720,12 @@ Assistants and talk to it from any Assist pipeline, satellite or the app.
   | **Full admin** | Every entity | Everything the brAIn chat can: shell, file edits, config, the web |
 
   So the kitchen speaker anybody can talk to stays a voice assistant while the agent
-  you use from your own phone is full admin. Each agent's **Blocked services** list
+  you use from your own phone is full admin. Somebody signed in to Home Assistant who
+  is **not an administrator** — a wall tablet's login, a guest — talking to a
+  whole-house or full-admin agent is answered at the voice-assistant level, and the
+  agent knows to say so; a satellite or an automation has no user and gets the
+  agent's own level, because who may stand near the satellite is the decision the
+  level already is. Each agent's **Blocked services** list
   still applies on top, and `protected_entities` is refused at every level. Full
   admin can edit your configuration from a misheard sentence — give it only to an
   agent you alone talk to.
@@ -884,6 +901,28 @@ simply because you prefer it.
   pass, and calling it while a pass is already running is noted in the log
   rather than queued. `button.brain_run_checks` on the *brAIn System* device
   is the same press with nothing to type. Wire them to any trigger you like.
+  `brain.answer_question` answers one of the guesses brAIn is waiting on, yes or
+  no — exactly as pressing Yes or No on the Findings tab does: a yes files the guess
+  as something brAIn knows, a no closes it and keeps the reason after it as a
+  correction. The *Waiting on you* sensor lists the open guesses with their ids.
+
+#### Who may call them, and what a failure looks like
+
+A task runs with Home Assistant's full API behind it and, at `tools: full`, a
+shell in `/config`, so asking for one is an administrator's to do.
+`brain.run_task` with `tools: house` or `full` (and with no `tools` at all, which
+is `full`), `brain.ask` with anything wider than `read_only`, `brain.add_memory`,
+`brain.study`, `brain.intent` and `brain.answer_question` refuse a signed-in user
+who is not a Home Assistant administrator. Automations and scripts run as the
+system and are not affected. `brain.add_memory` also refuses the sources brAIn
+keeps for your own answers (`correction`, `confirmed`, `person`).
+
+A task that **fails** — Claude signed out, the run timed out, it produced nothing,
+it was refused — raises an error carrying the reason, so it shows in the
+automation's trace instead of coming back as though Claude had said it.
+`brain.ask` never hands back an answer with `data` missing because the run failed:
+it raises. When the reason is a sign-in, it names the button that fixes it
+(**⚙ → Claude account → Sign in again** in the panel).
 #### How much a task is allowed to touch
 
 `brain.run_task` runs Claude in `/config` with the project's own permissions
@@ -947,15 +986,20 @@ act on it without a second lookup:
 
 | Event | When | Carries |
 | --- | --- | --- |
-| `brain_case` | A case opens on the Findings feed — a problem, a suggestion or a question waiting on you. | `case_id` (`f:<ts>`), `kind`, `claim`, `severity`, `status`, `entity_id`, `fixable`, `source` |
-| `brain_case_ended` | That case leaves the feed, whichever ending it got. | `case_id`, `kind`, `claim` |
+| `brain_case` | A finding opens on the Findings feed — something brAIn found that is waiting on you. Suggestions and guesses are on the feed too but are not announced by an event. | `case_id` (`f:<ts>`), `kind`, `claim`, `severity`, `status`, `entity_id`, `fixable`, `source` |
+| `brain_case_ended` | That finding leaves the feed, whichever ending it got. **Dismiss** is not an ending: a dismissed finding fires nothing when it goes and nothing when it comes back. | `case_id`, `kind`, `claim` |
 | `brain_change` | brAIn changed something in the house (a fix landed). | `case_id`, `claim`, `entity_id` |
 | `brain_finding` | The same moment as `brain_case`, in the shape earlier releases fired — kept so nothing written against it breaks. | `ts`, `text`, `severity`, `entity_id`, `fixable` |
 | `brain_learned` | A fact was filed into memory. | `fact`, `source` |
+| `brain_task_complete` | A `brain.run_task` or `brain.ask` task finished. | `task_id`, `status` (`completed` or `failed`), `error` on a failure |
 
 - Insight jobs render to `sensor.<name>_insight` with the markdown and ready-to-paste
   card YAML as attributes, so a report can drive a template, a notification, or a
-  dashboard.
+  dashboard. A job runs with read-only tools and what brAIn knows about the house in
+  front of its prompt; on its schedule it pauses with **Automatic insights** and the
+  usage budget, as every other run nobody pressed does (`brain.run_insight` always
+  runs). A run that fails shows as an error on the sensor beside the last good
+  report — it is never delivered as the report.
 - Findings surface as `sensor.brain_findings_open_findings`, a `brain_finding`
   event per new one, and an entry on Home Assistant's own **Repairs** page for
   each one waiting on you — and `findings_notify_service` pushes the critical
