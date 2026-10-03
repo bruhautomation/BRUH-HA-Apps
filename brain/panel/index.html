@@ -1081,6 +1081,24 @@
           <p class="hint">💡 Token-saving tips: each card's ✎ dialog can set fixed daily run times
             (for example “07:00, 19:00”), a longer every-N-hours interval, or disable that card
             entirely — scheduled times use far fewer tokens than short intervals.</p>
+
+          <!-- Who hears what, when: one sentence in the household's own words
+               rather than another row of options. Saved on change (blur),
+               like every other control here. The learned lines are shown
+               apart from it, one each, because a clause spliced into
+               somebody's sentence is one they cannot find again to remove.
+               No example in the box itself — a greyed-out example in an
+               empty box is read as content — so it lives on the ?. -->
+          <div class="setrow">
+            <label for="setNotifyPolicy">What deserves a notification — critical alerts
+              always come through</label>
+            <button type="button" class="btn icon tiny"
+              aria-label="More about the notification sentence"
+              data-tip="Say it the way you would to a person, for example: wake me for water, smoke, the freezer or the front door at night; batteries can wait for Saturday. brAIn reads it before each notification and decides whether to send it now, hold it for later or the morning list, or leave it on the Findings tab — and writes the message for your lock screen. Leaks, smoke, gas and other urgent critical alerts always come straight through, whatever this says, and if brAIn cannot ask Claude it sends exactly what it always did.">?</button>
+          </div>
+          <textarea id="setNotifyPolicy" rows="2" maxlength="400"
+            placeholder="In your own words…"></textarea>
+          <div id="setNotifyLearned" class="setlearned hidden"></div>
         </div>
       </details>
 
