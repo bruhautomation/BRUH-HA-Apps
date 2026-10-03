@@ -4030,7 +4030,7 @@ def remember_fact(fact, confidence="high", subject="", person=""):
 # a friendlier set translated at the far end: one vocabulary from the tool
 # schema to the HTTP route is one fewer place for two answers to the same
 # question to drift apart.
-RESOLUTION_KINDS = ("done", "wrong", "todo", "advice")
+RESOLUTION_KINDS = ("done", "wrong", "todo", "advice", "plan")
 MAX_RESOLUTIONS = 4
 MAX_RESOLUTION_LABEL = 90
 # `advice` replaces the card's "What you'd need to do" with the sentence
@@ -4075,7 +4075,8 @@ def offer_resolutions(options):
         if kind not in RESOLUTION_KINDS:
             return {"error": "kind must be one of "
                              + ", ".join(RESOLUTION_KINDS)}
-        cap = MAX_ADVICE_LABEL if kind == "advice" else MAX_RESOLUTION_LABEL
+        cap = (MAX_ADVICE_LABEL if kind in ("advice", "plan")
+               else MAX_RESOLUTION_LABEL)
         cleaned.append({"label": label.strip()[:cap], "kind": kind})
     return {
         "status": "offered",
@@ -4084,7 +4085,9 @@ def offer_resolutions(options):
                 "one, or none — you are not told which, and nothing is "
                 "settled until they do. An `advice` option settles nothing "
                 "either way: pressing it puts your sentence on the card as "
-                "what to do about it.",
+                "what to do about it. A `plan` option changes nothing by "
+                "being pressed either: brAIn plans that change read-only and "
+                "the card waits for them to press Apply.",
     }
 
 
@@ -5764,7 +5767,13 @@ TOOLS = [
             "to this house (\"Power-cycle the Tuya hub in the garage — the "
             "other three valves on it are answering\"), and pressing it "
             "replaces the generic 'What you'd need to do' on the card with "
-            "that sentence while the finding stays open. Offer only endings "
+            "that sentence while the finding stays open. 'plan' is how a "
+            "change you have agreed with them is made: its label says exactly "
+            "what to change (\"Add a condition so the hall light automation "
+            "only runs after sunset\"), and pressing it has brAIn work out "
+            "those steps read-only and put them on the card for them to "
+            "Apply, with an Undo — never make the change yourself in the "
+            "conversation. Offer only endings "
             "your own investigation supports, and leave out any you cannot "
             "justify — two honest options beat four. This changes nothing "
             "by itself: nothing is settled until they press, and you are not "
@@ -5787,8 +5796,8 @@ TOOLS = [
                             },
                             "kind": {
                                 "type": "string",
-                                "enum": ["done", "todo", "wrong", "advice"],
-                                "description": "done = they have already done this, and it goes into memory as a fix. todo = work for their to-do list, written as an instruction. wrong = brAIn has misread the house, and the label is the correction. advice = not an ending: the label becomes the card's 'What you'd need to do', specific to this house, and the finding stays open."
+                                "enum": ["done", "todo", "wrong", "advice", "plan"],
+                                "description": "done = they have already done this, and it goes into memory as a fix. todo = work for their to-do list, written as an instruction. wrong = brAIn has misread the house, and the label is the correction. advice = not an ending: the label becomes the card's 'What you'd need to do', specific to this house, and the finding stays open. plan = the change you agreed, said exactly: brAIn plans it read-only for them to Apply, with an Undo."
                             }
                         },
                         "required": ["label", "kind"]

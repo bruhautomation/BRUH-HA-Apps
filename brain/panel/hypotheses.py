@@ -9,7 +9,18 @@ the list only ever grew. A hypothesis is a claim with an end state.
         ──✗──▶ rejected    recorded as a dead end, never revisited
         ──⏱──▶ expired     nobody answered within the TTL
 
-Only `open` is ever shown or offered. `rejected` is the one status worth
+Only `open` is ever shown or offered — and an open guess somebody
+dismissed is not shown either, until its `snoozed_until` comes round.
+**A dismissed guess is still open, and it is not being ASKED.** "Not now"
+on a question used to snooze it in the case feed's own sidecar until its
+fourteen-day expiry, so the button that promised "brAIn brings it back
+later" quietly killed it — and while it sat there it went on holding one
+of the `MAX_OPEN` slots, so the gentlest press also stopped brAIn asking
+anything else for up to a fortnight. So the snooze lives on the entry
+itself (`snooze`): a sleeping guess does not count against the cap, and
+its TTL clock runs from when it is next put in front of somebody
+(`_asked_at`), which is what makes "it comes back" true rather than a
+guess about which of two dates arrives first. `rejected` is the one status worth
 putting back in a prompt ("you were on the wrong track here"), and it is
 capped hard. Confirmed ones leave no trace here at all — their content
 lives in the memory document, which is the point.
@@ -129,6 +140,35 @@ def _unique_ts(used: set[int]) -> int:
     return ts
 
 
+def _num(value) -> float:
+    """A stamp off disk, or 0 for anything that is not one — the file is
+    written by three processes and one of them is `jq`."""
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _asked_at(entry: dict) -> float:
+    """When this guess was last put in front of somebody.
+
+    Its proposal, or the moment a dismissal let it come back, whichever is
+    later — so a guess dismissed on day ten is asked again with a whole
+    TTL ahead of it rather than expiring while it slept. The shell writers
+    (`brain-memory.sh`, `brain-memory-consolidate.sh`) retire stale guesses
+    with the same `max(ts, snoozed_until)`, because two answers to "has
+    this one aged out" is a guess that comes back on one screen and is
+    already gone on the other.
+    """
+    return max(_num(entry.get("ts")), _num(entry.get("snoozed_until")))
+
+
+def asleep(entry: dict, now: float | None = None) -> bool:
+    """Whether a dismissal is still keeping this guess off every screen."""
+    return _num(entry.get("snoozed_until")) > (time.time() if now is None
+                                                else now)
+
+
 def _expire(entries: list[dict], now: float | None = None) -> bool:
     """Retire anything nobody answered in time. Returns True if changed."""
     if TTL_DAYS <= 0:
@@ -136,7 +176,7 @@ def _expire(entries: list[dict], now: float | None = None) -> bool:
     cutoff = (now or time.time()) - TTL_DAYS * 86400
     changed = False
     for e in entries:
-        if e.get("status") == "open" and float(e.get("ts") or 0) < cutoff:
+        if e.get("status") == "open" and _asked_at(e) < cutoff:
             e["status"] = "expired"
             changed = True
     return changed
@@ -165,16 +205,31 @@ def list_all(status: str | None = None) -> list[dict]:
             "status": st,
             "settled_at": int(e.get("settled_at") or 0),
             "note": str(e.get("note") or "")[:MAX_NOTE_CHARS],
+            "snoozed_until": int(_num(e.get("snoozed_until"))),
         })
     return out
 
 
+def awake(now: float | None = None) -> list[dict]:
+    """The open guesses somebody is actually being asked right now.
+
+    What every surface renders and what the cap counts: a guess somebody
+    dismissed is still open — it comes back — and it is not a question
+    on anybody's screen until it does.
+    """
+    return [e for e in list_all("open") if not asleep(e, now)]
+
+
 def open_count() -> int:
-    return len(list_all("open"))
+    return len(awake())
 
 
 def budget() -> int:
-    """How many more guesses may be proposed right now."""
+    """How many more guesses may be proposed right now.
+
+    Counted over the AWAKE ones: a dismissed guess is not being asked, and
+    a slot it held while it slept was a slot nothing else could use.
+    """
     return max(0, MAX_OPEN - open_count())
 
 
@@ -215,7 +270,9 @@ def propose(text: str, topic: str = "", *, subject: str = "",
         _expire(entries)
         if any(normalize(e.get("text") or "") == key for e in entries):
             return None     # proposed before, in any status — never re-floated
-        if sum(1 for e in entries if _status_of(e) == "open") >= MAX_OPEN:
+        now = time.time()
+        if sum(1 for e in entries if _status_of(e) == "open"
+               and not asleep(e, now)) >= MAX_OPEN:
             return None
         entry = {"ts": _unique_ts({int(e.get("ts") or 0) for e in entries}),
                  "text": text, "topic": str(topic or "")[:64], "status": "open"}
@@ -261,6 +318,26 @@ def _settle(ts: int, status: str, note: str = "") -> dict | None:
     return None
 
 
+def snooze(ts: int, until: float) -> dict | None:
+    """Keep an open guess off every screen until ``until``, and no longer.
+
+    It stays `open` — "not now" is not an answer — so it comes back by
+    itself, with its TTL running from then (`_asked_at`), and while it
+    sleeps it does not count against `MAX_OPEN`. Unknown ids and settled
+    guesses return None: a dismissal arriving after somebody answered is
+    about a question nobody is asking any more.
+    """
+    with _locked():
+        entries = _read()
+        for e in entries:
+            if int(e.get("ts") or 0) == ts and _status_of(e) == "open":
+                e["snoozed_until"] = int(until)
+                _write(entries)
+                return {"ts": ts, "text": e["text"], "status": "open",
+                        "snoozed_until": int(until)}
+    return None
+
+
 def confirm(ts: int) -> dict | None:
     """Accept a guess. The caller queues its text as a memory fact — the
     claim is the durable part, and this record is not."""
@@ -294,6 +371,8 @@ def reopen(ts: int) -> dict | None:
                 e["status"] = "open"
                 e.pop("settled_at", None)
                 e.pop("note", None)
+                # Put back in front of somebody, which is what a reopen is.
+                e.pop("snoozed_until", None)
                 _write(entries)
                 return {"ts": ts, "text": e["text"], "status": "open"}
     return None

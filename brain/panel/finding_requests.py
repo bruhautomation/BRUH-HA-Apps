@@ -83,6 +83,13 @@ MAX_PER_PASS = 50
 MAX_QUEUED = 500
 KEEP_S = 14 * 86400
 NOTE_MAX = 500
+# What a snooze that names no length USED to buy, and what one naming
+# nonsense is bounded by. A request that names no `hours` now carries
+# None, and the panel gives it the feed's own stakes-based quiet
+# (`cases.snooze_until`): a notification's Dismiss and the feed's are one
+# press, and a flat day here against one, three or seven there was one
+# word meaning three different things. Repairs' "Remind me tomorrow"
+# names its 24 hours on the button and sends them, so it keeps them.
 SNOOZE_DEFAULT_H = 24
 SNOOZE_MAX_H = 24 * 30
 
@@ -135,8 +142,9 @@ def parse(obj) -> dict | None:
         return None
     hours = obj.get("hours")
     if isinstance(hours, bool) or not isinstance(hours, (int, float)):
-        hours = SNOOZE_DEFAULT_H
-    hours = max(1.0, min(float(hours), SNOOZE_MAX_H))
+        hours = None
+    else:
+        hours = max(1.0, min(float(hours), SNOOZE_MAX_H))
     return {
         "ts": int(ts),
         "action": action,
