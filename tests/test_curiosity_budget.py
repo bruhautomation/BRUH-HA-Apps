@@ -22,7 +22,6 @@ real hypothesis queue (`test_curiosity_wiring`'s harness). Mutations:
 """
 from __future__ import annotations
 
-import asyncio
 import sys
 import unittest
 from pathlib import Path
