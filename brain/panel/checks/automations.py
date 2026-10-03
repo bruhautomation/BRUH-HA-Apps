@@ -385,6 +385,87 @@ def _trigger_platforms(config: dict) -> set[str]:
     return kinds
 
 
+# brAIn's own automations — the playbooks, an accepted routine, an armed
+# intent. `automation_writer.ID_PREFIX`, spelled here because this package
+# stays importable without the panel (a test holds the two together).
+BRAIN_PREFIX = "brain_"
+
+# What an alarm automation watches. A smoke, gas, leak or CO response is
+# DESIGNED never to fire in a healthy house, so "has never fired … or
+# delete it" about one is the check telling somebody to remove the thing
+# that would have woken them — and brAIn's own smoke, leak and freeze
+# playbooks were exactly that, thirty days after somebody accepted them.
+# By device class rather than by name: a detector declares what it is.
+SAFETY_CLASSES = frozenset({"smoke", "gas", "moisture", "carbon_monoxide",
+                            "safety"})
+# A binary sensor's device trigger names the condition, not the class
+# (`homeassistant/components/binary_sensor/device_trigger.py`): these are
+# the "it went off" halves of the five classes above.
+SAFETY_DEVICE_TRIGGERS = frozenset({"smoke", "gas", "moist", "co", "unsafe"})
+# An alarm panel going to `triggered` is the same claim about a whole house.
+SAFETY_DOMAINS = frozenset({"alarm_control_panel"})
+
+
+def _resolve(house: House, ref: str) -> str:
+    """An entity id, from either an entity id or a registry entry's `id`.
+
+    A device trigger names its entity by the registry's own uuid since
+    2023.x (`entity_id: 6a1b…`), which reads as an entity that does not
+    exist if it is looked up as one.
+    """
+    if ref in house.states or ref in house.registry:
+        return ref
+    for row in house.entities:
+        if str(row.get("id") or "") == ref and row.get("entity_id"):
+            return str(row["entity_id"])
+    return ref
+
+
+def _watched(house: House, trig: dict) -> list[str]:
+    """The entity ids one trigger names, under every key HA reads one from.
+
+    `entity_id:` at the top of a `state`/`numeric_state`/`device` trigger,
+    and `target: {entity_id: …}` — which is where HA 2026.7's
+    purpose-specific triggers (`trigger: light.turned_on`, the editor's
+    default) put it. An area, floor, label or device under `target:` is
+    not resolved here: none of the callers would say anything true about
+    "every light in the kitchen" from one of them.
+    """
+    out: list[str] = []
+    raw = (trig.get("entity_id")
+           if _trigger_kind(trig) in _STATE_TRIGGERS else None)
+    target = trig.get("target")
+    sources = [raw]
+    if isinstance(target, dict):
+        sources.append(target.get("entity_id"))
+    for source in sources:
+        for ref in listify(source):
+            if isinstance(ref, str) and ref.strip():
+                eid = _resolve(house, ref.strip())
+                if eid not in out:
+                    out.append(eid)
+    return out
+
+
+def _guards_safety(house: House, config: dict) -> bool:
+    """Whether this automation answers a smoke, gas, leak or CO alarm."""
+    for trig in _triggers(config):
+        if (_trigger_kind(trig) == "device"
+                and str(trig.get("domain") or "") == "binary_sensor"
+                and str(trig.get("type") or "") in SAFETY_DEVICE_TRIGGERS):
+            return True
+        for eid in _watched(house, trig):
+            if eid.split(".", 1)[0] in SAFETY_DOMAINS:
+                return True
+            attrs = (house.states.get(eid) or {}).get("attributes") or {}
+            reg = house.registry.get(eid) or {}
+            cls = (attrs.get("device_class") or reg.get("device_class")
+                   or reg.get("original_device_class"))
+            if str(cls or "") in SAFETY_CLASSES:
+                return True
+    return False
+
+
 def never_fired(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     out = []
@@ -392,6 +473,14 @@ def never_fired(snap: dict, now: float) -> list[dict]:
         eid = item["entity_id"]
         state = house.states.get(eid) if eid else None
         if not state or state.get("state") != "on":
+            continue
+        # brAIn's own: a playbook is meant to wait for the bad night, and
+        # every other one was accepted on a card that already said what it
+        # was for. brAIn advising its own removal is two halves of one
+        # add-on arguing in front of somebody.
+        if item["id"].startswith(BRAIN_PREFIX):
+            continue
+        if _guards_safety(house, item["config"]):
             continue
         attrs = state.get("attributes") or {}
         if attrs.get("last_triggered"):
@@ -512,9 +601,11 @@ def blueprint_missing(snap: dict, now: float) -> list[dict]:
 # auto.trigger_unavailable — the automation is fine, its trigger is dead
 # ---------------------------------------------------------------------------
 
-# Trigger kinds that watch an entity's state. A `time` or `event` trigger
-# names no entity, and a `device` trigger names one that HA resolves for
-# itself.
+# Trigger kinds whose top-level `entity_id` is the entity they watch. A
+# `time` or `event` trigger names no entity, and a `device` trigger names
+# one by its registry id (see `_resolve`). HA 2026.7's purpose-specific
+# triggers (`light.turned_on`) name theirs under `target:` instead, which
+# `_watched` reads for every kind.
 _STATE_TRIGGERS = frozenset({"state", "numeric_state", "device"})
 
 
@@ -550,10 +641,8 @@ def trigger_unavailable(snap: dict, now: float) -> list[dict]:
             continue  # a switched-off automation is auto.forgotten_off's
         broken: list[str] = []
         for trig in _triggers(item["config"]):
-            if _trigger_kind(trig) not in _STATE_TRIGGERS:
-                continue
-            for eid in listify(trig.get("entity_id")):
-                if not isinstance(eid, str) or "." not in eid:
+            for eid in _watched(house, trig):
+                if "." not in eid:
                     continue
                 st = house.states.get(eid)
                 if st is None:
