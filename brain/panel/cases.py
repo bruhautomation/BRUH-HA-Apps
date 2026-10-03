@@ -217,6 +217,37 @@ _ENDINGS: dict[tuple[str, str], tuple[str, str]] = {
     ("chore", "wrong"): ("todo_drop", ""),
 }
 
+# The same table for a kind that lives in a store other than its usual
+# one, which is checked FIRST. The Resident files opportunities and
+# questions into the FINDINGS store — an investigation's case is a row
+# there whatever its kind — and routing them by kind alone sent "Make the
+# change", "Yes" and "No" to the proposal and hypothesis hooks with a
+# finding's ts: every press failed with "already answered" (or acted on a
+# guess that happened to share the number), and the only answer that
+# worked was Dismiss.
+_STORE_ENDINGS: dict[tuple[str, str, str], tuple[str, str]] = {
+    # An improvement brAIn noticed: yes, I will do it — onto the list,
+    # exactly as a problem's *Add to list*.
+    ("findings", "opportunity", "do"): ("finding_todo", ""),
+    ("findings", "opportunity", "wrong"): ("end_finding", "wrong"),
+    # A question only the homeowner can answer: Yes files what the case
+    # said it would teach (its `memory_hint`), No is a correction.
+    ("findings", "question", "do"): ("end_finding", "confirm"),
+    ("findings", "question", "wrong"): ("end_finding", "wrong"),
+}
+
+
+# Producers that are not a RULE, so "Stop raising these" means nothing
+# about them. The Resident files whatever an investigation found — one
+# source for every kind of judgement — so muting it deleted every open
+# Resident case on the list, a live safety case included, while nothing
+# on its path ever read the mute and new cases went on arriving. The
+# safety lane is the rule that reports leaks, smoke and gas; that is not
+# a rule this panel offers a press to silence. What a person means on one
+# of these is "not this kind of thing", which is what *Not a problem* and
+# its reason box already teach, case by case.
+UNMUTABLE_SOURCES = frozenset({"resident", "safety"})
+
 
 # ---------------------------------------------------------------------------
 # Identity
@@ -689,7 +720,8 @@ def end(value: str, verb: str, note: str = "", *, hooks: Hooks,
         return {"id": case["id"], "kind": case["kind"], "verb": verb,
                 "when": int(now), "snoozed_until": until, "result": None}
 
-    spec = _ENDINGS.get((case["kind"], verb))
+    spec = (_STORE_ENDINGS.get((store, case["kind"], verb))
+            or _ENDINGS.get((case["kind"], verb)))
     if spec is None:
         return None
     hook_name, word = spec
@@ -778,7 +810,7 @@ def overflow(case: dict) -> list[dict]:
             add("unfix", "Put it back", f"/api/finding/{key}/unfix")
         add("discuss", "Talk about it", f"/api/finding/{key}/discuss")
         add("advice", "Say what to do", f"/api/finding/{key}/advice")
-        if case.get("source"):
+        if case.get("source") and case["source"] not in UNMUTABLE_SOURCES:
             # The press for the RULE rather than for the row. It carries
             # no id because it is about a producer, which is why it is the
             # one route here that is not under `/api/finding/{id}/`.
@@ -795,7 +827,8 @@ def overflow(case: dict) -> list[dict]:
 
 
 __all__ = [
-    "CHORE_SNOOZE_S", "Hooks", "KINDS", "FEED_KINDS", "LIVE_STATUSES", "MAX_SNOOZED",
+    "CHORE_SNOOZE_S", "Hooks", "KINDS", "FEED_KINDS", "LIVE_STATUSES",
+    "MAX_SNOOZED", "UNMUTABLE_SOURCES",
     "MIN_SNOOZE_S", "PREFIXES", "SNOOZE_BY_STAKES", "SNOOZE_FILE", "STAKES",
     "STATUSES", "STORES", "VERBS", "answers", "case_id", "end", "get",
     "list_cases", "more", "open_count", "overflow", "situation", "split_id",

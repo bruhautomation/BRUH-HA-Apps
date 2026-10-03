@@ -304,6 +304,27 @@ def _evidence(finding: dict) -> list[str]:
         )
     if finding.get("source_title"):
         parts.append(f"- Reported by: {finding['source_title']}")
+    # What the Resident's investigation READ and what it proposed, when a
+    # case came from one. The plan run used to start from the card's title
+    # alone and re-discover the house the investigation had just been paid
+    # to read; the readings are checkable (entity, value, when) and the
+    # proposed actions are the shapes it thought the change would take.
+    rows = [e for e in (finding.get("evidence") or []) if isinstance(e, dict)]
+    if rows:
+        parts.append("- What was read when it was investigated:")
+        for e in rows[:8]:
+            parts.append(f"  · {e.get('entity', '')} = {e.get('value', '')}"
+                         + (f" at {e['when']}" if e.get("when") else ""))
+    acts = [a for a in (finding.get("actions") or []) if isinstance(a, dict)]
+    if acts:
+        parts.append("- What the investigation thought could be done "
+                     "(starting points, not instructions):")
+        for a in acts[:4]:
+            parts.append(f"  · [{a.get('shape', '')}] {a.get('label', '')}"
+                         + (f" — {a['detail']}" if a.get("detail") else ""))
+    run = (finding.get("investigation") or {}).get("run_id")
+    if run:
+        parts.append(f"- The investigation's own conversation is run {run}.")
     if finding.get("fixable") is False:
         parts.append(
             "- This was flagged as needing a human. Verify that judgement "

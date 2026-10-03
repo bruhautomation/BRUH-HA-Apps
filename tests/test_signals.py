@@ -127,7 +127,7 @@ class TestTheAdapters(unittest.TestCase):
             "text": "The hall light fights the motion rule",
             "severity": "serious", "entity_id": "light.hall",
             "source": "analyst", "source_title": "Automations"}, NOON)
-        self.assertTrue(sig["text"].startswith("Automations:"))
+        self.assertTrue(sig["text"].startswith("Automations [serious]:"))
 
     def test_urgency_comes_from_the_producer_table_not_the_words(self):
         """`notify_router.urgency_of` is keyed on `source` for a reason,

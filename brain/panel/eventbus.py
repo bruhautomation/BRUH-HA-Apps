@@ -150,6 +150,19 @@ def backoff_delay(attempt: int, rand=random.random) -> float:
     return max(0.1, base * (1.0 + BACKOFF_JITTER * (2.0 * rand() - 1.0)))
 
 
+def _tripped_safety(data: dict) -> bool:
+    """Whether a state change is a safety detector reporting a hazard."""
+    new_state = (data or {}).get("new_state")
+    if not isinstance(new_state, dict):
+        return False
+    attrs = new_state.get("attributes")
+    if not signals.RegistryContext.safety_class(
+            attrs if isinstance(attrs, dict) else {}):
+        return False
+    return str(new_state.get("state") or "").strip().lower() \
+        in signals.HOT_SAFETY_STATES
+
+
 class EventBus:
     """One subscription to Home Assistant's event bus.
 
@@ -353,6 +366,15 @@ class EventBus:
         if self._in_second <= MAX_EVENTS_PER_S:
             return True
         if self._in_second > HARD_CEILING_PER_S:
+            # Except a safety detector tripping. The ceiling is what this
+            # process needs to survive a flood, and a flood is exactly when
+            # a leak sensor's one event must not be the one that is
+            # dropped — the safety lane hangs off this event and nothing
+            # else will ever report it. One attribute read; the flood is
+            # still bounded, because a house does not have thousands of
+            # smoke detectors tripping in a second.
+            if event_type == "state_changed" and _tripped_safety(data):
+                return True
             self._events_dropped += 1
             return False
         if event_type == "state_changed":

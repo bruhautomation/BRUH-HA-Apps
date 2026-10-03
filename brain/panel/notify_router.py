@@ -82,6 +82,12 @@ URGENCY = ("whenever", "today", "now")
 # promptly while somebody is awake, and waits when they are not.
 DEFAULT_URGENCY = "today"
 PRODUCER_URGENCY = {
+    # A smoke, leak, CO or gas detector that has just tripped. Filed by the
+    # deterministic safety lane (`server._safety_trip`) the moment the bus
+    # admits the transition, with no model in the way — and `now` is what
+    # lets it through quiet hours, which is the only hour a leak in a
+    # bedroom ceiling is ever reported in.
+    "safety": "now",
     # Something is happening in the house right now and waiting costs
     # something real.
     "check:dev.unavailable": "now",
@@ -276,13 +282,25 @@ def tier_of(finding: dict, min_severity: str | None = None) -> str:
     urgency half is `urgency_of`'s, which is declared per producer, so
     the set of rows that can wake a house is a set of lines of code
     rather than a set of sentences a model wrote.
+
+    **A case's own `stakes: high` is the other half of the pair**, for the
+    one producer whose rows are not one kind of thing: the Resident files
+    whatever an investigation found, so no single urgency fits its source.
+    `critical` is still required — and `resident.SEVERITY_BY_STAKES` tops
+    out at `serious`, so an investigation's own confidence cannot reach a
+    phone at three in the morning; only a row something deterministic
+    stamped `critical` can. Before this, the safety case the Resident
+    filed promised "sent straight through, whatever the hour" and was held
+    until morning, because `resident` had no entry in the table above.
     """
     sev = str((finding or {}).get("severity") or "warning")
     kept = worth_sending([finding or {}],
                          min_severity or DEFAULT_MIN_SEVERITY)
     if not kept:
         return "quiet"
-    if sev == "critical" and urgency_of(finding) == "now":
+    if sev == "critical" and (
+            urgency_of(finding) == "now"
+            or str((finding or {}).get("stakes") or "") == "high"):
         return "escalate"
     return "notify"
 
@@ -525,6 +543,23 @@ def prune_escalations(live_ids: set[int], path: str | None = None) -> list[int]:
             rows.pop(ts, None)
         save_escalations(rows, path)
     return gone
+
+
+def stop_escalation(ts: int, path: str | None = None) -> bool:
+    """Take one row off the ladder while it stays on the list.
+
+    `prune_escalations` stops a ladder when the row ENDS; this is the one
+    case where the row stays and the reminders should not: a safety
+    detector that reported clear. The card is still owed a look — water
+    that dried by itself still came from somewhere — but a phone told
+    three more times about a leak the sensor says is over is a phone that
+    is being argued with. Returns whether anything was climbing.
+    """
+    rows = load_escalations(path)
+    if rows.pop(int(ts), None) is None:
+        return False
+    save_escalations(rows, path)
+    return True
 
 
 def due_escalations(now: float, path: str | None = None) -> list[dict]:
@@ -812,6 +847,6 @@ __all__ = [
     "due_escalations", "escalation_state", "hold", "in_quiet_hours",
     "load_escalations", "load_queue", "next_escalation_at", "parse_action",
     "parse_hour", "prune_escalations", "quiet_ends_at", "record_reminder",
-    "save_escalations", "save_queue", "take_queue", "tier_of", "urgency_of",
-    "worth_sending",
+    "save_escalations", "save_queue", "stop_escalation", "take_queue",
+    "tier_of", "urgency_of", "worth_sending",
 ]

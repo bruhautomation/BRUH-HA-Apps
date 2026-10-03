@@ -148,7 +148,17 @@ HOT_FLOOR = "watch"
 # The flags a signal may set itself, and what each one means to the guard.
 # A producer that knows an entity is protected says so; nothing here tries
 # to work it out.
-FLAG_FLOORS = {"protected": NEVER_IGNORE_FLOOR, "safety": NEVER_IGNORE_FLOOR,
+#
+# `safety` floors at `act`, which is the verdict that files a safety case:
+# a detector that has tripped is not a thing a look gets to find
+# interesting or not. These flags were unreachable for two releases — no
+# producer set them, `signals.make` refused the keys, and the tests passed
+# by building dicts `make` would not — so the real floor for a leak was
+# `watch`. `signals.make` publishes both now and the bus and the adapters
+# set them; `server._safety_trip` is the deterministic lane in front of
+# all of this, so a floor here is about what the LOOK does next, never
+# about whether anybody heard.
+FLAG_FLOORS = {"safety": "act", "protected": NEVER_IGNORE_FLOOR,
                "hot": HOT_FLOOR}
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
@@ -173,7 +183,14 @@ def never_ignore(signal: dict) -> tuple[str, str]:
     for flag, level in FLAG_FLOORS.items():
         if signal.get(flag):
             raise_to(level, f"the signal is marked {flag}")
+    # The kind AND the producer. A kind is one of `signals.KINDS` and is
+    # almost never one of these words — a check row is `check`, a state
+    # change is `state` — so a table read against the kind alone matched
+    # nothing in production. The producer is a line of code rather than a
+    # sentence (`check:climate.freeze`, `safety`), which is the property
+    # `notify_router.urgency_of` keys on for the same reason.
     words = set(_WORD_RE.findall(str(signal.get("kind") or "").lower()))
+    words |= set(_WORD_RE.findall(str(signal.get("source") or "").lower()))
     hit = sorted(words & set(NEVER_IGNORE))
     if hit:
         raise_to(NEVER_IGNORE_FLOOR, f"it is a {hit[0]} signal")
@@ -277,6 +294,8 @@ def _render_signal(signal: dict) -> str:
     if not isinstance(signal, dict):
         return str(signal)
     bits = [f"[{signal.get('kind') or 'signal'}] {signal.get('subject') or ''}"]
+    if signal.get("text"):
+        bits.append(f"— {signal['text']}")
     for name in ("salience", "repeats", "seen_at", "source"):
         if signal.get(name) not in (None, "", 0):
             bits.append(f"{name}={signal[name]}")
@@ -299,7 +318,8 @@ def _rows(rows) -> list[str]:
 
 
 def first_look_prompt(batch_rows, memory_excerpt: str = "",
-                      open_cases_rows=None) -> str:
+                      open_cases_rows=None, *, now_line: str = "",
+                      watch_notes=None) -> str:
     """The prompt for one batch.
 
     ``batch_rows`` is what `signals.prompt_rows` returned — or the raw
@@ -314,9 +334,24 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
     something the homeowner has already explained.
     """
     parts = ["Decide what each of these signals is worth.\n"]
+    # The clock, in the house's own time. A door at 03:00 and a door at
+    # 15:00 are different signals and the rows carry only how long ago
+    # each one was — which says nothing about the hour without this line.
+    if now_line.strip():
+        parts.append("IT IS NOW: " + now_line.strip() + "\n")
     if memory_excerpt.strip():
         parts.append("WHAT BRAIN KNOWS ABOUT THIS HOME:\n"
                      + memory_excerpt.strip() + "\n")
+    notes = _rows(watch_notes)
+    if notes:
+        # What an earlier look said about a subject it decided to watch.
+        # Shown when the subject comes back, because the second look's
+        # whole reason to exist is that there is more to go on — and the
+        # first look's reason is part of what there is.
+        parts.append("EARLIER, YOU DECIDED TO WATCH THESE — here is why, and "
+                     "they have happened again since:")
+        parts += [f"- {row}" for row in notes]
+        parts.append("")
     cases = _rows(open_cases_rows)
     if cases:
         parts.append("ALREADY IN FRONT OF THE HOMEOWNER — a signal that is "
@@ -381,10 +416,15 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
     batch = list(rows or [])
     out: dict[int, dict] = {}
     for idx in range(1, count + 1):
+        # `fallback` marks an answer nobody gave. The caller must not
+        # persist a watch from one — a reply that could not be read would
+        # otherwise mute every subject in the batch for a fortnight on the
+        # strength of nothing having been said about any of them.
         answer = said.get(idx) or {
             "verdict": "watch",
             "why": UNREADABLE if unreadable else SKIPPED,
             "forced": True,
+            "fallback": True,
         }
         signal = batch[idx - 1] if idx <= len(batch) else None
         floor, why = never_ignore(signal) if signal is not None else ("", "")
@@ -392,7 +432,8 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
             answer = {"verdict": floor,
                       "why": (FORCED.format(why=why) + " " + answer["why"]
                               ).strip()[:MAX_WHY],
-                      "forced": True}
+                      "forced": True,
+                      "fallback": bool(answer.get("fallback"))}
         out[idx] = answer
     return out
 
@@ -467,6 +508,7 @@ CASE_SCHEMA = {
         },
         "memory_hint": {"type": "string"},
         "escalate": {"type": "boolean"},
+        "dismiss": {"type": "boolean"},
     },
     "required": ["claim", "detail", "confidence", "stakes", "evidence",
                  "actions", "escalate"],
@@ -523,6 +565,13 @@ Answer with ONE JSON object and nothing else. What it means:
 - "escalate" — true only if you are genuinely unsure AND being wrong would
   matter. It asks for a stronger model to look again; it is not a way to
   say something is important.
+- "dismiss" — only when you were sent a ROW THAT IS ALREADY ON THE LIST
+  (below): true if, having looked, it is not worth anybody's attention.
+  Leave "claim" empty and say why in "detail". The row is then held back
+  with your reason on it, where the homeowner can still see it and put it
+  back. If the row IS worth attention, write the claim, detail and fix as
+  they should read now: they REPLACE the row's own wording, so write them
+  for this house, not for the rule that filed it.
 
 Rules that matter more than anything about style:
 
@@ -538,15 +587,55 @@ Rules that matter more than anything about style:
 
 
 def investigate_prompt(signal: dict, memory_excerpt: str = "",
-                       house_block: str = "", open_cases_rows=None) -> str:
+                       house_block: str = "", open_cases_rows=None, *,
+                       signal_row: str = "", why: str = "",
+                       refining: dict | None = None,
+                       prior_case: dict | None = None,
+                       now_line: str = "") -> str:
     """The prompt for one investigation.
 
     One signal, not a batch: the whole point of the tier is that this run
     goes and looks, and a run asked to look at ten things properly looks
     at none of them.
+
+    ``signal_row`` is `signals.prompt_rows`' line for it — the sentence,
+    the evidence and a readable age, where `_render_signal` is the floor
+    for a caller that has none. ``why`` is the first look's reason for
+    sending it here, which is the half that says what to look FOR.
+    ``refining`` is the row already on the list this signal came from:
+    the run is asked to rewrite or dismiss it, never to file beside it,
+    and the caller keeps it OUT of the open-cases list — a run told the
+    one thing it was sent to look at is a thing it may not say could
+    only abstain or file a sibling card. ``prior_case`` is what a cheaper
+    run concluded and was unsure about, for an escalation: a stronger
+    model handed the same prompt with none of it is a re-roll, not a
+    second opinion.
     """
     parts = ["Look into this, and decide whether it is worth telling the "
-             + "homeowner.\n", "THE SIGNAL:", _render_signal(signal), ""]
+             + "homeowner.\n"]
+    if now_line.strip():
+        parts.append("IT IS NOW: " + now_line.strip() + "\n")
+    parts += ["THE SIGNAL:", signal_row.strip() or _render_signal(signal), ""]
+    if why.strip():
+        parts.append("WHY IT WAS SENT HERE: " + why.strip() + "\n")
+    if isinstance(refining, dict) and refining.get("text"):
+        parts.append("IT IS ABOUT A ROW ALREADY ON THE HOMEOWNER'S LIST — "
+                     "rewrite it or dismiss it; do not file beside it:")
+        parts.append(f"- says: {refining.get('text')}")
+        if refining.get("detail"):
+            parts.append(f"- detail: {str(refining['detail'])[:400]}")
+        if refining.get("fix"):
+            parts.append(f"- what it tells them to do: "
+                         f"{str(refining['fix'])[:300]}")
+        parts.append("")
+    if isinstance(prior_case, dict) and prior_case.get("claim"):
+        parts.append("A FIRST INVESTIGATION CONCLUDED THIS, AND WAS UNSURE — "
+                     "confirm it, correct it, or make no claim:")
+        parts.append(f"- claim: {prior_case.get('claim')}")
+        parts.append(f"- confidence: {prior_case.get('confidence')}")
+        if prior_case.get("detail"):
+            parts.append(f"- detail: {str(prior_case['detail'])[:400]}")
+        parts.append("")
     if memory_excerpt.strip():
         parts.append("WHAT BRAIN KNOWS ABOUT THIS HOME:\n"
                      + memory_excerpt.strip() + "\n")
@@ -663,6 +752,27 @@ def parse_case(obj, *, read_entities=None) -> dict | None:
     }
 
 
+def parse_dismissal(obj) -> str | None:
+    """The reason a refining run gave for holding its row back, or None.
+
+    Only a reply that left the claim EMPTY and said ``dismiss`` counts: a
+    run that both claimed something and asked to dismiss it has said two
+    things, and the claim is the one that may reach a person — so the
+    caller files the claim and this answers None.
+    """
+    if isinstance(obj, str):
+        try:
+            obj = json.loads(obj)
+        except ValueError:
+            return None
+    if not isinstance(obj, dict) or not obj.get("dismiss"):
+        return None
+    if str(obj.get("claim") or "").strip():
+        return None
+    why = str(obj.get("detail") or "").strip()[:MAX_WHY]
+    return why or "An investigation looked and found nothing worth showing."
+
+
 # ---------------------------------------------------------------------------
 # The watch list
 # ---------------------------------------------------------------------------
@@ -710,10 +820,12 @@ def _save_watch(rows: dict[str, dict]) -> None:
 def watch(signal: dict, why: str = "", now: float | None = None) -> dict:
     """Keep an eye on this subject. Returns the entry as it now stands.
 
-    The repeat count is recorded at the moment of watching, because that
-    is the baseline the next signal is measured against: without it,
-    "further evidence" would mean "any evidence", and the first signal
-    after the watch would re-open it immediately.
+    `seen` starts at zero and counts what is WITHHELD afterwards
+    (`note_withheld`). It used to record the signal's own `repeats` and
+    re-admit when a later signal's `repeats` exceeded it by three — but
+    `repeats` is a count within one burst, almost always 1, so separate
+    recurrences on later nights never added up to anything and a watch
+    was a fourteen-day mute that called itself a follow-up.
     """
     now = time.time() if now is None else now
     subject = str((signal or {}).get("subject") or "")
@@ -725,10 +837,42 @@ def watch(signal: dict, why: str = "", now: float | None = None) -> dict:
         "kind": str((signal or {}).get("kind") or ""),
         "why": str(why or "").strip()[:MAX_WATCH_WHY],
         "at": int(now),
-        "repeats": int((signal or {}).get("repeats") or 0),
+        "seen": 0,
     }
     _save_watch(rows)
     return rows[subject]
+
+
+def note_withheld(signals_held, now: float | None = None) -> int:
+    """Count what a watch held back. Returns how many entries moved.
+
+    One write for the whole batch, because a look withholds several at
+    once and this is a file. Each signal counts its own `repeats` (a burst
+    of five is five occurrences), so three nights of a door at 03:00 is
+    three — which is what `rejudge_due` is waiting for.
+    """
+    rows = _load_watch()
+    moved = 0
+    for signal in signals_held or []:
+        entry = rows.get(str((signal or {}).get("subject") or ""))
+        if entry is None:
+            continue
+        entry["seen"] = int(entry.get("seen") or 0) + max(
+            1, int((signal or {}).get("repeats") or 1))
+        entry["last_seen"] = int(time.time() if now is None else now)
+        moved += 1
+    if moved:
+        _save_watch(rows)
+    return moved
+
+
+def watch_note(subject: str) -> str:
+    """One line about why a subject was watched, for the next look, or ""."""
+    entry = _load_watch().get(str(subject or ""))
+    if not entry or not entry.get("why"):
+        return ""
+    return (f"{subject}: watched because \"{entry['why']}\"; "
+            f"{int(entry.get('seen') or 0)} more since")
 
 
 def watched() -> dict[str, dict]:
@@ -752,8 +896,9 @@ def rejudge_due(signal: dict, now: float | None = None) -> bool:
     """May this signal go into the next look?
 
     True for a subject nothing is watching, for one whose watch has aged
-    out, and for one that has happened `WATCH_RETRY_REPEATS` more times
-    since — **never** simply because time has passed. A signal the guard
+    out, and for one that has happened `WATCH_RETRY_REPEATS` times since,
+    counting what the watch withheld — **never** simply because time has
+    passed. A signal the guard
     will not let anybody ignore always passes, because a watch must not be
     able to hold a leak back.
     """
@@ -766,8 +911,11 @@ def rejudge_due(signal: dict, now: float | None = None) -> bool:
         return True
     if (now - float(entry.get("at") or 0)) > WATCH_TTL_S:
         return True
-    seen = int(entry.get("repeats") or 0)
-    return int((signal or {}).get("repeats") or 0) - seen >= WATCH_RETRY_REPEATS
+    # What has been withheld since, plus this one. Cumulative, so three
+    # separate nights reach the bar the way one burst of three always did.
+    seen = int(entry.get("seen") or 0)
+    return seen + max(1, int((signal or {}).get("repeats") or 1)) \
+        >= WATCH_RETRY_REPEATS
 
 
 # ---------------------------------------------------------------------------
@@ -943,6 +1091,7 @@ __all__ = [
     "NEVER_IGNORE_FLOOR", "OPUS_PER_DAY", "SEVERITY_BY_STAKES", "SKIPPED",
     "SONNET_PER_DAY", "TIMEOUT_S", "UNREADABLE", "VERDICTS", "WATCH_FILE",
     "WATCH_RETRY_REPEATS", "WATCH_TTL_S", "Ledger", "expire",
-    "first_look_prompt", "investigate_prompt", "never_ignore", "parse_case",
-    "parse_first_look", "rejudge_due", "tier_for", "watch", "watched",
+    "first_look_prompt", "investigate_prompt", "never_ignore",
+    "note_withheld", "parse_case", "parse_dismissal", "parse_first_look",
+    "rejudge_due", "tier_for", "watch", "watch_note", "watched",
 ]

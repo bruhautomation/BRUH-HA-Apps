@@ -155,7 +155,13 @@ def situation(case: dict) -> str:
         return "chore_done" if status == "done" else "chore"
     if kind == "question" or store == "hypotheses":
         return "question"
-    if kind == "opportunity" or store == "proposals":
+    # An opportunity is a PROPOSAL — a config brAIn wrote and Accept puts
+    # into Home Assistant — only when it lives in that store. One the
+    # Resident filed into the findings store has no config behind it, so
+    # *Make the change* and *Try it for a week* were presses with nothing
+    # to write or replay; it gets a finding's row instead (Fix it where
+    # brAIn could, Add to list, Dismiss, Not a problem).
+    if store == "proposals" or (kind == "opportunity" and store != "findings"):
         return "opportunity"
     if kind == "change" or fstatus == "fixed":
         return "change"
@@ -284,10 +290,14 @@ def answers(case: dict) -> list[dict]:
             _answer("yes", "Yes", "That's right. It becomes a plain fact "
                     "in memory.", route=f"/api/case/{cid}/do",
                     primary=True, done="Filed into memory"),
+            # `request="wrong"`: a question the Resident filed is a finding
+            # row, so Home Assistant's Repairs and a notification can carry
+            # *No* back as the same correction the tab makes. They offered
+            # only Dismiss before.
             _answer("no", "No", "Not right — say why if you can, and the "
                     "reason retires every guess built on the same "
                     "misreading.", route=f"/api/case/{cid}/wrong",
-                    note=True, done="Noted"),
+                    request="wrong", note=True, done="Noted"),
             _dismiss(cid),
         ]
 

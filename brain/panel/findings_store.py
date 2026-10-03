@@ -985,6 +985,107 @@ def add_case(row: dict, *, run_id: str = "", when: float | None = None) -> dict 
     return created[0] if created else None
 
 
+# What an investigation may rewrite on a row it was sent to look at, and
+# the statuses it may do it in — a row a person has moved on (a plan they
+# asked for, a fix in flight, a snooze) is theirs, and a run that took
+# five minutes must not drag it back.
+REFINABLE = ("open", "needs_you", "triaging")
+
+
+@_mutates
+def refine(ts: int, case: dict, run_id: str = "",
+           when: float | None = None) -> dict | None:
+    """Rewrite a row with what the run that LOOKED found. Returns it, or None.
+
+    The deeper look used to be unable to correct the cheaper one: it was
+    told the row it had been sent to investigate was "already in front of
+    the homeowner, do not claim it again", so it either abstained — a
+    paid run that left no trace — or filed a second, differently worded
+    card beside the first. This is the third answer, and the right one.
+
+    **`text` is never touched.** It is the key a check re-reports under, so
+    a rewritten `text` would read as a new problem on the next pass and
+    file the rule's sentence all over again; what changes is everything a
+    card SHOWS — the `claim` (which the feed renders over `text`), the
+    detail, the fix and who wrote it, the evidence, the stakes and the
+    confidence. Severity only rises: an investigation's stakes top out at
+    `serious`, and a rule that filed `critical` (a freeze) must not be
+    talked down a tier by a model's own confidence.
+    """
+    if not isinstance(case, dict):
+        return None
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) != int(ts):
+            continue
+        if entry.get("status") not in REFINABLE:
+            return None
+        merged = {**entry, **{k: case[k] for k in (
+            "claim", "kind", "confidence", "stakes", "actions",
+            "memory_hint") if case.get(k) not in (None, "", [])}}
+        evidence = list(case.get("evidence") or []) + list(
+            entry.get("evidence") or [])
+        merged["evidence"] = evidence
+        if run_id:
+            merged["investigation"] = {"run_id": run_id}
+        entry.update(_case_fields(merged))
+        detail = str(case.get("detail") or "").strip()
+        if detail:
+            entry["detail"] = detail[:MAX_DETAIL]
+        fix = str(case.get("fix") or "").strip()
+        if fix:
+            entry["fix"] = fix[:MAX_FIX]
+            entry["fix_by"] = "resident"
+        if _severity_rank(case.get("severity")) > _severity_rank(
+                entry.get("severity")):
+            entry["severity"] = case["severity"]
+        if entry.get("status") == "triaging":
+            entry["status"] = "open"
+        entry["triage"] = _clean_triage({
+            "verdict": "elevated",
+            "reason": str(case.get("claim") or "")[:MAX_CLAIM],
+            "run_id": run_id,
+            "at": int(when if when is not None else time.time()),
+            "elevated_by_person": bool(
+                (entry.get("triage") or {}).get("elevated_by_person")),
+            "wrote_fix": bool(fix)})
+        _write(items)
+        return _shape(entry)
+    return None
+
+
+@_mutates
+def hold_after_look(ts: int, reason: str, run_id: str = "",
+                    when: float | None = None) -> dict | None:
+    """An investigation looked and found nothing: hold the row, saying why.
+
+    The same `held` the first look writes, reached one tier later and only
+    by a reply that SAID so (`resident.parse_dismissal` — an empty claim
+    with `dismiss`), never by a run that failed or came back empty, which
+    leave the row exactly where it was. Never over a person: a row
+    somebody put back with "Let brAIn raise it again" (`elevated_by_person`)
+    stays up whatever a run says, because a person overruling a verdict is
+    the one piece of evidence a second verdict may not overrule back.
+    """
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) != int(ts):
+            continue
+        if entry.get("status") not in REFINABLE:
+            return None
+        if (entry.get("triage") or {}).get("elevated_by_person"):
+            return None
+        entry["status"] = "held"
+        entry["triage"] = _clean_triage({
+            "verdict": "held", "reason": str(reason or "")[:MAX_CLAIM],
+            "run_id": run_id,
+            "at": int(when if when is not None else time.time()),
+            "wrote_fix": False})
+        _write(items)
+        return _shape(entry)
+    return None
+
+
 @_mutates
 def set_status(ts: int, status: str, result: str = "",
                changed: list[str] | None = None) -> dict | None:
@@ -1623,6 +1724,7 @@ def source_titles() -> dict[str, str]:
 MUTE_CLEARS = ("open", "triaging", "held", "needs_you")
 
 
+@_mutates
 def refresh_details(objs: list[dict]) -> int:
     """Update the detail and severity of rows a producer has re-reported.
 
@@ -1632,6 +1734,21 @@ def refresh_details(objs: list[dict]) -> int:
     known; this is the other half, so a battery forecast filed a week ago
     says "about 2 days" today rather than "about 9". Returns how many rows
     changed.
+
+    **A held row whose severity ROSE goes back to be looked at.** `held` is
+    a look's verdict about the row as it stood — a battery at 30% is not
+    worth anybody's attention — and a re-report that raises it (the same
+    battery at 4%, `warning` to `serious`) is new evidence the verdict was
+    never given. It went on climbing off every screen, because a held row
+    reaches no badge, no notification and no prompt, and nothing ever
+    offered it again. It returns to `triaging`, which is what the
+    Resident's sweep reads (`awaiting_triage`), so the next look judges it
+    as it is now; a severity that fell, or stayed, leaves the verdict
+    standing.
+
+    Locked, like every other mutator here — it was the one that was not,
+    and it writes the same file `record_triage` and the endings do from
+    other threads.
     """
     items = _load()
     by_key = {normalize(f.get("text", "")): f for f in items}
@@ -1645,12 +1762,92 @@ def refresh_details(objs: list[dict]) -> int:
             continue
         if (cur.get("detail") != entry["detail"]
                 or cur.get("severity") != entry["severity"]):
+            rose = _severity_rank(entry["severity"]) > _severity_rank(
+                cur.get("severity"))
             cur["detail"] = entry["detail"]
             cur["severity"] = entry["severity"]
+            if rose and cur.get("status") == "held":
+                cur["status"] = "triaging"
             changed += 1
     if changed:
         _write(items)
     return changed
+
+
+def _severity_rank(severity) -> int:
+    try:
+        return SEVERITIES.index(str(severity or "warning"))
+    except ValueError:
+        return SEVERITIES.index("warning")
+
+
+@_mutates
+def annotate(ts: int, line: str) -> dict | None:
+    """Add one sentence to a row's detail, and nothing else.
+
+    For a fact that arrived after the row did and belongs on the card —
+    the safety lane's "the sensor reported dry at 03:14" — where rewriting
+    the detail would lose what the row first said and a second row would
+    be a second card about one event. Capped at the store's own detail
+    limit by dropping from the FRONT of what came after the original, so
+    the first sentence (what happened) is the one that survives.
+    """
+    line = str(line or "").strip()
+    if not line:
+        return None
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) != int(ts):
+            continue
+        detail = str(entry.get("detail") or "").strip()
+        merged = f"{detail} {line}".strip() if detail else line
+        entry["detail"] = merged[:MAX_DETAIL]
+        _write(items)
+        return _shape(entry)
+    return None
+
+
+# How long a Resident case may sit unanswered before it is taken off the
+# list, by its stakes. A case is a judgement about a moment, and the only
+# lifecycle it had was a person ending it — so a low-stakes observation
+# from March sat on the feed beside this morning's, and the feed stopped
+# reading as now. These are generous on purpose: a person who has not
+# answered in a fortnight has answered, and a high-stakes case gets a
+# month because being wrong about it costs more than one more day of it.
+# Safety cases are absent: what ends a leak is somebody looking.
+CASE_TTL_BY_STAKES = {"low": 7 * 86400, "medium": 14 * 86400,
+                      "high": 30 * 86400}
+CASE_EXPIRES = ("open", "needs_you")
+
+
+@_mutates
+def expire_cases(now: float | None = None,
+                 sources: tuple[str, ...] = (RESIDENT_SOURCE,)) -> list[dict]:
+    """Take aged-out Resident cases off the list. Returns what went.
+
+    `clear_resolved`'s rule rather than an ending's: no memory line and no
+    ledger entry, because nobody said anything about the house — a case
+    that expires was a judgement nobody took up, and if the thing it was
+    about is still true the next look will say so again in today's words.
+    Only `open`/`needs_you`: a plan somebody asked for, a fix in flight and
+    a snoozed row are all a person's.
+    """
+    now = time.time() if now is None else now
+    items = _load()
+    kept, gone = [], []
+    for entry in items:
+        src = str(entry.get("source") or "")
+        ttl = CASE_TTL_BY_STAKES.get(str(entry.get("stakes") or "medium"),
+                                     CASE_TTL_BY_STAKES["medium"])
+        if (src in sources and entry.get("status") in CASE_EXPIRES
+                and not is_snoozed(_shape(entry), now)
+                and now - float(entry.get("ts") or now) > ttl):
+            gone.append(_shape(entry))
+            continue
+        kept.append(entry)
+    if gone:
+        _write(kept)
+    return gone
 
 
 @_mutates
