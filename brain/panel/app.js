@@ -2499,6 +2499,7 @@ function restoreSettingsSections() {
     box.addEventListener("toggle", () => {
       prefSet(setSectionKey(name), box.open ? "1" : "0");
       if (name === "advanced" && box.open) loadAdvanced();
+      if (name === "defaults" && box.open) loadCameras();
     });
   });
 }
@@ -2531,6 +2532,8 @@ async function openSettings() {
   openBox("#setModal");
   loadAuth();
   advancedLoaded = false;
+  camerasLoaded = false;
+  if ($("#setsecDefaults") && $("#setsecDefaults").open) loadCameras();
   // Its open state survived the close (it is remembered), so a visit that
   // lands on an already-expanded Advanced still has to fetch: the section
   // being open is not the same claim as its rows being current.
@@ -12435,4 +12438,67 @@ async function runDeepReview(btn) {
     reviewState.pressing = false;
     refreshDeepReview();
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// ⚙ → Generation defaults → Cameras. One tick per camera brAIn may look at
+// on its own; empty until somebody ticks one. Read when the section opens,
+// never on the way into the dialog, and saved through the ordinary
+// settings PUT, so there is one route that changes a setting.
+// ---------------------------------------------------------------------------
+let camerasLoaded = false;
+
+async function loadCameras() {
+  if (camerasLoaded) return;
+  camerasLoaded = true;
+  const box = $("#setCameras");
+  if (!box) return;
+  try {
+    renderCameras(await api("api/cameras"));
+  } catch (e) {
+    camerasLoaded = false;
+    box.textContent = "Could not read your cameras: " + e.message;
+  }
+}
+
+function renderCameras(data) {
+  const box = $("#setCameras");
+  if (!box) return;
+  box.textContent = "";
+  const cams = Array.isArray(data.cameras) ? data.cameras : [];
+  if (!cams.length) {
+    box.appendChild(el("p", "hint tight", data.registry_read
+      ? "This house has no cameras brAIn can see."
+      : "brAIn has not read your devices yet — this list fills in after the first house check."));
+    return;
+  }
+  cams.forEach((cam) => {
+    const label = el("label", "check setcam");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = Boolean(cam.allowed);
+    input.dataset.entity = cam.entity_id;
+    input.addEventListener("change", saveCameras);
+    label.appendChild(input);
+    const words = el("span", null, cam.name || cam.entity_id);
+    if (cam.name && cam.name !== cam.entity_id) {
+      words.appendChild(el("span", "subtext", ` ${cam.entity_id}`));
+    }
+    label.appendChild(words);
+    box.appendChild(label);
+  });
+  const used = Number(data.used_today) || 0;
+  const cap = Number(data.per_day) || 0;
+  box.appendChild(el("p", "hint tight", data.error
+    ? `brAIn will not look at any camera until it can count again: ${data.error}`
+    : `Looked ${used} of ${cap} times today.`));
+}
+
+async function saveCameras() {
+  const picked = [...document.querySelectorAll("#setCameras input[data-entity]")]
+    .filter((i) => i.checked).map((i) => i.dataset.entity);
+  await saveSettings({ camera_confirm: picked },
+    picked.length ? `brAIn may look at ${picked.length} camera${picked.length > 1 ? "s" : ""}`
+      : "brAIn will not look at any camera on its own");
 }

@@ -94,7 +94,8 @@ automation" from a party trick into something that works on the second try.
 
 **The house's own record.** History and long-term statistics, the logbook, the error
 log, the Supervisor's view of your add-ons, weather forecasts, camera snapshots
-(it **sees** the image), rendered templates, and every service any integration exposes.
+(it **sees** the image — see Cameras for when it may look on its own),
+rendered templates, and every service any integration exposes.
 
 **Add-ons.** List, start, stop, restart and read the logs of your other add-ons.
 
@@ -3487,6 +3488,32 @@ To keep it from eating the plan you also use for your own work:
 `,
   },
   {
+    id: "cameras",
+    icon: "📄",
+    title: "Cameras",
+    body: `
+# Cameras
+
+A camera frame is the most private thing your house holds, so brAIn looks
+through one **on its own** — when you ask a voice assistant, when an
+automation runs the **Camera check** insight, or to confirm a safety alarm or
+an open door — only through the cameras you tick under **⚙ → Generation
+defaults → Cameras**. None are ticked to begin with.
+
+- **A daily limit.** Ticked cameras are looked at a dozen times a day at most,
+  across every one of those paths together; the list says how many have been
+  used today. If brAIn cannot count, it does not look.
+- **The Resident looks only to confirm.** When a leak, smoke, CO or gas sensor
+  trips, or a door, window or lock is involved, the investigation may use the
+  ticked cameras in the same room (or all of them, if none shares the room) —
+  never the first look, never anything else.
+- **The house, not the people.** Every prompt that may see a frame is told to
+  describe what it shows about the house and never to describe a person.
+- **You asking is you looking.** A camera you ask about in the chat or the
+  terminal is not counted against the limit or held to the list.
+`,
+  },
+  {
     id: "what-it-will-not-do",
     icon: "🚫",
     title: "What it will not do",
@@ -3520,6 +3547,8 @@ edges.
 - **No emergency playbook unlocks a door or disarms an alarm**, whatever the
   emergency. And brAIn never runs a playbook itself — it writes one, you accept
   it, and Home Assistant runs it.
+- **It looks through no camera on its own unless you ticked it.** See
+  Cameras.
 - **Voice is limited to Home Assistant by default.** Widening one agent to Bash and
   file editing (**Full admin**) is a choice you make deliberately, per agent.
 - **The registry services are admin-gated**, and destructive sweeps (orphan cleanup)

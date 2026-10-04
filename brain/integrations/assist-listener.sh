@@ -641,7 +641,7 @@ ALWAYS give times in the user's local timezone (stamped on each message), never 
 Use your MCP tools (control_light, control_climate, control_media_player, control_cover, control_fan, control_switch, control_lock, control_alarm, control_vacuum, call_service, get_all_states, get_areas, activate_scene, run_script, send_notification, get_service_details).
 For questions about the PAST ('how cold did it get last night', 'when did the garage open'), use get_history (recent detail) or get_statistics (daily min/max/mean over weeks).
 For FORECASTS ('weather tomorrow / this week'), use get_weather_forecast; get_entity_state on the weather entity only gives current conditions.
-To CHECK A CAMERA or visually verify something, use get_camera_snapshot and describe what you see."
+A camera answers get_camera_snapshot only if the homeowner has allowed brAIn to look at it; if it refuses, say so in one sentence and do not try another camera."
 
     local base_system_prompt
     if [ -n "$system_prompt" ]; then

@@ -1212,6 +1212,20 @@
           </div>
           <p class="hint">Only <code>log_level</code> stays Configuration-tab-only (it takes
             effect at startup, so there is nothing to sync).</p>
+
+          <!-- Which cameras brAIn may look at on its own. Empty until somebody
+               ticks one: a camera frame is the most private thing a house
+               holds, and voice, an automation's task and the Resident all
+               answer to this one list and one daily count. Fetched when this
+               section opens, never on the way into the dialog. -->
+          <h4 class="sethead">Cameras</h4>
+          <p class="hint">Cameras brAIn may look at on its own — when you ask a voice assistant,
+            when an automation runs a camera check, and to confirm a safety alarm or an open door.
+            None until you tick one.
+            <button type="button" class="btn icon tiny"
+              aria-label="More about which cameras brAIn may look at"
+              data-tip="Unticked cameras are never looked at on brAIn's own initiative. Ticked ones are looked at a limited number of times a day across every path, and a frame is described for what it shows about the house, never about a person. You asking in the chat or the terminal is you looking, and is not limited by this list.">?</button></p>
+          <div id="setCameras" class="setcams">Open this section to load your cameras.</div>
         </div>
       </details>
 

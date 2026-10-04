@@ -2774,10 +2774,49 @@ def _downscale_jpeg(data, max_dim):
         return data, "original (downscale failed)"
 
 
+# The channels whose camera looks are governed by the homeowner's opt-in
+# list and the panel's daily count (`panel/camera_policy.py`): a voice
+# turn and a task an automation started. A run the panel granted cameras
+# to (`BRAIN_CAMERA_GRANT`, set by `engine.run_analyst` for a Resident
+# investigation) is governed whatever its channel. What is left — a person
+# in the chat or the terminal — is the person looking, and is not asked.
+CAMERA_GOVERNED_CHANNELS = ("voice", "task")
+CAMERA_GRANT_ENV = "BRAIN_CAMERA_GRANT"
+
+
+def _camera_refusal(entity_id):
+    """Why this process may not take this frame, or "" when it may.
+
+    Asked of the panel on every governed frame, so the list, the grant and
+    the count are one answer. A panel that does not answer REFUSES: a cap
+    nobody can count is no cap, and a frame is the one read here a wrong
+    yes cannot take back.
+    """
+    grant = os.environ.get(CAMERA_GRANT_ENV, "").strip()
+    channel = _channel()
+    if not grant and channel not in CAMERA_GOVERNED_CHANNELS:
+        return ""
+    reply = _panel_send("POST", "/api/camera/permit",
+                        {"entity_id": entity_id,
+                         "channel": channel or "resident",
+                         "grant": grant or None}, timeout=10)
+    if not isinstance(reply, dict) or "allowed" not in reply:
+        why = reply.get("error") if isinstance(reply, dict) else ""
+        return ("brAIn could not ask whether it may look at this camera, so "
+                "it did not look" + (f" ({why})" if why else "") + ".")
+    if reply.get("allowed"):
+        return ""
+    return str(reply.get("reason")
+               or "brAIn is not allowed to look at that camera on its own.")
+
+
 def get_camera_snapshot(entity_id, max_dim=1024):
     """Fetch a camera snapshot and return it as an MCP image."""
     if not entity_id.startswith("camera."):
         return {"error": f"Not a camera entity: {entity_id}"}
+    refusal = _camera_refusal(entity_id)
+    if refusal:
+        return {"error": refusal}
     try:
         max_dim = max(256, min(int(max_dim), 1920))
     except (TypeError, ValueError):

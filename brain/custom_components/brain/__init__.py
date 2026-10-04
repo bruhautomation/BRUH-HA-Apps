@@ -88,6 +88,7 @@ from .const import (
     STUDY_REQUESTS_DIR,
 )
 from .insight_format import (
+    CAMERA_TEMPLATES,
     INSIGHT_TEMPLATES,
     build_card_yaml,
     make_preview,
@@ -796,8 +797,11 @@ async def _async_run_insight(hass: HomeAssistant, entry: ConfigEntry,
     try:
         opts = {**entry.data, **entry.options}
         prompt_text = (opts.get(CONF_INSIGHT_PROMPT) or "").strip()
+        template_key = opts.get(CONF_INSIGHT_TEMPLATE, "daily_briefing")
+        # Only the preset's own words get the snapshot tool: a custom prompt
+        # asked for nothing about cameras.
+        wants_cameras = not prompt_text and template_key in CAMERA_TEMPLATES
         if not prompt_text:
-            template_key = opts.get(CONF_INSIGHT_TEMPLATE, "daily_briefing")
             prompt_text = INSIGHT_TEMPLATES.get(
                 template_key, INSIGHT_TEMPLATES["daily_briefing"]
             )
@@ -839,6 +843,7 @@ async def _async_run_insight(hass: HomeAssistant, entry: ConfigEntry,
             result = await bridge.async_send_task(
                 prompt=prompt, timeout=timeout, model=model,
                 tools="read_only", memory=True, scheduled=scheduled,
+                cameras=wants_cameras,
             )
             payload = {
                 "markdown": truncate_markdown(result),

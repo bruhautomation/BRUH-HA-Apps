@@ -4724,3 +4724,10 @@ body.term-classic #termMode .ico-out { display: block; }
 .kreviewob { border-top: 1px solid var(--hairline); padding-top: 10px; }
 .kreviewtitle { font-weight: 600; margin-top: 2px; overflow-wrap: anywhere; }
 .kreviewdetail { margin: 4px 0 0; color: var(--ink-1); line-height: 1.6; overflow-wrap: anywhere; }
+
+/* ⚙ → Generation defaults → Cameras: one tick per camera, each a full
+   44px row on any pointer, because the list is short and every row is a
+   decision about privacy rather than a preference. */
+.setcams { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+.setcam { display: flex; align-items: center; gap: 10px; min-height: 44px; overflow-wrap: anywhere; }
+.setcam .subtext { color: var(--ink-3); font-size: 12px; }

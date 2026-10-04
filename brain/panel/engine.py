@@ -603,8 +603,22 @@ def _claude_argv() -> list[str]:
     return [claude_bin]
 
 
+# Per-run additions to the CLI's environment, set by the runner that wants
+# them around its own spawns and nowhere else. Thread-local because every
+# run goes through `asyncio.to_thread`, so two runs in flight are two
+# threads and neither may see the other's grant. `BRAIN_CAMERA_GRANT` is the
+# one key today: the MCP server reads it as the cameras THIS run may look
+# at, and it is always removed from what the panel inherited first, so a
+# grant only ever exists because a runner wrote it.
+_RUN_ENV = threading.local()
+CAMERA_GRANT_ENV = "BRAIN_CAMERA_GRANT"
+CAMERA_TOOL = "mcp__home-assistant__get_camera_snapshot"
+
+
 def _claude_env() -> dict[str, str]:
     env = dict(os.environ)
+    env.pop(CAMERA_GRANT_ENV, None)
+    env.update(getattr(_RUN_ENV, "extra", None) or {})
     env["HOME"] = CLAUDE_HOME
     # Never let a stale interactive login interfere; inject our credential.
     auth = get_auth()
@@ -813,6 +827,7 @@ def run_analyst(
     job: str = "",
     effort: str = "",
     schema: dict | None = None,
+    camera_grant: tuple[str, ...] = (),
 ) -> dict:
     """Run `claude -p` with READ-ONLY Home Assistant tools. Same envelope.
 
@@ -832,16 +847,31 @@ def run_analyst(
     ``--append-system-prompt``, not ``--system-prompt``: replacing the CLI's
     own prompt strips what it knows about calling tools, which is the entire
     point of this path.
+
+    ``camera_grant`` is the one widening, and it is narrow: the cameras
+    `camera_policy` let this run look at. The snapshot tool moves from the
+    deny list to the allow list for this run only, and the grant rides in
+    the CLI's environment to the MCP server, which refuses any camera not
+    in it and asks the panel's daily count before every frame.
     """
-    return _run_cli(
-        prompt,
-        ["--append-system-prompt", system_prompt,
-         "--allowedTools", ",".join(ANALYST_TOOLS),
-         "--disallowedTools", ",".join(ANALYST_DENIED)]
-        + project_flags(settings=False, files=False),
-        model, timeout, max_turns,
-        f"the analysis passed its {timeout}s limit and was stopped", source,
-        job=job, effort=effort, schema=schema)
+    allow, deny = list(ANALYST_TOOLS), list(ANALYST_DENIED)
+    grant = tuple(c for c in camera_grant or () if str(c).startswith("camera."))
+    if grant:
+        allow.append(CAMERA_TOOL)
+        deny = [t for t in deny if t != CAMERA_TOOL]
+    _RUN_ENV.extra = {CAMERA_GRANT_ENV: ",".join(grant)} if grant else {}
+    try:
+        return _run_cli(
+            prompt,
+            ["--append-system-prompt", system_prompt,
+             "--allowedTools", ",".join(allow),
+             "--disallowedTools", ",".join(deny)]
+            + project_flags(settings=False, files=False),
+            model, timeout, max_turns,
+            f"the analysis passed its {timeout}s limit and was stopped", source,
+            job=job, effort=effort, schema=schema)
+    finally:
+        _RUN_ENV.extra = {}
 
 
 def run_agent(

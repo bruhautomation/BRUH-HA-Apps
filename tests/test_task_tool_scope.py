@@ -283,7 +283,7 @@ class TestTheBridgeWritesIt(unittest.TestCase):
             "time": __import__("time"),
             "timeout": 300, "notify_entity": None,
             "model": None, "tools": None, "schema": None,
-            "memory": False, "scheduled": False,
+            "memory": False, "scheduled": False, "cameras": False,
         }
         scope.update(kw)
         exec(compile(snippet.replace("\n        ", "\n"), "<bridge>", "exec"),
@@ -320,6 +320,13 @@ class TestTheBridgeWritesIt(unittest.TestCase):
         self.assertIs(job["memory"], True)
         self.assertIs(job["scheduled"], True)
         self.assertEqual(job["tools"], "read_only")
+
+    def test_the_camera_preset_asks_for_the_camera_and_nothing_else_does(self):
+        """`cameras` rides only when set, for `memory`'s reason; it lifts the
+        snapshot tool off the narrow scope and nothing else (the opt-in list
+        and the daily count are asked at the MCP server)."""
+        self.assertNotIn("cameras", self._task(tools="read_only"))
+        self.assertIs(self._task(tools="read_only", cameras=True)["cameras"], True)
 
 
 class TestTheListenerAsksForTheShape(unittest.TestCase):

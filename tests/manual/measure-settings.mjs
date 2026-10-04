@@ -93,6 +93,22 @@ window.fetch = async (url, opts) => {
   window.__fetched.push(p);
   const answer = (body) => new Response(JSON.stringify(body), {
     status: 200, headers: { 'Content-Type': 'application/json' } });
+  // The camera list, in \`server._cameras_payload\`'s shape. Not one of the
+  // Advanced reads: it is fetched when Generation defaults opens.
+  if (p.includes('api/cameras')) {
+    return answer({
+      cameras: [
+        { entity_id: 'camera.porch', name: 'Porch', allowed: true },
+        { entity_id: 'camera.garden_long_name_that_wraps_on_a_phone',
+          name: 'The garden camera over the vegetable beds', allowed: false },
+      ],
+      allowed: ['camera.porch'], per_day: 12, used_today: 3, error: '',
+      registry_read: true,
+    });
+  }
+  if (p.includes('api/settings') && opts && opts.method === 'PUT') {
+    (window.__puts = window.__puts || []).push(JSON.parse(opts.body));
+  }
   if (p.includes('api/settings')) {
     return answer({
       settings: {
@@ -377,6 +393,50 @@ for (const width of WIDTHS) {
     if (!refetched) note(where, 'a remembered-open Advanced fetched nothing on reopen');
   } catch (e) {
     note(where, `driving the disclosures failed: ${String(e.message).split('\n')[0]}`);
+  }
+
+  // ⚙ → Generation defaults → Cameras: read when the section opens, a full
+  // row per camera, and a tick saved through the ordinary settings PUT.
+  try {
+    const before = await page.evaluate(
+      () => window.__fetched.filter((u) => u.includes('api/cameras')).length);
+    await page.evaluate(() => {
+      const d = document.querySelector('#setsecDefaults');
+      if (d.open) d.open = false;
+    });
+    await page.click('#setsecDefaults > summary');
+    await page.waitForSelector('#setCameras .setcam', { timeout: 5000 });
+    const cams = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('#setCameras .setcam')];
+      return {
+        fetched: window.__fetched.filter((u) => u.includes('api/cameras')).length,
+        rows: rows.map((r) => ({
+          h: Math.round(r.getBoundingClientRect().height),
+          checked: r.querySelector('input').checked,
+          right: r.getBoundingClientRect().right,
+        })),
+        text: document.getElementById('setCameras').textContent,
+        bodyRight: document.querySelector('#setModal .setsecbody')
+          .getBoundingClientRect().right,
+      };
+    });
+    if (cams.fetched <= before) note(where, 'opening Generation defaults did not read the cameras');
+    if (cams.rows.length !== 2) note(where, `${cams.rows.length} camera rows, not 2`);
+    cams.rows.forEach((r, i) => {
+      if (r.h < MIN_TARGET) note(where, `camera row ${i} is ${r.h}px`);
+      if (r.right > cams.bodyRight + 0.5) note(where, `camera row ${i} overflows`);
+    });
+    if (!cams.rows[0] || !cams.rows[0].checked) note(where, 'an allowed camera is not ticked');
+    if (!/3 of 12/.test(cams.text)) note(where, 'the camera list does not say how many looks are used');
+    await page.click('#setCameras .setcam:nth-child(2) input');
+    await page.waitForTimeout(200);
+    const put = await page.evaluate(() => (window.__puts || []).slice(-1)[0] || null);
+    if (!put || JSON.stringify(put.camera_confirm || null)
+        !== JSON.stringify(['camera.porch', 'camera.garden_long_name_that_wraps_on_a_phone'])) {
+      note(where, `ticking a camera saved ${JSON.stringify(put)}`);
+    }
+  } catch (e) {
+    note(where, `driving the camera list failed: ${String(e.message).split('\n')[0]}`);
   }
 
   await context.close();

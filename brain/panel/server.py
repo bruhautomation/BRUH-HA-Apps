@@ -150,6 +150,7 @@ import checks
 import cli_commands
 import conditions
 import conversations
+import camera_policy
 import curiosity
 import deep_review
 import doctor
@@ -792,6 +793,13 @@ SAFETY_SUBJECT_TTL_S = 6 * 3600
 # that reports leaks is not a thing this panel offers.
 SAFETY_SOURCE = "safety"
 MAX_SAFETY_SUBJECTS = 200
+# Doors, windows and locks the bus has seen change, and when — the index
+# `camera_policy.trip_kind` reads to decide whether an investigation may
+# use a camera. Filled by the same raw hook, for the same reason: the
+# device class lives on the event's attributes and a signal carries none.
+CLOSURE_SUBJECTS: dict[str, float] = {}
+CLOSURE_SUBJECT_TTL_S = 86400
+MAX_CLOSURE_SUBJECTS = 200
 
 
 CHECKS_FIRST_DELAY_S = 120
@@ -6055,6 +6063,17 @@ def _measurement_signals(snapshot: dict, now: float) -> int:
                                 signals.from_baseline, now, ctx)
 
 
+def _note_closure(entity: str, now: float | None = None) -> None:
+    """Remember a closure the bus saw, for the camera grant. Capped, aged."""
+    now = time.time() if now is None else now
+    CLOSURE_SUBJECTS[entity] = now
+    for old, at in list(CLOSURE_SUBJECTS.items()):
+        if now - at > CLOSURE_SUBJECT_TTL_S:
+            CLOSURE_SUBJECTS.pop(old, None)
+    while len(CLOSURE_SUBJECTS) > MAX_CLOSURE_SUBJECTS:
+        CLOSURE_SUBJECTS.pop(min(CLOSURE_SUBJECTS, key=CLOSURE_SUBJECTS.get), None)
+
+
 def _note_safety(event_type: str, data: dict) -> None:
     """Remember that a leak, smoke, CO or gas sensor has tripped, and file it.
 
@@ -6088,6 +6107,8 @@ def _note_safety(event_type: str, data: dict) -> None:
         return
     attrs = new_state.get("attributes")
     attrs = attrs if isinstance(attrs, dict) else {}
+    if signals.RegistryContext.is_closure(entity, attrs):
+        _note_closure(entity)
     klass = signals.RegistryContext.safety_class(attrs)
     if not klass:
         return
@@ -7102,6 +7123,33 @@ async def _resident_investigations(queued: list[tuple[dict, str, int]],
     return {"ran": ran, "filed": filed}
 
 
+def _camera_grant(signal: dict, now: float) -> tuple[list[str], str]:
+    """`(cameras, trip kind)` an investigation of this signal may look at.
+
+    Nothing unless the signal is a safety trip or a closure, nothing unless
+    somebody opted a camera in, and nothing once today's looks are spent —
+    `camera_policy`'s rules, asked here so the run is never handed a tool
+    it would only be refused at the chokepoint. The chokepoint asks again
+    on every frame; this is what keeps the tool off a run that cannot use it.
+    """
+    try:
+        opted = settings_store.load().get("camera_confirm") or []
+    except Exception:  # noqa: BLE001 — unreadable settings allow no camera
+        return [], ""
+    if not opted:
+        return [], ""
+    trip = camera_policy.trip_kind(signal, safety_subjects=SAFETY_SUBJECTS,
+                                   closure_subjects=CLOSURE_SUBJECTS)
+    if not trip:
+        return [], ""
+    spent, error = camera_policy.used(_local_now(now).strftime("%Y-%m-%d"))
+    if error or spent >= camera_policy.PER_DAY:
+        return [], trip
+    grant = camera_policy.grant_for(str(signal.get("subject") or ""), opted,
+                                    _FACTS_CTX.get("entity_areas") or {})
+    return grant, trip
+
+
 async def _resident_investigate(signal: dict, now: float, thinking: str,
                                 *, why: str = "", refines: int = 0) -> bool:
     """One signal, read properly. Returns whether a case was filed or a row
@@ -7132,10 +7180,13 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
         await asyncio.to_thread(_open_case_rows, exclude=exclude),
         signal_row=rows[0] if rows else "", why=why, refining=refining,
         now_line=_now_line(now))
+    grant, trip = await asyncio.to_thread(_camera_grant, signal, now)
+    prompt += camera_policy.prompt_line(grant, trip)
     result = await asyncio.to_thread(
         engine.run_analyst, prompt, resident.INVESTIGATE_SYSTEM, eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
-        "resident", job=resident.JOB_INVESTIGATE, schema=resident.CASE_SCHEMA)
+        "resident", job=resident.JOB_INVESTIGATE, schema=resident.CASE_SCHEMA,
+        camera_grant=tuple(grant))
     run_id = str((result.get("meta") or {}).get("session_id") or "")
     cost = await asyncio.to_thread(_record_usage, result, "resident-investigate")
     LEDGER.record(resident.JOB_INVESTIGATE, int(cost.get("total") or 0), now)
@@ -8718,6 +8769,79 @@ async def h_weekly_run(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Cameras: which ones brAIn may look at when nobody is at the panel
+#
+# `camera_policy` holds the rules. The MCP server asks `/api/camera/permit`
+# before every governed frame (voice, a task, the Resident's grant), and
+# the ⚙ dialog lists what there is to allow off the last checks pass's
+# registry — never a fetch for the dialog's own sake.
+# ---------------------------------------------------------------------------
+
+def _house_day(now: float) -> str:
+    return _local_now(now).strftime("%Y-%m-%d")
+
+
+async def h_camera_permit(request: web.Request) -> web.Response:
+    """One governed look: allowed, and counted, or refused with a sentence."""
+    body = await _json_body(request)
+    entity = str(body.get("entity_id") or "")
+    channel = str(body.get("channel") or "")
+    raw_grant = body.get("grant")
+    grant = None
+    if isinstance(raw_grant, str) and raw_grant.strip():
+        grant = [c.strip().lower() for c in raw_grant.split(",") if c.strip()]
+    elif isinstance(raw_grant, list):
+        grant = [str(c).strip().lower() for c in raw_grant if str(c).strip()]
+    now = time.time()
+    try:
+        opted = settings_store.load().get("camera_confirm") or []
+    except Exception:  # noqa: BLE001 — unreadable settings allow no camera
+        opted = []
+    allowed, reason = await asyncio.to_thread(
+        camera_policy.permit, entity, channel, grant, opted,
+        _house_day(now), now)
+    if allowed:
+        log.info("camera look allowed: %s for %s", entity, channel or "a run")
+    else:
+        log.info("camera look refused: %s for %s — %s", entity,
+                 channel or "a run", reason)
+    return web.json_response({"allowed": allowed, "reason": reason})
+
+
+def _cameras_payload() -> dict:
+    now = time.time()
+    try:
+        opted = settings_store.load().get("camera_confirm") or []
+    except Exception:  # noqa: BLE001
+        opted = []
+    known = sorted({e for e in (set(_NAMES) | set(_FACTS_CTX.get("entities") or ()))
+                    if str(e).startswith("camera.")} | set(opted))
+    spent, error = camera_policy.used(_house_day(now))
+    return {
+        "cameras": [{"entity_id": c,
+                     "name": (_NAMES.get(c) or {}).get("name") or c,
+                     "allowed": c in opted} for c in known],
+        "allowed": list(opted),
+        "per_day": camera_policy.PER_DAY,
+        "used_today": spent,
+        "error": error,
+        # The list comes off the last checks pass, and a dialog that says
+        # "no cameras" before that pass has run is a dialog that is wrong.
+        "registry_read": bool(_FACTS_CTX.get("entities")),
+    }
+
+
+async def h_cameras(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_cameras_payload))
+
+
+def _camera_diagnostics() -> dict:
+    payload = _cameras_payload()
+    return {"allowed": len(payload["allowed"]), "per_day": payload["per_day"],
+            "used_today": payload["used_today"], "error": payload["error"]}
+
+
+# ---------------------------------------------------------------------------
 # The deep review: the one run a person presses for on the top tier
 #
 # `deep_review` holds the rules (what it is told, what it may say, the
@@ -9947,6 +10071,7 @@ def _diagnostics_payload() -> dict:
         # exactly like one whose loop died in March.
         "weekly": _weekly_diagnostics(),
         "deep_review": _deep_review_diagnostics(),
+        "cameras": _camera_diagnostics(),
         # Answers given in the To-do app or on a notification, on
         # their way back to the one store that owns them.
         "finding_requests": _requests_diagnostics(),
@@ -15165,6 +15290,8 @@ def make_app() -> web.Application:
     app.router.add_post("/api/weekly/run", h_weekly_run)
     app.router.add_get("/api/deep-review", h_deep_review)
     app.router.add_post("/api/deep-review/run", h_deep_review_run)
+    app.router.add_post("/api/camera/permit", h_camera_permit)
+    app.router.add_get("/api/cameras", h_cameras)
     app.router.add_get("/api/activity", h_activity)
     app.router.add_get("/api/activity/entity/{entity_id}", h_activity_entity)
     app.router.add_post("/api/activity/summary", h_activity_summary)

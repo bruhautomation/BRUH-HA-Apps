@@ -447,12 +447,13 @@ class ClaudeBridge:
         schema: dict | None = None,
         memory: bool = False,
         scheduled: bool = False,
+        cameras: bool = False,
     ) -> str:
         """Send an automation task and wait for the result's text."""
         answer = await self.async_send_task_full(
             prompt, notify=notify, notify_entity=notify_entity,
             timeout=timeout, model=model, tools=tools, schema=schema,
-            memory=memory, scheduled=scheduled)
+            memory=memory, scheduled=scheduled, cameras=cameras)
         return answer["text"]
 
     async def async_send_task_full(
@@ -466,6 +467,7 @@ class ClaudeBridge:
         schema: dict | None = None,
         memory: bool = False,
         scheduled: bool = False,
+        cameras: bool = False,
     ) -> dict:
         """Send a task and wait for the whole result: ``{"text", "data"}``.
 
@@ -518,6 +520,11 @@ class ClaudeBridge:
             task["memory"] = True
         if scheduled:
             task["scheduled"] = True
+        # The snapshot tool on a narrow scope, which the listener otherwise
+        # denies. Every frame is still asked of the panel's opt-in list and
+        # daily count at the MCP server; this only lets the run ask.
+        if cameras:
+            task["cameras"] = True
 
         task_file = os.path.join(self.tasks_dir, f"{task_id}.json")
         result_file = os.path.join(self.task_results_dir, f"{task_id}.json")

@@ -282,6 +282,11 @@ claim_task_session() {
 # does not run at all, and the caller is told which.
 task_tool_flags() {
     local mode="$1"
+    # "true" when the task asked for the camera tool (the camera_check
+    # insight preset). It only lifts the snapshot tool off a narrow scope's
+    # deny list: whether any camera may then be looked at is the MCP
+    # server's question, asked of the panel's opt-in list and daily count.
+    local cameras="${2:-}"
 
     case "$mode" in
         ''|full) return 0 ;;
@@ -291,7 +296,7 @@ task_tool_flags() {
 
     local panel_dir lists allow deny
     panel_dir="${BRAIN_PANEL_DIR:-/opt/panel}"
-    if ! lists=$(BRAIN_PANEL_DIR="$panel_dir" python3 - <<'PYTOOLS' 2>/dev/null
+    if ! lists=$(BRAIN_PANEL_DIR="$panel_dir" BRAIN_TASK_CAMERAS="$cameras" python3 - <<'PYTOOLS' 2>/dev/null
 import os
 import sys
 sys.path.insert(0, os.environ.get("BRAIN_PANEL_DIR", "/opt/panel"))
@@ -302,6 +307,11 @@ except Exception:
 allow, deny = list(engine.ANALYST_TOOLS), list(engine.ANALYST_DENIED)
 if not allow or not deny:
     raise SystemExit(1)
+if os.environ.get("BRAIN_TASK_CAMERAS") == "true":
+    camera = engine.CAMERA_TOOL
+    deny = [t for t in deny if t != camera]
+    if camera not in allow:
+        allow.append(camera)
 # The analyst runs from CLAUDE_HOME with no --add-dir and no project
 # settings, so it cannot reach a file in /config by construction. A task
 # runs IN /config with settings.local.json pre-approving Read, so the same
@@ -514,6 +524,7 @@ process_task() {
     # carry them — BRight's, every older one — runs exactly as before.
     task_memory=$(jq -r 'if .memory == true then "true" else "" end' "$work_file" 2>/dev/null)
     task_scheduled=$(jq -r 'if .scheduled == true then "true" else "" end' "$work_file" 2>/dev/null)
+    task_cameras=$(jq -r 'if .cameras == true then "true" else "" end' "$work_file" 2>/dev/null)
 
     # A task that names no model takes the plan's tier for a task
     # (`BRAIN_MODEL_TASK`, off panel/model_plan.py via /data/.brain_env);
@@ -566,7 +577,7 @@ process_task() {
     if [ -n "$task_schema" ]; then
         schema_flags=(--json-schema "$task_schema")
     fi
-    if ! tool_flags_out=$(task_tool_flags "$task_tools"); then
+    if ! tool_flags_out=$(task_tool_flags "$task_tools" "$task_cameras"); then
         bashio::log.error "Task [$task_id] asked for tools='${task_tools}' and it could not be honoured"
         write_task_result "$task_id" "brAIn refused this task: tools='${task_tools}' is not one of full, house or read_only, or the analyst's tool lists could not be read from the panel. A task that cannot be scoped is not run with the full grant." "" refused
         journal_task error 0 "" "${task_model:-}" "tools scope could not be honoured" "$task_scheduled"
