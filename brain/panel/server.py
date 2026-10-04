@@ -155,6 +155,8 @@ import cli_commands
 import conditions
 import conversations
 import curiosity
+import deliveries
+import dispatch
 import doctor
 import energy
 import engine
@@ -169,6 +171,7 @@ import fixer
 import healing
 import health
 import house
+import household
 import habit_lookup
 import hypotheses
 import ideas
@@ -180,6 +183,7 @@ import manual_ledger
 import milestones
 import model_plan
 import music_assistant
+import notify_learn
 import notify_router
 import override_ledger
 import onboarding
@@ -1403,11 +1407,17 @@ def _quiet_hours() -> tuple[int | None, int | None]:
 
 
 async def _send_notification(rows: list[dict], held: bool = False,
-                             message: tuple[str, str] | None = None) -> bool:
+                             message: tuple[str, str] | None = None, *,
+                             kind: str = "", dispatched: bool = False) -> bool:
     """Deliver one message. A failure is a log line, never an exception.
 
     The finding is already safe on the list before this is called, so a
     bad service name must not be able to fail the run that filed it.
+
+    Every message, sent or failed, is a line in the delivery ledger
+    (`deliveries.py`): `kind` says what it was where the caller knows
+    better than the rows can (a reminder, the brief), and `dispatched`
+    that the dispatcher chose its timing and words.
     """
     service, _sev = _findings_notify_target()
     if not service or not rows:
@@ -1423,13 +1433,24 @@ async def _send_notification(rows: list[dict], held: bool = False,
     # page with the row three taps away. Only where the notifier reads the
     # keys (`open_link`), and only once the Supervisor has said what this
     # add-on's slug is — a made-up path opens the wrong add-on or nothing.
+    # The delivery's own id rides as the companion app's `tag`, which the
+    # app hands back on every event about the message — the one thread
+    # from a swipe on a phone to the line that sent it (`deliveries.tag_of`).
+    delivery = deliveries.new_id()
+    kind = kind or _delivery_kind(rows, held, _sev)
     data = {**({"actions": buttons} if buttons else {}),
-            **notify_router.open_link(service, addon_options.panel_path())}
+            **notify_router.open_link(service, addon_options.panel_path()),
+            **({"tag": deliveries.tag_for(delivery)}
+               if notify_router.can_answer(service) else {})}
     import ha_data
     try:
         await ha_data.send_notification(
             service, title, body, data=data or None)
     except Exception as exc:  # noqa: BLE001 — a bad target can't fail the run
+        await asyncio.to_thread(
+            deliveries.record, kind, delivery_id=delivery, service=service,
+            title=title, body=body, rows=rows, ok=False, error=str(exc),
+            dispatched=dispatched)
         log.warning("findings notification via %s failed: %s", service, exc)
         NOTIFY_LAST.update(error=str(exc)[:200], at=int(time.time()),
                            service=service)
@@ -1438,6 +1459,9 @@ async def _send_notification(rows: list[dict], held: bool = False,
                       + (", held overnight" if held else ""))
         return False
     NOTIFY_LAST.update(error="", at=int(time.time()), service=service)
+    await asyncio.to_thread(
+        deliveries.record, kind, delivery_id=delivery, service=service,
+        title=title, body=body, rows=rows, dispatched=dispatched)
     log.info("notified %s of %d finding(s)%s", service, len(rows),
              " held overnight" if held else "")
     return True
@@ -1460,7 +1484,8 @@ async def _flush_held_findings() -> int:
     rows = notify_router.take_queue(live)
     if not rows:
         return 0
-    await _send_notification(rows, held=True)
+    await _send_notification(rows, held=True,
+                             message=notify_router.compose_released(rows))
     return len(rows)
 
 
@@ -1501,6 +1526,8 @@ def _notify_diagnostics() -> dict:
         "last_error": str(NOTIFY_LAST.get("error") or "")[:200],
         "last_error_at": int(NOTIFY_LAST.get("at") or 0),
         "last_service": str(NOTIFY_LAST.get("service") or ""),
+        # The dispatcher, the delivery ledger and the learned suggestions.
+        **_dispatch_diagnostics(),
     }
 
 
@@ -1683,7 +1710,11 @@ async def _send_brief(now: float) -> str:
     BRIEF_STATE["last_error"] = ""
     BRIEF_STATE["last_text"] = body
     schedule_store.set_text(BRIEF_TEXT_KEY, body)
-    await _send_notification([{"text": body, "severity": "info"}])
+    # Its own title, not the findings composer's "brAIn found a problem"
+    # with "[info]" in front of the paragraph.
+    await _send_notification([{"text": body, "severity": "info"}],
+                             message=notify_router.compose_brief(body),
+                             kind="brief")
     return body
 
 
@@ -1966,7 +1997,9 @@ async def _send_weekly(now: float) -> str:
     WEEKLY_STATE["last_error"] = ""
     WEEKLY_STATE["last_text"] = body
     schedule_store.set_text(WEEKLY_TEXT_KEY, body)
-    await _send_notification([{"text": body, "severity": "info"}])
+    await _send_notification([{"text": body, "severity": "info"}],
+                             message=notify_router.compose_weekly(body),
+                             kind="weekly")
     return body
 
 
@@ -2045,6 +2078,8 @@ async def _apply_finding_requests() -> list[dict]:
     would re-file what the answers in the same burst had just settled.
     """
     requests = await asyncio.to_thread(finding_requests.collect)
+    # What a button on a notification answered, in the delivery ledger.
+    await asyncio.to_thread(_deliveries_note_requests, requests)
     # A person answered. It is the highest base weight in the signals
     # table and deliberately not hot — somebody typing an answer is not an
     # emergency — and what it must not do is sit behind a hundred sensors,
@@ -2765,7 +2800,7 @@ async def _escalation_tick() -> int:
         # "Replaced it" because its card does, and the ledger row carries
         # neither the check that raised it nor whether hands are needed.
         target = rows_live.get(int(row.get("ts") or 0), row)
-        await _send_notification([target], message=message)
+        await _send_notification([target], message=message, kind="reminder")
         notify_router.record_reminder(int(row.get("ts") or 0), time.time())
         sent += 1
     return sent
@@ -2806,6 +2841,12 @@ async def _notify_flush_loop():
             if due_at:
                 wait = max(ESCALATION_MIN_WAIT_S,
                            min(wait, due_at - time.time()))
+            # And a row the dispatcher held to a time (`hold_timed`): one
+            # due at 07:10 must not wait for a poll that comes at 07:15.
+            hold_at = notify_router.next_hold_at()
+            if hold_at:
+                wait = max(ESCALATION_MIN_WAIT_S,
+                           min(wait, hold_at - time.time()))
             await asyncio.sleep(wait)
         except asyncio.CancelledError:
             raise
@@ -2867,6 +2908,16 @@ async def _announce_findings(created: list[dict]) -> None:
 
     if not once:
         return
+    # Said aloud in the room somebody is in, when it is switched on and the
+    # row is serious, urgent and a check's own sentence — before the phone,
+    # and never instead of it (`_speak_first`, off by default).
+    await _speak_first(once, now)
+    # The dispatcher decides the notify tier's timing and words, AFTER the
+    # escalating rows above have gone out — it never sees one. Whatever it
+    # could not decide comes back and is sent exactly as below.
+    once = await _dispatch_notify_tier(once, now)
+    if not once:
+        return
     start, end = _quiet_hours()
     tz, _name = baselines.house_timezone()
     if not notify_router.in_quiet_hours(now, start, end, tz):
@@ -2885,6 +2936,483 @@ async def _announce_findings(created: list[dict]) -> None:
         depth = notify_router.hold(later, now)
         log.info("held %d finding(s) until quiet hours end (%d waiting)",
                  len(later), depth)
+
+
+# ---------------------------------------------------------------------------
+# Who hears what, when, in what words — the dispatcher, the delivery ledger
+# and the learned suggestions (W2D)
+# ---------------------------------------------------------------------------
+#
+# `_announce_findings` above keeps the tiers and the transport; what is
+# here decides the NOTIFY tier's timing and words (`dispatch.py`), records
+# what every message became (`deliveries.py`), and once a week asks the
+# household whether a kind of message it keeps swiping away should wait
+# for the morning (`notify_learn.py`). Every model answer is checked in
+# `dispatch.parse`; every way the dispatcher can fail hands the row back
+# to the deterministic path, which sends it exactly as it always did.
+
+DISPATCH_STATE: dict = {
+    "runs": 0, "fallbacks": 0, "last_at": 0, "last_fallback": "",
+    "last_error": "", "decisions": {}, "words_refused": 0,
+    "rows_deterministic": 0,
+}
+NOTIFY_LEARN_STATE: dict = {"last_at": 0, "filed": 0, "last_error": "",
+                            "last_filed": []}
+NOTIFY_LEARN_KEY = "notify_learn_last"
+NOTIFY_LEARN_POLL_S = 6 * 60 * 60
+NOTIFY_LEARN_FIRST_DELAY_S = 15 * 60
+
+
+def _delivery_kind(rows: list[dict], held: bool, min_severity: str) -> str:
+    """What a message was, when its caller did not say: a release from the
+    hold queue, or the tier its rows are in — one row escalating makes the
+    message an escalation, which is what the ledger is asked about."""
+    if held:
+        return "held"
+    try:
+        if any(notify_router.tier_of(r, min_severity) == "escalate"
+               for r in rows if isinstance(r, dict)):
+            return "escalate"
+    except Exception:  # noqa: BLE001 — a label, never a reason to not send
+        pass
+    return "notify"
+
+
+def _dispatch_names() -> dict[str, str]:
+    """`{entity_id: friendly name}` off the last checks pass — the map the
+    feed already reads, never a registry fetch for the dispatcher's sake."""
+    return {eid: str(row.get("name") or "") for eid, row in _NAMES.items()
+            if isinstance(row, dict) and row.get("name")}
+
+
+def _dispatch_fallback(reason: str) -> None:
+    DISPATCH_STATE["fallbacks"] += 1
+    DISPATCH_STATE["last_fallback"] = reason
+    log.info("the dispatcher stood down (%s); sending the deterministic way",
+             reason)
+
+
+def _deterministic_line(row: dict, now: float, quiet: tuple, tz) -> str:
+    """What `_announce_findings` would do with this row on its own — shown
+    to the dispatcher as the answer it is improving on."""
+    start, end = quiet
+    if not notify_router.in_quiet_hours(now, start, end, tz) \
+            or notify_router.urgency_of(row) == "now":
+        return "sent now"
+    return f"held until {int(end):02d}:00, when the quiet hours end"
+
+
+async def _dispatch_notify_tier(rows: list[dict], now: float) -> list[dict]:
+    """Decide the notify tier's timing and words. Returns the rows it did
+    NOT decide, for the deterministic path to send as it always has.
+
+    Every way this can fail returns its whole batch: the three gates every
+    scheduled Claude run answers to (`_resident_gate`), a batch past
+    `dispatch.MAX_ROWS`, a run that failed or timed out, and a reply
+    `dispatch.parse` cannot read. Never `feed_only` on a failure — an outage
+    of the dispatcher must not be an outage of the notifier. Never raises.
+    """
+    if not rows:
+        return rows
+    try:
+        settings = settings_store.load()
+        gate = _resident_gate(settings)
+        if gate:
+            _dispatch_fallback(gate)
+            return rows
+        if len(rows) > dispatch.MAX_ROWS:
+            _dispatch_fallback(f"{len(rows)} rows is past the batch cap")
+            return rows
+        start, end = _quiet_hours()
+        tz, tz_name = baselines.house_timezone()
+        try:
+            wake = rhythm.wake_minute(rhythm.profile(), _local_now(now))
+        except Exception:  # noqa: BLE001 — no rhythm is the fallback hour
+            wake = None
+        has_quiet = start is not None and end is not None and start != end
+        morning_at = dispatch.next_morning(now, tz, end if has_quiet else None,
+                                           wake)
+        names = _dispatch_names()
+        history = await asyncio.to_thread(deliveries.recent, now)
+        prompt = dispatch.frame(
+            rows, policy=settings_store.notify_policy_text(settings), now=now,
+            tz=tz, tz_name=tz_name, quiet=(start, end), history=history,
+            names=names, morning_at=morning_at,
+            deterministic={int(r.get("ts") or 0):
+                           _deterministic_line(r, now, (start, end), tz)
+                           for r in rows})
+    except Exception as exc:  # noqa: BLE001 — see the docstring
+        DISPATCH_STATE["last_error"] = str(exc)[:200]
+        _dispatch_fallback("the batch could not be framed")
+        return rows
+    DISPATCH_STATE["runs"] += 1
+    DISPATCH_STATE["last_at"] = int(now)
+    try:
+        # The wait includes the queue's: a dispatcher that cannot get a
+        # seat in time falls back to the fixed path like any failure.
+        result = await asyncio.wait_for(_claude(
+            engine.run_claude, prompt, dispatch.SYSTEM, eff_model(),
+            dispatch.TIMEOUT_S, 2, "dispatch", job=dispatch.JOB,
+            schema=dispatch.SCHEMA, priority=run_queue.SCHEDULED),
+            dispatch.TIMEOUT_S + 30)
+    except Exception as exc:  # noqa: BLE001 — a timeout included
+        DISPATCH_STATE["last_error"] = (str(exc) or type(exc).__name__)[:200]
+        _dispatch_fallback("the run failed")
+        return rows
+    if not isinstance(result, dict) or not result.get("ok"):
+        DISPATCH_STATE["last_error"] = str(
+            (result or {}).get("error") or "no reply")[:200]
+        _dispatch_fallback("the run failed")
+        return rows
+    decisions = dispatch.parse(_answer(result), rows, now=now, tz=tz,
+                               morning_at=morning_at, names=names)
+    if decisions is None:
+        DISPATCH_STATE["last_error"] = "the reply could not be read"
+        _dispatch_fallback("the reply could not be read")
+        return rows
+    DISPATCH_STATE["last_error"] = ""
+    left: list[dict] = []
+    send_now: list[dict] = []
+    holds: list[dict] = []
+    words: dict[int, tuple[str, str]] = {}
+    counts = DISPATCH_STATE["decisions"]
+    for row in rows:
+        ts = int(row.get("ts") or 0)
+        decided = decisions.get(ts)
+        if decided is None:
+            left.append(row)
+            continue
+        counts[decided["deliver"]] = counts.get(decided["deliver"], 0) + 1
+        if decided["words"]:
+            words[ts] = decided["words"]
+        elif decided["words_refused"]:
+            DISPATCH_STATE["words_refused"] += 1
+        if decided["deliver"] == "now":
+            send_now.append(row)
+        elif decided["deliver"] in ("hold_until", "digest"):
+            title, body = decided["words"] or ("", "")
+            holds.append({"finding": row, "until": decided["until"],
+                          "title": title, "body": body})
+        # feed_only: nothing is sent. The row is on the Findings tab, in
+        # `todo.brain` and in Repairs, which is where it was always going
+        # to be; `dispatch.parse` has already refused this on a critical row.
+    DISPATCH_STATE["rows_deterministic"] += len(left)
+    try:
+        if send_now:
+            await _send_notification(
+                send_now, message=dispatch.compose_batch(send_now, words),
+                kind="notify", dispatched=True)
+        if holds:
+            depth = await asyncio.to_thread(notify_router.hold_timed, holds,
+                                            now)
+            log.info("the dispatcher held %d finding(s) (%d waiting)",
+                     len(holds), depth)
+    except Exception as exc:  # noqa: BLE001 — never lose the rows over this
+        log.warning("dispatching failed (%s); sending the deterministic way",
+                    exc)
+        return rows
+    return left
+
+
+def _dispatch_diagnostics() -> dict:
+    """What the dispatcher decided, what the ledger holds and what the
+    household has been asked — the three silent halves of who hears what.
+    A dispatcher that always stands down and one that is working send the
+    same messages, so the fallbacks and their last reason are the payload."""
+    try:
+        ledger = deliveries.summary()
+    except Exception as exc:  # noqa: BLE001 — a diagnostics row, not a fault
+        ledger = {"available": False, "error": str(exc)[:120]}
+    try:
+        learned = len(settings_store.load().get("notify_policy_learned") or [])
+        has_policy = bool(settings_store.load().get("notify_policy"))
+    except Exception:  # noqa: BLE001
+        learned, has_policy = 0, False
+    return {
+        "dispatch": {**{k: v for k, v in DISPATCH_STATE.items()
+                        if k != "decisions"},
+                     "decisions": dict(DISPATCH_STATE["decisions"]),
+                     "policy_set": has_policy, "learned_clauses": learned,
+                     "timed_holds": sum(
+                         1 for r in notify_router.load_queue()
+                         if notify_router.held_until(r)),
+                     "next_hold_at": int(notify_router.next_hold_at())},
+        "deliveries": ledger,
+        "suggestions": dict(NOTIFY_LEARN_STATE),
+        "speak_first": {
+            "enabled": bool(_speak_enabled()),
+            **{k: v for k, v in SPEAK_STATE.items() if k != "said"},
+            "last_at": int(SPEAK_STATE.get("last_at") or 0)},
+    }
+
+
+# Speak first (W2D stretch): announce an urgent, serious house-check finding
+# on the satellite in the room somebody is in. Off by default; announce
+# only — see `household.py` for why it does not yet listen for an answer.
+SPEAK_STATE: dict = {"spoken": 0, "last_at": 0.0, "last_reason": "",
+                     "last_error": "", "said": {}}
+# A voice in the room is louder than a phone in a pocket, so it is rationed:
+# one announcement per this long, and one per finding ever.
+SPEAK_SPACING_S = 30 * 60
+SPEAK_SAID_MAX = 200
+
+
+def _speak_skip(reason: str) -> int:
+    SPEAK_STATE["last_reason"] = reason
+    return 0
+
+
+async def _speak_first(rows: list[dict], now: float) -> int:
+    """Say the first speakable row aloud. Returns how many were said.
+
+    Every refusal is `household.py`'s or one of three here — the switch,
+    the quiet hours, the spacing — and every failure is a line: the phone
+    goes out either way, so nothing here may raise or delay it by more than
+    the one bounded service call it makes.
+    """
+    try:
+        if not rows or not _speak_enabled():
+            return 0
+        _service, min_sev = _findings_notify_target()
+        said = SPEAK_STATE["said"]
+        cands = [r for r in rows
+                 if household.speakable(r, notify_router.tier_of(r, min_sev),
+                                        notify_router.urgency_of(r))
+                 and int(r.get("ts") or 0) not in said]
+        if not cands:
+            return 0
+        start, end = _quiet_hours()
+        tz, _name = baselines.house_timezone()
+        if notify_router.in_quiet_hours(now, start, end, tz):
+            return _speak_skip("inside the quiet hours")
+        if now - float(SPEAK_STATE["last_at"] or 0) < SPEAK_SPACING_S:
+            return _speak_skip("spoke less than half an hour ago")
+        import aiohttp
+        import ha_data
+        async with aiohttp.ClientSession() as session:
+            states = await ha_data._rest_get(session, "/states")
+            services = await ha_data._rest_get(session, "/services")
+        if not any(isinstance(d, dict) and d.get("domain") == "assist_satellite"
+                   and "announce" in (d.get("services") or {})
+                   for d in services or []):
+            return _speak_skip("this Home Assistant has no "
+                               "assist_satellite.announce")
+        areas = {eid: str(row.get("area") or "") for eid, row in _NAMES.items()
+                 if isinstance(row, dict)}
+        cast = household.roster(states if isinstance(states, list) else [],
+                                areas)
+        sat = household.pick_satellite(cast, household.occupied_areas(
+            states if isinstance(states, list) else [], areas, now))
+        if sat is None:
+            return _speak_skip("nobody is in a room with a voice satellite")
+        if automation_writer.is_protected(
+                sat["entity_id"], automation_writer.protected_patterns()):
+            return _speak_skip(f"{sat['entity_id']} is protected")
+        row = cands[0]
+        text = household.spoken_text(row, cast)
+        if not text:
+            return _speak_skip("its words name a person")
+        await ha_data.call_core_service(
+            "assist_satellite", "announce",
+            {"entity_id": sat["entity_id"], "message": text}, timeout=15)
+        said[int(row.get("ts") or 0)] = now
+        while len(said) > SPEAK_SAID_MAX:
+            said.pop(min(said, key=said.get), None)
+        SPEAK_STATE.update(last_at=now, last_reason="", last_error="",
+                           spoken=SPEAK_STATE["spoken"] + 1)
+        log.info("said a finding aloud on %s", sat["entity_id"])
+        return 1
+    except Exception as exc:  # noqa: BLE001 — the phone goes out regardless
+        SPEAK_STATE["last_error"] = str(exc)[:200]
+        log.warning("could not say a finding aloud: %s", exc)
+        return 0
+
+
+def _speak_enabled() -> bool:
+    try:
+        return settings_store.load().get("speak_first") is True
+    except Exception:  # noqa: BLE001 — unreadable is off
+        return False
+
+
+def _on_bus_event(event_type: str, data: dict) -> None:
+    """The bus's raw hook: the safety lane first, always, then a swipe.
+
+    One callable because the bus takes one; the lane is called before
+    anything else so nothing added here can delay or break it, and a
+    failure in the second half is caught here rather than by the bus.
+    """
+    _note_safety(event_type, data)
+    if event_type == "mobile_app_notification_cleared":
+        try:
+            deliveries.note_cleared(data if isinstance(data, dict) else {})
+        except Exception as exc:  # noqa: BLE001 — accounting, never the bus
+            log.debug("could not record a cleared notification: %s", exc)
+
+
+def _deliveries_note_requests(requests: list[dict]) -> int:
+    """A button on a notification answered a finding: that is the
+    message's outcome. Only `via: notification` — a tick in the To-do app
+    is an answer to the row, not to any message."""
+    noted = 0
+    for req in requests or []:
+        if not isinstance(req, dict) or req.get("kind"):
+            continue
+        if req.get("via") != "notification":
+            continue
+        try:
+            if deliveries.note_answer(req["ts"], req.get("action") or "",
+                                      via="notification"):
+                noted += 1
+        except Exception as exc:  # noqa: BLE001
+            log.debug("could not record an answered notification: %s", exc)
+    return noted
+
+
+def _producer_titles(folded: list[dict]) -> dict[str, str]:
+    """What each producer in the ledger is called, for a question's words:
+    a check's own title, never the group's, `_muted_rows`' rule."""
+    out: dict[str, str] = {}
+    for d in folded or []:
+        for src in d.get("sources") or []:
+            if src in out:
+                continue
+            title = ""
+            if src.startswith("check:"):
+                spec = checks.get_check(src[len("check:"):]) or {}
+                title = str(spec.get("title") or "")
+            out[src] = title or src
+    return out
+
+
+async def _notify_learn_pass(now: float) -> list[dict]:
+    """File this week's questions, if the ledger earns any. Returns them.
+
+    Deterministic and spends nothing, so no gate: it reads the ledger and
+    files at most `notify_learn.MAX_PER_PASS` question cases.
+    """
+    folded = await asyncio.to_thread(deliveries.fold, now)
+    NOTIFY_LEARN_STATE["last_at"] = int(now)
+    if folded is None:
+        NOTIFY_LEARN_STATE["last_error"] = "the delivery ledger could not be read"
+        return []
+    NOTIFY_LEARN_STATE["last_error"] = ""
+    # A question nobody answered in a week leaves the list the way a
+    # Resident case does — no memory line, no ledger entry — and may be
+    # asked again after `RE_ASK_DAYS`, never sooner.
+    await asyncio.to_thread(findings_store.expire_cases, now,
+                            (notify_learn.SOURCE,))
+    state = await asyncio.to_thread(notify_learn.load)
+    live = {int(f.get("ts") or 0)
+            for f in await asyncio.to_thread(findings_store.list_all)
+            if f.get("source") == notify_learn.SOURCE}
+    planned = notify_learn.plan(
+        folded, state, now, live, _dispatch_names(), _producer_titles(folded),
+        muted=notify_learn.SOURCE in settings_store.muted())
+    filed: list[dict] = []
+    for item in planned:
+        row = await asyncio.to_thread(findings_store.add_case, item["row"],
+                                      when=now)
+        if row:
+            notify_learn.record_asked(state, item["key"], int(row["ts"]),
+                                      item["clause"], item["subject"], now)
+            filed.append(row)
+    if filed:
+        await asyncio.to_thread(notify_learn.save, state)
+        log.info("asked about %d kind(s) of notification the household keeps "
+                 "dismissing", len(filed))
+    NOTIFY_LEARN_STATE["filed"] += len(filed)
+    NOTIFY_LEARN_STATE["last_filed"] = [r.get("claim") or "" for r in filed]
+    return filed
+
+
+async def _notify_learn_loop():
+    """Once a week, whenever the add-on is up for it. The stamp is on disk
+    (`schedule_store`), because a restart is not a new week."""
+    await asyncio.sleep(NOTIFY_LEARN_FIRST_DELAY_S)
+    while True:
+        try:
+            now = time.time()
+            last = schedule_store.get(NOTIFY_LEARN_KEY)
+            if now - last >= notify_learn.EVERY_S:
+                schedule_store.set(NOTIFY_LEARN_KEY, now)
+                await _notify_learn_pass(now)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
+            NOTIFY_LEARN_STATE["last_error"] = str(exc)[:200]
+            log.warning("notification suggestions pass failed: %s", exc)
+        await asyncio.sleep(NOTIFY_LEARN_POLL_S)
+
+
+async def _end_notify_suggestion(finding: dict, spec: dict,
+                                 note: str) -> tuple[dict, str]:
+    """Yes or No to "move these to the morning list?".
+
+    Yes appends the question's clause to the household's sentence —
+    shown on its own line in ⚙, removable there, and taken back by the
+    toast's Undo with the card. No is remembered so the subject is not
+    asked again. Neither writes a memory line: a preference about
+    notifications is the sentence's, and memory is facts about the house.
+    The list of clauses is capped and a full one REFUSES the Yes before
+    anything is settled (`todo_store`'s rule), because the room would be
+    made by dropping a clause somebody else agreed to.
+    """
+    state = await asyncio.to_thread(notify_learn.load)
+    key = notify_learn.key_for_finding(state, finding)
+    rec = dict(state.get(key) or {})
+    accept = spec.get("label") == "accepted"
+    if accept and rec.get("clause"):
+        learned = list(settings_store.load().get("notify_policy_learned") or [])
+        if not any(c.get("clause") == rec["clause"] for c in learned):
+            if len(learned) >= settings_store.NOTIFY_LEARNED_MAX:
+                raise web.HTTPConflict(
+                    text="Your notification sentence already carries "
+                         f"{settings_store.NOTIFY_LEARNED_MAX} learned lines — "
+                         "remove one in ⚙ Settings first.")
+            learned.append({"clause": rec["clause"],
+                            "subject": rec.get("subject") or "",
+                            "at": int(time.time())})
+            await asyncio.to_thread(settings_store.save,
+                                    {"notify_policy_learned": learned})
+
+    def settle() -> dict:
+        findings_store.settle_and_clear(finding["ts"], spec["kind"], note=note)
+        return _findings_payload()
+
+    payload = await asyncio.to_thread(settle)
+    if key:
+        rec["answer"] = "accepted" if accept else "declined"
+        rec["answered_at"] = int(time.time())
+        state[key] = rec
+        await asyncio.to_thread(notify_learn.save, state)
+    payload["notify_policy"] = {
+        k: settings_store.load().get(k) for k in settings_store.NOTIFY_POLICY_KEYS}
+    return payload, ""
+
+
+def _notify_learn_undo(entry: dict) -> None:
+    """Undo of a Yes takes its clause back; of either answer, the answer.
+    Best effort, `_record_exception`'s rule: an undo must not fail on it."""
+    finding = (entry or {}).get("finding") or {}
+    if finding.get("source") != notify_learn.SOURCE:
+        return
+    try:
+        state = notify_learn.load()
+        key = notify_learn.key_for_finding(state, finding)
+        rec = dict(state.get(key) or {})
+        if rec.get("answer") == "accepted" and rec.get("clause"):
+            learned = [c for c in settings_store.load().get(
+                "notify_policy_learned") or []
+                if c.get("clause") != rec["clause"]]
+            settings_store.save({"notify_policy_learned": learned})
+        if key and rec:
+            rec["answer"] = ""
+            rec.pop("answered_at", None)
+            state[key] = rec
+            notify_learn.save(state)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not undo a notification suggestion: %s", exc)
 
 
 async def _search_run(insight_id: str, cat: dict, framing: dict):
@@ -7373,12 +7901,13 @@ async def _safety_trip(entity: str, klass: str, state: dict,
 async def _safety_fallback_notice(filed: dict) -> None:
     """Home Assistant's own notification, for a house with no notify target."""
     import ha_data
+    title = "brAIn: " + str(filed.get("text") or "")[:120]
+    message = str(filed.get("detail") or "") + "\n\n" + SAFETY_FIX
+    delivery = deliveries.new_id()
     try:
         await ha_data.call_core_service(
             "persistent_notification", "create",
-            {"title": "brAIn: " + str(filed.get("text") or "")[:120],
-             "message": (str(filed.get("detail") or "") + "\n\n"
-                         + SAFETY_FIX),
+            {"title": title, "message": message,
              "notification_id": f"brain_safety_{int(filed.get('ts') or 0)}"},
             timeout=15)
         SAFETY_STATE["fallback"] += 1
@@ -7386,6 +7915,21 @@ async def _safety_fallback_notice(filed: dict) -> None:
         SAFETY_STATE["last_error"] = str(exc)[:200]
         log.warning("safety lane: could not create a persistent "
                     "notification: %s", exc)
+        _record_notice(delivery, title, message, filed, error=str(exc))
+        return
+    _record_notice(delivery, title, message, filed)
+
+
+def _record_notice(delivery: str, title: str, message: str, filed: dict,
+                   error: str = "") -> None:
+    """The safety lane's persistent notification, in the delivery ledger.
+
+    Synchronous on purpose: it is one append, and the lane runs on the
+    bus pump's loop where a thread hop buys nothing. Never raises —
+    `deliveries.record` does not."""
+    deliveries.record("notice", delivery_id=delivery,
+                      service="persistent_notification", title=title,
+                      body=message, rows=[filed], ok=not error, error=error)
 
 
 async def _safety_clear(entity: str, state: dict, when: float) -> bool:
@@ -12714,6 +13258,11 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
     on a notification. A second copy would be the same press teaching
     brAIn two different things depending on where it was made.
     """
+    if finding.get("source") == notify_learn.SOURCE:
+        # A question about notifications: Yes adds a clause to the
+        # household's sentence, and neither answer is a fact about the house.
+        return await _end_notify_suggestion(finding, spec, note)
+
     def settle() -> dict:
         findings_store.settle_and_clear(finding["ts"], spec["kind"], note=note)
         return _findings_payload()
@@ -13580,14 +14129,26 @@ async def _announce_accepted(row: dict, applied: dict) -> None:
         return
     title, body = notify_router.compose_accepted(
         str(row.get("title") or ""), str(applied.get("entity_id") or ""))
+    # A line in the delivery ledger like every other message, sent or not:
+    # a ledger that missed one sender is one nobody can read "what did
+    # brAIn tell me this week" off. No findings ride on it.
+    delivery = deliveries.new_id()
     try:
         await ha_data.send_notification(service, title, body)
     except Exception as exc:  # noqa: BLE001 — the automation is already
         # running; the notification is the courtesy copy.
+        await asyncio.to_thread(
+            deliveries.record, "accepted", delivery_id=delivery,
+            service=service, title=title, body=body, ok=False,
+            error=str(exc))
         log.warning("accepted-change notification via %s failed: %s",
                     service, exc)
         _report_async(reports.notify_failure, service, str(exc),
                       context="accepted-change announcement")
+        return
+    await asyncio.to_thread(
+        deliveries.record, "accepted", delivery_id=delivery,
+        service=service, title=title, body=body)
 
 
 async def h_proposal_decide(request: web.Request) -> web.Response:
@@ -14103,6 +14664,8 @@ def _undo_finding(entry: dict) -> tuple[bool, dict]:
     # the facts store, which read it within the minute.
     if entry.get("fact"):
         _unqueue_fact(entry["fact_source"], entry["fact"])
+    # A Yes to a notification suggestion took a clause with it.
+    _notify_learn_undo(entry)
     return restored, _findings_payload()
 
 
@@ -14530,7 +15093,8 @@ async def _reply_to_finding(finding: dict, text: str) -> tuple[bool, str]:
         answer = ("brAIn could not look into that just now — open the panel "
                   "to carry on the conversation there.")
     title = f"brAIn: {str(finding.get('text') or 'your reply')[:60]}"
-    sent = await _send_notification([finding], message=(title, answer))
+    sent = await _send_notification([finding], message=(title, answer),
+                                    kind="reply")
     return sent, "" if sent else "the answer could not be delivered"
 
 
@@ -17509,6 +18073,7 @@ def make_app() -> web.Application:
         app["weekly"] = _supervise("weekly", _weekly_loop())
         app["maintainer"] = _supervise("maintainer", _maint_loop())
         app["requests"] = _supervise("requests", _requests_loop())
+        app["notify_learn"] = _supervise("notify_learn", _notify_learn_loop())
         # The first thing in brAIn that is watched rather than polled, and
         # the loop that reads it. The bus files nothing and asks nothing —
         # its only output is a signal on the queue — and `_resident_loop`
@@ -17518,7 +18083,7 @@ def make_app() -> web.Application:
         # dev checkout at all.
         global EVENT_BUS
         EVENT_BUS = eventbus.EventBus(
-            _resident_offer, on_event=_note_safety,
+            _resident_offer, on_event=_on_bus_event,
             known_ids=_known_entity_ids,
             # A callable, not a snapshot: a fresh install has no
             # measured night for a fortnight, and a bus that froze the

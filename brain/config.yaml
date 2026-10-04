@@ -94,6 +94,12 @@ backup_exclude:
   # — they are redacted on the way in — but a house's entity names are a
   # floor plan, and a backup is the one route out nobody presses.
   - capture/**
+  # What was sent to a phone and what happened to it (deliveries.py): the
+  # lock-screen words of every notification, which are sentences about the
+  # house, and a record of when somebody answered. Not a credential, and
+  # not something a restore needs — a ledger that starts empty only delays
+  # a learned suggestion.
+  - deliveries.jsonl
 
 # Lifecycle stage, declared rather than inherited from the default.
 stage: stable

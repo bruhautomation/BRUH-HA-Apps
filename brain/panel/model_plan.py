@@ -69,6 +69,12 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     "entity_model":    ("haiku",  "low",    False, False),
     "situation":       ("haiku",  "low",    False, False),
     "occasions":       ("haiku",  "low",    False, False),
+    # Who hears what, when, in what words — one tool-less call over a batch
+    # of notify-tier findings and the household's own sentence. A timing
+    # and wording decision with a closed vocabulary, checked in code, and
+    # never asked about a row that escalates: Haiku, and it may not step
+    # up — a stronger model on a lock-screen sentence is spend, not care.
+    "dispatch":        ("haiku",  "low",    False, False),
     # Thinks — reasoning with tools where a wrong answer costs a card.
     "card":            ("sonnet", "medium", True,  True),
     "ask":             ("sonnet", "medium", True,  True),

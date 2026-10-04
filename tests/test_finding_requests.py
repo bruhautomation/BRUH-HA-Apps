@@ -66,11 +66,18 @@ class RequestCase(unittest.TestCase):
         findings_store.STATE_FILE = base / "config" / ".brain" / "state.json"
         finding_requests.REQUEST_DIR = base / "requests"
         finding_requests.REQUEST_DIR.mkdir()
+        # Every answer applied is noted in the delivery ledger, and the
+        # ledger's default is the real /data — which exists on a shared
+        # machine, so a test that does not point it here writes into it.
+        self.deliveries = importlib.import_module("deliveries")
+        self._old_deliveries = self.deliveries.DELIVERIES_FILE
+        self.deliveries.DELIVERIES_FILE = base / "deliveries.jsonl"
 
     def tearDown(self):
         (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR,
          findings_store.SETTLED_FILE, findings_store.STATE_FILE,
          finding_requests.REQUEST_DIR) = self._old
+        self.deliveries.DELIVERIES_FILE = self._old_deliveries
         self.tmp.cleanup()
 
     def drop(self, name: str, body) -> Path:

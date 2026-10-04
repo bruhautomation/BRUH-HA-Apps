@@ -2471,6 +2471,7 @@ function renderSettingsForm(data) {
     $("#" + id).value = val == null ? "" : String(val);
   });
   renderModelField(data);
+  renderNotifyPolicy(data.settings || {});
   $("#setSyncNote").textContent = data.options_synced
     ? "These are the add-on's own Configuration options — edit them here or on "
       + "the Configuration tab, it's the same setting either way. Changes apply "
@@ -12798,3 +12799,68 @@ async function refreshHouseNow() {
     if (currentView === "findings") refreshHouseNow();
   }, HOUSE_NOW_POLL_MS);
 }
+
+// ---------------------------------------------------------------------------
+// Who hears what, when — the household's notification sentence (W2D)
+// ---------------------------------------------------------------------------
+//
+// One sentence in the household's own words, saved on change like every
+// other control in ⚙, and under it the lines a learned suggestion added —
+// each on its own row with its own Remove, because a clause spliced into
+// somebody's sentence is one they cannot find again to take out. The box
+// is not overwritten while it has focus: `refreshOpenSettings` already
+// skips a dialog with focus inside it, and a save re-renders only after
+// the change that triggered it has landed.
+function renderNotifyPolicy(settings) {
+  // Speaking first is strictly opt-in, so only an explicit true ticks it:
+  // a setting that arrived missing or malformed reads as off.
+  const speak = $("#setSpeakFirst");
+  if (speak) speak.checked = settings.speak_first === true;
+  const box = $("#setNotifyPolicy");
+  if (!box) return;
+  if (document.activeElement !== box) box.value = settings.notify_policy || "";
+  const list = $("#setNotifyLearned");
+  const learned = Array.isArray(settings.notify_policy_learned)
+    ? settings.notify_policy_learned : [];
+  const wasOpen = !!list.querySelector("details[open]");
+  list.textContent = "";
+  list.classList.toggle("hidden", !learned.length);
+  if (!learned.length) return;
+  // Behind a disclosure that names how many: each line is a long sentence
+  // (it names its subject both ways, for a person and for a model), and a
+  // dialog measured against a height budget cannot spend a paragraph per
+  // answer somebody once gave. It stays open across a re-render, because
+  // a Remove re-renders and closing the list under the press reads as the
+  // press having taken everything.
+  const fold = document.createElement("details");
+  fold.open = wasOpen;
+  fold.appendChild(el("summary", null, learned.length === 1
+    ? "1 line added from your answers"
+    : `${learned.length} lines added from your answers`));
+  learned.forEach((item) => {
+    const row = el("div", "setlearnedrow");
+    row.appendChild(el("span", "setlearnedtext", item.clause || ""));
+    const remove = el("button", "btn ghost", "Remove");
+    remove.type = "button";
+    remove.setAttribute("aria-label", "Remove: " + (item.clause || ""));
+    remove.addEventListener("click", () => {
+      const keep = learned.filter((c) => c.id !== item.id);
+      saveSettings({ notify_policy_learned: keep }, "Removed — that line no longer applies");
+    });
+    row.appendChild(remove);
+    fold.appendChild(row);
+  });
+  list.appendChild(fold);
+}
+
+$("#setNotifyPolicy").addEventListener("change", () =>
+  saveSettings({ notify_policy: $("#setNotifyPolicy").value.trim() },
+    "Saved — brAIn will time and word notifications by it"));
+
+$("#setSpeakFirst").addEventListener("change", () => {
+  const on = $("#setSpeakFirst").checked;
+  saveSettings({ speak_first: on }, on
+    ? "On — an urgent problem is said aloud where somebody is, then sent to the phone"
+    : "Off — problems go to the phone only");
+});
+

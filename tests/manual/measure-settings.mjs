@@ -65,6 +65,8 @@ const IDS = [
   'setGatherMode', 'setHistoryDays', 'setKeepDays', 'setKeepRuns', 'setModel', 'setThinking',
   'setModelCustom', 'setPlan', 'setRefresh', 'setRefreshMode', 'setSyncNote',
   'setTerminalUi', 'setTimeout', 'usageFill', 'usageMark', 'usageText',
+  // The household's notification sentence and the lines learned beside it.
+  'setNotifyPolicy', 'setNotifyLearned', 'setSpeakFirst',
 ];
 
 // The sections, and whether the shipped markup opens them. Account and
@@ -101,6 +103,11 @@ window.fetch = async (url, opts) => {
         plan: 'pro', budget_percent: 25, refresh_hours: 12, history_days: 7,
         timeout_minutes: 8, history_keep_runs: 20, history_keep_days: 30,
         model: 'claude-sonnet-4-5', onboarded: true,
+        notify_policy: 'wake me for water or smoke; batteries can wait',
+        speak_first: true,
+        notify_policy_learned: [{ id: 'a1b2c3d4', subject: 'Garden lights',
+          clause: 'Notifications about Garden lights (light.garden) can wait '
+                  + 'for the morning list, unless they are critical.', at: 1756000000 }],
       },
       models: [{ id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5',
                  group: 'Recommended', hint: 'the everyday one' }],
@@ -299,6 +306,30 @@ for (const width of WIDTHS) {
       note(where, `a ? in ${t.inSection} is ${t.w}×${t.h}, under ${MIN_TARGET}`);
     }
   }
+
+  // ---- the notification sentence, and a learned line's Remove ------------
+  // The learned line is the one control here that is added by an answer
+  // somewhere else, so it is the one nobody would think to measure.
+  const learned = await page.evaluate(() => {
+    const fold = document.querySelector('#setNotifyLearned details');
+    if (fold) fold.open = true;
+    const rows = [...document.querySelectorAll('#setNotifyLearned .setlearnedrow')];
+    return rows.map((r) => {
+      const b = r.querySelector('button').getBoundingClientRect();
+      return { h: Math.round(b.height), text: r.textContent };
+    });
+  });
+  if (learned.length !== 1) note(where, `${learned.length} learned lines rendered, expected 1`);
+  for (const l of learned) {
+    if (touch && l.h < MIN_TARGET) note(where, `a learned line's Remove is ${l.h}px`);
+    if (!/Garden lights/.test(l.text)) note(where, 'a learned line does not say what it is');
+  }
+  const policy = await page.evaluate(() => document.querySelector('#setNotifyPolicy').value);
+  if (!/water/.test(policy)) note(where, 'the notification sentence did not render what was saved');
+  // Speaking aloud is opt-in, so the box must show what was saved — a box
+  // that rendered unticked over a saved yes is one somebody ticks again.
+  const speak = await page.evaluate(() => document.querySelector('#setSpeakFirst').checked);
+  if (!speak) note(where, 'the speak-first box did not render the saved yes');
 
   // ---- the iOS floor, and the page's own width ---------------------------
   if (touch) {

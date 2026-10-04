@@ -128,6 +128,12 @@ class AcceptCase(unittest.IsolatedAsyncioTestCase):
         self.server._findings_notify_target = lambda: ("mobile_app_phone",
                                                        "warning")
         self.addCleanup(self._restore_server_hooks)
+        # The announcement is a line in the delivery ledger, whose default
+        # is the real /data — which exists on a shared machine.
+        deliveries = importlib.import_module("deliveries")
+        self.addCleanup(setattr, deliveries, "DELIVERIES_FILE",
+                        deliveries.DELIVERIES_FILE)
+        deliveries.DELIVERIES_FILE = root / "deliveries.jsonl"
 
         # Fake Core. `automation.reload` and `/states/<id>` are the two
         # calls the accept path makes, and the two it has to believe.

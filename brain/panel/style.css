@@ -4839,3 +4839,32 @@ body.term-classic #termMode .ico-out { display: block; }
 @media (pointer: coarse) {
   .housenow-cals > summary, .housenow-cal { min-height: 44px; }
 }
+
+/* The household's notification sentence (W2D). The learned lines sit under
+   it one per row, each with its own Remove: a clause spliced into the
+   sentence would be one nobody could find again to take back. */
+.setlearned { margin-top: 8px; display: grid; gap: 6px; }
+.setlearned summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.setlearned details > .setlearnedrow + .setlearnedrow { margin-top: 6px; }
+.setlearnedrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 12px;
+  background: var(--plane);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+}
+.setlearnedtext { flex: 1; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.setlearnedrow .btn { flex: none; }
+@media (pointer: coarse) {
+  .setlearnedrow .btn { min-height: 44px; }
+}

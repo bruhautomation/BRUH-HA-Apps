@@ -140,6 +140,7 @@ LOOPS = {
     "maintainer": ("the maintainer (tidy-ups, upgrade notes, the house book)",
                    "degraded"),
     "requests": ("answers given in Home Assistant", "degraded"),
+    "notify_learn": ("the weekly notification suggestions", "degraded"),
     "resident": ("the attention loop", "degraded"),
     "situation": ("the reading of what the house is doing now", "degraded"),
     "options": ("the add-on options poll", "degraded"),
