@@ -94,6 +94,10 @@ class TestPowerToolCatalog(unittest.TestCase):
             "rename_label", "update_label", "set_area_icon", "update_floor",
             "delete_device", "delete_orphaned_devices", "delete_integration",
             "rename_person",
+            # What a device shows as — and the helper it can make has the
+            # service that takes it away again.
+            "set_device_class", "show_switch_as", "stop_showing_switch_as",
+            "set_sensor_display",
         ):
             self.assertIn(expected, services)
 

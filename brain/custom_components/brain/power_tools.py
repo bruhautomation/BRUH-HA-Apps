@@ -13,6 +13,10 @@ instead of editing `/config/.storage` files by hand:
                 apply/remove on entities, devices, areas
 - Entities:     rename, change entity_id, enable/disable, hide/unhide,
                 voice aliases, icon overrides, orphan cleanup (dry-run default)
+- Device types: the "Show as" control — a device class override (a binary
+                sensor as a door, a cover as a garage door, a switch as an
+                outlet), a switch shown as a light/fan/lock/cover/siren/valve
+                and back (switch_as_x), sensor display precision and unit
 - Devices:      rename, enable/disable (cascades to lonely parent devices),
                 delete, orphan cleanup (dry-run default)
 - Integrations: enable/disable/reload/delete config entries
@@ -57,10 +61,15 @@ released under the MIT License. Changes from Spook:
 
 from __future__ import annotations
 
+import asyncio
+import importlib
 import json
 import logging
 import os
 import re
+import sys
+import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -612,6 +621,713 @@ async def _delete_orphaned_entities(
     if requested:
         result["skipped_not_orphaned"] = skipped
     return result
+
+
+# ---------------------------------------------------------------------------
+# Device types — what Home Assistant shows a device as
+# ---------------------------------------------------------------------------
+#
+# The entity settings dialog's "Show as" is three different mechanisms
+# depending on what the entity is, and each is used here exactly the way
+# that dialog uses it (frontend: src/panels/config/entities/
+# entity-registry-settings-editor.ts):
+#
+#  - a binary sensor (door, window, motion, moisture…), a cover (garage,
+#    blind, shutter…), a switch's "outlet" and the like take a DEVICE CLASS
+#    override in the entity registry: `async_update_entity(device_class=)`,
+#    and None gives the integration's own `original_device_class` back.
+#    Core does not check the value — `config/entity_registry/update` takes
+#    any string — so the check is here, against the domain's own
+#    `<Domain>DeviceClass` enum read off the running core, and a core that
+#    will not say is refused rather than written to unchecked;
+#  - a SWITCH (a smart plug running a fan or a lamp) is shown as a light,
+#    fan, lock, cover, siren or valve by the `switch_as_x` helper: a config
+#    entry whose entity — unique_id is the entry's own id — takes the
+#    switch's place while the switch is hidden, and removing the entry
+#    unhides it (switch_as_x's own `async_remove_entry` does that). The
+#    entry is made through the helper's own config flow, which is what the
+#    dialog does too, and what the flow offers (the target domains, whether
+#    `invert` exists — 2024.2 on) is read off the form it returns rather than
+#    assumed. Only a switch can be wrapped: a fan entity cannot be shown as
+#    a light, and the refusal says what can be done instead;
+#  - a sensor's display precision and unit live in the registry's `sensor`
+#    entity options, the same mapping the dialog writes.
+#
+# A sensor's and a number's device class is refused rather than overridden.
+# It decides the unit, and long-term statistics group units by the device
+# class on the STATE (`sensor/recorder.py`), which the override changes — so
+# a wrong one quietly breaks history nobody is looking at, and Home
+# Assistant's own UI does not offer it for that reason.
+
+SWITCH_AS_X = "switch_as_x"
+# config_entries.SOURCE_USER's value: the step a person starts the flow at.
+_FLOW_SOURCE_USER = "user"
+
+# The domains that have device classes, and the enum each keeps them in —
+# importable from the domain's package on every core this integration runs
+# on (the enums moved into each `const.py` later and stayed re-exported).
+DEVICE_CLASS_ENUMS = {
+    "binary_sensor": "BinarySensorDeviceClass",
+    "button": "ButtonDeviceClass",
+    "cover": "CoverDeviceClass",
+    "event": "EventDeviceClass",
+    "humidifier": "HumidifierDeviceClass",
+    "media_player": "MediaPlayerDeviceClass",
+    "switch": "SwitchDeviceClass",
+    "update": "UpdateDeviceClass",
+    "valve": "ValveDeviceClass",
+}
+DEVICE_CLASS_REFUSED = {
+    "sensor": (
+        "{entity_id} is a sensor, and brAIn will not override a sensor's "
+        "device class: it decides the unit, and Home Assistant's long-term "
+        "statistics group units by it, so a wrong one breaks the history. "
+        "Home Assistant's own settings do not offer it either. Its unit and "
+        "display precision can be changed with brain.set_sensor_display."
+    ),
+    "number": (
+        "{entity_id} is a number, and brAIn will not override a number's "
+        "device class: it decides the unit the value is read in, and Home "
+        "Assistant's own settings do not offer it."
+    ),
+}
+# What switch_as_x has offered as targets, for the sentences that tell
+# somebody what to do instead. Never used to validate a request: the live
+# flow's own form says what this core offers.
+SWITCH_AS_TARGETS = ("cover", "fan", "light", "lock", "siren", "valve")
+# switch_as_x's own strings: "Invert state, only supported for cover, lock
+# and valve." On a light, fan or siren Core takes the flag and ignores it.
+SWITCH_AS_INVERTIBLE = ("cover", "lock", "valve")
+_NO_INVERT = (
+    "This Home Assistant's switch_as_x helper has no invert option (it "
+    "arrived in 2024.2), so the switch can only be shown as it is."
+)
+# Display precision: the dialog's own choices, 0 to 6 decimals.
+SENSOR_PRECISION_MAX = 6
+# How long to wait for a new helper's entity to reach the registry. Setting
+# the entry up is awaited by the flow, so this is a margin, not a poll.
+_WRAPPER_WAIT_S = 3.0
+
+
+def _domain(entity_id: str) -> str:
+    return str(entity_id).split(".", 1)[0]
+
+
+async def _component(hass: HomeAssistant, path: str):
+    """A core component module (`binary_sensor`, `sensor.const`), or None
+    when this core has no such thing."""
+    name = f"homeassistant.components.{path}"
+    module = sys.modules.get(name)
+    if module is not None:
+        return module
+    try:
+        # Off the loop: importing a component that is not loaded yet reads
+        # files, which Home Assistant flags inside the event loop.
+        return await hass.async_add_executor_job(importlib.import_module, name)
+    except Exception:  # noqa: BLE001 — a core without it, or one that fails to load
+        return None
+
+
+async def _device_classes(hass: HomeAssistant, domain: str) -> list[str] | None:
+    """The device classes this core offers for a domain, or None when it
+    has none or will not say."""
+    enum_name = DEVICE_CLASS_ENUMS.get(domain)
+    if enum_name is None:
+        return None
+    module = await _component(hass, domain)
+    enum = getattr(module, enum_name, None) if module is not None else None
+    if enum is None:
+        return None
+    try:
+        values = sorted({str(getattr(member, "value", member)) for member in enum})
+    except TypeError:
+        return None
+    return values or None
+
+
+def _not_in_registry(hass: HomeAssistant, entity_id: str, where: str) -> str:
+    """Why a setting cannot be stored on an entity the registry lacks."""
+    if hass.states.get(entity_id) is not None:
+        return (
+            f"{entity_id} has no unique ID, so Home Assistant keeps no "
+            f"registry entry to store a setting on — {where}"
+        )
+    return f"Entity not found: {entity_id}"
+
+
+def _resolve_entity_ref(registry, ref) -> str | None:
+    """An entity id from either an entity id or a registry entry id.
+
+    switch_as_x stores whichever it was handed and later rewrites it to
+    follow a rename, and a 2023 registry's `async_get` takes an entity id
+    only — so a uuid is looked up by walking the entries."""
+    if not isinstance(ref, str) or not ref:
+        return None
+    if "." in ref:
+        return ref
+    for entry in getattr(registry, "entities", {}).values():
+        if getattr(entry, "id", None) == ref:
+            return entry.entity_id
+    return None
+
+
+def _wrapper_entity_id(registry, entry) -> str | None:
+    """The entity a switch_as_x entry made — its unique_id is the entry id."""
+    target = (entry.options or {}).get("target_domain")
+    if not target:
+        return None
+    return registry.async_get_entity_id(target, SWITCH_AS_X, entry.entry_id)
+
+
+def _switch_as_entries(hass: HomeAssistant, registry, switch_id: str) -> list:
+    """Every switch_as_x entry wrapping this switch, with the entity it made."""
+    refs = {switch_id}
+    switch_entry = registry.async_get(switch_id)
+    if switch_entry is not None and getattr(switch_entry, "id", None):
+        refs.add(switch_entry.id)
+    return [
+        (entry, _wrapper_entity_id(registry, entry))
+        for entry in hass.config_entries.async_entries(SWITCH_AS_X)
+        if (entry.options or {}).get("entity_id") in refs
+    ]
+
+
+def _wrapped_switch(hass: HomeAssistant, registry, reg_entry):
+    """(config entry, the switch it wraps) when this registry entry is a
+    switch_as_x entity, else None."""
+    if reg_entry is None or getattr(reg_entry, "platform", None) != SWITCH_AS_X:
+        return None
+    entry_id = getattr(reg_entry, "config_entry_id", None)
+    config_entry = (
+        hass.config_entries.async_get_entry(entry_id) if entry_id else None
+    )
+    options = getattr(reg_entry, "options", None) or {}
+    switch = (options.get(SWITCH_AS_X) or {}).get("entity_id")
+    if not switch and config_entry is not None:
+        switch = _resolve_entity_ref(
+            registry, (config_entry.options or {}).get("entity_id")
+        )
+    return config_entry, switch
+
+
+def _references_to(hass: HomeAssistant, entity_ids) -> list[str]:
+    """Automations, scripts and scenes that name any of these entities."""
+    wanted = {e for e in entity_ids if e}
+    if not wanted:
+        return []
+    return sorted(
+        source_id
+        for source_id, referenced in _reference_sources(hass)
+        if wanted & set(referenced)
+    )
+
+
+async def _no_device_classes(hass: HomeAssistant, registry, entity_id: str,
+                             reg_entry) -> str:
+    """The sentence for an entity whose domain has no device classes."""
+    domain = _domain(entity_id)
+    wrapped = _wrapped_switch(hass, registry, reg_entry)
+    if wrapped is not None and wrapped[1]:
+        return (
+            f"{entity_id} is {wrapped[1]} shown as a {domain}. To show it as "
+            f"something else, call brain.show_switch_as on {wrapped[1]} with "
+            "another target_domain, or brain.stop_showing_switch_as to make "
+            "it a switch again."
+        )
+    if domain in SWITCH_AS_TARGETS:
+        return (
+            f"A {domain} has no device classes in Home Assistant, and only a "
+            f"switch can be shown as another kind of device — so {entity_id} "
+            "cannot be shown as anything else. If it runs off a smart plug, "
+            "show the plug's switch as what you want with brain.show_switch_as."
+        )
+    return (
+        f"Home Assistant has no device classes for {domain} entities. It has "
+        f"them for: {', '.join(sorted(DEVICE_CLASS_ENUMS))}."
+    )
+
+
+async def _not_a_switch(hass: HomeAssistant, entity_id: str) -> str:
+    """The sentence for show_switch_as handed something that is not a switch."""
+    domain = _domain(entity_id)
+    if domain in DEVICE_CLASS_ENUMS:
+        choices = await _device_classes(hass, domain)
+        listed = f" (choices: {', '.join(choices)})" if choices else ""
+        return (
+            f"{entity_id} is a {domain}, and only a switch can be shown as "
+            f"another kind of device. A {domain}'s type is its device class: "
+            f"change it with brain.set_device_class{listed}."
+        )
+    if domain == "sensor":
+        return (
+            f"{entity_id} is a sensor, and only a switch can be shown as "
+            "another kind of device. A sensor's unit and display precision "
+            "can be changed with brain.set_sensor_display."
+        )
+    return (
+        f"{entity_id} is a {domain}, not a switch. Home Assistant can show "
+        f"only a switch as another kind of device, so a {domain} cannot be "
+        "shown as a light or anything else. If it is plugged into a smart "
+        "plug, show that plug's switch instead (brain.show_switch_as with "
+        "the plug's switch.* entity)."
+    )
+
+
+def _schema_fields(schema) -> dict:
+    """{field name: validator} off a flow form's data_schema, or {} when it
+    cannot be read. Both voluptuous's markers and its successor's keep the
+    field name on the marker's `schema`."""
+    fields = getattr(schema, "schema", None)
+    if not isinstance(fields, dict):
+        return {}
+    named = {}
+    for key, validator in fields.items():
+        name = getattr(key, "schema", key)
+        if isinstance(name, str):
+            named[name] = validator
+    return named
+
+
+def _select_options(validator) -> list[str]:
+    """The values a select selector offers, or [] when it cannot be read.
+    2023 cores list `{value, label}` dicts and later ones plain values."""
+    config = getattr(validator, "config", None)
+    options = config.get("options") if isinstance(config, dict) else None
+    if not isinstance(options, (list, tuple)):
+        return []
+    values = []
+    for option in options:
+        value = option.get("value") if isinstance(option, dict) else option
+        if isinstance(value, str) and value:
+            values.append(str(value))
+    return values
+
+
+def _check_invert_target(target: str) -> None:
+    if target not in SWITCH_AS_INVERTIBLE:
+        raise ServiceValidationError(
+            f"invert only changes a {', a '.join(SWITCH_AS_INVERTIBLE[:-1])} "
+            f"or a {SWITCH_AS_INVERTIBLE[-1]} — Home Assistant ignores it on "
+            f"a {target}. Leave invert off."
+        )
+
+
+async def _set_invert(hass: HomeAssistant, entry, invert: bool) -> None:
+    """Flip invert on an existing helper through its own options flow —
+    the entity dialog's route — which reloads the entry when it finishes."""
+    manager = hass.config_entries.options
+    flow = await manager.async_init(entry.entry_id)
+    flow_id = flow.get("flow_id") if isinstance(flow, dict) else None
+    if not flow_id or flow.get("type") != "form":
+        why = (flow.get("reason") or flow.get("type")) \
+            if isinstance(flow, dict) else flow
+        raise HomeAssistantError(
+            f"Home Assistant would not open the switch_as_x helper's "
+            f"options ({why})."
+        )
+    try:
+        result = await manager.async_configure(flow_id, {"invert": invert})
+    except Exception as err:  # noqa: BLE001 — the helper's own schema refusing
+        with suppress(Exception):
+            manager.async_abort(flow_id)
+        raise HomeAssistantError(
+            f"Home Assistant's switch_as_x helper would not change invert: {err}"
+        ) from err
+    kind = str(result.get("type")) if isinstance(result, dict) else ""
+    if kind != "create_entry":
+        with suppress(Exception):
+            manager.async_abort(flow_id)
+        reason = (result.get("reason") or result.get("errors") or kind) \
+            if isinstance(result, dict) else result
+        raise HomeAssistantError(
+            f"Home Assistant's switch_as_x helper did not change invert ({reason})."
+        )
+
+
+async def _await_wrapper(hass: HomeAssistant, registry, target: str,
+                         entry_id: str | None) -> str | None:
+    """The new helper's entity id once the registry holds it, or None."""
+    if not entry_id:
+        return None
+    deadline = time.monotonic() + _WRAPPER_WAIT_S
+    while True:
+        found = registry.async_get_entity_id(target, SWITCH_AS_X, entry_id)
+        if found or time.monotonic() >= deadline:
+            return found
+        await asyncio.sleep(0.1)
+
+
+async def _set_device_class(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Show an entity as a different kind of device: a binary sensor as a
+    door, a window or a leak; a cover as a garage door or a blind; a switch
+    as an outlet. An omitted or empty device_class gives back the
+    integration's own. Every entity is checked before any is changed."""
+    registry = er.async_get(hass)
+    raw = call.data.get("device_class")
+    wanted = str(raw).strip().lower() if raw is not None else ""
+    wanted = wanted or None
+    choices_by_domain: dict[str, list[str] | None] = {}
+    plans = []
+    for entity_id in call.data["entity_id"]:
+        reg_entry = registry.async_get(entity_id)
+        domain = _domain(entity_id)
+        # The kind of entity first: "a light has no device classes" is the
+        # answer for a light whether or not it has a unique ID.
+        if domain in DEVICE_CLASS_REFUSED:
+            raise ServiceValidationError(
+                DEVICE_CLASS_REFUSED[domain].format(entity_id=entity_id)
+            )
+        if domain not in DEVICE_CLASS_ENUMS:
+            raise ServiceValidationError(
+                await _no_device_classes(hass, registry, entity_id, reg_entry)
+            )
+        if reg_entry is None:
+            raise ServiceValidationError(_not_in_registry(
+                hass, entity_id,
+                "set its device class where it is defined (its YAML, or "
+                "homeassistant: customize:).",
+            ))
+        if wanted is not None:
+            if domain not in choices_by_domain:
+                choices_by_domain[domain] = await _device_classes(hass, domain)
+            choices = choices_by_domain[domain]
+            if not choices:
+                raise HomeAssistantError(
+                    f"brAIn could not read the device classes this Home "
+                    f"Assistant offers for {domain}, so it will not write an "
+                    f"unchecked one onto {entity_id}."
+                )
+            if wanted not in choices:
+                raise ServiceValidationError(
+                    f'"{wanted}" is not a {domain} device class. Choose one '
+                    f"of: {', '.join(choices)} — or leave device_class empty "
+                    "to give back the integration's own."
+                )
+        plans.append((entity_id, reg_entry))
+    changed = []
+    for entity_id, reg_entry in plans:
+        original = getattr(reg_entry, "original_device_class", None)
+        previous = getattr(reg_entry, "device_class", None) or original
+        # Choosing what the integration already reports is following it:
+        # stored as no override, so a later change upstream still lands.
+        stored = None if wanted is None or wanted == original else wanted
+        registry.async_update_entity(entity_id, device_class=stored)
+        changed.append({
+            "entity_id": entity_id,
+            "device_class": stored or original,
+            "override": stored,
+            "original_device_class": original,
+            "previous": previous,
+        })
+    return {"entities": changed}
+
+
+async def _show_switch_as(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Show a switch as a light, fan, lock, cover, siren or valve through
+    Home Assistant's own switch_as_x helper. The original switch is hidden
+    and keeps working; brain.stop_showing_switch_as undoes it. A switch
+    already shown as something else is moved to the new type, the way the
+    entity dialog does it."""
+    entity_id = call.data["entity_id"]
+    target = str(call.data["target_domain"]).strip().lower()
+    invert = call.data.get("invert")
+    registry = er.async_get(hass)
+    wrapped = _wrapped_switch(hass, registry, registry.async_get(entity_id))
+    if wrapped is not None:
+        if not wrapped[1]:
+            raise ServiceValidationError(
+                f"{entity_id} is a switch shown as a {_domain(entity_id)}, "
+                "but brAIn could not tell which switch it wraps."
+            )
+        switch_id = wrapped[1]
+    elif _domain(entity_id) == "switch":
+        switch_id = entity_id
+    else:
+        raise ServiceValidationError(await _not_a_switch(hass, entity_id))
+    if registry.async_get(switch_id) is None and hass.states.get(switch_id) is None:
+        raise ServiceValidationError(f"Entity not found: {switch_id}")
+    if target == "switch":
+        raise ServiceValidationError(
+            f"To show {switch_id} as a switch again, call "
+            "brain.stop_showing_switch_as."
+        )
+    if invert:
+        _check_invert_target(target)
+    existing = _switch_as_entries(hass, registry, switch_id)
+
+    for entry, wrapper in existing:
+        options = entry.options or {}
+        if options.get("target_domain") != target:
+            continue
+        if invert is None or bool(options.get("invert", False)) == bool(invert):
+            return {
+                "entity_id": wrapper,
+                "switch_entity_id": switch_id,
+                "target_domain": target,
+                "config_entry_id": entry.entry_id,
+                "already": True,
+            }
+        # The same type with invert flipped: the helper's own options flow
+        # changes the entry and reloads it, which keeps the entity and
+        # everything somebody set on it. The dialog drives that options flow
+        # and so does this, so the helper's own schema is what accepts it.
+        if "invert" not in options:
+            raise ServiceValidationError(_NO_INVERT)
+        await _set_invert(hass, entry, bool(invert))
+        return {
+            "entity_id": wrapper,
+            "switch_entity_id": switch_id,
+            "target_domain": target,
+            "config_entry_id": entry.entry_id,
+            "invert": bool(invert),
+            "changed": "invert",
+        }
+
+    flow = await hass.config_entries.flow.async_init(
+        SWITCH_AS_X, context={"source": _FLOW_SOURCE_USER}
+    )
+    flow_id = flow.get("flow_id") if isinstance(flow, dict) else None
+    finished = False
+    replaced: list[dict] = []
+    try:
+        if not flow_id or flow.get("type") != "form":
+            why = (flow.get("reason") or flow.get("type")) \
+                if isinstance(flow, dict) else flow
+            raise HomeAssistantError(
+                f"Home Assistant would not start its switch_as_x helper ({why})."
+            )
+        fields = _schema_fields(flow.get("data_schema"))
+        offered = _select_options(fields.get("target_domain"))
+        if offered and target not in offered:
+            raise ServiceValidationError(
+                f"This Home Assistant can show a switch as: "
+                f"{', '.join(offered)} — not {target}."
+            )
+        if invert is not None and fields and "invert" not in fields:
+            if invert:
+                raise ServiceValidationError(_NO_INVERT)
+            invert = None  # off on a core without it is what it does anyway
+        user_input: dict[str, Any] = {"entity_id": switch_id, "target_domain": target}
+        if invert is not None:
+            user_input["invert"] = bool(invert)
+        for entry, wrapper in existing:
+            replaced.append({
+                "entity_id": wrapper,
+                "target_domain": (entry.options or {}).get("target_domain"),
+                "config_entry_id": entry.entry_id,
+            })
+            await hass.config_entries.async_remove(entry.entry_id)
+        try:
+            result = await hass.config_entries.flow.async_configure(
+                flow_id, user_input
+            )
+        except Exception as err:  # noqa: BLE001 — the helper's own schema refusing
+            raise ServiceValidationError(
+                f"Home Assistant's switch_as_x helper would not show "
+                f"{switch_id} as a {target}: {err}"
+                + _restored_note(switch_id, replaced)
+            ) from err
+        kind = str(result.get("type")) if isinstance(result, dict) else ""
+        finished = kind in ("create_entry", "abort")
+        if kind != "create_entry":
+            reason = (result.get("reason") or result.get("errors") or kind) \
+                if isinstance(result, dict) else result
+            raise HomeAssistantError(
+                f"Home Assistant's switch_as_x helper did not create the "
+                f"{target} ({reason})." + _restored_note(switch_id, replaced)
+            )
+    finally:
+        if not finished and flow_id:
+            with suppress(Exception):
+                hass.config_entries.flow.async_abort(flow_id)
+
+    entry = result.get("result")
+    entry_id = getattr(entry, "entry_id", None)
+    new_entity = await _await_wrapper(hass, registry, target, entry_id)
+    response: dict[str, Any] = {
+        "entity_id": new_entity,
+        "switch_entity_id": switch_id,
+        "target_domain": target,
+        "config_entry_id": entry_id,
+    }
+    if invert is not None:
+        response["invert"] = bool(invert)
+    notes = []
+    if new_entity is None:
+        notes.append(
+            "The helper was made but its entity has not appeared yet — look "
+            "under Settings → Devices & services → Helpers."
+        )
+    if replaced:
+        response["replaced"] = replaced
+        references = _references_to(hass, [r["entity_id"] for r in replaced])
+        if references:
+            response["references_to_replaced"] = references
+            notes.append(
+                "These automations/scripts/scenes used the entity that was "
+                f"replaced; point them at {new_entity or 'the new one'}."
+            )
+    if notes:
+        response["note"] = " ".join(notes)
+    return response
+
+
+def _restored_note(switch_id: str, replaced: list[dict]) -> str:
+    if not replaced:
+        return ""
+    gone = ", ".join(r["entity_id"] or r["config_entry_id"] for r in replaced)
+    return f" The old one ({gone}) was removed, so {switch_id} shows as a switch again."
+
+
+async def _stop_showing_switch_as(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict | None:
+    """Undo brain.show_switch_as: remove the switch_as_x helper, which
+    unhides the switch it wrapped. Takes the helper's entity or the switch.
+    dry_run previews what goes and what refers to it."""
+    entity_id = call.data["entity_id"]
+    registry = er.async_get(hass)
+    reg_entry = registry.async_get(entity_id)
+    wrapped = _wrapped_switch(hass, registry, reg_entry)
+    if wrapped is not None:
+        config_entry, switch_id = wrapped
+        if config_entry is None:
+            raise ServiceValidationError(
+                f"{entity_id} was made by the switch_as_x helper, but its "
+                "helper is gone — remove the leftover with "
+                "brain.delete_orphaned_entities."
+            )
+        targets = [(config_entry, entity_id)]
+    elif _domain(entity_id) == "switch":
+        switch_id = entity_id
+        targets = _switch_as_entries(hass, registry, switch_id)
+        if not targets:
+            raise ServiceValidationError(
+                f"{entity_id} is not shown as another kind of device, so "
+                "there is nothing to undo — it already shows as a switch."
+            )
+    else:
+        platform = getattr(reg_entry, "platform", None)
+        made_by = f" from the {platform} integration" if platform else ""
+        raise ServiceValidationError(
+            f"{entity_id} is a {_domain(entity_id)}{made_by}, not a switch "
+            "shown as another kind of device, so there is nothing to undo."
+        )
+    removed = [wrapper for _, wrapper in targets]
+    result: dict[str, Any] = {
+        "dry_run": _dry_run(call),
+        "switch_entity_id": switch_id,
+        "removed_entity_ids": [w for w in removed if w],
+        "config_entry_ids": [entry.entry_id for entry, _ in targets],
+    }
+    references = _references_to(hass, removed)
+    if references:
+        result["references_to_removed"] = references
+        result["note"] = (
+            "These automations/scripts/scenes use the entity that goes away; "
+            f"point them back at {switch_id}."
+        )
+    if _dry_run(call):
+        return result
+    for entry, _ in targets:
+        outcome = await hass.config_entries.async_remove(entry.entry_id)
+        if isinstance(outcome, dict) and outcome.get("require_restart"):
+            result["require_restart"] = True
+    return result
+
+
+async def _convertible_units(hass: HomeAssistant, reg_entry) -> list[str] | None:
+    """The units Home Assistant can show this sensor in, or None when its
+    device class has no converter (or the core will not say).
+
+    The sensor converts by its OWN device class — the one the integration
+    reports — so that is what is asked, not an override."""
+    device_class = getattr(reg_entry, "original_device_class", None)
+    if not device_class:
+        return None
+    module = await _component(hass, "sensor.const")
+    converters = getattr(module, "UNIT_CONVERTERS", None) if module else None
+    if not isinstance(converters, dict):
+        return None
+    units = getattr(converters.get(device_class), "VALID_UNITS", None)
+    if not units:
+        return None
+    try:
+        return sorted(str(unit) for unit in units if unit is not None)
+    except TypeError:
+        return None
+
+
+async def _set_sensor_display(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Change how a sensor is shown: its display precision (decimal places)
+    and, where Home Assistant can convert it, its unit. Only the fields
+    named change; null puts back the integration's own."""
+    named = [f for f in ("display_precision", "unit_of_measurement")
+             if f in call.data]
+    if not named:
+        raise ServiceValidationError(
+            "Nothing to update: name display_precision, unit_of_measurement "
+            "or both (null puts back the integration's own)."
+        )
+    precision = call.data.get("display_precision")
+    if precision is not None and (
+        isinstance(precision, bool) or not isinstance(precision, int)
+        or not 0 <= precision <= SENSOR_PRECISION_MAX
+    ):
+        raise ServiceValidationError(
+            f"display_precision is a whole number of decimal places from 0 to "
+            f"{SENSOR_PRECISION_MAX}, or null for the integration's own."
+        )
+    unit = call.data.get("unit_of_measurement")
+    unit = str(unit).strip() if unit is not None else ""
+    registry = er.async_get(hass)
+    plans = []
+    for entity_id in call.data["entity_id"]:
+        if _domain(entity_id) != "sensor":
+            raise ServiceValidationError(
+                f"{entity_id} is not a sensor. Display precision and unit "
+                "are a sensor's settings; to change what kind of device "
+                "something is shown as, see brain.set_device_class and "
+                "brain.show_switch_as."
+            )
+        reg_entry = registry.async_get(entity_id)
+        if reg_entry is None:
+            raise ServiceValidationError(_not_in_registry(
+                hass, entity_id,
+                "set its precision or unit where it is defined.",
+            ))
+        if "unit_of_measurement" in call.data and unit:
+            valid = await _convertible_units(hass, reg_entry)
+            if valid is None:
+                kind = getattr(reg_entry, "original_device_class", None)
+                raise ServiceValidationError(
+                    f"{entity_id}'s unit cannot be changed: Home Assistant "
+                    "converts units only for sensors whose device class has a "
+                    "converter (temperature, energy, power, pressure, …), and "
+                    f"this one's is {kind or 'not set'}. Its display "
+                    "precision can still be changed."
+                )
+            if unit not in valid:
+                raise ServiceValidationError(
+                    f'"{unit}" is not a unit Home Assistant can show '
+                    f"{entity_id} in. Choose one of: {', '.join(valid)}."
+                )
+        plans.append((entity_id, reg_entry))
+    changed = []
+    for entity_id, reg_entry in plans:
+        options = dict((getattr(reg_entry, "options", None) or {}).get("sensor") or {})
+        for name in named:
+            value = precision if name == "display_precision" else (unit or None)
+            if value is None:
+                options.pop(name, None)
+            else:
+                options[name] = value
+        registry.async_update_entity_options(entity_id, "sensor", options)
+        changed.append({
+            "entity_id": entity_id,
+            **{name: options.get(name) for name in named},
+        })
+    return {"entities": changed}
 
 
 # ---------------------------------------------------------------------------
@@ -2175,6 +2891,32 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     PowerTool("delete_orphaned_entities", _delete_orphaned_entities, {
         vol.Optional("dry_run", default=True): cv.boolean,
         vol.Optional("entity_id"): _ENTITY_LIST,
+    }, has_response=True),
+    # Device types — the entity dialog's "Show as"
+    PowerTool("set_device_class", _set_device_class, {
+        vol.Required("entity_id"): _ENTITY_LIST,
+        # Omitted, empty or null gives back the integration's own; the value
+        # is checked against the domain's device classes in the handler,
+        # because which those are is a question for the running core.
+        vol.Optional("device_class"): vol.Any(None, cv.string),
+    }, has_response=True),
+    PowerTool("show_switch_as", _show_switch_as, {
+        vol.Required("entity_id"): cv.entity_id,
+        # Checked against what the core's own switch_as_x flow offers.
+        vol.Required("target_domain"): cv.string,
+        vol.Optional("invert"): cv.boolean,
+    }, has_response=True),
+    PowerTool("stop_showing_switch_as", _stop_showing_switch_as, {
+        vol.Required("entity_id"): cv.entity_id,
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
+    PowerTool("set_sensor_display", _set_sensor_display, {
+        vol.Required("entity_id"): _ENTITY_LIST,
+        vol.Optional("display_precision"): vol.Any(
+            None,
+            vol.All(vol.Coerce(int), vol.Range(min=0, max=SENSOR_PRECISION_MAX)),
+        ),
+        vol.Optional("unit_of_measurement"): vol.Any(None, cv.string),
     }, has_response=True),
     # Devices
     PowerTool("rename_device", _rename_device, {

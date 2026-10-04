@@ -902,6 +902,11 @@ ANALYST_DENIED = [
     f"{MCP}minecraft_world", f"{MCP}minecraft_command",
     f"{MCP}minecraft_server", f"{MCP}minecraft_addons",
     f"{MCP}print_label", f"{MCP}bright_show",
+    # What a device shows as: each one rewrites the entity registry or
+    # creates and removes a helper's config entry, which an entity in a
+    # dashboard, an automation or a voice assistant then stands on.
+    f"{MCP}set_device_class", f"{MCP}show_switch_as",
+    f"{MCP}stop_showing_switch_as", f"{MCP}set_sensor_display",
     # The platform's own reach past the run — a peer session, a phone, a
     # timer. `--tools ""` already takes the built-ins off an analyst run;
     # they are named here as well because this list is what a study

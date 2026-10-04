@@ -3676,7 +3676,23 @@ def _trim_registry_item(registry, item):
         return {k: v for k, v in trimmed.items() if v not in (None, [], "")}
     elif registry == "entities":
         keep = {"entity_id", "name", "original_name", "device_id", "area_id",
-                "platform", "disabled_by", "hidden_by", "labels"}
+                "platform", "disabled_by", "hidden_by", "labels",
+                "device_class", "original_device_class"}
+        trimmed = {k: v for k, v in item.items()
+                   if k in keep and v not in (None, [], "")}
+        # What the entity is shown as, where the listing already says: a
+        # switch_as_x entity names the switch it stands in for, and a
+        # sensor's display options are the ones a person set.
+        options = item.get("options") if isinstance(item.get("options"), dict) else {}
+        wraps = (options.get("switch_as_x") or {}).get("entity_id")
+        if isinstance(wraps, str) and wraps:
+            trimmed["shows_switch"] = wraps
+        sensor = options.get("sensor") or {}
+        if sensor.get("display_precision") is not None:
+            trimmed["display_precision"] = sensor["display_precision"]
+        if sensor.get("unit_of_measurement"):
+            trimmed["display_unit"] = sensor["unit_of_measurement"]
+        return trimmed
     elif registry == "users":
         trimmed = {
             "user_id": item.get("id"),
@@ -3735,15 +3751,204 @@ def get_registry(registry, name_filter=None):
                 for v in item.values()
             )
         ]
+    typed_note = _add_entity_types(items) if registry == "entities" else None
     if len(items) > MAX_REGISTRY_RESULTS:
         return {
             "registry": registry,
             "count": len(items),
             "note": (f"Result truncated to {MAX_REGISTRY_RESULTS} — "
-                     "narrow the search with name_filter."),
+                     "narrow the search with name_filter."
+                     + (f" {typed_note}" if typed_note else "")),
             "items": items[:MAX_REGISTRY_RESULTS],
         }
-    return {"registry": registry, "count": len(items), "items": items}
+    out = {"registry": registry, "count": len(items), "items": items}
+    if typed_note:
+        out["note"] = typed_note
+    return out
+
+
+# The entity listing (`config/entity_registry/list`) carries no device class
+# — Core builds it from `as_partial_dict`, and the device class and the
+# integration's original are on the extended dict only. So a list narrowed
+# to this many rows is read again through `get_entries`, one round trip,
+# which is what "what is this shown as" needs; a whole-house listing is not.
+MAX_TYPED_ENTITIES = 100
+
+
+def _add_entity_types(items):
+    """Fill in device_class (the override a person set, "Show as") and
+    original_device_class (what the integration reports) on entity rows.
+    Returns a note when it could not, or None."""
+    rows = [i for i in items if i.get("entity_id")]
+    if not rows:
+        return None
+    if len(rows) > MAX_TYPED_ENTITIES:
+        return (f"device_class and original_device_class are filled in when "
+                f"name_filter narrows the list to {MAX_TYPED_ENTITIES} "
+                "entities or fewer.")
+    try:
+        entries = _ws_command({
+            "type": "config/entity_registry/get_entries",
+            "entity_ids": [i["entity_id"] for i in rows],
+        }, timeout=30)
+    except Exception:  # noqa: BLE001 — the list stands without them
+        entries = None
+    if not isinstance(entries, dict) or "error" in entries:
+        return "The device classes could not be read this time."
+    for item in rows:
+        full = entries.get(item["entity_id"])
+        if not isinstance(full, dict):
+            continue
+        for key in ("device_class", "original_device_class"):
+            if full.get(key):
+                item[key] = full[key]
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Device types — the "Show as" setting
+# ---------------------------------------------------------------------------
+#
+# What kind of device an entity is shown as is one Home Assistant setting
+# reached three ways — a device class override (a binary sensor as a door, a
+# cover as a garage door, a switch as an outlet), the switch_as_x helper (a
+# smart plug's switch as a light or a fan), a sensor's display options — and
+# brAIn's integration holds the one implementation of each as a Power Tool:
+# checked against what the running core offers, refused in a sentence that
+# says what to do instead, with an undo for the helper. So each tool here is
+# one `brain.*` service call with response data THROUGH `call_service`,
+# which is what puts the deny-list, `protected_entities` and the voice rules
+# in front of it: a brain.* service naming another domain's entity is
+# refused at the voice level by `_voice_service_refusal`, and every new
+# agent's Blocked services list carries `brain.*`.
+
+_TRUE_WORDS = ("true", "1", "yes", "on")
+
+
+def _ws_error_parts(text):
+    """(code, sentence) out of a WebSocket error, which `_ws_command` hands
+    back as the repr of Core's error dict — `{'code':
+    'service_validation_error', 'message': 'Validation error: …'}`. Core
+    puts "Validation error: " in front of a ServiceValidationError's own
+    sentence (websocket_api's handle_call_service), and the sentence is the
+    part a person can act on. Anything that is not that shape is its own
+    sentence, with no code."""
+    text = str(text)
+    if text.startswith("{"):
+        try:
+            import ast  # noqa: PLC0415 — only on this path
+            parsed = ast.literal_eval(text)
+        except (ValueError, SyntaxError):
+            return "", text
+        if isinstance(parsed, dict) and parsed.get("message"):
+            message = str(parsed["message"])
+            if message.startswith("Validation error: "):
+                message = message[len("Validation error: "):]
+            return str(parsed.get("code") or ""), message
+    return "", text
+
+
+def _brain_call(service, data):
+    """One brain.* Power Tool with response data, its failure said in words."""
+    result = call_service("brain", service, data, return_response=True)
+    if isinstance(result, dict) and result.get("error"):
+        code, text = _ws_error_parts(result["error"])
+        if code == "not_found" and f"brain.{service}" in text:
+            return {"error": (
+                f"brAIn's Home Assistant integration does not have "
+                f"brain.{service} yet: the add-on deploys it on start and Home "
+                "Assistant loads it on its next restart. Tell the user to "
+                "restart Home Assistant, then try again.")}
+        return {"error": text}
+    response = result.get("response") if isinstance(result, dict) else None
+    return response if isinstance(response, dict) else {"done": True}
+
+
+def _entity_list_or_error(entity_id, example):
+    """One entity id or several, as a list, or an error dict."""
+    raw = entity_id if isinstance(entity_id, list) else \
+        [part for part in str(entity_id or "").split(",")]
+    ids = [str(e).strip().lower() for e in raw if str(e).strip()]
+    if not ids:
+        return {"error": f"Name the entity, e.g. {example}."}
+    for eid in ids:
+        bad = _entity_or_error(eid, example)
+        if bad:
+            return bad
+    return ids
+
+
+def set_device_class(entity_id, device_class):
+    """Change what an entity is shown as (its device class), or give back
+    the integration's own with an empty device_class."""
+    ids = _entity_list_or_error(entity_id, "binary_sensor.back_door")
+    if isinstance(ids, dict):
+        return ids
+    data = {"entity_id": ids}
+    value = str(device_class or "").strip().lower()
+    if value:
+        data["device_class"] = value
+    return _brain_call("set_device_class", data)
+
+
+def show_switch_as(entity_id, target_domain, invert=None):
+    """Show a switch as a light, fan, lock, cover, siren or valve."""
+    eid = str(entity_id or "").strip().lower()
+    bad = _entity_or_error(eid, "switch.kitchen_plug")
+    if bad:
+        return bad
+    target = str(target_domain or "").strip().lower()
+    if not target or "." in target:
+        return {"error": ("target_domain is the kind of device to show it as: "
+                          "cover, fan, light, lock, siren or valve.")}
+    data = {"entity_id": eid, "target_domain": target}
+    if invert is not None:
+        data["invert"] = invert if isinstance(invert, bool) else \
+            str(invert).strip().lower() in _TRUE_WORDS
+    return _brain_call("show_switch_as", data)
+
+
+def stop_showing_switch_as(entity_id, dry_run=False):
+    """Make a switch shown as something else a switch again."""
+    eid = str(entity_id or "").strip().lower()
+    bad = _entity_or_error(eid, "switch.kitchen_plug")
+    if bad:
+        return bad
+    flag = dry_run if isinstance(dry_run, bool) else \
+        str(dry_run).strip().lower() in _TRUE_WORDS
+    return _brain_call("stop_showing_switch_as",
+                       {"entity_id": eid, "dry_run": flag})
+
+
+_UNSET = object()
+
+
+def set_sensor_display(entity_id, display_precision=_UNSET,
+                       unit_of_measurement=_UNSET):
+    """Change a sensor's display precision and, where it converts, its unit.
+    Only what is named changes; null puts back the integration's own."""
+    ids = _entity_list_or_error(entity_id, "sensor.living_room_temperature")
+    if isinstance(ids, dict):
+        return ids
+    data = {"entity_id": ids}
+    if display_precision is not _UNSET:
+        try:
+            places = None if display_precision in (None, "") \
+                else int(display_precision)
+        except (TypeError, ValueError):
+            return {"error": ("display_precision is a whole number of "
+                              "decimal places from 0 to 6, or -1 for the "
+                              "integration's own.")}
+        # -1 is the schema's spelling of "put back the integration's own":
+        # a JSON-schema integer cannot also be null.
+        data["display_precision"] = None if places is None or places < 0 else places
+    if unit_of_measurement is not _UNSET:
+        unit = str(unit_of_measurement or "").strip()
+        data["unit_of_measurement"] = unit or None
+    if len(data) == 1:
+        return {"error": ("Name display_precision, unit_of_measurement or "
+                          "both (null puts back the integration's own).")}
+    return _brain_call("set_sensor_display", data)
 
 
 def list_dashboards(include_resources=False):
@@ -4691,7 +4896,11 @@ TOOLS = [
             "config_entry_id, user_id) needed by the brain.* management services "
             "— the safe alternative to reading /config/.storage files. "
             "The full registry is retrieved and filtered server-side, then "
-            "capped at 300 rows; use name_filter to narrow large results."
+            "capped at 300 rows; use name_filter to narrow large results. "
+            "Entity rows carry device_class (a \"Show as\" override someone "
+            "set) and original_device_class (what the integration reports) "
+            "once name_filter narrows them to 100 or fewer, and shows_switch "
+            "on an entity that stands in for a switch."
         ),
         "inputSchema": {
             "type": "object",
@@ -4747,6 +4956,121 @@ TOOLS = [
                     "description": "Return only this view (0-based) — for dashboards too large to return whole"
                 }
             }
+        }
+    },
+    {
+        "name": "set_device_class",
+        "description": (
+            "Change what kind of device an entity is shown as — Home "
+            "Assistant's \"Show as\" setting. A binary sensor as a door, "
+            "window, garage_door, motion, occupancy, moisture, smoke…; a cover "
+            "as a garage, blind, shutter, curtain, gate…; a switch as an "
+            "outlet. Checked against the device classes this Home Assistant "
+            "offers, and a wrong one is refused with the list. An empty "
+            "device_class gives back the integration's own. A switch is shown "
+            "as a light or a fan with show_switch_as instead; a sensor's unit "
+            "and decimals with set_sensor_display. Returns the class now in "
+            "effect and the integration's original, so it can be put back."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The entity, e.g. binary_sensor.back_door — or several, separated by commas"
+                },
+                "device_class": {
+                    "type": "string",
+                    "description": "What to show it as, e.g. door, window, moisture, garage, outlet. Empty string gives back the integration's own."
+                }
+            },
+            "required": ["entity_id", "device_class"]
+        }
+    },
+    {
+        "name": "show_switch_as",
+        "description": (
+            "Show a switch — a smart plug running a fan or a lamp — as a "
+            "light, fan, lock, cover, siren or valve, through Home "
+            "Assistant's own \"Change device type of a switch\" helper "
+            "(switch_as_x). The new entity takes the switch's place in "
+            "dashboards and voice; the switch is hidden and keeps working. "
+            "Only a switch can be shown this way: a fan cannot be shown as a "
+            "light. Returns the new entity_id. A switch already shown as "
+            "something else moves to the new type. Undo with "
+            "stop_showing_switch_as."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The switch, e.g. switch.kitchen_plug (or the entity it is already shown as)"
+                },
+                "target_domain": {
+                    "type": "string",
+                    "description": "What to show it as: cover, fan, light, lock, siren or valve (checked against what this Home Assistant offers)"
+                },
+                "invert": {
+                    "type": "boolean",
+                    "description": "Invert the state — cover, lock and valve only, Home Assistant 2024.2 or newer. Omit to leave it as it is."
+                }
+            },
+            "required": ["entity_id", "target_domain"]
+        }
+    },
+    {
+        "name": "stop_showing_switch_as",
+        "description": (
+            "Undo show_switch_as: remove the helper so the switch shows as a "
+            "switch again and is no longer hidden. Takes the switch or the "
+            "entity it is shown as. Lists the automations, scripts and scenes "
+            "that use the entity going away; dry_run reports that without "
+            "changing anything."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The switch, or the light/fan/lock/cover/siren/valve it is shown as"
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "Only report what would go. Default false."
+                }
+            },
+            "required": ["entity_id"]
+        }
+    },
+    {
+        "name": "set_sensor_display",
+        "description": (
+            "Change how a sensor is shown: its display precision (decimal "
+            "places) and, where Home Assistant can convert it, its unit "
+            "(°C to °F, W to kW, …). Only what is named changes. A unit is "
+            "checked against the units Home Assistant can convert that sensor "
+            "to, and refused with the list."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The sensor, e.g. sensor.living_room_temperature — or several, separated by commas"
+                },
+                "display_precision": {
+                    "type": "integer",
+                    "minimum": -1,
+                    "maximum": 6,
+                    "description": "Decimal places to show, 0 to 6; -1 puts back the integration's own"
+                },
+                "unit_of_measurement": {
+                    "type": "string",
+                    "description": "The unit to show it in, e.g. °F or kWh; an empty string puts back the integration's own"
+                }
+            },
+            "required": ["entity_id"]
         }
     },
     {
@@ -5913,6 +6237,11 @@ TOOL_IMPLEMENTATIONS = {
     "get_registry": "get_registry",
     "list_dashboards": "list_dashboards",
     "get_dashboard": "get_dashboard",
+    # What a device shows as — each one brain.* Power Tool through call_service
+    "set_device_class": "set_device_class",
+    "show_switch_as": "show_switch_as",
+    "stop_showing_switch_as": "stop_showing_switch_as",
+    "set_sensor_display": "set_sensor_display",
     # Domain-specific device control
     "control_light": "control_light",
     "control_climate": "control_climate",
@@ -6113,6 +6442,10 @@ TOOL_ALIASES = {"get_device_registry": "get_entity_counts"}
 # refused for, and a long overlapping tool list is also a worse choice of tool.
 VOICE_HIDDEN_TOOLS = frozenset({
     "minecraft_command", "minecraft_server",   # refused for voice in full
+    # A brain.* Power Tool naming another domain's entity, which
+    # `_voice_service_refusal` refuses at call_service on every voice turn.
+    "set_device_class", "show_switch_as", "stop_showing_switch_as",
+    "set_sensor_display",
 })
 VOICE_HIDDEN_PREFIXES = ("music_assistant_",)  # MA_VOICE_REFUSAL, every one
 
@@ -6158,7 +6491,8 @@ INSTRUCTIONS = (
     "get_activity. What is normal: what_is_normal, get_baseline. Automations: "
     "get_automations, get_automation_config (the definition), "
     "get_automation_trace (why a run did what it did), search_related (what a "
-    "script or scene touches). Memory: recall; remember_fact for a durable "
+    "script or scene touches). What a device shows as: set_device_class, "
+    "show_switch_as. Memory: recall; remember_fact for a durable "
     "household fact. A refusal is the homeowner's policy — a protected "
     "entity, a blocked service, what is exposed to voice: tell the user and "
     "do not look for another route."
