@@ -6502,7 +6502,8 @@ async def h_status(request: web.Request) -> web.Response:
         # Why auto-refresh is idle, when it is — the same gates the chips
         # and the pill's dot report, readable as one field.
         "auto": dict(AUTO_STATE),
-        # `enable_insights` off hides the Insights and Proposals tabs.
+        # `enable_insights` off hides the Insights tab (Proposals stays: the
+        # checks pass fills it, and it is the one surface a proposal is on).
         "insights_enabled": insights_enabled(),
         "categories": read["categories"],
         # The Findings tab's badge: everything still waiting on a decision —
