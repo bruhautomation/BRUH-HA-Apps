@@ -2499,8 +2499,16 @@ async def run_healing(reason: str = "schedule") -> dict:
         chronic = planned.get("chronic") or []
         if chronic:
             tz, _tzname = await asyncio.to_thread(baselines.house_timezone)
-            rows_for = [healing.chronic_finding(c, c.get("heals") or [], tz)
-                        for c in chronic]
+            # "With the logs read": the lines that say why, read now.
+            import aiohttp  # noqa: PLC0415
+
+            read = []
+            async with aiohttp.ClientSession() as log_session:
+                for c in chronic:
+                    read.append(await healing.read_logs(log_session, c))
+            rows_for = [healing.chronic_finding(c, c.get("heals") or [], tz,
+                                                logs, where)
+                        for c, (logs, where) in zip(chronic, read)]
             # A direct call inside the thunk, so the sweep that holds every
             # producer to the gate (`test_triage`) can see this one too.
             await asyncio.to_thread(
