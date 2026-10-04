@@ -169,12 +169,19 @@ class FixCase(PanelCase):
         automation_writer.INDEX = automation_writer.JOURNAL_DIR / "index.jsonl"
         self.ledger = tmp / "actions.jsonl"
         actions.LEDGER_FILE = str(self.ledger)
+        # The follow-up ledger an applied fix writes. Its default is under
+        # /data, which a CI runner does not have — and the server's copy,
+        # which in a full run may be a different module object.
+        self._interventions = (self.server.interventions,
+                               self.server.interventions.FILE)
+        self.server.interventions.FILE = tmp / "interventions.jsonl"
 
     def tearDown(self):
         (engine.get_auth, engine.run_analyst, engine.run_agent,
          automation_writer.CONFIG_DIR, automation_writer.JOURNAL_DIR,
          automation_writer.SNAP_DIR, automation_writer.INDEX,
          actions.LEDGER_FILE) = self._fix_olds
+        self._interventions[0].FILE = self._interventions[1]
         super().tearDown()
 
     # -- the two Claude paths ------------------------------------------
@@ -319,6 +326,24 @@ class TestApplyAndCancel(FixCase):
         prompt = self.agent_calls[0]
         self.assertIn(PLAN["steps"][0], prompt)
         self.assertIn("do exactly these steps and nothing else", prompt)
+        self.assertEqual(findings_store.get(row["ts"])["status"], "fixed")
+
+    def test_a_follow_up_that_cannot_be_recorded_does_not_fail_the_fix(self):
+        # The ledger's parent is missing, which is what a write to /data
+        # looks like on a machine without one. The change itself worked, so
+        # the card must say fixed (and keep its Undo), not failed.
+        self.server.interventions.FILE = (Path(self.tmp.name) / "gone"
+                                          / "interventions.jsonl")
+        row = self.file_finding()
+        self.plan_it(row)
+        self.agent_allowed = True
+
+        async def body(client):
+            answer = await self.press(row["ts"], "apply", client)
+            self.assertEqual(answer.status, 200)
+            await self.work(client)
+
+        self.drive(body)
         self.assertEqual(findings_store.get(row["ts"])["status"], "fixed")
 
     def test_apply_without_a_plan_is_refused(self):

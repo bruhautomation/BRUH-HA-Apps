@@ -4603,20 +4603,29 @@ async def _run_typed_fix(job_id: str, finding: dict) -> None:
         await asyncio.to_thread(findings_store.set_status, ts, status,
                                 result_text, changed)
         if status == "fixed":
-            await asyncio.to_thread(interventions.record, {
-                "id": intervention, "applied_at": ended, "finding_ts": ts,
-                "finding_text": finding.get("text") or "",
-                "finding_key": findings_store.normalize(
-                    finding.get("text") or ""),
-                "source": finding.get("source") or "",
-                "steps": plan.get("steps") or [],
-                "kinds": [op.get("op") for op in ops],
-                "contract": plan_ops.contract_for(ops, intervention),
-                "verify_by": plan.get("verify_by"),
-                "expected_effect": plan.get("expected_effect") or "",
-                "entities": plan_ops.entities_named(ops),
-                "journal_ts": done["journal_ts"], "undo": done["undo"],
-                "outcome": status})
+            # The follow-up ledger is accounting about a change that has
+            # already happened: a write that fails must not turn a fix that
+            # worked into one the card calls failed (and so stop offering
+            # its Undo). It is said, and the looks simply have nothing to
+            # come back to.
+            try:
+                await asyncio.to_thread(interventions.record, {
+                    "id": intervention, "applied_at": ended, "finding_ts": ts,
+                    "finding_text": finding.get("text") or "",
+                    "finding_key": findings_store.normalize(
+                        finding.get("text") or ""),
+                    "source": finding.get("source") or "",
+                    "steps": plan.get("steps") or [],
+                    "kinds": [op.get("op") for op in ops],
+                    "contract": plan_ops.contract_for(ops, intervention),
+                    "verify_by": plan.get("verify_by"),
+                    "expected_effect": plan.get("expected_effect") or "",
+                    "entities": plan_ops.entities_named(ops),
+                    "journal_ts": done["journal_ts"], "undo": done["undo"],
+                    "outcome": status})
+            except OSError as exc:
+                log.warning("the fix for finding %s worked, but its follow-up "
+                            "could not be recorded: %s", ts, exc)
             _spawn_fix_verification(ts)
             if changed:
                 subjects = _finding_subjects(finding)
