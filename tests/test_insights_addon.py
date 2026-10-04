@@ -803,7 +803,11 @@ class TestPanelServer(unittest.TestCase):
                 if ticks["n"] > 1:
                     raise asyncio.CancelledError
 
+            # The tick also re-owns /config's YAML as root; on a box that
+            # has a real /config and a `claude` user that would be the
+            # machine's own files, so it is stood down here.
             with patch.object(asyncio, "sleep", sleep_once), \
+                 patch.object(server.ownership, "maybe_sweep", lambda: None), \
                  patch.object(server.findings_store, "sweep_inbox", lambda: []), \
                  patch.object(server.engine, "get_auth",
                               lambda: {"type": "oauth", "value": "x"}), \
@@ -3485,7 +3489,9 @@ class TestARefreshHasToBeAboutSomething(InsightsServerCase):
                                    for name in ("energy", "baselines",
                                                 "appliances")}}
 
+            # Not the machine's own /config: see the switch test above.
             with patch.object(asyncio, "sleep", sleep_once), \
+                 patch.object(server.ownership, "maybe_sweep", lambda: None), \
                  patch.object(server.findings_store, "sweep_inbox", lambda: []), \
                  patch.object(server, "_house_snapshot", snapshot), \
                  patch.object(server.engine, "get_auth",

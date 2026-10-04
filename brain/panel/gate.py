@@ -202,6 +202,20 @@ def contract_verdict(tool: str, args: dict, contract: dict) -> tuple[str, str]:
             subs = READ_ONLY_SUBCOMMANDS.get(first)
             if subs and len(words) > 1 and words[1] in subs:
                 return "allow", "a read-only command"
+            if first == "brain" and len(words) > 2 and words[1] == "own":
+                # Handing a file back to Claude changes nothing in it, and a
+                # fix is told to do exactly this when a file it was approved
+                # to edit is not writable — so it is allowed for the files
+                # the approved change names, one by one (never `-r`).
+                allowed = {os.path.normpath(p)
+                           for p in contract.get("files") or []}
+                paths = [os.path.normpath(w) for w in words[2:]]
+                if all(not w.startswith("-") for w in words[2:]) \
+                        and all(p in allowed for p in paths):
+                    return "allow", ("it hands back a file the approved "
+                                     "change names")
+                return "deny", ("under an approved change `brain own` may "
+                                "only name the files that change edits")
             return "deny", ("under an approved change the shell may only read "
                             f"(`{first}` is not on that list)")
         return "deny", "that tool is not part of the approved change"

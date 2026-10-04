@@ -6007,9 +6007,10 @@ async def _scheduler() -> None:
         except Exception as exc:  # noqa: BLE001 — bookkeeping, never the tick
             log.debug("booking shell runs failed: %s", exc)
         # Home Assistant's UI editors save automations.yaml, scripts.yaml
-        # and scenes.yaml as root; hand them back to the claude user every
-        # ten minutes so the next edit never meets a permission error.
-        # `maybe_sweep` gates itself and never raises.
+        # and scenes.yaml as root, and the Supervisor makes a new add-on's
+        # /addon_configs folder root's; hand them back to the claude user
+        # about once a minute so the next edit never meets a permission
+        # error. `maybe_sweep` gates itself and never raises.
         await asyncio.to_thread(ownership.maybe_sweep)
         # The drain that used to live here is the Resident's first look
         # now (`_resident_loop`), which reads the same `awaiting_triage()`

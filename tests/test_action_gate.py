@@ -640,6 +640,24 @@ class TestTheContractIsArithmetic(GateCase):
         self.assertEqual(verdict("Bash", {"command": "ha check"},
                                  self.CONTRACT)[0], "allow")
 
+    def test_brain_own_only_for_the_files_the_change_edits(self):
+        """A fix is told to run `brain own` on a file it was approved to
+        edit and cannot write; that much is allowed, and nothing wider."""
+        verdict = gate.contract_verdict
+        self.assertEqual(verdict("Bash", {
+            "command": "brain own /config/packages/heat.yaml"},
+            self.CONTRACT)[0], "allow")
+        self.assertEqual(verdict("Bash", {
+            "command": "brain own /config/packages/./heat.yaml"},
+            self.CONTRACT)[0], "allow")
+        for command in ("brain own /config/automations.yaml",
+                        "brain own /config/packages/heat.yaml /config/x.yaml",
+                        "brain own -r /config/packages",
+                        "brain own",
+                        "brain own /config/packages/heat.yaml; rm -rf /"):
+            self.assertEqual(verdict("Bash", {"command": command},
+                                     self.CONTRACT)[0], "deny", command)
+
     def test_an_invalid_contract_refuses_everything(self):
         self.assertEqual(gate.contract_verdict(
             PFX + "control_light", {"entity_id": "light.k1", "action": "on"},
