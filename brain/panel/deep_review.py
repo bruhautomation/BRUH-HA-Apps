@@ -188,6 +188,8 @@ def save(review: dict, now: float | None = None) -> dict:
         try:
             STORE.replace(STORE.with_suffix(".unreadable"))
         except OSError:
+            # The copy is a courtesy; the write below goes ahead either
+            # way, because the review just paid for is the thing to keep.
             pass
     reviews = [entry] + [r for r in current["reviews"] if r.get("id") != entry["id"]]
     reviews = reviews[:MAX_REVIEWS]
