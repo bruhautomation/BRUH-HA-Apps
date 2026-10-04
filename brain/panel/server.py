@@ -151,6 +151,7 @@ import cli_commands
 import conditions
 import conversations
 import curiosity
+import deep_review
 import doctor
 import energy
 import engine
@@ -194,6 +195,7 @@ import settings_store
 import shadow
 import shadow_findings
 import signals
+import synthesis
 import terminal_proxy
 import thermal
 import todo_store
@@ -1789,7 +1791,7 @@ WEEKLY_SENT_KEY = "weekly_last_sent"
 WEEKLY_TEXT_KEY = "weekly_last_text"
 WEEKLY_STATE: dict = {"last_sent": schedule_store.get(WEEKLY_SENT_KEY),
                       "last_text": schedule_store.get_text(WEEKLY_TEXT_KEY),
-                      "last_error": "", "last_state": {}}
+                      "last_error": "", "last_state": {}, "last_pick": {}}
 
 
 def _weekly_enabled() -> tuple[bool, int]:
@@ -1843,7 +1845,56 @@ async def _weekly_state(now: float) -> dict:
     return weekly.gather(rows, settled, power, since, now=now)
 
 
-async def _send_weekly(now: float) -> str:
+async def _weekly_pick(state: dict, now: float, *,
+                       pressed: bool = False) -> dict:
+    """The one thing the report ends on: the synthesis job's, else the rank's.
+
+    `synthesis` holds the rules; this is the plumbing. Whatever happens the
+    severity pick is computed first and journaled beside the choice as the
+    baseline, so "does the synthesis earn its run" is a number in the
+    journal rather than an impression. A scheduled report answers to the
+    three gates every scheduled run answers to (`_resident_gate`); a send
+    pressed by hand needs only a credential, the ideas press's rule —
+    "automatic runs pause; asking by hand always runs". Every
+    way of not running — one candidate, a gate, a failed run, a reply that
+    named nothing it was shown — is the old pick with the reason recorded.
+    """
+    rows = await asyncio.to_thread(findings_store.list_all, "live")
+    cands = synthesis.candidates(rows, now)
+    baseline = cands[0] if cands else state.get("one_thing")
+    chosen = None
+    reason = ""
+    if not synthesis.worth_asking(cands):
+        reason = "fewer than two open problems to choose between"
+    else:
+        if pressed:
+            reason = "" if engine.get_auth() else "there is no Claude credential"
+        else:
+            reason = _resident_gate(settings_store.load())
+        if not reason:
+            result = await asyncio.to_thread(
+                engine.run_claude,
+                synthesis.frame(cands, weekly.week_lines(state), now,
+                                str(state.get("memory") or "")),
+                synthesis.SYSTEM, eff_model(), synthesis.TIMEOUT_S,
+                synthesis.MAX_TURNS, "weekly", job="synthesis",
+                schema=synthesis.SCHEMA)
+            if not result.get("ok"):
+                reason = "the synthesis run failed: " + str(
+                    result.get("error") or "no reply")[:80]
+            else:
+                chosen = synthesis.parse(_answer(result), cands)
+                if chosen is None:
+                    reason = "the reply named no problem it was shown"
+    picked = synthesis.decision(baseline, chosen, reason)
+    journal.record(synthesis.JOURNAL_SOURCE,
+                   "ok" if chosen is not None else "fallback", ok=True,
+                   extra=picked["extra"])
+    WEEKLY_STATE["last_pick"] = dict(picked["extra"])
+    return picked
+
+
+async def _send_weekly(now: float, *, pressed: bool = False) -> str:
     """Gather, decide, and only then ask. Returns what was sent, or ''."""
     state = await _weekly_state(now)
     # Numbers, not the content: `last_state` rides into /api/diagnostics
@@ -1872,6 +1923,12 @@ async def _send_weekly(now: float) -> str:
         WEEKLY_STATE["last_error"] = ""
         log.info("weekly report: nothing to report, not sent")
         return ""
+
+    # Chosen only once the week is worth a message: a quiet week spends
+    # nothing on choosing what it will not say.
+    picked = await _weekly_pick(state, now, pressed=pressed)
+    state["one_thing"] = picked["pick"]
+    state["one_thing_why"] = picked["why"]
 
     result = await asyncio.to_thread(
         engine.run_analyst, weekly.frame(state), weekly.SYSTEM,
@@ -1935,6 +1992,10 @@ def _weekly_diagnostics() -> dict:
         "last_error": WEEKLY_STATE["last_error"],
         "last_chars": len(WEEKLY_STATE["last_text"]),
         "last_state": WEEKLY_STATE["last_state"],
+        # Which rule chose the one thing, and how often the synthesis has
+        # agreed with the rank: the number that says whether it earns its run.
+        "last_pick": WEEKLY_STATE.get("last_pick") or {},
+        "pick": synthesis.agreement(journal.tail(0)),
     }
 
 
@@ -8647,13 +8708,155 @@ async def h_weekly_run(request: web.Request) -> web.Response:
     # Sunday report that would have had another day's material.
     before = WEEKLY_STATE["last_sent"]
     WEEKLY_STATE["last_sent"] = now
-    body = await _send_weekly(now)
+    body = await _send_weekly(now, pressed=True)
     WEEKLY_STATE["last_sent"] = now if body else before
     schedule_store.set(WEEKLY_SENT_KEY, WEEKLY_STATE["last_sent"])
     return web.json_response({
         "sent": bool(body), "text": body,
         "error": WEEKLY_STATE["last_error"],
     })
+
+
+# ---------------------------------------------------------------------------
+# The deep review: the one run a person presses for on the top tier
+#
+# `deep_review` holds the rules (what it is told, what it may say, the
+# store and the estimate); this is the plumbing. It is reachable from one
+# route and nothing else — no loop, no request drain, no card — because
+# the job is PRESS_ONLY and `engine.planned(..., pressed=True)` is the one
+# call that may name it. `test_deep_review` holds that by walking the
+# module for every caller.
+# ---------------------------------------------------------------------------
+
+DEEP_REVIEW_STATE: dict = {"running": False, "starting": False,
+                           "started_at": 0.0, "last_error": "",
+                           "last_at": 0.0}
+_DEEP_REVIEW_TASKS: set = set()
+
+
+def _deep_review_payload() -> dict:
+    """What the House tab shows: the last review, the history, the price."""
+    stored = deep_review.load()
+    try:
+        plan_tokens = usage_store.budget_state(
+            settings_store.load()).get("plan_session_tokens")
+    except Exception:  # noqa: BLE001 — a price nobody can read is still a button
+        plan_tokens = None
+    model, effort = engine.planned(deep_review.JOB, pressed=True)
+    reviews = stored["reviews"]
+    return {
+        "running": bool(DEEP_REVIEW_STATE["running"]
+                        or DEEP_REVIEW_STATE["starting"]),
+        "started_at": int(DEEP_REVIEW_STATE["started_at"]),
+        "last_error": DEEP_REVIEW_STATE["last_error"],
+        "error": stored["error"],
+        "latest": reviews[0] if reviews else None,
+        "history": [{"id": r.get("id"), "at": r.get("at"),
+                     "tokens": r.get("tokens")} for r in reviews[1:]],
+        "estimate": deep_review.estimate(reviews, plan_tokens),
+        "model": model, "effort": effort,
+        "authenticated": bool(engine.get_auth()),
+    }
+
+
+async def _run_deep_review() -> None:
+    """One review, start to finish. Never raises into the loop."""
+    now = time.time()
+    try:
+        findings_text = await asyncio.to_thread(findings_store.prompt_block)
+        prompt = deep_review.frame(
+            findings=findings_text,
+            house=await _house_prompt_block(now),
+            memory=await asyncio.to_thread(_memory_block),
+            weekly=str(WEEKLY_STATE.get("last_text") or ""))
+        model, effort = engine.planned(deep_review.JOB, pressed=True)
+        result = await asyncio.to_thread(
+            engine.run_analyst, prompt, deep_review.SYSTEM, model,
+            deep_review.TIMEOUT_S, deep_review.MAX_TURNS, "deep_review",
+            job=deep_review.JOB, effort=effort, schema=deep_review.SCHEMA)
+        cost = _record_usage(result, "deep-review")
+        if not result.get("ok"):
+            DEEP_REVIEW_STATE["last_error"] = str(
+                result.get("error") or "the review did not answer")[:300]
+            log.warning("deep review failed: %s", DEEP_REVIEW_STATE["last_error"])
+            return
+        review = deep_review.parse(_answer(result))
+        if review is None:
+            DEEP_REVIEW_STATE["last_error"] = (
+                "the review answered, but not with anything that could be read")
+            log.warning("deep review: %s", DEEP_REVIEW_STATE["last_error"])
+            return
+        review["tokens"] = int(cost.get("total") or 0)
+        review["model"] = str(model or "")
+        await asyncio.to_thread(deep_review.save, review)
+        DEEP_REVIEW_STATE["last_error"] = ""
+        DEEP_REVIEW_STATE["last_at"] = time.time()
+        log.info("deep review filed: %d observation(s), %s tokens",
+                 len(review["observations"]), _tok(review["tokens"]))
+    except Exception as exc:  # noqa: BLE001 — a press must not kill the loop
+        DEEP_REVIEW_STATE["last_error"] = f"the review stopped: {exc}"[:300]
+        log.warning("deep review crashed: %s", exc)
+    finally:
+        DEEP_REVIEW_STATE["running"] = False
+        DEEP_REVIEW_STATE["starting"] = False
+
+
+def _start_deep_review() -> bool:
+    """Claim the run. The flag flips SYNCHRONOUSLY (`start_auth_check`'s
+    rule), and the task is held: the loop keeps only a weak reference."""
+    if DEEP_REVIEW_STATE["running"] or DEEP_REVIEW_STATE["starting"]:
+        return False
+    DEEP_REVIEW_STATE["starting"] = True
+    DEEP_REVIEW_STATE["started_at"] = time.time()
+
+    async def go() -> None:
+        DEEP_REVIEW_STATE["running"] = True
+        DEEP_REVIEW_STATE["starting"] = False
+        await _run_deep_review()
+
+    try:
+        task = asyncio.create_task(go())
+    except RuntimeError:
+        DEEP_REVIEW_STATE["starting"] = False
+        raise
+    _DEEP_REVIEW_TASKS.add(task)
+    task.add_done_callback(_DEEP_REVIEW_TASKS.discard)
+    return True
+
+
+async def h_deep_review(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_deep_review_payload))
+
+
+async def h_deep_review_run(request: web.Request) -> web.Response:
+    """Start a review now. A press, and the only door to the job.
+
+    Skips the usage budget — "asking by hand always runs" — and needs a
+    credential, because a press that cannot reach Claude is a press that
+    should say so rather than start.
+    """
+    if not engine.get_auth():
+        return web.json_response(
+            {"error": "connect your Claude account first"}, status=400)
+    if not _start_deep_review():
+        return web.json_response({"error": "a review is already running"},
+                                 status=409)
+    return web.json_response(await asyncio.to_thread(_deep_review_payload))
+
+
+def _deep_review_diagnostics() -> dict:
+    """Whether a review is running, when one last landed, and why one did not."""
+    stored = deep_review.load()
+    latest = stored["reviews"][0] if stored["reviews"] else {}
+    return {
+        "running": bool(DEEP_REVIEW_STATE["running"]
+                        or DEEP_REVIEW_STATE["starting"]),
+        "kept": len(stored["reviews"]),
+        "last_at": int(latest.get("at") or 0),
+        "last_tokens": latest.get("tokens"),
+        "last_error": DEEP_REVIEW_STATE["last_error"],
+        "store_error": stored["error"],
+    }
 
 
 async def h_appliances(request: web.Request) -> web.Response:
@@ -9743,6 +9946,7 @@ def _diagnostics_payload() -> dict:
         # sent because nothing was worth reporting reads, from outside,
         # exactly like one whose loop died in March.
         "weekly": _weekly_diagnostics(),
+        "deep_review": _deep_review_diagnostics(),
         # Answers given in the To-do app or on a notification, on
         # their way back to the one store that owns them.
         "finding_requests": _requests_diagnostics(),
@@ -14959,6 +15163,8 @@ def make_app() -> web.Application:
                         h_knowledge_card_refresh)
     app.router.add_get("/api/weekly", h_weekly)
     app.router.add_post("/api/weekly/run", h_weekly_run)
+    app.router.add_get("/api/deep-review", h_deep_review)
+    app.router.add_post("/api/deep-review/run", h_deep_review_run)
     app.router.add_get("/api/activity", h_activity)
     app.router.add_get("/api/activity/entity/{entity_id}", h_activity_entity)
     app.router.add_post("/api/activity/summary", h_activity_summary)

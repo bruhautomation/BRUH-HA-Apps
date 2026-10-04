@@ -1079,14 +1079,17 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
     return result
 
 
-def planned(job: str) -> tuple[str, str]:
+def planned(job: str, *, pressed: bool = False) -> tuple[str, str]:
     """`(model, effort)` the model plan gives a job on this install.
 
     The global `model` option (the add-on's Configuration tab, or the
     panel's override of it) wins when set — a person who typed a model
     meant every run — and the `thinking` setting scales the tiers. Read
     at call time rather than at import, the way `insights_enabled()` is,
-    so a change in ⚙ reaches the next run.
+    so a change in ⚙ reaches the next run. `pressed` is the caller saying
+    a person asked for this run; a PRESS_ONLY job raises without it, which
+    is `model_plan.resolve`'s refusal reaching the one route that may
+    name such a job.
     """
     try:
         settings = settings_store.load()
@@ -1094,7 +1097,7 @@ def planned(job: str) -> tuple[str, str]:
         settings = {}
     override = str(settings.get("model") or os.environ.get("BRAIN_MODEL", "") or "")
     thinking = str(settings.get("thinking") or model_plan.DEFAULT_THINKING)
-    return model_plan.resolve(job, thinking, override)
+    return model_plan.resolve(job, thinking, override, pressed=pressed)
 
 
 def _journal(source: str, result: dict, model: str, timeout_message: str,

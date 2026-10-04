@@ -268,6 +268,14 @@ window.fetch = async (url, opts) => {
   const p = String(url);
   const answer = (body, status) => new Response(JSON.stringify(body), {
     status: status || 200, headers: { 'Content-Type': 'application/json' } });
+  // The deep review: the run press records itself and answers running.
+  if (p.includes('api/deep-review/run')) {
+    window.__reviewPresses = (window.__reviewPresses || 0) + 1;
+    window.__review = Object.assign({}, window.__review || {},
+      { running: true, started_at: ${NOW} });
+    return answer(window.__review);
+  }
+  if (p.includes('api/deep-review')) return answer(window.__review || {});
   // Before the bare \`api/knowledge\` branch: these paths contain it.
   if (p.includes('api/knowledge/card/')) {
     // The 409 is not an error state — the measurement really has no answer
@@ -514,7 +522,7 @@ for (const width of WIDTHS) {
     note(`${width}px`, 'the brief does not say when it was sent');
   }
   // Four sections, in order.
-  const order = ['This morning', 'What brAIn has measured',
+  const order = ['This morning', 'Deep review', 'What brAIn has measured',
                  "How brAIn's memory works", 'Memory document',
                  'Waiting to be filed', 'Facts brAIn has learned'];
   const found = order.map((h) => m.sections.findIndex((t) => t.startsWith(h)));
@@ -1241,6 +1249,76 @@ for (const width of WIDTHS) {
   console.log(`${failures.length ? 'ok? ' : 'ok  '}milestones `
     + `${String(width).padStart(4)}px  1 card under its row, `
     + `${pend.length} pending lines`);
+  await context.close();
+}
+
+// ------------------------------------------------------------ deep review
+// One press on the top tier: the price is on the screen before the press,
+// the last review is readable under it, and the press says it started.
+// The shape is `server._deep_review_payload`'s, copied rather than guessed.
+const REVIEW = {
+  running: false, started_at: 0, last_error: '', error: '', authenticated: true,
+  model: 'fable', effort: 'high',
+  estimate: { tokens: 146000, basis: 'what the last 1 review on this house cost',
+              percent: 49 },
+  latest: {
+    id: 1, at: NOW - 5 * 86400, model: 'fable', tokens: 146000,
+    summary: 'The house is mostly well set up; one hub is carrying too much.',
+    one_thing: 'Move the Zigbee hub away from the microwave.',
+    observations: [
+      { title: 'Three plugs drop out together', kind: 'problem',
+        detail: 'The kettle, toaster and coffee plugs go unavailable in the same minute most mornings.',
+        entities: ['switch.kettle'] },
+      { title: 'The hall lights follow the house well', kind: 'working',
+        detail: 'The motion rule has not been overridden in a month.', entities: [] },
+    ],
+  },
+  history: [{ id: 0, at: NOW - 40 * 86400, tokens: 151000 }],
+};
+for (const width of WIDTHS) {
+  const touch = width < 800;
+  const at = `review ${width}px`;
+  const { context, page } = await openPanel(width,
+    `window.__review = ${JSON.stringify(REVIEW)};`, touch);
+  await page.click('.viewtab[data-view="memory"]');
+  await page.waitForSelector('#kReview .kreviewrun', { timeout: 5000 })
+    .catch(() => note(at, 'the deep review section never rendered'));
+  const r = await page.evaluate(() => {
+    const box = document.getElementById('kReview');
+    const btn = box && box.querySelector('.kreviewrun .btn');
+    const b = btn ? btn.getBoundingClientRect() : { height: 0 };
+    return {
+      text: box ? box.textContent : '',
+      btnText: btn ? btn.textContent : '',
+      btnH: Math.round(b.height),
+      disabled: btn ? btn.disabled : null,
+      obs: box ? box.querySelectorAll('.kreviewob').length : 0,
+      docWidth: document.documentElement.scrollWidth,
+    };
+  });
+  if (!/146k tokens/.test(r.text)) note(at, 'the price is not on the screen before the press');
+  if (!/49%/.test(r.text)) note(at, 'the price does not say what share of a session it is');
+  if (!/estimate/i.test(r.text)) note(at, 'the price does not say it is an estimate');
+  if (r.obs !== 2) note(at, `${r.obs} observations rendered, not 2`);
+  if (!/Move the Zigbee hub/.test(r.text)) note(at, 'the one thing this month is missing');
+  if (!/Earlier reviews/.test(r.text)) note(at, 'the earlier reviews are not named');
+  if (r.btnH < MIN_TARGET) note(at, `the review button is ${r.btnH}px`);
+  if (r.disabled) note(at, 'the review button is disabled with nothing running');
+  if (r.docWidth > width + 0.5) note(at, `page scrolls sideways (${r.docWidth}px)`);
+  await page.click('#kReview .kreviewrun .btn');
+  await page.waitForTimeout(300);
+  const after = await page.evaluate(() => ({
+    presses: window.__reviewPresses || 0,
+    btn: (document.querySelector('#kReview .kreviewrun .btn') || {}).textContent || '',
+    disabled: (document.querySelector('#kReview .kreviewrun .btn') || {}).disabled,
+    toast: (document.getElementById('toast') || {}).textContent || '',
+  }));
+  if (after.presses !== 1) note(at, `the press reached the server ${after.presses} times`);
+  if (!/Reviewing/.test(after.btn) || !after.disabled) {
+    note(at, 'a running review does not say so on its own button');
+  }
+  if (!/lands here/.test(after.toast)) note(at, `the press said "${after.toast}"`);
+  console.log(`${failures.length ? 'ok? ' : 'ok  '}deep review ${String(width).padStart(4)}px`);
   await context.close();
 }
 

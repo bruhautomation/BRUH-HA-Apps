@@ -1342,10 +1342,22 @@ usually \`notify.notify\`.
 It carries four things: what you used against the week before, what was found
 and what was answered, what brAIn learned, and **one thing to do this week**.
 
-That last one is chosen **before** Claude sees anything — the worst open
-severity, then the one open longest. Asked to pick, a model picks the finding
-it can write the best sentence about, which is the one carrying the most
-detail rather than the most consequence.
+That last one is chosen in its own step, before the report is written, and
+from a list brAIn hands over rather than freely. The simple rule is the worst
+open severity, then the one open longest — and that rule cannot see the week
+as a whole: three warnings about one flaky hub are plainly the thing worth an
+afternoon, while a \`serious\` row that has been open a month because it is
+how your house is will top a severity list every single week. So when there
+are at least two open problems to choose between, Claude's planner tier is
+shown them with the week's numbers and asked which one matters most, and why;
+the report then ends on that one and says why. Three things keep it honest:
+it may only name a problem it was shown, a **critical** problem is never
+passed over for something less severe (if one is open, only critical ones are
+offered), and anything that stops it — automatic runs paused, the usage
+budget spent, a failed run, an answer naming nothing it was shown — leaves
+the simple rule's pick. Both picks are written to the run journal side by
+side, so ⚙ → Diagnostics can say how often the two agreed; a choice that
+always agrees with the rule is a run you could switch off.
 
 It is not the morning brief with a longer timer. The brief asks *is there
 anything**; the report asks **what happened*, and its failure is the opposite
@@ -1362,6 +1374,35 @@ wrong trade.
 \`brain weekly\` prints what this week holds without sending; \`brain weekly
 send\` sends one now — which **moves the week**, so the next scheduled report
 is a week from now rather than a week from Sunday.
+`,
+  },
+  {
+    id: "a-deep-review-when-you-ask-for-one",
+    icon: "📄",
+    title: "A deep review, when you ask for one",
+    body: `
+# A deep review, when you ask for one
+
+Everything else brAIn writes is about one thing — a card about a category, a
+case about a signal, a report about a week — and runs on a model chosen so it
+can run often. **House → Knowledge → Deep review** is the other kind: Claude's
+top model, at high effort, with read-only tools and a long budget, sits with
+the whole house and says what it adds up to — a pattern across rooms, a cause
+behind several symptoms, something set up in a way that will bite later,
+something working well that you should keep.
+
+- **Only by a press.** Nothing schedules it; the scheduler cannot even name
+  the job.
+- **The price is on the button.** Before you press it says roughly how many
+  tokens it will spend and what share of a five-hour session that is on your
+  plan — read off what earlier reviews on your house actually cost, and a
+  first guess (about 150k) until one has run. It is an estimate and says so.
+- **It reads, and files nothing.** No findings, no proposals, no memory
+  lines. It is told what brAIn already knows so it does not repeat it, and
+  what it says is kept on that page (the last six reviews). If something in
+  it is worth acting on, ask about it in the chat.
+- Pressing it skips the usage budget, like every press: automatic runs pause
+  at the budget, asking by hand always runs.
 `,
   },
   {
@@ -2667,8 +2708,8 @@ brAIn 2.0 plans every Claude run by **job** rather than by one global model:
 |---|---|---|
 | **Haiku** | the first look at every finding and signal, scene naming, playbook text, milestones, the memory consolidator, the morning brief, auth check | A yes/no, a name or a sentence over material something else already gathered |
 | **Sonnet** | insight cards, fix plans, the weekly report, study, intents, curiosity, episode summaries, onboarding | Reading a house with tools and writing about it |
-| **Opus** | applying a fix | The one run that changes the house, at the highest effort |
-| **Fable** | nothing yet — reserved for a review you press for | Never from a timer — a scheduler cannot name it |
+| **Opus** | applying a fix, turning a sentence into an automation, the weekly report's one thing | The runs that change the house or decide what you act on |
+| **Fable** | the **deep review** you press for on House → Knowledge | Never from a timer — a scheduler cannot name it |
 
 The **thinking** dial (⚙ → Insights, or \`thinking\` in \`/api/settings\`) is
 \`light\` / \`normal\` / \`generous\`. **Light** steps down only the jobs where a

@@ -6312,6 +6312,7 @@ async function refreshHouse() {
       }
     })(),
     refreshMilestones(),
+    refreshDeepReview(),
   ]);
   renderHouse();
 }
@@ -12294,4 +12295,144 @@ function ideaReasonBox(idea, card, actions) {
   box.appendChild(row);
   card.appendChild(box);
   area.focus();
+}
+
+
+// ---------------------------------------------------------------------------
+// The deep review (House → Knowledge). The one run on the top tier, and only
+// by a press: the button says what it will roughly cost before it is
+// pressed (an estimate read off the reviews this house has already paid
+// for, and a first guess before there are any), and what the review said
+// stays here to be read. It files nothing on any other tab.
+// ---------------------------------------------------------------------------
+const reviewState = { data: null, error: "", timer: null, pressing: false };
+
+async function refreshDeepReview() {
+  try {
+    reviewState.data = await api("api/deep-review");
+    reviewState.error = "";
+  } catch (e) {
+    reviewState.error = "Could not read the deep review: " + e.message;
+  }
+  renderDeepReview();
+  // While one is running the tab watches for it landing — and only while
+  // the tab is the one on screen: a poll behind a pane nobody is looking at
+  // is a request per minute for an answer nobody will read.
+  clearTimeout(reviewState.timer);
+  if (reviewState.data && reviewState.data.running && currentView === "memory") {
+    reviewState.timer = setTimeout(refreshDeepReview, 8000);
+  }
+}
+
+function reviewCostText(est) {
+  if (!est || !Number(est.tokens)) return "";
+  const k = Math.max(1, Math.round(Number(est.tokens) / 1000));
+  let text = `About ${k}k tokens`;
+  if (est.percent !== null && est.percent !== undefined) {
+    text += ` — roughly ${est.percent}% of a five-hour session on your plan`;
+  }
+  return `${text}. An estimate: ${est.basis}.`;
+}
+
+const REVIEW_KIND_WORD = {
+  problem: "Problem", opportunity: "Could be better",
+  question: "Worth asking", working: "Working well",
+};
+
+function renderDeepReview() {
+  const box = $("#kReview");
+  if (!box) return;
+  box.textContent = "";
+  if (reviewState.error) {
+    box.appendChild(el("p", "kbrieftext off", reviewState.error));
+    return;
+  }
+  const d = reviewState.data;
+  if (!d) return;
+
+  const run = el("div", "kreviewrun");
+  const btn = el("button", "btn primary",
+    d.running ? "Reviewing…" : "Run a deep review");
+  btn.type = "button";
+  btn.disabled = Boolean(d.running) || reviewState.pressing || !d.authenticated;
+  tip(btn, "Claude's top model reads the whole house with read-only tools and "
+    + "says what it adds up to. It changes nothing and files nothing.");
+  btn.addEventListener("click", () => runDeepReview(btn));
+  run.appendChild(btn);
+  run.appendChild(el("p", "kreviewcost", d.running
+    ? `Started ${agoAt(d.started_at)} — a review takes several minutes, and lands here.`
+    : reviewCostText(d.estimate)));
+  box.appendChild(run);
+
+  if (!d.authenticated) {
+    box.appendChild(el("p", "kbrieftext off",
+      "Connect your Claude account first — ⚙ → Claude account."));
+  }
+  if (d.last_error) {
+    box.appendChild(el("p", "kbrieftext off",
+      `The last review did not finish: ${d.last_error}`));
+  }
+  if (d.error) box.appendChild(el("p", "kbrieftext off", d.error));
+
+  const r = d.latest;
+  if (!r) {
+    if (!d.error) {
+      box.appendChild(el("p", "kbrieftext off",
+        "No review yet. It reads the whole house, not one card's worth, and "
+        + "says what nothing else in brAIn has said."));
+    }
+    return;
+  }
+  const bits = [dateAt(r.at)];
+  if (r.model) bits.push(String(r.model));
+  if (Number(r.tokens)) bits.push(`${Math.round(Number(r.tokens) / 1000)}k tokens`);
+  box.appendChild(el("div", "kbriefwhen", bits.filter(Boolean).join(" · ")));
+  if (r.summary) box.appendChild(el("p", "kbrieftext", r.summary));
+  if (r.one_thing) {
+    const one = el("div", "kreviewone");
+    one.appendChild(el("div", "kreviewlabel", "The one thing this month"));
+    one.appendChild(el("p", "kbrieftext", r.one_thing));
+    box.appendChild(one);
+  }
+  const obs = Array.isArray(r.observations) ? r.observations : [];
+  if (obs.length) {
+    const list = el("ul", "kreviewobs");
+    obs.forEach((o) => {
+      const li = el("li", "kreviewob");
+      li.appendChild(el("div", "kreviewlabel",
+        REVIEW_KIND_WORD[o.kind] || "Problem"));
+      li.appendChild(el("div", "kreviewtitle", prettyText(String(o.title || ""))));
+      if (o.detail) li.appendChild(el("p", "kreviewdetail", prettyText(String(o.detail))));
+      list.appendChild(li);
+    });
+    box.appendChild(list);
+  }
+  const older = Array.isArray(d.history) ? d.history : [];
+  if (older.length) {
+    box.appendChild(el("p", "kreviewcost",
+      "Earlier reviews: " + older.map((h) => dateAt(h.at)).filter(Boolean).join(", ")));
+  }
+}
+
+async function runDeepReview(btn) {
+  reviewState.pressing = true;
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch("api/deep-review/run", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    });
+    let body = {};
+    try { body = await resp.json(); } catch (e) { body = {}; }
+    if (!resp.ok) {
+      toast(body.error || `Could not start a review (HTTP ${resp.status})`);
+    } else {
+      reviewState.data = body;
+      toast("Reviewing the house — it lands here in a few minutes");
+    }
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    reviewState.pressing = false;
+    refreshDeepReview();
+  }
 }
