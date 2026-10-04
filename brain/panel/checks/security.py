@@ -1,10 +1,10 @@
 """The access steward — who and what can reach this house.
 
 Every other check reads whether the house WORKS. These read who can make
-it do something: a lock a cloud speaker can open, brAIn's own terminal
-running with its permission prompts switched off, an add-on running with
-the Supervisor's protection mode turned off, and an address Home
-Assistant has banned after failed logins. None of them shows up as
+it do something: a lock a cloud speaker can open, a brAIn terminal
+session still acting without asking after the switch was turned off, an
+add-on running with the Supervisor's protection mode turned off, and an
+address Home Assistant has banned after failed logins. None of them shows up as
 anything looking wrong — the lock locks, the terminal works, the add-on
 runs — which is exactly why nobody notices them.
 
@@ -28,8 +28,10 @@ chosen and is worth a second look at, never on an ordinary house:
 
 Three new snapshot keys, each "I could not look" when its fetch failed —
 `exposure` (Core's expose list), `posture` (this add-on's own options),
-`ip_bans` (`/config/ip_bans.yaml`) — and `users`. No check reads `users`
-or `posture`; the weekly review does. `collect` is the one function that fills them, and
+`ip_bans` (`/config/ip_bans.yaml`) — and `users`. No check reads `users`;
+the weekly review does. `posture` carries the live permission switch and
+any terminal session still acting under an old setting, and only the
+second files a row. `collect` is the one function that fills them, and
 `checks.snapshot.collect` calls it at one point inside its session.
 """
 from __future__ import annotations
@@ -67,12 +69,27 @@ OPENING_DOMAINS = frozenset({"lock", "alarm_control_panel"})
 # A ban older than this is history rather than something to look at.
 BAN_WINDOW_DAYS = 14
 # The options whose being ON is part of this add-on's posture. They ride in
-# the weekly access digest and nowhere else: "Let brAIn act without asking"
-# used to file a card (`sec.brain_posture`) every time it was on, which is a
-# warning about the one setting a person turned on deliberately, with a
-# label that already says what it does and what stays guarded. The weekly
-# sentence can still say it is on.
+# the weekly access digest: "Let brAIn act without asking" used to file a
+# card every time it was on, which is a warning about the one setting a
+# person turned on deliberately, with a label that already says what it
+# does and what stays guarded. The weekly sentence can still say it is on.
 POSTURE_FLAGS = ("dangerously_skip_permissions",)
+# What IS worth a row: the switch is OFF, but a terminal session started
+# while it was on is still running. Turning it off reaches a session only
+# when one STARTS (ttyd re-attaches to the same tmux session), so that
+# session goes on acting without asking after the person said ask. That is
+# not a choice anybody made — it is the setting and the house disagreeing.
+# Its own text, deliberately: the old "switched off" row was the one people
+# answered Wrong to when they had turned the switch on on purpose, and that
+# answer must not suppress this one.
+STILL_ACTING_TEXT = ("A terminal session is still acting without asking "
+                     "after the switch was turned off")
+STILL_RUNNING = (
+    "\"Let brAIn act without asking\" is off, but {n} started while it was "
+    + "on {verb} still running, and {pronoun} still {act} without asking "
+    + "first. The switch reaches a terminal session only when it starts.",
+    "End it with /exit in the Terminal tab (a background task ends when it "
+    + "finishes). The next session asks.")
 
 
 # ---------------------------------------------------------------------------
@@ -154,10 +171,23 @@ async def collect(session, snap: dict, mark) -> None:
                                     "Home Assistant did not list what it exposes"))
 
     options = read_options()
-    snap["posture"] = ({k: options.get(k) for k in POSTURE_FLAGS}
-                       if options is not None else {})
-    mark("posture", options is not None,
-         "" if options is not None else "this add-on's options could not be read")
+    posture = ({k: options.get(k) for k in POSTURE_FLAGS}
+               if options is not None else None)
+    # The permission switch as a terminal session starting NOW reads it —
+    # the panel rewrites that file the moment the switch moves, where
+    # options.json is what the Supervisor wrote when the add-on started —
+    # plus anything still running that began with it on.
+    import permission_mode
+
+    live = permission_mode.published()
+    if live is not None:
+        posture = {**(posture or {}), "dangerously_skip_permissions": live}
+    sessions = permission_mode.terminal_sessions()
+    if posture is not None and sessions and sessions.get("acting"):
+        posture["terminal_acting"] = sessions["acting"]
+    snap["posture"] = posture if posture is not None else {}
+    mark("posture", posture is not None,
+         "" if posture is not None else "this add-on's options could not be read")
 
     bans = read_ip_bans()
     snap["ip_bans"] = bans or []
@@ -219,6 +249,33 @@ def lock_cloud_voice(snap: dict, now: float) -> list[dict]:
         "fixable": False,
         "entity_id": hits[0][0],
     }]
+
+
+# ---------------------------------------------------------------------------
+# sec.brain_posture — a terminal session the switch did not reach
+# ---------------------------------------------------------------------------
+
+def brain_posture(snap: dict, now: float) -> list[dict]:
+    posture = snap.get("posture") or {}
+    # On by choice is no card (POSTURE_FLAGS): only a session that kept
+    # acting after the switch went off is.
+    if posture.get("dangerously_skip_permissions") is True:
+        return []
+    acting = posture.get("terminal_acting")
+    if not (isinstance(acting, int) and not isinstance(acting, bool)
+            and acting > 0):
+        return []
+    many = acting > 1
+    detail, fix = STILL_RUNNING
+    return [{
+        "text": STILL_ACTING_TEXT,
+        "detail": detail.format(
+            n=f"{acting} terminal sessions" if many else "a terminal session",
+            verb="are" if many else "is",
+            pronoun="they" if many else "it",
+            act="act" if many else "acts"),
+        "fix": fix, "severity": "warning", "fixable": False,
+        "entity_id": ""}]
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +353,9 @@ def login_bans(snap: dict, now: float) -> list[dict]:
 CHECKS = [
     {"id": "sec.lock_cloud_voice", "title": "Locks a cloud speaker can open",
      "needs": ("states", "registry", "exposure"), "run": lock_cloud_voice},
+    {"id": "sec.brain_posture",
+     "title": "A terminal session the permission switch did not reach",
+     "needs": ("posture",), "run": brain_posture},
     {"id": "sec.addon_unprotected", "title": "Add-ons with protection off",
      "needs": ("supervisor",), "run": addon_unprotected},
     {"id": "sec.login_bans", "title": "Addresses banned after failed logins",

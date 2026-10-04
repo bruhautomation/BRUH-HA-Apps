@@ -1369,6 +1369,15 @@ body.modal-open {
    reveals, which sits directly under it */
 #setModelCustom { margin-top: 6px; }
 .edit-body .hint.tight { margin-top: 4px; font-size: 11.5px; }
+/* A hint that is reporting something still true rather than explaining a
+   control — a terminal session that did not get the permission switch's
+   current value. The words carry it; the rule only marks it, so it reads
+   in the ink colour rather than in a yellow nobody can read on white. */
+.edit-body .hint.warn {
+  color: var(--ink-2);
+  border-left: 3px solid var(--warning);
+  padding-left: 8px;
+}
 @media (max-width: 520px) {
   .setgrid { grid-template-columns: 1fr; }
 }

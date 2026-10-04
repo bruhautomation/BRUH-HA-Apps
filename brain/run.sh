@@ -58,9 +58,15 @@ _replace_dir_with_symlink() {
 # Written at boot, BEFORE ttyd starts, because the file lives in /data and
 # outlives a restart: without this, a value the panel published last boot
 # would answer for an option changed on the Configuration tab since — and a
-# stale `bypass` is the one stale value that fails open. So a write that
-# fails removes whatever was there, and the readers fall back to the boot
-# value in /data/.brain_env, or ask.
+# stale `bypass` is the one stale value that fails open.
+#
+# So a write that fails leaves the file EMPTY, never gone. An empty file
+# reads as asking; a gone one hands the answer to the fallback in
+# /data/.brain_env, which at this point in boot still holds the LAST boot's
+# value — the flag, on an add-on that was started with the switch on.
+# Truncating needs no free space, which is the likeliest reason the write
+# failed. Removing the file is the last resort, for a path that cannot even
+# be truncated.
 publish_permission_switch() {
     local skip="$1"
     local file="${BRAIN_PERMISSIONS_FILE:-/data/brain-permissions}"
@@ -71,8 +77,17 @@ publish_permission_switch() {
     if ! { printf '%s\n' "$word" > "${file}.tmp" \
             && chmod 644 "${file}.tmp" \
             && mv -f "${file}.tmp" "$file"; } 2>/dev/null; then
-        rm -f "$file" "${file}.tmp" 2>/dev/null || true
-        bashio::log.warning "Could not write ${file}; new terminal sessions will use the boot value or ask"
+        rm -f "${file}.tmp" 2>/dev/null || true
+        # A symlink would be followed by the truncation; take it away first.
+        if [ -L "$file" ]; then
+            rm -f "$file" 2>/dev/null || true
+        fi
+        if { : > "$file"; } 2>/dev/null || [ -d "$file" ]; then
+            bashio::log.warning "Could not write ${file}; left it empty, so new terminal sessions will ask"
+        else
+            rm -f "$file" 2>/dev/null || true
+            bashio::log.warning "Could not write or clear ${file}; new terminal sessions will use the boot value"
+        fi
     fi
 }
 
@@ -2117,11 +2132,13 @@ setup_automation_integration() {
 # Off still means something: the project file (settings.local.json)
 # pre-approves only Home Assistant's reading tools, so the terminal asks
 # before a shell command, an edit or a service call. On skips those
-# prompts. brain-protect-hook.py still refuses a shell service call or a YAML
-# edit that would reach a `protected_entities` entity either way (a hook's
-# refusal is not a prompt), the platform deny-list still holds (deny rules
-# are checked before the mode), and Claude Code still runs as the non-root
-# `claude` user inside the container.
+# prompts. brain-protect-hook.py still refuses a shell service call or a
+# file-tool YAML edit that would reach a `protected_entities` entity either
+# way (a hook's refusal is not a prompt) — though a shell command that
+# reaches one some other way is not checked, and that is said wherever the
+# switch is — the platform deny-list still holds (deny rules are checked
+# before the mode), and Claude Code still runs as the non-root `claude` user
+# inside the container.
 
 # The terminal starts in /config, explicitly.
 #

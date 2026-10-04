@@ -457,12 +457,25 @@ def eff_model() -> str:
 def eff_skip_permissions() -> bool:
     """"Let brAIn act without asking", as the terminal and the chat read it.
 
-    The same precedence as every mirrored option — a local override, the
-    add-on's live options, the value run.sh exported at startup — and only
-    an explicit True means act: a value that is anything else asks.
+    Only an explicit True means act. The precedence is the mirrored
+    options' — a local override, the add-on's live options, the value
+    run.sh exported at startup — with one turn that is about which stale
+    value is safe. A local override exists only because a write to the
+    Supervisor failed, and it outlives whatever is done on the
+    Configuration tab afterwards. A stale "ask" costs a prompt; a stale
+    "act" goes on acting after somebody turned the switch off there. So a
+    local False still wins, and a local True counts only where there is
+    no live Supervisor value to outrank it.
     """
-    return _opt("dangerously_skip_permissions",
-                permission_mode.startup()) is True
+    local = settings_store.load().get(permission_mode.OPTION)
+    if local is False:
+        return False
+    live = addon_options.get(permission_mode.OPTION)
+    if isinstance(live, bool):
+        return live
+    if local is True:
+        return True
+    return permission_mode.startup()
 
 
 def _publish_permission_mode() -> None:
@@ -6147,6 +6160,16 @@ async def _options_sync() -> None:
         log.warning("could not read add-on options — using panel-local values")
         return
     overrides = settings_store.option_overrides()
+    if overrides.get(permission_mode.OPTION) is True:
+        # A local "act" is promoted nowhere: it is a ⚙ press whose write
+        # failed, and the Configuration tab may have said "ask" since. A
+        # local "ask" is promoted like any other value, because that one
+        # failing open is not a risk.
+        log.info("not promoting a panel-local %s=true into the add-on's "
+                 "options", permission_mode.OPTION)
+        del overrides[permission_mode.OPTION]
+        if not overrides:
+            settings_store.clear_option_overrides()
     if overrides:
         try:
             await addon_options.write(
@@ -18616,6 +18639,11 @@ def _settings_payload(settings: dict) -> dict:
         "addon_defaults": addon_defaults(),
         "options_synced": addon_options.snapshot() is not None,
         "models": engine.MODEL_CHOICES,
+        # The terminal sessions still running, and how each began: a flip
+        # of "act without asking" reaches a terminal session only when it
+        # STARTS, so ⚙ says which open ones did not get it. None is "could
+        # not look", never "none open".
+        "permission_sessions": permission_mode.terminal_sessions(),
     }
 
 
@@ -18670,6 +18698,15 @@ async def h_settings_put(request: web.Request) -> web.Response:
             except addon_options.OptionsError as exc:
                 log.warning("could not write add-on options (%s) — "
                             "storing locally instead", exc)
+        # "Act without asking" is the one option a failed write may not
+        # turn on locally. The local copy would outrank nothing the
+        # Supervisor says (`eff_skip_permissions`) and be promoted nowhere
+        # (`_options_sync`), so saving it would be a toast saying "on"
+        # over a switch that stays off — refused instead, in words.
+        refused_switch = (not wrote_addon and addon_options.available()
+                          and clean_options.get(permission_mode.OPTION) is True)
+        if refused_switch:
+            clean_options.pop(permission_mode.OPTION)
         try:
             # Local store: authoritative only without a Supervisor. After a
             # successful add-on write we clear these so one value can't be
@@ -18680,6 +18717,16 @@ async def h_settings_put(request: web.Request) -> web.Response:
             raise web.HTTPBadRequest(text=str(exc))
         if permission_mode.OPTION in clean_options:
             _publish_permission_mode()
+        if refused_switch:
+            raise web.HTTPConflict(
+                text="brAIn could not save that to the add-on's options, so "
+                     "it is still asking. Try again, or turn it on from the "
+                     "add-on's Configuration tab.")
+        if not wrote_addon and clean_options:
+            payload = _settings_payload(settings)
+            # Said, so a toast can say the Configuration tab did not move.
+            payload["saved_locally"] = sorted(clean_options)
+            return web.json_response(payload)
     return web.json_response(_settings_payload(settings))
 
 

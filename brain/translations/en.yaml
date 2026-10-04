@@ -53,13 +53,18 @@ configuration:
     name: Let brAIn act without asking
     description: >-
       Off (the default), the terminal and the chat ask before Claude runs a
-      command, edits a file or changes something in Home Assistant; only
-      reading is pre-approved. On, they stop asking — anything brAIn can
-      reach, it changes straight away. Still guarded either way: protected
-      entities stay refused, brAIn's own deny-list holds, conversations about
-      a finding always ask, file edits can still be undone, and voice and
-      background runs keep their own rules. Takes effect on the next terminal
-      session or chat message, no restart. The same switch is in ⚙ → Terminal
+      command, edits a file or changes something in Home Assistant. Only
+      reading is pre-approved. On, they stop asking. Still guarded: brAIn's
+      Home Assistant tools refuse protected entities. So do plain shell
+      service calls, and YAML edits made with Claude's file tools, that name
+      one. A shell command that reaches one some other way is not checked.
+      brAIn's own deny-list holds, conversations about a finding still ask,
+      and voice and background runs keep their own rules. Edits made with
+      Claude's file
+      tools can be undone with brain undo; shell changes cannot. Applies to
+      the next terminal session and the chat's next message, with no
+      restart. A terminal session already open keeps the setting it started
+      with until you end it with /exit. The same switch is in ⚙ → Terminal
       & chat.
   assist_fast_mode:
     name: Fast voice responses

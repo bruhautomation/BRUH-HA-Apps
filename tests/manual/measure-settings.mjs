@@ -115,14 +115,28 @@ window.fetch = async (url, opts) => {
     (window.__puts = window.__puts || []).push(JSON.parse(opts.body));
   }
   if (p.includes('api/settings')) {
+    // The permission switch round-trips, so a press on it re-renders from
+    // what the "server" answered — and \`__refusePut\` stands in for the
+    // Supervisor refusing the write, which the panel answers with a 409.
+    const put = !!(opts && opts.method === 'PUT');
+    const sent = put ? JSON.parse(opts.body || '{}') : {};
+    if (put && window.__refusePut) {
+      return new Response("brAIn could not save that to the add-on's options, "
+        + 'so it is still asking.', { status: 409 });
+    }
+    if ('dangerously_skip_permissions' in sent) {
+      window.__skipPerms = sent.dangerously_skip_permissions === true;
+    }
     return answer({
+      ...(window.__permSessions !== undefined
+        ? { permission_sessions: window.__permSessions } : {}),
       settings: {
         auto_enabled: true, capture: false, terminal_ui: 'chat',
         chat_max_sessions: 3, gather_mode: 'search', refresh_mode: 'changed',
         plan: 'pro', budget_percent: 25, refresh_hours: 12, history_days: 7,
         timeout_minutes: 8, history_keep_runs: 20, history_keep_days: 30,
         model: 'claude-sonnet-4-5', onboarded: true,
-        dangerously_skip_permissions: false,
+        dangerously_skip_permissions: window.__skipPerms === true,
         notify_policy: 'wake me for water or smoke; batteries can wait',
         speak_first: true,
         notify_policy_learned: [{ id: 'a1b2c3d4', subject: 'Garden lights',
@@ -472,6 +486,71 @@ for (const width of WIDTHS) {
     }
   } catch (e) {
     note(where, `driving the camera list failed: ${String(e.message).split('\n')[0]}`);
+  }
+
+  // ---- the permission switch says what it did NOT reach -------------------
+  // A flip reaches a terminal session only when one STARTS (ttyd re-attaches
+  // to the same tmux session), so the line under the switch and the toast
+  // after a press have to say which open session kept the old setting —
+  // above all after "off", where saying nothing reads as "it stopped". Last
+  // in the run, because it leaves the Terminal section open.
+  try {
+    const line = () => page.evaluate(() => {
+      const n = document.querySelector('#setSkipPermsNote');
+      const own = window.__hintSentences().find((h) => h.text
+        === n.textContent.replace(/\s+/g, ' ').trim());
+      return { text: n.textContent, warn: n.classList.contains('warn'),
+               sentences: own ? own.sentences : -1 };
+    });
+    let got = await line();
+    if (got.warn) note(where, 'the permission line warns with nothing running');
+    if (!/next terminal session/.test(got.text)) {
+      note(where, `the permission line does not say when it applies: "${got.text}"`);
+    }
+    if (/stay refused/.test(got.text)) {
+      note(where, 'the permission line still claims protected entities "stay refused"');
+    }
+
+    // Off, with a terminal session still open that began acting.
+    await page.evaluate(async () => {
+      window.__permSessions = { acting: 1, asking: 0 };
+      renderSettingsForm(await api('api/settings'));
+    });
+    got = await line();
+    if (!got.warn || !/still acts without asking/.test(got.text) || !/\/exit/.test(got.text)) {
+      note(where, `an open session still acting is not said: "${got.text}"`);
+    }
+    if (got.sentences > 2) note(where, `the still-acting line runs to ${got.sentences} sentences`);
+
+    // On, with a session open that began asking — first refused, then not.
+    await page.evaluate(() => {
+      window.__permSessions = { acting: 0, asking: 1 };
+      window.__refusePut = true;
+      document.querySelector('#setsecTerminal').open = true;
+    });
+    await page.click('#setSkipPerms');
+    await page.waitForFunction(
+      () => /still asking/.test(document.querySelector('#toast').textContent),
+      null, { timeout: 4000 });
+    if (await page.evaluate(() => document.querySelector('#setSkipPerms').checked)) {
+      note(where, 'a refused save left the switch showing a value that did not save');
+    }
+    await page.evaluate(() => { window.__refusePut = false; });
+    await page.click('#setSkipPerms');
+    await page.waitForFunction(
+      () => /already open still asks/.test(document.querySelector('#toast').textContent),
+      null, { timeout: 4000 });
+    got = await line();
+    if (!/already open still asks/.test(got.text) || !got.warn) {
+      note(where, `an open session still asking is not said: "${got.text}"`);
+    }
+    if (got.sentences > 2) note(where, `the still-asking line runs to ${got.sentences} sentences`);
+    const toastText = await page.evaluate(() => document.querySelector('#toast').textContent);
+    if (/stay refused/.test(toastText)) {
+      note(where, 'the toast still claims protected entities "stay refused"');
+    }
+  } catch (e) {
+    note(where, `driving the permission switch failed: ${String(e.message).split('\n')[0]}`);
   }
 
   await context.close();
