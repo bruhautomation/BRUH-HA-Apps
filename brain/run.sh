@@ -505,6 +505,85 @@ ENVEOF
 }
 
 # ============================================================================
+# Home Assistant's user-editable config, handed to the claude user
+# ============================================================================
+#
+# Claude Code runs as `claude`; Home Assistant runs as root, so the YAML it
+# writes is root's — and its UI editors save automations.yaml, scripts.yaml
+# and scenes.yaml by writing a new file and renaming it over the old one,
+# so even a file handed over here is root's again after the next save from
+# the automation editor. A run that met one asked the homeowner to type
+# `sudo chown`, which nobody should ever be asked. This is the boot half;
+# the runtime half is the edit hook, `brain own` and the panel's sweep
+# (panel/ownership.py), which re-own what drifts back.
+#
+# What is handed over: the top-level *.yaml/*.yml, and these folders when
+# they exist — packages, blueprints, esphome, themes, custom_templates,
+# python_scripts — plus any folder configuration.yaml names with
+# !include_dir_*. Never `secrets.yaml`, never anything under a hidden folder
+# (.storage is Core's own state, rewritten continuously; .esphome is build
+# output), and never through a symbolic link: find does not follow links,
+# a linked folder is skipped, and chown -h acts on a link rather than on
+# what it points at. Bounded by BRAIN_OWN_MAX and quiet: one log line.
+#
+# Takes the root and the owner as arguments so the test can run this exact
+# function over a temporary tree.
+own_ha_config() {
+    local root="${1:-/config}" owner="${2:-claude:claude}"
+    local user="${owner%%:*}" cap="${BRAIN_OWN_MAX:-20000}"
+    { [ -d "$root" ] && [ ! -L "$root" ]; } || return 0
+    local real_root d f
+    real_root=$(readlink -f "$root" 2>/dev/null) || return 0
+    local -a dirs=(packages blueprints esphome themes custom_templates python_scripts)
+    local -a found=()
+    local -A seen=()
+
+    # Folders configuration.yaml includes, read as text: a relative path
+    # with no hidden or `..` component, or it is not ours to walk.
+    if [ -f "$root/configuration.yaml" ]; then
+        while IFS= read -r d; do
+            d="${d#./}"; d="${d%/}"
+            case "/$d/" in
+                *"/../"*|*"/./"*|*"/."*) continue ;;
+            esac
+            case "$d" in ""|/*) continue ;; esac
+            dirs+=("$d")
+        done < <(sed -n 's/.*!include_dir_[a-z_]*[[:space:]]\{1,\}\([^[:space:]#]*\).*/\1/p' \
+                    "$root/configuration.yaml" 2>/dev/null | tr -d "\"'")
+    fi
+
+    while IFS= read -r -d '' f; do
+        found+=("$f")
+    done < <(find "$root" -maxdepth 1 -type f \( -name '*.yaml' -o -name '*.yml' \) \
+                 ! -name secrets.yaml ! -user "$user" -print0 2>/dev/null)
+
+    for d in "${dirs[@]}"; do
+        [ -n "${seen[$d]:-}" ] && continue
+        seen[$d]=1
+        local top="$root/$d" real
+        { [ -d "$top" ] && [ ! -L "$top" ]; } || continue
+        real=$(readlink -f "$top" 2>/dev/null) || continue
+        case "$real" in "$real_root"/*) ;; *) continue ;; esac
+        while IFS= read -r -d '' f; do
+            found+=("$f")
+        done < <(find "$top" \( -type d -name '.*' ! -path "$top" -prune \) -o \
+                     \( \( -type f -o -type d \) ! -name secrets.yaml \
+                        ! -user "$user" -print0 \) 2>/dev/null)
+    done
+
+    local n=${#found[@]}
+    if [ "$n" -gt "$cap" ]; then
+        bashio::log.warning "Config ownership: ${n} entries need handing to ${user}; doing the first ${cap}, the edit hook and brain own take care of the rest"
+        found=("${found[@]:0:$cap}")
+        n=$cap
+    fi
+    if [ "$n" -gt 0 ]; then
+        printf '%s\0' "${found[@]}" | xargs -0 chown -h "$owner" 2>/dev/null || true
+    fi
+    bashio::log.info "Config ownership: ${n} file(s) and folder(s) under ${root} handed to ${user}"
+}
+
+# ============================================================================
 # Non-root User Setup (for --dangerously-skip-permissions)
 # ============================================================================
 
@@ -577,6 +656,8 @@ setup_claude_user() {
     chown claude:claude /config 2>/dev/null || true
     chown -R claude:claude /config/.brain 2>/dev/null || true
     chown -R claude:claude /config/custom_components 2>/dev/null || true
+    # And the YAML Home Assistant's editors write as root (see own_ha_config).
+    own_ha_config /config claude:claude
 
     # Grant ownership of enabled volume mounts
     [ -n "${SHARE_DIR:-}" ] && chown claude:claude /share 2>/dev/null || true

@@ -43,6 +43,15 @@ of regression that only shows up in somebody's log weeks later:
   ``/data/run-sources.jsonl`` claude-owned precisely so both halves can
   write it, and the old prune quietly undid that. Root can hand a file over;
   a non-root writer cannot, so this is best-effort by nature.
+* **A new file's owner, under the config folder.** A file that did not
+  exist has no owner to keep, and root's answer was root — so a scene file,
+  a package or a card mirror the panel created was one the ``claude`` user
+  could never edit in place, and the run that met it asked the homeowner
+  to type ``sudo chown``. Where root creates a file (or a missing folder)
+  inside ``CONFIG_DIR``, it takes the owner of the folder it lands in.
+  That grants nothing new: the owner of a folder can already rename a file
+  of its own over any entry in it. Outside the config folder nothing
+  changes, so ``/data`` stays root's.
 
 ``locked`` is the other half, and it answers a different failure. An
 atomic replace makes a *write* indivisible; it does nothing at all for a
@@ -120,6 +129,51 @@ def _umask() -> int:
 
 DEFAULT_MODE = 0o666 & ~_umask()
 
+# Home Assistant's config folder — the one tree where a file root creates
+# is handed to whoever owns the folder it lands in (see the docstring).
+# `automation_writer` reads the same variable, and `ownership` reads this.
+CONFIG_DIR = os.environ.get("BRAIN_CONFIG_DIR", "/config")
+
+
+def _inherited(directory: Path) -> tuple[int, int]:
+    """The owner a NEW entry in ``directory`` should take, or (-1, -1).
+
+    Only for root — nobody else can give a file away — and only inside the
+    config folder, answered on the real path: ``/config/../data`` is
+    lexically under it and is not in it.
+    """
+    if os.geteuid() != 0:
+        return -1, -1
+    try:
+        root = os.path.realpath(CONFIG_DIR).rstrip(os.sep) or os.sep
+        real = os.path.realpath(directory)
+        if real != root and not real.startswith(root + os.sep):
+            return -1, -1
+        st = os.stat(real)
+    except OSError:
+        return -1, -1
+    return st.st_uid, st.st_gid
+
+
+def _make_parents(directory: Path) -> None:
+    """``mkdir -p``, handing each folder root creates under the config
+    folder to the owner of the folder above it — or a new file's owner
+    would be inherited from a folder only root can write."""
+    missing = []
+    here = directory
+    while not os.path.lexists(here) and here.parent != here:
+        missing.append(here)
+        here = here.parent
+    directory.mkdir(parents=True, exist_ok=True)
+    for made in reversed(missing):
+        uid, gid = _inherited(made.parent)
+        if uid < 0:
+            continue
+        try:
+            os.chown(made, uid, gid, follow_symlinks=False)
+        except OSError:
+            pass            # best-effort, like every other hand-over here
+
 
 def _preserved(path: Path) -> tuple[int, int, int]:
     """The mode, uid and gid the file already has, or the defaults."""
@@ -159,8 +213,12 @@ def write_text(path, text: str, *, encoding: str = "utf-8",
     themselves, as they already did.
     """
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _make_parents(path.parent)
     keep_mode, uid, gid = _preserved(path)
+    if uid < 0:
+        # A new file: under the config folder, root hands it to the owner
+        # of the folder it lands in; anywhere else it stays the writer's.
+        uid, gid = _inherited(path.parent)
     fd, tmp = _scratch(path.parent, path.name)
     try:
         with os.fdopen(fd, "w", encoding=encoding) as handle:

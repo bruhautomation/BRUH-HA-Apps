@@ -12,6 +12,7 @@
 #   brain learn [topic]            Run a study session on the home
 #   brain ask "<question>"         One-shot question, same engine as the Ask card
 #   brain undo [n]                 Review and revert Claude's file edits
+#   brain own [-r] <path...>       Make a /config file writable by Claude (no sudo)
 #   brain login                    Sign in to Claude (same as `ha login`)
 #   brain check                    Run the house checks now (no Claude run)
 #   brain why [ask]                Why somebody did something by hand
@@ -63,6 +64,10 @@ Usage:
   brain learn [topic]            Study the home and write down what it finds
   brain ask "<question>"         Ask about the home (same engine as the Ask card)
   brain undo [n]                 Review and revert Claude's edits to /config
+  brain own [-r] <path...>       Make a file under /config writable by Claude
+                                 when Home Assistant saved it as root. The
+                                 edit hook does this by itself; nobody needs
+                                 to run sudo or chown
   brain check [list]             Run the house checks now — no Claude run,
                                  findings land on the Findings tab
   brain why [ask]                Why somebody here does something by hand —
@@ -137,6 +142,7 @@ case "$action" in
     learn)      delegate brain-learn.sh "$@" ;;
     ask)        delegate brain-ask.sh "$@" ;;
     undo)       delegate brain-undo.sh "$@" ;;
+    own)        delegate brain_own.py "$@" ;;
     check)      delegate brain-check.sh "$@" ;;
     why)        delegate brain-why.sh "$@" ;;
     weekly)     delegate brain-weekly.sh "$@" ;;

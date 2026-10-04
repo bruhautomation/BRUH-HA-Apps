@@ -13,6 +13,14 @@ own backups.
 
 The hook must never block an edit: any failure here exits 0 silently. A
 missing snapshot costs an undo, a raised exception would cost the edit.
+
+It does one more thing first, because it is the one hook that already sees
+every edit before it lands: when the target is under /config and the claude
+user cannot write it — Home Assistant's UI editors save automations.yaml,
+scripts.yaml and scenes.yaml as root — it asks the panel to hand the file
+back (`brain_own.ensure_writable`, the same route `brain own` uses). That
+step fails open too: a panel that is down or refuses leaves the edit to meet
+its own error, and costs at most a few seconds.
 """
 from __future__ import annotations
 
@@ -76,6 +84,20 @@ def prune() -> None:
         total -= size
 
 
+def make_writable(path: Path) -> None:
+    """Ask the panel to hand the target to the claude user if this process
+    cannot write it. Never raises and never blocks for long: the edit goes
+    ahead whatever the answer (see `brain_own.ensure_writable`)."""
+    try:
+        here = str(Path(__file__).resolve().parent)
+        if here not in sys.path:
+            sys.path.append(here)
+        import brain_own
+        brain_own.ensure_writable(path)
+    except Exception:  # noqa: BLE001 — a hook must never break the edit
+        pass
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -84,11 +106,6 @@ def main() -> int:
 
     tool = str(payload.get("tool_name") or "")
     if tool not in ("Write", "Edit", "NotebookEdit", "MultiEdit"):
-        return 0
-    if RETAIN_DAYS <= 0:
-        # The journal is switched off: nothing is copied, nothing is
-        # indexed, and `brain undo` has nothing to offer — which is what
-        # the option's own description promises.
         return 0
 
     tool_input = payload.get("tool_input") or {}
@@ -99,6 +116,15 @@ def main() -> int:
     if not raw:
         return 0
     path = Path(str(raw))
+    # Before the snapshot and before the journal's own early exits — the
+    # journal switched off, a file it never snapshots — because a file
+    # nobody journals still has to be writable for the edit to land.
+    make_writable(path)
+    if RETAIN_DAYS <= 0:
+        # The journal is switched off: nothing is copied, nothing is
+        # indexed, and `brain undo` has nothing to offer — which is what
+        # the option's own description promises.
+        return 0
     if not watched(path):
         return 0
 
