@@ -77,6 +77,12 @@ KIND_LABELS = {
     "mod": "Server mods",
     "resourcepack": "Resource packs",
 }
+KIND_SINGULAR = {
+    "plugin": "a plugin",
+    "datapack": "a data pack",
+    "mod": "a server mod",
+    "resourcepack": "a resource pack",
+}
 # The one sentence each kind owes somebody deciding whether the iPad will
 # see it. Shown on every card, so it is short.
 REACH = {
@@ -164,6 +170,32 @@ def search_params(kind: str, query: str, server_type: str, version: str,
         "limit": str(PAGE_SIZE),
         "offset": str(max(0, int(offset or 0))),
     }
+
+
+def published_as(project: dict, kind: str) -> bool:
+    """Whether Modrinth publishes this project as `kind`.
+
+    `/project` answers a single `project_type`, and it is the project's
+    *first* type, not its only one: a plugin is `mod`, and so is anything
+    that ships as a mod AND a data pack (VeinMiner is `mod` with a
+    `datapack` loader beside `fabric` and `paper`). Search already filtered
+    on the right type, so comparing that one field refused every plugin and
+    every multi-format data pack the browser had just offered. What a
+    project is published as is its `loaders`; the type field only decides
+    for a project that lists none.
+    """
+    loaders = {str(x).lower() for x in project.get("loaders") or []}
+    if kind == "plugin":
+        wanted = {name for names in PLUGIN_LOADERS.values() for name in names}
+    elif kind == "mod":
+        wanted = {name for names in MOD_LOADERS.values() for name in names} | {"neoforge", "quilt"}
+    elif kind == "datapack":
+        wanted = {"datapack"}
+    else:
+        wanted = set()
+    if loaders & wanted:
+        return True
+    return project.get("project_type") == kind
 
 
 def pick_version(versions: list[dict], loaders: list[str], version: str) -> dict | None:
@@ -391,10 +423,10 @@ async def install(client: Modrinth, ctx: Context, project_id: str, kind: str,
     seen.add(project_id)
 
     project = await client.project(project_id)
-    if project.get("project_type") != kind:
+    if not published_as(project, kind):
         raise AddonError(
-            f"{project.get('title') or project_id} is a {project.get('project_type')}, "
-            f"not a {kind}.")
+            f"{project.get('title') or project_id} is not published on Modrinth as "
+            f"{KIND_SINGULAR.get(kind, kind)}.")
     if kind == "mod" and project.get("client_side") == "required":
         raise AddonError(
             f"{project.get('title')} has to be installed on every player's device too, "
@@ -453,6 +485,42 @@ async def install(client: Modrinth, ctx: Context, project_id: str, kind: str,
     manifest[project["id"]] = row
     write_manifest(ctx.server_dir, manifest)
     return written + [{"id": project["id"], **row}]
+
+
+MAX_BATCH = 25
+
+
+async def install_many(client: Modrinth, ctx: Context, items: list) -> list[dict]:
+    """Install several projects, one after another; one result per request.
+
+    Sequential on purpose: every install rewrites the one per-world
+    manifest, and two at once would each write the other's row away. One
+    failure does not stop the rest — a batch somebody picked from a list
+    is a list of separate wishes, and the result says which landed.
+    """
+    if not isinstance(items, list) or not items:
+        raise AddonError("Nothing was selected to add.")
+    if len(items) > MAX_BATCH:
+        raise AddonError(f"Add at most {MAX_BATCH} at a time.")
+    results: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for item in items:
+        pid = str((item or {}).get("id") or "").strip() if isinstance(item, dict) else ""
+        kind = str((item or {}).get("kind") or "").strip() if isinstance(item, dict) else ""
+        if (pid, kind) in seen:
+            continue
+        seen.add((pid, kind))
+        try:
+            rows = await install(client, ctx, pid, kind)
+        except AddonError as exc:
+            results.append({"id": pid, "kind": kind, "ok": False, "error": str(exc)})
+            continue
+        except Exception as exc:  # noqa: BLE001 — offline mid-batch, a timeout
+            results.append({"id": pid, "kind": kind, "ok": False,
+                            "error": f"The install did not finish ({type(exc).__name__})."})
+            continue
+        results.append({"id": pid, "kind": kind, "ok": True, "installed": rows})
+    return results
 
 
 def remove(ctx: Context, project_id: str, force: bool = False) -> dict:

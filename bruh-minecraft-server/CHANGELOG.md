@@ -5,6 +5,27 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.16.1
+
+### Fixed
+
+- **"VeinMiner is a mod, not a datapack."** The add-on browser refused to install
+  most of what it had just offered. Modrinth's search knows a project is a data
+  pack or a plugin, but its project record reports a single type — and that type
+  is `mod` for every plugin and for anything published as a mod *and* a data pack
+  (VeinMiner ships as all three). The install read that one field, so it refused
+  VeinMiner as a data pack and every plugin as a plugin. It now reads what a
+  project is actually published for (its loaders), and VeinMiner installs as a
+  data pack, or as a plugin on Paper.
+
+### Added
+
+- **Add several at once.** Every result card has a **Select** button; pick as many
+  as you like across searches and kinds, then press **Add all to world** in the
+  tray at the bottom. They install in one go, one after another, and you get one
+  answer: what was added, anything that could not be (the rest still go in), and
+  a single reload or restart note instead of one per add-on. Up to 25 at a time.
+
 ## 1.16.0
 
 ### Added

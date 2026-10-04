@@ -2070,6 +2070,9 @@ async def api_addons_search(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+RESTART_NOTE = "Restart the server for it to load."
+
+
 async def _after_install(kind: str, rows: list[dict], ctx: addons.Context) -> dict:
     """What an install still needs: a reload, a restart, a pack pointed at."""
     notes: list[str] = []
@@ -2100,7 +2103,7 @@ async def _after_install(kind: str, rows: list[dict], ctx: addons.Context) -> di
         else:
             notes.append("Geyser is not installed, so Bedrock players are not sent it.")
     if restart:
-        notes.append("Restart the server for it to load.")
+        notes.append(RESTART_NOTE)
     return {"restart_needed": restart, "notes": notes}
 
 
@@ -2109,9 +2112,11 @@ async def api_addons_install(request: web.Request) -> web.Response:
         body = await request.json()
     except ValueError:
         body = {}
+    ctx = _addon_context()
+    if isinstance(body, dict) and "items" in body:
+        return await _install_batch(body.get("items"), ctx)
     project_id = str(body.get("id") or "").strip()
     kind = str(body.get("kind") or "").strip()
-    ctx = _addon_context()
     try:
         async with _modrinth_session() as session:
             rows = await addons.install(addons.Modrinth(session), ctx, project_id, kind)
@@ -2122,6 +2127,32 @@ async def api_addons_install(request: web.Request) -> web.Response:
             {"error": f"The install did not finish ({type(exc).__name__}: {exc})."}, status=502)
     after = await _after_install(kind, rows, ctx)
     return web.json_response({"ok": True, "installed": rows, **after})
+
+
+async def _install_batch(items, ctx: addons.Context) -> web.Response:
+    """Several add-ons in one press: one reload, one restart, one answer."""
+    try:
+        async with _modrinth_session() as session:
+            results = await addons.install_many(addons.Modrinth(session), ctx, items)
+    except addons.AddonError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    except Exception as exc:  # noqa: BLE001
+        return web.json_response(
+            {"error": f"The install did not finish ({type(exc).__name__}: {exc})."}, status=502)
+    by_kind: dict[str, list[dict]] = {}
+    for res in results:
+        if res.get("ok"):
+            by_kind.setdefault(res["kind"], []).extend(res["installed"])
+    notes: list[str] = []
+    restart = False
+    for kind, rows in by_kind.items():
+        after = await _after_install(kind, rows, ctx)
+        restart = restart or after["restart_needed"]
+        notes += [n for n in after["notes"] if n != RESTART_NOTE]
+    if restart:
+        notes.append(RESTART_NOTE)
+    return web.json_response({"ok": any(r.get("ok") for r in results), "results": results,
+                              "restart_needed": restart, "notes": notes})
 
 
 async def api_addons_remove(request: web.Request) -> web.Response:

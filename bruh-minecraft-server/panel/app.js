@@ -1283,6 +1283,10 @@
   // kinds are offered; every card says whether a Bedrock/iPad player gets it.
   // ------------------------------------------------------------------
   const addonState = { kind: null, q: '', offset: 0, info: null };
+  // What has been picked for "Add all to world", across searches and kinds:
+  // key `${kind}:${id}` -> { id, kind, title }.
+  const addonPicked = new Map();
+  const pickKey = (item) => `${item.kind}:${item.id}`;
 
   const fmtCount = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 
@@ -1302,7 +1306,10 @@
     } else if (item.installed) {
       action = '<span class="addon-added">Added ✓</span>';
     } else {
-      action = `<button class="btn btn-primary" data-addon-add="${esc(item.id)}" data-kind="${esc(item.kind)}">Add to world</button>`;
+      const picked = addonPicked.has(pickKey(item));
+      action = `<button class="btn btn-primary" data-addon-add="${esc(item.id)}" data-kind="${esc(item.kind)}">Add to world</button>
+        <button class="btn${picked ? ' is-selected' : ''}" type="button" aria-pressed="${picked}" data-addon-pick="${esc(item.id)}" data-kind="${esc(item.kind)}" data-title="${esc(item.title)}">${picked ? 'Selected ✓' : 'Select'}</button>`;
+      if (picked) card.classList.add('selected');
     }
     card.innerHTML = `
       <div class="addon-head">${icon}
@@ -1328,6 +1335,10 @@
       const names = (resp.installed || []).map((r) => `${r.title} ${r.version || ''}`.trim()).join(', ');
       note.textContent = `Added ${names}. ${(resp.notes || []).join(' ')}`;
       btn.textContent = 'Added ✓';
+      const pick = card.querySelector('button[data-addon-pick]');
+      if (pick) pick.remove();
+      card.classList.remove('selected');
+      if (addonPicked.delete(`${btn.dataset.kind}:${btn.dataset.addonAdd || btn.dataset.addonUpdate}`)) renderAddonTray();
       loadAddonsInstalled();
     } else {
       note.textContent = resp.error || 'That did not install.';
@@ -1337,7 +1348,82 @@
     }
   }
 
+  function renderAddonTray() {
+    const tray = $('#addon-tray');
+    const n = addonPicked.size;
+    tray.hidden = n === 0 && !$('#addon-tray-note').textContent;
+    const names = [...addonPicked.values()].map((p) => p.title);
+    $('#addon-tray-text').textContent = n
+      ? `${n} selected: ${names.slice(0, 4).join(', ')}${n > 4 ? ` and ${n - 4} more` : ''}`
+      : '';
+    $('#addon-tray-add').hidden = n === 0;
+    $('#addon-tray-clear').hidden = n === 0;
+    $('#addon-tray-add').textContent = n > 1 ? `Add all ${n} to world` : 'Add to world';
+  }
+
+  function addonPick(btn) {
+    const item = { id: btn.dataset.addonPick, kind: btn.dataset.kind, title: btn.dataset.title };
+    const key = pickKey(item);
+    const card = btn.closest('.addon-card');
+    if (addonPicked.has(key)) addonPicked.delete(key); else addonPicked.set(key, item);
+    const on = addonPicked.has(key);
+    btn.classList.toggle('is-selected', on);
+    btn.setAttribute('aria-pressed', String(on));
+    btn.textContent = on ? 'Selected ✓' : 'Select';
+    card.classList.toggle('selected', on);
+    $('#addon-tray-note').textContent = '';
+    $('#addon-tray-note').classList.remove('bad');
+    renderAddonTray();
+  }
+
+  async function addonInstallPicked() {
+    const btn = $('#addon-tray-add');
+    const note = $('#addon-tray-note');
+    const items = [...addonPicked.values()];
+    if (!items.length) return;
+    btn.disabled = true;
+    $('#addon-tray-clear').disabled = true;
+    btn.textContent = `Adding ${items.length}…`;
+    note.textContent = '';
+    note.classList.remove('bad');
+    const resp = await api('api/addons/install', {
+      method: 'POST', body: JSON.stringify({ items: items.map(({ id, kind }) => ({ id, kind })) }),
+    });
+    btn.disabled = false;
+    $('#addon-tray-clear').disabled = false;
+    if (!resp.results) {
+      note.textContent = resp.error || 'Those did not install.';
+      note.classList.add('bad');
+      renderAddonTray();
+      return;
+    }
+    const added = [];
+    const failed = [];
+    resp.results.forEach((r) => {
+      const picked = addonPicked.get(`${r.kind}:${r.id}`);
+      const title = picked ? picked.title : r.id;
+      if (r.ok) {
+        added.push(title);
+        addonPicked.delete(`${r.kind}:${r.id}`);
+      } else {
+        failed.push(`${title}: ${r.error}`);
+      }
+    });
+    const parts = [];
+    if (added.length) parts.push(`Added ${added.join(', ')}.`);
+    if (failed.length) parts.push(`Not added — ${failed.join(' ')}`);
+    parts.push(...(resp.notes || []));
+    note.textContent = parts.join(' ');
+    note.classList.toggle('bad', failed.length > 0 && !added.length);
+    renderAddonTray();
+    await loadAddonsInstalled();
+    searchAddons(false);
+  }
+
   function bindAddonButtons(root) {
+    root.querySelectorAll('button[data-addon-pick]').forEach((b) => {
+      b.addEventListener('click', () => addonPick(b));
+    });
     root.querySelectorAll('button[data-addon-add], button[data-addon-update]').forEach((b) => {
       b.addEventListener('click', () => addonInstall(b));
     });
@@ -1423,4 +1509,16 @@
     searchAddons(false);
   });
   $('#addon-more')?.addEventListener('click', () => searchAddons(true));
+  $('#addon-tray-add')?.addEventListener('click', addonInstallPicked);
+  $('#addon-tray-clear')?.addEventListener('click', () => {
+    addonPicked.clear();
+    $('#addon-tray-note').textContent = '';
+    document.querySelectorAll('#addon-results button[data-addon-pick]').forEach((b) => {
+      b.classList.remove('is-selected');
+      b.setAttribute('aria-pressed', 'false');
+      b.textContent = 'Select';
+      b.closest('.addon-card').classList.remove('selected');
+    });
+    renderAddonTray();
+  });
 })();
