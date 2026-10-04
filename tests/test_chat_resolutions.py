@@ -347,15 +347,20 @@ class TestOneVocabulary(unittest.TestCase):
         given on. `advice` is the one verb that is NOT an ending — it puts a
         sentence on the card and leaves the row — so it has a route of its
         own rather than a row in the endings table, and the panel must
-        never send it down the {verb} path.
+        never send it down the {verb} path. `plan` is the other one: it is
+        the change a discussion agreed on, and its press is the card's own
+        Fix it (`/fix`, which buys a read-only plan to Apply) carrying the
+        label as the change — never an ending, and never a run that acts.
         """
         server = importlib.import_module("server")
         for verb in self.chat.RESOLUTION_VERBS:
-            if verb == "advice":
+            if verb in ("advice", "plan"):
                 continue
             self.assertIn(verb, server.FINDING_VERBS, verb)
         self.assertNotIn("advice", server.FINDING_VERBS)
+        self.assertNotIn("plan", server.FINDING_VERBS)
         self.assertIn("api/finding/${finding.ts}/advice", self.app_js)
+        self.assertIn("api/finding/${finding.ts}/fix", self.app_js)
 
     def test_an_unattended_run_may_not_offer_resolutions_to_nobody(self):
         self.assertIn(f"{self.engine.MCP}offer_resolutions",

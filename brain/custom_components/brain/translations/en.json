@@ -133,7 +133,7 @@
         },
         "source": {
           "name": "Source",
-          "description": "Where this fact came from (defaults to service)."
+          "description": "Where this fact came from (defaults to service). correction, confirmed and person are kept for the homeowner's own answers and are refused."
         },
         "confidence": {
           "name": "Confidence",
@@ -142,16 +142,20 @@
       }
     },
     "answer_question": {
-      "name": "Answer memory question",
-      "description": "Answer an open question from Claude's memory system. The answer is recorded and also queued as a memory fact.",
+      "name": "Answer one of brAIn's guesses",
+      "description": "Answer one of the guesses brAIn is waiting on, yes or no — the same as pressing Yes or No on the Findings tab. A yes files the guess as something brAIn knows; a no closes it, and a reason after the no is kept as a correction.",
       "fields": {
+        "ts": {
+          "name": "Guess id",
+          "description": "The guess's id, from the \"Waiting on you\" sensor's questions. Use this or the question."
+        },
         "question": {
           "name": "Question",
-          "description": "The open question being answered."
+          "description": "The guess being answered, as it is worded (or enough of it to pick out just one). Use this or the id."
         },
         "answer": {
           "name": "Answer",
-          "description": "Your answer."
+          "description": "Start with yes or no. Anything after a no is kept as the reason."
         },
         "source": {
           "name": "Source",
@@ -181,11 +185,11 @@
         },
         "timeout": {
           "name": "Timeout",
-          "description": "Maximum seconds to wait for the task to complete (default 120)."
+          "description": "Maximum seconds to wait for the task to complete (default 300)."
         },
         "tools": {
           "name": "Tools",
-          "description": "What this task is allowed to touch. full (default) keeps today's behaviour: the shell, file edits, web access and every Home Assistant tool. house drops the shell, file edits and the web and leaves every Home Assistant tool. read_only is the same list the scheduled analyst runs with \u2014 it can look at anything and change nothing."
+          "description": "What this task is allowed to touch. full (default) keeps today's behaviour: the shell, file edits, web access and every Home Assistant tool. house drops the shell, file reads and edits, and the web, and leaves every Home Assistant tool. read_only is the same list the scheduled analyst runs with — it can look at anything in Home Assistant and change nothing, and it cannot read files. Anything wider than read_only needs a Home Assistant administrator (an automation runs as the system and may ask for any)."
         }
       }
     },
@@ -1234,6 +1238,16 @@
     "check": {
       "name": "Run house checks",
       "description": "Ask brAIn to run its house checks now rather than waiting for the next scheduled pass. Returns immediately — a pass takes a minute or two, and what it finds arrives on the Findings tab."
+    },
+    "study": {
+      "name": "Study the home",
+      "description": "Send brAIn off to investigate one topic and write down what it finds. Returns immediately; the results arrive in memory, not in a response. Needs a Home Assistant administrator.",
+      "fields": {
+        "topic": {
+          "name": "Topic",
+          "description": "What to study. Leave empty to study whatever has gone stalest."
+        }
+      }
     }
   },
   "issues": {

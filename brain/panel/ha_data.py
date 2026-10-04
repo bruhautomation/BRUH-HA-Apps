@@ -468,6 +468,7 @@ async def get_registries(session: aiohttp.ClientSession) -> dict[str, dict]:
         for d in (devices or [])
     }
     ent_area: dict[str, str] = {}
+    ent_area_id: dict[str, str] = {}
     ent_device: dict[str, str] = {}
     hidden: set[str] = set()
     for e in entities or []:
@@ -482,8 +483,12 @@ async def get_registries(session: aiohttp.ClientSession) -> dict[str, dict]:
         name = area_names.get(area_id or "")
         if name:
             ent_area[eid] = name
+            ent_area_id[eid] = area_id
     return {
         "entity_area": ent_area,
+        # The same rooms by ID, which is the key a fact about a room is
+        # filed under (`area:<id>`) — see `areas_for`.
+        "entity_area_id": ent_area_id,
         "entity_device": ent_device,
         "device_names": device_names,
         "hidden": hidden,
@@ -830,13 +835,29 @@ def memory_budget() -> int:
 FACTS_HEAD_CHARS = 1_000
 
 
-def _memory_for(entities=(), areas=(), domains=()) -> str:
+def areas_for(registries: dict, entities) -> list[str]:
+    """The area ids these entities sit in, deduped, in first-seen order.
+
+    What turns "this run reads the lounge thermometer" into "this run is
+    about the lounge", which is the only way a fact a person taught about
+    the room — filed `area:<id>` — reaches a run about a device in it.
+    """
+    where = (registries or {}).get("entity_area_id") or {}
+    out: list[str] = []
+    for eid in entities or ():
+        area = where.get(eid)
+        if area and area not in out:
+            out.append(area)
+    return out
+
+
+def _memory_for(entities=(), areas=(), domains=(), query: str = "") -> str:
     """The retrieval block plus the document's head, or the whole
     document where there are no facts to retrieve from."""
     try:
         import facts_store  # noqa: PLC0415 — panel-local, optional here
         block = facts_store.retrieval_block(
-            entities=entities, areas=areas, domains=domains,
+            entities=entities, areas=areas, domains=domains, query=query,
             limit_chars=min(memory_budget(), facts_store.RETRIEVAL_CHARS * 2))
     except Exception:  # noqa: BLE001 — the whole document is the floor
         block = ""
@@ -848,7 +869,7 @@ def _memory_for(entities=(), areas=(), domains=()) -> str:
     return block + ("\n" + head if head else "")
 
 
-def _read_context(entities=(), areas=(), domains=()) -> str:
+def _read_context(entities=(), areas=(), domains=(), query: str = "") -> str:
     """Learned memory first, then the CLAUDE.md excerpt.
 
     Memory facts lead because they are distilled knowledge about this home;
@@ -858,7 +879,7 @@ def _read_context(entities=(), areas=(), domains=()) -> str:
     see `_memory_for`.
     """
     parts: list[str] = []
-    memory = _memory_for(entities, areas, domains)
+    memory = _memory_for(entities, areas, domains, query)
     if memory:
         parts.append(memory)
     claude_md = _read_capped(CONTEXT_FILE, CONTEXT_CHARS)
@@ -918,7 +939,8 @@ ANCHOR_DOMAINS = ("person", "climate", "weather", "alarm_control_panel")
 MAX_ANCHORS = 40
 
 
-async def collect_orientation(question: str | None = None) -> dict:
+async def collect_orientation(question: str | None = None, *,
+                              domains=(), areas=()) -> dict:
     """What the home CONTAINS — the small bundle the searching path starts on.
 
     The single-shot path posts every entity because it has one turn to work
@@ -942,7 +964,10 @@ async def collect_orientation(question: str | None = None) -> dict:
 
     hidden = registries["hidden"]
     ent_area = registries["entity_area"]
-    domains: dict[str, int] = {}
+    # Not `domains`: that name is the card's, and shadowing it handed
+    # retrieval every domain in the house — a Climate card was told the
+    # lights' facts, and the argument did nothing.
+    counts: dict[str, int] = {}
     per_area: dict[str, int] = {}
     unavailable = 0
     anchors: list[dict] = []
@@ -951,7 +976,7 @@ async def collect_orientation(question: str | None = None) -> dict:
         if not eid or eid in hidden:
             continue
         domain = eid.split(".")[0]
-        domains[domain] = domains.get(domain, 0) + 1
+        counts[domain] = counts.get(domain, 0) + 1
         area = ent_area.get(eid)
         if area:
             per_area[area] = per_area.get(area, 0) + 1
@@ -960,7 +985,7 @@ async def collect_orientation(question: str | None = None) -> dict:
         if domain in ANCHOR_DOMAINS and len(anchors) < MAX_ANCHORS:
             anchors.append(slim_state(st, area, now))
 
-    ranked_domains = dict(sorted(domains.items(), key=lambda kv: -kv[1])
+    ranked_domains = dict(sorted(counts.items(), key=lambda kv: -kv[1])
                           [:MAX_ORIENTATION_DOMAINS])
     ranked_areas = dict(sorted(per_area.items(), key=lambda kv: -kv[1])
                         [:MAX_ORIENTATION_AREAS])
@@ -971,7 +996,7 @@ async def collect_orientation(question: str | None = None) -> dict:
             "location": config.get("location_name"),
             "ha_version": config.get("version"),
         },
-        "entity_count": sum(domains.values()),
+        "entity_count": sum(counts.values()),
         "unavailable_count": unavailable,
         "domains": ranked_domains,
         "areas": ranked_areas,
@@ -979,7 +1004,14 @@ async def collect_orientation(question: str | None = None) -> dict:
     }
     if question is not None:
         out["question"] = question
-    context = _read_context()
+    # What the run is ABOUT, so memory retrieval can find the facts that
+    # matter to it: the card's domains, any rooms it names, and the
+    # question's own words. Called with none of them (as it was), a card
+    # in the default search mode was told only the house-wide facts — the
+    # correction about the deliberately unheated guest room, filed under
+    # that room, never reached the Climate card.
+    context = _read_context(domains=domains, areas=areas,
+                            query=question or "")
     if context:
         out["context"] = context
     return out
@@ -1062,10 +1094,12 @@ async def collect_bundle(category: dict, history_days: int, question: str | None
             except Exception:  # noqa: BLE001 — stats are best-effort
                 pass
 
+        ids = [row.get("e") for row in bundle.get("entities") or []
+               if isinstance(row, dict) and row.get("e")]
         context = _read_context(
-            entities=[row.get("e") for row in bundle.get("entities") or []
-                      if isinstance(row, dict) and row.get("e")],
-            domains=list(category.get("domains") or []))
+            entities=ids, areas=areas_for(registries, ids),
+            domains=list(category.get("domains") or []),
+            query=question or "")
         if context:
             bundle["context"] = context
 

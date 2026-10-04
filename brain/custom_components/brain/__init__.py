@@ -7,7 +7,7 @@ Provides:
 - brain.run_task             — run a Claude task with optional notification
 - brain.clear_conversation   — clear a persistent conversation session
 - brain.add_memory           — queue a fact for the home memory store
-- brain.answer_question      — answer an open memory question
+- brain.answer_question      — answer one of brAIn's open guesses yes or no
 - BRUH Power Tools                 — 65 registry-management admin services
   (areas, floors, labels, entities, devices, integrations, helpers, zones,
   persons, blueprints, statistics, users, diagnostics, dashboards, repairs)
@@ -29,6 +29,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import Event, HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import (
@@ -45,9 +46,17 @@ try:
 except ImportError:
     SupportsResponse = None  # type: ignore[assignment,misc]
 
-from .bridge import ClaudeBridge
+try:
+    # 2023.11+. Before it, a bad argument is an ordinary HomeAssistantError,
+    # which still puts the sentence in the trace — the class only changes
+    # how the frontend colours it.
+    from homeassistant.exceptions import ServiceValidationError
+except ImportError:
+    ServiceValidationError = HomeAssistantError  # type: ignore[assignment,misc]
+
+from .bridge import BrainRunError, ClaudeBridge
 from .findings import FindingsWatcher
-from .learning import LearningWatcher
+from .learning import LearningWatcher, read_open_hypotheses
 from .requests import parse_action as parse_notification_action
 from .requests import write_request as write_finding_request
 from .const import (
@@ -73,9 +82,7 @@ from .const import (
     EVENT_MOBILE_ACTION,
     INSIGHTS_DIR,
     MEMORY_DIR,
-    MEMORY_FILE,
     MEMORY_INBOX_DIR,
-    QUESTIONS_FILE,
     SHARED_DIR,
     SIGNAL_INSIGHT_UPDATE,
     STUDY_REQUESTS_DIR,
@@ -86,7 +93,11 @@ from .insight_format import (
     make_preview,
     truncate_markdown,
 )
-from .power_tools import POWER_TOOL_SERVICES, async_register_power_tools
+from .power_tools import (
+    POWER_TOOL_SERVICES,
+    async_register_power_tools,
+    async_require_admin,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -117,13 +128,20 @@ SEND_PROMPT_SCHEMA = vol.Schema(
 # field existed, every `brain.run_task` call got all of it whatever it was
 # asked to do, with no way for the automation that asked to say otherwise.
 #
-# `full` is the DEFAULT and must stay one: BRight's director drives the
-# same tasks folder and depends on that grant, so narrowing the default
-# would break a working add-on next door. The two narrower values are
-# opt-in, and the listener derives both from the panel's own analyst lists
-# rather than from a copy kept here.
+# `full` is the default and stays one — every automation written against
+# this service asked for it by not asking — but it is no longer the reason
+# BRight works: BRight's director writes its task files straight into the
+# folder and never calls this service, so what the SERVICE grants and who
+# may call it are decided here alone. The two narrower values are opt-in,
+# and the listener derives both from the panel's own analyst lists rather
+# than from a copy kept here.
 TASK_TOOLS = ("full", "house", "read_only")
 DEFAULT_TASK_TOOLS = "full"
+# What a non-admin caller may ask for. `house` acts on the house through
+# the Supervisor's token, which is an admin's reach whatever the caller's
+# own account is, and `full` is a shell in /config; `read_only` is the
+# analyst's own list and changes nothing. See `_require_admin_for`.
+NON_ADMIN_TOOLS = ("read_only",)
 
 RUN_TASK_SCHEMA = vol.Schema(
     {
@@ -132,6 +150,10 @@ RUN_TASK_SCHEMA = vol.Schema(
         vol.Optional("notify_entity"): str,
         vol.Optional("timeout"): vol.All(int, vol.Range(min=10, max=600)),
         vol.Optional("tools", default=DEFAULT_TASK_TOOLS): vol.In(TASK_TOOLS),
+        # Offered in services.yaml since the selector was written and
+        # refused here until now — a valid-looking UI choice that failed
+        # the call with "extra keys not allowed".
+        vol.Optional("model"): str,
     }
 )
 
@@ -157,10 +179,15 @@ ADD_MEMORY_SCHEMA = vol.Schema(
     }
 )
 
+# Which guess, and yes or no. `ts` is the guess's id, which the "Waiting on
+# you" sensor carries; `question` is its text, for an automation written
+# before the id was on the sensor. One of the two is required, and that is
+# checked in the handler, where the open guesses can be read.
 ANSWER_QUESTION_SCHEMA = vol.Schema(
     {
-        vol.Required("question"): vol.All(str, vol.Length(min=1)),
-        vol.Required("answer"): vol.All(str, vol.Length(min=1)),
+        vol.Optional("ts"): vol.Coerce(int),
+        vol.Optional("question"): vol.All(str, vol.Length(min=1)),
+        vol.Required("answer"): vol.All(str, vol.Length(min=1, max=600)),
         vol.Optional("source", default="service"): str,
     }
 )
@@ -552,15 +579,6 @@ def _remove_file(path: str) -> None:
         pass
 
 
-def _read_text_capped(path: str, cap: int) -> str:
-    """Read at most `cap` bytes of a text file; '' on any error."""
-    try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            return fh.read(cap)
-    except OSError:
-        return ""
-
-
 # ---------------------------------------------------------------------------
 # Home memory store (shared with the add-on's brain memory tooling)
 #
@@ -568,15 +586,35 @@ def _read_text_capped(path: str, cap: int) -> str:
 #   inbox/<epoch>-<source>.jsonl  one candidate fact per line:
 #       {"ts": <epoch int>, "source": "...", "fact": "...",
 #        "confidence": "high|medium|low"}
-#   questions.jsonl               question + answer records; an answer is
-#       {"q": "...", "a": "...", "source": "...", "ts": <epoch int>}
+#
+# An answer to one of brAIn's guesses is NOT written here: it is a request
+# the panel applies with the guess's own confirm/reject (see
+# `handle_answer_question`), because the guess is what has to close.
 # ---------------------------------------------------------------------------
+
+# Sources that carry an authority the pipeline acts on, and so may not be
+# claimed by a service call. `correction` is the homeowner saying brAIn had
+# something wrong, and the consolidator is told a correction is newer and
+# WINS over the line it contradicts; `person` is never pruned to make room;
+# `confirmed` is a guess the homeowner said yes to. A service that could
+# file any of those could rewrite what every later run — voice, the fixer —
+# is told about the house, under a label that says a person typed it.
+RESERVED_MEMORY_SOURCES = frozenset({"correction", "person", "confirmed"})
 
 
 def _sanitize_source(source: str) -> str:
     """Keep inbox filenames safe: alnum/underscore/dash only."""
     cleaned = "".join(c for c in str(source) if c.isalnum() or c in "_-")
     return cleaned or "service"
+
+
+def _reserved_source(source: str) -> bool:
+    """Whether a source names one of the authorities above, however spelled.
+
+    Asked of the SANITIZED name, because that is what lands in the inbox:
+    `"Correction!"` and `"correction"` are the same line once written.
+    """
+    return _sanitize_source(source).lower() in RESERVED_MEMORY_SOURCES
 
 
 def _write_study_request(requests_dir: str, topic: str) -> str:
@@ -617,33 +655,80 @@ def _append_memory_fact(
     return path
 
 
-def _append_question_answer(
-    memory_dir: str, question: str, answer: str, source: str
-) -> None:
-    """Record an answer in questions.jsonl AND queue it as an inbox fact."""
-    source = _sanitize_source(source)
-    os.makedirs(memory_dir, exist_ok=True)
-    record = {
-        "q": str(question).strip(),
-        "a": str(answer).strip(),
-        "source": source,
-        "ts": int(time.time()),
-    }
-    with open(
-        os.path.join(memory_dir, QUESTIONS_FILE), "a", encoding="utf-8"
-    ) as fh:
-        fh.write(json.dumps(record) + "\n")
-    # What is remembered is the answer as a plain statement with the
-    # question as its subject — the same shape the panel's own
-    # `_submit_answer` queues. A "Q: … → A: …" pair filed into memory.md
-    # is what made the old document unreadable: the consolidator kept the
-    # question, and a document of questions answers nothing.
-    _append_memory_fact(
-        memory_dir,
-        f"{record['q'].rstrip('?').strip()}: {record['a']}",
-        source,
-        "high",
+# A guess is answered yes or no. Read off the first word, because that is
+# how people answer a yes/no question in a text box — "yes", "no — it's the
+# beer fridge" — and a no may carry its reason, which is the half that
+# teaches (the panel files it as a correction).
+_YES_WORDS = frozenset({"yes", "y", "yeah", "yep", "yup", "true", "correct",
+                        "right", "confirm", "confirmed", "affirmative"})
+_NO_WORDS = frozenset({"no", "n", "nope", "nah", "false", "wrong",
+                       "incorrect", "reject", "rejected", "negative"})
+
+
+def _verdict(answer: str) -> tuple[str, str]:
+    """`("confirm", "")` or `("reject", reason)` for an answer, or raise.
+
+    A free-text answer that is neither is refused rather than guessed at:
+    the old service filed whatever was typed as a high-confidence fact and
+    left the guess open, so a "no" became a fact and the question stayed on
+    every surface until it expired. An answer that names neither yes nor no
+    is a fact, and `brain.add_memory` is the door for one.
+    """
+    text = str(answer or "").strip()
+    head, _, rest = text.replace(",", " ").replace("—", " ").replace(
+        ":", " ").replace(".", " ").replace("!", " ").partition(" ")
+    word = head.strip().lower()
+    if word in _YES_WORDS:
+        return "confirm", ""
+    if word in _NO_WORDS:
+        # The reason is what followed the word, as it was typed.
+        reason = text[len(head):].lstrip(" ,.:;!—-").strip()
+        return "reject", reason[:500]
+    raise ServiceValidationError(
+        "brain.answer_question answers one of brAIn's guesses yes or no — "
+        "start the answer with yes or no (a reason after a no is kept). "
+        "To teach brAIn a fact instead, use brain.add_memory."
     )
+
+
+def _normalise_guess(text: str) -> str:
+    return " ".join(str(text or "").casefold().split()).rstrip(" ?.!")
+
+
+def _which_guess(open_guesses: list[dict], ts=None, question=None) -> int:
+    """The id of the open guess an answer is about, or raise.
+
+    By id first — that is what the sensor carries and it cannot be
+    ambiguous — and by text for an automation that has the question in
+    hand: exactly, then as the one guess containing what was given. Two
+    guesses matching is a refusal, because answering the wrong one closes
+    it and files its dead end for good.
+    """
+    if ts is not None:
+        for guess in open_guesses:
+            if int(guess.get("ts") or 0) == int(ts):
+                return int(ts)
+        raise ServiceValidationError(
+            f"No open guess has the id {ts} — it may have been answered "
+            "already or expired. The \"Waiting on you\" sensor lists the "
+            "open ones with their ids.")
+    want = _normalise_guess(question or "")
+    if not want:
+        raise ServiceValidationError(
+            "Say which guess you are answering: its ts (from the \"Waiting "
+            "on you\" sensor) or its question.")
+    exact = [g for g in open_guesses if _normalise_guess(g.get("text")) == want]
+    near = exact or [g for g in open_guesses
+                     if want in _normalise_guess(g.get("text"))]
+    if len(near) == 1:
+        return int(near[0].get("ts") or 0)
+    if not near:
+        raise ServiceValidationError(
+            f"No open guess matches \"{question}\". The \"Waiting on you\" "
+            "sensor lists the open ones with their ids.")
+    raise ServiceValidationError(
+        f"{len(near)} open guesses match \"{question}\" — answer by ts "
+        "instead, from the \"Waiting on you\" sensor.")
 
 
 # ---------------------------------------------------------------------------
@@ -656,7 +741,7 @@ def _setup_insight_schedule(hass: HomeAssistant, entry: ConfigEntry) -> None:
     opts = {**entry.data, **entry.options}
 
     async def _scheduled_run(_now=None) -> None:
-        await _async_run_insight(hass, entry)
+        await _async_run_insight(hass, entry, scheduled=True)
 
     interval = opts.get(CONF_INSIGHT_INTERVAL) or 0
     if isinstance(interval, (int, float)) and interval >= 5:
@@ -688,8 +773,21 @@ def _setup_insight_schedule(hass: HomeAssistant, entry: ConfigEntry) -> None:
     )
 
 
-async def _async_run_insight(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Run one insight job: render prompt -> task channel -> sensor + event."""
+async def _async_run_insight(hass: HomeAssistant, entry: ConfigEntry,
+                             scheduled: bool = False) -> None:
+    """Run one insight job: render prompt -> task channel -> sensor + event.
+
+    An insight job is an UNATTENDED run — it fires on a timer, and once
+    90 seconds after every setup — so it is held to the rules every other
+    unattended run is: the analyst's read-only tools (it used to inherit
+    the project grant, Bash and file edits included), the panel's pause
+    switch and usage budget when nobody pressed anything (`scheduled`),
+    and what brAIn knows about the house through the panel's own
+    retrieval rather than the first 2 KB of memory.md cut mid-fact. A run
+    the listener says failed is recorded as an ERROR on the sensor and
+    never as a report: an expired login used to be pushed to a phone as
+    that morning's briefing.
+    """
     running = hass.data[DOMAIN].setdefault("_insights_running", set())
     if entry.entry_id in running:
         _LOGGER.debug("Insight '%s' already running — skipped", entry.title)
@@ -715,30 +813,22 @@ async def _async_run_insight(hass: HomeAssistant, entry: ConfigEntry) -> None:
             )
             prompt = prompt_text
 
-        # Context blocks: learned home memory + the previous report, so
-        # recurring insights build on what's known instead of rediscovering
-        # the house every run.
+        # The previous report, so a recurring insight builds on what it
+        # said last time instead of rediscovering the house every run. What
+        # brAIn KNOWS about the house is not read here any more: the
+        # listener puts the panel's own retrieval block in front of the
+        # prompt (`memory=True`), which is one implementation of "what is
+        # known" rather than a byte-cut of the document in a second place.
         prior = await hass.async_add_executor_job(
             load_insight_payload, hass, entry.entry_id
         )
-        memory_text = await hass.async_add_executor_job(
-            _read_text_capped,
-            hass.config.path(SHARED_DIR, MEMORY_DIR, MEMORY_FILE),
-            2048,
-        )
-        context_blocks = []
-        if memory_text.strip():
-            context_blocks.append(
-                "Known about this home:\n" + memory_text.strip()
-            )
         prev_markdown = ((prior or {}).get("markdown") or "").strip()
         if prev_markdown:
-            context_blocks.append(
+            prompt = (
                 "Previous report (for continuity, note meaningful changes "
                 "rather than rediscovering):\n" + prev_markdown[:1536]
+                + "\n\n" + prompt
             )
-        if context_blocks:
-            prompt = "\n\n".join(context_blocks) + "\n\n" + prompt
 
         bridge = _get_bridge(hass)
         timeout = opts.get(CONF_TIMEOUT) or DEFAULT_INSIGHT_TIMEOUT
@@ -747,18 +837,29 @@ async def _async_run_insight(hass: HomeAssistant, entry: ConfigEntry) -> None:
         payload: dict
         try:
             result = await bridge.async_send_task(
-                prompt=prompt, timeout=timeout, model=model
+                prompt=prompt, timeout=timeout, model=model,
+                tools="read_only", memory=True, scheduled=scheduled,
             )
             payload = {
                 "markdown": truncate_markdown(result),
                 "last_success": dt_util.utcnow().isoformat(),
                 "duration_s": round(time.monotonic() - started, 1),
                 "error": None,
+                "error_code": None,
             }
         except Exception as exc:  # noqa: BLE001 — surface failure on the sensor
+            # The last good report and when it landed are kept beside the
+            # error, on disk as well as on the sensor: a run that failed
+            # says nothing new about the house, and a card that went blank
+            # after a restart because the failure overwrote the file would
+            # be the failure costing more than the run did.
             payload = {
+                **{k: v for k, v in (prior or {}).items()
+                   if k in ("markdown", "last_success", "ever_succeeded")},
                 "duration_s": round(time.monotonic() - started, 1),
-                "error": str(exc),
+                "error": str(exc) or type(exc).__name__,
+                "error_code": getattr(exc, "code", None)
+                or ("timeout" if isinstance(exc, TimeoutError) else "error"),
             }
 
         # Onboarding: after a job's FIRST successful run, send one
@@ -877,6 +978,43 @@ def _get_bridge(hass: HomeAssistant) -> ClaudeBridge:
     raise ValueError("brAIn integration is not configured")
 
 
+async def _require_admin_for(hass: HomeAssistant, call: ServiceCall,
+                             tools: str) -> None:
+    """Refuse a non-admin caller anything wider than `NON_ADMIN_TOOLS`.
+
+    A task runs with the Supervisor's token behind every Home Assistant
+    tool and, at `full`, a shell in /config — so the reach is an admin's
+    whatever the caller's own account is, and a wall tablet's or a guest's
+    login could get a root-equivalent run by naming a field. Home
+    Assistant does not stop it: only `async_register_admin_service` is
+    admin-gated, and that registration cannot return response data. So
+    the gate is the power tools' own (`async_require_admin`), asked here
+    for the scopes that need it. A context with no user — an automation,
+    a script one started — is the system and passes, as it does there.
+    """
+    if tools not in NON_ADMIN_TOOLS:
+        await async_require_admin(hass, call.context)
+
+
+def _failed(exc: Exception, what: str) -> HomeAssistantError:
+    """The error a service raises for a run that did not answer.
+
+    `HomeAssistantError` because that is what puts the sentence in an
+    automation's trace — the rule BRight's and BRUH Minecraft's services
+    already follow. A run that failed used to come back as `response`
+    with `data: None`, which an automation branching on the data read as
+    a real answer: `| default(false)` turned an expired login into
+    "nothing unusual".
+    """
+    if isinstance(exc, BrainRunError):
+        return HomeAssistantError(exc.text or f"{what} failed ({exc.code}).")
+    if isinstance(exc, TimeoutError):
+        return HomeAssistantError(
+            f"{what} did not finish in time. Make sure the brAIn add-on is "
+            "running; its log says what it was doing.")
+    return HomeAssistantError(f"{what} failed: {exc}")
+
+
 def _register_services(hass: HomeAssistant) -> None:
     """Register brain services."""
 
@@ -885,22 +1023,26 @@ def _register_services(hass: HomeAssistant) -> None:
         prompt = call.data["prompt"]
         timeout = call.data.get("timeout")
 
+        # A prompt goes down the conversation channel with no access level,
+        # which the add-on reads as the narrowest (voice) — so it needs no
+        # admin gate, any more than Assist itself does.
         try:
             result = await bridge.async_send_conversation(
                 text=prompt, timeout=timeout, model=call.data.get("model")
             )
-        except TimeoutError:
-            result = "Claude did not respond in time."
+        except (BrainRunError, TimeoutError) as exc:
+            raise _failed(exc, "Claude") from exc
 
         return {"response": result}
 
     async def handle_run_task(call: ServiceCall):
+        tools = call.data.get("tools", DEFAULT_TASK_TOOLS)
+        await _require_admin_for(hass, call, tools)
         bridge = _get_bridge(hass)
         prompt = call.data["prompt"]
         notify = call.data.get("notify", False)
         notify_entity = call.data.get("notify_entity")
         timeout = call.data.get("timeout")
-        tools = call.data.get("tools", DEFAULT_TASK_TOOLS)
 
         try:
             answer = await bridge.async_send_task_full(
@@ -908,27 +1050,34 @@ def _register_services(hass: HomeAssistant) -> None:
                 notify=notify,
                 notify_entity=notify_entity,
                 timeout=timeout,
+                model=call.data.get("model"),
                 tools=tools,
             )
-        except TimeoutError:
-            answer = {"text": "Claude task did not complete in time.",
-                      "data": None}
+        except (BrainRunError, TimeoutError) as exc:
+            raise _failed(exc, "The task") from exc
 
         return {"response": answer["text"], "data": answer.get("data")}
 
     async def handle_ask(call: ServiceCall):
-        """A question, and optionally the shape the answer must take."""
+        """A question, and optionally the shape the answer must take.
+
+        A failed run RAISES. The data an automation branches on is only
+        ever the object the CLI validated off a run that answered, never
+        a `None` standing beside an error sentence.
+        """
+        tools = call.data.get("tools", "read_only")
+        await _require_admin_for(hass, call, tools)
         bridge = _get_bridge(hass)
         schema = call.data.get("schema")
         try:
             answer = await bridge.async_send_task_full(
                 prompt=call.data["question"],
                 timeout=call.data.get("timeout"),
-                tools=call.data.get("tools", "read_only"),
+                tools=tools,
                 schema=schema if isinstance(schema, dict) else None,
             )
-        except TimeoutError:
-            answer = {"text": "Claude did not answer in time.", "data": None}
+        except (BrainRunError, TimeoutError) as exc:
+            raise _failed(exc, "The question") from exc
         return {"response": answer["text"], "data": answer.get("data")}
 
     async def handle_run_insight(call: ServiceCall):
@@ -944,7 +1093,9 @@ def _register_services(hass: HomeAssistant) -> None:
                 else "No insight jobs configured"
             )
         for e in entries:
-            hass.async_create_task(_async_run_insight(hass, e))
+            # A press: the pause switch and the budget are for runs nobody
+            # asked for, and asking by hand always runs.
+            hass.async_create_task(_async_run_insight(hass, e, scheduled=False))
 
     async def handle_clear_conversation(call: ServiceCall):
         bridge = _get_bridge(hass)
@@ -956,12 +1107,28 @@ def _register_services(hass: HomeAssistant) -> None:
         )
 
     async def handle_add_memory(call: ServiceCall):
+        """Queue one fact. Admin only, and never under a person's authority.
+
+        Memory is handed to every later run — voice, the fixer, every card
+        — so a fact filed here is a standing instruction to all of them,
+        which is an admin's to give. And a `correction` (or a `person`, or
+        a `confirmed`) is what the pipeline treats as the homeowner having
+        typed it, so a caller may not claim one.
+        """
+        await async_require_admin(hass, call.context)
+        source = call.data.get("source", "service")
+        if _reserved_source(source):
+            raise ServiceValidationError(
+                f"\"{source}\" is a source brAIn keeps for the homeowner's own "
+                "answers (corrections, confirmations, typed preferences), so "
+                "a service call cannot file under it. Leave source out, or "
+                "name where the fact came from.")
         memory_dir = hass.config.path(SHARED_DIR, MEMORY_DIR)
         await hass.async_add_executor_job(
             _append_memory_fact,
             memory_dir,
             call.data["fact"],
-            call.data.get("source", "service"),
+            source,
             call.data.get("confidence", "medium"),
         )
         _LOGGER.debug("Queued memory fact from %s", call.data.get("source"))
@@ -972,8 +1139,11 @@ def _register_services(hass: HomeAssistant) -> None:
         Fire-and-forget by design: a study session can run for many minutes,
         which is far longer than a service call should block. What it finds
         goes through the memory inbox like everything else, so the result
-        shows up in memory rather than in this call's response.
+        shows up in memory rather than in this call's response — which is
+        also why it is admin only: what a study files is handed to every
+        later run.
         """
+        await async_require_admin(hass, call.context)
         requests_dir = hass.config.path(SHARED_DIR, STUDY_REQUESTS_DIR)
         await hass.async_add_executor_job(
             _write_study_request, requests_dir, call.data.get("topic", ""))
@@ -993,6 +1163,9 @@ def _register_services(hass: HomeAssistant) -> None:
         from .requests import write_intent  # noqa: PLC0415 — that module
         # imports homeassistant.core and nothing else on purpose
 
+        # Admin only: what it drafts is an automation, and writing one is
+        # an admin's to do in Home Assistant itself.
+        await async_require_admin(hass, call.context)
         sentence = call.data["sentence"]
         await hass.async_add_executor_job(
             write_intent, hass, sentence, "service")
@@ -1038,15 +1211,39 @@ def _register_services(hass: HomeAssistant) -> None:
         _LOGGER.info("Asked brAIn to run its house checks")
 
     async def handle_answer_question(call: ServiceCall):
-        memory_dir = hass.config.path(SHARED_DIR, MEMORY_DIR)
-        await hass.async_add_executor_job(
-            _append_question_answer,
-            memory_dir,
-            call.data["question"],
-            call.data["answer"],
-            call.data.get("source", "service"),
-        )
-        _LOGGER.debug("Recorded answer for memory question")
+        """Answer one of brAIn's guesses, yes or no, from anywhere in HA.
+
+        It crosses to the panel as a REQUEST, the way a finding's ending
+        does, because the guess has to CLOSE: the panel confirms or
+        rejects it through the same code the Findings tab's Yes and No
+        use — the claim filed as memory, or the dead end recorded and the
+        reason filed as a correction. The old service appended to a file
+        nothing read and queued the typed answer as a high-confidence
+        fact, so a "no" became a fact and the guess stayed open on every
+        surface until it expired.
+
+        Fire-and-forget, `write_request`'s rule: the add-on may be
+        stopped, and the answer is applied when it is not. What is
+        refused here is what could never be applied — an answer that is
+        neither yes nor no, a guess that is not open.
+        """
+        from .requests import write_hypothesis_request  # noqa: PLC0415 —
+        # that module imports homeassistant.core and nothing else on purpose
+
+        await async_require_admin(hass, call.context)
+        verdict, reason = _verdict(call.data["answer"])
+        open_guesses = await hass.async_add_executor_job(
+            read_open_hypotheses, hass)
+        ts = _which_guess(open_guesses, call.data.get("ts"),
+                          call.data.get("question"))
+        landed = await hass.async_add_executor_job(
+            partial(write_hypothesis_request, hass, ts, verdict, note=reason,
+                    via=_sanitize_source(call.data.get("source", "service"))))
+        if not landed:
+            raise HomeAssistantError(
+                "brAIn could not record the answer — /config/.brain is not "
+                "writable. Nothing was changed.")
+        _LOGGER.info("Answered guess %s: %s", ts, verdict)
 
     extra_kwargs: dict = {}
     if SupportsResponse is not None:

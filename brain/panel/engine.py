@@ -729,6 +729,8 @@ ANALYST_TOOLS = [
     f"{MCP}get_registry",
     f"{MCP}get_automations",
     f"{MCP}get_automation_trace",
+    f"{MCP}get_automation_config",  # the definition a trace ran — runs have no files
+    f"{MCP}search_related",         # what a script or scene touches, what uses an entity
     f"{MCP}get_ha_config",
     f"{MCP}get_weather_forecast",
     # The rest of the MCP server's reads. Every tool the server registers is
@@ -738,7 +740,7 @@ ANALYST_TOOLS = [
     # it, which is not the same guarantee and reads like a broken tool.
     f"{MCP}get_services",
     f"{MCP}get_service_details",
-    f"{MCP}get_device_registry",
+    f"{MCP}get_entity_counts",
     f"{MCP}list_dashboards",
     f"{MCP}get_dashboard",
     f"{MCP}get_error_log",

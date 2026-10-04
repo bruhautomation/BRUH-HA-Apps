@@ -1820,10 +1820,26 @@ class InsightsServerCase(unittest.TestCase):
         usage_store.USAGE_FILE = os.path.join(self.tmp.name, "usage.json")
         self._old_www = self.server.WWW_CARD_DIR
         self.server.WWW_CARD_DIR = Path(self.tmp.name) / "www" / "bruh_insights"
+        # The facts store, pointed at a directory that does not exist: what
+        # a dev checkout and CI have, and what every case here was written
+        # against. A machine that happens to have a /config/.brain/memory
+        # (another suite left one) would otherwise hand the card's memory
+        # fingerprint somebody else's facts.
+        import facts_store  # noqa: PLC0415
+        self._facts_store = facts_store
+        self._old_facts = (facts_store.FACTS_FILE,
+                           facts_store.INGEST_STATE_FILE,
+                           facts_store.RECONCILE_STATE_FILE)
+        nofacts = Path(self.tmp.name) / "no-facts-dir"
+        facts_store.FACTS_FILE = nofacts / "facts.json"
+        facts_store.INGEST_STATE_FILE = nofacts / "facts-ingest.json"
+        facts_store.RECONCILE_STATE_FILE = nofacts / "facts-reconcile.json"
         self.server.JOBS.clear()
         self.server.QUEUE = asyncio.Queue()
 
     def tearDown(self):
+        (self._facts_store.FACTS_FILE, self._facts_store.INGEST_STATE_FILE,
+         self._facts_store.RECONCILE_STATE_FILE) = self._old_facts
         self.server.INSIGHTS_DIR = self._old_dir
         prompt_store.OVERRIDES_FILE = self._old_overrides
         self.server.MEMORY_INBOX_DIR = self._old_inbox
@@ -2102,12 +2118,17 @@ class TestGenerateFlow(InsightsServerCase):
         fingerprint = stored["inputs_fingerprint"]
         self.assertEqual(set(fingerprint["parts"]),
                          set(self.server.CARD_INPUT_PARTS))
-        # The finding this very run filed is inside it, so the next tick
-        # does not read its own output as a change.
-        self.assertGreaterEqual(fingerprint["open_findings"], 1)
+        # The finding this very run filed is NOT counted, and not because
+        # it is still `triaging`: the card's own rows are left out of its
+        # fingerprint whatever their status, so the Resident promoting one
+        # to `open` is not news to the card that filed it.
+        self.assertTrue(findings_store.list_all())
+        self.assertEqual(fingerprint["open_findings"], 0)
+        for row in findings_store.list_all():
+            findings_store.set_status(row["ts"], "open")
         again = self.server._card_inputs(
             "energy", self.server.resolve_category("energy"),
-            findings_store.prompt_block(), {"stores": {}})
+            findings_store.prompt_block(("energy",)), {"stores": {}})
         self.assertEqual(fingerprint["parts"]["findings"],
                          again["parts"]["findings"])
 
@@ -2313,7 +2334,7 @@ class TestGenerateFlow(InsightsServerCase):
         """Make both gather paths observable, and neither reach a real CLI."""
         self.calls = []
 
-        async def fake_orientation(question=None):
+        async def fake_orientation(question=None, **_about):
             if boom:
                 raise RuntimeError("HA is not answering")
             return orientation or {"entity_count": 512, "domains": {"sensor": 300},
@@ -2883,9 +2904,18 @@ class TestMemoryContext(unittest.TestCase):
         self._old = (self.ha_data.CONTEXT_FILE, self.ha_data.MEMORY_FILE)
         self.ha_data.CONTEXT_FILE = os.path.join(self.tmp.name, "CLAUDE.md")
         self.ha_data.MEMORY_FILE = os.path.join(self.tmp.name, "memory.md")
+        # And the facts store `_memory_for` retrieves from first. Its default
+        # is the real `/config/.brain/memory/facts.json`, so on any machine
+        # where something has created that file these tests read a house
+        # that is not theirs — the `MEMORY_INBOX_DIR` leak `facts_store.
+        # writable` was written for, from the reading side.
+        self.facts = importlib.import_module("facts_store")
+        self._old_facts = self.facts.FACTS_FILE
+        self.facts.FACTS_FILE = Path(self.tmp.name) / "facts.json"
 
     def tearDown(self):
         (self.ha_data.CONTEXT_FILE, self.ha_data.MEMORY_FILE) = self._old
+        self.facts.FACTS_FILE = self._old_facts
         self.tmp.cleanup()
 
     def _write(self, path, text):
@@ -3254,7 +3284,8 @@ class TestARefreshHasToBeAboutSomething(InsightsServerCase):
         self.server.SHARED_MEMORY_FILE.write_text("- the hall is cold\n")
         moved["memory"] = self._inputs()
         moved["stores"] = self._inputs(
-            snap={"stores": {"energy": {"state": "ready", "updated_at": 200}}})
+            snap={"stores": {"energy": {"state": "ready", "updated_at": 100,
+                                        "summary": "a new week of readings"}}})
         feedback_store.add_feedback("energy", "less about the kettle")
         moved["feedback"] = self._inputs()
         moved["focus"] = self.server._card_inputs(
@@ -3279,11 +3310,23 @@ class TestARefreshHasToBeAboutSomething(InsightsServerCase):
     def test_a_card_that_reads_every_measurement_notices_all_of_them(self):
         """A user category or a typed question could be about anything."""
         self.assertIsNone(categories.stores_for("user-1234"))
-        snap = {"stores": {"thermal": {"state": "ready", "updated_at": 1}}}
+        snap = {"stores": {"thermal": {"state": "ready", "updated_at": 1,
+                                       "summary": "4 rooms measured."}}}
         base = self.server._card_inputs("user-1234", self.eff, "none", snap)
-        snap["stores"]["thermal"]["updated_at"] = 2
+        snap["stores"]["thermal"]["summary"] = "5 rooms measured."
         current = self.server._card_inputs("user-1234", self.eff, "none", snap)
         self.assertTrue(self.server._inputs_change(base, current)["moved"])
+
+    def test_a_rebuild_that_changed_nothing_moves_nothing(self):
+        """The bug the content fingerprint exists for: every store is
+        rebuilt or re-stamped at least daily, and a stamp moving is not
+        the house changing."""
+        snap = {"stores": {"energy": {"state": "ready", "updated_at": 100,
+                                      "summary": "40 kWh this week."}}}
+        base = self.server._card_inputs("energy", self.eff, "none", snap)
+        snap["stores"]["energy"]["updated_at"] = 99_999
+        current = self.server._card_inputs("energy", self.eff, "none", snap)
+        self.assertFalse(self.server._inputs_change(base, current)["moved"])
 
     def test_a_card_with_no_stored_fingerprint_has_moved(self):
         """Made before this existed, or never made: either way the next
@@ -3314,12 +3357,23 @@ class TestARefreshHasToBeAboutSomething(InsightsServerCase):
         self.assertIn("more finding(s) on the list", change["why"])
 
     def test_reading_memory_costs_no_copy_of_it(self):
-        """mtime and size, never the contents: the document is somebody's
-        home and this only ever compares it against itself."""
+        """A digest of what the run would read, never the text: the
+        document is somebody's home and this only ever compares it against
+        itself."""
         self.server.SHARED_MEMORY_FILE.write_text("- a secret about the house")
         stamp = self.server._memory_stamp()
         self.assertNotIn("secret", stamp)
-        self.assertRegex(stamp, r"^\d+:\d+$")
+        self.assertRegex(stamp, r"^doc:[0-9a-f]{16}$")
+
+    def test_a_rewrite_that_says_the_same_thing_moves_nothing(self):
+        """The consolidator rewrites memory.md on every pass that had
+        anything queued, whatever it ended up saying — the mtime the gate
+        used to read moved daily."""
+        self.server.SHARED_MEMORY_FILE.write_text("# Memory\n- the hall is cold\n")
+        before = self.server._memory_stamp()
+        time.sleep(0.01)
+        self.server.SHARED_MEMORY_FILE.write_text("# Memory\n\n- the hall is cold\n")
+        self.assertEqual(self.server._memory_stamp(), before)
 
     def test_a_missing_document_is_a_stable_answer(self):
         self.assertEqual(self.server._memory_stamp(), "none")
@@ -3630,7 +3684,7 @@ class TestSeeingTheWholePrompt(InsightsServerCase):
         async def fake_bundle(cat, days, question=None):
             return {"meta": {"now": "2026-07-18T12:00:00"}, "entities": []}
 
-        async def fake_orientation(question=None):
+        async def fake_orientation(question=None, **_about):
             return {"entity_count": 412, "domains": {"light": 40},
                     "areas": {"Hall": 4}, "anchors": []}
 

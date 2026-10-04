@@ -905,9 +905,11 @@ class TestChatTerminalPanel(unittest.TestCase):
         # The strip is reused, not rebuilt: a box left open on the finding
         # you just settled would greet the next one with its buttons hidden.
         self.assertIn('const openNote = bar.querySelector(".findnote");', self.js)
-        # And the discussion itself changes nothing.
+        # And the discussion itself changes nothing without asking: the
+        # prompt says so, and tests/test_discuss_safety.py drives the argv
+        # that makes it true (a sentence alone was the whole guard once).
         server = (PANEL / "server.py").read_text()
-        self.assertIn("Do not change anything yet", server)
+        self.assertIn("asks me first", server)
 
     def test_remind_me_later_is_not_a_decision(self):
         """Dismissing is permanent and is fed back into every future

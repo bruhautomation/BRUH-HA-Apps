@@ -1976,7 +1976,10 @@ class TestSnoozeAndDiscussRoutes(ServerCase):
         self.assertIn("The trigger cannot fire", prompt)
         self.assertIn("Invert the condition", prompt)
         self.assertIn("light.porch", prompt)
-        self.assertIn("Do not change anything", prompt)
+        # A change is asked for, never made, and an agreed one becomes a
+        # plan on the card (test_discuss_safety drives the ask rules).
+        self.assertIn("asks me first", prompt)
+        self.assertIn("`plan` option", prompt)
 
     def test_discussing_a_finding_that_does_not_exist_is_a_404(self):
         async def run():
