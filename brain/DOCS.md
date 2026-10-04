@@ -251,6 +251,19 @@ What brAIn actually read (entity, reading, when), what could be done and what
 consent it would need, how sure it is and what looked at the finding before you
 did are all behind **Why brAIn thinks so**, closed until you open it.
 
+**How brAIn learns from your answers.** Every call the Resident makes is written
+down, and once a day brAIn checks each one against what you did next: *Not a
+problem*, *I've fixed it*, *Add to list*, putting back something it hid, a problem
+it had passed over turning up within three days, or undoing a fix. Where the record
+is lopsided — the same sensor raised four times and marked *Not a problem* each
+time — a cheap run writes a short judgement into its facts. You will see it on the
+Knowledge tab, and you can forget it there. The counts in it are brAIn's own
+arithmetic. Judgements never make brAIn quieter about leaks, smoke, gas, freezing or
+anything on your protected list, never mention people, and disappear when a later
+card on the same thing turns out to be real. Each look is also shown a handful of
+brAIn's earlier calls on similar things and how they turned out.
+`brain eval outcomes` shows the record.
+
 **When it is not working.** ⚙ → Diagnostics carries the loop: how many signals are
 waiting, how many did not fit the last batch, when it last looked, what the day has
 cost, and whether the event subscription is connected, reconnecting or idle. A
@@ -456,6 +469,11 @@ ordinary findings under a "check" label, with no Claude run at all.
 - **Dashboards** showing entities that no longer exist.
 - **Forecasts**: a battery running down, from the slope of its last sixty
   days, three weeks before it is flat.
+- **Access**: a lock or alarm panel exposed to Alexa or Google through Home
+  Assistant Cloud; an add-on whose protection mode has been switched off; and
+  recent failed logins that got an address banned. Once a week brAIn also
+  writes one sentence about who and what can reach the house, shown on
+  **Upkeep**.
 
 A new check runs **where nobody can see it first**. Its rows go to a separate
 store for a fortnight and reach no tab, no badge, no notification and no to-do
@@ -1216,6 +1234,75 @@ because one number over both is wrong on all seven days rather than on none —
 so the weekday answer takes about two weeks and the weekend one about five,
 since a weekend is two days a week. And a home that stirs anywhere between 05:00 and 11:00 has no
 usual time, so it says so rather than reporting the middle of that as one.
+
+### It knows what the house is doing right now
+
+Every few minutes brAIn puts together what it can see: who is home, which rooms
+have recent motion, media or lights on, which doors are open when they usually are
+not, what is running, the weather, and today's event on any calendar you chose.
+When that picture changes, a quick look turns it into a **mode** and one sentence,
+shown as a line at the top of the Findings feed:
+
+> Home, settled for the evening — the lounge and kitchen in use, the dishwasher
+> running.
+
+The modes are `home`, `away`, `asleep` (settled for the night), `waking`,
+`guests` and `unknown` (not sure). Every number and every device the sentence names has to be in what
+brAIn could see, or the previous sentence is kept and labelled **earlier**. It
+says `unknown` rather than guessing when the house has no presence entities, when
+the picture could not be refreshed, or before anything has been read, and *away*
+needs somebody's presence to say nobody is home. It never says anything about
+anybody's body, health or sleep. **The mode is context, never a switch**: a wrong
+*away* cannot make a leak alarm or a protected device any less important.
+
+The same reading is `sensor.brain_house`. Its state is the mode (`unknown` when
+brAIn is not sure), and its attributes are `sentence`, `rooms_in_use`,
+`unusual_together`, `because`, `coming_up` and `published_age_minutes`, plus a
+`reason` whenever the state is `unknown`. It never goes unavailable: a reading that stopped being
+refreshed reads `unknown` with the reason, judged by the age of the file, so an
+automation keyed on it is never acting on how the house looked an hour ago.
+
+```yaml
+trigger:
+  - trigger: state
+    entity_id: sensor.brain_house
+    to: away
+    for: "00:15:00"
+action:
+  - action: climate.set_preset_mode
+    target: { entity_id: climate.hall }
+    data: { preset_mode: away }
+```
+
+Handle `unknown` as "do nothing" — it is the honest answer whenever brAIn cannot
+tell.
+
+**What is coming up.** Twice a day brAIn reads the next three days of your weather
+forecast. A frost (0 °C or below), a hot day (30 °C or above), a day with 10 mm of
+rain or more and gusts of 60 km/h or more each become a short note, worked out with
+arithmetic rather than a model. **Calendars brAIn may read** — the disclosure under
+the line on the Findings feed — lists your calendars, none ticked; nothing is read
+until you tick one, and unticking them all stops it. A ticked calendar's next three
+days are read too, and the notable events become notes like "Mum staying Fri–Sun".
+What a calendar says is treated as information, never as an instruction. Every note
+is kept as a fact that expires when the occasion is over, and nothing here changes
+the house.
+
+**What each device is.** Once a night brAIn reads the names, makes, models and
+rooms of the devices its checks care about and records what each one measures, what
+it controls, whether its battery is charged or replaced, and which way a water
+switch closes — in whatever language you named them, so a `hoofdkraan` is a
+shutoff. Each answer is checked against a closed list before it is kept, only a
+device that changed or was renamed is read again, and anything brAIn is unsure
+about falls back to the word lists it always used. A reading may make an
+unclassified binary sensor a safety sensor (it has to be very sure), can never stop
+a leak, smoke, CO or gas sensor being one, and never rings your phone on its own —
+the instant alert still keys on Home Assistant's own device class.
+
+`GET /api/situation` is the reading, `GET /api/occasions` (and `POST
+/api/occasions/run`) the notes and the calendars, and `GET /api/world` (and `POST
+/api/world/run`) the device readings in use; `/api/diagnostics` carries all three
+under `understanding`.
 
 ### A morning brief, when there is something to say
 
@@ -2048,6 +2135,35 @@ panel; each add-on keeps its own.
 Every one of these goes through the same checks as any other service call: an
 agent's **Blocked services** list applies, so you can take `bruh_minecraft.teleport`
 away from the kitchen speaker if you want to.
+
+### Upkeep: keeping the house itself in order
+
+**House → Upkeep** keeps the house itself in order, and every part of it is a
+press. Each section says what it last did, when, and why a scheduled pass was
+held back.
+
+- **House book**: a short manual written from your own automations, scripts,
+  scenes and what brAIn has learned. Every line shows the sources it came from,
+  and codes and passwords are left out. Questions it cannot answer from the house
+  appear on the Findings tab; your answer goes into memory. *Publish* gives you a
+  private link to a read-only copy, and *Stop sharing* deletes it and changes the
+  link. After the first one, brAIn rewrites the book weekly, but only when
+  something it reads has changed.
+- **Names and rooms**: suggests tidier names, rooms and spoken aliases in one
+  table. Tick what you want and press Apply. A room move lists the automations it
+  will change. Undo works for 30 days and never overwrites a rename you made
+  since. The "named after its hardware" and "no room" findings open this table
+  from **Fix it**.
+- **Updates**: for each pending update, *Check* reads the release notes against
+  your configuration and answers *safe tonight*, *wait* (with what to change) or
+  *not sure*, quoting the line in each it relied on. brAIn never installs an
+  update, and never reads `secrets.yaml`.
+- **Overnight check**: once a night between 03:00 and 06:00, brAIn reads the
+  error log, the Zigbee mesh and Z-Wave statistics, and files up to five root
+  causes on the Findings tab, each citing the records it rests on. Like every
+  scheduled run, it pauses with *automatic insights* and the usage budget.
+- **Who can reach the house**: the weekly access sentence, written from the last
+  checks pass.
 
 ### It knows what happened, and what caused it
 
@@ -2896,6 +3012,10 @@ With it on, every card run writes one file under `/data/capture`:
 - what it cost,
 - and later, **the ending you gave each finding it raised**.
 
+The Resident's first looks are captured too, as their inputs (the batch, the
+memory excerpt, the open cases), and the nightly pass labels each one with what
+you did next, so `brain eval first_look` can replay them against today's prompt.
+
 That last part is the whole point. An ending on the Findings feed is already a
 label: **I fixed it** and **Got it** say the report was right, **Wrong** says
 it was not. Pairing that with the prompt that produced it turns a house into a
@@ -3004,6 +3124,8 @@ brain doctor                       # end-to-end diagnostic
 brain doctor --json                # the same verdict as one JSON object
 brain doctor --deep                # every face, one real round trip each (~5 turns)
 brain doctor --rehearse            # plant defects here, score the checks, clean up
+brain eval outcomes                # what the Resident decided, and what you did next
+brain eval first_look              # replay captured first looks against today's prompt (spends runs)
 brain weekly [send]                # the week's report: what it holds, or send one
 brain report                       # redacted diagnostics bundle for a bug report
 
@@ -3202,6 +3324,12 @@ To keep it from eating the plan you also use for your own work:
   (`BRAIN_CLAUDE_SLOTS` changes it), a tripped safety detector goes first, then
   anything you pressed, then scheduled work, and one place is always kept free of
   scheduled work — so a press never waits behind the timer.
+- **The background jobs are small and mostly nightly.** Reading what each device
+  is, what is coming up and what the house is doing now, the judgement pass over
+  your answers and the weekly access sentence use the cheapest model and only
+  re-read what changed. The overnight check is one mid-tier run a night, and the
+  house book is rewritten weekly and only when something it reads has moved. Every
+  one of them pauses with automatic insights and the usage budget.
 - Fixed daily times ("07:00, 19:00") cost far fewer tokens than a short refresh
   interval, and cards you never look at can simply be deleted.
 

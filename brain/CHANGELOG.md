@@ -625,6 +625,187 @@ Resident can correct its own first look.**
   used to wait behind it. The reply is now answered in the background and the
   other answers are applied at once.
 
+### What brAIn learns from your answers
+
+- **brAIn now remembers every call it makes about your house, and checks it
+  against what you did.** Every time the Resident looks at something — ignores
+  it, watches it, sends it for a closer look — and every time an investigation
+  files a card, rewrites one or holds it back, brAIn writes that decision down.
+  Once a day it compares those decisions with what happened next: a card you
+  marked *Not a problem*, one you fixed or added to your list, one you put back
+  after brAIn hid it, something it passed over that turned into a real problem
+  within three days, a fix of brAIn's that you undid. You can see the tally per
+  check, per device and per kind of thing with `brain eval outcomes`, and ⚙ →
+  Diagnostics carries the summary.
+- **brAIn learns which of its calls this house keeps disagreeing with.** When
+  the record is lopsided — four hall-motion cards at 3am all marked *Not a
+  problem* with "it's the cat", or a freezer it kept passing over that kept
+  turning out to matter — a cheap nightly run writes a short judgement ("Night
+  motion on the hall landing is the cat — 4 of 4 it raised were marked not a
+  problem") into brAIn's facts, where the next look about that sensor reads it.
+  The counts are always brAIn's arithmetic, never the model's. A judgement can
+  never make brAIn quieter about a leak, smoke, gas, a freeze or anything on
+  your protected list — it refuses to write one, and the safety floors are
+  applied after anything the model says regardless. A judgement goes away the
+  moment a later card on the same thing turns out to be real, expires after 30
+  days if nothing renews it, and is never about a person's health, sleep or
+  whereabouts. It answers to the same switches every scheduled run does (Claude
+  sign-in, automatic runs, the usage budget) and to *Learn about your home*.
+  Judgements show on the Knowledge tab like any other fact and can be forgotten
+  there.
+- **The Resident sees how its past calls on similar things turned out.** Each
+  look and each investigation is now shown a handful of brAIn's earlier calls on
+  the same device, the same check or the same kind of thing, with what you did
+  about them — including the reason you typed when you said it was wrong. An
+  investigation also sees how well its stated confidence has held up ("at 80–90%
+  sure, you agreed 61% of the time").
+- **A prompt change can be measured before it ships.** With capture switched on
+  (⚙ → Diagnostics, off by default), brAIn keeps the batches its first look
+  judged; the nightly pass labels them with what you did. `brain eval
+  first_look` replays them against today's prompt and reports how often it now
+  agrees with you, next to how often it agreed at the time, and confirms every
+  safety signal stayed at its floor. It spends real Claude runs, so it is capped
+  (60,000 tokens by default) and only ever runs when you ask. It never changes
+  anything — a prompt or model changes only when a person reads the number and
+  decides it should.
+
+### brAIn understands what is in the house and what it is doing
+
+- **brAIn reads what each device is, in any language, instead of matching
+  English words in its name.** Many checks used to decide what a sensor was from
+  the words in its name. "Nozzle" meant hot, "dew point" meant "not the outdoor
+  temperature", "washer" meant a chore, "main water" meant a shutoff valve. That
+  was a word list, and a house that named things in Dutch, in shorthand or after
+  the shop it came from got none of it.
+
+  Once a night, brAIn now reads the names, makes, models and rooms of the
+  devices those checks care about, about sixty at a time. It records what each
+  one measures, what it controls, whether its battery is charged or replaced,
+  and which way its switch closes. Each answer is checked against a closed list
+  before it is kept. Only a device that changes, or is renamed or moved, is read
+  again.
+
+  Anything brAIn is unsure about falls back to the old word list. So a house
+  that read correctly before still reads exactly the same, and a `hoofdkraan`
+  now gets into the leak playbook.
+- **A reading can make something a safety sensor, but can never stop one being
+  one.** A leak, smoke, gas or CO sensor that Home Assistant gave a device class
+  stays one, whatever brAIn reads about it. brAIn can add safety status to a
+  binary sensor Home Assistant never classified, and needs to be very sure
+  before it does. It can never take status away, and it never touches the
+  protected list.
+
+  The instant alert you get when a detector trips still keys only on Home
+  Assistant's own device class. A sensor brAIn added is watched closely and
+  looked at first, but it cannot ring your phone on brAIn's word alone.
+- **Batteries you charge are not batteries you replace.** A low battery on
+  something you charge, like a phone, a robot vacuum or a power bank, now says
+  "Charge it." rather than telling you to buy a new battery. The battery-runway
+  forecast says the same.
+- **The leak playbook closes valves whose "on" means closed.** Some water
+  switches close the supply when they are switched *on*. The playbook used to
+  turn every water switch off, which opens those ones. A switch brAIn has read
+  as "on closes it" is now turned on, under its own line on the card, so you can
+  see which way each valve is driven before you accept it.
+- **What brAIn thinks the house is doing, in one line.** Every few minutes brAIn
+  puts together what it can see right now: who is home, which rooms have recent
+  motion, media or lights, which doors are open when they usually are not, what
+  is running, the weather, and today's event on any calendar you chose. When
+  that picture changes, it asks for a mode (home, away, settled for the night,
+  waking up, guests, or not sure), the rooms in use, and one sentence.
+
+  The sentence appears at the top of the Findings feed. Every number and every
+  device it names has to be in what brAIn could see, or the previous sentence is
+  kept and labelled "earlier". It never says anything about anybody's body,
+  health or sleep. A picture brAIn could not refresh reads as "not sure", never
+  "nobody's home". The mode never makes a safety alert or a protected device any
+  less important.
+- **`sensor.brain_house`.** The same reading, as a Home Assistant sensor. Its
+  state is the mode, and its attributes are the sentence, the rooms in use,
+  anything unusual together, what is coming up and why. It never goes
+  unavailable. A reading that stopped being refreshed reads `unknown` with the
+  reason, judged by the age of the file, so a dashboard or an automation is
+  never acting on how the house looked an hour ago.
+- **What is coming up: frost, heavy rain, heat, and the calendars you choose.**
+  Twice a day brAIn reads the next three days of your weather forecast. A frost,
+  a heavy-rain day, a hot day or a gale becomes a short note, worked out with
+  arithmetic rather than a model. If you tick a calendar ("Calendars brAIn may
+  read", under the line on the Findings feed), its events for the next three
+  days are read too, and the notable ones become notes like "Mum staying
+  Fri–Sun".
+
+  Each note is kept as a fact that expires when the occasion is over, and is
+  offered to brAIn's first look and to the house's sentence. Nothing here
+  changes the house. No calendar is read until you tick one, and what a calendar
+  says is treated as information, never as an instruction.
+
+### Upkeep: names, rooms, updates, the overnight check and the house book
+
+- **House → Upkeep: one place for keeping the house in order.** A new tab in
+  the House group has four sections: the house book, names and rooms, updates,
+  and the overnight health check. Each one is a press. The page says what each
+  section last did, when, and why a scheduled pass was held back ("automatic
+  insights are paused", "nothing it reads has changed"). A store that could not
+  be read says so, rather than showing an empty section.
+- **Tidy names, rooms and aliases, reviewed as one table.** Press *Suggest
+  tidier names* and brAIn reads the house's own naming style, then proposes a
+  table of changes: names that are still the hardware's
+  (`0x00158d0001a2b3c4`, `Shelly Plus 1PM 8A4C`), entities and devices with no
+  room, and spoken aliases for the things people actually say. Every row has a
+  tick box and nothing changes until you press Apply, which goes through Home
+  Assistant's own registry. A room move lists the automations that will start
+  or stop reaching that entity, because an area target follows the room.
+  brAIn refuses a name another entity already answers to, a room that does not
+  exist, and anything on the protected list. An applied batch can be undone for
+  30 days, and an undo puts back only the fields that still hold what brAIn
+  wrote, so a rename you made since is kept. The "named after its hardware" and
+  "no room" findings now offer **Fix it**, which opens this table.
+- **Should I update tonight? An answer that quotes its evidence.** For each
+  pending update, press *Check*: brAIn reads the release notes, searches your
+  configuration for the integrations and options they mention, and answers
+  **safe tonight**, **wait** (with the reason and the edit you would need), or
+  **not sure**. A *safe* or *wait* answer has to quote one line from the notes
+  and one from your configuration, and both are checked word for word against
+  what was actually read; an answer that cannot quote both, or notes that could
+  not be fetched, show as *not sure*. brAIn never runs an update itself. Secret
+  values are blanked before anything is sent, and `secrets.yaml` is never read.
+- **An overnight health check that names the cause rather than the symptom.**
+  Between 03:00 and 06:00 each night, and whenever you press it, brAIn reads
+  Home Assistant's error log, the Zigbee mesh (routers, weak links, devices not
+  seen), Z-Wave node statistics, and automations that switch a smart plug
+  feeding a router. It asks for at most five root causes, such as "the hallway
+  plug that the upstairs Zigbee sensors route through keeps being switched off
+  by the bedtime automation". Every cause must cite the records it rests on by
+  an id brAIn handed out; one that cites nothing, or a record that was not
+  there, is dropped and counted. Causes reach the Findings tab through the same
+  first look every finding takes, and a cause stays put on a night its source
+  could not be read. It answers to the same switches as every scheduled run.
+- **The house book: how this house works, written down, every sentence
+  cited.** Press *Write the house book* and brAIn writes a short manual: what
+  the automations do, how the heating runs, what the alarms do, where the
+  shutoffs are, and anything else worth knowing, from the house's own
+  automations, scripts, scenes and what brAIn has learned. Every sentence
+  carries its sources and a sentence with none is dropped. Codes, PINs,
+  passwords and anything shaped like a token are left out. Where it has a gap
+  it cannot fill, such as where the water shutoff is, it asks on the Findings
+  tab (three at a time, five open at most) and your answer goes into memory.
+  Once you have asked for one, it is rewritten weekly, but only when something
+  it reads has changed.
+- **Share the house book with a link, and take the link back.** *Publish* puts
+  a read-only, redacted copy with no script at an unguessable `/local` address
+  for the sitter, the cleaner or the person buying the house, and asks search
+  engines to keep away. *Stop sharing* deletes it and changes the address, so
+  an old link is dead even if somebody kept it. While published, every rewrite
+  updates the shared copy.
+- **Access steward: four security checks and a weekly sentence.** New house
+  checks for a lock or alarm panel exposed to Alexa or Google, an add-on whose
+  protection mode is off, and recent failed logins that got an address banned.
+  Each says nothing when it could not look, and *Wrong, because…* stops it for
+  that lock. Once a week brAIn also writes one sentence about who and what can
+  reach the house, from the last checks pass; it answers to the same switches
+  as every scheduled run, and a review that failed waits six hours before
+  trying again.
+
 ## 2.10.1
 
 **The classic terminal on a phone: Paste works, the keyboard stops fighting you.**
