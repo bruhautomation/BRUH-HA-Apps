@@ -93,6 +93,17 @@ SOURCES: dict[str, dict[str, str]] = {
     "resident": {"label": "Resident",
                  "blurb": "watching the house, and looking into what it saw",
                  "store": "engine"},
+    # The action gate's model question (`gate.py`): a probe, never a
+    # conversation — it is shown the person's words, a proposed call and
+    # what it reaches, and answers one word.
+    "gate": {"label": "Action gate",
+             "blurb": "checking an action against what you asked for",
+             "store": "engine"},
+    # A follow-up look at a fix brAIn made a day, a week or a month ago,
+    # when nothing deterministic could say whether it held.
+    "followup": {"label": "Follow-up",
+                 "blurb": "checking a fix brAIn made is still holding",
+                 "store": "engine"},
     # `tests/corpus/replay.py` — the same argument as `doctor`, one step
     # further from a person: a replay re-runs somebody else's captured
     # prompt to score this release's version of it, so every turn is a

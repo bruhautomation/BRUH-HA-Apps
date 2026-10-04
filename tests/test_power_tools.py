@@ -54,6 +54,15 @@ PRE_EXISTING_SERVICES = {
 }
 
 
+
+def service_posts(api):
+    """The calls that reached Core as a service call. The chokepoint also
+    reads each named entity's state first (the before-state the action
+    ledger records), and those GETs are not the call being asserted."""
+    return [c for c in api.call_args_list
+            if str(c.args[0] if c.args else c.kwargs.get("endpoint", ""))
+            .startswith("/api/services/")]
+
 class TestPowerToolCatalog(unittest.TestCase):
     """The catalog is the contract: code, services.yaml, strings, and icons
     must always agree on the set of services."""
@@ -456,7 +465,7 @@ class TestMcpCallServiceResponse(unittest.TestCase):
         ) as rest, patch.object(ha_mcp_server, "_ws_command") as ws:
             ha_mcp_server.call_service("light", "turn_on",
                                        {"entity_id": "light.x"})
-        rest.assert_called_once()
+        self.assertEqual(len(service_posts(rest)), 1)
         ws.assert_not_called()
 
 

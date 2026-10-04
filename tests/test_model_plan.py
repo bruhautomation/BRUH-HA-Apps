@@ -67,6 +67,15 @@ class TestTheTable(TestCase):
         # A naming call is never promoted to Opus.
         self.assertEqual(model_plan.resolve("scene_names", "generous")[0], "haiku")
 
+    def test_the_gate_and_the_follow_up_look_are_the_cheap_tier(self):
+        """Both run often and answer a closed vocabulary. The gate runs
+        before an acting tool while somebody waits, so `generous` may not
+        promote it, and neither may `light` make it anything else."""
+        for job in ("gate", "followup", "house_rules"):
+            self.assertEqual(model_plan.resolve(job), ("haiku", "low"), job)
+            self.assertEqual(model_plan.resolve(job, "generous")[0], "haiku")
+            self.assertEqual(model_plan.resolve(job, "light")[0], "haiku")
+
     def test_an_unknown_job_lands_in_the_middle(self):
         self.assertEqual(model_plan.resolve("never-heard-of-it"), ("sonnet", "medium"))
 

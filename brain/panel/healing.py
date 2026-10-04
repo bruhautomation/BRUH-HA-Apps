@@ -81,6 +81,7 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 
@@ -255,7 +256,95 @@ def record_heal(history: dict, attempt: dict, at: float) -> int:
     return len(kept)
 
 
-def chronic_finding(candidate: dict, heals: list[int], tz=None) -> dict:
+# "With the logs read": a recurrence is filed with the lines of the log that
+# say why, read when it is filed rather than left as an instruction to go
+# and look. A handful of lines, capped, colour codes stripped and scrubbed
+# for tokens — and quoted, because a log is text somebody else wrote.
+LOG_LINES = 6
+LOG_LINE_CHARS = 200
+LOG_FETCH_S = 15
+_LOG_WORTH = re.compile(r"error|warn|exception|traceback|fail|refus|timed? ?out"
+                        r"|unavailable|cannot|could not", re.I)
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def log_excerpt(text: str) -> list[str]:
+    """The last lines of a log that look like trouble — or, if none do,
+    simply the last lines. Pure; never raises."""
+    lines = [_ANSI.sub("", ln).strip() for ln in str(text or "").splitlines()]
+    lines = [ln for ln in lines if ln]
+    worth = [ln for ln in lines if _LOG_WORTH.search(ln)]
+    picked = (worth or lines)[-LOG_LINES:]
+    try:
+        import journal  # noqa: PLC0415 — panel-local, for the token scrub
+        scrub = journal.scrub
+    except Exception:  # noqa: BLE001
+        def scrub(value):
+            return value
+    return [scrub(ln)[:LOG_LINE_CHARS] for ln in picked]
+
+
+def system_log_lines(entries, needle: str) -> list[str]:
+    """Home Assistant's own error log, filtered to one integration."""
+    out = []
+    needle = str(needle or "").lower()
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "")
+        source = " ".join(str(s) for s in entry.get("source") or [])
+        if needle and needle not in name.lower() and needle not in source.lower():
+            continue
+        message = entry.get("message")
+        first = message[0] if isinstance(message, list) and message else message
+        out.append(f"{entry.get('level') or ''}: {name}: {first or ''}")
+    return log_excerpt("\n".join(out))
+
+
+async def read_logs(session, candidate: dict) -> tuple[list[str], str]:
+    """`(lines, where)` — the log that says why a target keeps failing.
+
+    `where` names the log in words; an empty `lines` with a `where` that
+    begins "could not" is the honest answer to a log nobody could read.
+    Never raises.
+    """
+    remedy = str(candidate.get("remedy") or "")
+    try:
+        if remedy == "addon.start":
+            import aiohttp  # noqa: PLC0415
+
+            where = f"the {candidate.get('label') or 'add-on'} add-on's log"
+            url = f"{SUPERVISOR_API}/addons/{candidate.get('target')}/logs"
+            headers = {"Authorization":
+                       f"Bearer {os.environ.get('SUPERVISOR_TOKEN', '')}",
+                       "Accept": "text/plain"}
+            async with session.get(
+                    url, headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=LOG_FETCH_S)) as resp:
+                if resp.status >= 400:
+                    return [], f"could not read {where} ({resp.status})"
+                text = await resp.text()
+            return log_excerpt(text[-200_000:]), where
+        if remedy in ("entry.reload", "zwave.ping"):
+            import ha_data  # noqa: PLC0415
+
+            needle = (candidate.get("integration") if remedy == "entry.reload"
+                      else "zwave_js") or ""
+            where = (f"Home Assistant's log for {needle}" if needle
+                     else "Home Assistant's log")
+            answer = await ha_data._ws_commands(
+                session, [{"type": "system_log/list"}])
+            entries = answer[0] if answer else None
+            if not isinstance(entries, list):
+                return [], f"could not read {where}"
+            return system_log_lines(entries, needle), where
+    except Exception as exc:  # noqa: BLE001 — "could not read" is an answer
+        return [], f"could not read the log ({type(exc).__name__})"
+    return [], ""
+
+
+def chronic_finding(candidate: dict, heals: list[int], tz=None,
+                    logs: list[str] | None = None, where: str = "") -> dict:
     """The finding a chronic target becomes, wire-shaped for `add_many`."""
     remedy = str(candidate.get("remedy") or "")
     label = str(candidate.get("label") or candidate.get("target") or "it")
@@ -271,13 +360,24 @@ def chronic_finding(candidate: dict, heals: list[int], tz=None) -> dict:
                    f"{len(heals)} times in the last {CHRONIC_DAYS} days "
                    f"({days}), and every one of them worked for a while. "
                    "It has stopped doing it, so the problem will show "
-                   "until somebody finds the cause."),
+                   "until somebody finds the cause." + _log_part(logs, where)),
         "fix": fix.format(label=label),
         "severity": "warning",
         "fixable": False,
         "source": CHRONIC_SOURCE,
         "source_title": "Overnight self-healing",
     }
+
+
+def _log_part(logs: list[str] | None, where: str) -> str:
+    if logs:
+        quoted = " ".join(f"«{ln}»" for ln in logs)
+        return f" The last lines of {where} that look like trouble: {quoted}"
+    if where.startswith("could not"):
+        return f" brAIn {where}."
+    if where:
+        return f" brAIn read {where} and found nothing that looked like trouble."
+    return ""
 
 
 def load(path: Path | None = None) -> dict:
@@ -471,6 +571,8 @@ def _entry_attempts(finding: dict, snap: dict, patterns: list[str]) -> list[dict
             "data": {"entry_id": entry_id},
             "target": entry_id,
             "label": name,
+            # Which integration's log to read if this keeps happening.
+            "integration": str(entry.get("domain") or ""),
             "entities": owned,
             "resolvable": linked,
             "sentence": f"reloaded the {name} integration",
@@ -688,7 +790,8 @@ def _ordinal(n: int) -> str:
 
 __all__ = [
     "CHRONIC_DAYS", "CHRONIC_HEALS", "CHRONIC_SAYS", "CHRONIC_SOURCE",
-    "chronic_finding", "heals_in_window", "record_heal", "target_key",
+    "chronic_finding", "heals_in_window", "log_excerpt", "read_logs",
+    "record_heal", "system_log_lines", "target_key",
     "CALL_TIMEOUT_S", "MAX_PER_NIGHT", "OUTCOME_FAIL", "OUTCOME_OK",
     "NEEDS", "OUTCOME_SKIP", "REMEDIES", "SETTLE_GRACE_MIN",
     "SETTLE_OFFSET_MIN",

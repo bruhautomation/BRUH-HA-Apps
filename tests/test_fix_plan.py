@@ -56,11 +56,24 @@ import unfix  # noqa: E402
 # stay in step with the first is the drift this repo keeps writing down.
 from test_todo_list import PanelCase  # noqa: E402
 
+import plan_ops  # noqa: E402
+
+# The change as a typed operation (`plan_ops`): what Apply carries out is
+# the ops, and the steps a person reads are those ops written out by the
+# code that will perform them — so `steps` is derived here exactly as
+# `fixer.parse_plan` derives it, rather than typed a second time.
+PLAN_OPS = [{
+    "op": "agentic",
+    "instruction": "Edit /config/automations.yaml: point 'Hall lights' at "
+                   "binary_sensor.hall rather than binary_sensor.hall_old",
+    "files": ["/config/automations.yaml"],
+    "calls": [{"domain": "automation", "service": "reload"}],
+}]
 PLAN = {
     "can_fix": True,
     "needs_you": False,
-    "steps": ["Edit /config/automations.yaml: point 'Hall lights' at "
-              "binary_sensor.hall rather than binary_sensor.hall_old"],
+    "ops": PLAN_OPS,
+    "steps": [plan_ops.describe(plan_ops.clean_op(op)) for op in PLAN_OPS],
     "risk": "The automation will not fire between the edit and the reload.",
     "summary": "Its trigger entity was renamed, so it can never fire.",
 }

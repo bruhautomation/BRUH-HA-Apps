@@ -131,7 +131,17 @@ class ChokepointCase(unittest.TestCase):
         self.core = FakeCore()
         self.rest = []
 
+        self.state_reads = []
+
         def rest(endpoint, method="GET", data=None, accept=None):
+            # A state read is the chokepoint recording what an entity was
+            # doing before the call (the before-state the ledger carries),
+            # not the call reaching Core — kept apart so "reached Core
+            # once" still means the service call.
+            if method == "GET" and str(endpoint).startswith("/api/states/"):
+                self.state_reads.append(endpoint)
+                return {"entity_id": endpoint.rsplit("/", 1)[-1],
+                        "state": "off", "attributes": {}}
             self.rest.append((endpoint, data))
             return {"ok": True}
         for p in (patch.object(m, "_ws_command", self.core),

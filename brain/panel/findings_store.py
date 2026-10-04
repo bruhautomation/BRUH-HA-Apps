@@ -395,9 +395,12 @@ def _clean_changed(value) -> list[str]:
 # there are enough of them to describe a real fix and few enough that the
 # card stays a card.
 MAX_PLAN_STEPS = 10
-MAX_PLAN_STEP = 200
+# A step is an op written out (`plan_ops.describe`), and an agentic step names
+# its instruction plus every call and file it may touch — so it is allowed
+# the length of the instruction and its reach, not one line.
+MAX_PLAN_STEP = 1600
 MAX_PLAN_RISK = 300
-MAX_PLAN_SUMMARY = 600
+MAX_PLAN_SUMMARY = 900
 
 
 def _clean_plan(value) -> dict:
@@ -418,7 +421,7 @@ def _clean_plan(value) -> dict:
         if len(steps) >= MAX_PLAN_STEPS:
             break
     needs_you = bool(value.get("needs_you"))
-    return {
+    out = {
         # Mutually exclusive by definition, the same way `fixer.parse_result`
         # reads them: a fix that needs hands is not one software can make.
         "can_fix": bool(value.get("can_fix")) and not needs_you,
@@ -428,6 +431,20 @@ def _clean_plan(value) -> dict:
         "summary": str(value.get("summary") or "").strip()[:MAX_PLAN_SUMMARY],
         "at": int(value.get("at") or 0),
     }
+    # The typed half — the ops Apply carries out, re-validated on every
+    # read because Apply reads them off this row (`plan_ops.clean_stored`).
+    # A plan with no ops that still says `can_fix` was written before plans
+    # were contracts: it is not something to approve, and it says why,
+    # rather than offering an Apply that would carry out prose.
+    import plan_ops  # noqa: PLC0415 — the store keeps no import of policy
+
+    typed = plan_ops.clean_stored(value)
+    out.update(typed)
+    out.setdefault("ops", [])
+    if out["can_fix"] and not typed.get("ops"):
+        out["can_fix"] = False
+        out["ops_refused"] = typed.get("ops_refused") or plan_ops.LEGACY_PLAN
+    return out
 
 
 def _clean_triage(value) -> dict:

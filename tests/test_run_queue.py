@@ -243,8 +243,20 @@ class TestTheServersOneHelper(unittest.TestCase):
         limit and no order, which is the whole failure this exists for."""
         import ast
         tree = ast.parse((PANEL / "server.py").read_text())
+        # The one exception, and why: the action gate's question is asked
+        # from INSIDE a seated run's tool call, so a seat for it can only
+        # come after one of those runs ends — a deadlock. It is named here
+        # so a second unseated run has to be argued for the same way.
+        unseated = {"_gate_decide"}
+        skip = set()
+        for fn in ast.walk(tree):
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                    and fn.name in unseated:
+                skip.update(id(n) for n in ast.walk(fn))
         offenders = []
         for node in ast.walk(tree):
+            if id(node) in skip:
+                continue
             if not isinstance(node, ast.Call):
                 continue
             func = node.func

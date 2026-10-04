@@ -1601,12 +1601,21 @@ class TestProjectSettingsAllowList(unittest.TestCase):
         so a hook missing there is a fix nobody can undo and a protected
         entity a fix can write around."""
         for doc in (self.settings, self.headless):
-            hooks = doc["hooks"]["PreToolUse"]
-            self.assertEqual(hooks[0]["matcher"], "Write|Edit|MultiEdit|NotebookEdit")
-            self.assertIn("brain-edit-snapshot.py", hooks[0]["hooks"][0]["command"])
-            self.assertEqual(hooks[1]["matcher"], "Bash|Write|Edit|MultiEdit")
-            self.assertIn("brain-protect-hook.py", hooks[1]["hooks"][0]["command"])
-            self.assertTrue((SCRIPTS / "brain-protect-hook.py").is_file())
+            by_script = {}
+            for entry in doc["hooks"]["PreToolUse"]:
+                for hook in entry["hooks"]:
+                    script = hook["command"].rsplit("/", 1)[-1]
+                    by_script[script] = entry["matcher"]
+            self.assertEqual(by_script.get("brain-edit-snapshot.py"),
+                             "Write|Edit|MultiEdit|NotebookEdit")
+            self.assertEqual(by_script.get("brain-protect-hook.py"),
+                             "Bash|Write|Edit|MultiEdit")
+            # The action gate sees every acting Home Assistant call as well
+            # as the edits, in the terminal and the chat as in a fix.
+            self.assertIn("mcp__home-assistant__",
+                          by_script.get("brain-action-gate.py", ""))
+            for script in by_script:
+                self.assertTrue((SCRIPTS / script).is_file(), script)
 
     def test_the_slash_commands_land_beside_it(self):
         commands = Path(self.tmp) / ".claude" / "commands"

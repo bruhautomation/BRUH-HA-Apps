@@ -34,6 +34,7 @@ it without the add-on runtime.
 from __future__ import annotations
 
 import engine
+import plan_ops
 
 # The plan run's guard. Far smaller than the fix's: this reads the entity, the
 # automation and the history and writes a paragraph, where a fix has to make
@@ -128,16 +129,32 @@ WHEN THE ANSWER IS NO
 - If the fix would need to act on a PROTECTED ENTITY (the homeowner's list is in the prompt below), set "can_fix": false and name the entity.
 - If you cannot work out what is wrong, or this is a change you would not be confident making, set "can_fix": false and say so plainly. A refused plan is a good outcome; a confident wrong one costs trust, because this one is read as permission.
 
+THE CHANGE AS OPERATIONS — what the homeowner approves is the list of "ops", and brAIn carries out exactly those. Use the narrowest one that does the job:
+- {"op": "edit_automation", "id": "<the automation's config id>", "new_config": {<the WHOLE automation as it should be: id, alias, triggers, conditions, actions, mode>}} — read it first with get_automation_config, change only what is wrong, keep everything else as it was. brAIn writes it in place, reloads, and checks it is running.
+- {"op": "reload", "domain": "automation"} — after something brAIn edited, if the edit needs one beyond the automation edit's own.
+- {"op": "call_service", "domain": "light", "service": "turn_off", "target": {"entity_id": ["light.x"]}, "data": {}} — the entities by id, only that domain's own entities; never an area, device or label; never unlocking or disarming.
+- {"op": "rename_entity", "entity_id": "light.x", "name": "Hall ceiling"} — a friendly name, and/or "new_entity_id".
+- {"op": "set_area", "entity_id": "light.x", "area_id": "hall"}.
+- {"op": "agentic", "instruction": "what to do, exactly", "calls": [{"domain": "automation", "service": "reload", "target": {"entity_id": []}}], "files": ["/config/packages/heating.yaml"]} — ONLY when none of the above can say it. A run then does it with tools, and it may make the calls and edit the files you list here and nothing else, so list every one it will need.
+Then say how brAIn should check, afterwards, that the change did its job:
+- "verify_by": {"kind": "trace_within_h", "automation": "automation.x", "hours": 48} — it should run within that many hours; or
+- {"kind": "state_is", "entity": "sensor.x", "state": "on", "within_h": 24}; or
+- {"kind": "finding_clears", "hours": 24} — the check that reported it stops reporting it.
+"expected_effect" is one sentence on what will be different once it works.
+
 OUTPUT
 Reply with ONE JSON object and nothing else — no markdown fences, no prose around it:
 {
   "can_fix": true,
   "needs_you": false,
+  "ops": [{"op": "edit_automation", "id": "1700000000000", "new_config": {"id": "1700000000000", "alias": "Morning lights", "triggers": [], "actions": []}}],
   "steps": ["one line per concrete change: which entity/file/automation, what it becomes"],
+  "expected_effect": "one sentence: what will be different once it works",
+  "verify_by": {"kind": "finding_clears", "hours": 24},
   "risk": "one sentence: what could go wrong",
   "summary": "One or two plain sentences: what is actually wrong, and what you would do about it."
 }
-Set "can_fix": false when software should not or cannot make this change — with an empty "steps", because a list of changes under a refusal reads as a plan somebody can approve."""
+Set "can_fix": false when software should not or cannot make this change — with empty "ops" and "steps", because a list of changes under a refusal reads as a plan somebody can approve."""
 
 
 def build_plan_prompt(finding: dict, memory: str = "", context: str = "",
@@ -180,10 +197,22 @@ PLAN_SCHEMA = {
         "can_fix": {"type": "boolean"},
         "needs_you": {"type": "boolean"},
         "steps": {"type": "array", "items": {"type": "string"}},
+        # The typed half. The CLI checks the shape; `plan_ops.clean_ops`
+        # checks everything that decides what the op may touch.
+        "ops": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"op": {"type": "string",
+                                  "enum": list(plan_ops.OP_KINDS)}},
+            "required": ["op"],
+            "additionalProperties": True}},
+        "expected_effect": {"type": "string"},
+        "verify_by": {"type": "object", "properties": {
+            "kind": {"type": "string", "enum": list(plan_ops.VERIFY_KINDS)}},
+            "additionalProperties": True},
         "risk": {"type": "string"},
         "summary": {"type": "string"},
     },
-    "required": ["can_fix", "steps", "summary"],
+    "required": ["can_fix", "steps", "summary", "ops"],
     "additionalProperties": True,
 }
 RESULT_SCHEMA = {
@@ -223,6 +252,9 @@ def parse_plan(text: str, obj: dict | None = None) -> dict:
             "can_fix": False,
             "needs_you": False,
             "steps": [],
+            "ops": [],
+            "expected_effect": "",
+            "verify_by": None,
             "risk": "",
             "summary": "brAIn looked at this, but its plan came back "
                        "unreadable, so there is nothing to approve. Try "
@@ -231,24 +263,39 @@ def parse_plan(text: str, obj: dict | None = None) -> dict:
         }
 
     needs_you = bool(obj.get("needs_you"))
-    steps = []
-    if isinstance(obj.get("steps"), list):
-        for item in obj["steps"]:
-            if isinstance(item, str) and item.strip():
-                steps.append(item.strip()[:200])
+    summary = str(obj.get("summary") or "").strip()[:600]
+    # The ops are what Apply carries out, so they are what is checked — and
+    # a plan whose ops cannot all be read is refused WHOLE: a dropped op is
+    # a step on the card that would not happen, which is a half-applied fix
+    # nobody approved (`plan_ops`).
+    ops, refusal = [], ""
+    if bool(obj.get("can_fix")) and not needs_you:
+        try:
+            ops = plan_ops.clean_ops(obj.get("ops"))
+        except plan_ops.Refused as exc:
+            refusal = str(exc)
     # Read the same way `parse_result` reads its pair: a change that needs
     # hands is not one software is going to make.
-    can_fix = bool(obj.get("can_fix")) and not needs_you and bool(steps)
+    can_fix = bool(obj.get("can_fix")) and not needs_you and bool(ops)
+    if refusal:
+        summary = (summary + " " if summary else "") + (
+            f"brAIn will not offer this as a change it can make: {refusal}.")
     return {
         "can_fix": can_fix,
         "needs_you": needs_you,
-        # A refusal's steps are dropped rather than rendered: a list of
-        # changes under "brAIn cannot do this" reads as a plan somebody
-        # can approve, which is the one misreading this step exists to
-        # prevent.
-        "steps": steps if can_fix else [],
+        # The steps a person reads ARE the ops, written out by the code
+        # that will carry them out — never the model's own prose about
+        # them, which could describe something else. A refusal's steps are
+        # dropped: a list of changes under "brAIn cannot do this" reads as
+        # a plan somebody can approve, which is the one misreading this
+        # step exists to prevent.
+        "steps": [plan_ops.describe(op) for op in ops] if can_fix else [],
+        "ops": ops if can_fix else [],
+        "expected_effect": (str(obj.get("expected_effect") or "").strip()
+                            [:plan_ops.MAX_EFFECT] if can_fix else ""),
+        "verify_by": plan_ops.clean_verify(obj.get("verify_by")) if can_fix else None,
         "risk": str(obj.get("risk") or "").strip()[:300],
-        "summary": str(obj.get("summary") or "").strip()[:600],
+        "summary": summary[:900],
     }
 
 
@@ -272,6 +319,9 @@ def plan_block(plan: dict) -> str:
     lines += [f"{i}. {step}" for i, step in enumerate(steps, 1)]
     if (plan or {}).get("risk"):
         lines.append(f"What you said could go wrong: {plan['risk']}")
+    contract = contract_block(plan)
+    if contract:
+        lines.append(contract)
     lines.append(
         "They pressed Apply on those steps and on nothing else. If you get "
         "there and the house has moved on, or a step turns out to be wrong or "
@@ -279,6 +329,36 @@ def plan_block(plan: dict) -> str:
         "Do not substitute a different change: they did not agree to one, and "
         "a fix nobody approved is worse than a fix that did not happen. "
         "Anything else you notice goes in \"also_found\".")
+    return "\n".join(lines)
+
+
+def contract_block(plan: dict) -> str:
+    """What the tool-enabled run may touch, said in the prompt as well.
+
+    Enforcement is not here: the MCP chokepoint refuses any call off the
+    contract and the action gate refuses a file edit outside it. This is
+    the half that lets the run plan around the limits rather than walk
+    into them — and it names the changes brAIn already made, so the run
+    does not make them a second time.
+    """
+    ops = (plan or {}).get("ops") or []
+    agentic = [op for op in ops if op.get("op") == "agentic"]
+    if not agentic:
+        return ""
+    contract = plan_ops.contract_for(ops, "")
+    lines = ["WHAT THIS RUN MAY TOUCH — the homeowner approved these and "
+             "nothing else; anything off this list is refused:"]
+    for call in contract["calls"]:
+        who = ", ".join(call["entities"]) or "no entity"
+        lines.append(f"- call {call['domain']}.{call['service']} on {who}")
+    for path in contract["files"]:
+        lines.append(f"- edit {path}")
+    done = [plan_ops.describe(op) for op in ops if op.get("op") != "agentic"]
+    if done:
+        lines.append("brAIn makes these itself, before this run — do not "
+                     "make them again:")
+        lines += [f"- {d}" for d in done]
+    lines.append("Your part: " + "; ".join(op["instruction"] for op in agentic))
     return "\n".join(lines)
 
 

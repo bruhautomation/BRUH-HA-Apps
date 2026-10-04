@@ -18,6 +18,15 @@ except ImportError:  # Pillow is optional; the test that needs it skips
     Image = None
 
 
+
+def service_posts(api):
+    """The calls that reached Core as a service call. The chokepoint also
+    reads each named entity's state first (the before-state the action
+    ledger records), and those GETs are not the call being asserted."""
+    return [c for c in api.call_args_list
+            if str(c.args[0] if c.args else c.kwargs.get("endpoint", ""))
+            .startswith("/api/services/")]
+
 class TestRegistryConsistency(unittest.TestCase):
     """The registry is the contract: schemas, implementations, and specs
     must always agree — this is what makes adding tools safe."""
@@ -335,7 +344,7 @@ class TestServiceDenyList(unittest.TestCase):
         ha_mcp_server.DENIED_SERVICES = ["lock.unlock"]
         mock_api.return_value = {"ok": True}
         ha_mcp_server.call_service("light", "turn_on", {"entity_id": "light.x"})
-        mock_api.assert_called_once()
+        self.assertEqual(len(service_posts(mock_api)), 1)
 
     @patch("ha_mcp_server.ha_api_request")
     def test_control_tool_routes_through_deny(self, mock_api):
@@ -370,7 +379,7 @@ class TestServiceDenyList(unittest.TestCase):
         ha_mcp_server.call_service(
             "homeassistant", "turn_on",
             {"entity_id": ["light.x", "switch.y"]})
-        mock_api.assert_called_once()
+        self.assertEqual(len(service_posts(mock_api)), 1)
 
     @patch("ha_mcp_server.ha_api_request")
     def test_meta_service_with_unresolvable_targets_fails_closed(self, mock_api):
@@ -396,7 +405,7 @@ class TestServiceDenyList(unittest.TestCase):
         mock_api.return_value = {"ok": True}
         ha_mcp_server.call_service("homeassistant", "turn_off",
                                    {"entity_id": "light.x"})
-        mock_api.assert_called_once()
+        self.assertEqual(len(service_posts(mock_api)), 1)
 
     @patch("ha_mcp_server.ha_api_request")
     def test_fire_event_is_refused_on_a_restricted_channel(self, mock_api):

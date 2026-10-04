@@ -195,6 +195,10 @@ DEFAULTS = {
     # a calendar is the most personal thing a house holds, and "brAIn read
     # my calendar" has to be a thing a person chose.
     "occasion_calendars": [],
+    # Entities a person has named as tripwires (`security.py`): any acting
+    # call on one is refused by the MCP chokepoint and files a security
+    # case. Beside the one brAIn creates on a press, not instead of it.
+    "honeytoken_entities": [],
 }
 
 # An entity id, and nothing else: this one is read by the nightly pass
@@ -334,6 +338,34 @@ def load() -> dict:
     if isinstance(outdoor, str) and _ENTITY_RE.match(outdoor) \
             and len(outdoor) <= MAX_ENTITY_CHARS:
         out["thermal_outdoor"] = outdoor
+    try:
+        out["honeytoken_entities"] = clean_entity_list(
+            data.get("honeytoken_entities"))
+    except ValueError:
+        # A list that cannot be read is no tripwire rather than a crash on
+        # every settings read; the MCP chokepoint's other floors still hold.
+        pass
+    return out
+
+
+MAX_HONEYTOKENS = 10
+
+
+def clean_entity_list(value) -> list[str]:
+    """A short list of entity ids, or a ValueError naming the bad one."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("honeytoken_entities must be a list of entity ids")
+    out: list[str] = []
+    for item in value:
+        eid = str(item or "").strip().lower()
+        if not _ENTITY_RE.match(eid) or len(eid) > MAX_ENTITY_CHARS:
+            raise ValueError(f"{str(item)[:60]!r} is not an entity id")
+        if eid not in out:
+            out.append(eid)
+    if len(out) > MAX_HONEYTOKENS:
+        raise ValueError(f"at most {MAX_HONEYTOKENS} tripwire entities")
     return out
 
 
@@ -409,6 +441,8 @@ def save(fields: dict) -> dict:
             clean[key] = clean_calendars(value)
         elif key in NOTIFY_POLICY_KEYS or key == "speak_first":
             clean[key] = clean_notify_policy(key, value)
+        elif key == "honeytoken_entities":
+            clean[key] = clean_entity_list(value)
         elif key == "plan":
             if value not in PLANS:
                 raise ValueError(f"plan must be one of {', '.join(PLANS)}")

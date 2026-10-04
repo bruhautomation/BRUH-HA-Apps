@@ -228,6 +228,15 @@ import upgrades
 import occasions
 import situation
 import world_model
+# Every change is a contract: typed fixes, interventions, the action gate
+# and the tripwire (`_run_typed_fix` and its neighbours).
+import consequence
+import gate
+import house_rules
+import interventions
+import plan_ops
+import security
+import typed_fix
 # `_CARD_CONTRACT` and `_previous_block` are reached into deliberately, by
 # the prompt preview, which reports the size of every block a run is sent:
 # a second copy of the contract or of the previous-run renderer here would
@@ -2680,8 +2689,16 @@ async def run_healing(reason: str = "schedule") -> dict:
         chronic = planned.get("chronic") or []
         if chronic:
             tz, _tzname = await asyncio.to_thread(baselines.house_timezone)
-            rows_for = [healing.chronic_finding(c, c.get("heals") or [], tz)
-                        for c in chronic]
+            # "With the logs read": the lines that say why, read now.
+            import aiohttp  # noqa: PLC0415
+
+            read = []
+            async with aiohttp.ClientSession() as log_session:
+                for c in chronic:
+                    read.append(await healing.read_logs(log_session, c))
+            rows_for = [healing.chronic_finding(c, c.get("heals") or [], tz,
+                                                logs, where)
+                        for c, (logs, where) in zip(chronic, read)]
             # A direct call inside the thunk, so the sweep that holds every
             # producer to the gate (`test_triage`) can see this one too.
             await asyncio.to_thread(
@@ -4092,6 +4109,8 @@ async def _run_plan(job_id: str) -> None:
             raise RuntimeError(result["error"] or "the plan run failed")
 
         plan = fixer.parse_plan(result["text"], result.get("data"))
+        # The floors asked at the plan, and an edit's diff and replay.
+        plan = await _typed_plan_extras(plan)
         row = await asyncio.to_thread(findings_store.set_plan, ts, plan)
         if row is None:
             # The finding was settled, or somebody pressed Cancel, while
@@ -4163,6 +4182,11 @@ async def _run_fix(job_id: str) -> None:
     finding = findings_store.get(ts)
     if finding is None:
         _set_job(job_id, state="error", error="that finding is gone")
+        return
+    if (finding.get("plan") or {}).get("ops"):
+        # A plan written as typed operations: the panel carries out the
+        # deterministic ones and the agentic one runs under its contract.
+        await _run_typed_fix(job_id, finding)
         return
     try:
         # the route already claimed it on disk — this is the in-memory half
@@ -4322,6 +4346,813 @@ async def _verify_fix(ts: int) -> dict:
         log.info("finding %s came back: %s still reports it after the fix",
                  ts, check_id)
     return {"checked": True, "came_back": still}
+
+
+# ---------------------------------------------------------------------------
+# Every change is a contract — typed fixes, interventions, the action gate
+# and the tripwire. The policy lives in plan_ops / typed_fix / interventions
+# / consequence / gate / security; this block is the glue that hands them
+# Core and the stores.
+# ---------------------------------------------------------------------------
+
+PREVIEW_REPLAY_DAYS = typed_fix.REPLAY_DAYS
+
+
+def _refuse_plan(plan: dict, why: str) -> dict:
+    """A plan the floors (or the writer) would refuse, offered as nothing.
+
+    `parse_plan`'s rule: a list of changes under a refusal reads as a plan
+    somebody can approve, so the ops and the steps go with it."""
+    summary = str(plan.get("summary") or "").strip()
+    return {**plan, "can_fix": False, "ops": [], "steps": [], "preview": [],
+            "summary": (summary + " " if summary else "")
+            + f"brAIn will not offer this as a change it can make: {why}."}
+
+
+async def _typed_plan_extras(plan: dict) -> dict:
+    """The floors asked at the PLAN, and the preview an edit carries.
+
+    The chokepoint asks again at call time and the writer at write time;
+    this is the ask that keeps a card from offering an Apply something
+    downstream will refuse. An `edit_automation` op carries the diff of the
+    bytes it will change and a replay of the old and new config over the
+    recorder's week, so what is approved is what will be written."""
+    if not plan.get("can_fix") or not plan.get("ops"):
+        return plan
+    tokens = await asyncio.to_thread(security.honeytoken_ids)
+    refusal = plan_ops.protected_refusal(plan["ops"], None, tokens)
+    if refusal:
+        return _refuse_plan(plan, refusal)
+    previews: list[dict] = []
+    tz = None
+    for op in plan["ops"]:
+        if op.get("op") != "edit_automation":
+            previews.append({})
+            continue
+        shown = await asyncio.to_thread(typed_fix.edit_preview, op)
+        if shown.get("error"):
+            return _refuse_plan(plan, shown["error"])
+        entry: dict = {"diff": shown["diff"]}
+        try:
+            import aiohttp  # noqa: PLC0415
+
+            if tz is None:
+                tz, _name = await asyncio.to_thread(baselines.house_timezone)
+            end = time.time()
+            start = end - PREVIEW_REPLAY_DAYS * 86400
+            async with aiohttp.ClientSession() as session:
+                entry["replay"] = await _replay_config(
+                    session, op["new_config"], start, end, tz)
+                if shown.get("before_config"):
+                    entry["replay_before"] = await _replay_config(
+                        session, shown["before_config"], start, end, tz)
+        except Exception as exc:  # noqa: BLE001 — the diff still stands
+            entry["replay_note"] = f"brAIn could not replay it: {exc}"[:300]
+        previews.append(entry)
+    plan["preview"] = previews
+    return plan
+
+
+def _typed_hooks() -> typed_fix.Hooks:
+    """Core, for `typed_fix.execute`. The same doors every other press uses."""
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    async def apply_edit(row: dict):
+        # The entity Core registered for this config id, read back rather
+        # than derived from the alias — `_registry_entity_id`'s rule.
+        real, _looked = await _registry_entity_id(str(row.get("edits") or ""))
+        if real:
+            row = {**row, "automation": {"entity_id": real}}
+        return await _apply_accepted(row)
+
+    async def revert_edit(written: dict) -> str:
+        reverted = await asyncio.to_thread(automation_writer.revert, written)
+        try:
+            await ha_data.call_core_service("automation", "reload")
+        except Exception as exc:  # noqa: BLE001 — the bytes are back
+            log.warning("could not reload after putting a fix back: %s", exc)
+        return "" if reverted.get("ok") else str(reverted.get("error") or
+                                                  "it could not be put back")
+
+    async def call(domain: str, service: str, data: dict):
+        return await ha_data.call_core_service(domain, service, data)
+
+    async def state(entity_id: str):
+        return await ha_data.entity_state(entity_id)
+
+    async def ws(commands: list[dict]) -> list[dict]:
+        async with aiohttp.ClientSession() as session:
+            return await ha_data._ws_calls(session, commands)
+
+    def ledger(row: dict) -> None:
+        typed_fix.append_ledger(row, actions.LEDGER_FILE)
+
+    return typed_fix.Hooks(apply_edit=apply_edit, revert_edit=revert_edit,
+                           call=call, state=state, ws=ws, ledger=ledger)
+
+
+async def _run_typed_fix(job_id: str, finding: dict) -> None:
+    """Carry out an approved plan: the panel's ops first, then the agentic
+    one under its contract. Never on a schedule — only `_run_fix` calls
+    this, and only `h_finding_apply` queues that.
+
+    The deterministic ops are the panel's own (no model, no shell); the
+    `agentic` op is the one `run_agent` run, and it carries
+    `BRAIN_CHANGE_CONTRACT` so the MCP chokepoint and the action gate refuse
+    anything off the approved list. Every applied plan becomes an
+    intervention the follow-up looks come back to."""
+    ts = int(finding["ts"])
+    plan = finding.get("plan") or {}
+    ops = plan.get("ops") or []
+    intervention = interventions.new_id(ts)
+    try:
+        _set_job(job_id, state="fixing", error="")
+        started = time.time()
+        await asyncio.to_thread(findings_store.set_fix_window, ts,
+                                started, None)
+        protected = automation_writer.protected_patterns()
+        tokens = await asyncio.to_thread(security.honeytoken_ids)
+        done = await typed_fix.execute(ops, _typed_hooks(),
+                                       intervention=intervention,
+                                       protected=protected, honeytokens=tokens)
+        status, result_text, changed, also = "fixed", "", [], []
+        run_meta: dict = {}
+        if not done["ok"]:
+            status = "failed"
+            back = (" What it had already changed was put back."
+                    if done["rolled_back"] else "")
+            result_text = (f"brAIn did not finish this change: "
+                           f"{done['error']}.{back}")
+        elif plan_ops.has_agentic(ops):
+            contract = plan_ops.contract_for(ops, intervention)
+            memory = await asyncio.to_thread(_read_shared_memory)
+            prompt = fixer.build_prompt(finding, memory=memory,
+                                        protected=protected, plan=plan)
+            env = {"BRAIN_CHANGE_CONTRACT": json.dumps(contract),
+                   "BRAIN_CHANNEL": "fix",
+                   "BRAIN_INTERVENTION_ID": intervention}
+            result = await _claude(
+                engine.run_agent, prompt, fixer.FIX_SYSTEM, eff_model(),
+                FIX_TIMEOUT_S, FIX_MAX_TURNS, "fix", job="fix_apply",
+                schema=fixer.RESULT_SCHEMA, env=env, priority=run_queue.PRESS)
+            _record_usage(result, job_id)
+            run_meta = result.get("meta") or {}
+            if not result["ok"]:
+                status = "failed"
+                result_text = (f"The fix run did not complete: "
+                               f"{str(result['error'] or '')[:400]}")
+            else:
+                parsed = fixer.parse_result(result["text"], result.get("data"))
+                status = ("needs_you" if parsed["needs_you"] else
+                          "fixed" if parsed["ok"] else "failed")
+                result_text = fixer.result_text(parsed)
+                changed = done["done"] + list(parsed["changed"])
+                also = parsed["also_found"]
+        else:
+            changed = list(done["done"])
+            result_text = "brAIn made the change itself: " + "; ".join(changed)
+        ended = time.time()
+        try:
+            files = len(unfix.journal_entries(started, ended,
+                                              also=done["journal_ts"]))
+            calls = len(unfix.service_calls(started, ended))
+        except Exception:  # noqa: BLE001 — accounting, not the fix
+            files = calls = None
+        await asyncio.to_thread(findings_store.set_fix_window, ts, None,
+                                ended, files, calls)
+        await asyncio.to_thread(findings_store.set_status, ts, status,
+                                result_text, changed)
+        if status == "fixed":
+            await asyncio.to_thread(interventions.record, {
+                "id": intervention, "applied_at": ended, "finding_ts": ts,
+                "finding_text": finding.get("text") or "",
+                "finding_key": findings_store.normalize(
+                    finding.get("text") or ""),
+                "source": finding.get("source") or "",
+                "steps": plan.get("steps") or [],
+                "kinds": [op.get("op") for op in ops],
+                "contract": plan_ops.contract_for(ops, intervention),
+                "verify_by": plan.get("verify_by"),
+                "expected_effect": plan.get("expected_effect") or "",
+                "entities": plan_ops.entities_named(ops),
+                "journal_ts": done["journal_ts"], "undo": done["undo"],
+                "outcome": status})
+            _spawn_fix_verification(ts)
+            if changed:
+                subjects = _finding_subjects(finding)
+                await _submit_memory(
+                    f"brAIn fixed this on {time.strftime('%Y-%m-%d')}: "
+                    f"{finding.get('text')} — {'; '.join(changed)}",
+                    source="fix", subject=subjects[0] if subjects else "",
+                    subjects=subjects[1:],
+                    run_id=capture.run_id_from(run_meta))
+        if also:
+            findings_store.add_many(triage.gate([
+                {"text": extra, "source": "fix",
+                 "source_title": f"Noticed while fixing “{finding['text']}”"}
+                for extra in also]))
+        _set_job(job_id, state="done", error="")
+        log.info("finding %s → %s (typed fix %s)", ts, status, intervention)
+    except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
+        log.warning("typed fix for finding %s failed: %s", ts, exc)
+        findings_store.set_fix_window(ts, None, time.time())
+        findings_store.set_status(
+            ts, "failed",
+            result=f"The fix did not complete: {str(exc)[:400]}")
+        _set_job(job_id, state="error", error=str(exc)[:500])
+
+
+# -- restoring what a fix's service calls changed (a press, never a timer) --
+
+RESTORE_SETTLE_S = 2.0
+RESTORE_STATUSES = frozenset({"fixed", "failed", "needs_you", "open"})
+
+
+async def h_finding_restore(request: web.Request) -> web.Response:
+    """Put the entities a fix's service calls changed back how they were.
+
+    Read off the before-states the chokepoint recorded, put back with
+    `scene.apply` (each domain's own reproduce_state), and then read again,
+    because Home Assistant accepting a call is not a light being on. Every
+    entity gets its own line: restored, or could not restore and why."""
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    finding = _finding_or_404(request)
+    if finding.get("status") not in RESTORE_STATUSES:
+        raise web.HTTPConflict(text="this finding is being worked on — wait "
+                                    "for it to finish first")
+    started = float(finding.get("fix_started") or 0)
+    ended = float(finding.get("fix_ended") or 0)
+    if started <= 0 or ended <= 0:
+        raise web.HTTPConflict(text="brAIn did not record what this fix "
+                                    "changed, so there is nothing to put back")
+    calls = await asyncio.to_thread(unfix.service_calls, started, ended)
+    tokens = await asyncio.to_thread(security.honeytoken_ids)
+    plan = unfix.restore_plan(calls, None, tokens)
+    if not plan["apply"] and not plan["refused"]:
+        raise web.HTTPConflict(text="this fix made no service calls brAIn "
+                                    "recorded, so there is nothing to put back")
+    error, after = "", {}
+    if plan["apply"]:
+        before = {}
+        for eid in plan["apply"]:
+            try:
+                before[eid] = typed_fix.before_of(await ha_data.entity_state(eid))
+            except Exception:  # noqa: BLE001 — recorded as unknown
+                before[eid] = {"unknown": True}
+        iv = await asyncio.to_thread(interventions.for_finding,
+                                     int(finding["ts"]))
+        try:
+            await ha_data.call_core_service("scene", "apply",
+                                            {"entities": plan["apply"]})
+        except Exception as exc:  # noqa: BLE001 — reported per entity
+            error = str(exc)
+        typed_fix.append_ledger(typed_fix.ledger_row(
+            "scene", "apply", list(plan["apply"]), before=before,
+            channel="restore", intervention=(iv or {}).get("id", "")),
+            actions.LEDGER_FILE)
+        if not error:
+            await asyncio.sleep(RESTORE_SETTLE_S)
+        for eid in plan["apply"]:
+            try:
+                after[eid] = await ha_data.entity_state(eid)
+            except Exception:  # noqa: BLE001
+                after[eid] = None
+    rows = unfix.restore_report(plan, after, error)
+    text = unfix.restore_text(rows)
+
+    def note() -> dict:
+        findings_store.set_status(int(finding["ts"]), finding["status"],
+                                  result=text)
+        return _findings_payload()
+
+    payload = await asyncio.to_thread(note)
+    log.info("finding %s: restore — %d back, %d could not be",
+             finding["ts"], sum(1 for r in rows if r["restored"]),
+             sum(1 for r in rows if not r["restored"]))
+    return web.json_response({**payload, "restored": rows, "text": text})
+
+
+async def _undo_intervention(finding: dict) -> list[str]:
+    """Reverse the registry changes a typed fix made. Returns the failures.
+
+    The file half rides `unfix.journal_entries(..., also=)`; this is the
+    other deterministic half — a rename or an area move carries the value
+    it replaced, so putting it back is exact."""
+    row = await asyncio.to_thread(interventions.for_finding, int(finding["ts"]))
+    if not row:
+        return []
+    failures = []
+    hooks = _typed_hooks()
+    for item in reversed(row.get("undo") or []):
+        if item.get("kind") == "edit":
+            continue      # the journal half reverts it, once
+        why = await typed_fix.undo_one(item, hooks)
+        if why:
+            failures.append(why)
+    await asyncio.to_thread(interventions.update, row["id"], status="undone")
+    return failures
+
+
+# -- the follow-up looks ----------------------------------------------------
+
+FOLLOWUP_TICK_S = 600
+FOLLOWUP_TIMEOUT_S = 240
+FOLLOWUP_STATE: dict = {"running": False, "last_tick": 0, "looks": 0,
+                        "regressed": 0, "deferred": 0, "suggested": 0,
+                        "last_error": ""}
+
+
+async def _followup_loop() -> None:
+    while True:
+        await asyncio.sleep(FOLLOWUP_TICK_S)
+        try:
+            await _followup_tick(time.time())
+        except Exception as exc:  # noqa: BLE001 — never let this kill the loop
+            FOLLOWUP_STATE["last_error"] = str(exc)[:200]
+            log.warning("follow-up looks failed: %s", exc)
+
+
+async def _followup_tick(now: float) -> int:
+    """Recurrences first (free), then every look whose day has come."""
+    if FOLLOWUP_STATE["running"]:
+        return 0
+    FOLLOWUP_STATE["running"] = True
+    looked = 0
+    try:
+        FOLLOWUP_STATE["last_tick"] = int(now)
+        rows = (await asyncio.to_thread(interventions.read))["rows"]
+        live = await asyncio.to_thread(findings_store.list_all)
+        for row in rows:
+            if row.get("status") != "watching":
+                continue
+            back = interventions.came_back(row, live, findings_store.normalize)
+            if back:
+                detail = "the problem was reported again"
+                await asyncio.to_thread(interventions.mark_regressed,
+                                        row["id"], detail, now)
+                await _regressed(row, None, detail, now, back)
+        for row, day in await asyncio.to_thread(interventions.due, now):
+            verdict, detail, how = await _judge_look(row, day, now)
+            if verdict is None:
+                FOLLOWUP_STATE["deferred"] += 1
+                continue
+            looked += 1
+            FOLLOWUP_STATE["looks"] += 1
+            await asyncio.to_thread(interventions.set_look, row["id"], day,
+                                    verdict, detail, now, how)
+            if verdict == "regressed":
+                await _regressed(row, day, detail, now, None)
+        return looked
+    finally:
+        FOLLOWUP_STATE["running"] = False
+
+
+async def _judge_look(row: dict, day: int, now: float
+                      ) -> tuple[str | None, str, str]:
+    """`(verdict, detail, how)` — None for a look the gates are holding."""
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    verify = row.get("verify_by") or {}
+    kind = verify.get("kind")
+    applied = float(row.get("applied_at") or 0)
+    if kind in ("trace_within_h", "state_is"):
+        target = verify.get("automation") or verify.get("entity")
+        try:
+            state = await ha_data.entity_state(target)
+        except Exception:  # noqa: BLE001 — "could not look"
+            state = None
+        if kind == "trace_within_h":
+            return (*interventions.judge_trace(verify, state, applied, now),
+                    "trace")
+        return (*interventions.judge_state(verify, state), "state")
+    source = str(row.get("source") or "")
+    check_id = source[6:] if source.startswith("check:") else ""
+    if kind == "finding_clears" or (not kind and check_id):
+        if check_id and checks.get_check(check_id) is not None:
+            if CHECKS_STATE["running"]:
+                return None, "a checks pass is running", "check"
+            snapshot = await checks.snapshot.collect(now)
+            result = checks.run_all(snapshot, now, only=[check_id])
+            if check_id not in result["ran"]:
+                return ("could_not_check",
+                        str(result["skipped"].get(check_id)
+                            or result["errors"].get(check_id)
+                            or "the check could not run")[:300], "check")
+            keys = {findings_store.normalize(f["text"])
+                    for f in result["findings"]}
+            if row.get("finding_key") in keys:
+                return "regressed", f"{check_id} reports it again", "check"
+            return "held", f"{check_id} no longer reports it", "check"
+    # Nothing deterministic can say: a cheap look, gated like every
+    # scheduled run, and "could not check" if the gates hold it too long.
+    why = _resident_gate(settings_store.load())
+    if why:
+        if interventions.overdue(row, day, now):
+            return "could_not_check", f"brAIn could not look: {why}", "gated"
+        return None, why, "gated"
+    result = await _claude(
+        engine.run_analyst, interventions.followup_prompt(row, day),
+        interventions.FOLLOWUP_SYSTEM, "", FOLLOWUP_TIMEOUT_S, 12, "followup",
+        job="followup", schema=interventions.FOLLOWUP_SCHEMA,
+        priority=run_queue.SCHEDULED)
+    _record_usage(result, f"followup-{row.get('id')}")
+    if not result.get("ok"):
+        return ("could_not_check",
+                f"the look failed: {str(result.get('error') or '')[:200]}",
+                "look")
+    verdict, reason = interventions.parse_followup(result.get("text") or "",
+                                                   result.get("data"))
+    return verdict, reason, "look"
+
+
+async def _regressed(row: dict, day: int | None, detail: str, now: float,
+                     live: dict | None) -> None:
+    """Reopen the case, citing the intervention; and a repeat is a period."""
+    FOLLOWUP_STATE["regressed"] += 1
+    text = interventions.came_back_text(row, day, detail)
+    ts = int(row.get("finding_ts") or 0)
+    current = await asyncio.to_thread(findings_store.get, ts) if ts else None
+    if live is not None and int(live.get("ts") or 0) != ts:
+        await asyncio.to_thread(findings_store.annotate, int(live["ts"]), text)
+    elif current is not None:
+        if current.get("status") in ("fixed",):
+            await asyncio.to_thread(findings_store.set_status, ts, "open",
+                                    text)
+        else:
+            await asyncio.to_thread(findings_store.annotate, ts, text)
+    else:
+        created = await asyncio.to_thread(findings_store.add_many, triage.gate([{
+            "text": f"{str(row.get('finding_text') or 'A fixed problem')[:200]}"
+                    " — came back after brAIn's fix",
+            "detail": text, "source": "followup",
+            "source_title": "Follow-up looks",
+            "severity": "warning"}]))
+        if created:
+            log.info("follow-up: reopened %s as a new finding", row.get("id"))
+    rows = (await asyncio.to_thread(interventions.read))["rows"]
+    key = row.get("finding_key") or ""
+    days = interventions.interval_days(rows, key) if key else None
+    if days:
+        times = sum(1 for r in rows
+                    if r.get("finding_key") == key and r.get("regressed_at"))
+        made = await asyncio.to_thread(findings_store.add_many, triage.gate(
+            [interventions.maintenance_row(row, days, times)]))
+        if made:
+            FOLLOWUP_STATE["suggested"] += 1
+            log.info("follow-up: %s keeps coming back — suggested every %d "
+                     "days", key[:60], days)
+
+
+# -- the action gate --------------------------------------------------------
+
+GATE_TIMEOUT_S = 18
+GATE_REGISTRY_TTL_S = 60
+_GATE_REGISTRY: dict = {"at": 0.0, "maps": None}
+
+
+async def _gate_registry() -> dict | None:
+    """Entity → area, areas, device → entities; cached a minute."""
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415
+
+    now = time.time()
+    if _GATE_REGISTRY["maps"] is not None and \
+            now - _GATE_REGISTRY["at"] < GATE_REGISTRY_TTL_S:
+        return _GATE_REGISTRY["maps"]
+    try:
+        async with aiohttp.ClientSession() as session:
+            regs = await asyncio.wait_for(ha_data.get_registries(session),
+                                          REGISTRY_LOOKUP_S)
+    except Exception as exc:  # noqa: BLE001 — "I could not look"
+        log.debug("gate: registries unreadable: %s", exc)
+        return None
+    area_ids = regs.get("entity_area_id") or {}
+    names = {}
+    for eid, aid in area_ids.items():
+        names[aid] = (regs.get("entity_area") or {}).get(eid, aid)
+    area_entities: dict[str, list] = {}
+    for eid, aid in area_ids.items():
+        area_entities.setdefault(aid, []).append(eid)
+    device_entities: dict[str, list] = {}
+    for eid, did in (regs.get("entity_device") or {}).items():
+        device_entities.setdefault(did, []).append(eid)
+    maps = {"entity_area": area_ids, "area_names": names,
+            "area_entities": area_entities, "device_entities": device_entities}
+    _GATE_REGISTRY.update(at=now, maps=maps)
+    return maps
+
+
+async def _gate_view(tool: str, args: dict, exposed_only: bool
+                     ) -> consequence.View:
+    """What the gate is allowed to know: registries, closed states, members."""
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415
+
+    maps = await _gate_registry() or {}
+    view = consequence.View(
+        entity_area=maps.get("entity_area") or {},
+        area_names=maps.get("area_names") or {},
+        area_entities=maps.get("area_entities") or {},
+        device_entities=maps.get("device_entities") or {},
+        protected=automation_writer.protected_patterns(),
+        honeytokens=set(await asyncio.to_thread(security.honeytoken_ids)))
+    first = consequence.resolve(tool, args, view)
+    wanted = [e["entity_id"] for e in first["entities"]]
+    containers = [e for e in wanted
+                  if e.split(".", 1)[0] in consequence.CONTAINER_DOMAINS]
+    if containers:
+        try:
+            async with aiohttp.ClientSession() as session:
+                answers = await asyncio.wait_for(ha_data._ws_commands(session, [
+                    {"type": "search/related",
+                     "item_type": c.split(".", 1)[0], "item_id": c}
+                    for c in containers]), REGISTRY_LOOKUP_S)
+        except Exception:  # noqa: BLE001 — unread members stay unresolved
+            answers = [None] * len(containers)
+        for container, answer in zip(containers, answers):
+            if isinstance(answer, dict):
+                view.members[container] = [
+                    str(e) for e in answer.get("entity") or []
+                    if str(e) != container]
+    resolved = consequence.resolve(tool, args, view)
+    if exposed_only:
+        # The voice floor's own module (`scripts/brain_exposed.py`, beside
+        # the panel in the image as in the repo). Unread exposure fails
+        # closed: an empty set refuses every entity.
+        view.exposed = set()
+        try:
+            import sys  # noqa: PLC0415
+
+            scripts = str(Path(__file__).resolve().parent.parent / "scripts")
+            if scripts not in sys.path:
+                sys.path.append(scripts)
+            import brain_exposed  # noqa: PLC0415
+
+            snap = brain_exposed.load()
+            if snap is not None:
+                view.exposed = {e["entity_id"] for e in resolved["entities"]
+                                if brain_exposed.is_exposed(e["entity_id"],
+                                                            snap)}
+        except Exception as exc:  # noqa: BLE001
+            log.debug("gate: exposure unreadable: %s", exc)
+    for eid in [e["entity_id"] for e in resolved["entities"]][:40]:
+        try:
+            view.states[eid] = await ha_data.entity_state(eid) or {}
+        except Exception:  # noqa: BLE001 — shown as could not read
+            pass
+    return view
+
+
+async def _gate_decide(body: dict) -> dict:
+    """One decision. Every path ends in `gate`'s vocabulary; none in allow
+    by default."""
+    gate.STATE["asked"] += 1
+    tool = str(body.get("tool") or "")
+    args = body.get("input") if isinstance(body.get("input"), dict) else {}
+    channel = re.sub(r"[^a-z0-9_]", "", str(body.get("channel") or ""))[:32]
+    words = [str(w)[:1200] for w in (body.get("words") or [])
+             if isinstance(w, str)][-6:]
+    contract = body.get("contract") if isinstance(body.get("contract"),
+                                                  dict) else None
+    exposed_only = bool(body.get("exposed_only"))
+    if not consequence.is_gated(tool, contract is not None):
+        return {"verdict": "allow", "decision": "allow",
+                "reason": "not an acting tool", "path": "not_gated"}
+    key = gate.cache_key(str(body.get("session_id") or ""), tool, args, words,
+                         str((contract or {}).get("id") or ""))
+    hit = gate.cached(key)
+    if hit:
+        return hit
+    try:
+        view = await asyncio.wait_for(_gate_view(tool, args, exposed_only),
+                                      GATE_TIMEOUT_S)
+    except Exception as exc:  # noqa: BLE001 — undecided, never allow
+        return gate.undecided(channel, f"could not read the house: "
+                                       f"{type(exc).__name__}")
+    cons = consequence.resolve(tool, args, view)
+    floor = gate.floors(cons, channel, exposed_only)
+    if floor:
+        gate.STATE["floor"] += 1
+        out = gate._out(floor[0], floor[1], channel, "floor")
+        gate.remember(key, out)
+        return out
+    # The person's own standing rules, matched in code. They only ever
+    # TIGHTEN what any path below decides (`house_rules.tighten`).
+    rule = house_rules.check(cons, (await asyncio.to_thread(
+        house_rules.load))["rules"], _local_minute())
+
+    def ruled(verdict: str, why: str, path: str) -> dict:
+        tighter, changed = house_rules.tighten(verdict, rule)
+        if changed:
+            gate.STATE["house_rule"] = gate.STATE.get("house_rule", 0) + 1
+            return gate._out(tighter, rule[1], channel, "house_rule")
+        return gate._out(verdict, why, channel, path)
+
+    if contract is not None:
+        gate.STATE["contract"] += 1
+        verdict, why = gate.contract_verdict(tool, args, contract)
+        out = ruled(verdict, why, "contract")
+        gate.remember(key, out)
+        return out
+    if rule and rule[0] == "deny":
+        out = ruled("allow", "", "house_rule")
+        gate.remember(key, out)
+        return out
+    fast = consequence.fast_path(cons, words)
+    if fast and not rule:
+        gate.STATE["fast_path"] += 1
+        out = gate._out("allow", fast, channel, "fast_path")
+        gate.remember(key, out)
+        return out
+    if not engine.get_auth():
+        return gate.undecided(channel, "there is no Claude credential")
+    if not gate.interactive(channel):
+        # An unattended run answers to the budget like every scheduled one.
+        try:
+            if usage_store.budget_state(settings_store.load())["blocked"]:
+                return gate.undecided(channel, "the usage budget is spent")
+        except Exception:  # noqa: BLE001 — a budget that cannot be read
+            pass
+    gate.STATE["model"] += 1
+    try:
+        # The one engine run that takes NO seat on the run queue, and the
+        # reason is the queue: a gate question is asked from INSIDE a run
+        # (a fix's tool call), and that run already holds a seat — three
+        # seated fixes each waiting on a gate that needs a fourth seat is a
+        # deadlock the timeout would answer as "undecided", which refuses.
+        # It is a small, tool-less, capped turn, `doctor`'s exception.
+        result = await asyncio.wait_for(asyncio.to_thread(
+            engine.run_claude, gate.build_prompt(words, cons),
+            gate.GATE_SYSTEM, "", GATE_TIMEOUT_S, 4, "gate",
+            job="gate", schema=gate.GATE_SCHEMA), GATE_TIMEOUT_S + 5)
+    except Exception as exc:  # noqa: BLE001 — undecided, never allow
+        return gate.undecided(channel, type(exc).__name__)
+    if not result.get("ok"):
+        return gate.undecided(channel, "the gate's run failed")
+    verdict, why = gate.parse(result.get("text") or "", result.get("data"))
+    out = ruled(verdict, why, "model")
+    gate.remember(key, out)
+    return out
+
+
+def _local_minute(now: float | None = None) -> int:
+    local = _local_now(time.time() if now is None else now)
+    return local.hour * 60 + local.minute
+
+
+# -- house rules (written once, compiled once, matched in code) -------------
+
+HOUSE_RULES_TIMEOUT_S = 90
+
+
+async def h_house_rules(request: web.Request) -> web.Response:
+    data = await asyncio.to_thread(house_rules.load)
+    return web.json_response(data)
+
+
+async def h_house_rules_save(request: web.Request) -> web.Response:
+    """Save the sentences and compile any that changed. A press: it needs a
+    credential and skips the budget, as every pressed run does."""
+    body = await _json_body(request)
+    try:
+        texts = house_rules.clean_rules(body.get("rules"))
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    known = {r["text"]: r for r in (await asyncio.to_thread(
+        house_rules.load))["rules"] if r.get("compiled")}
+    if any(t not in known for t in texts) and not engine.get_auth():
+        raise web.HTTPBadRequest(text="connect your Claude account first — "
+                                      "a new rule is compiled by Claude once")
+    rows = []
+    for text in texts:
+        if text in known:
+            rows.append({"text": text, "compiled": known[text]["compiled"],
+                         "error": ""})
+            continue
+        result = await _claude(
+            engine.run_claude, house_rules.compile_prompt(text),
+            house_rules.COMPILE_SYSTEM, "", HOUSE_RULES_TIMEOUT_S, 4,
+            "gate", job="house_rules", schema=house_rules.RULE_SCHEMA,
+            priority=run_queue.PRESS)
+        raw = result.get("data") if result.get("ok") else None
+        if raw is None and result.get("ok"):
+            match = re.search(r"\{.*\}", str(result.get("text") or ""), re.S)
+            try:
+                raw = json.loads(match.group(0)) if match else None
+            except ValueError:
+                raw = None
+        matcher, why = house_rules.clean_compiled(raw)
+        if not result.get("ok"):
+            why = "the compile run failed — try saving again"
+        rows.append({"text": text, "compiled": matcher, "error": why})
+    try:
+        await asyncio.to_thread(house_rules.save, rows, texts)
+    except OSError as exc:
+        raise web.HTTPInternalServerError(text=f"could not save: {exc}")
+    gate._CACHE.clear()          # a verdict cached before the rule is stale
+    return web.json_response(await asyncio.to_thread(house_rules.load))
+
+
+async def h_gate(request: web.Request) -> web.Response:
+    """The action gate's door — the hook posts here before an acting tool."""
+    body = await _json_body(request)
+    try:
+        out = await _gate_decide(body)
+    except Exception as exc:  # noqa: BLE001 — undecided, never allow
+        log.warning("action gate failed: %s", exc)
+        out = gate.undecided(str(body.get("channel") or ""),
+                             type(exc).__name__)
+    return web.json_response(out)
+
+
+# -- the tripwire -----------------------------------------------------------
+
+async def h_security_tripwire(request: web.Request) -> web.Response:
+    """The MCP server reports a refused call on a tripwire entity. Filed
+    by code, announced like the safety lane, no gate and no model."""
+    body = await _json_body(request)
+    entity = str(body.get("entity") or "").strip().lower()[:255]
+    if entity not in set(await asyncio.to_thread(security.honeytoken_ids)):
+        # Only a real tripwire files a case: a report about anything else
+        # is not one this route is for.
+        raise web.HTTPBadRequest(text="that is not a tripwire entity")
+    now = time.time()
+    local = _local_now(now)
+    stamp = f"{local:%a} {local.day} {local:%b}, {local:%H:%M:%S}"
+    row = security.case_row(entity, str(body.get("call") or "")[:120],
+                            str(body.get("channel") or "")[:32],
+                            str(body.get("run_id") or "")[:64], now, stamp)
+    security.note_trip(entity, now)
+    filed = await asyncio.to_thread(findings_store.add_case, row, when=now)
+    if filed is None:
+        security.STATE["repeats"] += 1
+        return web.json_response({"filed": False})
+    log.warning("tripwire: %s", filed["text"])
+    service, _sev = _findings_notify_target()
+    if service:
+        await _announce_findings([filed])
+    else:
+        await _safety_fallback_notice(filed)
+    return web.json_response({"filed": True, "ts": filed["ts"]})
+
+
+async def h_security_state(request: web.Request) -> web.Response:
+    return web.json_response({"tripwire": security.diagnostics(),
+                              "entities": await asyncio.to_thread(
+                                  security.honeytoken_ids)})
+
+
+async def h_security_honeytoken(request: web.Request) -> web.Response:
+    """Make brAIn's own tripwire entity, on a press. Idempotent: a second
+    press with one already made answers with it rather than another."""
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415
+
+    existing = await asyncio.to_thread(security.read_file)
+    if existing["created"]:
+        entities = await asyncio.to_thread(security.publish, existing["created"])
+        return web.json_response({"created": False, "entities": entities})
+    try:
+        async with aiohttp.ClientSession() as session:
+            answer = await ha_data._ws_calls(session, [{
+                "type": "input_boolean/create",
+                "name": security.HONEYTOKEN_NAME, "icon": "mdi:shield-alert"}])
+    except Exception as exc:  # noqa: BLE001
+        raise web.HTTPBadGateway(text=f"Home Assistant would not create it: "
+                                      f"{exc}")
+    first = answer[0] if answer else {}
+    result = first.get("result") if isinstance(first, dict) else None
+    if not (isinstance(first, dict) and first.get("ok")
+            and isinstance(result, dict) and result.get("id")):
+        raise web.HTTPBadGateway(text="Home Assistant would not create it: "
+                                      + str((first or {}).get("error") or ""))
+    # The id Core MINTED, never the slug of the name (`IDManager`'s `_2`).
+    entity = f"input_boolean.{result['id']}"
+    created = [{"entity_id": entity, "item_id": result["id"]}]
+    entities = await asyncio.to_thread(security.publish, created)
+    log.info("tripwire entity created: %s", entity)
+    return web.json_response({"created": True, "entities": entities})
+
+
+def _acting_diagnostics() -> dict:
+    """What can silently stop in this block, in numbers. Never raises."""
+    try:
+        rules = house_rules.load()
+        return {"interventions": interventions.summary(),
+                "followup": {k: v for k, v in FOLLOWUP_STATE.items()},
+                "gate": gate.diagnostics(),
+                "tripwire": security.diagnostics(),
+                "house_rules": {
+                    "rules": len(rules["rules"]),
+                    "compiled": sum(1 for r in rules["rules"]
+                                    if r.get("compiled")),
+                    "not_compiled": [r["text"] for r in rules["rules"]
+                                     if not r.get("compiled")][:5],
+                    "error": rules["error"]}}
+    except Exception as exc:  # noqa: BLE001 — a row about the row
+        return {"error": str(exc)[:200]}
 
 
 # ---------------------------------------------------------------------------
@@ -12793,6 +13624,9 @@ def _diagnostics_payload() -> dict:
         # Every Claude run the server starts takes a seat here; who holds
         # one and who waits is what tells "brAIn is busy" from "stuck".
         "claude_runs": run_queue.stats(),
+        # What brAIn has changed and whether it held, the action gate's
+        # answers and the tripwire — each of which can stop silently.
+        "acting": _acting_diagnostics(),
         "usage": {
             **{k: usage.get(k) for k in ("source", "used_percent", "limits")},
             # When a finished run last told the tracker to ask. The
@@ -16026,9 +16860,16 @@ async def h_finding_unfix(request: web.Request) -> web.Response:
                  "before the panel kept that window. `brain undo` in the "
                  "terminal lists every file Claude has edited.")
 
-    entries = await asyncio.to_thread(unfix.journal_entries, started, ended)
+    # A typed fix's own edits are the panel's journal lines, named by the
+    # intervention it recorded — the one Undo reverses both halves.
+    applied = await asyncio.to_thread(interventions.for_finding,
+                                      int(finding["ts"]))
+    entries = await asyncio.to_thread(
+        unfix.journal_entries, started, ended,
+        (applied or {}).get("journal_ts") or ())
     calls = await asyncio.to_thread(unfix.service_calls, started, ended)
     outcome = await asyncio.to_thread(unfix.revert_edits, entries)
+    registry_failures = await _undo_intervention(finding) if applied else []
 
     reload_failures = []
     for domain, service in outcome["reloads"]:
@@ -16040,7 +16881,9 @@ async def h_finding_unfix(request: web.Request) -> web.Response:
                 f"running what the fix wrote until it does: {exc}")
             log.warning("could not reload %s after an undo: %s", domain, exc)
 
-    text = "\n\n".join([unfix.summary(outcome, calls)] + reload_failures)
+    text = "\n\n".join([unfix.summary(outcome, calls)] + reload_failures
+                       + [f"Could not put a registry change back: {why}"
+                          for why in registry_failures])
 
     def restore() -> dict:
         findings_store.set_status(finding["ts"], "open", result=text,
@@ -18650,6 +19493,16 @@ def make_app() -> web.Application:
     app.router.add_post("/api/finding/{ts}/apply", h_finding_apply)
     app.router.add_post("/api/finding/{ts}/cancel", h_finding_cancel)
     app.router.add_post("/api/finding/{ts}/unfix", h_finding_unfix)
+    # Every change is a contract: the restore a fix's calls can be undone
+    # with, the action gate's door, and the tripwire. Before the {verb}
+    # catch-all for snooze's reason.
+    app.router.add_post("/api/finding/{ts}/restore", h_finding_restore)
+    app.router.add_post("/api/gate", h_gate)
+    app.router.add_post("/api/security/tripwire", h_security_tripwire)
+    app.router.add_get("/api/security", h_security_state)
+    app.router.add_post("/api/security/honeytoken", h_security_honeytoken)
+    app.router.add_get("/api/house-rules", h_house_rules)
+    app.router.add_post("/api/house-rules", h_house_rules_save)
     app.router.add_post("/api/finding/{ts}/snooze", h_finding_snooze)
     app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)
     # Not an ending either: the chat's sentence onto the card. Before the
@@ -18879,6 +19732,14 @@ def make_app() -> web.Application:
         # What the house is doing now: a frame every few minutes, a cheap
         # sentence only when it moved.
         app["situation"] = _supervise("situation", _situation_loop())
+        # The follow-up looks at every applied fix, and the tripwire file
+        # rewritten so a tripwire named in settings guards from boot.
+        app["followups"] = _supervise("followups", _followup_loop())
+        try:
+            await asyncio.to_thread(security.publish)
+        except Exception as exc:  # noqa: BLE001 — a guard that could not
+            # be republished is a fault row, not a panel that will not start
+            log.warning("could not publish the tripwire file: %s", exc)
         if addon_options.available():
             app["options"] = _supervise("options", _options_poller())
         if engine.get_auth():

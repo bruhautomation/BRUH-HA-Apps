@@ -255,7 +255,9 @@ _STORE_ENDINGS: dict[tuple[str, str, str], tuple[str, str]] = {
 # a rule this panel offers a press to silence. What a person means on one
 # of these is "not this kind of thing", which is what *Not a problem* and
 # its reason box already teach, case by case.
-UNMUTABLE_SOURCES = frozenset({"resident", "safety"})
+# `security` is the tripwire (`security.py`): a producer nobody should be
+# able to silence with one press, any more than the safety lane.
+UNMUTABLE_SOURCES = frozenset({"resident", "safety", "security"})
 
 
 # ---------------------------------------------------------------------------

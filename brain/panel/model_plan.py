@@ -80,6 +80,16 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     # neither steps up — a slower reader is a slower box.
     "interpret":       ("haiku",  "low",    False, False),
     "correct":         ("haiku",  "low",    False, False),
+    # The action gate: allow / ask / deny over a call it is shown in
+    # code-resolved terms, seen only beside the person's own words. Never
+    # steps up — it runs before an acting tool, in the time somebody is
+    # waiting on a light.
+    "gate":            ("haiku",  "low",    False, False),
+    # A follow-up look at an applied fix whose check could not be made
+    # deterministically — held / regressed / could not check.
+    "followup":        ("haiku",  "low",    False, False),
+    # A house rule's sentence compiled into the gate's matcher, on a press.
+    "house_rules":     ("haiku",  "low",    False, False),
     # Thinks — reasoning with tools where a wrong answer costs a card.
     "card":            ("sonnet", "medium", True,  True),
     "ask":             ("sonnet", "medium", True,  True),

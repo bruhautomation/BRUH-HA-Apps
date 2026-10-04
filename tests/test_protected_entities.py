@@ -20,6 +20,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "brain", "ha-mc
 import ha_mcp_server  # noqa: E402
 
 
+
+def service_posts(api):
+    """The calls that reached Core as a service call. The chokepoint also
+    reads each named entity's state first (the before-state the action
+    ledger records), and those GETs are not the call being asserted."""
+    return [c for c in api.call_args_list
+            if str(c.args[0] if c.args else c.kwargs.get("endpoint", ""))
+            .startswith("/api/services/")]
+
 class ProtectedCase(unittest.TestCase):
     def setUp(self):
         self._denied = ha_mcp_server.DENIED_SERVICES
@@ -61,7 +70,7 @@ class TestEntityTargets(ProtectedCase):
     def test_an_unprotected_entity_still_works(self, mock_api):
         mock_api.return_value = {"ok": True}
         ha_mcp_server.call_service("lock", "unlock", {"entity_id": "lock.shed"})
-        mock_api.assert_called_once()
+        self.assertEqual(len(service_posts(mock_api)), 1)
 
     @patch("ha_mcp_server.ha_api_request")
     def test_the_control_tools_route_through_the_policy(self, mock_api):
@@ -90,7 +99,7 @@ class TestEntityTargets(ProtectedCase):
         mock_api.return_value = {"ok": True}
         ha_mcp_server.call_service("lock", "unlock", {"entity_id": "lock.front_door"})
         ha_mcp_server.call_service("light", "turn_on", {"area_id": "garage"})
-        self.assertEqual(mock_api.call_count, 2)
+        self.assertEqual(len(service_posts(mock_api)), 2)
 
 
 class TestTargetsThisProcessCannotResolve(ProtectedCase):
