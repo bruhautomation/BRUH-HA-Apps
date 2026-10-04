@@ -67,6 +67,8 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     # A follow-up look at an applied fix whose check could not be made
     # deterministically — held / regressed / could not check.
     "followup":        ("haiku",  "low",    False, False),
+    # A house rule's sentence compiled into the gate's matcher, on a press.
+    "house_rules":     ("haiku",  "low",    False, False),
     # Thinks — reasoning with tools where a wrong answer costs a card.
     "card":            ("sonnet", "medium", True,  True),
     "ask":             ("sonnet", "medium", True,  True),

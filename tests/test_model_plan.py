@@ -71,7 +71,7 @@ class TestTheTable(TestCase):
         """Both run often and answer a closed vocabulary. The gate runs
         before an acting tool while somebody waits, so `generous` may not
         promote it, and neither may `light` make it anything else."""
-        for job in ("gate", "followup"):
+        for job in ("gate", "followup", "house_rules"):
             self.assertEqual(model_plan.resolve(job), ("haiku", "low"), job)
             self.assertEqual(model_plan.resolve(job, "generous")[0], "haiku")
             self.assertEqual(model_plan.resolve(job, "light")[0], "haiku")

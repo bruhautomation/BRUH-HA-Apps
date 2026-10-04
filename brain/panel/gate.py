@@ -76,7 +76,8 @@ MAX_REASON = 300
 
 STATE: dict = {"asked": 0, "allow": 0, "ask": 0, "deny": 0,
                "fast_path": 0, "floor": 0, "contract": 0, "model": 0,
-               "undecided": 0, "cached": 0, "last_at": 0, "last": ""}
+               "undecided": 0, "cached": 0, "house_rule": 0, "last_at": 0,
+               "last": ""}
 _CACHE: dict[str, tuple[float, dict]] = {}
 
 GATE_SCHEMA = {

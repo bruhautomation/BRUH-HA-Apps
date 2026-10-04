@@ -4721,3 +4721,7 @@ body.term-classic #termMode .ico-out { display: block; }
   background: var(--surface-2); border-radius: 6px;
 }
 @media (pointer: coarse) { .findplan .plandiff summary { min-height: 44px; line-height: 44px; } }
+.houserules { margin-top: 8px; }
+.houserules summary { cursor: pointer; min-height: 32px; line-height: 32px; }
+.houserules textarea { display: block; width: 100%; max-width: 100%; margin: 6px 0; box-sizing: border-box; }
+@media (pointer: coarse) { .houserules summary { min-height: 44px; line-height: 44px; } }

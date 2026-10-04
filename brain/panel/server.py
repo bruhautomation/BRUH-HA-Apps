@@ -208,6 +208,7 @@ import weekly
 # and the tripwire (`_run_typed_fix` and its neighbours).
 import consequence
 import gate
+import house_rules
 import interventions
 import plan_ops
 import security
@@ -4201,14 +4202,30 @@ async def _gate_decide(body: dict) -> dict:
         out = gate._out(floor[0], floor[1], channel, "floor")
         gate.remember(key, out)
         return out
+    # The person's own standing rules, matched in code. They only ever
+    # TIGHTEN what any path below decides (`house_rules.tighten`).
+    rule = house_rules.check(cons, (await asyncio.to_thread(
+        house_rules.load))["rules"], _local_minute())
+
+    def ruled(verdict: str, why: str, path: str) -> dict:
+        tighter, changed = house_rules.tighten(verdict, rule)
+        if changed:
+            gate.STATE["house_rule"] = gate.STATE.get("house_rule", 0) + 1
+            return gate._out(tighter, rule[1], channel, "house_rule")
+        return gate._out(verdict, why, channel, path)
+
     if contract is not None:
         gate.STATE["contract"] += 1
         verdict, why = gate.contract_verdict(tool, args, contract)
-        out = gate._out(verdict, why, channel, "contract")
+        out = ruled(verdict, why, "contract")
+        gate.remember(key, out)
+        return out
+    if rule and rule[0] == "deny":
+        out = ruled("allow", "", "house_rule")
         gate.remember(key, out)
         return out
     fast = consequence.fast_path(cons, words)
-    if fast:
+    if fast and not rule:
         gate.STATE["fast_path"] += 1
         out = gate._out("allow", fast, channel, "fast_path")
         gate.remember(key, out)
@@ -4233,9 +4250,66 @@ async def _gate_decide(body: dict) -> dict:
     if not result.get("ok"):
         return gate.undecided(channel, "the gate's run failed")
     verdict, why = gate.parse(result.get("text") or "", result.get("data"))
-    out = gate._out(verdict, why, channel, "model")
+    out = ruled(verdict, why, "model")
     gate.remember(key, out)
     return out
+
+
+def _local_minute(now: float | None = None) -> int:
+    local = _local_now(time.time() if now is None else now)
+    return local.hour * 60 + local.minute
+
+
+# -- house rules (written once, compiled once, matched in code) -------------
+
+HOUSE_RULES_TIMEOUT_S = 90
+
+
+async def h_house_rules(request: web.Request) -> web.Response:
+    data = await asyncio.to_thread(house_rules.load)
+    return web.json_response(data)
+
+
+async def h_house_rules_save(request: web.Request) -> web.Response:
+    """Save the sentences and compile any that changed. A press: it needs a
+    credential and skips the budget, as every pressed run does."""
+    body = await _json_body(request)
+    try:
+        texts = house_rules.clean_rules(body.get("rules"))
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    known = {r["text"]: r for r in (await asyncio.to_thread(
+        house_rules.load))["rules"] if r.get("compiled")}
+    if any(t not in known for t in texts) and not engine.get_auth():
+        raise web.HTTPBadRequest(text="connect your Claude account first — "
+                                      "a new rule is compiled by Claude once")
+    rows = []
+    for text in texts:
+        if text in known:
+            rows.append({"text": text, "compiled": known[text]["compiled"],
+                         "error": ""})
+            continue
+        result = await asyncio.to_thread(
+            engine.run_claude, house_rules.compile_prompt(text),
+            house_rules.COMPILE_SYSTEM, "", HOUSE_RULES_TIMEOUT_S, 4,
+            "gate", job="house_rules", schema=house_rules.RULE_SCHEMA)
+        raw = result.get("data") if result.get("ok") else None
+        if raw is None and result.get("ok"):
+            match = re.search(r"\{.*\}", str(result.get("text") or ""), re.S)
+            try:
+                raw = json.loads(match.group(0)) if match else None
+            except ValueError:
+                raw = None
+        matcher, why = house_rules.clean_compiled(raw)
+        if not result.get("ok"):
+            why = "the compile run failed — try saving again"
+        rows.append({"text": text, "compiled": matcher, "error": why})
+    try:
+        await asyncio.to_thread(house_rules.save, rows, texts)
+    except OSError as exc:
+        raise web.HTTPInternalServerError(text=f"could not save: {exc}")
+    gate._CACHE.clear()          # a verdict cached before the rule is stale
+    return web.json_response(await asyncio.to_thread(house_rules.load))
 
 
 async def h_gate(request: web.Request) -> web.Response:
@@ -4322,10 +4396,18 @@ async def h_security_honeytoken(request: web.Request) -> web.Response:
 def _acting_diagnostics() -> dict:
     """What can silently stop in this block, in numbers. Never raises."""
     try:
+        rules = house_rules.load()
         return {"interventions": interventions.summary(),
                 "followup": {k: v for k, v in FOLLOWUP_STATE.items()},
                 "gate": gate.diagnostics(),
-                "tripwire": security.diagnostics()}
+                "tripwire": security.diagnostics(),
+                "house_rules": {
+                    "rules": len(rules["rules"]),
+                    "compiled": sum(1 for r in rules["rules"]
+                                    if r.get("compiled")),
+                    "not_compiled": [r["text"] for r in rules["rules"]
+                                     if not r.get("compiled")][:5],
+                    "error": rules["error"]}}
     except Exception as exc:  # noqa: BLE001 — a row about the row
         return {"error": str(exc)[:200]}
 
@@ -15894,6 +15976,8 @@ def make_app() -> web.Application:
     app.router.add_post("/api/security/tripwire", h_security_tripwire)
     app.router.add_get("/api/security", h_security_state)
     app.router.add_post("/api/security/honeytoken", h_security_honeytoken)
+    app.router.add_get("/api/house-rules", h_house_rules)
+    app.router.add_post("/api/house-rules", h_house_rules_save)
     app.router.add_post("/api/finding/{ts}/snooze", h_finding_snooze)
     app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)
     # Not an ending either: the chat's sentence onto the card. Before the

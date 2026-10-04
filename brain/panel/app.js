@@ -12374,12 +12374,56 @@ function actingDiagRows(d) {
       + (t.tripped ? `, tripped ${t.tripped} time${t.tripped === 1 ? "" : "s"}` : "")
       + (t.file_error ? ` — <i>${esc(t.file_error)}</i>` : "") + "</li>",
   ];
+  const hr = a.house_rules || {};
+  items.push(`<li>House rules: ${hr.rules ? `${hr.compiled ?? 0} of ${hr.rules} `
+    + "checked on every action" : "none written"}`
+    + ((hr.not_compiled || []).length ? ` — <i>not understood: `
+      + `${(hr.not_compiled || []).map(esc).join("; ")}</i>` : "")
+    + (hr.error ? ` — <i>${esc(hr.error)}</i>` : "") + "</li>");
   const button = t.entities ? "" : '<button class="btn small" id="tripwireMake">'
     + "Make a tripwire entity</button>";
+  const rules = '<details class="houserules"><summary>Write house rules</summary>'
+    + '<p class="hint">One per line, in your own words — “never turn the heating '
+    + "above 23”, “don’t open the garage after 22:00”. Each is checked against "
+    + "every action brAIn takes, and can only make it more careful.</p>"
+    + '<textarea id="houseRulesText" rows="4"></textarea>'
+    + '<button class="btn small" id="houseRulesSave">Save rules</button></details>';
   return [diagRow("Changes and the action gate",
-    `<ul>${items.join("")}</ul>${button}`,
-    !!(iv.error || t.file_error))];
+    `<ul>${items.join("")}</ul>${button}${rules}`,
+    !!(iv.error || t.file_error || hr.error))];
 }
+
+document.addEventListener("toggle", async (e) => {
+  const det = e.target;
+  if (!(det instanceof HTMLElement) || !det.classList.contains("houserules")
+      || !det.open) return;
+  try {
+    const data = await api("api/house-rules");
+    const box = det.querySelector("#houseRulesText");
+    if (box) box.value = (data.rules || []).map((r) => r.text).join("\n");
+  } catch (err) { /* the box stays empty; saving still works */ }
+}, true);
+
+document.addEventListener("click", async (e) => {
+  const btn = e.target.closest && e.target.closest("#houseRulesSave");
+  if (!btn) return;
+  const box = document.querySelector("#houseRulesText");
+  const rules = (box ? box.value : "").split("\n").map((t) => t.trim())
+    .filter(Boolean);
+  btn.disabled = true;
+  try {
+    const data = await api("api/house-rules", {
+      method: "POST", body: JSON.stringify({ rules }) });
+    const missed = (data.rules || []).filter((r) => !r.compiled);
+    toast(missed.length
+      ? `Saved — ${missed.length} not understood: ${missed[0].error}`
+      : "House rules saved");
+    loadDiagnostics();
+  } catch (err) {
+    toast("Could not save the rules: " + err);
+    btn.disabled = false;
+  }
+});
 
 // Delegated, because the diagnostics body is rebuilt on every open.
 document.addEventListener("click", async (e) => {
