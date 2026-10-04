@@ -91,11 +91,14 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import logging
 import os
 import time
 from typing import Any
 
 from ._util import load_yaml_file
+
+log = logging.getLogger("brain.checks")
 
 CONFIG_DIR = os.environ.get("BRAIN_HA_CONFIG_DIR", "/config")
 # The two domains Core keeps traces for (`trace.websocket_api.TRACE_DOMAINS`).
@@ -503,6 +506,16 @@ async def collect(now: float | None = None) -> dict:
     except Exception as exc:  # noqa: BLE001
         snap["facts"] = {}
         _mark("facts", False, f"the facts store could not be read: {exc}")
+    # The same rules by SCOPE (`corrections.scope_map`): a room's, a whole
+    # check's, and the never-covered table `House.should_report` refuses
+    # the wide ones with. Left OUT on failure rather than emptied, so
+    # `House` falls back to the exception map above and nothing that was
+    # standing down starts filing because of how this pass was built.
+    try:
+        import corrections  # noqa: PLC0415
+        snap["corrections"] = corrections.scope_map(now)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not read the scoped corrections: %s", exc)
 
     # What each entity IS (`world_model`): the readings whose fingerprint
     # still matches the registry this pass fetched. Read, never built —

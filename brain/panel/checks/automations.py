@@ -94,6 +94,9 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
             dead = sorted(r for r in refs if not house.exists(r))
             if not dead:
                 continue
+            subject = item["entity_id"] or dead[0]
+            if not house.should_report(subject, "auto.dead_ref"):
+                continue
             out.append({
                 "text": f"{_label(kind, item)} refers to entities that do "
                         "not exist",
@@ -105,7 +108,7 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
                        + ", or remove the reference.",
                 "severity": "serious" if kind != "Scene" else "warning",
                 "fixable": True,
-                "entity_id": item["entity_id"] or dead[0],
+                "entity_id": subject,
             })
     return out
 
@@ -145,6 +148,8 @@ def dead_service(snap: dict, now: float) -> list[dict]:
             missing = sorted(s for s in _service_calls(item["config"])
                              if s not in services)
             if not missing:
+                continue
+            if not house.should_report(item["entity_id"], "auto.dead_service"):
                 continue
             hint = _closest_notify(missing[0], services)
             out.append({
@@ -269,6 +274,8 @@ def trace_error(snap: dict, now: float) -> list[dict]:
         error = last.get("error")
         if execution != "error" and not error:
             continue
+        if not house.should_report(item["entity_id"], "auto.trace_error"):
+            continue
         # Only the *latest* run counts: an error three runs ago that has
         # since run clean is history, not a finding.
         step = str(last.get("last_step") or "")
@@ -318,6 +325,8 @@ def condition_never_passes(snap: dict, now: float) -> list[dict]:
         ran_age = age_days(last_ran, now) if last_ran else None
         if ran_age is not None and ran_age < CONDITION_PASSED_DAYS:
             continue
+        if not house.should_report(eid, "auto.condition_never_passes"):
+            continue
         out.append({
             "text": f"{_label_of(item)} triggers but its condition never "
                     "passes",
@@ -355,6 +364,8 @@ def already_running(snap: dict, now: float) -> list[dict]:
             if age is not None and age <= 1:
                 recent.append(r)
         if len(recent) < ALREADY_RUNNING_MIN:
+            continue
+        if not house.should_report(eid, "auto.already_running"):
             continue
         out.append({
             "text": f"{_label_of(item)} keeps being skipped "
@@ -492,6 +503,8 @@ def never_fired(snap: dict, now: float) -> list[dict]:
         kinds = _trigger_platforms(item["config"])
         if kinds and kinds <= RARE_TRIGGERS:
             continue
+        if not house.should_report(eid, "auto.never_fired"):
+            continue
         out.append({
             "text": f"{_label('Automation', item)} has never fired",
             "detail": f"Enabled since {when(reg.get('created_at'))} and its "
@@ -515,6 +528,8 @@ def forgotten_off(snap: dict, now: float) -> list[dict]:
             continue
         age = age_days(state.get("last_changed"), now)
         if age is None or age < FORGOTTEN_OFF_DAYS:
+            continue
+        if not house.should_report(eid, "auto.forgotten_off"):
             continue
         out.append({
             "text": f"{_label('Automation', item)} has been switched off "
@@ -553,6 +568,8 @@ def duplicate(snap: dict, now: float) -> list[dict]:
         if first is None:
             seen[sig] = item
             continue
+        if not house.should_report(item["entity_id"], "auto.duplicate"):
+            continue
         out.append({
             "text": f"{_label('Automation', item)} is a copy of "
                     f"'{first['alias']}'",
@@ -581,6 +598,9 @@ def blueprint_missing(snap: dict, now: float) -> list[dict]:
             if not isinstance(path, str) or not path:
                 continue
             if os.path.isfile(os.path.join(base, sub, path)):
+                continue
+            if not house.should_report(item["entity_id"],
+                                       "auto.blueprint_missing"):
                 continue
             out.append({
                 "text": f"{_label(kind, item)} uses a blueprint that is "
@@ -655,6 +675,9 @@ def trigger_unavailable(snap: dict, now: float) -> list[dict]:
         if not broken:
             continue
         broken = sorted(set(broken))
+        subject = item["entity_id"] or broken[0]
+        if not house.should_report(subject, "auto.trigger_unavailable"):
+            continue
         out.append({
             "text": f"{_label('Automation', item)} is triggered by an "
                     "entity that is not reporting",
@@ -666,7 +689,7 @@ def trigger_unavailable(snap: dict, now: float) -> list[dict]:
                    "the trigger at one that works.",
             "severity": "serious",
             "fixable": True,
-            "entity_id": item["entity_id"] or broken[0],
+            "entity_id": subject,
         })
     return out
 
@@ -793,6 +816,7 @@ def overridden(snap: dict, now: float) -> list[dict]:
 
     moves = mined.get("moves") or {}
     history = _override_history()
+    house = House(snap)
     out = []
 
     # Two routes in, and the second is the one that matters most. The
@@ -823,6 +847,9 @@ def overridden(snap: dict, now: float) -> list[dict]:
         last = max((g or {}).get("last") or 0.0,
                    float(shape["last"]) if shape else 0.0)
 
+        subject = key if key.startswith("automation.") else ""
+        if subject and not house.should_report(subject, "auto.overridden"):
+            continue
         if acute:
             ran = int(moves.get(key) or 0)
             said = (f"{g['count']} of the {ran} times it acted"
@@ -846,7 +873,7 @@ def overridden(snap: dict, now: float) -> list[dict]:
                       "together if it is not obvious."),
             "severity": "info",
             "fixable": False,
-            "entity_id": key if key.startswith("automation.") else "",
+            "entity_id": subject,
         })
     return out
 
@@ -904,11 +931,15 @@ def conflicting(snap: dict, now: float) -> list[dict]:
             p["entities"].append(c["entity_id"])
         p["last"] = max(p["last"], c.get("ts") or 0.0)
 
+    house = House(snap)
     out = []
     for key, p in sorted(pairs.items()):
         if p["count"] < CONFLICT_MIN:
             continue
         if len(p["ways"]) < 2 and not p["raced"]:
+            continue
+        subject = key[0] if key[0].startswith("automation.") else ""
+        if subject and not house.should_report(subject, "auto.conflict"):
             continue
         a, b = (p["names"].get(k, k) for k in key)
         out.append({
@@ -926,7 +957,7 @@ def conflicting(snap: dict, now: float) -> list[dict]:
                       "decision written out."),
             "severity": "warning",
             "fixable": False,
-            "entity_id": key[0] if key[0].startswith("automation.") else "",
+            "entity_id": subject,
         })
     return out
 

@@ -48,8 +48,10 @@ _LOGGER = logging.getLogger(__name__)
 # the notification's reply box, on its way to the case's conversation.
 # `todo` (the feed's *Add to to-do*) and `ack` (*Got it* on a change
 # brAIn made) are the panel's own presses carried out here, so Repairs
-# and a notification offer what the card offers.
-ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack")
+# and a notification offer what the card offers. `undo` is the Undo on
+# the confirmation a reply is answered with ("Got it — I'll stop flagging
+# it until October"), which the panel resolves to the toast's own token.
+ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack", "undo")
 
 # What can be asked of the to-do list from out here. They are the tab's
 # own presses and nothing new: tick one off, take it off the list, put a

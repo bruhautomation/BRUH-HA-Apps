@@ -154,7 +154,9 @@ import checks
 import cli_commands
 import conditions
 import conversations
+import corrections
 import curiosity
+import decision_trail
 import deliveries
 import dispatch
 import doctor
@@ -177,6 +179,7 @@ import hypotheses
 import ideas
 import authoring
 import intents
+import interpret
 import journal
 import knowledge_store
 import manual_ledger
@@ -1407,7 +1410,8 @@ def _quiet_hours() -> tuple[int | None, int | None]:
 
 
 async def _send_notification(rows: list[dict], held: bool = False,
-                             message: tuple[str, str] | None = None, *,
+                             message: tuple[str, str] | None = None,
+                             buttons: list[dict] | None = None, *,
                              kind: str = "", dispatched: bool = False) -> bool:
     """Deliver one message. A failure is a log line, never an exception.
 
@@ -1428,7 +1432,13 @@ async def _send_notification(rows: list[dict], held: bool = False,
     title, body = message or notify_router.compose(rows, held=held)
     # Buttons, but only where they can be answered and only when the
     # message is about one finding — see `notify_router.actions_for`.
-    buttons = notify_router.actions_for(rows, service)
+    # A caller with its own (a confirmation's Undo) replaces them: the
+    # card's answers under "Got it — I'll stop flagging it" would offer to
+    # end a case that has just been ended. Gated the same way.
+    if buttons is None:
+        buttons = notify_router.actions_for(rows, service)
+    elif not notify_router.can_answer(service):
+        buttons = []
     # And where a tap lands: the panel, rather than Home Assistant's front
     # page with the row three taps away. Only where the notifier reads the
     # keys (`open_link`), and only once the Supervisor has said what this
@@ -2115,6 +2125,16 @@ async def _apply_finding_requests() -> list[dict]:
                 result["ok"] = ok
                 if not ok:
                     result["why"] = why
+        elif action == "undo":
+            # The Undo on a confirmation a reply was answered with
+            # (`_reply_routes`): the toast's own token, found by the row's
+            # id, so the phone's Undo puts back exactly what the tab's
+            # would — the row, the settled key, the memory line and every
+            # rule the correction wrote.
+            ok, why = await _undo_from_phone(ts)
+            result["ok"] = ok
+            if not ok:
+                result["why"] = why
         elif action == "todo":
             # The feed's own *Add to to-do*, from a Repairs dialog or a
             # notification button: the same move the tab makes, through
@@ -2130,12 +2150,23 @@ async def _apply_finding_requests() -> list[dict]:
         else:
             finding = await asyncio.to_thread(findings_store.get, ts)
             spec = FINDING_VERBS.get(finding_requests.verb_for(action))
+            note = str(req.get("note") or "")
+            if finding and spec and action == "wrong" and note.strip() \
+                    and req.get("via") == "repairs":
+                # The reason box on a Repairs dialog, read before it is
+                # filed: "remind me tomorrow" typed there is a defer, not a
+                # permanent rule (`_repairs_routes`). Unread — no
+                # credential, a failed run — it is the Wrong it always was.
+                routes = await _interpret(note, "repairs", case=finding)
+                if routes is not None:
+                    result["ok"] = await _repairs_routes(finding, note, routes)
+                    spec = None
             if finding and spec:
                 # No undo token: `undo_store` is the toast's, and there is
                 # no toast on a lock screen. By the time somebody un-ticks
                 # an item the row it stood for is already gone, so an
                 # offer nothing can accept would be worse than none.
-                await _end_finding(finding, spec, req.get("note", ""))
+                await _end_finding(finding, spec, note)
                 result["ok"] = True
         if result["ok"]:
             result["why"] = ""
@@ -2355,6 +2386,13 @@ async def _one_intent(req: dict, now: float) -> dict | None:
         builder, sentence, answer, int(now * 1000), protected)
     if obj.get("refused"):
         return await asyncio.to_thread(intents.note, obj, now)
+    # Who said it rides with what was said, so the automation's own
+    # description can quote a person as a person and a card as a card
+    # (`automation_writer.description_for`). Never part of the config, so
+    # never part of what `proposals.key_for` hashes.
+    for said in (obj.get("spoken"), obj.get("intent")):
+        if isinstance(said, dict):
+            said["via"] = str(req.get("via") or "")[:32]
 
     import aiohttp  # noqa: PLC0415 — as `_offer_routines` does
 
@@ -2406,6 +2444,40 @@ async def _grade_against_you(session, config: dict, now: float, tz) -> dict:
         trials.evaluate, config, history, rows, start, now, tz, now)
 
 
+async def _service_routes(req: dict, now: float) -> int | None:
+    """`brain.intent`'s sentence, read. None: the intent path as it was.
+
+    An automation sent it, so it is an unattended surface and answers to
+    `auto_enabled` and the budget as well as a credential. A rule (one-off
+    or standing) goes to `_one_intent` with the words the reader picked
+    out; a fact to keep, a study and a change to an automation go where
+    the ask bar sends them. Returns how many routes produced something.
+    """
+    routes = await _interpret(req["sentence"], "service")
+    if routes is None:
+        return None
+    done = 0
+    for route in routes:
+        kind, text = route["kind"], route["text"]
+        if kind in ("one_off", "standing_rule"):
+            if await _one_intent({**req, "sentence": text}, now):
+                done += 1
+            now += 0.001
+        elif kind == "automation_edit":
+            card_id = _new_card_id()
+            done += int(_enqueue(
+                card_id, question=AUTOMATION_EDIT_FRAME.format(text)[:500]))
+        elif kind == "remember":
+            # An automation sent it, so it is not a fact a person typed and
+            # is not kept the way one is (`facts_store.KEEP_SOURCES`).
+            await _submit_memory(text, source="service")
+            done += 1
+        elif kind == "study":
+            await asyncio.to_thread(onboarding.request_study, text)
+            done += 1
+    return done
+
+
 async def _apply_intent_requests() -> int:
     """Drain the intent drop. Returns how many sentences were answered."""
     queued = await asyncio.to_thread(intents.collect)
@@ -2413,6 +2485,12 @@ async def _apply_intent_requests() -> int:
     answered = 0
     for req in queued:
         try:
+            if req.get("via") == "service":
+                handled = await _service_routes(req, now)
+                if handled is not None:
+                    answered += handled
+                    now += 0.001
+                    continue
             if await _one_intent(req, now):
                 answered += 1
         except Exception as exc:  # noqa: BLE001 — one bad sentence must
@@ -2889,10 +2967,21 @@ async def _announce_findings(created: list[dict]) -> None:
     safe on the list, and the notification is the courtesy copy.
     """
     service, min_severity = _findings_notify_target()
-    if not service or not created:
+    if not created:
+        return
+    if not service:
+        # The one silence a person cannot see from anywhere else: a phone
+        # that never rang because nothing was set to ring it.
+        decision_trail.note_many(decision_trail.rows_for(
+            created, "no_target", "no notification service is set"))
         return
     tiers = notify_router.classify(created, min_severity)
     escalating, once = tiers["escalate"], tiers["notify"]
+    if tiers.get("quiet"):
+        decision_trail.note_many(decision_trail.rows_for(
+            tiers["quiet"], "notify_quiet",
+            f"below your notification floor ({min_severity}); it is on the "
+            "Findings list"))
     if not escalating and not once:
         return
 
@@ -2933,6 +3022,8 @@ async def _announce_findings(created: list[dict]) -> None:
     if urgent:
         await _send_notification(urgent)
     if later:
+        decision_trail.note_many(decision_trail.rows_for(
+            later, "quiet_hold", f"held for quiet hours ({start}:00–{end}:00)"))
         depth = notify_router.hold(later, now)
         log.info("held %d finding(s) until quiet hours end (%d waiting)",
                  len(later), depth)
@@ -5565,6 +5656,14 @@ async def h_generate(request: web.Request) -> web.Response:
     if question:
         if len(question) > 500:
             raise web.HTTPBadRequest(text="question too long")
+        # Read first (`interpret`, surface `ask_bar`): a question, a rule, a
+        # fact to keep, a why, a study, possibly two at once. Unread — no
+        # credential, the day's cap, a failed run — and everything below
+        # is the ask bar exactly as it was: the four patterns are the
+        # offline answer, not a second reader.
+        routes = await _interpret(question, "ask_bar")
+        if routes is not None:
+            return web.json_response(await _route_ask(question, routes))
         scene_match = SCENE_RE.match(question)
         if scene_match:
             area = scene_match.group("area").strip()
@@ -8124,6 +8223,15 @@ def _note_registry(snapshot: dict) -> None:
         names = {}
         for eid in set(house.states) | set(house.registry):
             names[eid] = {"name": house.name(eid), "area": house.area_of(eid)}
+            # What kind of thing it is, for the one reader that has to
+            # refuse a safety device before it asks anybody anything
+            # (`corrections.never_covered`). Only where it says.
+            attrs = (house.states.get(eid) or {}).get("attributes") or {}
+            reg = house.registry.get(eid) or {}
+            klass = (attrs.get("device_class") or reg.get("device_class")
+                     or reg.get("original_device_class") or "")
+            if klass:
+                names[eid]["class"] = str(klass)
         _NAMES.clear()
         _NAMES.update(names)
     except Exception as exc:  # noqa: BLE001
@@ -8396,6 +8504,11 @@ async def _resident_pass(now: float) -> dict:
             RESIDENT_STATE["last_error"] = excuse
             log.info("the Resident is holding %d signal(s): %s",
                      len(RESIDENT_PENDING), excuse)
+        # And on the trail, one line per subject per hour however many
+        # ticks it waits (`decision_trail.MERGE_S`): "why didn't you tell
+        # me" on a paused house is answered by THIS, in these words.
+        decision_trail.note_many(_signal_decisions(
+            RESIDENT_PENDING[:50], "gate_hold", excuse))
         return {**out, "held": excuse}
     RESIDENT_STATE["last_error"] = ""
 
@@ -8582,6 +8695,7 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
     to_investigate: list[tuple[dict, str, int]] = []
     requeue: list[dict] = []
     filed_cases = 0
+    let_go: list[dict] = []
     for i, signal in enumerate(batch, 1):
         answer = verdicts.get(i) or {"verdict": "watch",
                                      "why": resident.SKIPPED,
@@ -8590,6 +8704,7 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
         counts[verdict] += 1
         ts = int(signal.get("finding_ts") or 0)
         if verdict == "ignore":
+            let_go.extend(_signal_decisions([signal], "look_ignore", why))
             if ts:
                 decided[ts] = ("held", why)
             continue
@@ -8606,6 +8721,7 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
                     requeue.append(signal)
                 continue
             await asyncio.to_thread(resident.watch, signal, why, now)
+            let_go.extend(_signal_decisions([signal], "look_watch", why))
             continue
         safety = bool(signal.get("safety")) or _is_safety_signal(signal)
         lane_ts = _safety_case_for(signal) if safety else 0
@@ -8629,6 +8745,8 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
         to_investigate.append((signal, why, ts or lane_ts))
     if requeue:
         RESIDENT_PENDING.extend(requeue)
+    if let_go:
+        await asyncio.to_thread(decision_trail.note_many, let_go, now)
 
     moved = await asyncio.to_thread(
         findings_store.record_triage, decided, run_id, now) if decided else []
@@ -8844,6 +8962,10 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
         if dismissal:
             held = await asyncio.to_thread(findings_store.hold_after_look,
                                            refines, dismissal, run_id, now)
+            if held:
+                await asyncio.to_thread(
+                    decision_trail.note_many, decision_trail.rows_for(
+                        [refining], "held", dismissal), now)
             log.info("an investigation found nothing in %s%s",
                      refining.get("text"),
                      "" if held else " (the row had moved on; left as it is)")
@@ -10337,6 +10459,7 @@ async def run_checks(reason: str = "schedule") -> dict:
                 ran_sources,
                 {findings_store.normalize(f["text"]) for f in shadow_rows})
             shadow_findings.prune(started)
+            _note_pass_decisions(result, created)
             return created, refreshed, cleared, {
                 "created": len(hidden), "found": len(shadow_rows)}
 
@@ -12412,6 +12535,18 @@ def _cli_version() -> str:
 _OPTION_SECRET_WORDS = ("token", "password", "secret", "api_key", "credential")
 
 
+def _safe_summary(fn) -> dict:
+    """A module's diagnostics summary, or a row saying it could not be read.
+
+    `reports.faults`' rule: a payload that cannot be built must not take
+    the rest of the payload down with it.
+    """
+    try:
+        return dict(fn())
+    except Exception as exc:  # noqa: BLE001
+        return {"readable": False, "error": journal.scrub(str(exc))[:200]}
+
+
 def _facts_summary_safe() -> dict:
     """The facts store's own summary, or a row saying it could not be
     read — `reports.faults`' rule: a payload it cannot read is a row."""
@@ -12501,6 +12636,17 @@ def _diagnostics_payload() -> dict:
             "facts": _facts_summary_safe(),
         },
         "checks": CHECKS_STATE["last"],
+        # What brAIn decided not to say, counted by reason over the last
+        # day, and whether the trail can be read or written at all: a
+        # trail that stopped writing makes every "why didn't you tell me"
+        # read as "no record", which is a different answer.
+        "decisions": _safe_summary(decision_trail.summary),
+        # How often a typed sentence was read rather than pattern-matched,
+        # and why it fell back when it did — a reader that has silently
+        # stopped working leaves every box doing the old thing.
+        "interpreter": _safe_summary(interpret.summary),
+        "corrections": {**{k: v for k, v in CORRECTION_STATE.items()},
+                        **_safe_summary(corrections.summary)},
         # The last deep run's verdict — three facts, never the transcript.
         # A bug report needs to know whether every face was walked, when,
         # and which one broke; the stage list is a page of prose and
@@ -13250,7 +13396,8 @@ async def h_finding_verb(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
-async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]:
+async def _end_finding(finding: dict, spec: dict, note: str, *,
+                      refine: bool = True) -> tuple[dict, str]:
     """Settle a finding and record what it taught. One implementation.
 
     Both front doors reach this: the tab's own buttons, and a request
@@ -13292,6 +13439,22 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
     # about the house in the run's words, rather than the template's
     # "Fixed by the homeowner: <the card's title>".
     hint = str(finding.get("memory_hint") or "").strip()
+    # A question that offers to WIDEN a correction (`corrections.offer_row`).
+    # Yes writes the rule it offered — and that rule is the effect the undo
+    # token has to carry; any other answer writes nothing at all, because
+    # "Not a problem in this home: Stop flagging … for the garage?" is not
+    # a fact about the house, it is a declined suggestion.
+    if corrections.is_offer(finding):
+        if spec.get("label") == "accepted":
+            got = await asyncio.to_thread(
+                corrections.accept_offer, str(finding.get("text") or ""),
+                protected=automation_writer.protected_patterns())
+            if got["ids"]:
+                payload["_exception_ids"] = got["ids"]
+            else:
+                payload["correction"] = got["why"]
+        else:
+            template, hint = "", ""
     if spec.get("hint") and hint:
         fact = hint + (f" (The homeowner added: {note})" if note else "")
         await _submit_memory(
@@ -13324,6 +13487,13 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
             # Private to the press that made it: the route turns it into
             # the undo token and takes it off the payload (`_ending_undo`).
             payload["_exception_ids"] = written
+            # And a reason somebody typed gets its second look: how wide,
+            # and until when (`corrections`). Started rather than awaited
+            # — the press answers now with the narrow rule it always
+            # wrote, and the scope lands within seconds — and skipped by a
+            # caller that runs it itself and has to quote its answer back.
+            if refine and note.strip():
+                _start_correction(finding, note, written)
     return payload, fact
 
 
@@ -14646,8 +14816,16 @@ def _undo_finding(entry: dict) -> tuple[bool, dict]:
         # rode on it finds the rule by the report it was written about.
         if "exception" in entry:
             facts_store.forget_ids(entry.get("exception") or [])
-        elif entry.get("key"):
+        # Every rule carrying the report's key, too: the correction pass
+        # (`corrections.apply_plan`) may have added a lifetime or a
+        # whole-entity rule after this token was minted, and an Undo that
+        # took back the press's rule and left the pass's would be the
+        # "half of any of them is worse than none" the toast promises not
+        # to do. And a question offering to widen it asks about nothing.
+        if entry.get("key"):
             facts_store.forget_exceptions(entry["key"])
+            for text_key in corrections.withdraw(entry["key"]):
+                _drop_offer_case(text_key)
     else:
         restored = hypotheses.reopen(entry["ts"]) is not None
         # A rejected guess also went into the ask-history as a dead end.
@@ -15055,6 +15233,29 @@ async def _settle_replies(timeout: float | None = None) -> None:
 
 
 async def _reply_to_finding(finding: dict, text: str) -> tuple[bool, str]:
+    """A reply typed into a notification: read it first, then do it.
+
+    Until 2.12 every reply was a question for the Resident, so *"it's
+    always like that in winter"* typed under a frozen-sensor notification
+    got an essay back and ended nothing. The interpreter reads the words
+    against the case they were typed under (`interpret`, surface `reply`)
+    and a reply that ENDS or CORRECTS the case does exactly that, through
+    the tab's own endings, and is answered with one sentence and an Undo
+    (`_reply_routes`). Anything the interpreter cannot read — no
+    credential, a failed run, an unreadable reply — and anything it reads
+    as conversation is the Resident's answer exactly as before
+    (`_reply_conversation`).
+    """
+    said = str(text or "").strip()
+    if not said:
+        return False, "the reply was empty"
+    routes = await _interpret(said, "reply", case=finding)
+    if routes is None or all(r["kind"] == "chat" for r in routes):
+        return await _reply_conversation(finding, said)
+    return await _reply_routes(finding, said, routes)
+
+
+async def _reply_conversation(finding: dict, text: str) -> tuple[bool, str]:
     """Answer a reply typed into a notification, as the next notification.
 
     The Reply button is the case's conversation reached from a lock
@@ -15096,6 +15297,578 @@ async def _reply_to_finding(finding: dict, text: str) -> tuple[bool, str]:
     sent = await _send_notification([finding], message=(title, answer),
                                     kind="reply")
     return sent, "" if sent else "the answer could not be delivered"
+
+
+# ---------------------------------------------------------------------------
+# What a person typed: read once, routed through code that already exists
+# ---------------------------------------------------------------------------
+#
+# `interpret` is the reader and decides nothing that is not already a press
+# somewhere: a card question goes to the card queue, a sentence about a rule
+# to the intent drop, an ending to `_end_finding`. `corrections` is the
+# second look a "Not a problem, because…" gets — how wide and until when —
+# and `decision_trail` is what a "why didn't you tell me" is answered from.
+
+# How long the explain path's answers are kept for the panel to fetch, and
+# how many. In memory: an answer is read within seconds of being asked for.
+EXPLAINS: dict[str, dict] = {}
+EXPLAINS_MAX = 20
+EXPLAIN_TIMEOUT_S = 240
+EXPLAIN_MAX_TURNS = 30
+_EXPLAIN_TASKS: set = set()
+
+CORRECTION_TIMEOUT_S = 60
+# A runaway guard on the second look, per local day and in memory.
+CORRECTION_MAX_PER_DAY = 100
+CORRECTION_STATE: dict = {"day": "", "runs": 0, "applied": 0, "offered": 0,
+                          "failed": 0, "last_error": "", "last": 0.0}
+_CORRECTION_TASKS: set = set()
+
+# A confirmation on a phone carries an Undo button; this is how its press
+# finds the token. `undo_store`'s own lifetime, and the same ring size.
+PHONE_UNDO: dict[int, tuple[str, float]] = {}
+
+# What "change an automation" is asked as. There is no path from a
+# sentence to an EDIT of somebody's automation yet — the one producer that
+# edits (`conditions`) works from a measured pattern — so the honest route
+# is a card that reads the automation and says what to change, whose
+# suggestion rides the card's own opportunity drop to Proposals.
+AUTOMATION_EDIT_FRAME = (
+    "Find the automation this is about and say exactly what to change so "
+    "that it does what I asked — and offer the change as an opportunity: {}")
+
+
+def _signal_decisions(signals_list, kind: str, reason: str) -> list[dict]:
+    """Trail rows for signals the Resident did not show anybody."""
+    out = []
+    for sig in signals_list or ():
+        if not isinstance(sig, dict):
+            continue
+        subject = str(sig.get("subject") or "")
+        out.append({"kind": kind,
+                    "subject": subject if "." in subject else "",
+                    "check": str(sig.get("producer") or sig.get("kind") or ""),
+                    "reason": str(reason or ""),
+                    "text": str(sig.get("text") or "")})
+    return out
+
+
+def _note_pass_decisions(result: dict, created: list[dict]) -> int:
+    """What a checks pass withheld, onto the trail. Never raises."""
+    try:
+        live = findings_store.suppressing_keys()
+        settled = {e.get("key"): e.get("kind")
+                   for e in findings_store.settled_listing()
+                   if e.get("key") in live}
+        try:
+            muted = settings_store.muted()
+        except Exception:  # noqa: BLE001 — unreadable mutes nothing
+            muted = set()
+        rows = decision_trail.pass_rows(
+            result,
+            created_keys={findings_store.normalize(f.get("text") or "")
+                          for f in created},
+            settled=settled, muted=muted, normalize=findings_store.normalize)
+        return decision_trail.note_many(rows)
+    except Exception as exc:  # noqa: BLE001 — accounting never fails a pass
+        log.debug("could not note this pass's decisions: %s", exc)
+        return 0
+
+
+async def _interpret(words: str, surface: str,
+                     case: dict | None = None) -> list[dict] | None:
+    """The routes a person's words take on this surface, or None.
+
+    None is the caller's old code, every time: no credential, the day's
+    runaway cap, a failed run or a reply that names nothing this surface
+    can carry. An unattended surface (the service) also answers to
+    `auto_enabled` and the budget; a pressed one does not.
+    """
+    settings: dict = {}
+    budget_ok = True
+    if surface not in interpret.PRESSED:
+        settings = await asyncio.to_thread(settings_store.load)
+        try:
+            budget_ok = not usage_store.budget_state(settings)["blocked"]
+        except Exception:  # noqa: BLE001 — an unreadable budget is the
+            # estimate's problem, not a reason to stop reading words
+            budget_ok = True
+    why = interpret.gate(surface, has_auth=bool(engine.get_auth()),
+                         auto_enabled=bool(settings.get("auto_enabled", True)),
+                         budget_ok=budget_ok)
+    if why:
+        interpret.note_fallback(why)
+        return None
+    interpret.note_run()
+    try:
+        result = await _claude(
+            engine.run_claude, interpret.prompt(words, surface, case),
+            interpret.SYSTEM, eff_model(), interpret.TIMEOUT_S, 2,
+            "interpret", job="interpret", schema=interpret.SCHEMA,
+            priority=(run_queue.PRESS if surface in interpret.PRESSED
+                      else run_queue.SCHEDULED))
+    except Exception as exc:  # noqa: BLE001
+        result = {"ok": False, "error": str(exc)}
+    if not result.get("ok"):
+        interpret.note_fallback(str(result.get("error") or "the run failed"))
+        return None
+    routes = interpret.parse(_answer(result), surface, words)
+    if routes is None:
+        interpret.note_fallback("the reply named nothing this box can do")
+        return None
+    log.info("read %s words as %s", surface,
+             ", ".join(r["kind"] for r in routes))
+    return routes
+
+
+def _new_card_id() -> str:
+    stamp = int(time.time())
+    while _job_active(f"custom-{stamp}"):
+        stamp += 1
+    return f"custom-{stamp}"
+
+
+def _resolve_subject(said: str) -> str:
+    """An entity id for what somebody called a device, or ''.
+
+    An id is taken as it is; a name is matched against what the last
+    checks pass saw things CALLED — exactly first, then a single partial
+    match. Two candidates is no answer, because explaining the wrong
+    sensor is worse than explaining none.
+    """
+    said = " ".join(str(said or "").split())
+    if not said:
+        return ""
+    if _ENTITY_IN_TEXT_RE.fullmatch(said):
+        return said
+    low = said.casefold()
+    exact = [eid for eid, row in _NAMES.items()
+             if str(row.get("name") or "").casefold() == low]
+    if len(exact) == 1:
+        return exact[0]
+    partial = [eid for eid, row in _NAMES.items()
+               if low in str(row.get("name") or "").casefold()]
+    return partial[0] if len(partial) == 1 else ""
+
+
+def _recent_trail(limit: int = 12) -> dict:
+    """The newest decisions, about anything — when no subject was named."""
+    rows, readable = decision_trail.read()
+    rows = sorted(rows, key=lambda r: int(r.get("ts") or 0), reverse=True)
+    out = []
+    for row in rows[:limit]:
+        row = dict(row)
+        row["meaning"] = decision_trail.KINDS.get(row.get("kind"), "")
+        out.append(row)
+    return {"subject": "", "readable": readable, "rows": out,
+            "kinds": sorted({r["kind"] for r in out})}
+
+
+async def _explain_now(question: str, subject: str = "",
+                       case: dict | None = None) -> dict:
+    """Answer one why-question with the decision trail and reading tools.
+
+    ``{"ok", "answer", "kind", "cited", "offer", "no_record", "subject"}``.
+    A press, so it needs a credential and not the budget. The trail is
+    handed to the run whole for the subject — read off the store, not
+    remembered — and the run's own tools reach the traces, the logbook
+    and `explain_decision` for anything else.
+    """
+    eid = _resolve_subject(subject) or str((case or {}).get("entity_id") or "")
+    name = (_NAMES.get(eid) or {}).get("name") or subject or eid
+    if not engine.get_auth():
+        return {"ok": False, "subject": eid,
+                "answer": "Connect your Claude account first."}
+    trail = await asyncio.to_thread(decision_trail.for_subject, eid) \
+        if eid else await asyncio.to_thread(_recent_trail)
+    prompt = interpret.explain_prompt(question, subject=name, trail=trail,
+                                      case=case)
+    started = time.time()
+    try:
+        result = await _claude(
+            engine.run_analyst, prompt, interpret.EXPLAIN_SYSTEM, eff_model(),
+            EXPLAIN_TIMEOUT_S, EXPLAIN_MAX_TURNS, "explain", job="explain",
+            schema=interpret.EXPLAIN_SCHEMA, priority=run_queue.PRESS)
+    except Exception as exc:  # noqa: BLE001
+        result = {"ok": False, "error": str(exc)}
+    parsed = interpret.parse_explain(_answer(result)) if result.get("ok") \
+        else None
+    log.info("explained %r in %.0fs%s", question[:60], time.time() - started,
+             "" if parsed else " — no readable answer")
+    if parsed is None:
+        return {"ok": False, "subject": eid,
+                "answer": "brAIn could not work that out just now.",
+                "error": str(result.get("error") or "")[:200]}
+    return {"ok": True, "subject": eid, "subject_name": name,
+            "trail_rows": len(trail.get("rows") or ()),
+            "trail_readable": bool(trail.get("readable", True)), **parsed}
+
+
+def _start_explain(question: str, subject: str = "") -> str:
+    """Start an explanation the panel will fetch. Returns its id."""
+    explain_id = f"why-{int(time.time() * 1000)}"
+    while explain_id in EXPLAINS:
+        explain_id += "x"
+    EXPLAINS[explain_id] = {"state": "running", "question": question[:500],
+                            "at": int(time.time())}
+    for old in sorted(EXPLAINS, key=lambda k: EXPLAINS[k]["at"])[
+            :max(0, len(EXPLAINS) - EXPLAINS_MAX)]:
+        EXPLAINS.pop(old, None)
+
+    async def run_it() -> None:
+        try:
+            answer = await _explain_now(question, subject)
+            EXPLAINS.setdefault(explain_id, {}).update(
+                state="done" if answer.get("ok") else "error", **answer)
+        except Exception as exc:  # noqa: BLE001
+            EXPLAINS.setdefault(explain_id, {}).update(
+                state="error", answer="brAIn could not work that out just now.",
+                error=str(exc)[:200])
+
+    task = asyncio.get_running_loop().create_task(run_it())
+    _EXPLAIN_TASKS.add(task)
+    task.add_done_callback(_EXPLAIN_TASKS.discard)
+    return explain_id
+
+
+async def _route_ask(question: str, routes: list[dict]) -> dict:
+    """The ask bar's response for what the interpreter read.
+
+    Every route lands where the matching regex used to send it, so the
+    panel's existing toasts still describe it; `routes` says which.
+    """
+    out: dict = {"queued": [], "routes": [r["kind"] for r in routes]}
+    for route in routes:
+        kind, text = route["kind"], route["text"]
+        if kind in ("card_question", "chat", "automation_edit"):
+            card_id = _new_card_id()
+            asked = (AUTOMATION_EDIT_FRAME.format(text)
+                     if kind == "automation_edit" else text)
+            if _enqueue(card_id, question=asked[:500]):
+                out["queued"].append(card_id)
+        elif kind in ("one_off", "standing_rule"):
+            out["intent"] = await asyncio.to_thread(
+                intents.request, text, "panel")
+        elif kind == "study":
+            match = LEARN_RE.match(text)
+            topic = (text[match.end():] if match else text).strip().rstrip("?.!")
+            out["learning"] = await asyncio.to_thread(
+                onboarding.request_study, topic)
+        elif kind == "remember":
+            await _submit_memory(text, source="person")
+            out.setdefault("remembered", []).append(text)
+        elif kind == "explain":
+            out["explain"] = _start_explain(text, route.get("subject", ""))
+        elif kind == "scenes":
+            out.update(await _design_scenes(route["subject"]))
+    return out
+
+
+async def _snooze_case(finding: dict, hours: float | None) -> int:
+    until = await asyncio.to_thread(_request_snooze_until, finding["ts"], hours)
+    await asyncio.to_thread(findings_store.snooze, finding["ts"], until)
+    return until
+
+
+def _when_words(until: int) -> str:
+    local = _local_now(until)
+    today = _local_now(time.time())
+    if local.date() == today.date():
+        return f"at {local:%H:%M}"
+    if (local.date() - today.date()).days == 1:
+        return f"tomorrow at {local:%H:%M}"
+    return f"on {local:%a} {local.day} {local:%b}"
+
+
+async def _reply_routes(finding: dict, said: str,
+                        routes: list[dict]) -> tuple[bool, str]:
+    """Do what a reply said, then say so in one message with an Undo.
+
+    An ending goes through `_end_finding` — the tab's door — and a Wrong
+    gets its scope and lifetime synchronously here (`_scope_correction`),
+    because the sentence a person is told has to be the one that was
+    applied. The Undo button is the toast's token, found by the finding's
+    id when it comes back (`PHONE_UNDO`); it carries every rule this wrote.
+    """
+    sentences: list[str] = []
+    token = ""
+    chat_after = False
+    for route in routes:
+        kind = route["kind"]
+        if kind == "case_ending":
+            ending = route["ending"]
+            note = route.get("note") or (said if ending == "wrong" else "")
+            if ending == "todo":
+                try:
+                    await _move_finding_to_todo(finding, note)
+                    sentences.append("Added to your to-do list.")
+                except web.HTTPException as exc:
+                    sentences.append(exc.text or "The to-do list is full.")
+                continue
+            if ending == "not_now":
+                until = await _snooze_case(finding, None)
+                sentences.append(f"Dismissed — it comes back "
+                                 f"{_when_words(until)}.")
+                continue
+            spec = FINDING_VERBS["wrong" if ending == "wrong" else "done"]
+            payload, fact = await _end_finding(finding, spec, note,
+                                               refine=False)
+            ids = list(payload.get("_exception_ids") or [])
+            if ending == "wrong":
+                scoped = await _scope_correction(finding, note, ids) \
+                    if ids and note.strip() else None
+                if scoped:
+                    ids += [i for i in scoped["ids"] if i not in ids]
+                    sentences.append(scoped["sentence"])
+                else:
+                    sentences.append("Got it — I won't flag that again.")
+            else:
+                sentences.append("Got it — marked as fixed.")
+            payload["_exception_ids"] = ids
+            token = _ending_undo(finding, spec, fact, payload)
+        elif kind == "defer":
+            until = await _snooze_case(finding, route.get("hours"))
+            sentences.append(f"I'll remind you {_when_words(until)}.")
+        elif kind == "remember":
+            subjects = _finding_subjects(finding)
+            await _submit_memory(route["text"], source="person",
+                                 subject=subjects[0] if subjects else "",
+                                 subjects=subjects[1:])
+            sentences.append("I'll remember that.")
+        elif kind in ("one_off", "standing_rule"):
+            await asyncio.to_thread(intents.request, route["text"], "reply")
+            sentences.append("I'm working that out as an automation — "
+                             "it'll be on Proposals for you to accept.")
+        elif kind == "explain":
+            answer = await _explain_now(route["text"],
+                                        route.get("subject", ""), finding)
+            sentences.append(answer["answer"])
+            if answer.get("offer"):
+                sentences.append(f"If you want: {answer['offer']}.")
+        elif kind == "chat":
+            chat_after = True
+    if chat_after and not sentences:
+        return await _reply_conversation(finding, said)
+    buttons = None
+    if token:
+        PHONE_UNDO[int(finding["ts"])] = (token, time.time() + undo_store.TTL_S)
+        for stale in [k for k, (_t, exp) in PHONE_UNDO.items()
+                      if exp < time.time()]:
+            PHONE_UNDO.pop(stale, None)
+        buttons = [{"action": f"{notify_router.ACTION_PREFIX}.undo."
+                              f"{int(finding['ts'])}", "title": "Undo"}]
+    body = " ".join(sentences)[:REPLY_MAX_CHARS] or "Done."
+    title = f"brAIn: {str(finding.get('text') or 'your reply')[:60]}"
+    sent = await _send_notification([finding], message=(title, body),
+                                    buttons=buttons if buttons is not None
+                                    else [])
+    journal.record("reply", "ok", ok=True,
+                   extra={"ts": finding.get("ts"),
+                          "routes": [r["kind"] for r in routes]})
+    return sent, "" if sent else "the answer could not be delivered"
+
+
+async def _undo_from_phone(ts: int) -> tuple[bool, str]:
+    """The Undo button on a confirmation: the toast's own token, taken."""
+    held = PHONE_UNDO.pop(int(ts), None)
+    if not held or held[1] < time.time():
+        return False, "that undo has expired"
+    entry = undo_store.take(held[0])
+    if entry is None:
+        return False, "that undo has expired"
+    restored, _payload = await asyncio.to_thread(_undo_finding, entry)
+    return True, "" if restored else "the report had already come back"
+
+
+async def _repairs_routes(finding: dict, note: str,
+                          routes: list[dict]) -> bool:
+    """A Repairs reason box, read. Returns whether an ending was given.
+
+    The box sits under "Not a problem", so a press there is a Wrong unless
+    the words plainly say otherwise — "remind me tomorrow" is a defer, "I
+    already replaced it" is done. What it may not do is end nothing: a
+    reply read as only a fact still ends the case the way the press meant.
+    """
+    ended = False
+    for route in routes:
+        kind = route["kind"]
+        if kind == "case_ending" and not ended:
+            ending = route["ending"]
+            if ending == "todo":
+                try:
+                    await _move_finding_to_todo(finding, route.get("note", ""))
+                    ended = True
+                except web.HTTPException:
+                    # A full list leaves `ended` False on purpose: the box
+                    # sat under "Not a problem", so the Wrong below is what
+                    # the press falls back to rather than ending nothing.
+                    pass
+            elif ending == "not_now":
+                await _snooze_case(finding, None)
+                ended = True
+            else:
+                spec = FINDING_VERBS["done" if ending == "done" else "wrong"]
+                await _end_finding(finding, spec,
+                                   route.get("note") or note)
+                ended = True
+        elif kind == "defer" and not ended:
+            await _snooze_case(finding, route.get("hours"))
+            ended = True
+        elif kind == "remember":
+            subjects = _finding_subjects(finding)
+            await _submit_memory(route["text"], source="person",
+                                 subject=subjects[0] if subjects else "",
+                                 subjects=subjects[1:])
+    if not ended:
+        await _end_finding(finding, FINDING_VERBS["wrong"], note)
+    return True
+
+
+def _drop_offer_case(text_key: str) -> int:
+    """Take a correction offer's question off the list. Returns how many."""
+    gone = 0
+    for row in findings_store.list_all():
+        if str(row.get("source") or "") != corrections.SOURCE:
+            continue
+        if corrections.offer_key_for(str(row.get("text") or "")) == text_key:
+            gone += int(findings_store.remove(int(row["ts"])))
+    return gone
+
+
+def _correction_day_ok(now: float) -> bool:
+    day = time.strftime("%Y-%m-%d", time.localtime(now))
+    if CORRECTION_STATE["day"] != day:
+        CORRECTION_STATE.update(day=day, runs=0)
+    return CORRECTION_STATE["runs"] < CORRECTION_MAX_PER_DAY
+
+
+async def _scope_correction(finding: dict, note: str,
+                            base_ids: list[str]) -> dict | None:
+    """The second look at "Not a problem, because…". None: nothing changed.
+
+    The press has already written its narrow, permanent rule; this asks
+    how wide the sentence meant and until when, and writes only what one
+    entity's reach allows — a wider scope becomes a question on the list
+    (`corrections.offer_row`). A credential is needed and the budget is
+    not: the person pressed. A pass that lands after the toast's Undo
+    writes nothing, because the press's rule it would scope is gone.
+    """
+    now = time.time()
+    if not base_ids or not note.strip() or not engine.get_auth():
+        return None
+    if not _correction_day_ok(now):
+        CORRECTION_STATE["last_error"] = "the day's cap is spent"
+        return None
+    CORRECTION_STATE["runs"] += 1
+    CORRECTION_STATE["last"] = now
+    eid = str(finding.get("entity_id") or "")
+    named = _NAMES.get(eid) or {}
+    entity_name = str(named.get("name") or eid)
+    area_id = str((_FACTS_CTX.get("entity_areas") or {}).get(eid) or "")
+    area_name = str((_FACTS_CTX.get("areas") or {}).get(area_id)
+                    or named.get("area") or "")
+    check_id = corrections.check_of(finding)
+    check_title = str((checks.get_check(check_id) or {}).get("title")
+                      or finding.get("source_title") or "") if check_id else ""
+    try:
+        result = await _claude(
+            engine.run_claude,
+            corrections.prompt(finding, note, entity_name=entity_name,
+                               area_name=area_name, check_title=check_title),
+            corrections.SYSTEM, eff_model(), CORRECTION_TIMEOUT_S, 2,
+            "correct", job="correct", schema=corrections.SCHEMA,
+            priority=run_queue.PRESS)
+    except Exception as exc:  # noqa: BLE001
+        result = {"ok": False, "error": str(exc)}
+    reply = _answer(result) if result.get("ok") else None
+    if not isinstance(reply, dict):
+        CORRECTION_STATE["failed"] += 1
+        CORRECTION_STATE["last_error"] = str(
+            result.get("error") or "an unreadable reply")[:200]
+        return None
+    the_plan = corrections.plan(
+        reply, finding, area_id=area_id,
+        device_class=str(named.get("class") or ""),
+        protected=automation_writer.protected_patterns(),
+        southern=await asyncio.to_thread(corrections.house_southern))
+    key = findings_store.normalize(finding.get("text") or "")
+    report = str(finding.get("claim") or finding.get("text") or "")
+    applied = await asyncio.to_thread(
+        corrections.apply_plan, the_plan, finding, base_ids, note,
+        finding_key=key, about=report)
+    if not applied["written"] and applied["why"]:
+        log.info("a correction was taken back before it was scoped")
+        return None
+    offer = None
+    if the_plan["offer"]:
+        row = await asyncio.to_thread(
+            corrections.offer_row, the_plan, note, entity_name=entity_name,
+            area_name=area_name, check_title=check_title, finding_key=key,
+            about=report)
+        if row:
+            offer = await asyncio.to_thread(findings_store.add_case, row)
+            CORRECTION_STATE["offered"] += int(offer is not None)
+    CORRECTION_STATE["applied"] += 1
+    sentence = corrections.confirmation(
+        the_plan, entity_name=entity_name, area_name=area_name,
+        check_title=check_title)
+    log.info("correction on %s: %s%s%s", log_safe(eid or report[:40]),
+             the_plan["scope"],
+             f" {the_plan['until']}" if the_plan["until"] else "",
+             " (offered wider)" if offer else "")
+    return {"plan": the_plan, "ids": applied["ids"], "sentence": sentence,
+            "offer": offer}
+
+
+def _start_correction(finding: dict, note: str, ids: list[str]) -> None:
+    """Start the second look without making the press wait for it."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = loop.create_task(_scope_correction(dict(finding), note, list(ids)))
+    _CORRECTION_TASKS.add(task)
+    task.add_done_callback(_CORRECTION_TASKS.discard)
+
+
+async def h_why(request: web.Request) -> web.Response:
+    """What brAIn decided not to say about one entity (or one check).
+
+    The decision trail, read; no model. ``{"subject", "readable", "rows",
+    "kinds", "name"}`` — no rows on a readable trail means no record of a
+    decision, which is not the same claim as "brAIn chose silence", and
+    the payload carries the sentence that says which.
+    """
+    subject = str(request.query.get("entity") or request.query.get("check")
+                  or "").strip()[:255]
+    try:
+        limit = max(1, min(50, int(request.query.get("limit") or 20)))
+    except ValueError:
+        limit = 20
+    if subject:
+        got = await asyncio.to_thread(decision_trail.for_subject, subject,
+                                      limit=limit)
+    else:
+        got = await asyncio.to_thread(_recent_trail, limit)
+    got["name"] = (_NAMES.get(subject) or {}).get("name", "")
+    if not got["readable"]:
+        got["says"] = ("brAIn's decision trail could not be read, so it "
+                       "cannot say whether it decided not to report this.")
+    elif not got["rows"]:
+        got["says"] = ("brAIn has no record of deciding not to report this "
+                       "— which is not the same as having seen it and "
+                       "chosen to stay quiet.")
+    else:
+        got["says"] = ""
+    return web.json_response(got)
+
+
+async def h_explain_get(request: web.Request) -> web.Response:
+    """One explanation the ask bar started, as far as it has got."""
+    found = EXPLAINS.get(request.match_info["id"])
+    if found is None:
+        raise web.HTTPNotFound(text="no such explanation")
+    return web.json_response(found)
 
 
 async def h_finding_discuss(request: web.Request) -> web.Response:
@@ -17812,6 +18585,8 @@ def make_app() -> web.Application:
     app.router.add_put("/api/settings", h_settings_put)
     app.router.add_get("/api/insights", h_insights)
     app.router.add_post("/api/generate", h_generate)
+    app.router.add_get("/api/why", h_why)
+    app.router.add_get("/api/explain/{id}", h_explain_get)
     app.router.add_delete("/api/insight/{id}", h_delete_insight)
     app.router.add_put("/api/insight/{id}", h_rename_insight)
     app.router.add_post("/api/insight/{id}/refine", h_insight_refine)

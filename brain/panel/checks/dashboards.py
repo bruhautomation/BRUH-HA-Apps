@@ -45,6 +45,8 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
                       and r.split(".", 1)[0] in house.known_domains)
         if not dead:
             continue
+        if not house.should_report(dead[0], "org.dashboard_dead_ref"):
+            continue
         title = str(dash.get("title") or dash.get("url_path") or "Overview")
         out.append({
             "text": f"Dashboard '{title}' shows entities that no longer exist",

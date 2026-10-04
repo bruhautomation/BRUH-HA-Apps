@@ -86,7 +86,7 @@ def hardware_name(snap: dict, now: float) -> list[dict]:
             continue
         name = house.name(eid)
         token = hardware_token(name)
-        if token:
+        if token and house.should_report(eid, "reg.hardware_name"):
             hits.append((eid, name, token))
     if not hits:
         return []
@@ -126,6 +126,8 @@ def no_area(snap: dict, now: float) -> list[dict]:
             continue
         if (house.registry.get(eid) or {}).get("area_id"):
             continue  # the entity overrides its device's area
+        if not house.should_report(eid, "reg.no_area"):
+            continue
         by_device.setdefault(dev["id"], []).append(eid)
     if not by_device:
         return []
@@ -184,7 +186,8 @@ def unused_helper(snap: dict, now: float) -> list[dict]:
     if not candidates:
         return []
     refs = _referenced(house)
-    unused = sorted(e for e in candidates if e not in refs)
+    unused = sorted(e for e in candidates if e not in refs
+                    and house.should_report(e, "reg.unused_helper"))
     if not unused:
         return []
     names = [f"{house.name(e)} ({e})" for e in unused]

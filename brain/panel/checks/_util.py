@@ -53,6 +53,12 @@ _ENTITY_RE = re.compile(r"(?<![\w.])([a-z_]+)\.([a-z0-9_]+)(?![\w.])")
 _STATES_ATTR_RE = re.compile(r"\bstates\.([a-z_]+)\.([a-z0-9_]+)")
 
 
+# How many withheld rows one checks pass may hand to the decision trail. A
+# house where every check gives up on everything is a house the trail
+# should describe once, not a reason to grow a list without bound.
+TRAIL_MAX = 500
+
+
 def parse_ts(value: Any) -> float | None:
     """An HA timestamp (ISO string, or epoch seconds) as epoch seconds."""
     if value is None or value == "":
@@ -173,6 +179,130 @@ class House:
         if not rules:
             return False
         return check_id in rules or "*" in rules
+
+    def area_id_of(self, entity_id: str) -> str:
+        """The area id an entity sits in — its own, else its device's.
+
+        `area_of`'s rule (an entity's own area beats its device's, which is
+        Home Assistant's) answering with the id rather than the name,
+        because a correction scoped to a room is stored under the id: a
+        room somebody renames is still the room they meant.
+        """
+        reg = self.registry.get(entity_id) or {}
+        area = reg.get("area_id")
+        if not area:
+            area = (self.device_of(entity_id) or {}).get("area_id")
+        return str(area or "")
+
+    def _never_covered(self, entity_id: str, check_id: str) -> bool:
+        """Is this a pair no WIDE correction may ever stand down?
+
+        A correction somebody gave about one sensor may be scoped to a room
+        or to a whole rule (`corrections.py`), and the room or the rule can
+        later hold a leak detector, a smoke alarm, a lock or something on
+        the protected list that nobody was thinking of when they typed it.
+        So the wide scopes are refused for those at READ time as well as at
+        write time — a scope written in March cannot know what was fitted
+        in May. The table is the snapshot's (`corrections.scope_map()`'s
+        `never`), so this stays a pure read over what the pass was handed.
+        """
+        never = (self.snap.get("corrections") or {}).get("never") or {}
+        if check_id in set(never.get("checks") or ()):
+            return True
+        domain = domain_of(entity_id)
+        if domain in set(never.get("domains") or ()):
+            return True
+        patterns = [str(p).lower() for p in never.get("protected") or ()]
+        target = entity_id.lower()
+        if any(p in (target, f"{domain}.*", "*") for p in patterns):
+            return True
+        classes = set(never.get("classes") or ())
+        if classes:
+            attrs = (self.states.get(entity_id) or {}).get("attributes") or {}
+            reg = self.registry.get(entity_id) or {}
+            klass = (attrs.get("device_class") or reg.get("device_class")
+                     or reg.get("original_device_class") or "")
+            if klass in classes:
+                return True
+        return False
+
+    def withheld_by(self, entity_id: str, check_id: str) -> dict | None:
+        """The correction that stands this check down for this entity, or None.
+
+        Four scopes, narrowest first (`corrections.SCOPES`): this check on
+        this entity, anything on this entity, this check in this entity's
+        room, this check everywhere. The three wide ones never cover a pair
+        `_never_covered` names. A snapshot with no ``corrections`` key — an
+        older collector, a store that could not be read — falls back to the
+        exception map `excepted` reads, so nothing that was standing down
+        starts filing again because of how the snapshot was built.
+        """
+        table = self.snap.get("corrections")
+        if not isinstance(table, dict):
+            if self.excepted(entity_id, check_id):
+                return {"scope": "entity_check", "text": ""}
+            return None
+        rules = (table.get("entity") or {}).get(entity_id) or {}
+        if check_id in rules:
+            return {**rules[check_id], "scope": "entity_check"}
+        if self._never_covered(entity_id, check_id):
+            return None
+        if "*" in rules:
+            return {**rules["*"], "scope": "entity"}
+        area = self.area_id_of(entity_id)
+        if area:
+            hit = ((table.get("area") or {}).get(area) or {}).get(check_id)
+            if hit:
+                return {**hit, "scope": "check_area"}
+        hit = (table.get("check") or {}).get(check_id)
+        if hit:
+            return {**hit, "scope": "check"}
+        return None
+
+    def should_report(self, entity_id: str, check_id: str) -> bool:
+        """May this check file a row about this entity? The one question.
+
+        Every check that files a row about an entity asks it, and
+        `tests/test_scoped_corrections.py` holds that by reading the checks'
+        own source: a check that bypassed it would go on filing a row the
+        homeowner already answered, in new words, which is the loop the
+        Wrong button exists to end. A refusal leaves its reason on the
+        decision trail (`_note`), because a row withheld because somebody
+        said so is the one silence a person can ask about and deserves the
+        sentence they gave.
+        """
+        rule = self.withheld_by(entity_id, check_id)
+        if rule is None:
+            return True
+        self._note({"kind": "exception", "subject": entity_id,
+                    "check": check_id,
+                    "reason": str(rule.get("text") or
+                                  "you said this is not a problem here"),
+                    "text": f"scope: {rule.get('scope', 'entity_check')}"
+                            + (f", until {rule['until']}"
+                               if rule.get("until") else "")})
+        return False
+
+    def gave_up(self, check_id: str, rows: list[dict], reason: str) -> None:
+        """A check that says nothing because it found too much. One line each.
+
+        Past a cap a check files nothing at all, on purpose — a dozen
+        sensors frozen at once is a recorder purge, not a dozen broken
+        sensors — and that is exactly the silence somebody later asks
+        about. Each entity the check would have named gets a line on the
+        decision trail with the sentence for why it went unsaid.
+        """
+        for row in rows or ():
+            if not isinstance(row, dict):
+                continue
+            self._note({"kind": "cap", "subject": str(row.get("entity_id") or ""),
+                        "check": check_id, "reason": reason,
+                        "text": str(row.get("text") or "")})
+
+    def _note(self, row: dict) -> None:
+        trail = self.snap.get("_trail")
+        if isinstance(trail, list) and len(trail) < TRAIL_MAX:
+            trail.append(row)
 
     def enabled(self, entity_id: str) -> bool:
         reg = self.registry.get(entity_id)

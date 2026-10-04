@@ -134,7 +134,7 @@ def unusual(snap: dict, now: float) -> list[dict]:
         st = house.states.get(eid)
         if not st or not eligible(house, eid, st):
             continue
-        if house.excepted(eid, "base.unusual"):
+        if not house.should_report(eid, "base.unusual"):
             continue
         # A reading far from normal on a sensor that has been walking one
         # way for a month is the walk, and `forecast.decline` says so with
@@ -163,9 +163,15 @@ def unusual(snap: dict, now: float) -> list[dict]:
             continue
         hits.append((abs(found["sigmas"]), eid, found, baseline))
 
-    if not hits or len(hits) > MAX_ROWS:
+    if len(hits) > MAX_ROWS:
         # Too many is the measurement being wrong, not the house. Said
-        # nothing rather than said fifty times.
+        # nothing rather than said fifty times — and the trail says so.
+        house.gave_up("base.unusual", [{"entity_id": h[1]} for h in hits],
+                      f"{len(hits)} readings were far outside their usual "
+                      f"range at once — past {MAX_ROWS} that is the baseline "
+                      "no longer describing the house, not the house")
+        return []
+    if not hits:
         return []
     hits.sort(reverse=True)
 
