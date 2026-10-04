@@ -221,6 +221,19 @@ class TestAFixIsHeldToItsContract(ServerCase):
                                                    "action": "turn_off"})
         self.assertNotIn("error", got)
 
+    def test_the_device_type_tools_are_held_to_it_too(self):
+        # They reach Core as brain.* services through call_service, so the
+        # contract holds them by service and by entity like any other call.
+        self.contract([{"domain": "brain", "service": "set_device_class",
+                        "entities": ["binary_sensor.back_door"]}])
+        got = m.handle_tool_call("set_device_class", {
+            "entity_id": "binary_sensor.front_door", "device_class": "door"})
+        self.assertIn("binary_sensor.front_door", got.get("error", ""))
+        got = m.handle_tool_call("show_switch_as", {
+            "entity_id": "switch.kitchen_plug", "target_domain": "light"})
+        self.assertIn("not part of the change", got.get("error", ""))
+        self.assertEqual(self.core.posts, [])
+
     def test_a_contract_cannot_widen_a_floor(self):
         m.PROTECTED_ENTITIES = ["lock.front_door"]
         self.contract([{"domain": "lock", "service": "unlock",

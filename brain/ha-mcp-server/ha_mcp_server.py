@@ -473,6 +473,9 @@ CONTRACT_ROUTED = frozenset({
     "control_cover", "control_fan", "control_switch", "control_lock",
     "control_alarm", "control_vacuum", "send_notification", "activate_scene",
     "run_script", "reload_config",
+    # brain.* Power Tools with response data, through `_brain_call`.
+    "set_device_class", "show_switch_as", "stop_showing_switch_as",
+    "set_sensor_display",
 })
 CONTRACT_REFUSED_TOOLS = frozenset({
     "fire_event", "remember_fact", "offer_resolutions",
