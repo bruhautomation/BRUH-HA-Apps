@@ -193,6 +193,7 @@ import notify_router
 import override_ledger
 import onboarding
 import outcomes
+import ownership
 import permission_mode
 import playbooks
 import prompt_store
@@ -5992,6 +5993,11 @@ async def _scheduler() -> None:
             await asyncio.to_thread(journal.book_shell_rows, _SHELL_HANDLERS)
         except Exception as exc:  # noqa: BLE001 — bookkeeping, never the tick
             log.debug("booking shell runs failed: %s", exc)
+        # Home Assistant's UI editors save automations.yaml, scripts.yaml
+        # and scenes.yaml as root; hand them back to the claude user every
+        # ten minutes so the next edit never meets a permission error.
+        # `maybe_sweep` gates itself and never raises.
+        await asyncio.to_thread(ownership.maybe_sweep)
         # The drain that used to live here is the Resident's first look
         # now (`_resident_loop`), which reads the same `awaiting_triage()`
         # queue on its own five-second tick — so a row a study session just
@@ -19090,6 +19096,31 @@ async def h_chat_context(request: web.Request) -> web.Response:
     return web.json_response({"context": text})
 
 
+async def h_own(request: web.Request) -> web.Response:
+    """Hand files under /config to the claude user — `brain own` and the
+    edit hook ask here, so nobody is ever asked to run sudo chown.
+
+    Loopback only, read off the socket (`ownership.from_loopback`): the
+    panel is root, and an ingress page has no business asking it to chown
+    anything. What may be handed over, and how it is checked, is
+    `ownership.own`'s; every path gets its own answer.
+    """
+    if not ownership.from_loopback(request):
+        return web.json_response({"error": ownership.LOOPBACK_ONLY},
+                                 status=403)
+    body = await _json_body(request)
+    try:
+        answer = await asyncio.to_thread(ownership.own, body.get("paths"),
+                                         bool(body.get("recursive")))
+    except ownership.Refused as exc:
+        return web.json_response({"error": str(exc)}, status=exc.status)
+    return web.json_response(answer)
+
+
+# A file the chat cannot write is never the person's problem to fix.
+CHAT_IDENTITY += "\n\n" + ownership.AGENT_RULE
+
+
 def _chat_registry() -> "chat_session.SessionRegistry":
     """The registry, told which model a session spawned now should run.
 
@@ -19863,6 +19894,7 @@ def make_app() -> web.Application:
     app.router.add_get("/api/chat/conversations", h_chat_conversations)
     app.router.add_post("/api/chat/adopt", h_chat_adopt)
     app.router.add_post("/api/chat/context", h_chat_context)
+    app.router.add_post("/api/own", h_own)
     app.router.add_post("/api/chat/resume", h_chat_resume)
     app.router.add_post("/api/chat/model", h_chat_model)
     app.router.add_post("/api/chat/permission", h_chat_permission)
