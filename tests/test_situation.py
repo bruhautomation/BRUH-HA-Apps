@@ -26,6 +26,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -351,6 +352,14 @@ class TestTheLoop(unittest.TestCase):
             now, states=states(now, **kw)))
 
     def test_one_turn_per_material_change_and_published(self):
+        # The part of the day is part of the fingerprint, and this walks the
+        # clock forward by ~25 minutes from the real time — so run near
+        # 11:55 or 16:55 it crossed a boundary and took a turn for a reason
+        # this test is not about. Held still for the walk.
+        held = mock.patch.object(self.server.situation, "part_of_day",
+                                 lambda hour: "morning")
+        held.start()
+        self.addCleanup(held.stop)
         now = time.time()
         read = self.refresh(now)
         self.assertEqual(len(self.calls), 1)
