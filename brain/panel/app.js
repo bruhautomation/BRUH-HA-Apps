@@ -2895,6 +2895,7 @@ function renderDiagnostics(d) {
     // An empty roll-call is /proc unreadable, not seven dead daemons.
     rows.push(diagRow("Background daemons", "could not read /proc"));
   }
+  rows.push(...actingDiagRows(d));
   if (failures.length) {
     const items = failures.slice(0, 5).map((f) =>
       `<li><b>${esc(f.source || "?")}</b> · ${esc(f.outcome || "?")}`
@@ -4264,6 +4265,7 @@ function planBlock(f) {
     box.appendChild(list);
   }
   if (plan.risk) box.appendChild(el("p", "findrisk", `What could go wrong: ${plan.risk}`));
+  planContract(box, plan);
   return box;
 }
 
@@ -4510,6 +4512,7 @@ function makeFinding(f) {
       back.addEventListener("click", () => findAction(
         f, "unfix", "Put back — read what it says", btns));
     }
+    if (findCanUndo(f) && (f.fix_calls || 0) > 0) addRestoreButton(f, add, btns);
   } else if (f.status === "ignored") {
     // A row dismissed before the settled ledger existed, still on disk
     // until startup moves it. Startup normally gets there first.
@@ -12277,3 +12280,119 @@ document.addEventListener("visibilitychange", () => {
     if (["starting", "awaiting_code", "working"].includes(st.phase)) pollSetup();
   } catch (e) { /* ignore */ }
 })();
+
+// ---------------------------------------------------------------------------
+// Every change is a contract: what a plan will do, exactly; the restore a
+// fix's calls can be undone with; and what the acting half has done lately.
+// ---------------------------------------------------------------------------
+
+// The typed half of a plan, under its steps: why it cannot be applied, what
+// will be different, how brAIn will check it held, and — for an edit to an
+// automation — the exact bytes it will change and what a replay of the
+// old and new config says. Every sentence here is the server's; this only
+// lays them out.
+function planContract(box, plan) {
+  if (plan.ops_refused) box.appendChild(el("p", "findrisk", plan.ops_refused));
+  if (!plan.can_fix) return;
+  if (plan.expected_effect) {
+    box.appendChild(el("p", "planeffect", `Once it works: ${plan.expected_effect}`));
+  }
+  (plan.preview || []).forEach((p) => {
+    if (!p || !p.diff) return;
+    const det = el("details", "plandiff");
+    det.appendChild(el("summary", null, "The exact change to automations.yaml"));
+    det.appendChild(el("pre", null, p.diff));
+    box.appendChild(det);
+    const line = planReplayLine(p);
+    if (line) box.appendChild(el("p", "planreplay", line));
+  });
+  if (plan.verify_text) box.appendChild(el("p", "planverify", plan.verify_text));
+}
+
+function planReplayLine(p) {
+  const r = p.replay;
+  if (p.replay_note) return p.replay_note;
+  if (!r) return "";
+  if (r.refused || r.error) return `brAIn could not replay it: ${r.error || "unknown"}`;
+  const days = Math.round(r.days ?? 7);
+  const after = r.would_run ?? 0;
+  const was = p.replay_before;
+  const times = (n) => `${n} ${n === 1 ? "time" : "times"}`;
+  if (was && !was.refused && !was.error) {
+    return `Over the last ${days} days it ran ${times(was.would_run ?? 0)} as it `
+      + `is; with this change it would have run ${times(after)}.`;
+  }
+  return `Over the last ${days} days the changed automation would have run ${times(after)}.`;
+}
+
+// A press, never a timer: the server sets each entity back to the state the
+// chokepoint recorded before brAIn's call, then reads it again and answers
+// per entity. Refusals (protected, less secure, a reading) come back as
+// lines too, so the toast is the summary and the card carries the detail.
+function addRestoreButton(f, add, btns) {
+  const b = add(el("button", "btn small ghost", "⟲  Put them back"));
+  tip(b, "Set what brAIn's service calls changed back to how brAIn recorded "
+    + "it before. Each entity answers for itself; you press this, brAIn "
+    + "never does it on its own.");
+  b.addEventListener("click", async () => {
+    btns.forEach((x) => { x.disabled = true; });
+    try {
+      const data = await api(`api/finding/${f.ts}/restore`, { method: "POST" });
+      takeFindings(data);
+      syncFeed();
+      renderFindings();
+      const back = (data.restored || []).filter((r) => r.restored).length;
+      const total = (data.restored || []).length;
+      toast(`Put back ${back} of ${total} — the card says which`);
+    } catch (e) {
+      toast("Could not put them back: " + e);
+      btns.forEach((x) => { x.disabled = false; });
+    }
+  });
+}
+
+function actingDiagRows(d) {
+  const a = (d && d.acting) || null;
+  if (!a) return [];
+  if (a.error) return [diagRow("Changes and the action gate", esc(a.error), true)];
+  const iv = a.interventions || {};
+  const g = a.gate || {};
+  const t = a.tripwire || {};
+  const fu = a.followup || {};
+  const items = [
+    `<li>${iv.rows ?? 0} change${iv.rows === 1 ? "" : "s"} brAIn made: `
+      + `${iv.watching ?? 0} being watched, ${iv.held ?? 0} held, `
+      + `${iv.regressed ?? 0} came back, ${iv.could_not_check ?? 0} could not be checked`
+      + (iv.next_look_at ? ` — next look ${esc(timeUntil(iv.next_look_at))}` : "")
+      + "</li>",
+    `<li>Follow-up looks: ${fu.looks ?? 0} taken, ${fu.deferred ?? 0} held by a gate`
+      + (fu.last_error ? ` — <i>${esc(fu.last_error)}</i>` : "") + "</li>",
+    `<li>Action gate: ${g.asked ?? 0} asked — ${g.allow ?? 0} let through, `
+      + `${g.ask ?? 0} asked you, ${g.deny ?? 0} refused (${g.fast_path ?? 0} with no `
+      + `model, ${g.undecided ?? 0} undecided)</li>`,
+    `<li>Tripwire: ${t.entities ? `${t.entities} guarded` : "none set up"}`
+      + (t.tripped ? `, tripped ${t.tripped} time${t.tripped === 1 ? "" : "s"}` : "")
+      + (t.file_error ? ` — <i>${esc(t.file_error)}</i>` : "") + "</li>",
+  ];
+  const button = t.entities ? "" : '<button class="btn small" id="tripwireMake">'
+    + "Make a tripwire entity</button>";
+  return [diagRow("Changes and the action gate",
+    `<ul>${items.join("")}</ul>${button}`,
+    !!(iv.error || t.file_error))];
+}
+
+// Delegated, because the diagnostics body is rebuilt on every open.
+document.addEventListener("click", async (e) => {
+  const btn = e.target.closest && e.target.closest("#tripwireMake");
+  if (!btn) return;
+  btn.disabled = true;
+  try {
+    const r = await api("api/security/honeytoken", { method: "POST" });
+    toast(r.created ? "Tripwire made — nothing should ever act on it"
+                    : "The tripwire is already there");
+    loadDiagnostics();
+  } catch (err) {
+    toast("Could not make the tripwire: " + err);
+    btn.disabled = false;
+  }
+});

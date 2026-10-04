@@ -510,6 +510,9 @@ def clean_stored(value) -> dict:
            "expected_effect": str(value.get("expected_effect") or "")
            .strip()[:MAX_EFFECT],
            "verify_by": clean_verify(value.get("verify_by"))}
+    # Derived on every read, never stored as prose: the card says how the
+    # follow-up looks will check, in the words this module owns.
+    out["verify_text"] = verify_sentence(out["verify_by"])
     preview = value.get("preview")
     if isinstance(preview, list):
         out["preview"] = [_clean_preview(p) for p in preview[:MAX_OPS]]

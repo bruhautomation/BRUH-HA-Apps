@@ -4705,3 +4705,19 @@ body.term-classic #termMode .ico-out { display: block; }
 .kref .kreflabel { display: block; margin-top: 6px; color: var(--ink-2); font-size: 12px; }
 .kref select { display: block; max-width: 100%; margin-top: 4px; min-height: 36px; }
 @media (pointer: coarse) { .kref select { min-height: 44px; } }
+
+/* Every change is a contract: the typed half of a plan under its steps.
+   The diff is the bytes that will change in automations.yaml, so it is
+   shown as written — monospaced, scrollable sideways inside its own box
+   rather than widening the card, and closed until somebody asks. */
+.findplan .planeffect,
+.findplan .planreplay,
+.findplan .planverify { margin: 6px 0 0; color: var(--ink-2); font-size: 13px; }
+.findplan .plandiff { margin-top: 8px; }
+.findplan .plandiff summary { cursor: pointer; min-height: 32px; line-height: 32px; }
+.findplan .plandiff pre {
+  margin: 6px 0 0; padding: 8px 10px; max-height: 320px; overflow: auto;
+  max-width: 100%; white-space: pre; font-size: 12px; line-height: 1.45;
+  background: var(--surface-2); border-radius: 6px;
+}
+@media (pointer: coarse) { .findplan .plandiff summary { min-height: 44px; line-height: 44px; } }
