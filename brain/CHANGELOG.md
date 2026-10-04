@@ -2,6 +2,23 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.11.1
+
+**A session limit no longer reads as brAIn breaking, and the help in ⚙ can be read.**
+
+- **The `?` help in Settings opens on top of the dialog.** It was opening behind
+  it, where nothing could read it.
+- **Capture for the corpus says what it is for.** It now opens by saying you do
+  not need it to use brAIn: it saves card runs to help improve brAIn's own
+  prompts, and is best left off.
+- **"Most Claude runs are failing" counts only failures.** A run that fell back
+  still made its card, and a run your account's session limit refused is the
+  account saying wait. Counting both is how one evening's limit kept brAIn
+  "degraded" for a whole day.
+- **A problem report says each thing once.** The same failure ten times is one
+  line with a count, and a notification brAIn deliberately held until a later
+  time is no longer listed as stuck.
+
 ## 2.11.0
 
 **A leak, smoke or gas alarm reaches you whatever brAIn is doing, and the
