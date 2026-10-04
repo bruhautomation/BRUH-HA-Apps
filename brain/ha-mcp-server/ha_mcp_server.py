@@ -1655,6 +1655,64 @@ def get_findings(status="open", limit=50):
     }
 
 
+def explain_decision(entity_id="", check_id="", limit=20):
+    """What brAIn decided NOT to say about something, and why.
+
+    The decision trail, read over loopback (`/api/why`) — the one
+    implementation of it is the panel's. Every surface brAIn has reports
+    what it did; this is the answer to "why didn't you tell me": a check
+    that gave up because too many sensors looked frozen at once, a
+    re-report the homeowner had already answered, a correction standing
+    the rule down, a muted rule, a message held for quiet hours, a batch
+    the budget would not pay for, a look that let a signal go. No rows is
+    NOT "brAIn chose silence" — it is no record of deciding anything, and
+    the reply says so in those words. Read-only.
+    """
+    entity_id = str(entity_id or "").strip()
+    check_id = str(check_id or "").strip()
+    pattern = r"^[a-z0-9_]+\.[a-z0-9_]+$"
+    if entity_id and not re.match(pattern, entity_id):
+        return {"error": (f"'{entity_id[:64]}' is not an entity id. They look "
+                          "like light.kitchen — use get_all_states to find it.")}
+    if check_id and not re.match(pattern, check_id):
+        return {"error": (f"'{check_id[:64]}' is not a check id. They look "
+                          "like dev.frozen or auto.dead_ref.")}
+    try:
+        limit = max(1, min(50, int(limit or 20)))
+    except (TypeError, ValueError):
+        limit = 20
+    if entity_id:
+        query = f"entity={urllib.parse.quote(entity_id, safe='')}"
+    elif check_id:
+        query = f"check={urllib.parse.quote(check_id, safe='')}"
+    else:
+        query = ""
+    result = _panel_get(f"/api/why?{query}&limit={limit}" if query
+                        else f"/api/why?limit={limit}")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    result = result if isinstance(result, dict) else {}
+    rows = []
+    for row in result.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        stamp = time.strftime("%Y-%m-%d %H:%M",
+                              time.localtime(int(row.get("ts") or 0)))
+        item = {"when": stamp, "kind": row.get("kind"),
+                "meaning": row.get("meaning"), "reason": row.get("reason")}
+        for key in ("check", "text", "subject"):
+            if row.get(key):
+                item[key] = row[key]
+        rows.append(item)
+    out = {"subject": entity_id or check_id or "everything",
+           "readable": bool(result.get("readable", True)), "decisions": rows}
+    if result.get("name"):
+        out["name"] = result["name"]
+    if result.get("says"):
+        out["note"] = result["says"]
+    return out
+
+
 def get_health():
     """Is brAIn working — the verdict the panel, the mirror and the health
     sensor all read, and nothing derived a second time here.
@@ -5562,6 +5620,32 @@ TOOLS = [
         }
     },
     {
+        "name": "explain_decision",
+        "description": (
+            "What brAIn decided NOT to tell the homeowner about an entity (or "
+            "a check), and why: a check that gave up because too many things "
+            "looked wrong at once, a report they had already answered, a "
+            "correction they gave, a rule they muted, a message held for "
+            "quiet hours, a run the budget would not pay for, a first look "
+            "that let it go. Use it for 'why didn't you tell me…'. No rows "
+            "means brAIn has no record of deciding anything — never say it "
+            "chose to stay quiet then. Read-only."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string",
+                              "description": "The entity it is about"},
+                "check_id": {"type": "string",
+                             "description": ("A check id (dev.frozen, "
+                                             "auto.dead_ref) to ask about "
+                                             "a rule instead")},
+                "limit": {"type": "number",
+                          "description": "At most this many rows (default 20)"}
+            }
+        }
+    },
+    {
         "name": "get_health",
         "description": (
             "Whether brAIn itself is working, in its own words: the health "
@@ -5915,6 +5999,7 @@ TOOL_IMPLEMENTATIONS = {
     "print_label": "print_label",
     "bright_status": "bright_status",
     "bright_show": "bright_show",
+    "explain_decision": "explain_decision",
 }
 
 
@@ -5947,7 +6032,7 @@ VOICE_REFUSED_TOOLS = frozenset({
     "search_related", "get_activity",
     "get_house_model", "room_physics", "simulate_automation", "get_findings",
     "get_health", "get_error_log", "fire_event", "get_supervisor_info",
-    "reload_config", "offer_resolutions",
+    "reload_config", "offer_resolutions", "explain_decision",
 })
 VOICE_REFUSED_PREFIXES = ("esphome_",)
 # Tools about ONE entity: allowed only when it is named and exposed.

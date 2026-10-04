@@ -257,6 +257,68 @@ def summary(now: float | None = None, window_s: float = 86400.0) -> dict:
             "day": counts, "writable": _parent_exists()}
 
 
+def _check_of(row: dict) -> str:
+    source = str(row.get("source") or "")
+    return source[len("check:"):] if source.startswith("check:") else source
+
+
+def rows_for(findings, kind: str, reason: str) -> list[dict]:
+    """One decision per finding, for a writer that withheld a batch.
+
+    The subject is the row's entity where it has one; a row about nothing
+    in particular (a system check, a digest) keeps its producer as the
+    `check`, which is what "why does this rule never say anything" reads.
+    """
+    out = []
+    for row in findings or ():
+        if not isinstance(row, dict):
+            continue
+        out.append({"kind": kind, "subject": str(row.get("entity_id") or ""),
+                    "check": _check_of(row), "reason": reason,
+                    "text": str(row.get("text") or row.get("claim") or "")})
+    return out
+
+
+# What a settled-ledger kind means, for a re-report the ledger swallowed.
+_SETTLED_WORDS = {
+    "ignored": "you marked it Not a problem",
+    "fixed": "you said you had fixed it",
+    "accepted": "it is on your to-do list",
+}
+
+
+def pass_rows(result: dict, *, created_keys, settled: dict, muted,
+              normalize) -> list[dict]:
+    """Every decision a checks pass made that nothing else records.
+
+    Three kinds, each read off what the pass already holds: what a check
+    withheld itself (`run_all`'s ``withheld`` — a correction, a cap), a
+    muted producer's rows (`triage.gate` drops them at the door), and a
+    re-report the settled ledger swallowed (`add_many` drops it silently).
+    A row already open on the list is not here: it was reported, and the
+    list is where it is. Pure over what it is handed, so a test can drive
+    it without a store.
+    """
+    out = [dict(r) for r in (result.get("withheld") or ())
+           if isinstance(r, dict)]
+    muted = set(muted or ())
+    created_keys = set(created_keys or ())
+    for row in result.get("findings") or ():
+        if not isinstance(row, dict):
+            continue
+        source = str(row.get("source") or "")
+        key = normalize(str(row.get("text") or ""))
+        if source in muted:
+            out.extend(rows_for([row], "mute",
+                                "you asked brAIn to stop raising these"))
+        elif key not in created_keys and key in settled:
+            out.extend(rows_for([row], "dedupe", _SETTLED_WORDS.get(
+                settled[key], "it had already been answered")))
+    out.extend(rows_for(result.get("shadow") or (), "shadow",
+                        "this rule is still on trial and reaches nobody"))
+    return out
+
+
 def clear_memory() -> None:
     """Forget which decisions were written recently — for tests."""
     with _LOCK:
@@ -264,4 +326,5 @@ def clear_memory() -> None:
 
 
 __all__ = ["KINDS", "MAX_LINES", "MERGE_S", "TRAIL_FILE", "clear_memory",
-           "for_subject", "note", "note_many", "read", "summary"]
+           "for_subject", "note", "note_many", "pass_rows", "read",
+           "rows_for", "summary"]

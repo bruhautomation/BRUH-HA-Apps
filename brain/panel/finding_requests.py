@@ -57,7 +57,7 @@ REQUEST_DIR = Path(os.environ.get(
 # house", and "not now". Anything else — a fix run, a regeneration — is
 # work rather than an answer, and belongs behind the panel where the
 # thing it starts can be watched.
-ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack")
+ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack", "undo")
 
 # ...and the tab's own verb for each, so the two front doors settle a
 # finding through exactly the same code. "fixed" is the tab's "done" —
@@ -70,7 +70,9 @@ ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack")
 VERBS = {"fixed": "done", "wrong": "wrong", "ack": "ack"}
 # `reply` and `snooze` are deliberately absent: neither ends a finding.
 # A reply is a turn in the case's conversation and is answered, not
-# applied.
+# applied. `undo` is the Undo on the confirmation a reply is answered with
+# — the toast's own token, found by the row's id — and is absent for the
+# opposite reason: it takes an ending back.
 
 # A request is a few hundred bytes. Anything larger is not one.
 MAX_BYTES = 16 * 1024

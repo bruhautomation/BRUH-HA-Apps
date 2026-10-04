@@ -1941,6 +1941,14 @@ async function generate(categoryOrId, question, inPlace = false) {
         ? { question }
         : { category: categoryOrId };
     const res = await api("api/generate", { method: "POST", body: JSON.stringify(body) });
+    // The interpreter read the sentence (`interpret`) and may have sent it
+    // more than one way at once. `routes` is what it read; every key below
+    // is where each part landed, and each says so in its own words.
+    if (res && Array.isArray(res.routes)) {
+      showRouted(res);
+      if ((res.queued || []).length) { await refreshStatus(); fastPoll(); }
+      return;
+    }
     // "learn about the boiler" isn't a card — the server routed it to a study
     // session instead, and there is nothing on the dashboard to wait for.
     if (res && "learning" in res) {
@@ -1976,6 +1984,91 @@ async function generate(categoryOrId, question, inPlace = false) {
   } catch (e) {
     toast(e.message);
   }
+}
+
+// What the interpreter did with one sentence, said once. The parts are the
+// same toasts the ask bar's patterns always produced, joined, plus the two
+// the patterns never had: a fact kept, and a "why" being looked into.
+function showRouted(res) {
+  const said = [];
+  if ((res.queued || []).length) said.push("Making a card for that");
+  if ("intent" in res) {
+    said.push("working out the automation — it lands on Proposals, and "
+      + "nothing runs until you accept it");
+  }
+  if ("learning" in res) {
+    said.push(res.learning ? `studying ${res.learning} in the background`
+      : "studying what brAIn knows least about");
+  }
+  if ((res.remembered || []).length) said.push("kept that in memory");
+  if ("scenes" in res) said.push(`designing four scenes for the ${res.scenes}`);
+  if (res.refused) said.push(res.refused);
+  if (res.explain) {
+    said.push("looking into why");
+    watchExplain(res.explain);
+  }
+  if (said.length) {
+    const text = said.join("; ");
+    toast(text.charAt(0).toUpperCase() + text.slice(1) + ".");
+  }
+}
+
+// A why-answer, polled until it lands. One at a time: a second question
+// replaces the first, because the block under the bar is one answer.
+let explainWatch = null;
+async function watchExplain(id) {
+  const box = $("#askExplain");
+  if (!box) return;
+  explainWatch = id;
+  box.classList.remove("hidden");
+  box.replaceChildren(el("p", "askexplain-wait", "Looking into why…"));
+  for (let i = 0; i < 120 && explainWatch === id; i++) {
+    let got = null;
+    try {
+      got = await api(`api/explain/${encodeURIComponent(id)}`);
+    } catch (e) {
+      got = { state: "error", answer: e.message };
+    }
+    if (got && got.state !== "running") {
+      if (explainWatch === id) renderExplain(box, got);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
+function renderExplain(box, got) {
+  const head = el("div", "askexplain-head");
+  head.append(el("b", null, got.question || "Why"));
+  const close = el("button", "btn small ghost", "✕");
+  tip(close, "Close this answer");
+  close.type = "button";
+  close.addEventListener("click", () => {
+    explainWatch = null;
+    box.classList.add("hidden");
+    box.replaceChildren();
+  });
+  head.append(close);
+  const body = [head, el("p", "askexplain-answer", got.answer || "")];
+  if ((got.cited || []).length) {
+    const list = el("ul", "askexplain-cited");
+    got.cited.forEach((c) => list.append(el("li", null, c)));
+    body.push(list);
+  }
+  if (got.offer) {
+    // The change is the NEXT turn, not this one: it fills the bar and the
+    // person sends it, which is the card menu's "Make this an automation".
+    const next = el("button", "btn small", got.offer);
+    next.type = "button";
+    tip(next, "Put this in the question bar to ask for it");
+    next.addEventListener("click", () => {
+      const input = $("#askInput");
+      input.value = got.offer;
+      input.focus();
+    });
+    body.push(next);
+  }
+  box.replaceChildren(...body);
 }
 
 // One ✕ for every kind of card, and it means the same thing for all of them:

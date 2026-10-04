@@ -59,6 +59,11 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     "consolidate":     ("haiku",  "low",    False, False),
     "reflect":         ("haiku",  "low",    False, False),
     "auth_check":      ("haiku",  "low",    False, False),
+    # Reading what a person typed into a route, and a correction into a
+    # scope and a lifetime: a closed vocabulary somebody is waiting on, so
+    # neither steps up — a slower reader is a slower box.
+    "interpret":       ("haiku",  "low",    False, False),
+    "correct":         ("haiku",  "low",    False, False),
     # Thinks — reasoning with tools where a wrong answer costs a card.
     "card":            ("sonnet", "medium", True,  True),
     "ask":             ("sonnet", "medium", True,  True),
@@ -66,6 +71,9 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     "brief":           ("sonnet", "medium", True,  False),
     "weekly":          ("sonnet", "medium", True,  True),
     "curiosity":       ("sonnet", "medium", True,  False),
+    # "Why did that happen / why didn't you tell me": reading tools and
+    # the decision trail, answered for a person who asked.
+    "explain":         ("sonnet", "medium", True,  True),
     "onboarding":      ("sonnet", "medium", True,  False),
     # Proposing a card set is the same job onboarding does, at a moment
     # when the house has months of history behind it — so it reasons

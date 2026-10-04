@@ -725,6 +725,7 @@ ANALYST_TOOLS = [
     f"{MCP}get_findings",      # what is on the Findings tab, so a run can
                                # answer "what needs attention" without guessing
     f"{MCP}get_health",        # whether brAIn itself is working, in its own words
+    f"{MCP}explain_decision",  # what brAIn decided NOT to say, and why
     f"{MCP}get_areas",
     f"{MCP}get_registry",
     f"{MCP}get_automations",
