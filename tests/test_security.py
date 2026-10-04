@@ -281,7 +281,8 @@ class TestAnalystCanOnlyRead(unittest.TestCase):
         declared = set(re.findall(r'"name":\s*"([a-z_0-9]+)"', src))
         acting = {n for n in declared if re.match(
             r"^(call_service|control_|send_|activate_|run_script|reload_|set_|"
-            r"create_|delete_|update_|render_template|fire_event|remember_)", n)}
+            r"create_|delete_|update_|render_template|fire_event|remember_|"
+            r"show_|stop_)", n)}
         self.assertTrue(acting, "no acting tools found — did the regex rot?")
         missing = sorted(
             n for n in acting

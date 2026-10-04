@@ -8,9 +8,10 @@ Provides:
 - brain.clear_conversation   — clear a persistent conversation session
 - brain.add_memory           — queue a fact for the home memory store
 - brain.answer_question      — answer one of brAIn's open guesses yes or no
-- BRUH Power Tools                 — 65 registry-management admin services
-  (areas, floors, labels, entities, devices, integrations, helpers, zones,
-  persons, blueprints, statistics, users, diagnostics, dashboards, repairs)
+- BRUH Power Tools                 — 69 registry-management admin services
+  (areas, floors, labels, entities, device types, devices, integrations,
+  helpers, zones, persons, blueprints, statistics, users, diagnostics,
+  dashboards, repairs)
   — see power_tools.py
 
 Both conversation agent and sensors are independently toggleable per config entry.

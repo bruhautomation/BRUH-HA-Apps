@@ -221,6 +221,18 @@
     },
     "check": {
       "service": "mdi:home-search-outline"
+    },
+    "set_device_class": {
+      "service": "mdi:shape-outline"
+    },
+    "show_switch_as": {
+      "service": "mdi:swap-horizontal"
+    },
+    "stop_showing_switch_as": {
+      "service": "mdi:toggle-switch-outline"
+    },
+    "set_sensor_display": {
+      "service": "mdi:decimal"
     }
   }
 }

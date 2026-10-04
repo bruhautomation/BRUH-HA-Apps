@@ -561,6 +561,14 @@ return response data — pass \`return_response: true\` for those.
   \`set_entity_icon\` (omit icon to clear), \`delete_orphaned_entities\` (R, dry-run by
   default; optional entity_id list scopes the cleanup — always dry-run first,
   then delete with the reviewed entity_id list, never blind-delete all)
+- Device types (the entity dialog's "Show as"): use the MCP tools.
+  \`set_device_class\` shows a binary sensor as a door, window, motion,
+  moisture…, a cover as a garage, blind, shutter…, a switch as an outlet
+  (an empty class gives back the integration's own). \`show_switch_as\` shows a
+  switch — a smart plug running a fan or a lamp — as a light, fan, lock, cover,
+  siren or valve, and \`stop_showing_switch_as\` undoes it. Only a switch can be
+  shown as another kind of device: a fan cannot become a light.
+  \`set_sensor_display\` sets a sensor's decimals and, where it converts, its unit.
 - Helpers: \`create_helper\` (R; helper_type ∈ input_boolean/input_number/
   input_select/input_text/input_datetime/counter/timer/schedule, plus an
   \`options\` object with the type's own fields e.g. min/max, options list,

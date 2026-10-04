@@ -64,6 +64,8 @@ GATED_MCP = frozenset({
     "esphome_clean", "esphome_compile", "esphome_create_device",
     "esphome_delete_device", "esphome_install", "esphome_set_secret",
     "esphome_update_firmware", "esphome_write_config",
+    "set_device_class", "show_switch_as", "stop_showing_switch_as",
+    "set_sensor_display",
 })
 CONTRACT_BUILTINS = frozenset({"Bash", "Write", "Edit", "MultiEdit",
                                "NotebookEdit"})
