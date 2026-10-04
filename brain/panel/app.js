@@ -2554,6 +2554,9 @@ function renderSettingsForm(data) {
   $("#setCapture").checked = data.settings.capture === true;
   $("#setTerminalUi").value = data.settings.terminal_ui || "chat";
   $("#setChatSessions").value = String(data.settings.chat_max_sessions || 3);
+  // Only an explicit true ticks it: a value that arrived missing or
+  // malformed is asking, which is what the terminal and the chat will do.
+  $("#setSkipPerms").checked = data.settings.dangerously_skip_permissions === true;
   $("#setGatherMode").value = data.settings.gather_mode || "search";
   $("#setRefreshMode").value = data.settings.refresh_mode || "changed";
   $("#setThinking").value = data.settings.thinking || "normal";
@@ -2620,6 +2623,23 @@ function loadAdvanced() {
   loadCaptures();
   loadDeep(true);
   loadRehearsal(true);
+}
+
+// Open ⚙ at one control: the section it lives in opened, the control
+// scrolled into view, focused and briefly marked. What "Stop asking" on a
+// chat approval card does — the switch is found where the asking happens,
+// and flipped where its consequences are written down.
+async function openSettingsAt(id) {
+  await openSettings();
+  const target = document.getElementById(id);
+  if (!target) return;
+  const sec = target.closest(".setsec");
+  if (sec && !sec.open) sec.open = true;
+  const row = target.closest(".setrow") || target;
+  row.scrollIntoView({ block: "center" });
+  try { target.focus({ preventScroll: true }); } catch (e) { /* not focusable */ }
+  row.classList.add("setflash");
+  setTimeout(() => row.classList.remove("setflash"), 2400);
 }
 
 async function openSettings() {
@@ -3800,6 +3820,19 @@ $("#setRefreshMode").addEventListener("change", async () => {
 // closes the oldest idle one to make room.
 $("#setChatSessions").addEventListener("change", () =>
   saveSettings({ chat_max_sessions: Number($("#setChatSessions").value) }));
+// One switch with two doors: saving it writes the add-on's own
+// `dangerously_skip_permissions` option, so the Configuration tab moves with
+// it, and the server republishes it to the file a terminal session reads
+// when it starts. The chat picks it up on its next message. The toast says
+// what still holds, because "acts without asking" read on its own sounds
+// like more than it is.
+$("#setSkipPerms").addEventListener("change", () => {
+  const on = $("#setSkipPerms").checked;
+  saveSettings({ dangerously_skip_permissions: on }, on
+    ? "On — the next terminal session and chat message act without asking. "
+      + "Protected entities stay refused."
+    : "Off — the terminal and the chat ask before acting again");
+});
 // Applied straight away rather than on the next status poll, so the Terminal
 // tab has already changed by the time the dialog is closed — and through the
 // same path as the tab's own switch, so changing it here carries the
@@ -9834,12 +9867,47 @@ function chatApprovalCard(ev) {
   const row = el("div", "permrow");
   const allow = el("button", "btn small primary", "Allow once");
   const deny = el("button", "btn small", "Don't allow");
+  const buttons = [allow, deny];
+  // "Always allow" only where the CLI itself suggested a rule — the server
+  // hands back exactly that suggestion, and says how long it lasts, so the
+  // line under the row is the whole of what the press adds.
+  let always = null;
+  if (ev.always) {
+    always = el("button", "btn small", "Always allow");
+    buttons.push(always);
+  }
   allow.addEventListener("click", () =>
-    chatPermissionPost({ id: ev.id, allow: true }, [allow, deny]));
+    chatPermissionPost({ id: ev.id, allow: true }, buttons));
   deny.addEventListener("click", () =>
-    chatPermissionPost({ id: ev.id, allow: false }, [allow, deny]));
+    chatPermissionPost({ id: ev.id, allow: false }, buttons));
+  if (always) {
+    always.addEventListener("click", () =>
+      chatPermissionPost({ id: ev.id, allow: true, always: true }, buttons));
+  }
   row.append(allow, deny);
+  if (always) row.appendChild(always);
   card.appendChild(row);
+  if (ev.always) {
+    const until = ev.always_until === "conversation"
+      ? "for the rest of this conversation"
+      : "in the terminal and every chat, until the add-on restarts";
+    card.appendChild(el("div", "permscope",
+      `Always allow adds ${ev.always} — ${until}.`));
+  }
+  // The switch that stops the asking altogether, found where the asking
+  // happens. It opens ⚙ at the switch rather than flipping it: the dialog
+  // is where what stays guarded is written down, and a one-press "never ask
+  // again" on a card about one command is a bigger answer than the
+  // question. This card still wants its own answer either way.
+  if (ev.stop_asking) {
+    const foot = el("div", "permfoot");
+    const stop = el("button", "btn small ghost permstop", "Stop asking…");
+    stop.type = "button";
+    stop.title = "Open the switch that lets brAIn act without asking";
+    stop.addEventListener("click", () => openSettingsAt("setSkipPerms"));
+    foot.appendChild(stop);
+    card.appendChild(foot);
+  }
   return card;
 }
 
@@ -9942,10 +10010,13 @@ function chatPermissionDone(ev) {
   if (row) {
     const q = card.dataset.kind === "question";
     row.replaceWith(el("div", "permnote",
-      ev.answered ? (ev.allow ? (q ? "Answered" : "Allowed")
+      ev.answered ? (ev.allow ? (q ? "Answered" : (ev.always ? "Always allowed" : "Allowed"))
                               : (q ? "Skipped" : "Not allowed"))
                   : "Withdrawn"));
   }
+  // What the buttons offered goes with them: a line about what "Always
+  // allow" would add, under a card already answered, reads as still on offer.
+  card.querySelectorAll(".permscope, .permfoot").forEach((n) => n.remove());
   chatState.permCard = null;
 }
 

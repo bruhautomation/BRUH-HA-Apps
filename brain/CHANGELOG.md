@@ -797,7 +797,7 @@ Resident can correct its own first look.**
   engines to keep away. *Stop sharing* deletes it and changes the address, so
   an old link is dead even if somebody kept it. While published, every rewrite
   updates the shared copy.
-- **Access steward: four security checks and a weekly sentence.** New house
+- **Access steward: three security checks and a weekly sentence.** New house
   checks for a lock or alarm panel exposed to Alexa or Google, an add-on whose
   protection mode is off, and recent failed logins that got an address banned.
   Each says nothing when it could not look, and *Wrong, because…* stops it for

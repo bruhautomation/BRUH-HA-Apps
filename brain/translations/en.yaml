@@ -50,14 +50,17 @@ configuration:
       Add an arrow-key and modifier toolbar to the terminal on phones and
       tablets, plus the iOS dictation fix. No effect on desktop.
   dangerously_skip_permissions:
-    name: Skip permission prompts in the terminal
+    name: Let brAIn act without asking
     description: >-
-      Off (the default), the interactive terminal asks before Claude runs a
-      command, edits a file or calls a Home Assistant service; only reading
-      Home Assistant is pre-approved. On, it asks before nothing — everything
-      brAIn can reach, it can then change without asking. The chat asks with
-      its own approval cards either way, background listeners use their own
-      allow-list, and protected entities stay refused either way.
+      Off (the default), the terminal and the chat ask before Claude runs a
+      command, edits a file or changes something in Home Assistant; only
+      reading is pre-approved. On, they stop asking — anything brAIn can
+      reach, it changes straight away. Still guarded either way: protected
+      entities stay refused, brAIn's own deny-list holds, conversations about
+      a finding always ask, file edits can still be undone, and voice and
+      background runs keep their own rules. Takes effect on the next terminal
+      session or chat message, no restart. The same switch is in ⚙ → Terminal
+      & chat.
   assist_fast_mode:
     name: Fast voice responses
     description: >-

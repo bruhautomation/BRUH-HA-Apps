@@ -131,6 +131,12 @@ jobs:
       - name: Measure the Settings dialog
         run: node tests/manual/measure-settings.mjs
 
+      # The chat's approval card is where the asking happens, so it is
+      # where the way out of asking has to be: "Always allow" with what it
+      # adds said in words, and "Stop asking…" landing on the switch in ⚙.
+      - name: Measure the chat approval card
+        run: node tests/manual/measure-permcard.mjs
+
       # A live card has two ages; the foot used to report one of them.
       - name: Measure a live card's two ages
         run: node tests/manual/measure-cardlive.mjs

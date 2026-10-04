@@ -560,6 +560,47 @@ class TestTheFastPathAndTheModel(GateCase):
         self.assertEqual(self.model_calls, [])
 
 
+class TestTheSwitchReachesTheGate(GateCase):
+    """"Let brAIn act without asking" stops the gate's asking in the two
+    faces a person sits at, and nothing below the model's judgement."""
+
+    def setUp(self):
+        super().setUp()
+        self.server.settings_store.save({"dangerously_skip_permissions": True})
+        self.model_reply = {"verdict": "ask", "reason": "broader than asked"}
+
+    def test_the_model_is_not_consulted_in_the_chat_or_the_terminal(self):
+        for channel in ("chat", "terminal"):
+            out = self.ask(PFX + "control_switch",
+                           {"entity_id": "switch.freezer", "action": "off"},
+                           ["tidy up the kitchen"], channel=channel)
+            self.assertEqual((out["decision"], out["path"]),
+                             ("allow", "switch"), channel)
+        self.assertEqual(self.model_calls, [])
+
+    def test_an_unattended_channel_is_not_reached(self):
+        out = self.ask(PFX + "control_switch",
+                       {"entity_id": "switch.freezer", "action": "off"},
+                       ["tidy up the kitchen"], channel="task")
+        self.assertEqual(out["path"], "model")
+        self.assertEqual(out["decision"], "deny")
+
+    def test_the_floors_still_refuse(self):
+        os.environ["BRAIN_PROTECTED_ENTITIES"] = "lock.*"
+        out = self.ask(PFX + "control_lock",
+                       {"entity_id": "lock.back", "action": "unlock"},
+                       ["open the back door"])
+        self.assertEqual((out["decision"], out["path"]), ("deny", "floor"))
+
+    def test_turning_it_off_is_not_answered_from_the_cache(self):
+        args = {"entity_id": "switch.freezer", "action": "off"}
+        self.assertEqual(self.ask(PFX + "control_switch", args,
+                                  ["tidy up"])["path"], "switch")
+        self.server.settings_store.save({"dangerously_skip_permissions": False})
+        out = self.ask(PFX + "control_switch", args, ["tidy up"])
+        self.assertEqual((out["decision"], out["path"]), ("ask", "model"))
+
+
 class TestTheContractIsArithmetic(GateCase):
     CONTRACT = {"id": "fix-1-2", "files": ["/config/packages/heat.yaml"],
                 "calls": [{"domain": "climate", "service": "set_temperature",

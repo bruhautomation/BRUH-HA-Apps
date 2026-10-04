@@ -12,10 +12,12 @@ TMUX_SESSION_NAME="claude"
 # the conversation you just had in the other tab. It is also what makes
 # /config/CLAUDE.md and /config/.claude/settings.local.json apply.
 CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-/config}"
-TASK_DIR="/data/tasks"
-mkdir -p "$TASK_DIR"
 
-# Read the permissions flag from the shared env file written by run.sh.
+# The permissions flag is read when a session STARTS, from the switch's
+# current value ("Let brAIn act without asking", brain-permissions.sh) —
+# not once when this picker opens, and not from a value frozen at boot, so
+# turning the switch on or off in ⚙ reaches the next session without an
+# add-on restart.
 #
 # The default is empty — prompt for permission — and it has to be, in both
 # directions. This read used to default to --dangerously-skip-permissions
@@ -29,14 +31,36 @@ mkdir -p "$TASK_DIR"
 #     substitution fired on the *normal* path and the picker skipped every
 #     prompt no matter what the option said.
 #
-# A security default may only fail closed. If run.sh has something to say
-# it says it here; anything else means prompt.
+# A security default may only fail closed. The library prints the flag only
+# for a switch file that says exactly `bypass` (or, with no file at all, a
+# boot value that is exactly the flag); anything else — and no library at
+# all — means prompt.
 PERMS_FLAG=""
 if [ -r /data/.brain_env ]; then
     # shellcheck disable=SC1091
     source /data/.brain_env
-    PERMS_FLAG="${BRAIN_CLAUDE_PERMS_FLAG:-}"
 fi
+PERMS_LIB="${BRAIN_PERMS_LIB:-/opt/scripts/brain-permissions.sh}"
+if [ ! -r "$PERMS_LIB" ]; then
+    PERMS_LIB="$(dirname "${BASH_SOURCE[0]}")/brain-permissions.sh"
+fi
+if [ -r "$PERMS_LIB" ]; then
+    # shellcheck disable=SC1090
+    source "$PERMS_LIB"
+fi
+
+current_perms() {
+    PERMS_FLAG=""
+    if declare -F brain_perms_flag >/dev/null 2>&1; then
+        PERMS_FLAG=$(brain_perms_flag)
+    fi
+}
+
+# Below the env file's source, like every other BRAIN_* read: the override
+# is a test's, and reading it above the source is the ordering
+# TestBrainEnvIsSourcedBeforeItIsRead exists to catch.
+TASK_DIR="${BRAIN_TASK_DIR:-/data/tasks}"
+mkdir -p "$TASK_DIR"
 
 show_banner() {
     clear
@@ -125,6 +149,7 @@ attach_existing_session() {
 }
 
 launch_claude_new() {
+    current_perms
     echo "Starting new Claude session..."
 
     if check_existing_session; then
@@ -137,6 +162,7 @@ launch_claude_new() {
 }
 
 launch_claude_continue() {
+    current_perms
     echo "Continuing most recent conversation..."
 
     if check_existing_session; then
@@ -148,6 +174,7 @@ launch_claude_continue() {
 }
 
 launch_claude_resume() {
+    current_perms
     echo "Opening conversation list..."
 
     if check_existing_session; then
@@ -188,6 +215,7 @@ launch_claude_custom() {
 }
 
 launch_new_window() {
+    current_perms
     if ! check_existing_session; then
         echo "No existing session. Starting new session..."
         sleep 1
@@ -201,6 +229,7 @@ launch_new_window() {
 }
 
 launch_background_task() {
+    current_perms
     echo ""
     echo "Enter a prompt for Claude to work on in the background:"
     echo "(Claude will work autonomously and save output to /data/tasks/)"

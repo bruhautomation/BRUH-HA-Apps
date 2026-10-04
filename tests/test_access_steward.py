@@ -112,14 +112,22 @@ class TestALockACloudSpeakerCanOpen(unittest.TestCase):
 
 
 class TestBrainsOwnPosture(unittest.TestCase):
-    def test_skip_permissions_on_fires(self):
-        found = fire("sec.brain_posture",
-                     house(posture={"dangerously_skip_permissions": True}))
-        self.assertEqual(len(found), 1)
-        self.assertIn("Configuration tab", found[0]["fix"])
+    """"Let brAIn act without asking" is a choice with its own label, so it
+    files no card: it rides in the weekly digest and nowhere else."""
 
-    def test_an_option_the_file_did_not_carry_is_not_on(self):
-        self.assertEqual(fire("sec.brain_posture", house(posture={})), [])
+    def test_no_check_files_a_card_for_the_switch(self):
+        self.assertNotIn("sec.brain_posture",
+                         {c["id"] for c in security.CHECKS})
+        snap = house(posture={"dangerously_skip_permissions": True})
+        result = checks.run_all(snap, NOW)
+        for row in result.get("findings") or []:
+            self.assertNotIn("permission", row["text"].lower())
+
+    def test_the_digest_still_says_it_is_on(self):
+        snap = house(posture={"dangerously_skip_permissions": True})
+        digest = security.review_digest(snap, NOW)
+        self.assertEqual(digest["posture"],
+                         {"dangerously_skip_permissions": True})
 
 
 class TestProtectionModeOff(unittest.TestCase):

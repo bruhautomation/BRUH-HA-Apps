@@ -62,6 +62,7 @@ import engine
 
 import atomic_write
 import journal
+import permission_mode
 import settings_store
 
 # Where the chat runs. /config so the project's settings.local.json (the
@@ -529,9 +530,49 @@ DISCUSS_ASK = tuple(
 # `--permission-prompt-tool`'s arrangement, generalised.
 _OPTIONAL_FLAGS = (
     ("permission-prompt-tool", "_prompt_tool_ok"),
+    ("permission-mode", "_mode_ok"),
     ("append-system-prompt", "_system_ok"),
     ("--settings", "_settings_ok"),
 )
+
+# **"Let brAIn act without asking" is a permission MODE, and a discussion
+# names its own** (`permission_mode`, `_permission_mode`). With the switch on
+# the chat spawns with ``--permission-mode bypassPermissions`` (read off the
+# installed CLI's own option table, which also accepts ``default``), so no
+# approval card appears. Three things stay guarded, and none of them is a
+# prompt for this to skip:
+#
+# * **Deny rules are evaluated BEFORE the mode.** The CLI's own permission
+#   check returns a deny from a rule ahead of the branch that lets bypass
+#   allow everything else (read off the 2.1.289 bundle), so the platform
+#   deny-list in settings.local.json still holds — and it is put on the
+#   argv as well (`--disallowedTools`), so it holds on a box whose project
+#   settings could not be written.
+# * **PreToolUse hooks run in every mode**, so brain-protect-hook.py still
+#   refuses a shell service call or a YAML edit reaching a protected
+#   entity, and the edit snapshot still feeds `brain undo`. The MCP
+#   server's `protected_entities` chokepoint is a refusal inside the tool,
+#   which no mode reaches.
+# * **A discussion is spawned with ``--permission-mode default``** whatever
+#   the switch says. Its ask rules outrank an allow anyway, and naming the
+#   mode means a Discuss session never inherits bypass from anywhere — an
+#   agreed change still goes through the plan, Apply and Undo.
+#
+# A change reaches an idle conversation on its next message through the
+# respawn `send` already does (`_spawned_mode`, the `_spawned_model` rule);
+# one that is mid-answer keeps the mode it was started with until then.
+
+# What a can_use_tool request's `permission_suggestions` may hand back as
+# "Always allow this", in the CLI SDK's own PermissionUpdate shape. Only a
+# rule that ALLOWS, only the two destinations that end with this add-on —
+# the conversation (`session`) and /config/.claude/settings.local.json
+# (`localSettings`, which run.sh rewrites at every start) — and only the
+# one mode that is not a permission switch in disguise. A suggestion naming
+# the user or project settings would outlast the add-on's own rewrite and
+# reach runs nobody was looking at, so it is dropped rather than offered.
+SUGGESTION_DESTINATIONS = ("session", "localSettings")
+MAX_SUGGESTIONS = 6
+MAX_SUGGESTION_RULES = 12
 
 # ---------------------------------------------------------------------------
 # The ways a finding could end, offered inside the conversation about it
@@ -724,6 +765,103 @@ def tool_summary(name: str, args: dict) -> str:
     return ""
 
 
+def _clean_rule(rule) -> dict | None:
+    """One `{toolName, ruleContent?}` rule, or None for anything else."""
+    if not isinstance(rule, dict):
+        return None
+    name = rule.get("toolName")
+    if not isinstance(name, str) or not name.strip() or len(name) > 200:
+        return None
+    out = {"toolName": name.strip()}
+    content = rule.get("ruleContent")
+    if content is not None:
+        if not isinstance(content, str) or len(content) > 500:
+            return None
+        out["ruleContent"] = content
+    return out
+
+
+def permission_updates(raw) -> list[dict]:
+    """The suggestions "Always allow this" may hand back, cleaned.
+
+    The input is the CLI's own `permission_suggestions` — PermissionUpdate
+    objects, `{type, …, destination}` (its SDK's schema). Kept: `addRules`
+    that ALLOW, `addDirectories`, and `setMode` to `acceptEdits`, each only
+    to a destination in `SUGGESTION_DESTINATIONS`. Dropped, rather than
+    passed through: a `replaceRules` (it would replace the reading
+    allow-list run.sh writes), any removal, any other mode, and anything
+    malformed — the CLI drops a malformed update itself, and a card that
+    offers to always allow something the CLI then throws away is a press
+    that does nothing it said.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw[:MAX_SUGGESTIONS]:
+        if not isinstance(item, dict):
+            continue
+        dest = item.get("destination")
+        if dest not in SUGGESTION_DESTINATIONS:
+            continue
+        kind = item.get("type")
+        if kind == "addRules" and item.get("behavior") == "allow":
+            raw_rules = item.get("rules")
+            if not isinstance(raw_rules, list):
+                continue
+            rules = [r for r in map(_clean_rule,
+                                    raw_rules[:MAX_SUGGESTION_RULES])
+                     if r is not None]
+            if rules:
+                out.append({"type": "addRules", "rules": rules,
+                            "behavior": "allow", "destination": dest})
+        elif kind == "addDirectories":
+            dirs = item.get("directories")
+            dirs = [d for d in dirs[:MAX_SUGGESTION_RULES]
+                    if isinstance(d, str) and d.strip()] \
+                if isinstance(dirs, list) else []
+            if dirs:
+                out.append({"type": "addDirectories", "directories": dirs,
+                            "destination": dest})
+        elif kind == "setMode" and item.get("mode") == "acceptEdits":
+            out.append({"type": "setMode", "mode": "acceptEdits",
+                        "destination": dest})
+    return out
+
+
+def _rule_words(rule: dict) -> str:
+    name = rule["toolName"]
+    if name.startswith("mcp__"):
+        # mcp__home-assistant__call_service → call_service: the server name
+        # is the same on every card, and the tool is what is being allowed.
+        name = name.rsplit("__", 1)[-1]
+    content = rule.get("ruleContent")
+    return f"{name}({content})" if content else name
+
+
+def suggestion_label(updates: list[dict]) -> str:
+    """What "Always allow this" would allow, in a few words. "" for none."""
+    parts: list[str] = []
+    for update in updates:
+        if update["type"] == "addRules":
+            parts += [_rule_words(r) for r in update["rules"]]
+        elif update["type"] == "addDirectories":
+            parts += [f"files in {d}" for d in update["directories"]]
+        elif update["type"] == "setMode":
+            parts.append("every file edit")
+    return _clip(", ".join(parts), 200) if parts else ""
+
+
+def suggestion_reach(updates: list[dict]) -> str:
+    """How long it lasts: `conversation` when every update stays in this
+    process, `restart` when one is written to settings.local.json, which
+    run.sh rewrites at the next start. "" for none."""
+    if not updates:
+        return ""
+    if all(u["destination"] == "session" for u in updates):
+        return "conversation"
+    return "restart"
+
+
 class ChatSession:
     """One live ``claude`` process, plus the transcript of what it said."""
 
@@ -806,10 +944,22 @@ class ChatSession:
         # runs exactly as it did before the round-trip — refusals are final
         # and amber — instead of not running at all.
         self._prompt_tool_ok = True
-        # The same, for the appended system prompt and the chat's own
-        # `--settings` (see `_OPTIONAL_FLAGS`).
+        # The same, for the permission mode, the appended system prompt
+        # and the chat's own `--settings` (see `_OPTIONAL_FLAGS`).
+        self._mode_ok = True
         self._system_ok = True
         self._settings_ok = True
+        # "Let brAIn act without asking", as the server last read it — set
+        # on every request like `model`, never read from settings here, so
+        # this module still does not depend on the web layer.
+        self.skip_permissions = False
+        # The `--permission-mode` the LIVE process was spawned with ("" for
+        # none), for the `_spawned_model` reason: a switch flipped while a
+        # conversation was open is intent, and only a respawn applies it.
+        self._spawned_mode: str | None = None
+        # The `permission_suggestions` of the pending ask, cleaned
+        # (`permission_updates`) — what "Always allow this" hands back.
+        self._pending_suggestions: list[dict] = []
         # What `--settings` the LIVE process was spawned with, for the
         # `_spawned_model` reason: a conversation that became a discussion
         # after its process started is still running without the ask rules,
@@ -1092,6 +1242,24 @@ class ChatSession:
             out["permissions"] = {"ask": list(DISCUSS_ASK)}
         return out
 
+    def _permission_mode(self) -> str:
+        """The `--permission-mode` this conversation should spawn with.
+
+        A discussion names `default` whatever the switch says; otherwise
+        the switch decides, and off is no flag at all — the CLI's own
+        default, which is what every release before this sent.
+        """
+        if self.finding_ts:
+            return permission_mode.CHAT_DISCUSS
+        if self.skip_permissions:
+            return permission_mode.CHAT_BYPASS
+        return ""
+
+    def _mode_arg(self) -> str:
+        """What actually goes on the argv: nothing once a CLI refused the
+        flag, which is asking — the direction a dropped guard may fall."""
+        return self._permission_mode() if self._mode_ok else ""
+
     def _settings_arg(self) -> str:
         if not self._settings_ok:
             return ""
@@ -1142,6 +1310,17 @@ class ChatSession:
             # refusal Claude writes around. Rules still short-circuit: the
             # CLI only asks where the interactive TUI would have prompted.
             argv += ["--permission-prompt-tool", "stdio"]
+        mode = self._mode_arg()
+        if mode:
+            argv += ["--permission-mode", mode]
+            if mode == permission_mode.CHAT_BYPASS:
+                # The CLI checks deny rules before the mode, so the
+                # project file's platform deny-list already holds here; the
+                # same list on the argv makes it hold on a box whose
+                # settings.local.json could not be written, which is the
+                # one mode where a missing rule would mean nothing asks.
+                argv += ["--disallowedTools",
+                         ",".join(engine.PLATFORM_DENIED)]
         system = self._system_prompt()
         if system:
             # Appended, never replacing: the CLI's own prompt is what it
@@ -1305,6 +1484,7 @@ class ChatSession:
         # currently wants — see set_model() and send() for who compares them.
         self._spawned_model = self.model
         self._spawned_settings = self._settings_arg()
+        self._spawned_mode = self._mode_arg()
         self._reader = asyncio.create_task(
             self._read_loop(self.proc, self._first_event))
         if self._prompt_tool_ok:
@@ -1466,7 +1646,8 @@ class ChatSession:
             if self.alive() and (self._respawn_pending
                                  or self.model != self._spawned_model
                                  or self._settings_arg()
-                                 != self._spawned_settings):
+                                 != self._spawned_settings
+                                 or self._mode_arg() != self._spawned_mode):
                 # The process no longer matches what the panel wants of it — a
                 # model chosen in ⚙ or the picker while it was live, or a turn
                 # cap only a respawn clears. Both are argv-shaped problems, and
@@ -1530,6 +1711,16 @@ class ChatSession:
         # button that would answer them with nothing. A malformed one falls
         # through to the ordinary card, which at least fails loudly.
         questions = question_spec(args) if tool == QUESTION_TOOL else None
+        # A discussion asks before it acts on purpose — its ask rules
+        # outrank an allow — so neither way of not being asked is offered
+        # there: an "always" rule written from a discussion would stop the
+        # NEXT ordinary chat asking and leave this one asking anyway.
+        discussing = bool(self.finding_ts)
+        if questions or discussing:
+            self._pending_suggestions = []
+        else:
+            self._pending_suggestions = permission_updates(
+                request.get("permission_suggestions"))
         self.pending_permission = {
             "id": request_id,
             "tool": tool,
@@ -1539,6 +1730,17 @@ class ChatSession:
             "input": "" if questions else _clip(
                 json.dumps(args, ensure_ascii=False, indent=2),
                 MAX_RESULT_CHARS),
+            # "Always allow this": what the rule would be, in words, and
+            # how long it lasts. Empty when the CLI suggested nothing this
+            # panel will hand back.
+            "always": suggestion_label(self._pending_suggestions),
+            "always_until": suggestion_reach(self._pending_suggestions),
+            # "Stop asking": the switch in ⚙, offered where it would change
+            # something — not in a discussion (which names its own mode)
+            # and not where this process is already acting without asking
+            # (a card there is a rule or a safety check of the CLI's own).
+            "stop_asking": not questions and not discussing
+            and self._spawned_mode != permission_mode.CHAT_BYPASS,
         }
         # Live-only: the answered question's tool result is the transcript.
         self._emit({"type": "permission", **self.pending_permission},
@@ -1564,7 +1766,8 @@ class ChatSession:
 
     async def respond_permission(self, request_id: str, allow: bool,
                                  timed_out: bool = False,
-                                 answers: dict | None = None) -> dict:
+                                 answers: dict | None = None,
+                                 always: bool = False) -> dict:
         """Answer the pending approval, on the wire the CLI asked on.
 
         An allow hands back the tool's own input untouched; a deny carries
@@ -1577,6 +1780,14 @@ class ChatSession:
         CLI's own permission component puts them. Allowing a question with
         no answers is refused here rather than sent — that is the exact
         empty answer sheet this card exists to prevent.
+
+        ``always`` is "Always allow this": the same allow, carrying the
+        CLI's own suggestions back as ``updatedPermissions`` — the shape its
+        SDK's permission result takes (`{behavior, updatedInput,
+        updatedPermissions}`). Only what the CLI offered and
+        `permission_updates` kept is ever sent; there is nothing to send
+        on a request that offered none, and that is refused rather than
+        silently downgraded to "once".
         """
         pending = self.pending_permission
         if not pending or pending.get("id") != request_id:
@@ -1593,6 +1804,12 @@ class ChatSession:
             answer: dict = {"behavior": "allow",
                             "updatedInput": {**self._pending_input,
                                              "answers": clean}}
+        elif allow and always:
+            if not self._pending_suggestions:
+                raise ValueError("nothing to always allow")
+            answer = {"behavior": "allow",
+                      "updatedInput": self._pending_input,
+                      "updatedPermissions": list(self._pending_suggestions)}
         elif allow:
             answer = {"behavior": "allow",
                       "updatedInput": self._pending_input}
@@ -1622,8 +1839,10 @@ class ChatSession:
             self._drop_pending_permission()
             raise RuntimeError(f"could not reach the Claude session: {exc}") \
                 from exc
-        self._drop_pending_permission(answered=True, allowed=allow)
-        return {"ok": True, "id": request_id, "allow": allow}
+        self._drop_pending_permission(answered=True, allowed=allow,
+                                      always=bool(allow and always))
+        return {"ok": True, "id": request_id, "allow": allow,
+                "always": bool(allow and always)}
 
     def _refuse_control(self, event: dict) -> None:
         """Decline a control request this panel does not implement.
@@ -1651,7 +1870,8 @@ class ChatSession:
             pass
 
     def _drop_pending_permission(self, answered: bool = False,
-                                 allowed: bool = False) -> None:
+                                 allowed: bool = False,
+                                 always: bool = False) -> None:
         """Clear the card everywhere a viewer might still be holding it."""
         timer, self._permission_timer = self._permission_timer, None
         if timer is not None:
@@ -1664,9 +1884,11 @@ class ChatSession:
                 timer.cancel()
         pending, self.pending_permission = self.pending_permission, None
         self._pending_input = {}
+        self._pending_suggestions = []
         if pending:
             self._emit({"type": "permission_done", "id": pending.get("id"),
-                        "answered": answered, "allow": allowed}, keep=False)
+                        "answered": answered, "allow": allowed,
+                        "always": always}, keep=False)
             self._changed()
 
     async def interrupt(self) -> dict:
@@ -2218,6 +2440,9 @@ class SessionRegistry:
         # never depends on the web layer — the server refreshes it on every
         # request, exactly as it refreshes the attached session's own.
         self.model = os.environ.get("BRAIN_MODEL", "")
+        # The same, for "Let brAIn act without asking". False until the
+        # server says otherwise, which is asking.
+        self.skip_permissions = False
         _migrate_legacy()
         prune_transcripts()
 
@@ -2227,6 +2452,7 @@ class SessionRegistry:
         # A conversation opened from the rail runs the model the chat is
         # set to, not whatever the environment said at boot.
         session.model = self.model
+        session.skip_permissions = self.skip_permissions
         session._on_change = lambda _s: self._broadcast()
         session._on_ask = self._announce_ask
         self._sessions.append(session)

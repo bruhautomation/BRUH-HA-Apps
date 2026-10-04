@@ -28,8 +28,8 @@ chosen and is worth a second look at, never on an ordinary house:
 
 Three new snapshot keys, each "I could not look" when its fetch failed —
 `exposure` (Core's expose list), `posture` (this add-on's own options),
-`ip_bans` (`/config/ip_bans.yaml`) — and `users`, which no check reads
-and the review does. `collect` is the one function that fills them, and
+`ip_bans` (`/config/ip_bans.yaml`) — and `users`. No check reads `users`
+or `posture`; the weekly review does. `collect` is the one function that fills them, and
 `checks.snapshot.collect` calls it at one point inside its session.
 """
 from __future__ import annotations
@@ -66,17 +66,13 @@ CLOUD_ASSISTANTS = {"cloud.alexa": "Alexa", "cloud.google_assistant":
 OPENING_DOMAINS = frozenset({"lock", "alarm_control_panel"})
 # A ban older than this is history rather than something to look at.
 BAN_WINDOW_DAYS = 14
-# The options whose being ON is a posture worth a row. One today; a table
-# so the next one is a line rather than a function.
-POSTURE_FLAGS = {
-    "dangerously_skip_permissions": (
-        "brAIn's terminal runs Claude with its permission prompts switched off",
-        "Anything Claude decides to do in the Terminal tab runs without "
-        + "asking first — edits to /config, shell commands, calls into Home "
-        + "Assistant. It is meant for a session where you are watching it.",
-        "Turn dangerously_skip_permissions off on the add-on's "
-        + "Configuration tab when you are not using it."),
-}
+# The options whose being ON is part of this add-on's posture. They ride in
+# the weekly access digest and nowhere else: "Let brAIn act without asking"
+# used to file a card (`sec.brain_posture`) every time it was on, which is a
+# warning about the one setting a person turned on deliberately, with a
+# label that already says what it does and what stays guarded. The weekly
+# sentence can still say it is on.
+POSTURE_FLAGS = ("dangerously_skip_permissions",)
 
 
 # ---------------------------------------------------------------------------
@@ -226,22 +222,6 @@ def lock_cloud_voice(snap: dict, now: float) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# sec.brain_posture — brAIn's own options
-# ---------------------------------------------------------------------------
-
-def brain_posture(snap: dict, now: float) -> list[dict]:
-    posture = snap.get("posture") or {}
-    out = []
-    for key, (text, detail, fix) in POSTURE_FLAGS.items():
-        # `is True`: an option the file did not carry is not one that is on.
-        if posture.get(key) is True:
-            out.append({"text": text, "detail": detail, "fix": fix,
-                        "severity": "warning", "fixable": False,
-                        "entity_id": ""})
-    return out
-
-
-# ---------------------------------------------------------------------------
 # sec.addon_unprotected — protection mode off
 # ---------------------------------------------------------------------------
 
@@ -316,8 +296,6 @@ def login_bans(snap: dict, now: float) -> list[dict]:
 CHECKS = [
     {"id": "sec.lock_cloud_voice", "title": "Locks a cloud speaker can open",
      "needs": ("states", "registry", "exposure"), "run": lock_cloud_voice},
-    {"id": "sec.brain_posture", "title": "brAIn's own permissions",
-     "needs": ("posture",), "run": brain_posture},
     {"id": "sec.addon_unprotected", "title": "Add-ons with protection off",
      "needs": ("supervisor",), "run": addon_unprotected},
     {"id": "sec.login_bans", "title": "Addresses banned after failed logins",

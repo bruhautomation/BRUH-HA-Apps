@@ -51,6 +51,31 @@ _replace_dir_with_symlink() {
     ln -sfn "$link_dest" "$dir_path"
 }
 
+# Write "Let brAIn act without asking" where a terminal session reads it when
+# it starts (scripts/brain-permissions.sh; panel/permission_mode.py is the
+# panel's writer of the same file). One word: `bypass` or `ask`.
+#
+# Written at boot, BEFORE ttyd starts, because the file lives in /data and
+# outlives a restart: without this, a value the panel published last boot
+# would answer for an option changed on the Configuration tab since — and a
+# stale `bypass` is the one stale value that fails open. So a write that
+# fails removes whatever was there, and the readers fall back to the boot
+# value in /data/.brain_env, or ask.
+publish_permission_switch() {
+    local skip="$1"
+    local file="${BRAIN_PERMISSIONS_FILE:-/data/brain-permissions}"
+    local word="ask"
+    if [ "$skip" = "true" ]; then
+        word="bypass"
+    fi
+    if ! { printf '%s\n' "$word" > "${file}.tmp" \
+            && chmod 644 "${file}.tmp" \
+            && mv -f "${file}.tmp" "$file"; } 2>/dev/null; then
+        rm -f "$file" "${file}.tmp" 2>/dev/null || true
+        bashio::log.warning "Could not write ${file}; new terminal sessions will use the boot value or ask"
+    fi
+}
+
 init_environment() {
     local data_home="/data/home"
     local config_dir="/data/.config"
@@ -300,15 +325,17 @@ MEMORYMD
         chmod 644 "$data_home/.tmux.conf"
     fi
 
-    # Read the permissions toggle.  This controls the interactive terminal ONLY.
-    # Background listeners (Assist, Automation) do NOT use this flag — they get
-    # tool permissions from /config/.claude/settings.local.json instead.
+    # Read the permissions switch ("Let brAIn act without asking"). It
+    # reaches the interactive terminal and the panel's chat; background
+    # listeners (Assist, Automation) never use it — they get their tool
+    # permissions from /config/.brain/headless_settings.json instead.
     local skip_perms
     skip_perms=$(bashio::config 'dangerously_skip_permissions' 'false')
     local perms_flag=""
     if [ "$skip_perms" = "true" ]; then
         perms_flag="--dangerously-skip-permissions"
     fi
+    publish_permission_switch "$skip_perms"
 
     # Write environment file for background processes (listeners, etc.)
     # These processes may lose env vars due to with-contenv shebang reloading
@@ -318,7 +345,9 @@ MEMORYMD
     # always have valid auth, even if the listener process doesn't inherit
     # the token from the s6 environment for any reason.
     #
-    # NOTE: BRAIN_CLAUDE_PERMS_FLAG is used by the interactive terminal only.
+    # NOTE: BRAIN_CLAUDE_PERMS_FLAG is the terminal's FALLBACK — what a
+    # session starts with when /data/brain-permissions is absent. The file
+    # is the current answer (see publish_permission_switch).
     # There is no turn cap here any more. `assist_max_turns`,
     # `automation_max_turns` and `study_max_turns` were options whose
     # only effect was to TRUNCATE a run that needed one more step — the
@@ -1997,36 +2026,21 @@ setup_automation_integration() {
 # Session Launch
 # ============================================================================
 
-# Returns "--dangerously-skip-permissions" if the user has opted in via config,
-# or an empty string if disabled. This flag tells Claude Code to execute tool
-# calls (file edits, shell commands, etc.) without interactive confirmation.
+# "Let brAIn act without asking" reaches the terminal as a FILE, read when a
+# session starts (scripts/brain-permissions.sh), rather than as a flag baked
+# into the command ttyd was launched with — which is what made a change need
+# an add-on restart. brain-terminal-start and the session picker both ask the
+# file; the panel rewrites it whenever the switch moves (⚙ → Terminal & chat,
+# or the Configuration tab, read back within a poll).
 #
-# This flag controls the INTERACTIVE TERMINAL only. Background listeners
-# (Assist conversation agents, Automation tasks) get their tool permissions
-# from /config/.brain/headless_settings.json, which claude-run adds to a
-# headless run — so they never need this flag.
-#
-# The flag is OFF by default, and off now means something: the project
-# file (/config/.claude/settings.local.json) pre-approves only Home
-# Assistant's reading tools, so the terminal asks before a shell command,
-# an edit or a service call. Turning it on skips ALL of those prompts.
-# brain-protect-hook.py still refuses a shell service call or a YAML edit
-# that would reach a `protected_entities` entity either way: a hook's
-# refusal is not a prompt, and skipping prompts does not skip it.
-#
-# SECURITY NOTE: Even with this flag enabled, Claude Code still runs as a
-# non-root user (UID 1000) inside an isolated container. It cannot access the
-# host OS or other add-ons.
-get_permissions_flag() {
-    local skip_perms
-    skip_perms=$(bashio::config 'dangerously_skip_permissions' 'false')
-
-    if [ "$skip_perms" = "true" ]; then
-        echo "--dangerously-skip-permissions"
-    else
-        echo ""
-    fi
-}
+# Off still means something: the project file (settings.local.json)
+# pre-approves only Home Assistant's reading tools, so the terminal asks
+# before a shell command, an edit or a service call. On skips those
+# prompts. brain-protect-hook.py still refuses a shell service call or a YAML
+# edit that would reach a `protected_entities` entity either way (a hook's
+# refusal is not a prompt), the platform deny-list still holds (deny rules
+# are checked before the mode), and Claude Code still runs as the non-root
+# `claude` user inside the container.
 
 # The terminal starts in /config, explicitly.
 #
@@ -2046,20 +2060,19 @@ CLAUDE_PROJECT_DIR="/config"
 get_claude_launch_command() {
     local auto_launch_claude
     auto_launch_claude=$(bashio::config 'auto_launch_claude' 'true')
-    local perms_flag
-    perms_flag=$(get_permissions_flag)
 
     if [ "$auto_launch_claude" = "true" ]; then
         # brain-terminal-start, not claude-run directly: it checks whether the
-        # chat tab has handed a conversation over and resumes it if so, then
-        # execs claude-run with these same flags.
-        echo "tmux new-session -A -s claude -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/brain-terminal-start ${perms_flag}'"
+        # chat tab has handed a conversation over and resumes it if so, and it
+        # reads the permission switch when the session STARTS — no flag is
+        # baked in here, or a change would wait for the next add-on restart.
+        echo "tmux new-session -A -s claude -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/brain-terminal-start'"
     else
         if [ -f /usr/local/bin/brain-menu ]; then
             echo "tmux new-session -A -s claude-picker -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/brain-menu'"
         else
             bashio::log.warning "Session picker not found, falling back to auto-launch"
-            echo "tmux new-session -A -s claude -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/brain-terminal-start ${perms_flag}'"
+            echo "tmux new-session -A -s claude -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/brain-terminal-start'"
         fi
     fi
 }
@@ -2123,7 +2136,7 @@ start_web_terminal() {
     bashio::log.info "  CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR}"
     bashio::log.info "  HOME=${HOME}"
     bashio::log.info "  HA MCP Server: $(bashio::config 'enable_ha_mcp_server' 'true')"
-    bashio::log.info "  Skip permissions: $(bashio::config 'dangerously_skip_permissions' 'false')"
+    bashio::log.info "  Act without asking (terminal + chat): $(bashio::config 'dangerously_skip_permissions' 'false')"
 
     local launch_command
     launch_command=$(get_claude_launch_command)
@@ -2209,6 +2222,9 @@ start_panel() {
     export BRAIN_HISTORY_KEEP_RUNS="$(bashio::config 'history_keep_runs' '40')"
     export BRAIN_HISTORY_KEEP_DAYS="$(bashio::config 'history_keep_days' '30')"
     export BRAIN_MODEL="$(bashio::config 'model' '')"
+    # The floor under the panel's live read of the permission switch, the
+    # way BRAIN_MODEL is under the model's (permission_mode.startup()).
+    export BRAIN_SKIP_PERMISSIONS="$(bashio::config 'dangerously_skip_permissions' 'false')"
     export BRAIN_TIMEOUT_MIN="$(bashio::config 'generation_timeout_minutes' '8')"
     export BRAIN_LOG_LEVEL="$(bashio::config 'log_level' 'info')"
     # One switch for "tell me everything": at debug the panel logs every

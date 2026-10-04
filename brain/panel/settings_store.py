@@ -46,7 +46,7 @@ the panel's ⚙ dialog edits at runtime — no add-on restart needed:
                     costs.
 
 It can also hold the add-on's Configuration-tab options, but only as a
-FALLBACK: those six settings normally live in the add-on's own options via
+FALLBACK: those seven settings normally live in the add-on's own options via
 the Supervisor (see addon_options.py), so the panel and the Configuration
 tab always agree. When the Supervisor isn't reachable the panel stores them
 here instead; each is None when unset, meaning "use the startup value":
@@ -57,6 +57,12 @@ here instead; each is None when unset, meaning "use the startup value":
   history_keep_days  — days past runs are kept (0-365)
   model              — Claude model override ("" is treated as unset)
   timeout_minutes    — per-generation hard timeout (2-30)
+  dangerously_skip_permissions — "Let brAIn act without asking": the
+                       terminal and the chat stop asking before each change
+                       (`permission_mode.py`). A boolean, and the one option
+                       here that is not about generation — it is mirrored
+                       the same way so ⚙ and the Configuration tab are one
+                       switch with two doors.
 
 File shape: {"auto_enabled": true, "plan": "pro", "budget_percent": 25,
 "refresh_hours": 12, ...} — option keys may be absent or null (= unset).
@@ -128,6 +134,10 @@ OPTION_RANGES = {
 }
 MAX_MODEL_CHARS = 100
 
+# Boolean add-on options mirrored the same way: name → nothing to clamp.
+# Kept apart from OPTION_RANGES because an int check would read True as 1.
+OPTION_BOOLS = ("dangerously_skip_permissions",)
+
 # The chat's live-process cap. A range rather than a free integer for the
 # same reason budget_percent has one: the low end has to leave the chat
 # usable and the high end has to leave the box usable.
@@ -171,6 +181,7 @@ DEFAULTS = {
     "history_keep_days": None,
     "model": None,
     "timeout_minutes": None,
+    "dangerously_skip_permissions": None,
     "chat_model": None,
     "chat_max_sessions": DEFAULT_CHAT_SESSIONS,
     # How hard brAIn thinks, as one word rather than a model per job. The
@@ -319,6 +330,9 @@ def load() -> dict:
         val = data.get(name)
         if isinstance(val, int) and not isinstance(val, bool) and lo <= val <= hi:
             out[name] = val
+    for name in OPTION_BOOLS:
+        if isinstance(data.get(name), bool):
+            out[name] = data[name]
     lo, hi = CHAT_SESSIONS_RANGE
     sessions = data.get("chat_max_sessions")
     if isinstance(sessions, int) and not isinstance(sessions, bool) \
@@ -404,12 +418,19 @@ def clean_option(key: str, value):
         if value is not None and not isinstance(value, str):
             raise ValueError("model must be a string or null")
         return (value or "").strip()[:MAX_MODEL_CHARS] or None
+    if key in OPTION_BOOLS:
+        # A boolean or nothing. A string "true" is refused rather than
+        # read, because a switch that turns off asking is the one setting
+        # a typo must not be able to turn on.
+        if value is not None and not isinstance(value, bool):
+            raise ValueError(f"{key} must be true, false or null")
+        return value
     raise ValueError(f"unknown option: {key}")
 
 
 def is_option(key: str) -> bool:
     """True for the settings that mirror an add-on Configuration option."""
-    return key in OPTION_RANGES or key == "model"
+    return key in OPTION_RANGES or key == "model" or key in OPTION_BOOLS
 
 
 def option_overrides() -> dict:
