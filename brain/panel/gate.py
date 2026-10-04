@@ -213,9 +213,9 @@ def contract_verdict(tool: str, args: dict, contract: dict) -> tuple[str, str]:
                 if all(not w.startswith("-") for w in words[2:]) \
                         and all(p in allowed for p in paths):
                     return "allow", ("it hands back a file the approved "
-                                     "change names")
+                                     + "change names")
                 return "deny", ("under an approved change `brain own` may "
-                                "only name the files that change edits")
+                                + "only name the files that change edits")
             return "deny", ("under an approved change the shell may only read "
                             f"(`{first}` is not on that list)")
         return "deny", "that tool is not part of the approved change"
