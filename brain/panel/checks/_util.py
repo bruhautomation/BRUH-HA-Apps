@@ -6,6 +6,7 @@ the individual checks stay readable as rules.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import math
 import re
 from typing import Any, Iterable, Iterator
@@ -253,3 +254,35 @@ def join_names(names: Iterable[str], limit: int = 6) -> str:
     if len(names) <= limit:
         return ", ".join(names)
     return ", ".join(names[:limit]) + f" and {len(names) - limit} more"
+
+
+def load_yaml_file(path: str) -> Any:
+    """Parse one of HA's YAML files, or None if it is absent or broken.
+
+    ``!secret``, ``!include`` and friends are HA's tags, not YAML's; a
+    loader that refuses them would refuse most real config files. They are
+    read as None here — a check reading a value that was a secret sees
+    nothing, which is the honest answer, not a crash.
+    """
+    try:
+        import yaml
+    except ImportError:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+
+    class _Loader(yaml.SafeLoader):
+        pass
+
+    def _tag(loader, suffix, node):
+        return None
+
+    _Loader.add_multi_constructor("!", _tag)
+    try:
+        return yaml.load(text, Loader=_Loader)  # noqa: S506 — SafeLoader subclass
+    except yaml.YAMLError as exc:
+        logging.getLogger("brain.checks").warning("could not parse %s: %s", path, str(exc)[:200])
+        return None

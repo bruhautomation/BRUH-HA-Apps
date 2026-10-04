@@ -256,7 +256,7 @@ class TestAFailedRunRaises(ServiceCase):
             try:
                 return await handler(call(data, user_id))
             finally:
-                await helper
+                await asyncio.gather(helper)
         return asyncio.new_event_loop().run_until_complete(main())
 
     FAILED = {"result": "Claude's saved login has expired. Open brAIn from the "

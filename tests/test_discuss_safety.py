@@ -105,7 +105,8 @@ class ChatCase(unittest.IsolatedAsyncioTestCase):
             if len(argvs) >= count:
                 return argvs
             await asyncio.sleep(0.05)
-        self.fail(f"expected {count} spawn(s), saw {read_argvs(self.log)}")
+        raise self.failureException(
+            f"expected {count} spawn(s), saw {read_argvs(self.log)}")
 
     async def until(self, check, timeout=8.0):
         loop = asyncio.get_running_loop()

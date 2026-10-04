@@ -79,7 +79,7 @@ def main(stdin=None, stdout=None) -> int:
                 "hookEventName": "UserPromptSubmit",
                 "additionalContext": text,
             }}))
-    except BaseException:  # noqa: BLE001 — a hook that fails adds nothing
+    except Exception:  # noqa: BLE001 — a hook that fails adds nothing
         return 0
     return 0
 
@@ -87,6 +87,6 @@ def main(stdin=None, stdout=None) -> int:
 if __name__ == "__main__":
     try:
         code = main()
-    except BaseException:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         code = 0
     sys.exit(code)

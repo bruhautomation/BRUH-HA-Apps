@@ -1586,8 +1586,8 @@ class TestProjectSettingsAllowList(unittest.TestCase):
         for doc in (self.settings, self.headless):
             self.assertEqual(doc["crossSessionInbound"], "refuse")
             self.assertIs(doc["autoMemoryEnabled"], False)
-            self.assertTrue(set(engine.PLATFORM_DENIED)
-                            <= set(doc["permissions"]["deny"]))
+            self.assertLessEqual(set(engine.PLATFORM_DENIED),
+                                 set(doc["permissions"]["deny"]))
 
     def test_the_project_server_is_still_trusted(self):
         """The approval that makes HA tools load in a `-p` run is separate

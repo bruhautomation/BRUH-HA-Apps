@@ -80,7 +80,6 @@ MAX_QUESTIONS_PER_RUN = 3
 MAX_OPEN_QUESTIONS = 5
 MAX_QUESTION = 160
 MAX_ASKED = 200
-WEEK_S = 7 * 86400
 TIMEOUT_S = 600
 
 # Keys whose value is a credential or a code in somebody's config, dropped

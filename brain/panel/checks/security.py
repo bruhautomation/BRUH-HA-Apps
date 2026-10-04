@@ -39,7 +39,7 @@ import json
 import os
 import re
 
-from ._util import House, domain_of, join_names, parse_ts
+from ._util import House, domain_of, join_names, load_yaml_file, parse_ts
 
 CONFIG_DIR = os.environ.get("BRAIN_HA_CONFIG_DIR", "/config")
 IP_BANS_FILE = os.environ.get(
@@ -105,7 +105,6 @@ def read_ip_bans(path: str | None = None) -> list[dict] | None:
     path = IP_BANS_FILE if path is None else path
     if not os.path.exists(path):
         return []
-    from .snapshot import load_yaml_file
     data = load_yaml_file(path)
     if data is None:
         try:

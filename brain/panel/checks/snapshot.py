@@ -96,6 +96,8 @@ import os
 import time
 from typing import Any
 
+from ._util import load_yaml_file
+
 log = logging.getLogger("brain.checks")
 
 CONFIG_DIR = os.environ.get("BRAIN_HA_CONFIG_DIR", "/config")
@@ -128,36 +130,9 @@ MAX_ADDON_INFO = 40
 # Config files — with Home Assistant's own tags tolerated
 # ---------------------------------------------------------------------------
 
-def load_yaml_file(path: str) -> Any:
-    """Parse one of HA's YAML files, or None if it is absent or broken.
-
-    ``!secret``, ``!include`` and friends are HA's tags, not YAML's; a
-    loader that refuses them would refuse most real config files. They are
-    read as None here — a check reading a value that was a secret sees
-    nothing, which is the honest answer, not a crash.
-    """
-    try:
-        import yaml
-    except ImportError:
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            text = fh.read()
-    except OSError:
-        return None
-
-    class _Loader(yaml.SafeLoader):
-        pass
-
-    def _tag(loader, suffix, node):
-        return None
-
-    _Loader.add_multi_constructor("!", _tag)
-    try:
-        return yaml.load(text, Loader=_Loader)  # noqa: S506 — SafeLoader subclass
-    except yaml.YAMLError as exc:
-        log.warning("could not parse %s: %s", path, str(exc)[:200])
-        return None
+# `load_yaml_file` lives in `_util` so `security` can read the login-ban
+# file without importing this module back; it is re-exported here because
+# every reader and test already asks this module for it.
 
 
 def load_configs(config_dir: str = CONFIG_DIR) -> dict:

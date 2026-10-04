@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -144,7 +145,7 @@ def _num(value) -> float | None:
         out = float(value)
     except (TypeError, ValueError):
         return None
-    return None if out != out else out
+    return None if math.isnan(out) else out
 
 
 # ---------------------------------------------------------------------------

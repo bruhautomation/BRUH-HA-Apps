@@ -968,7 +968,6 @@ CALIBRATION_PREDICATE = "judgement:calibration"
 # facts every card run reads — only the investigation asks for it.
 CALIBRATION_SUBJECT = "check:resident"
 DIRECTIONS = ("quieter", "louder")
-SCOPES = ("entity", "check")
 # Below this many labelled items a pattern is an anecdote.
 MIN_LABELLED = 3
 # …and this lopsided before it is a pattern.

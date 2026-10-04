@@ -217,13 +217,18 @@ class TestTheContract(unittest.TestCase):
         self.assertNotIn("opportunities", categories.CARD_SCHEMA["required"])
 
     def test_the_schema_validates_a_reply_carrying_one(self):
-        import jsonschema  # noqa: PLC0415
+        # `jsonschema` is not a test dependency (see test_corpus), so this
+        # walks the subset of JSON Schema CARD_SCHEMA is written in. It
+        # raises on any keyword it does not know, so a schema that grows a
+        # new one fails here rather than passing unchecked.
         reply = {"title": "t", "summary": "s", "highlights": [], "html": "<p/>",
                  "opportunities": [{"text": PATIO, "entities": ["light.patio"]}]}
-        jsonschema.validate(reply, categories.CARD_SCHEMA)
-        with self.assertRaises(jsonschema.ValidationError):
-            jsonschema.validate({**reply, "opportunities": [{"entities": []}]},
-                                categories.CARD_SCHEMA)
+        self.assertEqual(_schema_errors(reply, categories.CARD_SCHEMA), [])
+        bad = {**reply, "opportunities": [{"entities": []}]}
+        self.assertTrue(any("text" in e
+                            for e in _schema_errors(bad, categories.CARD_SCHEMA)))
+        loose = {**reply, "opportunities": [{"text": PATIO, "why": "x"}]}
+        self.assertTrue(_schema_errors(loose, categories.CARD_SCHEMA))
 
     def test_the_contract_tells_the_model_what_one_is(self):
         text = categories._CARD_CONTRACT
@@ -257,6 +262,38 @@ class TestTheContract(unittest.TestCase):
         for question in ("When did the boiler last run?",
                          "Should the porch light be on a timer?", ""):
             self.assertEqual(shape(question), "", question)
+
+
+_SCHEMA_TYPES = {"object": dict, "array": list, "string": str, "boolean": bool}
+_SCHEMA_KEYWORDS = {"type", "properties", "required", "additionalProperties",
+                    "items", "enum"}
+
+
+def _schema_errors(value, schema, path="$"):
+    """The errors JSON Schema would report, for the keywords CARD_SCHEMA uses."""
+    unknown = set(schema) - _SCHEMA_KEYWORDS
+    if unknown:
+        raise AssertionError(f"schema keyword this walker does not know: {unknown}")
+    kind = schema.get("type")
+    if kind and not isinstance(value, _SCHEMA_TYPES[kind]):
+        return [f"{path}: not {kind}"]
+    errors = []
+    if "enum" in schema and value not in schema["enum"]:
+        errors.append(f"{path}: {value!r} not in enum")
+    if isinstance(value, dict):
+        props = schema.get("properties", {})
+        for key in schema.get("required", []):
+            if key not in value:
+                errors.append(f"{path}: missing {key}")
+        for key, item in value.items():
+            if key in props:
+                errors += _schema_errors(item, props[key], f"{path}.{key}")
+            elif schema.get("additionalProperties") is False:
+                errors.append(f"{path}: unexpected {key}")
+    if isinstance(value, list) and "items" in schema:
+        for i, item in enumerate(value):
+            errors += _schema_errors(item, schema["items"], f"{path}[{i}]")
+    return errors
 
 
 if __name__ == "__main__":
