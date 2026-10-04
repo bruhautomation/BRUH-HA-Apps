@@ -76,6 +76,35 @@ aliases. Hide, unhide, enable and disable. Find references to entities and devic
 that no longer exist, and clean them up — dry-run by default, so you see the list
 before anything goes.
 
+**What a device shows as.** Every entity in Home Assistant has a **Show as** setting,
+and brAIn can change it. Ask in the chat or the terminal ("show the back door sensor
+as a door").
+
+- A contact sensor can show as a door, a window, a garage door, a motion sensor or a
+  leak sensor; a cover as a garage door, a blind, a shutter, a curtain or a gate; a
+  switch as an outlet. The type is checked against the list your Home Assistant
+  offers, and a wrong one is refused with that list. Leave the type empty to go back
+  to what the integration reports.
+- A smart plug running a fan or a lamp can show as a **fan** or a **light** (or a
+  lock, cover, siren or valve). brAIn uses Home Assistant's own *Change device type
+  of a switch* helper: the new entity takes the plug's place, and the plug's switch
+  is hidden and keeps working. To undo it, ask brAIn to stop showing it as a fan:
+  the switch comes back, and brAIn lists any automations, scripts or scenes that
+  used the entity that goes away (it can show you that list before changing
+  anything).
+- Only a switch can be shown as something else. A ceiling fan from an integration
+  cannot become a light, and brAIn says so.
+- A sensor's decimal places can be changed, and, where Home Assistant can convert
+  it, its unit (°C to °F, W to kW). A unit it cannot convert to is refused with the
+  ones it can.
+
+The same four are admin-only services you can call from an automation:
+\`brain.set_device_class\`, \`brain.show_switch_as\`, \`brain.stop_showing_switch_as\` and
+\`brain.set_sensor_display\`. From the chat and the terminal they go through the same
+checks as any other change — protected entities and
+the action gate — and a voice agent at the **Voice assistant**
+level cannot use them.
+
 **Integrations.** Reload one without restarting Home Assistant. Enable, disable, or
 remove one entirely.
 
@@ -338,10 +367,10 @@ the press it was.
   house — **Fix it** is deliberately not one of them and stays where it is.
   Discuss opens a **new** conversation beside whatever you were doing in the chat,
   so an answer being written carries on. In it Claude can read anything but has to
-  ask before it changes anything: every service call, file edit or shell command
-  shows a permission card first. When you agree what to change, Claude can offer
-  it as a button; pressing it has brAIn plan exactly that change, read-only, and
-  put the plan on the card. Nothing happens until you press **Apply**, and
+  ask before it changes anything, even with **Let brAIn act without asking** on:
+  every service call, file edit or shell command shows a permission card first.
+  When you agree what to change, Claude can offer it as a button; pressing it has
+  brAIn plan exactly that change, read-only, and put the plan on the card. Nothing happens until you press **Apply**, and
   **Undo** puts it back.
 - **I fixed it** — you handled it yourself. brAIn remembers that you did, and there
   is an optional box for **how** ("replaced the CR2032 — it's a 3-monthly job on that
@@ -1180,6 +1209,41 @@ simply because you prefer it.
   a top bar that folds away while you're typing so the terminal gets the screen.
 - **Sessions survive.** tmux underneath, so a dropped connection doesn't kill your
   work, and the environment persists across restarts.
+
+## Asking before acting
+
+By default the terminal and the chat ask before Claude runs a command, edits a file
+or changes something in Home Assistant. Reading is never asked about.
+
+To stop the asking, turn on **Let brAIn act without asking**. It is in ⚙ → Terminal
+& chat and on the add-on's Configuration tab, and they are the same switch. It
+applies to the next terminal session and the chat's next message, with no restart; a
+chat that is in the middle of an answer finishes it first. A terminal session that is
+already open keeps the setting it started with, and reopening the Terminal tab goes
+back to that same session, so end it (\`/exit\`) to start one under the new setting.
+
+With the switch on, these still hold:
+
+- **Protected entities** are still refused by every Home Assistant tool, and a
+  service call typed as a shell command or a YAML edit that names one is refused too.
+- **brAIn's own deny-list** still applies.
+- **The action gate** stops asking its own model what you meant,
+  but its floors and your house rules still decide.
+- **A conversation about a finding** (Discuss) still asks before every change.
+- **Edits made with Claude's file tools** can still be undone with \`brain undo\`.
+- **Voice, cards, automation tasks and Fix it** keep their own rules. The switch never
+  reaches them.
+
+What it does not cover: with the switch on, Claude runs shell commands without
+asking. A shell command that reaches a protected entity some other way (a script
+written to a file and run later, say) is not checked, and \`brain undo\` cannot put
+back a change a shell command made. If that matters to you, leave the switch off —
+see Security.
+
+An approval card can also offer **Always allow**, when Claude Code suggests a rule
+for what it is asking about. The line under the buttons says what it adds and for
+how long: either the rest of that conversation, or the terminal and every chat until
+the add-on restarts. **Stop asking…** on a card takes you to the switch.
 `,
   },
   {
@@ -2999,8 +3063,10 @@ Five sections, and you only open the ones you need.
   Claude subscription, the share of each 5-hour session Insights may spend,
   the meter showing where that session is now, and whether a card fetches what
   it needs or is handed the whole home.
-* **Terminal & chat** — which face the Ask tab shows (chat or the full
-  terminal), and how many conversations keep a live Claude Code process.
+* **Terminal & chat** — whether brAIn asks before it acts (**Let brAIn act
+  without asking**, the same switch as the Configuration tab's), which face the Ask
+  tab shows (chat or the full terminal), and how many conversations keep a live
+  Claude Code process.
 * **Generation defaults** — refresh interval, when a card actually refreshes,
   days of history, timeout, model, and how many past runs are kept. These are
   the add-on's own Configuration options; editing them here or on the
@@ -3465,6 +3531,16 @@ These files are on \`/share\` rather than in \`/data\` precisely so you can reac
 without the panel — which also means they are **not** covered by the add-on's
 \`backup_exclude\`. That is why the redaction runs over the whole file every time,
 rather than over the sections that "could" hold a token.
+
+## If Claude says a file is read-only
+
+This is meant to be fixed before you see it: brAIn hands the file back to Claude
+before an edit, and re-owns the YAML Home Assistant's editors save every ten minutes.
+If it ever happens — usually a shell command writing to a file Home Assistant has
+just saved — run \`brain own /config/<file>\` in the terminal, or ask Claude to. It
+never needs \`sudo\` or \`chown\`, and Claude is told never to ask you for either. If
+\`brain own\` says the panel is not answering, the add-on is not running; \`brain
+doctor\` checks that. See Files Claude cannot write.
 `,
   },
   {
@@ -3608,6 +3684,7 @@ brain findings wrong 1786715730 "that sensor is meant to sit closed"
 brain learn energy                 # study a topic
 brain ask "why is the garage cold" # same engine as the Ask card
 brain undo                         # review and revert Claude's edits
+brain own /config/scenes.yaml      # make a file Home Assistant saved as root writable again
 brain check                        # run the house checks now (no Claude run)
 brain doctor                       # end-to-end diagnostic
 brain doctor --json                # the same verdict as one JSON object
@@ -3633,6 +3710,29 @@ Run \`brain help\` or \`ha help\` for the full list.
 > If some other \`ha\` command is ever present on \`PATH\` inside the container, brAIn
 > installs its own as \`hass\` instead rather than shadowing it. The startup log says so
 > when this happens.
+
+## Files Claude cannot write: \`brain own\`
+
+Claude Code runs as its own non-root user, and Home Assistant saves
+\`automations.yaml\`, \`scripts.yaml\` and \`scenes.yaml\` as root, which can leave them
+read-only for Claude. brAIn hands them back by itself:
+
+- when the add-on starts, for your YAML and the usual config folders (\`packages\`,
+  \`blueprints\`, \`esphome\`, \`themes\`, \`custom_templates\`, \`python_scripts\` and any
+  folder \`configuration.yaml\` includes with \`!include_dir_*\`);
+- right before Claude edits a file it cannot write;
+- and every ten minutes, for the top-level YAML files the editors save.
+
+\`brain own <path…>\` does the same on demand, for a file a shell command wants to
+write (the edit hook only sees Claude's own edits); \`brain own -r <folder…>\` does a
+whole folder. You should never need to run \`sudo\` or \`chown\`, and Claude is told never
+to ask you to.
+
+What stays guarded, whatever you ask: brAIn never hands over anything outside
+\`/config\`, a symbolic link, \`.storage\`, \`.cloud\`, its own saved credentials,
+\`secrets.yaml\` or the recorder database. Files brAIn's panel creates under \`/config\`
+take the owner of the folder they land in, so Claude can edit them too; anything
+the panel writes outside \`/config\` is left as it was.
 `,
   },
   {
@@ -3642,11 +3742,11 @@ Run \`brain help\` or \`ha help\` for the full list.
     body: `
 # Configuration options
 
-**Six of these are also editable from the panel's ⚙ Settings dialog**, which writes
+**Seven of these are also editable from the panel's ⚙ Settings dialog**, which writes
 them back through the Supervisor so both screens always show the same value:
 \`auto_refresh_hours\`, \`history_days\`, \`history_keep_runs\`, \`history_keep_days\`,
-\`model\` and \`generation_timeout_minutes\`. Everything else on this page is the
-Configuration tab's alone.
+\`model\`, \`generation_timeout_minutes\` and \`dangerously_skip_permissions\`.
+Everything else on this page is the Configuration tab's alone.
 
 ⚙ Settings also holds things that are **not** add-on options at all, because they
 are changed while looking at the panel rather than at a restart: the master pause,
@@ -3680,7 +3780,7 @@ the Ask tab itself), because it changes nothing about how the add-on runs.
 | \`auto_generate_context\` | bool | \`true\` | Regenerate \`/config/CLAUDE.md\` with your HA system context at startup. |
 | \`enable_ha_mcp_server\` | bool | \`true\` | Give Claude native HA access (states, services, history, statistics, registries, dashboards, logs, templates). |
 | \`enable_mobile_ui\` | bool | \`true\` | Splice the mobile toolbar and iOS dictation fix into ttyd's UI. |
-| \`dangerously_skip_permissions\` | bool | \`false\` | Off: the terminal and the chat ask before running a command, editing a file or calling a service. On: the terminal stops asking. Never reaches the chat, cards, voice or automation tasks, which keep their own list. |
+| \`dangerously_skip_permissions\` | bool | \`false\` | **Let brAIn act without asking.** Off: the terminal and the chat ask before running a command, editing a file or changing something in Home Assistant. On: they stop asking, and the action gate stops asking its own model in those two. The same switch is in ⚙ → Terminal & chat, and it applies on the next terminal session or chat message without a restart. Protected entities, brAIn's deny-list, your house rules and conversations about a finding stay guarded either way. Voice, cards, automation tasks and Fix it keep their own rules. See Asking before acting. |
 
 ## Voice and automation
 
@@ -3901,6 +4001,10 @@ edges.
   file editing (**Full admin**) is a choice you make deliberately, per agent.
 - **The registry services are admin-gated**, and destructive sweeps (orphan cleanup)
   are dry-run by default.
+- **It will not change a sensor's or a number's device class.** That class decides
+  the unit and the long-term statistics, so a wrong one quietly breaks your history,
+  and Home Assistant's own settings do not offer it either. A sensor's unit and
+  decimals can still be changed.
 - **It is not affiliated with Anthropic or the Open Home Foundation.** It runs the
   official Claude Code CLI under your own account.
 `,
@@ -3987,17 +4091,21 @@ That is the point of it, and it is worth knowing where the edges are.
   that — a script written to a file and run later, say — is still Claude
   keeping a rule it has been **told** (it is in the fixer's instructions and in
   the generated \`/config/CLAUDE.md\`) rather than a gate enforcing it. If that
-  distinction matters to you, leave \`dangerously_skip_permissions\` off, which
-  is the default and makes the terminal and the chat ask first. A **Fix it**
-  run is held tighter than either: it may edit only the files its plan listed
-  and run only shell commands that read (see The action gate).
-- **\`dangerously_skip_permissions\` does what it says.** Off by default, and
-  off means the terminal and the chat **ask** before they run a shell
-  command, edit a file or call a Home Assistant service; on, the terminal
-  stops asking. It has never reached the chat, the cards, voice or automation
-  tasks. Until 2.11 "off" was close to a no-op: the project's own settings
-  file pre-approved Bash, edits and every Home Assistant tool, and the
-  terminal and the chat read that file too. Now
+  distinction matters to you, leave **Let brAIn act without asking**
+  (\`dangerously_skip_permissions\`) off, which is the default and makes the
+  terminal and the chat ask first. A **Fix it** run is held tighter than either:
+  it may edit only the files its plan listed and run only shell commands that
+  read (see The action gate).
+- **\`dangerously_skip_permissions\` ("Let brAIn act without asking") does what
+  it says.** Off by default, and off means the terminal and the chat **ask**
+  before they run a shell command, edit a file or call a Home Assistant
+  service. On, both stop asking, and in those two the action gate stops asking
+  its own model as well; protected entities, the deny-list, your house rules and
+  Discuss still hold (see Asking before acting). It has
+  never reached the cards, voice, automation tasks or Fix it. Until 2.11 "off"
+  was close to a no-op: the project's own settings file pre-approved Bash, edits
+  and every Home Assistant tool, and the terminal and the chat read that file
+  too. Now
   \`/config/.claude/settings.local.json\` pre-approves only **reading** Home
   Assistant, and the runs that have nobody to ask — the automation listener,
   study, the consolidator, a full-access voice agent, \`brain ask\` — get their
@@ -4029,12 +4137,17 @@ into an action.
   chat or the terminal. In an unattended run, it is refused.
 - **If the gate cannot be reached:** you are asked if you are there, and the
   action is refused if you are not.
+- **With Let brAIn act without asking on**, an action from the chat or the
+  terminal that passes the floors (the tripwire, protected entities) and your house
+  rules goes through without the gate asking its model. Automation tasks and Fix it
+  are checked exactly as before: the switch never reaches a run nobody is watching.
 - **Voice agents at the default "voice" level** keep their own limits: only
   devices exposed to Assist, and only everyday services. The gate does not slow
   them down, which also means house rules (below) do not apply to them.
 - **Shell commands and file edits** are checked only inside a **Fix it** run.
-  In your own terminal and chat they are yours, and the permission prompts and
-  the protected list still apply.
+  In your own terminal and chat they are yours: the protected list still applies,
+  and so do the permission prompts unless you turned on **Let brAIn act without
+  asking**.
 
 Text brAIn reads from your house — media titles, calendar descriptions,
 notification bodies, sensors that report a sentence, logbook messages — reaches

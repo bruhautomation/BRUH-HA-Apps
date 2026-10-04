@@ -1050,6 +1050,100 @@ Resident can correct its own first look.**
   had no caller but its own tests; what those tests held that the Resident's did
   not is now held on the Resident path.
 
+### Asking before acting, file ownership and what a device shows as
+
+- **One switch stops the asking, in the terminal and the chat.** The add-on
+  option is now called **Let brAIn act without asking**, and the same switch is
+  in ⚙ → Terminal & chat. Flip it in either place and the other follows. Your
+  existing setting keeps its meaning: the key is still
+  `dangerously_skip_permissions`.
+- **The chat obeys it too, and so does the action gate.** Before, the switch
+  reached only the terminal, and the chat always showed approval cards. With it
+  on, the chat stops asking as well, and in the chat and the terminal the action
+  gate stops asking its own model about what you meant. What still decides with
+  the switch on: protected entities, the tripwire, brAIn's own deny-list, your
+  house rules, and conversations about a finding, which always ask before a
+  change. Edits made with Claude's file tools can still be undone with
+  `brain undo`. Fix it runs, voice and background runs keep their own rules;
+  the switch never reaches them. With it on, shell commands run without asking
+  too, so leave it off if that matters to you.
+- **No restart needed.** A new terminal session and the chat's next message
+  both pick up the change. A conversation that is mid-answer finishes under the
+  old setting, then changes. A terminal session that is already open keeps the
+  setting it started with (reopening the Terminal tab goes back to it), so end
+  it with `/exit` to pick up a change.
+- **A setting it cannot read means "ask".** If brAIn cannot read the switch,
+  the terminal asks. A garbled or unreadable setting counts as "ask", never as
+  "go ahead".
+- **No warning card for a switch you turned on.** The access check no longer
+  files a finding while the switch is on: it is a choice with its own label.
+  The weekly access sentence can still mention it.
+- **"Always allow" on an approval card.** When Claude Code suggests a rule for
+  the command it is asking about, the card offers it. The line under the button
+  says what is added and how long it lasts: for the rest of the conversation,
+  or in the terminal and every chat until the add-on restarts. brAIn only
+  offers rules that allow something and end with the add-on.
+- **"Stop asking…" on an approval card** opens ⚙ at the switch, rather than
+  flipping it from a card about one command.
+- **The session picker reads the switch each time it starts a session.**
+  Previously it used the value from when the add-on started.
+- **brAIn no longer asks you to fix file permissions.** Home Assistant saves
+  automations.yaml, scripts.yaml and scenes.yaml as root, which used to leave
+  them read-only for Claude, and a run could end with "run sudo chown …". Now
+  brAIn hands those files back by itself:
+  - at startup, your YAML and the usual config folders (packages, blueprints,
+    esphome, themes, custom_templates, python_scripts and any
+    `!include_dir_*` folder);
+  - before Claude edits a file it cannot write;
+  - every ten minutes, for the top-level YAML the editors rewrite.
+
+  Claude is told, in the chat, the terminal and a Fix it run, to do this
+  itself and never to ask you for sudo or chown.
+- **New: `brain own <path…>`** (and `brain own -r <folder…>`). The same
+  hand-over on demand, for a shell command the edit hook does not see. It never
+  touches `.storage`, `.cloud`, brAIn's own credentials, `secrets.yaml`, the
+  recorder database, a symbolic link, or anything outside `/config`.
+- **Files brAIn's panel creates under `/config` belong to the folder's
+  owner**, so Claude can edit them in place. Files under `/data` stay root's.
+- **brAIn can change what kind of device something shows as.** It is the same
+  *Show as* setting as in an entity's own settings. A contact sensor can show
+  as a door, a window, a garage door, a motion sensor or a leak sensor; a cover
+  as a garage door, a blind, a shutter, a curtain or a gate; a switch as an
+  outlet. Ask in the chat or the terminal ("show the back door sensor as a
+  door"). Leave the type empty to go back to what the integration reports. The
+  type is checked against the list your Home Assistant offers, and a wrong one
+  is refused with that list.
+- **A smart plug running a fan or a lamp can show as a fan or a light.** brAIn
+  uses Home Assistant's own *Change device type of a switch* helper, which can
+  also make it a lock, cover, siren or valve. The new entity takes the plug's
+  place; the plug's switch is hidden and keeps working. A switch already shown
+  as something else is moved to the new type, and you get back the new entity's
+  id.
+- **And back again.** "Stop showing it as a fan" removes the helper, so the
+  switch shows as a switch and is no longer hidden. brAIn lists any
+  automations, scripts or scenes that used the entity that goes away, and can
+  show you that list before changing anything.
+- **Only a switch can be shown as something else.** A fan from an integration
+  cannot become a light. brAIn says so and, if the fan runs off a smart plug,
+  suggests showing the plug's switch instead.
+- **A sensor's decimals and unit.** brAIn can set how many decimal places a
+  sensor shows and, where Home Assistant can convert it, its unit (°C to °F, W
+  to kW). A unit Home Assistant cannot convert to is refused with the units it
+  can. A sensor's or a number's *device class* is never changed, because it
+  decides the unit and the long-term statistics; Home Assistant's own settings
+  do not offer it either.
+- **What stays guarded.** These are admin-only services
+  (`brain.set_device_class`, `brain.show_switch_as`,
+  `brain.stop_showing_switch_as`, `brain.set_sensor_display`). From the chat
+  and the terminal they pass the same checks as any other change: protected
+  entities are refused, and the action gate stands in front of them. A voice
+  agent at the *Voice assistant* level cannot use them, and neither can
+  scheduled cards or any other unattended run.
+- **The registry listing says what a device shows as.** When brAIn lists
+  entities (narrowed to 100 or fewer), each row carries the type somebody chose
+  and the type the integration reports, and an entity that stands in for a
+  switch names that switch.
+
 ## 2.10.1
 
 **The classic terminal on a phone: Paste works, the keyboard stops fighting you.**
