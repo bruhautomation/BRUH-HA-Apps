@@ -2279,11 +2279,21 @@ duplicate them (see [What it will not do](#what-it-will-not-do)).
    Insights tab for the twenty minutes the syllabus takes is indistinguishable
    from a broken one; and the five opening study sessions run a **lighter**
    syllabus than `brain learn` does, because somebody is watching a progress bar.
+   While it studies, **what it finds is shown as it lands** under the progress —
+   the facts each session filed about your house, newest first — rather than a
+   bar alone.
 6. **Pick your cards.** A fresh install now creates **only** what you ticked. The
    nine shipped categories are offered as suggestions like everything else, and
    the ones you did not accept are not created — including when you accept none,
    which is an answer and gives you the empty dashboard you asked for. (An install
    that onboarded before 1.48.0 is untouched: it keeps every card it has.)
+7. **One automation to try for a week.** When the study turned up something an
+   automation would fix — a light you switch on by hand every evening, a door
+   nobody remembers — the last step offers it as one sentence, ticked. Leaving it
+   ticked sends that sentence through the same path a typed one takes: drafted,
+   simulated over your recorded history and graded against what your household
+   actually did, then **trialled for a week** on **Home → Proposals**. Nothing is
+   written to your house until you accept it there.
 
 A **Claude Pro or Max subscription** is the cheapest way to run brAIn — it uses the
 plan you already pay for rather than API credits. An API key works too.

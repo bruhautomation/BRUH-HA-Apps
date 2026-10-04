@@ -4731,3 +4731,15 @@ body.term-classic #termMode .ico-out { display: block; }
 .setcams { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .setcam { display: flex; align-items: center; gap: 10px; min-height: 44px; overflow-wrap: anywhere; }
 .setcam .subtext { color: var(--ink-3); font-size: 12px; }
+
+/* Onboarding: what the study sessions have found, as it lands. A short
+   list under the progress, newest first; the topic is a small label so a
+   fact reads as a sentence about the house rather than as a log line. */
+.obfound { margin: 14px 0 6px; max-width: 68ch; }
+.obfoundlist { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.obfoundrow { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline;
+  line-height: 1.5; overflow-wrap: anywhere; }
+.obfoundtopic { color: var(--ink-3); font-size: 11.5px; font-weight: 600;
+  letter-spacing: .04em; text-transform: uppercase; flex: none; }
+.obfoundfact { color: var(--ink-1); flex: 1 1 220px; min-width: 0; }
+#obTryBlock { margin-top: 6px; }

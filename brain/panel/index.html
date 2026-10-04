@@ -298,6 +298,14 @@
         you can close this tab and come back.</p>
     </div>
 
+    <!-- What the study sessions have found, as it lands. The bar above says
+         how far along the syllabus is; this says what it has learned about
+         THIS house, which is what makes the half hour worth waiting for. -->
+    <div id="obFound" class="obfound hidden">
+      <h3 class="obh3">What brAIn has found so far</h3>
+      <ul id="obFoundList" class="obfoundlist"></ul>
+    </div>
+
     <div id="obRecommend" class="hidden">
       <div class="row">
         <button id="obGo" class="btn primary">See what it suggests</button>
@@ -318,6 +326,24 @@
       <div id="obShippedBlock" class="hidden">
         <h3 class="obh3">Cards that ship with brAIn, and fit this house</h3>
         <div id="obShipped" class="oblist"></div>
+      </div>
+      <!-- One automation the recommend pass found a reason for. Ticking it
+           sends the sentence through the ask bar's own path: drafted,
+           simulated over this house's history, graded against what the
+           household did, then watched for a week. Nothing is written to the
+           house until it is accepted on Home → Proposals. -->
+      <div id="obTryBlock" class="hidden">
+        <h3 class="obh3">One automation to try for a week</h3>
+        <label class="obcard">
+          <input type="checkbox" id="obTry" checked>
+          <div class="obcardbody">
+            <div class="obcardtitle" id="obTryText"></div>
+            <div class="obcardwhy" id="obTryWhy"></div>
+            <div class="obcardfocus">brAIn simulates it over your recorded history first,
+              then watches it for a week beside what you actually do. Nothing is written to
+              your house until you accept it under Home → Proposals.</div>
+          </div>
+        </label>
       </div>
       <p class="hint" id="obChooseNote"></p>
       <div class="row">

@@ -7834,6 +7834,29 @@ function renderOnboarding() {
       "Studied everything — waiting for what it found to be filed into memory.";
   }
 
+  // What the sessions have found, as it lands — newest first, a handful.
+  // Shown while learning and while the suggestions are one press away,
+  // never over the step-0 question or the list of cards to tick.
+  const found = Array.isArray(learning.reveals) ? learning.reveals : [];
+  const foundList = $("#obFoundList");
+  foundList.textContent = "";
+  found.forEach((r) => {
+    const li = el("li", "obfoundrow");
+    if (r.topic) li.appendChild(el("span", "obfoundtopic", r.topic));
+    li.appendChild(el("span", "obfoundfact", r.fact));
+    foundList.appendChild(li);
+  });
+  $("#obFound").classList.toggle("hidden",
+    step0 || manual || chose || !found.length);
+
+  // The one automation to try, when the recommend pass found a reason.
+  const tryRule = obState.try_rule;
+  $("#obTryBlock").classList.toggle("hidden", !tryRule || !tryRule.sentence);
+  if (tryRule && tryRule.sentence) {
+    $("#obTryText").textContent = tryRule.sentence;
+    $("#obTryWhy").textContent = tryRule.why || "";
+  }
+
   if (obState.sparse) {
     $("#obSparseText").textContent = obState.missing
       || "There isn't enough here yet for brAIn to suggest anything useful.";
@@ -7891,7 +7914,8 @@ function renderOnboarding() {
 function obChooseNote() {
   const note = $("#obChooseNote");
   if (!note) return;
-  const picked = $("#obChoose").querySelectorAll("input:checked").length;
+  const picked = $("#obChoose").querySelectorAll(
+    "input[data-index]:checked, input[data-shipped]:checked").length;
   note.textContent = picked
     ? `${picked} card${picked === 1 ? "" : "s"} will be on your Insights tab. `
       + "You can add, edit or remove cards any time."
@@ -8018,14 +8042,19 @@ $("#obAccept").addEventListener("click", async (ev) => {
     .map((cb) => Number(cb.dataset.index));
   const shipped = Array.from($("#obShipped").querySelectorAll("input:checked"))
     .map((cb) => cb.dataset.shipped);
+  const tryIt = !$("#obTryBlock").classList.contains("hidden")
+    && $("#obTry").checked;
   const res = await obCall("api/onboarding/accept",
-    { accept: picked, shipped }, ev.target);
+    { accept: picked, shipped, try_rule: tryIt }, ev.target);
   if (!res) return;
   obState.onboarded = true;
   const total = picked.length + shipped.length;
-  toast(total
-    ? `${total} card${total === 1 ? "" : "s"} on your Insights tab`
-    : "Done — your Insights tab starts empty");
+  const tried = res.tried
+    ? " One automation is being simulated — its week starts under Home → Proposals."
+    : "";
+  toast((total
+    ? `${total} card${total === 1 ? "" : "s"} on your Insights tab.`
+    : "Done — your Insights tab starts empty.") + tried);
   await Promise.all([refreshStatus(), refreshInsights()]);
   render();
 });

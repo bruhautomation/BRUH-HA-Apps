@@ -2340,6 +2340,15 @@ async def _one_intent(req: dict, now: float) -> dict | None:
     log.info("%s proposed from %s: %s",
              "standing automation" if standing else "one-off intent",
              log_safe(req.get("via") or "the panel"), log_safe(obj["title"]))
+    if standing and req.get("trial") and row.get("status") == "proposed":
+        # Asked for before the card existed ("try it for a week" on the
+        # onboarding screen). A trial writes nothing — it replays the week
+        # and grades it — so the press that asked is all the consent it
+        # needs; the accept at the end of the week is still a press.
+        tried = await asyncio.to_thread(proposals.start_trial, row["ts"])
+        if tried is not None:
+            log.info("its trial week started, as the request asked")
+            row = tried
     return row
 
 
@@ -13093,7 +13102,23 @@ async def h_onboarding_accept(request: web.Request) -> web.Response:
     if shipped is not None and not isinstance(shipped, list):
         raise web.HTTPBadRequest(text="shipped must be a list of category ids")
     created = await asyncio.to_thread(onboarding.accept, picked, shipped)
+    # The one automation the recommend pass offered to try, when it was
+    # ticked: into the ask bar's own drop, so it is drafted, refused or
+    # simulated over this house's history and graded against what the
+    # household did, exactly as a typed sentence is — and its week starts
+    # when it lands. Nothing is written to the house by this press.
+    tried = ""
+    if body.get("try_rule"):
+        rule = (await asyncio.to_thread(onboarding.stored_recommendations)
+                ).get("try_rule")
+        sentence = _opportunity_sentence((rule or {}).get("sentence") or "")
+        if sentence:
+            tried = await asyncio.to_thread(
+                intents.request, sentence, "onboarding", None, trial=True)
+            if tried:
+                await asyncio.to_thread(onboarding.mark_tried, tried)
     return web.json_response({"created": created, "onboarded": True,
+                              "tried": tried,
                               "shipped": prompt_store.load_overrides()["accepted"]})
 
 

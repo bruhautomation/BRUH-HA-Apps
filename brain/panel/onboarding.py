@@ -101,10 +101,14 @@ Reply with ONE JSON object and nothing else:
                       "why": "One sentence to the homeowner explaining why this is worth having, citing what was found."}],
  "shipped": [{"id": "one of the general card ids you were given",
               "why": "One sentence on why this home in particular has enough for it."}],
+ "try": {"sentence": "One automation this home would benefit from, said the way a person would say it: 'When the back door opens after sunset, turn on the patio light.'",
+         "why": "One sentence citing what you found that makes it worth trying."},
  "sparse": false,
  "missing": "Only when sparse is true: one sentence on what this home would need before insights are worth generating."}
 
 Propose at most 8, and fewer is better — four sharp cards beat eight vague ones.
+
+"try" is AT MOST ONE automation, and it is optional: leave it out unless you found something it rests on — entities that really exist here and a habit, a gap or a nuisance you actually saw. It will be simulated over this home's own recorded history before anything is written, so it must trigger on something the recorder keeps (a time, a state change, a number crossing a line) and act on named entities. Never a lock, an alarm or anything that opens the house.
 
 If what this home HAS is too thin to justify ANY card — barely any entities, no history, nothing learned — set "sparse": true, return an empty recommendations list, and say plainly in "missing" what is absent. Do not pad with generic cards; a card about a home you know nothing about wastes tokens on every run and teaches the homeowner to ignore the dashboard."""
 
@@ -353,6 +357,64 @@ def pending_facts(limit: int = 200) -> list[str]:
     return out
 
 
+# How many of the study sessions' findings the onboarding screen shows as
+# they land. Enough to read as "it is finding things about THIS house",
+# few enough to read at all.
+MAX_REVEALS = 8
+MAX_REVEAL_CHARS = 240
+
+
+def reveals(since: float = 0.0, limit: int = MAX_REVEALS) -> list[dict]:
+    """What the opening study sessions have found, newest first.
+
+    The first half hour of an install was a progress bar: five sessions
+    each spending minutes in somebody's house, and nothing on screen said
+    what any of them had learned until a recommend pass turned it into a
+    list of cards. So the facts are shown AS THEY LAND — read off the
+    memory inbox the sessions write to, and off `processed/` beside it,
+    because a consolidation pass that filed a line moments ago must not
+    take it off the screen that was showing it. Only lines a study session
+    wrote (`study:<topic>`) and only from this onboarding (`since`): the
+    screen is about what was found just now, not everything ever queued.
+    Read-only, and a file it cannot read is skipped.
+    """
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for folder in (INBOX_DIR / "processed", INBOX_DIR):
+        try:
+            paths = sorted(folder.glob("*.jsonl"))
+        except OSError:
+            continue
+        for path in paths:
+            try:
+                raw = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for line in raw.splitlines():
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+                source = str(obj.get("source") or "")
+                if not source.startswith("study:"):
+                    continue
+                fact = " ".join(str(obj.get("fact") or "").split())
+                ts = obj.get("ts")
+                ts = int(ts) if isinstance(ts, (int, float)) and not isinstance(
+                    ts, bool) else 0
+                if (not fact or fact.upper().startswith("FORGET:")
+                        or ts < since or fact in seen):
+                    continue
+                seen.add(fact)
+                topic = source.split(":", 1)[1]
+                rows.append({"fact": fact[:MAX_REVEAL_CHARS], "ts": ts,
+                             "topic": topic if topic in FIRST_TOPICS else ""})
+    rows.sort(key=lambda r: -r["ts"])
+    return rows[:max(0, int(limit))]
+
+
 def _studied_at() -> int:
     """When the last opening topic was recorded, or 0."""
     try:
@@ -391,6 +453,9 @@ def learning_progress(now: float | None = None) -> dict:
         # (`_shared_blocks`). A finished syllabus that has found nothing
         # yet means "wait", and past READY_AFTER_S it means "go on".
         "memory_ready": (lines + pending) >= MIN_MEMORY_LINES or waited,
+        # What the sessions have found so far, as it lands — the screen
+        # shows these while the bar fills, rather than a bar alone.
+        "reveals": reveals(since=float(_read_state().get("started_at") or 0)),
     }
 
 
@@ -561,13 +626,35 @@ def parse_recommendations(text: str) -> dict:
         "shipped": picked,
         "sparse": sparse,
         "missing": str(obj.get("missing") or "").strip()[:400] if sparse else "",
+        "try_rule": parse_try(obj.get("try")),
     }
+
+
+MAX_TRY_CHARS = 300
+
+
+def parse_try(value) -> dict | None:
+    """The one automation offered to try, or None.
+
+    Only the sentence is taken: it goes through the ask bar's own drop
+    (`intents.request`) and so through `authoring.build`'s refusals and
+    two simulations exactly as a typed sentence does. A config written
+    here would be a second path from a sentence to a rule.
+    """
+    if not isinstance(value, dict):
+        return None
+    sentence = " ".join(str(value.get("sentence") or "").split())[:MAX_TRY_CHARS]
+    if not sentence or sentence.endswith("?"):
+        return None
+    return {"sentence": sentence,
+            "why": " ".join(str(value.get("why") or "").split())[:MAX_TRY_CHARS]}
 
 
 def save_recommendations(result: dict) -> dict:
     _patch_state(phase="choosing", recommendations=result["recommendations"],
                  shipped=result.get("shipped") or [],
                  sparse=result["sparse"], missing=result["missing"],
+                 try_rule=result.get("try_rule"),
                  recommended_at=int(time.time()))
     return result
 
@@ -579,7 +666,14 @@ def stored_recommendations() -> dict:
         "shipped": state.get("shipped") or [],
         "sparse": bool(state.get("sparse")),
         "missing": state.get("missing") or "",
+        "try_rule": parse_try(state.get("try_rule")),
+        "tried_rule": state.get("tried_rule") or "",
     }
+
+
+def mark_tried(sentence: str) -> None:
+    """Remember that the onboarding automation was sent to be simulated."""
+    _patch_state(tried_rule=str(sentence or "")[:MAX_TRY_CHARS])
 
 
 # ---------------------------------------------------------------------------
