@@ -78,12 +78,24 @@ POSTURE_FLAGS = {
         "\"Let brAIn act without asking\" is on: anything Claude decides to "
         + "do in the terminal or the chat runs without asking first — edits "
         + "to /config, shell commands, calls into Home Assistant. Protected "
-        + "entities stay refused. It is meant for a stretch where you are "
-        + "watching it.",
+        + "entities are still refused through brAIn's Home Assistant tools, "
+        + "but a shell command that reaches one some other way is not "
+        + "checked. It is meant for a stretch where you are watching it.",
         "Turn \"Let brAIn act without asking\" off in ⚙ → Terminal & chat, "
         + "or dangerously_skip_permissions on the add-on's Configuration "
         + "tab, when you are not using it."),
 }
+# The same row when the switch is OFF but a terminal session started while
+# it was on is still running: turning it off reaches a session only when one
+# STARTS, so that session is still acting without asking. Same text — it is
+# the same fact about the house, and a second wording would file a second
+# row — with a detail and a fix about the session rather than the switch.
+STILL_RUNNING = (
+    "\"Let brAIn act without asking\" is off, but {n} started while it was "
+    + "on {verb} still running, and {pronoun} still {act} without asking "
+    + "first. The switch reaches a terminal session only when it starts.",
+    "End it with /exit in the Terminal tab (a background task ends when it "
+    + "finishes). The next session asks.")
 
 
 # ---------------------------------------------------------------------------
@@ -165,10 +177,23 @@ async def collect(session, snap: dict, mark) -> None:
                                     "Home Assistant did not list what it exposes"))
 
     options = read_options()
-    snap["posture"] = ({k: options.get(k) for k in POSTURE_FLAGS}
-                       if options is not None else {})
-    mark("posture", options is not None,
-         "" if options is not None else "this add-on's options could not be read")
+    posture = ({k: options.get(k) for k in POSTURE_FLAGS}
+               if options is not None else None)
+    # The permission switch as a terminal session starting NOW reads it —
+    # the panel rewrites that file the moment the switch moves, where
+    # options.json is what the Supervisor wrote when the add-on started —
+    # plus anything still running that began with it on.
+    import permission_mode
+
+    live = permission_mode.published()
+    if live is not None:
+        posture = {**(posture or {}), "dangerously_skip_permissions": live}
+    sessions = permission_mode.terminal_sessions()
+    if posture is not None and sessions and sessions.get("acting"):
+        posture["terminal_acting"] = sessions["acting"]
+    snap["posture"] = posture if posture is not None else {}
+    mark("posture", posture is not None,
+         "" if posture is not None else "this add-on's options could not be read")
 
     bans = read_ip_bans()
     snap["ip_bans"] = bans or []
@@ -245,6 +270,20 @@ def brain_posture(snap: dict, now: float) -> list[dict]:
             out.append({"text": text, "detail": detail, "fix": fix,
                         "severity": "warning", "fixable": False,
                         "entity_id": ""})
+    acting = posture.get("terminal_acting")
+    if not out and isinstance(acting, int) and not isinstance(acting, bool) \
+            and acting > 0:
+        many = acting > 1
+        detail, fix = STILL_RUNNING
+        out.append({
+            "text": POSTURE_FLAGS["dangerously_skip_permissions"][0],
+            "detail": detail.format(
+                n=f"{acting} terminal sessions" if many else "a terminal session",
+                verb="are" if many else "is",
+                pronoun="they" if many else "it",
+                act="act" if many else "acts"),
+            "fix": fix, "severity": "warning", "fixable": False,
+            "entity_id": ""})
     return out
 
 

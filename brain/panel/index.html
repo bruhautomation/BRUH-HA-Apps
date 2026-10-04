@@ -1167,10 +1167,13 @@
               edit or change.</span></span></label>
             <button type="button" class="btn icon tiny"
               aria-label="More about acting without asking"
-              data-tip="Off, the terminal and the chat ask before Claude runs a command, edits a file or changes something in Home Assistant, and only reading is pre-approved. On, they stop asking. What stays guarded either way: protected entities are still refused, brAIn's own deny-list still holds, a conversation about a finding still asks (an agreed change still goes through the plan, with Undo), file edits can still be put back with brain undo, and voice and background runs keep their own rules. It applies to the next terminal session and the chat's next message; a session already running keeps asking until then. This is the add-on's dangerously_skip_permissions option, so the Configuration tab shows the same switch.">?</button>
+              data-tip="Off, the terminal and the chat ask before Claude runs a command, edits a file or changes something in Home Assistant. Only reading is pre-approved. On, they stop asking. Still guarded: brAIn's Home Assistant tools refuse protected entities, and so do plain shell service calls and YAML edits made with Claude's file tools that name one. A shell command that reaches one some other way is not checked. brAIn's own deny-list still holds, a conversation about a finding still asks (an agreed change still goes through the plan, with Undo), and voice and background runs keep their own rules. Edits made with Claude's file tools can be put back with brain undo; changes made by shell commands cannot. A change reaches the next terminal session and the chat's next message. A terminal session already open keeps the setting it started with, either way, until you end it with /exit; a chat answer already being written finishes first. This is the add-on's dangerously_skip_permissions option, so the Configuration tab shows the same switch.">?</button>
           </div>
-          <p class="hint" id="setSkipPermsNote">Protected entities, brAIn's deny-list and conversations
-            about a finding stay guarded. Applies to the next terminal session and chat message.</p>
+          <!-- Rewritten by renderSettingsForm from `permission_sessions`
+               when an open terminal session did not get the switch's
+               current value; this text is what it says otherwise. -->
+          <p class="hint" id="setSkipPermsNote">Applies to the next terminal session and chat message.
+            Protected entities are refused through brAIn's own tools, not every shell command.</p>
 
           <div class="setrow">
             <label for="setTerminalUi">Terminal tab</label>

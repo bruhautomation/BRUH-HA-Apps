@@ -2462,6 +2462,7 @@ function renderSettingsForm(data) {
   // Only an explicit true ticks it: a value that arrived missing or
   // malformed is asking, which is what the terminal and the chat will do.
   $("#setSkipPerms").checked = data.settings.dangerously_skip_permissions === true;
+  renderSkipPermsNote(data);
   $("#setGatherMode").value = data.settings.gather_mode || "search";
   $("#setRefreshMode").value = data.settings.refresh_mode || "changed";
   $("#setThinking").value = data.settings.thinking || "normal";
@@ -2529,6 +2530,43 @@ function loadAdvanced() {
   loadRehearsal(true);
 }
 
+// The line under "Let brAIn act without asking". The switch reaches a
+// terminal session only when it STARTS — ttyd re-attaches to the same tmux
+// session on every visit — so a flip leaves any open one as it began: still
+// acting after "off", still asking after "on". The server counts what is
+// running (`permission_sessions`, null when it could not look) and this
+// says which open session did not get the current value, and how to end
+// it. Nothing here ends one: a terminal is somebody's work.
+const SKIP_PERMS_NOTE = "Applies to the next terminal session and chat message. "
+  + "Protected entities are refused through brAIn's own tools, not every shell command.";
+
+function skipPermsStale(data) {
+  const on = data.settings && data.settings.dangerously_skip_permissions === true;
+  const live = data.permission_sessions || null;
+  if (!live) return "";
+  const acting = Number(live.acting) || 0;
+  const asking = Number(live.asking) || 0;
+  if (!on && acting > 0) {
+    return acting > 1
+      ? `${acting} terminal sessions started while this was on are still open and still act without asking. End them with /exit; the next one asks.`
+      : "A terminal session started while this was on is still open and still acts without asking. End it with /exit; the next one asks.";
+  }
+  if (on && asking > 0) {
+    return asking > 1
+      ? `${asking} terminal sessions already open still ask. End them with /exit and the next one won't.`
+      : "The terminal session already open still asks. End it with /exit and the next one won't.";
+  }
+  return "";
+}
+
+function renderSkipPermsNote(data) {
+  const note = $("#setSkipPermsNote");
+  if (!note) return;
+  const stale = skipPermsStale(data);
+  note.textContent = stale || SKIP_PERMS_NOTE;
+  note.classList.toggle("warn", !!stale);
+}
+
 // Open ⚙ at one control: the section it lives in opened, the control
 // scrolled into view, focused and briefly marked. What "Stop asking" on a
 // chat approval card does — the switch is found where the asking happens,
@@ -2575,6 +2613,9 @@ async function refreshOpenSettings() {
 // `note` is what to say when the save came from somewhere that isn't the
 // Settings dialog — "Saved" is only meaningful next to the field you just
 // changed, and the topbar chip is nowhere near one.
+// `note` may be a function of the saved payload, for a toast whose words
+// depend on what the server found (the permission switch's). Answers the
+// payload, or null when the save failed, so a control can put itself back.
 async function saveSettings(fields, note) {
   try {
     const data = await api("api/settings", {
@@ -2593,9 +2634,11 @@ async function saveSettings(fields, note) {
     chatState.defaultModelLabel = data.model_label || "";
     renderUsageChip();
     renderPausedChip();
-    toast(note || "Saved");
+    toast((typeof note === "function" ? note(data) : note) || "Saved");
+    return data;
   } catch (e) {
     toast(e.message);
+    return null;
   }
 }
 
@@ -3725,14 +3768,29 @@ $("#setChatSessions").addEventListener("change", () =>
 // `dangerously_skip_permissions` option, so the Configuration tab moves with
 // it, and the server republishes it to the file a terminal session reads
 // when it starts. The chat picks it up on its next message. The toast says
-// what still holds, because "acts without asking" read on its own sounds
-// like more than it is.
-$("#setSkipPerms").addEventListener("change", () => {
-  const on = $("#setSkipPerms").checked;
-  saveSettings({ dangerously_skip_permissions: on }, on
-    ? "On — the next terminal session and chat message act without asking. "
-      + "Protected entities stay refused."
-    : "Off — the terminal and the chat ask before acting again");
+// what changed and what did NOT: a terminal session already open keeps the
+// setting it started with, in both directions, and "off" is the direction
+// where saying otherwise would be a lie about something still acting.
+function skipPermsToast(on, data) {
+  const parts = [on
+    ? "On — new terminal sessions and the chat's next message act without asking."
+    : "Off — new terminal sessions and the chat's next message ask first."];
+  const stale = skipPermsStale(data);
+  if (stale) parts.push(stale);
+  else parts.push("A chat answer already being written finishes first.");
+  if ((data.saved_locally || []).includes("dangerously_skip_permissions")) {
+    parts.push("Saved in brAIn only: the add-on's Configuration tab could not be updated.");
+  }
+  return parts.join(" ");
+}
+
+$("#setSkipPerms").addEventListener("change", async () => {
+  const box = $("#setSkipPerms");
+  const on = box.checked;
+  const data = await saveSettings({ dangerously_skip_permissions: on },
+    (saved) => skipPermsToast(on, saved));
+  // A refused save leaves the switch where it was, and so does the box.
+  if (!data) box.checked = !on;
 });
 // Applied straight away rather than on the next status poll, so the Terminal
 // tab has already changed by the time the dialog is closed — and through the

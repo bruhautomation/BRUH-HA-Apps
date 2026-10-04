@@ -21,6 +21,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PANEL_DIR = BASE_DIR / "brain" / "panel"
@@ -121,6 +122,42 @@ class TestBrainsOwnPosture(unittest.TestCase):
     def test_an_option_the_file_did_not_carry_is_not_on(self):
         self.assertEqual(fire("sec.brain_posture", house(posture={})), [])
 
+    def test_its_detail_does_not_overstate_what_stays_guarded(self):
+        """Shell commands run unasked with the switch on, and the hook only
+        knows the obvious ones — so the detail may not say protected
+        entities "stay refused" without saying where that stops."""
+        found = fire("sec.brain_posture",
+                     house(posture={"dangerously_skip_permissions": True}))
+        self.assertNotIn("stay refused", found[0]["detail"])
+        self.assertIn("not checked", found[0]["detail"])
+
+    def test_a_terminal_session_still_acting_keeps_the_row_up(self):
+        """Off reaches a terminal session only when one starts, so a session
+        begun while it was on is still acting: the same row, with a detail
+        and a fix about the session."""
+        on = fire("sec.brain_posture",
+                  house(posture={"dangerously_skip_permissions": True}))
+        found = fire("sec.brain_posture",
+                     house(posture={"dangerously_skip_permissions": False,
+                                    "terminal_acting": 1}))
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["text"], on[0]["text"])
+        self.assertIn("a terminal session", found[0]["detail"])
+        self.assertIn("/exit", found[0]["fix"])
+        two = fire("sec.brain_posture",
+                   house(posture={"dangerously_skip_permissions": False,
+                                  "terminal_acting": 2}))
+        self.assertIn("2 terminal sessions", two[0]["detail"])
+        # On, with a session acting too, is still one row.
+        both = fire("sec.brain_posture",
+                    house(posture={"dangerously_skip_permissions": True,
+                                   "terminal_acting": 1}))
+        self.assertEqual(len(both), 1)
+        for junk in (0, True, "1", None):
+            self.assertEqual(fire("sec.brain_posture", house(posture={
+                "dangerously_skip_permissions": False,
+                "terminal_acting": junk})), [], repr(junk))
+
 
 class TestProtectionModeOff(unittest.TestCase):
     def _addons(self, rows):
@@ -178,7 +215,7 @@ class TestTheCollector(unittest.IsolatedAsyncioTestCase):
     """What a refused `config/auth/list` does to the users key, over a
     real socket."""
 
-    async def _collect(self, answers, options=None):
+    async def _collect(self, answers, options=None, published=None):
         core = await FakeCore(answers).start()
         self.addAsyncCleanup(core.close)
         old = ha_data.CORE_WS
@@ -195,6 +232,17 @@ class TestTheCollector(unittest.IsolatedAsyncioTestCase):
         security.IP_BANS_FILE = os.path.join(tmp.name, "ip_bans.yaml")
         self.addCleanup(setattr, security, "OPTIONS_FILE", old_o)
         self.addCleanup(setattr, security, "IP_BANS_FILE", old_b)
+        # The live permission switch is read off the file a terminal session
+        # reads; absent here, so posture is the options file's, as before —
+        # and a machine with a real /data cannot answer for this test.
+        perms_file = os.path.join(tmp.name, "perms")
+        if published is not None:
+            with open(perms_file, "w", encoding="utf-8") as fh:
+                fh.write(published)
+        perms = mock.patch.dict(os.environ,
+                                {"BRAIN_PERMISSIONS_FILE": perms_file})
+        perms.start()
+        self.addCleanup(perms.stop)
         import aiohttp
         snap = {"available": {}, "errors": {}}
 
@@ -222,6 +270,46 @@ class TestTheCollector(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("never-copied", json.dumps(snap))
         self.assertEqual(snap["posture"], {"dangerously_skip_permissions": True})
         self.assertEqual(snap["ip_bans"], [])
+
+    async def test_the_live_switch_outranks_the_options_file(self):
+        """options.json is what the Supervisor wrote when the add-on
+        started; the published file is what a terminal session starting now
+        reads, rewritten the moment the switch moves."""
+        answers = {"config/auth/list": ok([]),
+                   "homeassistant/expose_entity/list": ok(
+                       {"exposed_entities": {}})}
+        snap = await self._collect(
+            answers, options={"dangerously_skip_permissions": True},
+            published="ask\n")
+        self.assertEqual(snap["posture"], {"dangerously_skip_permissions": False})
+        snap = await self._collect(
+            answers, options={"dangerously_skip_permissions": False},
+            published="bypass\n")
+        self.assertEqual(snap["posture"], {"dangerously_skip_permissions": True})
+        # A file that says neither is no answer, so the options file stands.
+        snap = await self._collect(
+            answers, options={"dangerously_skip_permissions": True},
+            published="")
+        self.assertEqual(snap["posture"], {"dangerously_skip_permissions": True})
+        # And with no options file at all, the live switch is still posture.
+        snap = await self._collect(answers, published="bypass\n")
+        self.assertTrue(snap["available"]["posture"])
+        self.assertEqual(snap["posture"], {"dangerously_skip_permissions": True})
+
+    async def test_a_session_still_acting_is_carried(self):
+        import permission_mode
+        answers = {"config/auth/list": ok([]),
+                   "homeassistant/expose_entity/list": ok(
+                       {"exposed_entities": {}})}
+        with mock.patch.object(permission_mode, "terminal_sessions",
+                               return_value={"acting": 1, "asking": 0}):
+            snap = await self._collect(
+                answers, options={"dangerously_skip_permissions": False},
+                published="ask\n")
+        self.assertEqual(snap["posture"], {"dangerously_skip_permissions": False,
+                                           "terminal_acting": 1})
+        self.assertEqual(
+            len(fire("sec.brain_posture", house(posture=snap["posture"]))), 1)
 
     async def test_a_refusal_is_unavailable_not_empty(self):
         snap = await self._collect({

@@ -549,10 +549,14 @@ _OPTIONAL_FLAGS = (
 #   argv as well (`--disallowedTools`), so it holds on a box whose project
 #   settings could not be written.
 # * **PreToolUse hooks run in every mode**, so brain-protect-hook.py still
-#   refuses a shell service call or a YAML edit reaching a protected
-#   entity, and the edit snapshot still feeds `brain undo`. The MCP
-#   server's `protected_entities` chokepoint is a refusal inside the tool,
-#   which no mode reaches.
+#   refuses a shell service call or a file-tool YAML edit reaching a
+#   protected entity, and the edit snapshot still feeds `brain undo`. The
+#   MCP server's `protected_entities` chokepoint is a refusal inside the
+#   tool, which no mode reaches. What is NOT covered, and every sentence a
+#   person reads about this switch says so: the hook matches the obvious
+#   shell shapes, so a command that reaches a protected entity some other
+#   way (a heredoc into automations.yaml, a URL built in pieces) now runs
+#   unasked; and a change made by a shell command reaches no undo journal.
 # * **A discussion is spawned with ``--permission-mode default``** whatever
 #   the switch says. Its ask rules outrank an allow anyway, and naming the
 #   mode means a Discuss session never inherits bypass from anywhere — an
@@ -2730,7 +2734,12 @@ class SessionRegistry:
                     # Held but stopped — by the cap, or by a handoff. The
                     # transcript is already right, so this is a start, not
                     # a resume: replaying over it would wipe the notice
-                    # that explains the gap.
+                    # that explains the gap. It spawns with what the chat
+                    # is set to NOW, as `_adopt` does for a new one — or a
+                    # switch flipped while it was stopped would spawn the
+                    # old way and be respawned on the first message.
+                    existing.model = self.model
+                    existing.skip_permissions = self.skip_permissions
                     await existing.start()
                     spawned = True
                 self._attach_locked(existing)
