@@ -304,6 +304,8 @@ def load() -> dict:
         out["honeytoken_entities"] = clean_entity_list(
             data.get("honeytoken_entities"))
     except ValueError:
+        # A list that cannot be read is no tripwire rather than a crash on
+        # every settings read; the MCP chokepoint's other floors still hold.
         pass
     return out
 

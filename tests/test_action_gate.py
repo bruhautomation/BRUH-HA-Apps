@@ -385,8 +385,12 @@ class GateCase(PanelCase):
                         engine.get_auth, security.HONEYTOKEN_FILE,
                         os.environ.get("BRAIN_PROTECTED_ENTITIES"))
         security.HONEYTOKEN_FILE = Path(self.tmp.name) / "h" / "honey.json"
+        # The server's copies, which in a full run may be other objects.
+        self._sec2 = (self.server.security, self.server.security.HONEYTOKEN_FILE)
+        self.server.security.HONEYTOKEN_FILE = security.HONEYTOKEN_FILE
         os.environ.pop("BRAIN_PROTECTED_ENTITIES", None)
         gate._CACHE.clear()
+        self.server.gate._CACHE.clear()
         self.model_calls = []
         self.model_reply = {"verdict": "allow", "reason": "they asked"}
         self.model_ok = True
@@ -430,7 +434,9 @@ class GateCase(PanelCase):
             os.environ.pop("BRAIN_PROTECTED_ENTITIES", None)
         else:
             os.environ["BRAIN_PROTECTED_ENTITIES"] = protected
+        self._sec2[0].HONEYTOKEN_FILE = self._sec2[1]
         gate._CACHE.clear()
+        self.server.gate._CACHE.clear()
         super().tearDown()
 
     def ask(self, tool, args, words=(), channel="chat", contract=None):
@@ -510,6 +516,7 @@ class TestTheFastPathAndTheModel(GateCase):
         for channel, want in (("chat", "ask"), ("task", "deny"),
                               ("", "deny")):
             gate._CACHE.clear()
+            self.server.gate._CACHE.clear()
             out = self.ask(PFX + "control_switch",
                            {"entity_id": "switch.freezer", "action": "off"},
                            ["turn off the freezer"], channel=channel)

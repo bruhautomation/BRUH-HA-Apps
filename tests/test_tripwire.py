@@ -34,8 +34,10 @@ TOKEN = "input_boolean.brain_honeytoken"
 class TripwireCase(PanelCase):
     def setUp(self):
         super().setUp()
-        self._sec_old = security.HONEYTOKEN_FILE
-        security.HONEYTOKEN_FILE = Path(self.tmp.name) / "brain" / "honey.json"
+        self._sec_mods = {id(m): m for m in (security, self.server.security)}
+        self._sec_old = {k: m.HONEYTOKEN_FILE for k, m in self._sec_mods.items()}
+        for m in self._sec_mods.values():
+            m.HONEYTOKEN_FILE = Path(self.tmp.name) / "brain" / "honey.json"
         security.HONEYTOKEN_FILE.parent.mkdir(parents=True)
         self.announced = []
 
@@ -51,7 +53,8 @@ class TripwireCase(PanelCase):
         self.server._safety_fallback_notice = fallback
 
     def tearDown(self):
-        security.HONEYTOKEN_FILE = self._sec_old
+        for k, m in self._sec_mods.items():
+            m.HONEYTOKEN_FILE = self._sec_old[k]
         (self.server._announce_findings,
          self.server._safety_fallback_notice) = self._ann_old
         super().tearDown()

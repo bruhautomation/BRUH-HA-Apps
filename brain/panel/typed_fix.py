@@ -197,6 +197,9 @@ def append_ledger(row: dict, path: str) -> None:
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row) + "\n")
     except OSError:
+        # Accounting must not fail the change it is accounting for: a ledger
+        # this cannot write costs an attribution and the restore of this
+        # call, never the call itself.
         pass
 
 

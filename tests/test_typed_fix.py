@@ -63,9 +63,42 @@ def plan(ops, **extra):
 
 
 class TypedCase(FixCase):
+    def _everywhere(self, modules, name, value):
+        """Set one attribute on every copy of a module the code may hold.
+
+        Several test files pop and re-import panel modules, so in a full run
+        the module the server writes through can be a different object from
+        the one this file imported — patching only ours is a patch the code
+        under test never sees (CLAUDE.md, on `self.server.<module>`)."""
+        for mod in {id(m): m for m in modules}.values():
+            self._restores.append((mod, name, getattr(mod, name)))
+            setattr(mod, name, value)
+
     def setUp(self):
         super().setUp()
         tmp = Path(self.tmp.name)
+        import automation_writer
+        import plan_ops
+        import test_fix_plan
+        self._restores = []
+        # The values FixCase chose, read off the copy it patched — never off
+        # whichever copy `import` hands back now, which may be another one.
+        chosen = test_fix_plan.automation_writer
+        writers = [automation_writer, chosen, self.server.automation_writer,
+                   typed_fix.automation_writer, unfix.automation_writer,
+                   plan_ops.automation_writer,
+                   self.server.typed_fix.automation_writer,
+                   self.server.unfix.automation_writer,
+                   self.server.plan_ops.automation_writer]
+        for name in ("CONFIG_DIR", "JOURNAL_DIR", "SNAP_DIR", "INDEX"):
+            self._everywhere(writers, name, getattr(chosen, name))
+        self._everywhere([actions, test_fix_plan.actions, self.server.actions,
+                          unfix.actions, self.server.unfix.actions],
+                         "LEDGER_FILE", str(self.ledger))
+        self._everywhere([interventions, self.server.interventions], "FILE",
+                         tmp / "interventions.jsonl")
+        self._everywhere([security, self.server.security], "HONEYTOKEN_FILE",
+                         tmp / "brain" / "honeytoken.json")
         (self.config / "configuration.yaml").write_text(
             "automation: !include automations.yaml\n")
         self.automations = self.config / "automations.yaml"
@@ -76,8 +109,6 @@ class TypedCase(FixCase):
                             self.server._wait_for_entity,
                             self.server.RESTORE_SETTLE_S,
                             os.environ.get("BRAIN_PROTECTED_ENTITIES"))
-        interventions.FILE = tmp / "interventions.jsonl"
-        security.HONEYTOKEN_FILE = tmp / "brain" / "honeytoken.json"
         self.server.RESTORE_SETTLE_S = 0
         os.environ.pop("BRAIN_PROTECTED_ENTITIES", None)
 
@@ -129,6 +160,8 @@ class TypedCase(FixCase):
             os.environ["BRAIN_PROTECTED_ENTITIES"] = protected
         self.ha_data.call_core_service, self.ha_data.entity_state = \
             self._ha_olds
+        for mod, name, value in reversed(self._restores):
+            setattr(mod, name, value)
         super().tearDown()
 
     def planned_row(self, reply):

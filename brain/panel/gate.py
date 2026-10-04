@@ -194,7 +194,7 @@ def contract_verdict(tool: str, args: dict, contract: dict) -> tuple[str, str]:
             command = str(args.get("command") or "").strip()
             if not command or SHELL_META.search(command):
                 return "deny", ("under an approved change the shell may only "
-                                "read, one plain command at a time")
+                                + "read, one plain command at a time")
             words = command.split()
             first = words[0]
             if first in READ_ONLY_COMMANDS:
@@ -225,7 +225,7 @@ def contract_verdict(tool: str, args: dict, contract: dict) -> tuple[str, str]:
                             "of the approved change")
         if not any(want <= ents if ents else not want for _d, _s, ents in match):
             return "deny", ("that reaches entities the approved change does "
-                            "not name")
+                            + "not name")
     return "allow", "it is part of the approved change"
 
 

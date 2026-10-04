@@ -96,14 +96,18 @@ class TestTheMatcher(unittest.TestCase):
 class RulesCase(GateCase):
     def setUp(self):
         super().setUp()
-        self._hr_old = house_rules.FILE
-        house_rules.FILE = Path(self.tmp.name) / "house_rules.json"
+        self._hr_mods = {id(m): m for m in (house_rules,
+                                            self.server.house_rules)}
+        self._hr_old = {k: m.FILE for k, m in self._hr_mods.items()}
+        for m in self._hr_mods.values():
+            m.FILE = Path(self.tmp.name) / "house_rules.json"
         self._minute_old = self.server._local_minute
         self.minute = 23 * 60
         self.server._local_minute = lambda now=None: self.minute
 
     def tearDown(self):
-        house_rules.FILE = self._hr_old
+        for k, m in self._hr_mods.items():
+            m.FILE = self._hr_old[k]
         self.server._local_minute = self._minute_old
         super().tearDown()
 
@@ -129,6 +133,7 @@ class TestTheGateObeysTheRules(RulesCase):
         self.assertEqual(self.model_calls, [])
         self.minute = 12 * 60
         gate._CACHE.clear()
+        self.server.gate._CACHE.clear()
         out = self.ask(PFX + "control_cover",
                        {"entity_id": "cover.door", "action": "close"},
                        ["close the garage"])

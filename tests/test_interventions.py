@@ -169,8 +169,12 @@ class FollowupCase(PanelCase):
         import engine
         import ha_data
         self.engine, self.ha_data = engine, ha_data
-        self._iv_old = interventions.FILE
-        interventions.FILE = Path(self.tmp.name) / "interventions.jsonl"
+        # Both copies: the server's may be another object in a full run.
+        self._iv_mods = {id(m): m for m in (interventions,
+                                            self.server.interventions)}
+        self._iv_old = {k: m.FILE for k, m in self._iv_mods.items()}
+        for m in self._iv_mods.values():
+            m.FILE = Path(self.tmp.name) / "interventions.jsonl"
         self._olds2 = (ha_data.entity_state, engine.run_analyst,
                        engine.get_auth)
         self.states = {}
@@ -191,7 +195,8 @@ class FollowupCase(PanelCase):
         self.server.FOLLOWUP_STATE["running"] = False
 
     def tearDown(self):
-        interventions.FILE = self._iv_old
+        for k, m in self._iv_mods.items():
+            m.FILE = self._iv_old[k]
         (self.ha_data.entity_state, self.engine.run_analyst,
          self.engine.get_auth) = self._olds2
         super().tearDown()
