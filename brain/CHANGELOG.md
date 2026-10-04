@@ -889,6 +889,167 @@ Resident can correct its own first look.**
 - **A notification can carry Undo.** The notification buttons (the add-on and
   the integration both) gained `undo`, the button on a reply's confirmation.
 
+### Fix it shows the change, and an action gate that cannot be talked round
+
+- **Fix it shows exactly what it will change, and the panel makes most changes
+  itself.** A plan is now a list of typed steps, not a paragraph: change one
+  automation, reload a configuration, call one service on named devices, rename
+  an entity, or move something to a room — and, only when none of those can say
+  it, one step a Claude run carries out with tools. The steps on the card are
+  written out by the code that will perform them, so what you approve is what
+  runs. A change to an automation shows the exact lines that will change in
+  `automations.yaml` and how often the old and new versions would have run over
+  the last week. **Apply** makes the plain changes itself, with no model and no
+  shell, and stops at the first one that fails, putting back the edits it had
+  already made; only the tool step starts a Claude run. One step brAIn will not
+  take refuses the whole plan, because a step on the card that would not happen
+  is worse than no plan.
+- **A fix run can only touch what you approved.** When a fix needs a Claude run,
+  it carries a contract: the service calls and the files the plan listed, and
+  nothing else. brAIn's Home Assistant chokepoint refuses any other call during
+  that run, and the action gate refuses a file edit outside the contract and any
+  shell command that does more than read. A step that cannot name what it will
+  touch is not offered as a fix.
+- **Every action records what it changed from.** Each service call brAIn makes —
+  from the chat, the terminal, voice, an automation task or a fix — now records
+  the state of each entity just before the call, beside which of those asked and
+  which run it was. A state that could not be read is recorded as unknown, never
+  as off.
+- **Put them back.** A fixed card whose fix made service calls has a new button,
+  **Put them back**. It sets those entities back to how brAIn recorded them just
+  before the fix, reads each one again, and says per entity whether it is back.
+  It never unlocks a lock, disarms an alarm or opens a garage, door or gate; it
+  never touches a protected entity, and says so for each; and brAIn never
+  presses it itself. **Undo the fix** still puts files back exactly as they
+  were, and now names this button for the service calls it does not reverse.
+- **brAIn checks its fixes after a day, a week and a month.** Every change brAIn
+  makes is recorded with how it said it would check that it worked: an
+  automation running, a sensor reading a value, or the check that found the
+  problem no longer finding it. Where that is arithmetic, no model is used;
+  otherwise a cheap look runs, gated like every scheduled run. Each look answers
+  *held*, *came back* or *could not check*, and "could not check" never counts
+  as the fix having worked. A problem that comes back reopens its card and says
+  which fix it came back from. One that comes back a second time becomes a
+  suggested maintenance interval ("about every 11 days"), not a third fix.
+- **An action gate that cannot be talked round.** Before brAIn acts on the house
+  from the chat, the terminal, an automation task or a fix, a gate checks the
+  action against what you asked for. It is shown three things: your own words in
+  the conversation, the action, and what the action would reach, worked out in
+  code from Home Assistant's registries — through scenes, scripts, rooms and
+  devices. It never sees what brAIn read on the way, so a planted entity name,
+  calendar entry or web page cannot argue it into anything.
+  - One light, fan, blind or thermostat in the room you named goes through with
+    no model. Anything else is asked of a small, cheap model.
+  - If the gate cannot be reached, brAIn asks you in the chat or the terminal,
+    and refuses anywhere nobody is watching.
+  - The gate can never say yes on its own authority, and never loosens the
+    protected list or the voice limits.
+  - Voice agents at the default voice level keep their own, narrower limits and
+    are not slowed by the gate. Agents set to "Whole house" or "Full admin" are
+    checked, and refused where the gate would have asked.
+- **A tripwire.** ⚙ → Diagnostics → *Changes and the action gate* → **Make a
+  tripwire entity** creates `input_boolean.brain_honeytoken`, an entity you
+  never ask brAIn to touch; more can be named in `honeytoken_entities`
+  (`/api/settings`). If anything tries to act on one, the action is refused
+  before it reaches Home Assistant, and a security card is filed and sent to
+  your phone straight away, naming the conversation that asked.
+- **Text brAIn reads from outside is marked as data.** The chat, the terminal
+  and every run now receive free text from Home Assistant — media titles,
+  calendar descriptions, notification bodies, sensors that report a sentence,
+  logbook messages — marked as untrusted data, not instructions. Home
+  Assistant's error log is not marked yet.
+- **A fault healed every night is filed with its log.** Overnight self-healing
+  already stopped restarting something that broke three nights in a fortnight.
+  The card it files now quotes the log lines that say why, with colour codes
+  stripped and tokens removed: the add-on's own log for an add-on, and Home
+  Assistant's error log for an integration or a Z-Wave node. A log brAIn could
+  not read says so.
+- **House rules.** ⚙ → Diagnostics → **Write house rules** takes up to ten rules
+  in your own words, such as "never turn the heating above 23" or "don't open
+  the garage after 22:00". Each is turned into a precise check once, when you
+  save it, and from then on every action the gate sees is checked against it
+  without a model. A rule can only make brAIn more careful, never less, and one
+  brAIn could not understand is listed as such so you can reword it. Because the
+  gate applies them, house rules do not reach voice agents at the default voice
+  level.
+
+### Cameras, a deep review, the weekly pick and the first hour
+
+- **Proposals live on the Proposals tab, and only there.** A suggested
+  automation, condition, playbook or scene set used to appear on the Findings
+  feed as well as on the Proposals tab, counted by both badges and answerable in
+  two places, and the feed's copy carried less of the evidence. The Proposals
+  tab is now the one place they are offered, with everything that goes with
+  them: the targets by name, the swatches, the trial's week, and Undo on an
+  accepted automation. The Findings badge counts only what is waiting on a
+  decision about the house. Turning off *Insights* no longer hides the Proposals
+  tab, because the free house checks fill it too.
+- **When an idea is not for this house, you can say why.** *Not for this house*
+  on the Ideas page now opens a short, optional box for a reason. The next time
+  brAIn looks for ideas it is told what you dismissed and why, so "we don't have
+  solar" stops the next solar idea rather than one title.
+- **The weekly report's "one thing to do" is chosen across the week.** It used
+  to be the worst severity, then the longest open, so three warnings about one
+  flaky hub never outranked anything, and a serious row that is simply how the
+  house is topped the list every week. A synthesis run now reads the open
+  problems and the week's numbers together and picks the one whose dealing-with
+  would make the most difference, with a sentence saying why. It can only pick a
+  row it was shown, it never passes over something critical, and the old pick is
+  kept beside it in the run journal so you can see how often the two agree. If
+  the run cannot happen — no sign-in, automatic runs paused, the budget spent, a
+  failed reply — the report ends on the old pick exactly as before.
+- **A deep review, when you ask for one.** House → Knowledge has a *Deep review*
+  button. It runs brAIn's most capable model, reading only, across everything
+  brAIn knows about the house — the open problems, the measurements, the memory,
+  the last weekly report — and writes up a handful of observations: patterns
+  across rooms, things that have been true for a month, what is worth doing
+  next. It files nothing; the review is a page you read. The button shows what a
+  review is likely to cost before you press it (from the reviews you have run
+  before, or a first guess), it never runs on a schedule, and the last six
+  reviews are kept.
+- **Cameras: brAIn looks only through the ones you allow, only when it matters,
+  and a few times a day.** ⚙ → Generation defaults → *Cameras* lists your
+  cameras with a tick box each, all off by default. When a leak, smoke, CO or
+  gas detector trips, a freeze warning fires, or a door, window or lock is
+  involved, the investigation that follows may take a snapshot from a ticked
+  camera — one in the same room when there is one — to confirm what it sees.
+  That is at most 12 looks a day across the house, counted on disk, and the
+  panel says how many have been used. A voice agent or an automation task that
+  asks for a camera is held to the same list and the same count, and is told
+  where to change it; so is the *Camera check* insight preset. Your own chat and
+  terminal are not limited. If brAIn cannot count today's looks, it does not
+  look.
+- **The first hour shows what it found.** While onboarding studies the house,
+  the screen lists what each study session has learned as it lands ("The garage
+  freezer is on a smart plug"), not just a progress bar. When it finishes, it
+  may suggest one automation to try — written as a sentence, grounded in
+  something it saw you do — with a tick box. Ticking it drafts the automation,
+  replays it against the last fortnight and starts a week-long trial on the
+  Proposals tab, exactly as if you had typed the sentence in the ask bar.
+  Nothing is written to your house by that tick.
+- **brAIn as Home Assistant's AI Task.** On Home Assistant 2025.7 and later,
+  brAIn is an AI Task entity, so the *Suggest with AI* buttons in Home
+  Assistant's editors and the `ai_task.generate_data` action can be answered by
+  brAIn, with what it knows about your house in front of the instruction and
+  reading tools only. When a structure is asked for, the answer is checked
+  against it before it is returned; one that does not fit is an error with the
+  reason, never data shaped nearly right. It needs the automation listener. On
+  an older Home Assistant the entity does not appear.
+- **Other assistants can ask brAIn what it has measured.** On Home Assistant
+  2024.6 and later, another conversation agent — OpenAI's, Google's, a local
+  model, or the Model Context Protocol server integration — can be given *brAIn
+  measurements* under its *Control Home Assistant* setting. It offers three
+  read-only questions: what an entity normally reads at this hour of the week,
+  what brAIn remembers about something (with who taught it and when), and what
+  changed an entity recently and why. Only entities exposed to that assistant
+  can be asked about, and facts about ones it cannot see are left out. It needs
+  the voice worker pool (`assist_fast_mode`, on by default).
+- **Under the hood.** The old triage drain (`_triage_findings`, its prompt,
+  schema and parser) is gone. The Resident's first look has been the one judge
+  of what reaches the Findings list since the Resident arrived, and the drain
+  had no caller but its own tests; what those tests held that the Resident's did
+  not is now held on the Resident path.
+
 ## 2.10.1
 
 **The classic terminal on a phone: Paste works, the keyboard stops fighting you.**

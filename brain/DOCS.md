@@ -286,26 +286,30 @@ the press it was.
 
 - **Fix it** — brAIn goes and looks, and tells you what it *would* change before it
   changes anything. That look is read-only by construction: it reads the entity, its
-  history and the automation that is wrong, and comes back with the steps it would
-  take — which file, which entity, what it becomes — one sentence on what could go
-  wrong in *this* house, and whether software should be making this change at all.
+  history and the automation that is wrong, and comes back with a plan of exact
+  steps, one sentence on what could go wrong in *this* house, and whether software
+  should be making this change at all. The steps you read are written out by the
+  code that will carry them out, not by Claude (see
+  [What Fix it changes, and how to put it back](#what-fix-it-changes-and-how-to-put-it-back)).
   The card then offers two presses.
-  - **Apply** is the only place the add-on lets Claude act on your house on its own
-    initiative. It is bounded to one finding, and the run is told to carry out exactly
-    the steps you read: if the house has moved on, or a step turns out to be wrong or
-    unsafe, it stops and says so rather than substituting a change you did not agree
-    to. Anything else it notices becomes a finding of its own.
+  - **Apply** carries out exactly those steps, bounded to one finding. Most of them
+    brAIn's panel makes itself, with no model involved; only a step that needs
+    Claude to work something out starts a Claude run, and that run may touch only
+    the service calls and files the step listed. If a step fails, or the house has
+    moved on, it stops and says so rather than substituting a change you did not
+    agree to, and puts back the edits it had already made. Anything else it
+    notices becomes a finding of its own.
   - **Cancel** leaves the finding exactly as open as it was, and keeps the plan on the
     card — reading it again later costs nothing.
   - A plan that needs your hands (a flat battery, a hub to re-pair) or that brAIn will
     not make itself says so and offers no Apply.
 - **Undo the fix** — after brAIn has changed something, the card carries an undo for as
-  long as the finding sits there waiting to be read. It puts back every file the run
+  long as the finding sits there waiting to be read. It puts back every file the fix
   edited under `/config` and reloads Home Assistant, out of the same journal
   `brain undo` reads in the terminal. The service calls the fix made are **listed, not
-  reversed**: a call records what was asked for and never what the entity was doing
-  before it, so putting one back would be a guess. The card says which is which before
-  you press — *brAIn changed 2 files and made 3 service calls. Undo puts the files
+  reversed** by Undo, because undoing a call is acting on your house again; that is
+  what **Put them back** is for (below). The card says which is which before you
+  press — *brAIn changed 2 files and made 3 service calls. Undo puts the files
   back; the service calls are listed, not reversed.* A fix that ran before brAIn
   recorded that window says so rather than claiming there was nothing to put back, and
   points you at `brain undo`, which lists every file Claude has ever edited. This is
@@ -376,6 +380,46 @@ which stops the suppression and nothing more. Nothing "comes back" unless the ne
 analysis finds it still there. Beside it, **Looked at** lists what the first look
 decided was not worth your evening, with the reason on every row and one press
 that puts it back.
+
+#### What Fix it changes, and how to put it back
+
+When you press **Fix it**, brAIn works out a plan without changing anything, and
+the card shows it as a list of exact steps. Most steps are things brAIn's panel
+does directly:
+
+- change one automation (the card shows the exact lines that change, and how
+  often the old and new versions would have run last week);
+- reload a configuration;
+- call a service on named devices;
+- rename a device;
+- move a device to a room.
+
+If a fix needs Claude to work something out with its tools, that step lists
+exactly which service calls and files it may touch, and the run is held to that
+list. A step that cannot say what it will touch is not offered, and one step
+brAIn will not take means no plan at all, so nothing on the card is a step that
+would quietly not happen.
+
+After a fix:
+
+- **Undo the fix** puts back every file brAIn changed and reloads Home
+  Assistant.
+- **Put them back** sets the devices brAIn's service calls changed back to how
+  they were just before. It reads each one again and tells you per device
+  whether it worked. It never unlocks a lock, disarms an alarm, or opens a
+  garage, door or gate, and it never touches a protected entity. You press it;
+  brAIn never does.
+
+#### brAIn checks its own fixes
+
+brAIn looks at every fix again after a day, a week and a month. Where it can
+check with simple arithmetic, such as "has the automation run since?" or "does
+the sensor read on?", it does. Otherwise it takes a quick, cheap look, which
+waits while automatic runs are paused.
+
+If a problem comes back, its card reopens and says which fix it came back from.
+If it comes back twice, brAIn suggests a maintenance interval instead of fixing
+it a third time. "Could not check" is shown as exactly that, never as success.
 
 ### The to-do list
 
@@ -2463,9 +2507,12 @@ Before Claude writes to any file under `/config`, brAIn snapshots the previous
 contents. `brain undo` lists what changed and puts any of it back — one edit, or
 everything from today. `secrets.yaml` is never snapshotted.
 
-That covers Claude's edits. For the house as a whole, use Home Assistant's own
-backups: they're whole-system and restorable, and brAIn deliberately does not
-duplicate them (see [What it will not do](#what-it-will-not-do)).
+That covers Claude's edits. The service calls a **Fix it** made are set back
+with **Put them back** on its card, which reads each device again afterwards
+(see [What Fix it changes, and how to put it back](#what-fix-it-changes-and-how-to-put-it-back)).
+For the house as a whole, use Home Assistant's own backups: they're
+whole-system and restorable, and brAIn deliberately does not duplicate them
+(see [What it will not do](#what-it-will-not-do)).
 
 ---
 
@@ -2686,7 +2733,8 @@ Five sections, and you only open the ones you need.
   days of history, timeout, model, and how many past runs are kept. These are
   the add-on's own Configuration options; editing them here or on the
   Configuration tab is the same setting either way.
-* **Advanced** — Diagnostics, problem reports, corpus capture, the deep check
+* **Advanced** — Diagnostics (with *Changes and the action gate*: the
+  tripwire and house rules), problem reports, corpus capture, the deep check
   and the rehearsal. Nothing here is fetched until you open it, because four of
   those readings cost a request and two of them start a poll.
 
@@ -2700,7 +2748,7 @@ brAIn 2.0 plans every Claude run by **job** rather than by one global model:
 
 | Tier | Jobs | Why |
 |---|---|---|
-| **Haiku** | the first look at every finding and signal, scene naming, playbook text, milestones, the memory consolidator, the morning brief, auth check | A yes/no, a name or a sentence over material something else already gathered |
+| **Haiku** | the first look at every finding and signal, scene naming, playbook text, milestones, the memory consolidator, the morning brief, auth check, the action gate's question, a follow-up look at a fix, compiling a house rule | A yes/no, a name or a sentence over material something else already gathered |
 | **Sonnet** | insight cards, fix plans, the weekly report, study, intents, curiosity, episode summaries, onboarding | Reading a house with tools and writing about it |
 | **Opus** | applying a fix, turning a sentence into an automation, the weekly report's one thing | The runs that change the house or decide what you act on |
 | **Fable** | the **deep review** you press for on House → Knowledge | Never from a timer — a scheduler cannot name it |
@@ -3608,7 +3656,9 @@ That is the point of it, and it is worth knowing where the edges are.
   keeping a rule it has been *told* (it is in the fixer's instructions and in
   the generated `/config/CLAUDE.md`) rather than a gate enforcing it. If that
   distinction matters to you, leave `dangerously_skip_permissions` off, which
-  is the default and makes the terminal and the chat ask first.
+  is the default and makes the terminal and the chat ask first. A **Fix it**
+  run is held tighter than either: it may edit only the files its plan listed
+  and run only shell commands that read (see [The action gate](#the-action-gate)).
 - **`dangerously_skip_permissions` does what it says.** Off by default, and
   off means the terminal and the chat **ask** before they run a shell
   command, edit a file or call a Home Assistant service; on, the terminal
@@ -3631,6 +3681,44 @@ That is the point of it, and it is worth knowing where the edges are.
   Supervisor gives, and it is worth knowing that `hassio_role: admin` costs
   two points that ingress and AppArmor pay back. brAIn needs that role
   because `ha addon` manages your other add-ons.
+
+### The action gate
+
+Before brAIn acts on your house from the chat, the terminal, an automation task
+or a fix, it checks the action against what you asked for. The check sees your
+words, the action, and which devices it would reach, worked out from Home
+Assistant's own registries. It never sees anything brAIn read along the way, so
+text planted in a device name, a calendar entry or a web page cannot talk it
+into an action.
+
+- **Turning a light, fan, blind or thermostat in a room you named** goes
+  straight through.
+- **Something broader or different from what you said** is asked about in the
+  chat or the terminal. In an unattended run, it is refused.
+- **If the gate cannot be reached:** you are asked if you are there, and the
+  action is refused if you are not.
+- **Voice agents at the default "voice" level** keep their own limits: only
+  devices exposed to Assist, and only everyday services. The gate does not slow
+  them down, which also means house rules (below) do not apply to them.
+- **Shell commands and file edits** are checked only inside a **Fix it** run.
+  In your own terminal and chat they are yours, and the permission prompts and
+  the protected list still apply.
+
+Text brAIn reads from your house — media titles, calendar descriptions,
+notification bodies, sensors that report a sentence, logbook messages — reaches
+Claude marked as data, not instructions.
+
+### Tripwire and house rules
+
+⚙ → Advanced → Diagnostics → *Changes and the action gate*:
+
+- **Make a tripwire entity** creates a switch nothing should ever touch. If
+  anything tries to act on it, the action is refused and you get a security
+  alert straight away, naming the conversation it came from.
+- **Write house rules** takes up to ten rules in your own words. brAIn turns
+  each one into a precise check, once, and applies it to every action the gate
+  sees. Rules can only make brAIn more careful. A rule it could not understand
+  is listed so you can reword it.
 
 ## Where things live
 
