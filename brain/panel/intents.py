@@ -156,13 +156,19 @@ def _now() -> float:
 # ---------------------------------------------------------------------------
 
 def request(sentence: str, via: str = "panel",
-            now: float | None = None) -> str:
+            now: float | None = None, *, trial: bool = False) -> str:
     """Queue one sentence. Returns what was queued, or "" for nothing.
 
     The panel's own writer. The integration writes the identical shape
     from Home Assistant's side (`custom_components/brain/requests.py`), and
     `tests/test_intents.py` drives both into `parse_request` rather than
     writing the format down twice.
+
+    ``trial`` asks for the proposal's shadow week to start the moment it
+    lands — what somebody who ticked "try it for a week" before the card
+    existed asked for. It is a field of the REQUEST, not a rule about who
+    sent it: a trial writes nothing to the house (it replays the week and
+    grades it), and a one-off ignores it.
     """
     text = str(sentence or "").strip()[:MAX_SENTENCE]
     if not text:
@@ -177,9 +183,10 @@ def request(sentence: str, via: str = "panel",
     # scratch is a dotted random name that ends in `.tmp`, so the drain's
     # `*.json` glob cannot see half a request, and this file does not get
     # to invent a second answer to "how is a file replaced safely".
-    atomic_write.write_json(REQUEST_DIR / f"{stamp}.json",
-                            {"ts": int(now), "sentence": text,
-                             "via": str(via or "")[:32]})
+    body = {"ts": int(now), "sentence": text, "via": str(via or "")[:32]}
+    if trial:
+        body["trial"] = True
+    atomic_write.write_json(REQUEST_DIR / f"{stamp}.json", body)
     return text
 
 
@@ -210,8 +217,12 @@ def parse_request(obj) -> dict | None:
     sentence = str(obj.get("sentence") or "").strip()[:MAX_SENTENCE]
     if not sentence:
         return None
-    return {"ts": int(ts), "sentence": sentence,
-            "via": str(obj.get("via") or "")[:32]}
+    out = {"ts": int(ts), "sentence": sentence,
+           "via": str(obj.get("via") or "")[:32]}
+    # The literal `true` and nothing else, so an older request is unchanged.
+    if obj.get("trial") is True:
+        out["trial"] = True
+    return out
 
 
 def _files() -> list[Path]:
@@ -322,6 +333,9 @@ SCHEMA = {
         "trigger": {"type": "array", "items": {"type": "object"}},
         "condition": {"type": "array", "items": {"type": "object"}},
         "action": {"type": "array", "items": {"type": "object"}},
+        # A standing rule's own (`authoring.ALLOWED_MODES`); a one-off
+        # ignores it, because it disarms itself after one run whatever.
+        "mode": {"type": "string"},
     },
     "required": ["once"],
     "additionalProperties": True,
@@ -365,13 +379,24 @@ def title_for(sentence: str) -> str:
     return text[:1].upper() + text[1:] if text else "A one-off from brAIn"
 
 
-def disarm(entity_id: str) -> dict:
+# The automation running the action, as Home Assistant renders it. What
+# the disarm targets, and the one template `_protected_refusal` allows.
+SELF_TARGET = "{{ this.entity_id }}"
+
+
+def disarm(entity_id: str = SELF_TARGET) -> dict:
     """The action brAIn adds and the model is told not to.
 
     Written by code rather than asked for, because it is the whole
     difference between a one-off and a rule somebody has to remember to
     delete — and a model that forgot it once would leave a standing
     automation behind under a card that says it fired.
+
+    It targets ITSELF, by `this`, rather than an entity id worked out in
+    advance. The id worked out in advance was a guess at Core's slug, and
+    a slug can be taken: a restored orphan of the same sentence accepted
+    last month holds it, so the new automation registered as `_2`, its
+    disarm switched the orphan off, and the one-off kept firing for ever.
     """
     return {"service": "automation.turn_off",
             "target": {"entity_id": entity_id},
@@ -431,7 +456,7 @@ def build(sentence: str, answer: dict, ts: int,
         "trigger": triggers,
         "condition": _listify(answer.get("condition")
                               or answer.get("conditions")),
-        "action": list(steps) + [disarm(entity_id)],
+        "action": list(steps) + [disarm()],
         # Not the model's to choose. A one-off that could run twice at
         # once is a one-off that is not one.
         "mode": "single",
@@ -673,6 +698,7 @@ __all__ = [
     "MAX_QUEUED", "MAX_REFUSED", "MAX_ROWS", "MAX_SENTENCE",
     "REQUEST_DIR", "STATUSES",
     "STORE", "SYSTEM", "TIMEOUT_S", "MAX_TURNS", "arm", "armed_count",
+    "SELF_TARGET",
     "build", "collect", "disarm", "drop", "expired", "fired_from_state",
     "get", "listing", "mark_fired", "note", "parse_answer",
     "parse_request",

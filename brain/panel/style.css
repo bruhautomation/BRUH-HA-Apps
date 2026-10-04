@@ -1285,6 +1285,16 @@ body.modal-open {
    checkbox it explains. */
 .setrow { display: flex; align-items: center; gap: 4px; margin: 12px 0 5px; }
 .setrow.top { align-items: flex-start; }
+/* The row ⚙ was opened at (`openSettingsAt`): marked for a moment, so
+   somebody who pressed "Stop asking…" on a chat card lands on the switch
+   rather than hunting a long dialog for it. An outline, not a colour on
+   its own — the label beside it says what it is. */
+.setrow.setflash {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 6px;
+  transition: outline-color 0.6s ease;
+}
 .setrow > label { margin: 0; flex: 1; min-width: 0; }
 .setrow .btn.icon.tiny {
   flex: none;
@@ -1359,6 +1369,15 @@ body.modal-open {
    reveals, which sits directly under it */
 #setModelCustom { margin-top: 6px; }
 .edit-body .hint.tight { margin-top: 4px; font-size: 11.5px; }
+/* A hint that is reporting something still true rather than explaining a
+   control — a terminal session that did not get the permission switch's
+   current value. The words carry it; the rule only marks it, so it reads
+   in the ink colour rather than in a yellow nobody can read on white. */
+.edit-body .hint.warn {
+  color: var(--ink-2);
+  border-left: 3px solid var(--warning);
+  padding-left: 8px;
+}
 @media (max-width: 520px) {
   .setgrid { grid-template-columns: 1fr; }
 }
@@ -2408,9 +2427,26 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 }
 .permcard .permrow {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
 }
+/* What "Always allow" would add, and for how long — under the row, in
+   words, because a phone has no hover to read a tooltip with. */
+.permcard .permscope {
+  margin-top: 6px;
+  color: var(--ink-3);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+/* "Stop asking…" opens ⚙ at the switch; it is a way out of asking
+   altogether, so it sits apart from the card's own answer. */
+.permcard .permfoot {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-end;
+}
+.permcard .permstop { color: var(--ink-3); border-color: transparent; }
 .permcard .permnote {
   margin-top: 10px;
   color: var(--ink-3);
@@ -3282,6 +3318,12 @@ body.term-classic #termMode .ico-out { display: block; }
 }
 .findresult p { margin: 0 0 7px; }
 .findresult p:last-child { margin-bottom: 0; }
+/* The fixer's report on a case card says what kind of report it is, and
+   the heading stacks over it for `.findfix`'s reason. */
+.findresult > .findfixlabel { display: block; margin-bottom: 5px; }
+/* A proposal's evidence on its case card: the replay and the trial's
+   grade, in the Proposals tab's own classes, beside the buttons that act
+   on them. */
 .findchanged { margin: 8px 0 0; padding-left: 18px; }
 .findchanged li { margin: 3px 0; }
 
@@ -4689,4 +4731,271 @@ body.term-classic #termMode .ico-out { display: block; }
   @container card (max-width: 600px) {
     .card-head .cardact { width: 44px; }
   }
+}
+
+/* The thermal drill-down's outdoor reference: which one, why, and a picker.
+   No font-size on the select, so the 16px touch floor above still holds. */
+.kref { margin-top: 8px; }
+.kref .kreflabel { display: block; margin-top: 6px; color: var(--ink-2); font-size: 12px; }
+.kref select { display: block; max-width: 100%; margin-top: 4px; min-height: 36px; }
+@media (pointer: coarse) { .kref select { min-height: 44px; } }
+
+/* ---------------------------------------------------------------- upkeep
+   The House → Upkeep pane: the house book, names and rooms, updates and the
+   overnight check. One block, appended; it borrows `.findhead`, `.ksec` and
+   `.btn` and adds only what those do not have. */
+.upwrap { max-width: 900px; }
+.upbody { display: grid; gap: 10px; }
+.upbody h3 { margin: 12px 0 0; font-size: 15px; }
+.upactions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.upline { margin: 0; font-size: 14px; color: var(--ink); max-width: 72ch; }
+.upline.muted { color: var(--ink-2); }
+.upline.busy { color: var(--accent-2); }
+.upline.warn {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 16%, var(--surface));
+}
+.upstatus { display: grid; gap: 6px; }
+.upstatus:empty { display: none; }
+.uplist { display: grid; gap: 8px; }
+.uprow {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  min-width: 0;
+}
+.uprow input[type="checkbox"] { width: 22px; height: 22px; margin: 1px 0 0; flex: none; }
+.uprowbody { display: grid; gap: 4px; min-width: 0; }
+.uprowhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+             overflow-wrap: anywhere; }
+.upchip {
+  display: inline-block;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 1px 7px;
+}
+.upchip.kind { font-weight: 600; }
+.upwhy { font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere; }
+.upreach {
+  font-size: 13px;
+  color: var(--ink);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning) 14%, var(--surface));
+}
+.uprefused summary, .upedit summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.upbatch { display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+           font-size: 14px; }
+.uplink { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+          font-size: 14px; overflow-wrap: anywhere; min-width: 0; }
+.uplink a { color: var(--accent-2); word-break: break-all; }
+.upbooksec h3 { margin: 14px 0 6px; }
+.upbooklist { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.upbooklist li { font-size: 14.5px; line-height: 1.5; }
+.upchips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.upupdate {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  justify-items: start;
+}
+.upupdatehead { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.upverdict { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+             font-size: 14px; }
+/* The verdict is a word, and the colour only repeats it. */
+.upverdict.safe_tonight .upchip.verdict {
+  color: var(--ink); background: color-mix(in srgb, var(--good) 22%, var(--surface)); }
+.upverdict.wait .upchip.verdict {
+  color: var(--ink); background: color-mix(in srgb, var(--serious) 24%, var(--surface)); }
+.upquote {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--grid);
+  display: grid;
+  gap: 2px;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 100%;
+}
+.upquote code { white-space: pre-wrap; }
+.upedit pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px;
+              margin: 0; }
+.upsentence { margin: 0; font-size: 15px; max-width: 68ch; }
+
+@media (pointer: coarse) {
+  .upsec .btn { min-height: 44px; }
+}
+
+/* ------------------------------------------------------------ the house now
+   One quiet line above the Findings feed (`renderHouseNow` in app.js): the
+   mode as a word, the sentence, what is coming up. Small on purpose — it is
+   context for the list under it, not a card. */
+.housenow {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.25));
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.4;
+  min-width: 0;
+}
+.housenow-top { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+.housenow-mode { font-weight: 600; white-space: nowrap; }
+.housenow-sentence { min-width: 0; overflow-wrap: anywhere; }
+.housenow-sentence.stale { opacity: 0.7; font-style: italic; }
+.housenow-reason, .housenow-coming { margin-top: 4px; opacity: 0.8; font-size: 13px; overflow-wrap: anywhere; }
+.housenow-cals { margin-top: 6px; font-size: 13px; }
+.housenow-cals > summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; opacity: 0.8; }
+.housenow-callist { display: grid; gap: 4px; padding: 4px 0 2px; }
+.housenow-cal { display: flex; gap: 8px; align-items: center; min-height: 32px; }
+@media (pointer: coarse) {
+  .housenow-cals > summary, .housenow-cal { min-height: 44px; }
+}
+
+/* The household's notification sentence (W2D). The learned lines sit under
+   it one per row, each with its own Remove: a clause spliced into the
+   sentence would be one nobody could find again to take back. */
+.setlearned { margin-top: 8px; display: grid; gap: 6px; }
+.setlearned summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.setlearned details > .setlearnedrow + .setlearnedrow { margin-top: 6px; }
+.setlearnedrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 12px;
+  background: var(--plane);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+}
+.setlearnedtext { flex: 1; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.setlearnedrow .btn { flex: none; }
+@media (pointer: coarse) {
+  .setlearnedrow .btn { min-height: 44px; }
+}
+
+/* The answer to a "why" asked in the bar (`watchExplain`): words, not a card,
+   under the bar it was asked in. */
+.askexplain {
+  margin: 4px 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+}
+.askexplain.hidden { display: none; }
+.askexplain-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.askexplain-head b { min-width: 0; overflow-wrap: anywhere; }
+.askexplain-answer { margin: 8px 0; line-height: 1.45; }
+.askexplain-wait { margin: 0; color: var(--ink-2); }
+.askexplain-cited {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-size: 0.92em;
+  color: var(--ink-2);
+}
+.askexplain .btn.small { max-width: 100%; white-space: normal; text-align: left; }
+
+/* Every change is a contract: the typed half of a plan under its steps.
+   The diff is the bytes that will change in automations.yaml, so it is
+   shown as written — monospaced, scrollable sideways inside its own box
+   rather than widening the card, and closed until somebody asks. */
+.findplan .planeffect,
+.findplan .planreplay,
+.findplan .planverify { margin: 6px 0 0; color: var(--ink-2); font-size: 13px; }
+.findplan .plandiff { margin-top: 8px; }
+.findplan .plandiff summary { cursor: pointer; min-height: 32px; line-height: 32px; }
+.findplan .plandiff pre {
+  margin: 6px 0 0; padding: 8px 10px; max-height: 320px; overflow: auto;
+  max-width: 100%; white-space: pre; font-size: 12px; line-height: 1.45;
+  background: var(--surface-2); border-radius: 6px;
+}
+@media (pointer: coarse) { .findplan .plandiff summary { min-height: 44px; line-height: 44px; } }
+.houserules { margin-top: 8px; }
+.houserules summary { cursor: pointer; min-height: 32px; line-height: 32px; }
+.houserules textarea { display: block; width: 100%; max-width: 100%; margin: 6px 0; box-sizing: border-box; }
+@media (pointer: coarse) { .houserules summary { min-height: 44px; line-height: 44px; } }
+
+/* The deep review on House → Knowledge: one press, its price said beside
+   it, and the last review under it. The button is 44px on any pointer —
+   it is the one control in the section and it spends the most expensive
+   run brAIn has. */
+.kreview { max-width: 68ch; }
+.kreviewrun { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.kreviewrun .btn { min-height: 44px; }
+.kreviewcost { margin: 0; color: var(--ink-2); font-size: 13px; line-height: 1.5; flex: 1 1 220px; }
+.kreviewone { margin-top: 12px; }
+.kreviewlabel {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.kreviewobs { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 12px; }
+.kreviewob { border-top: 1px solid var(--hairline); padding-top: 10px; }
+.kreviewtitle { font-weight: 600; margin-top: 2px; overflow-wrap: anywhere; }
+.kreviewdetail { margin: 4px 0 0; color: var(--ink-1); line-height: 1.6; overflow-wrap: anywhere; }
+
+/* ⚙ → Generation defaults → Cameras: one tick per camera, each a full
+   44px row on any pointer, because the list is short and every row is a
+   decision about privacy rather than a preference. */
+.setcams { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+.setcam { display: flex; align-items: center; gap: 10px; min-height: 44px; overflow-wrap: anywhere; }
+.setcam .subtext { color: var(--ink-3); font-size: 12px; }
+
+/* Onboarding: what the study sessions have found, as it lands. A short
+   list under the progress, newest first; the topic is a small label so a
+   fact reads as a sentence about the house rather than as a log line. */
+.obfound { margin: 14px 0 6px; max-width: 68ch; }
+.obfoundlist { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.obfoundrow { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline;
+  line-height: 1.5; overflow-wrap: anywhere; }
+.obfoundtopic { color: var(--ink-3); font-size: 11.5px; font-weight: 600;
+  letter-spacing: .04em; text-transform: uppercase; flex: none; }
+.obfoundfact { color: var(--ink-1); flex: 1 1 220px; min-width: 0; }
+#obTryBlock { margin-top: 6px; }
+
+/* The chat's approval card on a phone: it is where the asking happens, so
+   its answers — Allow once, Don't allow, Always allow — and the way out of
+   asking altogether are thumb targets. Scoped to this card (the panel's
+   touch floor is per control on purpose) and appended last, because the
+   first `pointer: coarse` block is the 16px text floor. */
+@media (pointer: coarse) {
+  .permcard .permrow .btn, .permcard .permstop { min-height: 44px; padding-inline: 14px; }
 }

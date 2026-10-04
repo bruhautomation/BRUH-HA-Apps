@@ -40,9 +40,11 @@ from .const import (DOMAIN, EVENT_FINDING, FINDINGS_STATE_FILENAME,
 
 _LOGGER = logging.getLogger(__name__)
 
-# The mirror is capped by the add-on (STATE_MAX_ROWS = 50 short rows), but a
-# corrupted or hand-edited file must not be able to stall the event loop.
-MAX_STATE_BYTES = 256 * 1024
+# The mirror carries the add-on's whole live list, which its store caps at
+# 200 short rows (~200 KB at the very most, prose cut to 240 characters a
+# field) — so this is room for that and a corrupted or hand-edited file
+# still cannot stall the event loop.
+MAX_STATE_BYTES = 1024 * 1024
 
 
 def findings_state_path(hass: HomeAssistant) -> str:
@@ -54,7 +56,11 @@ def read_findings_state(hass: HomeAssistant) -> dict | None:
 
     Shape: {ts, open, by_severity: {info/warning/serious/critical: n},
     findings: [{ts, text, severity, status, entity_id, fixable,
-    source_title}, ...]} — newest first, live rows only.
+    source_title}, ...], snoozed: [same, + snoozed_until]} — newest first,
+    live rows only. `snoozed` is the rows somebody pressed Dismiss on: still
+    live, not asking until they come back, and kept apart so nothing that
+    reads `findings` has to know about them. A mirror from an add-on that
+    predates the key reads as none snoozed.
     """
     path = findings_state_path(hass)
     try:
@@ -69,6 +75,9 @@ def read_findings_state(hass: HomeAssistant) -> dict | None:
     rows = data.get("findings")
     data["findings"] = [f for f in rows if isinstance(f, dict) and f.get("text")] \
         if isinstance(rows, list) else []
+    snoozed = data.get("snoozed")
+    data["snoozed"] = [f for f in snoozed if isinstance(f, dict) and f.get("ts")] \
+        if isinstance(snoozed, list) else []
     return data
 
 
@@ -209,13 +218,27 @@ def _placeholders(row: dict) -> tuple:
 
 
 
+def _rows(state: dict) -> tuple[dict[int, dict], dict[int, dict]]:
+    """The mirror's live rows and its snoozed ones, each keyed by ts.
+
+    A row in both is live: the add-on writes each row once, so that can only
+    be a hand-edited file, and the reading that keeps a row asking is the
+    one that cannot hide a problem.
+    """
+    current = {int(f.get("ts") or 0): f for f in state.get("findings") or []}
+    snoozed = {int(f.get("ts") or 0): f for f in state.get("snoozed") or []
+               if int(f.get("ts") or 0) not in current}
+    return current, snoozed
+
+
 def _case_payload(finding: dict) -> dict:
     """The case vocabulary, off a mirror row. One shape for all three events.
 
-    `case_id` is the Home feed's own (`f:<ts>`), so a listener can hand it
-    straight back to `brain.case` presses and to the panel's deep link;
-    `kind` and `claim` are what the Resident wrote where it was the
-    producer, and the finding's own text otherwise.
+    `case_id` is the Home feed's own (`f:<ts>`), so a listener can match
+    one event to another and to the panel's deep link; the `ts` half is the
+    id the finding's answers take (a To-do tick, a notification button, a
+    Repairs dialog). `kind` and `claim` are what the Resident wrote where it
+    was the producer, and the finding's own text otherwise.
     """
     ts = int(finding.get("ts") or 0)
     return {
@@ -243,6 +266,19 @@ class FindingsWatcher:
     add-on's store dedupes across every status and the settled ledger, so an
     id that appears here is genuinely news.
 
+    **The status snapshot is primed with it**, because the watermark is only
+    half of what the events are diffed against: `brain_change` fires for a
+    row whose status MOVED to `fixed`, and with nothing remembered about the
+    statuses at startup every row already sitting in `fixed` — which stays
+    live until somebody presses Got it — read as having just moved, so
+    every restart and every reload announced "changed the house" again.
+
+    **A snoozed row has not ended.** Dismiss takes a row out of `findings`
+    and puts it in the mirror's `snoozed`, so the watcher keeps it in both
+    the watermark and the snapshot: no `brain_case_ended` when it leaves,
+    no `brain_case`/`brain_finding` when it comes back, and a real
+    `brain_case_ended` if it is settled while it is away.
+
     **The issues are reconciled rather than diffed**, and that difference is
     exactly why they are NOT primed the way the events are: an event is
     news and an issue is state. Home Assistant drops a non-persistent issue
@@ -265,39 +301,51 @@ class FindingsWatcher:
     def prime(self) -> None:
         """Adopt the current list without announcing it.
 
-        Only the event watermark is primed. The issue set deliberately is
-        not — see the class docstring: a restart clears non-persistent
-        issues, so priming them would leave a house that rebooted with no
-        Repairs entry for anything already open.
+        The event watermark AND the status snapshot are primed — the second
+        is what stops a row already `fixed` re-firing `brain_change` on every
+        restart (see the class docstring). The issue set deliberately is
+        not: a restart clears non-persistent issues, so priming them would
+        leave a house that rebooted with no Repairs entry for anything
+        already open. A mirror that has never been written primes an empty
+        roster — what the add-on files once it does is news, which on a
+        fresh install it is.
         """
         state = read_findings_state(self.hass)
-        self._seen = {int(f.get("ts") or 0)
-                      for f in (state or {}).get("findings", [])}
+        current, snoozed = _rows(state or {})
+        self._seen = set(current) | set(snoozed)
+        self._last = {**snoozed, **current}
 
     async def async_poll(self, _now=None) -> None:
         state = await self.hass.async_add_executor_job(
             read_findings_state, self.hass)
         if state is None:
             return
-        current = {int(f.get("ts") or 0): f for f in state["findings"]}
-        self._announce(current)
+        current, snoozed = _rows(state)
+        self._announce(current, snoozed)
         # Reconciled on every pass, including the one that primes the
         # watermark: an issue is state, and the first poll after a restart
-        # is what puts the page back.
+        # is what puts the page back. Snoozed rows raise none — Dismiss is
+        # somebody saying "not now", and a Repairs entry is a "now".
         self.sync_issues(current)
 
-    def _announce(self, current: dict[int, dict]) -> None:
+    def _announce(self, current: dict[int, dict],
+                  snoozed: dict[int, dict] | None = None) -> None:
         """One ``brain_finding`` event per finding nothing has announced."""
+        snoozed = snoozed or {}
         if self._seen is None:
-            self._seen = set(current)
+            self._seen = set(current) | set(snoozed)
+            self._last = {**snoozed, **current}
             return
         fresh = [current[ts] for ts in sorted(current) if ts not in self._seen]
         # Ids leave the mirror when a finding is settled; forgetting them
         # here keeps the watermark from growing forever, and cannot re-fire
         # a settled finding because the add-on's settled ledger stops the
-        # same problem ever re-entering the list.
+        # same problem ever re-entering the list. A row that moved to
+        # `snoozed` has not left — it has been put off — so it is neither
+        # gone now nor fresh when it returns.
         before = self._last if isinstance(self._last, dict) else {}
-        gone = [before[ts] for ts in sorted(before) if ts not in current]
+        gone = [before[ts] for ts in sorted(before)
+                if ts not in current and ts not in snoozed]
         # A row whose status moved to `fixed` is brAIn having changed the
         # house — the one moment an automation may want to react to with
         # something other than a notification. A row that ARRIVES fixed
@@ -305,8 +353,11 @@ class FindingsWatcher:
         changed = [current[ts] for ts in sorted(current)
                    if str(current[ts].get("status") or "") == "fixed"
                    and str((before.get(ts) or {}).get("status") or "") != "fixed"]
-        self._seen = set(current)
-        self._last = dict(current)
+        self._seen = set(current) | set(snoozed)
+        # A snoozed row is remembered by its last LIVE shape where there is
+        # one (the claim it was announced under), else by the mirror's.
+        self._last = {**{ts: before.get(ts) or row for ts, row in snoozed.items()},
+                      **current}
         for finding in gone:
             self.hass.bus.async_fire(EVENT_CASE_ENDED, {
                 **_case_payload(finding),

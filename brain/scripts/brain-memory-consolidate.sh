@@ -172,12 +172,18 @@ sweep_share_inbox() {
 # consolidation runs at a time, and the writer this loses to is not a
 # consolidation. So the queue's own lock is taken, and it is the same lock
 # `atomic_write.locked` takes on the panel side.
+#
+# A guess somebody dismissed ages from when it comes BACK, not from when it
+# was proposed: `max(ts, snoozed_until)` is `hypotheses._asked_at`, and a
+# shell writer reading only `ts` retired it while the panel was promising
+# it would return.
 _retire_stale_hypotheses() {
     local now cutoff
     now=$(date +%s)
     cutoff=$((now - HYPOTHESIS_TTL_DAYS * 86400))
     if jq -c --argjson cutoff "$cutoff" \
-        'if .status == "open" and (.ts // 0) < $cutoff
+        'if .status == "open"
+            and ([(.ts // 0), (.snoozed_until // 0)] | max) < $cutoff
          then .status = "expired" else . end' \
         "$HYPOTHESES_FILE" > "${HYPOTHESES_FILE}.tmp" 2>/dev/null; then
         mv "${HYPOTHESES_FILE}.tmp" "$HYPOTHESES_FILE"
@@ -371,8 +377,9 @@ claude_pass() {
     # failure — timeout, rate limit, a malformed prompt — report itself as
     # "not authenticated?", which sent people to re-do a sign-in that was
     # fine while the real cause stayed invisible.
-    local err_file rc=0
+    local err_file rc=0 started
     err_file=$(mktemp 2>/dev/null || echo "/tmp/brain-memory-err.$$")
+    started=$(date +%s)
     # shellcheck disable=SC2086
     printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" \
             $claude_cmd -p --disallowedTools "*" --max-turns 1 \
@@ -386,10 +393,21 @@ claude_pass() {
        && grep -qi "unknown option\|unrecognized option" "$err_file" 2>/dev/null; then
         log "this Claude CLI has no --session-id — running unlabelled"
         rc=0
+        session_id=""
         # shellcheck disable=SC2086
         printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" \
                 $claude_cmd -p --disallowedTools "*" --max-turns 1 \
                 --model "$CLAUDE_MODEL" >"$out_file" 2>"$err_file" || rc=$?
+    fi
+
+    # One journal row per pass, from the process that ran it: the panel
+    # books it (a report when it failed, its tokens into the breakdown)
+    # and the usage reading is nudged. Before the stderr is thrown away,
+    # because its last line is what a failure's row carries.
+    if command -v brain_journal_record > /dev/null 2>&1; then
+        brain_journal_record memory "$rc" --stderr "$err_file" \
+            --run-id "$session_id" --model "$CLAUDE_MODEL" \
+            --duration "$(( $(date +%s) - started ))"
     fi
 
     if [ "$rc" != 0 ]; then

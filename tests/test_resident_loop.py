@@ -132,7 +132,7 @@ class LoopCase(unittest.TestCase):
             "server": (srv.LEDGER, srv._house_prompt_block,
                        srv._read_shared_memory, srv._announce_findings,
                        srv._record_usage, srv.MEMORY_INBOX_DIR,
-                       srv.EVENT_BUS),
+                       srv.EVENT_BUS, srv._findings_notify_target),
         }
         (root / "inbox").mkdir(parents=True, exist_ok=True)
         # Pointed under a "config" that does not exist, so the mirrors are
@@ -152,6 +152,13 @@ class LoopCase(unittest.TestCase):
                    STATE_FILE=root / "config" / ".brain" / "todo.json")
         self.point("cases", SNOOZE_FILE=root / "cases-snooze.json")
         self.point("resident", WATCH_FILE=root / "resident-watch.json")
+        # Every look and investigation writes a verdict row, and the next
+        # look reads the graded log back as worked examples — so the log is
+        # this test's own, or one test's verdicts become the next one's
+        # prompt.
+        self.point("outcomes",
+                   VERDICTS_FILE=root / "resident-verdicts.jsonl",
+                   STATE_FILE=root / "resident-outcomes.json")
         settings_store.SETTINGS_FILE = os.path.join(self.tmp.name, "settings.json")
         settings_store.save({"onboarded": True, "auto_enabled": True})
         srv.LEDGER = resident.Ledger(root / "resident-ledger.json")
@@ -193,8 +200,14 @@ class LoopCase(unittest.TestCase):
         srv._announce_findings = announce
         srv.RESIDENT_PENDING.clear()
         srv.RESIDENT_INFLIGHT.clear()
+        srv.RESIDENT_PARKED.clear()
         srv.RESIDENT_QUEUE = asyncio.Queue()
         srv.SAFETY_SUBJECTS.clear()
+        srv.SAFETY_TRIPS.clear()
+        # A notify target, so a safety case is announced (stubbed above)
+        # rather than falling back to a persistent notification over a
+        # Supervisor this test has none of.
+        srv._findings_notify_target = lambda: ("mobile_app_test", "critical")
         srv._KNOWN_ENTITIES.update({"at": 0.0, "ids": frozenset()})
         srv._SIGNAL_CTX.update({"at": 0.0, "ctx": signals.EMPTY_CONTEXT})
         for key, value in (("running", False), ("last_look_at", 0.0),
@@ -218,9 +231,11 @@ class LoopCase(unittest.TestCase):
          engine.get_auth) = self._old["engine"]
         (srv.LEDGER, srv._house_prompt_block, srv._read_shared_memory,
          srv._announce_findings, srv._record_usage, srv.MEMORY_INBOX_DIR,
-         srv.EVENT_BUS) = self._old["server"]
+         srv.EVENT_BUS, srv._findings_notify_target) = self._old["server"]
         srv.RESIDENT_PENDING.clear()
         srv.RESIDENT_INFLIGHT.clear()
+        srv.RESIDENT_PARKED.clear()
+        srv.SAFETY_TRIPS.clear()
         srv.TRIAGE_STATE.update({"running": False, "day": "", "runs": 0})
         self.tmp.cleanup()
 
@@ -316,8 +331,8 @@ class TestWhenTheLookHappens(LoopCase):
 class TestAGateHoldsAndLosesNothing(LoopCase):
     """Three gates, one rule: no run is spawned and no signal is lost.
 
-    This is the opposite of what `_triage_findings` does with the same three
-    — that one surfaced the whole queue — and deliberately: triage was about
+    This is the opposite of what the retired triage drain did with the same
+    three — that one surfaced the whole queue — and deliberately: triage was about
     to hide a row, this is about to look at one, and `triage.STALE_S` is
     what makes the wait bounded.
     """
@@ -428,7 +443,11 @@ class TestWhatTheVerdictsDo(LoopCase):
         self.assertEqual(shown["triage"]["verdict"], "elevated")
         self.assertIn("binary_sensor.pantry", resident.watched())
 
-    def test_investigate_spawns_one_analyst_run_and_files_a_case(self):
+    def test_investigate_rewrites_the_row_it_was_sent_to_look_at(self):
+        """The deeper look CORRECTS the cheaper one. It used to be told the
+        row it was investigating was already in front of the homeowner and
+        not to claim it, so it abstained or filed a second card beside the
+        first; now the row is its subject and its answer rewrites it."""
         row = self.file_check_row()
         self.looks.append(reply([{"id": 1, "verdict": "investigate",
                                   "why": "its history would settle this"}]))
@@ -443,46 +462,59 @@ class TestWhatTheVerdictsDo(LoopCase):
         self.assertEqual(call["system"], resident.INVESTIGATE_SYSTEM)
         self.assertEqual(call["args"][1], resident.INVESTIGATE_TIMEOUT_S)
         self.assertEqual(call["args"][3], "resident")
-        # The row a rule filed is elevated, and the case is a row of its own
-        # filed under the Resident so the scorecard grades it.
-        self.assertEqual(findings_store.get(row["ts"])["status"], "open")
+        # The prompt carries the row as its subject, the sentence, the
+        # look's reason and the clock — and does NOT list the row as a
+        # thing it may not claim.
+        self.assertIn("ALREADY ON THE HOMEOWNER'S LIST", call["prompt"])
+        self.assertIn("its history would settle this", call["prompt"])
+        self.assertIn("IT IS NOW:", call["prompt"])
+        self.assertIn("Sensors frozen", call["prompt"])
+        self.assertNotIn("do not claim any of these again:\n- [problem] The "
+                         "pantry contact", call["prompt"])
+        # One row, rewritten — never a sibling.
+        self.assertEqual([f for f in findings_store.list_all()
+                          if f["source"] == findings_store.RESIDENT_SOURCE], [])
+        fresh = findings_store.get(row["ts"])
+        self.assertEqual(fresh["status"], "open")
+        self.assertEqual(fresh["text"], row["text"],
+                         "the key a check re-reports under was rewritten")
+        self.assertEqual(fresh["claim"],
+                         json.loads(case_reply()["text"])["claim"])
+        self.assertEqual(fresh["fix"], "Check the door seal.")
+        self.assertEqual(fresh["fix_by"], "resident")
+        self.assertEqual(fresh["investigation"]["run_id"], "inv-1")
+        self.assertTrue(any("pantry" in (e.get("entity") or "")
+                            for e in fresh["evidence"]))
+
+    def test_an_investigation_that_finds_nothing_holds_the_row_saying_why(self):
+        row = self.file_check_row()
+        self.looks.append(reply([{"id": 1, "verdict": "investigate",
+                                  "why": "probably a cupboard"}]))
+        self.investigations.append(case_reply(
+            claim="", dismiss=True, evidence=[],
+            detail="It is a cupboard contact nobody opens."))
+        self.tick()
+        fresh = findings_store.get(row["ts"])
+        self.assertEqual(fresh["status"], "held")
+        self.assertIn("cupboard contact", fresh["triage"]["reason"])
+
+    def test_a_live_signal_files_a_case_and_a_duplicate_claim_is_counted(self):
+        now = time.time()
+        for n in range(2):
+            self.server.RESIDENT_STATE["last_look_at"] = 0.0
+            self.server._resident_offer(signals.make(
+                "baseline", "sensor.garage_freezer", now=now + n,
+                source="baseline:hour", text="far above its usual reading",
+                salience=0.9))
+            self.looks.append(reply([{"id": 1, "verdict": "investigate",
+                                      "why": "worth a look"}], f"look-{n}"))
+            self.investigations.append(case_reply())
+            self.tick(now + n)
         filed = [f for f in findings_store.list_all()
                  if f["source"] == findings_store.RESIDENT_SOURCE]
         self.assertEqual(len(filed), 1, findings_store.list_all())
-        self.assertEqual(filed[0]["status"], "open")
-        self.assertEqual(filed[0]["claim"], case_reply()["text"]
-                         and json.loads(case_reply()["text"])["claim"])
-        # And the signal that started it rides in the evidence, because the
-        # run was handed that line rather than reading it off the house.
-        self.assertTrue(any("pantry" in (e.get("entity") or "")
-                            for e in filed[0]["evidence"]))
-
-    def test_a_duplicate_claim_is_counted_and_not_filed_twice(self):
-        self.file_check_row()
-        self.looks.append(reply([{"id": 1, "verdict": "investigate",
-                                  "why": "worth a look"}]))
-        self.investigations.append(case_reply(
-            evidence=[{"entity": "binary_sensor.pantry", "value": "off",
-                       "when": "3 Sep"}]))
-        self.tick()
-        before = len(findings_store.list_all())
-
-        # The same claim again, from a second look over a second signal.
-        # Handed over the way a checks pass hands its own rows over, rather
-        # than waiting for the minute the store sweep runs on.
-        self.server.RESIDENT_STATE["last_look_at"] = 0.0
-        second = self.file_check_row(
-            text="The pantry contact is still not moving",
-            source="check:dev.frozen")
-        self.server._offer_findings([second], time.time())
-        self.looks.append(reply([{"id": 1, "verdict": "investigate",
-                                  "why": "still worth a look"}], "look-2"))
-        self.investigations.append(case_reply(
-            evidence=[{"entity": "binary_sensor.pantry", "value": "off",
-                       "when": "4 Sep"}]))
-        self.tick()
-        self.assertEqual(len(findings_store.list_all()), before + 1,
-                         "the duplicate claim was filed as a second case")
+        self.assertEqual(filed[0]["claim"],
+                         json.loads(case_reply()["text"])["claim"])
         self.assertEqual(self.server.RESIDENT_STATE["duplicates"], 1)
 
     def test_act_on_a_safety_signal_files_a_case_notifies_and_calls_nothing(self):
@@ -511,7 +543,7 @@ class TestWhatTheVerdictsDo(LoopCase):
         [row] = findings_store.list_all()
         self.assertEqual(row["severity"], "critical")
         self.assertEqual(row["stakes"], "high")
-        self.assertEqual(row["source"], findings_store.RESIDENT_SOURCE)
+        self.assertEqual(row["source"], self.server.SAFETY_SOURCE)
         self.assertEqual([a["shape"] for a in row["actions"]], ["notify"])
         self.assertFalse(row["actions"][0]["consent"])
         self.assertEqual([r["ts"] for r in self.announced], [row["ts"]])
@@ -564,7 +596,12 @@ class TestTheLedgerRations(LoopCase):
         # Queued, not dropped: an allowance that is spent is a reason to
         # wait, never a reason to decide a signal was worth nothing.
         self.assertEqual(self.server.RESIDENT_STATE["investigations_waiting"], 1)
-        self.assertEqual(self.server.RESIDENT_STATE["queue_len"], 1)
+        # PARKED, with the look's reason — not put back for a fresh paid
+        # look to re-judge every minute with no memory of the verdict.
+        [(parked, why, refines)] = self.server.RESIDENT_PARKED
+        self.assertEqual(why, "worth a look")
+        self.assertTrue(refines)
+        self.assertEqual(self.server.RESIDENT_STATE["queue_len"], 0)
 
     def test_the_cheap_tier_is_never_stopped_by_the_ledger(self):
         now = time.time()
@@ -610,9 +647,9 @@ class TestTheLedgerRations(LoopCase):
         self.tick()
         self.assertEqual(len(self.analyst_calls), 1,
                          "the escalation ran past its allowance")
-        [filed] = [f for f in findings_store.list_all()
-                   if f["source"] == findings_store.RESIDENT_SOURCE]
-        self.assertIn("did not look again", filed["detail"])
+        [refined] = [f for f in findings_store.list_all()
+                     if f.get("claim")]
+        self.assertIn("did not look again", refined["detail"])
 
     def test_the_look_is_charged_to_the_ledger(self):
         self.file_check_row()
@@ -770,9 +807,13 @@ class TestTheCasesRoute(RouteCase):
         kinds = sorted({c["kind"] for c in payload["cases"]})
         # Never the chore: accepted work is the To-do tab's, with its own
         # count, and on this feed it read as a finding with no way onto
-        # the list.
-        self.assertEqual(kinds, ["opportunity", "problem", "question"])
-        self.assertEqual(payload["open"], 3)
+        # the list. Never the proposal either, for the same reason one
+        # store over: the Proposals tab is the one surface it is offered
+        # on, and its badge is the one that counts it.
+        self.assertEqual(kinds, ["problem", "question"])
+        self.assertEqual(payload["open"], 2)
+        self.assertFalse(any(c["id"].startswith("p:")
+                             for c in payload["cases"]))
         # …and the three things the feed's foot line is built from.
         for key in ("ledger", "resident", "eventbus", "watching"):
             self.assertIn(key, payload)

@@ -1807,18 +1807,30 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         out = await (await self.client.post("/api/chat/adopt")).json()
         self.assertFalse(out["adopted"])
 
-    async def test_adopting_mid_answer_is_refused(self):
-        """Adopting stops our process. Losing an answer being written is
-        worse than making somebody wait for it."""
+    async def test_adopting_mid_answer_leaves_the_answer_running(self):
+        """Adopting used to STOP the attached process to resume the
+        terminal's conversation in its place, so it refused mid-answer —
+        losing an answer being written is worse than making somebody wait.
+        It goes through the registry now, which opens the terminal's
+        conversation beside the busy one: nothing is stopped, so there is
+        nothing to refuse, and the answer goes on being written in the
+        background where switching back finds it."""
         self._fake_conversation("terminal-one", "what the terminal was doing")
         os.environ["FAKE_CHAT_MODE"] = "slow"
-        self.chat_session.session().state = "busy"
+        busy = self.chat_session.session()
+        busy.state = "busy"
         try:
             resp = await self.client.post("/api/chat/adopt")
-            self.assertEqual(resp.status, 409)
+            self.assertEqual(resp.status, 200)
+            out = await resp.json()
+            self.assertTrue(out["adopted"])
+            self.assertEqual(out["session_id"], "terminal-one")
+            self.assertIsNot(self.chat_session.session(), busy)
+            self.assertEqual(busy.state, "busy")
+            self.assertIn(busy, self.chat_session.registry().sessions())
         finally:
             os.environ["FAKE_CHAT_MODE"] = "ok"
-            self.chat_session.session().state = "idle"
+            busy.state = "idle"
 
     # ---------------------------------------------------------------
     # Who ran what.

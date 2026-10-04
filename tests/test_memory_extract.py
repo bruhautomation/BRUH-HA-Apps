@@ -40,6 +40,7 @@ sys.path.insert(0, str(PANEL))
 FAKE_CLAUDE = """#!/bin/sh
 cat > "$ARGV_LOG.prompt"
 printf '%s\\n' "$@" > "$ARGV_LOG"
+pwd > "$ARGV_LOG.cwd"
 sleep "${FAKE_DELAY:-0}"
 cat <<'JSON'
 {"fact": "the porch sensor reads on continuously by design", "confidence": "high", "subject": "binary_sensor.porch", "kind": "correction"}
@@ -56,6 +57,21 @@ for a in "$@"; do
     echo "error: unknown option '--session-id'" >&2
     exit 1
   fi
+done
+echo '{"fact": "the boiler is in the loft", "confidence": "high", "subject": "house", "kind": "fact"}'
+"""
+
+# A CLI from before --tools and --setting-sources: refuses each by name, the
+# way the real arg parser does, and answers once it is asked without them.
+FAKE_CLAUDE_ANCIENT = """#!/bin/sh
+cat > /dev/null
+printf '%s\\n' "$@" > "$ARGV_LOG"
+for a in "$@"; do
+  case "$a" in
+    --tools|--setting-sources)
+      echo "error: unknown option '$a'" >&2
+      exit 1 ;;
+  esac
 done
 echo '{"fact": "the boiler is in the loft", "confidence": "high", "subject": "house", "kind": "fact"}'
 """
@@ -120,6 +136,8 @@ class ExtractCase(unittest.TestCase):
         self.child_log = root / "child.log"
         self.transcript = root / "session.jsonl"
         self.chat_dir.mkdir()
+        self.home = root / "home"
+        self.home.mkdir()
         self.claude = root / "claude"
         self.claude.write_text(self.FAKE)
         self.claude.chmod(0o755)
@@ -141,7 +159,12 @@ class ExtractCase(unittest.TestCase):
             "BRAIN_EXTRACT_LOG": str(self.child_log),
             "ARGV_LOG": str(self.argv_log),
             "FAKE_DELAY": self.DELAY,
+            "BRAIN_HOME": str(self.home),
         })
+        # No panel: the journal row is asserted where it is asked for, and
+        # must not reach the real /data anywhere else.
+        env.pop("BRAIN_PANEL_DIR", None)
+        env["BRAIN_PANEL_DIR"] = str(Path(self.tmp.name) / "no-panel")
         env.update(extra)
         return env
 
@@ -285,11 +308,34 @@ class TestWhatItFiles(ExtractCase):
         self.wait_for_inbox()
         argv = self.argv_log.read_text().split("\n")
         self.assertIn("-p", argv)
-        self.assertIn("--disallowedTools", argv)
-        self.assertIn("*", argv)
+        self.assertEqual(argv[argv.index("--tools") + 1], "")
+        self.assertNotIn("--disallowedTools", argv)
         self.assertIn("--max-turns", argv)
         self.assertEqual(argv[argv.index("--max-turns") + 1], "1")
         self.assertIn("--session-id", argv)
+
+    def test_the_run_stands_where_the_engines_runs_do(self):
+        """From /config the pass paid for the whole generated CLAUDE.md,
+        the project's MCP server and its own Stop hook firing again, to
+        read four kilobytes. It runs from CLAUDE_HOME now, on its own
+        system prompt, with no MCP and no setting source — and the
+        isolation it names is the engine's own, kept in step by hand
+        because the hook must start without the panel."""
+        import engine
+        self.run_hook()
+        self.wait_for_inbox()
+        argv = self.argv_log.read_text().split("\n")
+        self.assertEqual(Path(self.argv_log.with_name("argv.log.cwd")
+                              .read_text().strip()).resolve(),
+                         self.home.resolve())
+        self.assertIn("--strict-mcp-config", argv)
+        self.assertEqual(argv[argv.index("--setting-sources") + 1], "")
+        self.assertEqual(json.loads(argv[argv.index("--settings") + 1]),
+                         engine.isolation_settings())
+        # The system prompt spans lines, and the argv log is one per line.
+        self.assertIn("--system-prompt", argv)
+        self.assertIn("EARLIER is context", self.argv_log.read_text())
+        self.assertEqual(argv[argv.index("--output-format") + 1], "json")
 
     def test_the_model_comes_from_the_plan_and_defaults_to_haiku(self):
         """run.sh writes BRAIN_MODEL_MEMORY into /data/.brain_env from
@@ -402,6 +448,112 @@ class TestWhatItRefuses(ExtractCase):
             [sys.executable, str(SCRIPT)], input="not json at all",
             capture_output=True, text=True, timeout=20, env=self.env())
         self.assert_nothing_filed(proc)
+
+
+class TestOnlyWhatIsNewIsRead(ExtractCase):
+    """Every window used to reach back to the previous user turn, so from
+    the second turn of a conversation it held two and the keyword gate was
+    never asked: one run per turn over overlapping windows. A window now
+    starts after the last message a pass read."""
+
+    def env(self, **extra):
+        return super().env(BRAIN_EXTRACT_SPACING="0", **extra)
+
+    def append(self, n: int, user_text: str):
+        lines = self.transcript.read_text().splitlines()
+        lines.append(json.dumps({
+            "type": "user", "uuid": f"u{n}", "isSidechain": False,
+            "message": {"role": "user", "content": user_text}}))
+        lines.append(json.dumps({
+            "type": "assistant", "uuid": f"a{n}", "isSidechain": False,
+            "message": {"role": "assistant",
+                        "content": [{"type": "text", "text": "Understood."}]}}))
+        self.write_transcript(lines)
+
+    def prompt(self) -> tuple[str, str]:
+        text = self.argv_log.with_name("argv.log.prompt").read_text()
+        earlier, _, new = text.partition("NEW:")
+        return earlier, new
+
+    def test_a_second_pass_reads_only_what_was_said_since(self):
+        self.run_hook()
+        self.assertTrue(self.wait_for_inbox())
+        earlier, new = self.prompt()
+        self.assertIn("porch motion sensor", new)
+        self.assertIn("how many lights", earlier)
+        for path in self.inbox_files():
+            path.unlink()
+        self.append(2, "We always keep the garage heater off at night, on purpose.")
+        self.run_hook()
+        self.assertTrue(self.wait_for_inbox())
+        earlier, new = self.prompt()
+        self.assertIn("garage heater", new)
+        self.assertNotIn("porch motion sensor", new)
+        self.assertIn("porch motion sensor", earlier, "context, not content")
+
+    def test_a_stop_with_nothing_new_buys_nothing(self):
+        self.run_hook()
+        self.assertTrue(self.wait_for_inbox())
+        self.argv_log.unlink()
+        self.run_hook()
+        time.sleep(2.0)
+        self.assertFalse(self.argv_log.exists(), "a pass over nothing new ran")
+
+    def test_two_exchanges_no_longer_skip_the_gate(self):
+        """The bug itself: a first window of two exchanges whose newest
+        message carries no teaching language used to pass on its count."""
+        self.write_transcript(transcript_lines(
+            exchanges=2,
+            user_text="and how many are on upstairs, give me the whole list"))
+        proc, _ = self.run_hook()
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(self.settle(), [])
+        self.assertFalse(self.argv_log.exists())
+
+    def test_a_message_judged_not_worth_a_pass_moves_the_window(self):
+        self.write_transcript(transcript_lines(
+            exchanges=1,
+            user_text="how many lights are on downstairs right now please"))
+        self.run_hook()
+        self.assertEqual(self.settle(1.5), [])
+        self.append(5, "Actually the hall lamp is on a smart plug, never the switch.")
+        self.run_hook()
+        self.assertTrue(self.wait_for_inbox())
+        earlier, new = self.prompt()
+        self.assertIn("smart plug", new)
+        self.assertNotIn("downstairs right now", new)
+
+
+class TestTheRunIsJournalled(ExtractCase):
+    def test_a_pass_records_itself_through_the_panels_journal(self):
+        journal_file = Path(self.tmp.name) / "journal.jsonl"
+        env = self.env(BRAIN_PANEL_DIR=str(PANEL),
+                       BRAIN_JOURNAL_FILE=str(journal_file),
+                       BRAIN_USAGE_NUDGE=str(Path(self.tmp.name) / "nudge"))
+        self.run_hook(env=env)
+        files = self.wait_for_inbox()
+        run_id = json.loads(files[0].read_text().splitlines()[0])["run_id"]
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not journal_file.exists():
+            time.sleep(0.05)
+        rows = [json.loads(line) for line in journal_file.read_text().splitlines()]
+        self.assertEqual([(r["source"], r["outcome"], r["run_id"]) for r in rows],
+                         [("memory_extract", "ok", run_id)])
+        self.assertTrue(rows[0]["extra"]["shell"])
+
+
+class TestAnAncientCli(ExtractCase):
+    FAKE = FAKE_CLAUDE_ANCIENT
+
+    def test_flags_it_does_not_know_are_dropped_and_the_pass_still_runs(self):
+        self.run_hook()
+        self.assertTrue(self.wait_for_inbox(), "the pass never ran")
+        argv = self.argv_log.read_text().split("\n")
+        self.assertNotIn("--tools", argv)
+        self.assertNotIn("--setting-sources", argv)
+        # The deny-everything spelling an older CLI does know stands in.
+        self.assertEqual(argv[argv.index("--disallowedTools") + 1], "*")
+        self.assertIn("--strict-mcp-config", argv)
 
 
 class TestAReplyNobodyCanRead(ExtractCase):

@@ -65,6 +65,11 @@ const IDS = [
   'setGatherMode', 'setHistoryDays', 'setKeepDays', 'setKeepRuns', 'setModel', 'setThinking',
   'setModelCustom', 'setPlan', 'setRefresh', 'setRefreshMode', 'setSyncNote',
   'setTerminalUi', 'setTimeout', 'usageFill', 'usageMark', 'usageText',
+  // The household's notification sentence and the lines learned beside it.
+  'setNotifyPolicy', 'setNotifyLearned', 'setSpeakFirst',
+  // The permission switch, and the row "Stop asking…" on a chat approval
+  // card opens the dialog at.
+  'setSkipPerms', 'setSkipPermsRow',
 ];
 
 // The sections, and whether the shipped markup opens them. Account and
@@ -93,14 +98,50 @@ window.fetch = async (url, opts) => {
   window.__fetched.push(p);
   const answer = (body) => new Response(JSON.stringify(body), {
     status: 200, headers: { 'Content-Type': 'application/json' } });
-  if (p.includes('api/settings')) {
+  // The camera list, in \`server._cameras_payload\`'s shape. Not one of the
+  // Advanced reads: it is fetched when Generation defaults opens.
+  if (p.includes('api/cameras')) {
     return answer({
+      cameras: [
+        { entity_id: 'camera.porch', name: 'Porch', allowed: true },
+        { entity_id: 'camera.garden_long_name_that_wraps_on_a_phone',
+          name: 'The garden camera over the vegetable beds', allowed: false },
+      ],
+      allowed: ['camera.porch'], per_day: 12, used_today: 3, error: '',
+      registry_read: true,
+    });
+  }
+  if (p.includes('api/settings') && opts && opts.method === 'PUT') {
+    (window.__puts = window.__puts || []).push(JSON.parse(opts.body));
+  }
+  if (p.includes('api/settings')) {
+    // The permission switch round-trips, so a press on it re-renders from
+    // what the "server" answered — and \`__refusePut\` stands in for the
+    // Supervisor refusing the write, which the panel answers with a 409.
+    const put = !!(opts && opts.method === 'PUT');
+    const sent = put ? JSON.parse(opts.body || '{}') : {};
+    if (put && window.__refusePut) {
+      return new Response("brAIn could not save that to the add-on's options, "
+        + 'so it is still asking.', { status: 409 });
+    }
+    if ('dangerously_skip_permissions' in sent) {
+      window.__skipPerms = sent.dangerously_skip_permissions === true;
+    }
+    return answer({
+      ...(window.__permSessions !== undefined
+        ? { permission_sessions: window.__permSessions } : {}),
       settings: {
         auto_enabled: true, capture: false, terminal_ui: 'chat',
         chat_max_sessions: 3, gather_mode: 'search', refresh_mode: 'changed',
         plan: 'pro', budget_percent: 25, refresh_hours: 12, history_days: 7,
         timeout_minutes: 8, history_keep_runs: 20, history_keep_days: 30,
         model: 'claude-sonnet-4-5', onboarded: true,
+        dangerously_skip_permissions: window.__skipPerms === true,
+        notify_policy: 'wake me for water or smoke; batteries can wait',
+        speak_first: true,
+        notify_policy_learned: [{ id: 'a1b2c3d4', subject: 'Garden lights',
+          clause: 'Notifications about Garden lights (light.garden) can wait '
+                  + 'for the morning list, unless they are critical.', at: 1756000000 }],
       },
       models: [{ id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5',
                  group: 'Recommended', hint: 'the everyday one' }],
@@ -300,6 +341,30 @@ for (const width of WIDTHS) {
     }
   }
 
+  // ---- the notification sentence, and a learned line's Remove ------------
+  // The learned line is the one control here that is added by an answer
+  // somewhere else, so it is the one nobody would think to measure.
+  const learned = await page.evaluate(() => {
+    const fold = document.querySelector('#setNotifyLearned details');
+    if (fold) fold.open = true;
+    const rows = [...document.querySelectorAll('#setNotifyLearned .setlearnedrow')];
+    return rows.map((r) => {
+      const b = r.querySelector('button').getBoundingClientRect();
+      return { h: Math.round(b.height), text: r.textContent };
+    });
+  });
+  if (learned.length !== 1) note(where, `${learned.length} learned lines rendered, expected 1`);
+  for (const l of learned) {
+    if (touch && l.h < MIN_TARGET) note(where, `a learned line's Remove is ${l.h}px`);
+    if (!/Garden lights/.test(l.text)) note(where, 'a learned line does not say what it is');
+  }
+  const policy = await page.evaluate(() => document.querySelector('#setNotifyPolicy').value);
+  if (!/water/.test(policy)) note(where, 'the notification sentence did not render what was saved');
+  // Speaking aloud is opt-in, so the box must show what was saved — a box
+  // that rendered unticked over a saved yes is one somebody ticks again.
+  const speak = await page.evaluate(() => document.querySelector('#setSpeakFirst').checked);
+  if (!speak) note(where, 'the speak-first box did not render the saved yes');
+
   // ---- the iOS floor, and the page's own width ---------------------------
   if (touch) {
     for (const c of m.small) {
@@ -377,6 +442,115 @@ for (const width of WIDTHS) {
     if (!refetched) note(where, 'a remembered-open Advanced fetched nothing on reopen');
   } catch (e) {
     note(where, `driving the disclosures failed: ${String(e.message).split('\n')[0]}`);
+  }
+
+  // ⚙ → Generation defaults → Cameras: read when the section opens, a full
+  // row per camera, and a tick saved through the ordinary settings PUT.
+  try {
+    const before = await page.evaluate(
+      () => window.__fetched.filter((u) => u.includes('api/cameras')).length);
+    await page.evaluate(() => {
+      const d = document.querySelector('#setsecDefaults');
+      if (d.open) d.open = false;
+    });
+    await page.click('#setsecDefaults > summary');
+    await page.waitForSelector('#setCameras .setcam', { timeout: 5000 });
+    const cams = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('#setCameras .setcam')];
+      return {
+        fetched: window.__fetched.filter((u) => u.includes('api/cameras')).length,
+        rows: rows.map((r) => ({
+          h: Math.round(r.getBoundingClientRect().height),
+          checked: r.querySelector('input').checked,
+          right: r.getBoundingClientRect().right,
+        })),
+        text: document.getElementById('setCameras').textContent,
+        bodyRight: document.querySelector('#setModal .setsecbody')
+          .getBoundingClientRect().right,
+      };
+    });
+    if (cams.fetched <= before) note(where, 'opening Generation defaults did not read the cameras');
+    if (cams.rows.length !== 2) note(where, `${cams.rows.length} camera rows, not 2`);
+    cams.rows.forEach((r, i) => {
+      if (r.h < MIN_TARGET) note(where, `camera row ${i} is ${r.h}px`);
+      if (r.right > cams.bodyRight + 0.5) note(where, `camera row ${i} overflows`);
+    });
+    if (!cams.rows[0] || !cams.rows[0].checked) note(where, 'an allowed camera is not ticked');
+    if (!/3 of 12/.test(cams.text)) note(where, 'the camera list does not say how many looks are used');
+    await page.click('#setCameras .setcam:nth-child(2) input');
+    await page.waitForTimeout(200);
+    const put = await page.evaluate(() => (window.__puts || []).slice(-1)[0] || null);
+    if (!put || JSON.stringify(put.camera_confirm || null)
+        !== JSON.stringify(['camera.porch', 'camera.garden_long_name_that_wraps_on_a_phone'])) {
+      note(where, `ticking a camera saved ${JSON.stringify(put)}`);
+    }
+  } catch (e) {
+    note(where, `driving the camera list failed: ${String(e.message).split('\n')[0]}`);
+  }
+
+  // ---- the permission switch says what it did NOT reach -------------------
+  // A flip reaches a terminal session only when one STARTS (ttyd re-attaches
+  // to the same tmux session), so the line under the switch and the toast
+  // after a press have to say which open session kept the old setting —
+  // above all after "off", where saying nothing reads as "it stopped". Last
+  // in the run, because it leaves the Terminal section open.
+  try {
+    const line = () => page.evaluate(() => {
+      const n = document.querySelector('#setSkipPermsNote');
+      const own = window.__hintSentences().find((h) => h.text
+        === n.textContent.replace(/\s+/g, ' ').trim());
+      return { text: n.textContent, warn: n.classList.contains('warn'),
+               sentences: own ? own.sentences : -1 };
+    });
+    let got = await line();
+    if (got.warn) note(where, 'the permission line warns with nothing running');
+    if (!/next terminal session/.test(got.text)) {
+      note(where, `the permission line does not say when it applies: "${got.text}"`);
+    }
+    if (/stay refused/.test(got.text)) {
+      note(where, 'the permission line still claims protected entities "stay refused"');
+    }
+
+    // Off, with a terminal session still open that began acting.
+    await page.evaluate(async () => {
+      window.__permSessions = { acting: 1, asking: 0 };
+      renderSettingsForm(await api('api/settings'));
+    });
+    got = await line();
+    if (!got.warn || !/still acts without asking/.test(got.text) || !/\/exit/.test(got.text)) {
+      note(where, `an open session still acting is not said: "${got.text}"`);
+    }
+    if (got.sentences > 2) note(where, `the still-acting line runs to ${got.sentences} sentences`);
+
+    // On, with a session open that began asking — first refused, then not.
+    await page.evaluate(() => {
+      window.__permSessions = { acting: 0, asking: 1 };
+      window.__refusePut = true;
+      document.querySelector('#setsecTerminal').open = true;
+    });
+    await page.click('#setSkipPerms');
+    await page.waitForFunction(
+      () => /still asking/.test(document.querySelector('#toast').textContent),
+      null, { timeout: 4000 });
+    if (await page.evaluate(() => document.querySelector('#setSkipPerms').checked)) {
+      note(where, 'a refused save left the switch showing a value that did not save');
+    }
+    await page.evaluate(() => { window.__refusePut = false; });
+    await page.click('#setSkipPerms');
+    await page.waitForFunction(
+      () => /already open still asks/.test(document.querySelector('#toast').textContent),
+      null, { timeout: 4000 });
+    got = await line();
+    if (!/already open still asks/.test(got.text) || !got.warn) {
+      note(where, `an open session still asking is not said: "${got.text}"`);
+    }
+    if (got.sentences > 2) note(where, `the still-asking line runs to ${got.sentences} sentences`);
+    const toastText = await page.evaluate(() => document.querySelector('#toast').textContent);
+    if (/stay refused/.test(toastText)) {
+      note(where, 'the toast still claims protected entities "stay refused"');
+    }
+  } catch (e) {
+    note(where, `driving the permission switch failed: ${String(e.message).split('\n')[0]}`);
   }
 
   await context.close();

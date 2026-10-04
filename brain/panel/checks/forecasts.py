@@ -12,6 +12,7 @@ lives in ``detail`` so the finding refreshes rather than re-files.
 from __future__ import annotations
 
 from . import baseline as baseline_check
+from . import devices
 from ._util import DAY, House, num
 
 # A runway shorter than this is worth a row; longer is not yet news.
@@ -63,6 +64,10 @@ def battery_runway(snap: dict, now: float) -> list[dict]:
             continue
         if st.get("state") in ("unavailable", "unknown"):
             continue
+        # A battery somebody charges is not one to have a replacement
+        # ready for — `dev.battery_low`'s rule, through the same helper.
+        if devices.rechargeable(house, eid):
+            continue
         points = []
         for r in rows if isinstance(rows, list) else []:
             if not isinstance(r, dict):
@@ -86,6 +91,8 @@ def battery_runway(snap: dict, now: float) -> list[dict]:
             continue
         days_left = level / -slope
         if days_left > BATTERY_RUNWAY_DAYS:
+            continue
+        if not house.should_report(eid, "forecast.battery"):
             continue
         dev = house.device_of(eid)
         who = house.device_name(dev) if dev else house.name(eid)
@@ -139,7 +146,10 @@ def decline(snap: dict, now: float) -> list[dict]:
         # they end up disagreeing about which box a battery is in.
         if not st or not baseline_check.eligible(house, eid, st):
             continue
-        if abs(moved.get("move") or 0.0) < DECLINE_MIN_MOVE:
+        unit = baseline.get("unit") or (st.get("attributes") or {}).get(
+            "unit_of_measurement")
+        if abs(moved.get("move") or 0.0) < baseline_check.min_move(
+                unit, DECLINE_MIN_MOVE):
             continue
         attrs = st.get("attributes") or {}
         hits.append((abs(moved["spreads"]), eid, moved,
@@ -152,9 +162,23 @@ def decline(snap: dict, now: float) -> list[dict]:
     by_class: dict[str, int] = {}
     for _rank, _eid, _moved, klass, _b in hits:
         by_class[klass] = by_class.get(klass, 0) + 1
-    hits = [h for h in hits if by_class.get(h[3], 0) <= SAME_CLASS_MAX]
+    together = [h for h in hits if by_class.get(h[3], 0) > SAME_CLASS_MAX]
+    if together:
+        house.gave_up("forecast.decline",
+                      [{"entity_id": h[1]} for h in together],
+                      "several sensors of the same kind were drifting the "
+                      "same way at once — that is the weather or the season "
+                      "moving, not one device")
+    hits = [h for h in hits if by_class.get(h[3], 0) <= SAME_CLASS_MAX
+            and house.should_report(h[1], "forecast.decline")]
 
-    if not hits or len(hits) > DECLINE_MAX_ROWS:
+    if len(hits) > DECLINE_MAX_ROWS:
+        house.gave_up("forecast.decline", [{"entity_id": h[1]} for h in hits],
+                      f"{len(hits)} readings were drifting at once — past "
+                      f"{DECLINE_MAX_ROWS} that is the measurement rather "
+                      "than the house")
+        return []
+    if not hits:
         return []
     hits.sort(reverse=True)
 

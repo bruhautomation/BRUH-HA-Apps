@@ -56,7 +56,23 @@ Behaviour switches via env:
   FAKE_CHAT_NOPROMPTFLAG  refuse --permission-prompt-tool at startup the way
                                    a CLI from before the stdio value exists:
                                    name the flag on stderr and die unspoken
+  FAKE_CHAT_REFUSE  a comma list of flags to refuse at startup the way a
+                                   CLI from before they existed does:
+                                   "error: unknown option '<flag>'" on
+                                   stderr, dying unspoken
   FAKE_CHAT_LOG   append each invocation's argv as a JSON line
+  FAKE_CHAT_SUGGESTIONS  in permission mode, a JSON list sent as the
+                                   request's `permission_suggestions` — the
+                                   CLI's own PermissionUpdate objects
+  FAKE_CHAT_PERMS_LOG  append each `updatedPermissions` an allow carried,
+                                   as a JSON line — what "Always allow this"
+                                   handed back, checked first against the
+                                   shape the CLI's SDK schema accepts
+
+Permission mode: `--permission-mode bypassPermissions` on the argv makes
+permission mode answer without asking, the way the real CLI does — the
+tool runs and no `can_use_tool` is sent. Any other value (`default` is what
+a discussion names) asks exactly as before.
 """
 
 import json
@@ -88,6 +104,11 @@ if os.environ.get("FAKE_CHAT_NOPROMPTFLAG") \
           "must be an MCP tool", file=sys.stderr)
     sys.exit(1)
 
+for _flag in filter(None, os.environ.get("FAKE_CHAT_REFUSE", "").split(",")):
+    if _flag in argv:
+        print(f"error: unknown option '{_flag}'", file=sys.stderr)
+        sys.exit(1)
+
 # Distinct per process, because several of these run at once now: two
 # fresh sessions reporting one id would look to the registry like one
 # conversation held twice. A --resume still wins, as the real CLI's does.
@@ -98,6 +119,43 @@ if "--resume" in argv:
               f"{argv[argv.index('--resume') + 1]}", file=sys.stderr)
         sys.exit(1)
     SESSION = argv[argv.index("--resume") + 1]
+
+
+# The permission mode the CLI was started in, as its own option parser
+# would read it. Only bypass changes what this fixture does.
+PERMISSION_MODE = (argv[argv.index("--permission-mode") + 1]
+                   if "--permission-mode" in argv else "")
+
+# The PermissionUpdate shape the CLI's SDK schema accepts (read off the
+# 2.1.289 bundle's zod objects): a closed set of types, each with its own
+# fields, and a closed set of destinations. An update outside it is dropped
+# by the real CLI with a warning; this fixture refuses the turn instead, so
+# a test cannot pass on a shape the real thing would throw away.
+UPDATE_DESTINATIONS = {"userSettings", "projectSettings", "localSettings",
+                       "session", "cliArg"}
+
+
+def update_ok(update):
+    if not isinstance(update, dict) \
+            or update.get("destination") not in UPDATE_DESTINATIONS:
+        return False
+    kind = update.get("type")
+    if kind in ("addRules", "replaceRules", "removeRules"):
+        rules = update.get("rules")
+        return update.get("behavior") in ("allow", "deny", "ask") \
+            and isinstance(rules, list) and all(
+                isinstance(r, dict) and isinstance(r.get("toolName"), str)
+                and (r.get("ruleContent") is None
+                     or isinstance(r.get("ruleContent"), str))
+                for r in rules)
+    if kind == "setMode":
+        return update.get("mode") in ("acceptEdits", "auto",
+                                      "bypassPermissions", "default",
+                                      "dontAsk", "plan")
+    if kind in ("addDirectories", "removeDirectories"):
+        dirs = update.get("directories")
+        return isinstance(dirs, list) and all(isinstance(d, str) for d in dirs)
+    return False
 
 
 def emit(obj):
@@ -247,6 +305,20 @@ for line in sys.stdin:
                       "is_error": True, "result": "allow without updatedInput",
                       "duration_ms": 5, "num_turns": 1})
                 continue
+            perms = answer.get("updatedPermissions")
+            if perms is not None:
+                if not isinstance(perms, list) \
+                        or not all(update_ok(u) for u in perms):
+                    emit({"type": "result",
+                          "subtype": "error_during_execution",
+                          "is_error": True,
+                          "result": "Malformed updatedPermissions",
+                          "duration_ms": 5, "num_turns": 1})
+                    continue
+                perms_log = os.environ.get("FAKE_CHAT_PERMS_LOG")
+                if perms_log:
+                    with open(perms_log, "a") as fh:
+                        fh.write(json.dumps(perms) + "\n")
             if kind == "question":
                 # The answers ride INSIDE updatedInput — the exact contract
                 # a generic Allow button breaks. An empty sheet is the bug.
@@ -328,6 +400,11 @@ for line in sys.stdin:
         emit({"type": "result", "subtype": "success", "is_error": False,
               "result": "Offered.", "duration_ms": 12, "num_turns": 1})
         continue
+    if mode == "permission" and PERMISSION_MODE == "bypassPermissions":
+        # Bypass: the call runs without a question, which is the whole
+        # point of the switch — no can_use_tool reaches the panel.
+        finish_turn(text)
+        continue
     if mode == "permission":
         # Ask before touching the tool, the way the real CLI does when
         # --permission-prompt-tool stdio is on the argv and the call is
@@ -338,10 +415,14 @@ for line in sys.stdin:
             {"type": "tool_use", "id": "toolu_perm", "name": "Bash",
              "input": {"command": "rm /tmp/x"}},
         ], "usage": {"input_tokens": 900, "output_tokens": 30}}})
+        request = {"subtype": "can_use_tool", "tool_name": "Bash",
+                   "input": {"command": "rm /tmp/x"},
+                   "tool_use_id": "toolu_perm"}
+        suggestions = os.environ.get("FAKE_CHAT_SUGGESTIONS")
+        if suggestions:
+            request["permission_suggestions"] = json.loads(suggestions)
         emit({"type": "control_request", "request_id": request_id,
-              "request": {"subtype": "can_use_tool", "tool_name": "Bash",
-                          "input": {"command": "rm /tmp/x"},
-                          "tool_use_id": "toolu_perm"}})
+              "request": request})
         continue
     if mode == "question":
         # AskUserQuestion rides the same wire as any permission ask; what

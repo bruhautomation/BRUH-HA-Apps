@@ -253,7 +253,9 @@ def _cold_enough(unit: str) -> float:
 
 def underheated(snap: dict, now: float) -> list[dict]:
     """A room the heating cannot bring to what it is asked for."""
-    hits = underheated_rooms(snap)
+    house = House(snap)
+    hits = [h for h in underheated_rooms(snap)
+            if house.should_report(h["entity_id"], "climate.underheated")]
     if not hits or len(hits) > MAX_UNDERHEATED:
         return []
     out = []
@@ -304,6 +306,8 @@ def heat_loss(snap: dict, now: float) -> list[dict]:
         k = float(entry["k"])
         tau = float(entry.get("tau_h") or (1.0 / k))
         if k < middle * LOSS_FACTOR or tau > FAST_TAU_H:
+            continue
+        if not house.should_report(eid, "climate.heat_loss"):
             continue
         hits.append((tau, eid, entry))
     if not hits or len(hits) > MAX_LOSS_ROWS:
@@ -438,6 +442,8 @@ def preheat(snap: dict, now: float) -> list[dict]:
         lead_min = lead_h * 60.0
         if lead_min < PREHEAT_MIN_LEAD_MIN or lead_h > PREHEAT_MAX_LEAD_H:
             continue
+        if not house.should_report(eid, "climate.preheat"):
+            continue
         hits.append((-(target - at_wake), eid, entry, at_wake, target,
                      lead_min, area))
 
@@ -537,10 +543,11 @@ def _deg_absolute(celsius: float, unit: str) -> float:
 
 def freeze(snap: dict, now: float) -> list[dict]:
     """A room on course for the temperature pipes are at risk at."""
-    hits = freezing_rooms(snap, now)
+    house = House(snap)
+    hits = [h for h in freezing_rooms(snap, now)
+            if house.should_report(h["entity_id"], "climate.freeze")]
     if not hits or len(hits) > MAX_FREEZE:
         return []
-    house = House(snap)
     hits.sort(key=lambda h: h["hours"])
     out = []
     for hit in hits:
@@ -611,6 +618,8 @@ def window(snap: dict, now: float) -> list[dict]:
         if fall["rate"] < expected * WINDOW_FACTOR:
             continue
         if fall["rate"] - expected < min_excess:
+            continue
+        if not house.should_report(eid, "climate.window"):
             continue
         hits.append((-(fall["rate"] / expected), eid, entry, fall, expected))
 

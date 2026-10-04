@@ -24,6 +24,35 @@ Behavior switches via env:
                    | overloaded_then_ok (one-shot: the first call answers
                      the API's own 529 envelope, every later call answers
                      normally; "first" is remembered in FAKE_ONCE_FILE)
+                   | tool_then_crash (stream: start the turn, call a tool,
+                     get its result back, then die before the result event
+                     — a voice turn that may already have changed the house)
+                   | structured (one-shot, --output-format json: a
+                     --json-schema run answers `structured_output` —
+                     FAKE_STRUCTURED, or {"ok": true} — UNLESS the run
+                     denied every tool with `--disallowedTools "*"`,
+                     which denies the CLI's own StructuredOutput tool
+                     too: then it burns its turns and answers prose with
+                     no `structured_output`, which is what the real CLI
+                     did to every first look and snapshot card)
+                   | ratelimited (one-shot: the account's usage limit,
+                     the way the CLI words it in -p mode)
+  FAKE_ONESHOT_TEXT  (one-shot, ok mode) answer with exactly this instead
+                   of echoing the prompt
+  FAKE_HELP        comma-separated flags `--help` lists (default: none — an
+                   older CLI). A `--help` call is answered before anything
+                   is logged, because it is a probe and not a run.
+  FAKE_HELP_LOG    append one line per `--help` probe, so a test can count
+                   how often a caller asked
+  FAKE_REJECT      comma-separated flag names this CLI does not know; a
+                   call carrying one dies naming it, the way the real
+                   arg parser does ("error: unknown option '--tools'")
+  FAKE_SESSIONS_DIR  the CLI's transcript store, as a directory of empty
+                   files named for session ids. A one-shot call that got
+                   past the arg parser leaves one behind (it reached the
+                   API), and a later `--session-id` naming an id already
+                   there is refused the way the real CLI refuses it —
+                   "Session ID … is already in use" — before any request
 """
 
 import json
@@ -32,6 +61,15 @@ import sys
 import time
 
 argv = sys.argv[1:]
+if argv == ["--help"]:
+    help_log = os.environ.get("FAKE_HELP_LOG")
+    if help_log:
+        with open(help_log, "a") as fh:
+            fh.write("help\n")
+    print("Usage: claude [options] [command] [prompt]\n\nOptions:")
+    for flag in filter(None, os.environ.get("FAKE_HELP", "").split(",")):
+        print(f"  {flag.strip()} <value>")
+    sys.exit(0)
 log_path = os.environ.get("FAKE_CLAUDE_LOG")
 if log_path:
     # One write per invocation: the pool pre-warms a spare in the background,
@@ -42,12 +80,28 @@ if log_path:
                  + "ENV BRAIN_DENIED_SERVICES="
                  + os.environ.get("BRAIN_DENIED_SERVICES", "") + "\n"
                  + "ENV BRAIN_EXPOSED_ONLY="
-                 + os.environ.get("BRAIN_EXPOSED_ONLY", "") + "\n")
+                 + os.environ.get("BRAIN_EXPOSED_ONLY", "") + "\n"
+                 + "ENV BRAIN_CHANNEL="
+                 + os.environ.get("BRAIN_CHANNEL", "") + "\n"
+                 + "ENV CLAUDE_CODE_DISABLE_AUTO_MEMORY="
+                 + os.environ.get("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "") + "\n"
+                 + "ENV CLAUDE_CODE_DISABLE_ADVISOR_TOOL="
+                 + os.environ.get("CLAUDE_CODE_DISABLE_ADVISOR_TOOL", "") + "\n")
 
 mode = os.environ.get("FAKE_MODE", "ok")
 
 AUTH_ERROR = ("Failed to authenticate: OAuth session expired and could not "
               "be refreshed")
+RATE_LIMITED = "You've hit your limit · resets 3pm (UTC)"
+
+# The arg parser runs before anything else, so a flag this CLI does not
+# know ends the call before it could have reached the API.
+for flag in filter(None, (os.environ.get("FAKE_REJECT") or "").split(",")):
+    if "--" + flag.strip() in argv:
+        print(f"error: unknown option '--{flag.strip()}'", file=sys.stderr)
+        sys.exit(1)
+
+sessions_dir = os.environ.get("FAKE_SESSIONS_DIR") or ""
 
 if "--input-format" in argv:
     sid = "11111111-1111-1111-1111-111111111111"
@@ -65,6 +119,32 @@ if "--input-format" in argv:
             time.sleep(60)
             continue
         if mode == "crash":
+            sys.exit(1)
+        if mode == "tool_then_crash":
+            # The real CLI's shape for a turn that reached a tool: the
+            # message opens, a tool_use block starts (token streaming
+            # only), the assistant message carries it whole, and the tool's
+            # result comes back as a user event — then this process dies.
+            if "--include-partial-messages" in argv:
+                print(json.dumps({"type": "stream_event", "session_id": sid,
+                                  "event": {"type": "message_start"}}),
+                      flush=True)
+                print(json.dumps({"type": "stream_event", "session_id": sid,
+                                  "event": {"type": "content_block_start",
+                                            "content_block": {
+                                                "type": "tool_use",
+                                                "name": "control_light"}}}),
+                      flush=True)
+            print(json.dumps({"type": "assistant", "session_id": sid,
+                              "message": {"content": [
+                                  {"type": "text", "text": "Turning it off."},
+                                  {"type": "tool_use", "id": "t1",
+                                   "name": "control_light", "input": {}}]}}),
+                  flush=True)
+            print(json.dumps({"type": "user", "session_id": sid,
+                              "message": {"content": [
+                                  {"type": "tool_result", "tool_use_id": "t1",
+                                   "content": "ok"}]}}), flush=True)
             sys.exit(1)
         if mode == "autherror":
             # the real CLI marks the result event as an error
@@ -112,6 +192,52 @@ else:
     for flag in ("--resume", "--session-id"):
         if flag in argv:
             sid = argv[argv.index(flag) + 1]
+    if sessions_dir:
+        # The real CLI files every conversation it starts, and refuses to
+        # start a second one under an id whose transcript already exists —
+        # before any request, so the refusal costs nothing and answers
+        # nothing. A `--resume` is the other way to name an id, and the
+        # only one that may reuse it.
+        record = os.path.join(sessions_dir, sid)
+        if "--session-id" in argv and os.path.exists(record):
+            print(f"Error: Session ID {sid} is already in use.",
+                  file=sys.stderr)
+            sys.exit(1)
+        with open(record, "a"):
+            pass
+    if mode == "ratelimited":
+        if json_out:
+            print(json.dumps({
+                "type": "result", "subtype": "success", "is_error": True,
+                "result": RATE_LIMITED, "session_id": sid, "num_turns": 1,
+                "duration_ms": 20,
+            }))
+        else:
+            print(RATE_LIMITED)
+        sys.exit(1)
+    if mode == "structured" and json_out:
+        envelope = {"type": "result", "subtype": "success",
+                    "session_id": sid, "duration_ms": 40,
+                    "usage": {"input_tokens": 10, "output_tokens": 5}}
+        disallowed = argv[argv.index("--disallowedTools") + 1] \
+            if "--disallowedTools" in argv else ""
+        if "--json-schema" in argv and "*" in disallowed.split(","):
+            # `*` denies the CLI's own StructuredOutput tool with every
+            # other one. The run asks for it, is refused, asks again, and
+            # gives up in prose — no `structured_output`, several turns
+            # spent, and a parse that only works when the prose happens
+            # to hold the object.
+            envelope.update(is_error=False, num_turns=5,
+                            result="I was unable to use the StructuredOutput "
+                                   "tool, so here is my answer in words.")
+        else:
+            wanted = os.environ.get("FAKE_STRUCTURED") or '{"ok": true}'
+            envelope.update(is_error=False, num_turns=2,
+                            result=wanted)
+            if "--json-schema" in argv:
+                envelope["structured_output"] = json.loads(wanted)
+        print(json.dumps(envelope))
+        sys.exit(0)
     if mode == "overloaded_then_ok":
         once = os.environ.get("FAKE_ONCE_FILE") or ""
         first = bool(once) and not os.path.exists(once)
@@ -154,5 +280,9 @@ else:
             }))
         else:
             print(text)
+    elif os.environ.get("FAKE_ONESHOT_TEXT"):
+        # A one-shot that answers with exactly this — a reflection pass's
+        # JSON lines, say — instead of echoing its prompt.
+        print(os.environ["FAKE_ONESHOT_TEXT"])
     else:
         print(f"ONESHOT: {data}")

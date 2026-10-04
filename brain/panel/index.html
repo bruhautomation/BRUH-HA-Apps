@@ -114,6 +114,7 @@
   <button class="subtab" data-view="terminal" data-group="ask" role="tab">Chat</button>
   <button class="subtab" data-view="memory" data-group="house" role="tab">Knowledge</button>
   <button class="subtab" data-view="activity" data-group="house" role="tab">Activity</button>
+  <button class="subtab" data-view="upkeep" data-group="house" role="tab">Upkeep</button>
   <button class="subtab" data-view="docs" data-group="help" role="tab">Docs</button>
 </nav>
 
@@ -298,6 +299,14 @@
         you can close this tab and come back.</p>
     </div>
 
+    <!-- What the study sessions have found, as it lands. The bar above says
+         how far along the syllabus is; this says what it has learned about
+         THIS house, which is what makes the half hour worth waiting for. -->
+    <div id="obFound" class="obfound hidden">
+      <h3 class="obh3">What brAIn has found so far</h3>
+      <ul id="obFoundList" class="obfoundlist"></ul>
+    </div>
+
     <div id="obRecommend" class="hidden">
       <div class="row">
         <button id="obGo" class="btn primary">See what it suggests</button>
@@ -318,6 +327,24 @@
       <div id="obShippedBlock" class="hidden">
         <h3 class="obh3">Cards that ship with brAIn, and fit this house</h3>
         <div id="obShipped" class="oblist"></div>
+      </div>
+      <!-- One automation the recommend pass found a reason for. Ticking it
+           sends the sentence through the ask bar's own path: drafted,
+           simulated over this house's history, graded against what the
+           household did, then watched for a week. Nothing is written to the
+           house until it is accepted on Home → Proposals. -->
+      <div id="obTryBlock" class="hidden">
+        <h3 class="obh3">One automation to try for a week</h3>
+        <label class="obcard">
+          <input type="checkbox" id="obTry" checked>
+          <div class="obcardbody">
+            <div class="obcardtitle" id="obTryText"></div>
+            <div class="obcardwhy" id="obTryWhy"></div>
+            <div class="obcardfocus">brAIn simulates it over your recorded history first,
+              then watches it for a week beside what you actually do. Nothing is written to
+              your house until you accept it under Home → Proposals.</div>
+          </div>
+        </label>
       </div>
       <p class="hint" id="obChooseNote"></p>
       <div class="row">
@@ -362,6 +389,10 @@
          and "＋ Make recurring" is a button on the card it applies to. -->
     <p class="askhint">Every answer becomes a card. Say <b>“learn about…”</b>
       to send brAIn studying instead.</p>
+    <!-- A "why" asked in the bar is answered here, in words, rather than as
+         a card: a card is a picture of data, and "why didn't you tell me"
+         is answered by what brAIn decided and why (the decision trail). -->
+    <div id="askExplain" class="askexplain hidden" aria-live="polite"></div>
 
     <div id="filters" class="filters"></div>
     <div id="grid" class="grid"></div>
@@ -527,6 +558,51 @@
          is the "refresh everything" control this panel deleted. -->
     <div id="actSummary" class="actsummary"></div>
     <div id="actList" class="actlist"></div>
+  </section>
+</div>
+
+<!-- Upkeep: Home Assistant ITSELF, looked after. The house book, tidier
+     names and rooms, whether each waiting update is safe tonight, and what
+     the overnight health check and the access review found. Every press
+     here spends one Claude run and STARTS it — the section reads the
+     outcome back — and nothing changes in Home Assistant until a person
+     ticks rows and presses Apply. -->
+<div id="viewUpkeep" class="view">
+  <section class="upwrap">
+    <div class="findhead">
+      <div>
+        <h2>Upkeep</h2>
+        <p class="sub">Home Assistant itself, looked after: a plain-language
+          book of how this house works, tidier names and rooms, whether each
+          waiting update is safe to install, and what the overnight check
+          found. Each button spends one Claude run; nothing in Home Assistant
+          changes until you tick it and press Apply.</p>
+      </div>
+    </div>
+    <section class="ksec upsec">
+      <h2>House book</h2>
+      <p class="hint tight">How this house works, for a partner or a sitter.
+        Every sentence names what it came from; codes and passwords are left
+        out.</p>
+      <div id="upBook" class="upbody"></div>
+    </section>
+    <section class="ksec upsec">
+      <h2>Names, rooms and aliases</h2>
+      <p class="hint tight">brAIn suggests names in this house's own style,
+        a room for devices in none, and the words people actually say. Tick
+        what you want; Undo works for 30 days.</p>
+      <div id="upTidy" class="upbody"></div>
+    </section>
+    <section class="ksec upsec">
+      <h2>Updates waiting</h2>
+      <p class="hint tight">brAIn reads each update's release notes against
+        your configuration. It never installs anything.</p>
+      <div id="upUpdates" class="upbody"></div>
+    </section>
+    <section class="ksec upsec">
+      <h2>Overnight health and access</h2>
+      <div id="upHealth" class="upbody"></div>
+    </section>
   </section>
 </div>
 
@@ -722,6 +798,15 @@
   <section class="ksec kbriefsec">
     <h2>This morning</h2>
     <div id="kBrief" class="kbrief"></div>
+  </section>
+
+  <!-- (a2) A deep review: the one run on the top tier, and only by a press.
+       Its price is on the button before it is pressed (an estimate read
+       off the reviews this house has already paid for), and what it said
+       stays here to be read — it files nothing anywhere else. -->
+  <section class="ksec kreviewsec">
+    <h2>Deep review</h2>
+    <div id="kReview" class="kreview"></div>
   </section>
 
   <!-- (b) The measurements. Always seven rows, always in this order, whatever
@@ -1081,16 +1166,54 @@
           <p class="hint">💡 Token-saving tips: each card's ✎ dialog can set fixed daily run times
             (for example “07:00, 19:00”), a longer every-N-hours interval, or disable that card
             entirely — scheduled times use far fewer tokens than short intervals.</p>
+
+          <!-- Who hears what, when: one sentence in the household's own words
+               rather than another row of options. Saved on change (blur),
+               like every other control here. The learned lines are shown
+               apart from it, one each, because a clause spliced into
+               somebody's sentence is one they cannot find again to remove.
+               No example in the box itself — a greyed-out example in an
+               empty box is read as content — so it lives on the ?. -->
+          <div class="setrow">
+            <label for="setNotifyPolicy">What deserves a notification — critical alerts
+              always come through</label>
+            <button type="button" class="btn icon tiny"
+              aria-label="More about the notification sentence"
+              data-tip="Say it the way you would to a person, for example: wake me for water, smoke, the freezer or the front door at night; batteries can wait for Saturday. brAIn reads it before each notification and decides whether to send it now, hold it for later or the morning list, or leave it on the Findings tab — and writes the message for your lock screen. Leaks, smoke, gas and other urgent critical alerts always come straight through, whatever this says, and if brAIn cannot ask Claude it sends exactly what it always did.">?</button>
+          </div>
+          <textarea id="setNotifyPolicy" rows="2" maxlength="400"
+            placeholder="In your own words…"></textarea>
+          <div id="setNotifyLearned" class="setlearned hidden"></div>
         </div>
       </details>
 
       <details class="setsec" id="setsecTerminal" data-sec="terminal">
         <summary>
           <span class="setsecname">Terminal &amp; chat</span>
-          <span class="setsecsub">Which face the Terminal tab shows, and how many conversations
-            stay live at once</span>
+          <span class="setsecsub">Whether brAIn asks before it acts, which face the Terminal tab
+            shows, and how many conversations stay live</span>
         </summary>
         <div class="setsecbody">
+          <!-- One switch, two doors: this is the add-on's
+               `dangerously_skip_permissions` option, written back through the
+               Supervisor like the generation defaults, so the Configuration
+               tab shows the same value. "Stop asking" on a chat approval card
+               opens the dialog here. -->
+          <div class="setrow top" id="setSkipPermsRow">
+            <label class="check bigcheck"><input id="setSkipPerms" type="checkbox">
+              <span><b>Let brAIn act without asking</b><br>
+              <span class="subtext">The terminal and the chat stop asking before each command,
+              edit or change.</span></span></label>
+            <button type="button" class="btn icon tiny"
+              aria-label="More about acting without asking"
+              data-tip="Off, the terminal and the chat ask before Claude runs a command, edits a file or changes something in Home Assistant. Only reading is pre-approved. On, they stop asking. Still guarded: brAIn's Home Assistant tools refuse protected entities, and so do plain shell service calls and YAML edits made with Claude's file tools that name one. A shell command that reaches one some other way is not checked. brAIn's own deny-list still holds, a conversation about a finding still asks (an agreed change still goes through the plan, with Undo), and voice and background runs keep their own rules. Edits made with Claude's file tools can be put back with brain undo; changes made by shell commands cannot. A change reaches the next terminal session and the chat's next message. A terminal session already open keeps the setting it started with, either way, until you end it with /exit; a chat answer already being written finishes first. This is the add-on's dangerously_skip_permissions option, so the Configuration tab shows the same switch.">?</button>
+          </div>
+          <!-- Rewritten by renderSettingsForm from `permission_sessions`
+               when an open terminal session did not get the switch's
+               current value; this text is what it says otherwise. -->
+          <p class="hint" id="setSkipPermsNote">Applies to the next terminal session and chat message.
+            Protected entities are refused through brAIn's own tools, not every shell command.</p>
+
           <div class="setrow">
             <label for="setTerminalUi">Terminal tab</label>
             <button type="button" class="btn icon tiny"
@@ -1177,7 +1300,7 @@
               <label for="setModel">Claude model</label>
               <select id="setModel" class="selin"></select>
               <input id="setModelCustom" class="hidden" type="text" maxlength="100"
-                     autocomplete="off" spellcheck="false" placeholder="e.g. claude-opus-5">
+                     autocomplete="off" spellcheck="false" placeholder="e.g. claude-opus-5-5">
               <p class="hint tight">Smaller models cost far fewer tokens per run; the
                 biggest ones dig deeper. Pick <b>Custom model id…</b> for anything newer
                 than this add-on.</p>
@@ -1203,6 +1326,20 @@
           </div>
           <p class="hint">Only <code>log_level</code> stays Configuration-tab-only (it takes
             effect at startup, so there is nothing to sync).</p>
+
+          <!-- Which cameras brAIn may look at on its own. Empty until somebody
+               ticks one: a camera frame is the most private thing a house
+               holds, and voice, an automation's task and the Resident all
+               answer to this one list and one daily count. Fetched when this
+               section opens, never on the way into the dialog. -->
+          <h4 class="sethead">Cameras</h4>
+          <p class="hint">Cameras brAIn may look at on its own — when you ask a voice assistant,
+            when an automation runs a camera check, and to confirm a safety alarm or an open door.
+            None until you tick one.
+            <button type="button" class="btn icon tiny"
+              aria-label="More about which cameras brAIn may look at"
+              data-tip="Unticked cameras are never looked at on brAIn's own initiative. Ticked ones are looked at a limited number of times a day across every path, and a frame is described for what it shows about the house, never about a person. You asking in the chat or the terminal is you looking, and is not limited by this list.">?</button></p>
+          <div id="setCameras" class="setcams">Open this section to load your cameras.</div>
         </div>
       </details>
 
@@ -1214,8 +1351,8 @@
       <details class="setsec" id="setsecAdvanced" data-sec="advanced">
         <summary>
           <span class="setsecname">Advanced</span>
-          <span class="setsecsub">Diagnostics, problem reports, corpus capture, the deep check
-            and the rehearsal</span>
+          <span class="setsecsub">Diagnostics, problem reports, speaking up, corpus capture,
+            the deep check and the rehearsal</span>
         </summary>
         <div class="setsecbody">
           <h4 class="sethead first">Diagnostics</h4>
@@ -1239,6 +1376,17 @@
               else was happening. This asks the next one now. Unlike the rest of
               this dialog it costs a Claude turn, and it never asks twice about the
               same thing.">Ask why now</button>
+          </div>
+
+          <h4 class="sethead">Speak first</h4>
+          <div class="setrow top">
+            <label class="check bigcheck"><input id="setSpeakFirst" type="checkbox">
+              <span><b>Say urgent problems aloud</b><br>
+              <span class="subtext">Off by default. A serious problem is announced on the
+              voice satellite in the room somebody is in, then sent to the phone as usual.</span></span></label>
+            <button type="button" class="btn icon tiny"
+              aria-label="More about speaking first"
+              data-tip="Only a check's serious or critical finding that needs attention now is spoken, never during quiet hours, never when everybody is away, at most once per finding and once every half hour. A satellite you have protected is never used, and nothing a person is called is said aloud. The phone notification is sent either way.">?</button>
           </div>
 
           <h4 class="sethead">Problems</h4>

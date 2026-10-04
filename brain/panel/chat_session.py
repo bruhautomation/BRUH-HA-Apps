@@ -62,6 +62,7 @@ import engine
 
 import atomic_write
 import journal
+import permission_mode
 import settings_store
 
 # Where the chat runs. /config so the project's settings.local.json (the
@@ -306,7 +307,28 @@ def _clean_meta(meta: object) -> dict:
         lost_from = meta.get("lost_from")
         if isinstance(lost_from, str) and safe_id(lost_from):
             out["lost_from"] = lost_from
+    # Which finding the conversation is about — the Discuss route's subject.
+    # Kept with the transcript because it decides more than the buttons on
+    # a resolution card: a discussion's acting tools ask first
+    # (`DISCUSS_ASK`), and a conversation reopened after a restart that
+    # forgot what it was about would come back with them pre-approved.
+    ts = meta.get("finding_ts")
+    if isinstance(ts, int) and not isinstance(ts, bool) and ts > 0:
+        out["finding_ts"] = ts
     return out
+
+
+def _kept_meta(session_id: str) -> dict:
+    """A conversation's kept `meta`, read off its transcript. Every way of
+    failing answers "nothing kept", which is what a fresh one has."""
+    path = transcript_path(session_id or "")
+    if path is None:
+        return {}
+    try:
+        data = json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return _clean_meta(data.get("meta")) if isinstance(data, dict) else {}
 
 
 def row_state_payload(state: str, cap: int | None = None) -> dict:
@@ -443,6 +465,120 @@ START_GRACE = float(os.environ.get("BRAIN_CHAT_START_GRACE", "10"))
 PERMISSION_TIMEOUT = float(os.environ.get("BRAIN_CHAT_PERMISSION_TIMEOUT", "600"))
 
 # ---------------------------------------------------------------------------
+# What a chat process is told before anybody types, and what it must ask
+# ---------------------------------------------------------------------------
+#
+# The chat used to start as Claude Code's own software-engineering prompt
+# plus whatever `/config/CLAUDE.md` said at boot — nothing about being this
+# house's brAIn, nothing about what it was already worried about, and no
+# memory fetched for the message in front of it. Three things fix that and
+# all three ride the argv, because the argv is the only thing a spawn
+# carries.
+#
+# **A short appended system prompt** (`PROMPT_PROVIDER`, set by the server,
+# which is the half that can read the stores). It is composed at SPAWN and
+# a current CLI records it once per conversation and replays it on every
+# resume, so what it says about the house is labelled as of the start; the
+# per-message half is the hook below.
+#
+# **A `UserPromptSubmit` hook** (`CONTEXT_HOOK`) that asks the panel for the
+# facts relevant to the message being sent and hands them to the turn as
+# context. It is wired here, in the chat's own `--settings`, and nowhere
+# else: the project settings file is read by voice and the listeners too,
+# and a synchronous hook on every voice turn is latency somebody can hear.
+# It is only named when the script exists, because Python answers a missing
+# file with exit 2 and **exit 2 from this hook blocks the prompt** — a
+# dev checkout with no `/opt/scripts` would otherwise refuse every message.
+#
+# **A discussion asks before it acts** (`DISCUSS_ASK`). The Discuss button
+# said "without changing anything" and only a sentence in the prompt held
+# that, while the project's allow-list pre-approved every Home Assistant
+# call, the shell and the file editor. A conversation about a finding gets
+# `permissions.ask` for every acting tool — an ask rule outranks an allow
+# rule in the CLI's own evaluation (deny, then ask, then allow) — so a
+# change there is an approval card a person presses, and the way the model
+# is told to make one is a `plan` resolution, which is the plan → Apply →
+# Undo path the card already has.
+CONTEXT_HOOK = os.environ.get("BRAIN_CHAT_CONTEXT_HOOK",
+                              "/opt/scripts/brain-chat-context.py")
+# Seconds. The hook's own budget is far smaller (it gives up on the panel
+# well inside this); this is the CLI's ceiling on a hook that hung.
+CONTEXT_HOOK_TIMEOUT = 5
+
+# Installed by the server: ``fn(session) -> str``, the system prompt a
+# fresh process is spawned with. None (a test, or this module on its own)
+# means no prompt is appended, which is what the chat did before.
+PROMPT_PROVIDER = None
+
+# The reads `ANALYST_DENIED` refuses for COST rather than because they
+# act, and the one tool that offers endings — a discussion is exactly
+# where offering them belongs.
+_DISCUSS_FREE = frozenset((
+    f"{engine.MCP}offer_resolutions", f"{engine.MCP}render_template",
+    f"{engine.MCP}get_camera_snapshot", "WebFetch", "WebSearch",
+))
+# Every tool that can change the house, a file or anything else: the
+# analyst's deny list less the reads above, plus the one file editor that
+# list predates.
+DISCUSS_ASK = tuple(
+    [t for t in engine.ANALYST_DENIED if t not in _DISCUSS_FREE]
+    + ["MultiEdit"])
+
+# Flags a CLI from before they existed refuses at startup, naming them on
+# stderr. Each is dropped for this add-on run and the spawn retried, so a
+# CLI a version behind loses the feature and keeps the chat —
+# `--permission-prompt-tool`'s arrangement, generalised.
+_OPTIONAL_FLAGS = (
+    ("permission-prompt-tool", "_prompt_tool_ok"),
+    ("permission-mode", "_mode_ok"),
+    ("append-system-prompt", "_system_ok"),
+    ("--settings", "_settings_ok"),
+)
+
+# **"Let brAIn act without asking" is a permission MODE, and a discussion
+# names its own** (`permission_mode`, `_permission_mode`). With the switch on
+# the chat spawns with ``--permission-mode bypassPermissions`` (read off the
+# installed CLI's own option table, which also accepts ``default``), so no
+# approval card appears. Three things stay guarded, and none of them is a
+# prompt for this to skip:
+#
+# * **Deny rules are evaluated BEFORE the mode.** The CLI's own permission
+#   check returns a deny from a rule ahead of the branch that lets bypass
+#   allow everything else (read off the 2.1.289 bundle), so the platform
+#   deny-list in settings.local.json still holds — and it is put on the
+#   argv as well (`--disallowedTools`), so it holds on a box whose project
+#   settings could not be written.
+# * **PreToolUse hooks run in every mode**, so brain-protect-hook.py still
+#   refuses a shell service call or a file-tool YAML edit reaching a
+#   protected entity, and the edit snapshot still feeds `brain undo`. The
+#   MCP server's `protected_entities` chokepoint is a refusal inside the
+#   tool, which no mode reaches. What is NOT covered, and every sentence a
+#   person reads about this switch says so: the hook matches the obvious
+#   shell shapes, so a command that reaches a protected entity some other
+#   way (a heredoc into automations.yaml, a URL built in pieces) now runs
+#   unasked; and a change made by a shell command reaches no undo journal.
+# * **A discussion is spawned with ``--permission-mode default``** whatever
+#   the switch says. Its ask rules outrank an allow anyway, and naming the
+#   mode means a Discuss session never inherits bypass from anywhere — an
+#   agreed change still goes through the plan, Apply and Undo.
+#
+# A change reaches an idle conversation on its next message through the
+# respawn `send` already does (`_spawned_mode`, the `_spawned_model` rule);
+# one that is mid-answer keeps the mode it was started with until then.
+
+# What a can_use_tool request's `permission_suggestions` may hand back as
+# "Always allow this", in the CLI SDK's own PermissionUpdate shape. Only a
+# rule that ALLOWS, only the two destinations that end with this add-on —
+# the conversation (`session`) and /config/.claude/settings.local.json
+# (`localSettings`, which run.sh rewrites at every start) — and only the
+# one mode that is not a permission switch in disguise. A suggestion naming
+# the user or project settings would outlast the add-on's own rewrite and
+# reach runs nobody was looking at, so it is dropped rather than offered.
+SUGGESTION_DESTINATIONS = ("session", "localSettings")
+MAX_SUGGESTIONS = 6
+MAX_SUGGESTION_RULES = 12
+
+# ---------------------------------------------------------------------------
 # The ways a finding could end, offered inside the conversation about it
 # ---------------------------------------------------------------------------
 #
@@ -474,20 +610,28 @@ PERMISSION_TIMEOUT = float(os.environ.get("BRAIN_CHAT_PERMISSION_TIMEOUT", "600"
 # line acceptable — you read it on the button.
 #
 # **No resolution touches the house.** The verbs are the three that record a
-# DECISION (done, wrong, todo). "Fix it" — the one button that sends Claude at
-# the house — is deliberately not offerable: it stays where it always was, on
-# the strip, pressed deliberately, and it does not end the finding anyway
-# (it moves it to `fixing`, which is a different lifecycle from "dismissed").
+# DECISION (done, wrong, todo), `advice`, which puts a sentence on the card,
+# and `plan`, which buys the READ-ONLY plan run with the change the
+# conversation agreed as its brief. "Fix it" as an action — Apply, the one
+# press that sends Claude at the house — is deliberately not offerable: it
+# stays on the card, under the plan a person read, pressed deliberately.
+# `plan` exists because a discussion that agreed a change had nowhere to
+# take it but the chat itself, which acted directly: no plan on the row, no
+# fix window, no Undo. Its press is `/api/finding/{ts}/fix` with the label
+# as the brief, so agreement goes through the same plan → Apply → Undo
+# path every other change on the card takes, and nothing changes before
+# Apply.
 RESOLUTION_TOOL = "offer_resolutions"
-RESOLUTION_VERBS = ("done", "wrong", "todo", "advice")
+RESOLUTION_VERBS = ("done", "wrong", "todo", "advice", "plan")
 MAX_RESOLUTIONS = 4
 MAX_RESOLUTION_LABEL = 90
 # `advice` is the one kind whose label is a paragraph rather than a
 # button's worth of words: it is the sentence that replaces "What you'd
 # need to do" on the card, so it takes the store's own cap for that field
-# (`findings_store.MAX_FIX`) and not a button's.
+# (`findings_store.MAX_FIX`) and not a button's. `plan`'s label is a
+# change described exactly enough to plan, so it takes the same.
 MAX_ADVICE_LABEL = 600
-_LABEL_CAP = {"advice": MAX_ADVICE_LABEL}
+_LABEL_CAP = {"advice": MAX_ADVICE_LABEL, "plan": MAX_ADVICE_LABEL}
 
 
 def resolution_offer(name: str, args: object) -> list[dict] | None:
@@ -625,6 +769,103 @@ def tool_summary(name: str, args: dict) -> str:
     return ""
 
 
+def _clean_rule(rule) -> dict | None:
+    """One `{toolName, ruleContent?}` rule, or None for anything else."""
+    if not isinstance(rule, dict):
+        return None
+    name = rule.get("toolName")
+    if not isinstance(name, str) or not name.strip() or len(name) > 200:
+        return None
+    out = {"toolName": name.strip()}
+    content = rule.get("ruleContent")
+    if content is not None:
+        if not isinstance(content, str) or len(content) > 500:
+            return None
+        out["ruleContent"] = content
+    return out
+
+
+def permission_updates(raw) -> list[dict]:
+    """The suggestions "Always allow this" may hand back, cleaned.
+
+    The input is the CLI's own `permission_suggestions` — PermissionUpdate
+    objects, `{type, …, destination}` (its SDK's schema). Kept: `addRules`
+    that ALLOW, `addDirectories`, and `setMode` to `acceptEdits`, each only
+    to a destination in `SUGGESTION_DESTINATIONS`. Dropped, rather than
+    passed through: a `replaceRules` (it would replace the reading
+    allow-list run.sh writes), any removal, any other mode, and anything
+    malformed — the CLI drops a malformed update itself, and a card that
+    offers to always allow something the CLI then throws away is a press
+    that does nothing it said.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw[:MAX_SUGGESTIONS]:
+        if not isinstance(item, dict):
+            continue
+        dest = item.get("destination")
+        if dest not in SUGGESTION_DESTINATIONS:
+            continue
+        kind = item.get("type")
+        if kind == "addRules" and item.get("behavior") == "allow":
+            raw_rules = item.get("rules")
+            if not isinstance(raw_rules, list):
+                continue
+            rules = [r for r in map(_clean_rule,
+                                    raw_rules[:MAX_SUGGESTION_RULES])
+                     if r is not None]
+            if rules:
+                out.append({"type": "addRules", "rules": rules,
+                            "behavior": "allow", "destination": dest})
+        elif kind == "addDirectories":
+            dirs = item.get("directories")
+            dirs = [d for d in dirs[:MAX_SUGGESTION_RULES]
+                    if isinstance(d, str) and d.strip()] \
+                if isinstance(dirs, list) else []
+            if dirs:
+                out.append({"type": "addDirectories", "directories": dirs,
+                            "destination": dest})
+        elif kind == "setMode" and item.get("mode") == "acceptEdits":
+            out.append({"type": "setMode", "mode": "acceptEdits",
+                        "destination": dest})
+    return out
+
+
+def _rule_words(rule: dict) -> str:
+    name = rule["toolName"]
+    if name.startswith("mcp__"):
+        # mcp__home-assistant__call_service → call_service: the server name
+        # is the same on every card, and the tool is what is being allowed.
+        name = name.rsplit("__", 1)[-1]
+    content = rule.get("ruleContent")
+    return f"{name}({content})" if content else name
+
+
+def suggestion_label(updates: list[dict]) -> str:
+    """What "Always allow this" would allow, in a few words. "" for none."""
+    parts: list[str] = []
+    for update in updates:
+        if update["type"] == "addRules":
+            parts += [_rule_words(r) for r in update["rules"]]
+        elif update["type"] == "addDirectories":
+            parts += [f"files in {d}" for d in update["directories"]]
+        elif update["type"] == "setMode":
+            parts.append("every file edit")
+    return _clip(", ".join(parts), 200) if parts else ""
+
+
+def suggestion_reach(updates: list[dict]) -> str:
+    """How long it lasts: `conversation` when every update stays in this
+    process, `restart` when one is written to settings.local.json, which
+    run.sh rewrites at the next start. "" for none."""
+    if not updates:
+        return ""
+    if all(u["destination"] == "session" for u in updates):
+        return "conversation"
+    return "restart"
+
+
 class ChatSession:
     """One live ``claude`` process, plus the transcript of what it said."""
 
@@ -707,6 +948,27 @@ class ChatSession:
         # runs exactly as it did before the round-trip — refusals are final
         # and amber — instead of not running at all.
         self._prompt_tool_ok = True
+        # The same, for the permission mode, the appended system prompt
+        # and the chat's own `--settings` (see `_OPTIONAL_FLAGS`).
+        self._mode_ok = True
+        self._system_ok = True
+        self._settings_ok = True
+        # "Let brAIn act without asking", as the server last read it — set
+        # on every request like `model`, never read from settings here, so
+        # this module still does not depend on the web layer.
+        self.skip_permissions = False
+        # The `--permission-mode` the LIVE process was spawned with ("" for
+        # none), for the `_spawned_model` reason: a switch flipped while a
+        # conversation was open is intent, and only a respawn applies it.
+        self._spawned_mode: str | None = None
+        # The `permission_suggestions` of the pending ask, cleaned
+        # (`permission_updates`) — what "Always allow this" hands back.
+        self._pending_suggestions: list[dict] = []
+        # What `--settings` the LIVE process was spawned with, for the
+        # `_spawned_model` reason: a conversation that became a discussion
+        # after its process started is still running without the ask rules,
+        # and only a respawn gives it them.
+        self._spawned_settings: str | None = None
         # When anything a listing shows moves (the state, the pending
         # approval), and when THIS session is the one asking. Installed by
         # the registry; None on a session nobody is holding, which is what
@@ -744,6 +1006,7 @@ class ChatSession:
                 self.events = [e for e in events if isinstance(e, dict)][-MAX_EVENTS:]
                 self._seq = max((e.get("seq") or 0) for e in self.events) if self.events else 0
             self.meta = _clean_meta(data.get("meta"))
+            self.finding_ts = int(self.meta.get("finding_ts") or 0)
 
     def _persist(self) -> None:
         """Write this conversation's scrollback, if it has a name yet.
@@ -949,6 +1212,88 @@ class ChatSession:
         # so the listing is refreshed from here rather than polled.
         self._changed()
 
+    # -- what this conversation is about --------------------------------
+
+    def about(self, finding_ts: int) -> None:
+        """Make this a conversation about one finding, or about nothing.
+
+        The subject is the session's and never the model's (it stamps every
+        resolution card), and it is kept in `meta` because it also decides
+        what the process may do unasked — see `DISCUSS_ASK`.
+        """
+        try:
+            ts = int(finding_ts or 0)
+        except (TypeError, ValueError):
+            ts = 0
+        self.finding_ts = ts if ts > 0 else 0
+        if self.finding_ts:
+            self.meta["finding_ts"] = self.finding_ts
+        else:
+            self.meta.pop("finding_ts", None)
+
+    def _settings(self) -> dict:
+        """The chat's own `--settings`: the context hook, and a discussion's
+        ask rules. Empty when there is nothing to add."""
+        out: dict = {}
+        hook = CONTEXT_HOOK or ""
+        if hook and os.path.isfile(hook):
+            out["hooks"] = {"UserPromptSubmit": [{"hooks": [{
+                "type": "command",
+                "command": f"python3 {hook}",
+                "timeout": CONTEXT_HOOK_TIMEOUT,
+            }]}]}
+        if self.finding_ts:
+            out["permissions"] = {"ask": list(DISCUSS_ASK)}
+        return out
+
+    def _permission_mode(self) -> str:
+        """The `--permission-mode` this conversation should spawn with.
+
+        A discussion names `default` whatever the switch says; otherwise
+        the switch decides, and off is no flag at all — the CLI's own
+        default, which is what every release before this sent.
+        """
+        if self.finding_ts:
+            return permission_mode.CHAT_DISCUSS
+        if self.skip_permissions:
+            return permission_mode.CHAT_BYPASS
+        return ""
+
+    def _mode_arg(self) -> str:
+        """What actually goes on the argv: nothing once a CLI refused the
+        flag, which is asking — the direction a dropped guard may fall."""
+        return self._permission_mode() if self._mode_ok else ""
+
+    def _settings_arg(self) -> str:
+        if not self._settings_ok:
+            return ""
+        settings = self._settings()
+        return json.dumps(settings, separators=(",", ":")) if settings else ""
+
+    def _system_prompt(self) -> str:
+        """What the server says this process should be told, or nothing.
+        Never raises: a prompt that could not be composed is a chat that
+        starts the way it always did, not one that does not start."""
+        if not self._system_ok or PROMPT_PROVIDER is None:
+            return ""
+        try:
+            text = PROMPT_PROVIDER(self)
+        except Exception:  # noqa: BLE001 — a prompt is never worth a spawn
+            return ""
+        return str(text or "").strip()
+
+    def _drop_rejected_flag(self, detail: str) -> bool:
+        """Turn off the one optional flag a CLI refused at startup.
+
+        True when something was dropped (so a respawn may help), False when
+        the stderr names nothing this can drop — a real failure, reported
+        as one."""
+        for marker, attr in _OPTIONAL_FLAGS:
+            if getattr(self, attr) and marker in (detail or ""):
+                setattr(self, attr, False)
+                return True
+        return False
+
     # -- process ---------------------------------------------------------
 
     def _argv(self) -> list[str]:
@@ -969,6 +1314,32 @@ class ChatSession:
             # refusal Claude writes around. Rules still short-circuit: the
             # CLI only asks where the interactive TUI would have prompted.
             argv += ["--permission-prompt-tool", "stdio"]
+        mode = self._mode_arg()
+        if mode:
+            argv += ["--permission-mode", mode]
+            if mode == permission_mode.CHAT_BYPASS:
+                # The CLI checks deny rules before the mode, so the
+                # project file's platform deny-list already holds here; the
+                # same list on the argv makes it hold on a box whose
+                # settings.local.json could not be written, which is the
+                # one mode where a missing rule would mean nothing asks.
+                argv += ["--disallowedTools",
+                         ",".join(engine.PLATFORM_DENIED)]
+        system = self._system_prompt()
+        if system:
+            # Appended, never replacing: the CLI's own prompt is what it
+            # knows about calling tools, which is most of what a chat does.
+            argv += ["--append-system-prompt", system]
+        settings = self._settings_arg()
+        if settings:
+            argv += ["--settings", settings]
+        elif self.finding_ts:
+            # A discussion whose CLI refused `--settings` cannot ASK before
+            # it acts, so it may not act: the same tools are forbidden
+            # outright. Failing closed costs a discussion its changes,
+            # which the `plan` resolution makes anyway; failing open would
+            # be the read-only promise kept by a sentence again.
+            argv += ["--disallowedTools", ",".join(DISCUSS_ASK)]
         if self.model:
             # Kept on the argv even when resuming: a resumed session
             # otherwise continues on the model it remembers, which is the
@@ -1014,12 +1385,12 @@ class ChatSession:
             detail = ""
             if not self._first_event.is_set() and not self.alive():
                 detail = await self._stderr_tail(self.proc)
-                if self._prompt_tool_ok and "permission-prompt-tool" in detail:
-                    # A CLI from before `--permission-prompt-tool stdio`
-                    # existed refuses it at startup and names the flag on
-                    # stderr. That loses the approval round-trip, not the
-                    # chat: drop the flag for this add-on run and try again.
-                    self._prompt_tool_ok = False
+                # A CLI from before one of the optional flags existed
+                # refuses it at startup and names it on stderr — first of
+                # them `--permission-prompt-tool stdio`, which loses the
+                # approval round-trip, not the chat. Drop the flag for this
+                # add-on run and try again, once per flag.
+                while self._drop_rejected_flag(detail):
                     if not await self._spawn_watched():
                         return
                     detail = "" if self._first_event.is_set() or self.alive() \
@@ -1108,12 +1479,16 @@ class ChatSession:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=engine._claude_env(),
+            # `chat` is a channel somebody is watching: the action gate
+            # may ask here, where an unattended run is refused instead.
+            env={**engine._claude_env(), "BRAIN_CHANNEL": "chat"},
             limit=1024 * 1024,
         )
         # What this process actually runs, as distinct from what the panel
         # currently wants — see set_model() and send() for who compares them.
         self._spawned_model = self.model
+        self._spawned_settings = self._settings_arg()
+        self._spawned_mode = self._mode_arg()
         self._reader = asyncio.create_task(
             self._read_loop(self.proc, self._first_event))
         if self._prompt_tool_ok:
@@ -1273,7 +1648,10 @@ class ChatSession:
             if self.alive() and self.state == "busy":
                 raise RuntimeError("Claude is still answering — stop it first")
             if self.alive() and (self._respawn_pending
-                                 or self.model != self._spawned_model):
+                                 or self.model != self._spawned_model
+                                 or self._settings_arg()
+                                 != self._spawned_settings
+                                 or self._mode_arg() != self._spawned_mode):
                 # The process no longer matches what the panel wants of it — a
                 # model chosen in ⚙ or the picker while it was live, or a turn
                 # cap only a respawn clears. Both are argv-shaped problems, and
@@ -1337,6 +1715,16 @@ class ChatSession:
         # button that would answer them with nothing. A malformed one falls
         # through to the ordinary card, which at least fails loudly.
         questions = question_spec(args) if tool == QUESTION_TOOL else None
+        # A discussion asks before it acts on purpose — its ask rules
+        # outrank an allow — so neither way of not being asked is offered
+        # there: an "always" rule written from a discussion would stop the
+        # NEXT ordinary chat asking and leave this one asking anyway.
+        discussing = bool(self.finding_ts)
+        if questions or discussing:
+            self._pending_suggestions = []
+        else:
+            self._pending_suggestions = permission_updates(
+                request.get("permission_suggestions"))
         self.pending_permission = {
             "id": request_id,
             "tool": tool,
@@ -1346,6 +1734,17 @@ class ChatSession:
             "input": "" if questions else _clip(
                 json.dumps(args, ensure_ascii=False, indent=2),
                 MAX_RESULT_CHARS),
+            # "Always allow this": what the rule would be, in words, and
+            # how long it lasts. Empty when the CLI suggested nothing this
+            # panel will hand back.
+            "always": suggestion_label(self._pending_suggestions),
+            "always_until": suggestion_reach(self._pending_suggestions),
+            # "Stop asking": the switch in ⚙, offered where it would change
+            # something — not in a discussion (which names its own mode)
+            # and not where this process is already acting without asking
+            # (a card there is a rule or a safety check of the CLI's own).
+            "stop_asking": not questions and not discussing
+            and self._spawned_mode != permission_mode.CHAT_BYPASS,
         }
         # Live-only: the answered question's tool result is the transcript.
         self._emit({"type": "permission", **self.pending_permission},
@@ -1371,7 +1770,8 @@ class ChatSession:
 
     async def respond_permission(self, request_id: str, allow: bool,
                                  timed_out: bool = False,
-                                 answers: dict | None = None) -> dict:
+                                 answers: dict | None = None,
+                                 always: bool = False) -> dict:
         """Answer the pending approval, on the wire the CLI asked on.
 
         An allow hands back the tool's own input untouched; a deny carries
@@ -1384,6 +1784,14 @@ class ChatSession:
         CLI's own permission component puts them. Allowing a question with
         no answers is refused here rather than sent — that is the exact
         empty answer sheet this card exists to prevent.
+
+        ``always`` is "Always allow this": the same allow, carrying the
+        CLI's own suggestions back as ``updatedPermissions`` — the shape its
+        SDK's permission result takes (`{behavior, updatedInput,
+        updatedPermissions}`). Only what the CLI offered and
+        `permission_updates` kept is ever sent; there is nothing to send
+        on a request that offered none, and that is refused rather than
+        silently downgraded to "once".
         """
         pending = self.pending_permission
         if not pending or pending.get("id") != request_id:
@@ -1400,6 +1808,12 @@ class ChatSession:
             answer: dict = {"behavior": "allow",
                             "updatedInput": {**self._pending_input,
                                              "answers": clean}}
+        elif allow and always:
+            if not self._pending_suggestions:
+                raise ValueError("nothing to always allow")
+            answer = {"behavior": "allow",
+                      "updatedInput": self._pending_input,
+                      "updatedPermissions": list(self._pending_suggestions)}
         elif allow:
             answer = {"behavior": "allow",
                       "updatedInput": self._pending_input}
@@ -1429,8 +1843,10 @@ class ChatSession:
             self._drop_pending_permission()
             raise RuntimeError(f"could not reach the Claude session: {exc}") \
                 from exc
-        self._drop_pending_permission(answered=True, allowed=allow)
-        return {"ok": True, "id": request_id, "allow": allow}
+        self._drop_pending_permission(answered=True, allowed=allow,
+                                      always=bool(allow and always))
+        return {"ok": True, "id": request_id, "allow": allow,
+                "always": bool(allow and always)}
 
     def _refuse_control(self, event: dict) -> None:
         """Decline a control request this panel does not implement.
@@ -1458,7 +1874,8 @@ class ChatSession:
             pass
 
     def _drop_pending_permission(self, answered: bool = False,
-                                 allowed: bool = False) -> None:
+                                 allowed: bool = False,
+                                 always: bool = False) -> None:
         """Clear the card everywhere a viewer might still be holding it."""
         timer, self._permission_timer = self._permission_timer, None
         if timer is not None:
@@ -1471,9 +1888,11 @@ class ChatSession:
                 timer.cancel()
         pending, self.pending_permission = self.pending_permission, None
         self._pending_input = {}
+        self._pending_suggestions = []
         if pending:
             self._emit({"type": "permission_done", "id": pending.get("id"),
-                        "answered": answered, "allow": allowed}, keep=False)
+                        "answered": answered, "allow": allowed,
+                        "always": always}, keep=False)
             self._changed()
 
     async def interrupt(self) -> dict:
@@ -1584,6 +2003,10 @@ class ChatSession:
             self.context = {}
             self.events = []
             self.meta = {}
+            # What the conversation was about, if we kept it: a discussion
+            # reopened from the rail after a restart is still a discussion,
+            # with its subject on its cards and its acting tools asking.
+            self.about(_kept_meta(session_id).get("finding_ts") or 0)
             self._seq = 0
             # Live viewers repaint from here: clear first, then the history.
             self._emit({"type": "cleared"}, keep=False)
@@ -1650,12 +2073,14 @@ class ChatSession:
             return {"ok": True, "model": model, "model_label": label,
                     "restarted": True}
 
-    async def reset(self) -> dict:
+    async def reset(self, finding_ts: int = 0) -> dict:
         """Start a genuinely new conversation.
 
         Drops the resume id as well as the transcript — keeping the id would
         make "New chat" mean "same conversation, blank screen", which is the
-        one thing it must not mean.
+        one thing it must not mean. ``finding_ts`` makes it a discussion of
+        that finding from its first spawn, which is the only moment the
+        ask rules can reach the process without a restart.
         """
         async with self._swap_lock:
             await self.stop()
@@ -1664,7 +2089,7 @@ class ChatSession:
             self.info = {}
             self.context = {}
             self.meta = {}
-            self.finding_ts = 0
+            self.about(finding_ts)
             self._seq = 0
             self._persist()
             self._emit({"type": "cleared"}, keep=False)
@@ -1851,7 +2276,10 @@ def _open_in_terminal(session_id: str) -> bool:
     Returns whether the window was opened. Everything here is best effort:
     the file alone is enough to be correct, just not instant.
     """
-    payload = json.dumps({"session_id": session_id, "ts": int(time.time())})
+    stamp = int(time.time())
+    payload = json.dumps({"session_id": session_id, "ts": stamp})
+    _LAST_HANDOFF.clear()
+    _LAST_HANDOFF.update({"session_id": session_id, "ts": stamp})
     try:
         path = Path(HANDOFF_FILE)
         atomic_write.write_text(path, payload, mode=0o600)
@@ -1878,6 +2306,71 @@ def _open_in_terminal(session_id: str) -> bool:
         return proc.returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+# The panel's own copy of the last handoff. The file is the terminal's
+# instruction and `brain-terminal-start` DELETES it when it takes it up —
+# which is the ordinary case, the window opening on the press — so by the
+# time somebody switches back the file is usually gone and "which
+# conversation did we hand over" would have no answer. In memory, because
+# it is only a tie-break over the transcripts' own times: a restart loses
+# it and adopt falls back to the newest of your conversations, which is
+# what it always did.
+_LAST_HANDOFF: dict = {}
+
+
+def read_handoff() -> dict:
+    """The last handoff record: which conversation the chat gave the
+    terminal, and when. ``{}`` when there is none or it cannot be read."""
+    try:
+        data = json.loads(Path(HANDOFF_FILE).read_text("utf-8"))
+    except (OSError, ValueError):
+        data = dict(_LAST_HANDOFF)
+    if not isinstance(data, dict):
+        return {}
+    sid = data.get("session_id")
+    try:
+        ts = float(data.get("ts") or 0)
+    except (TypeError, ValueError):
+        ts = 0.0
+    return {"session_id": sid, "ts": ts} if isinstance(sid, str) \
+        and safe_id(sid) else {}
+
+
+def pick_adopted(rows: list[dict], handoff: dict,
+                 held_elsewhere: set) -> dict | None:
+    """Which of a person's conversations the classic terminal was last on.
+
+    Pure over three answers, because "the newest one" — what adopt used to
+    take — is the wrong question twice over. A chat still answering in the
+    background is by construction recently written, so it beat the
+    terminal's conversation and was resumed a SECOND time beside the
+    session already holding it: two `claude --resume` processes appending
+    to one conversation and two rows under one id. And the newest one is
+    only evidence; the handoff record is the fact.
+
+    So: anything a chat session in the registry holds (other than the
+    attached one) is not the terminal's and is left out; of what is left,
+    one written to AFTER the handoff is what the terminal has been doing
+    since (the handed conversation continued, or a new one started there);
+    with nothing written since, the terminal is still on the conversation
+    it was handed. With no handoff record at all — the classic terminal
+    opened directly — the newest one is the only evidence there is.
+    ``rows`` is `conversations.listing`'s, newest first.
+    """
+    rows = [r for r in rows if r.get("id") and r["id"] not in held_elsewhere]
+    if not rows:
+        return None
+    handed = handoff.get("session_id") or ""
+    if handed:
+        since = [r for r in rows
+                 if float(r.get("modified") or 0) > float(handoff.get("ts") or 0)]
+        if since:
+            return since[0]
+        mine = next((r for r in rows if r["id"] == handed), None)
+        if mine is not None:
+            return mine
+    return rows[0]
 
 
 def _tmux_argv() -> list[str]:
@@ -1951,6 +2444,9 @@ class SessionRegistry:
         # never depends on the web layer — the server refreshes it on every
         # request, exactly as it refreshes the attached session's own.
         self.model = os.environ.get("BRAIN_MODEL", "")
+        # The same, for "Let brAIn act without asking". False until the
+        # server says otherwise, which is asking.
+        self.skip_permissions = False
         _migrate_legacy()
         prune_transcripts()
 
@@ -1960,6 +2456,7 @@ class SessionRegistry:
         # A conversation opened from the rail runs the model the chat is
         # set to, not whatever the environment said at boot.
         session.model = self.model
+        session.skip_permissions = self.skip_permissions
         session._on_change = lambda _s: self._broadcast()
         session._on_ask = self._announce_ask
         self._sessions.append(session)
@@ -2239,7 +2736,12 @@ class SessionRegistry:
                     # Held but stopped — by the cap, or by a handoff. The
                     # transcript is already right, so this is a start, not
                     # a resume: replaying over it would wipe the notice
-                    # that explains the gap.
+                    # that explains the gap. It spawns with what the chat
+                    # is set to NOW, as `_adopt` does for a new one — or a
+                    # switch flipped while it was stopped would spawn the
+                    # old way and be respawned on the first message.
+                    existing.model = self.model
+                    existing.skip_permissions = self.skip_permissions
                     await existing.start()
                     spawned = True
                 self._attach_locked(existing)
@@ -2263,15 +2765,24 @@ class SessionRegistry:
             out["spawned"] = True
             return out
 
-    async def new(self) -> dict:
-        """Start a conversation, leaving whatever else is open alone."""
+    async def new(self, finding_ts: int = 0) -> dict:
+        """Start a conversation, leaving whatever else is open alone.
+
+        ``finding_ts`` is the Discuss route's: the new conversation is about
+        that finding from its first spawn. It goes through here rather than
+        through ``reset`` on the attached session because the attached one
+        may be mid-answer, and Discuss used to kill that answer — and its
+        approval card — to make room for a question about something else.
+        """
         async with self._lock:
             current = self._attached
-            if current is not None and not current.events:
+            if current is not None and not current.events \
+                    and current.state != "busy":
                 # Nothing was ever said in the one on screen. Spending a
                 # slot on a second empty chat is a process for nothing.
-                return await current.reset()
+                return await current.reset(finding_ts)
             session = self._adopt(ChatSession())
+            session.about(finding_ts)
             try:
                 await self._make_room(session)
                 await session.start()

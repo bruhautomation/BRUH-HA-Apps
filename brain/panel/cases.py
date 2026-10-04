@@ -105,6 +105,20 @@ LIVE_STATUSES = ("open", "watching", "acting")
 # endings ride `CASE_HOOKS`), so asking for `kinds=KINDS` still lists it.
 FEED_KINDS = tuple(k for k in KINDS if k != "chore")
 
+# Which STORES the feed lists. A proposal is out of it for the chore's
+# reason one store over: it has a tab of its own with a badge of its own,
+# and it was answerable in both places — counted by the Findings badge
+# and the Proposals badge at once, two badges about one decision. The
+# Proposals tab is the surface that can carry a proposal whole: the
+# replay and the before-and-after, a playbook's targets by name, a set of
+# scenes drawn as swatches, a trial's week and its grade, Undo on an
+# accepted automation and the end of a trial — and the feed's card could
+# carry only the first two, sending a playbook or a scene to the tab for
+# its evidence anyway. A proposal is still a case (`get` answers for it,
+# its endings ride `CASE_HOOKS` for a page served before the change), and
+# the Resident's "already said" prompt asks for every store by name.
+FEED_STORES = tuple(s for s in STORES if s != "proposals")
+
 VERBS = ("do", "not_now", "wrong")
 # And the statuses a verb may be given on. A run is changing the house in
 # `acting`, so an ending there would delete the row the fixer is still
@@ -140,7 +154,16 @@ _PROPOSAL_STATUS = {"proposed": "open", "trialling": "watching"}
 # here, so the feed's sort and the snooze it earns cannot disagree.
 _STAKES_BY_SEVERITY = {"critical": "high", "serious": "high",
                        "warning": "medium", "info": "low"}
-_STAKES_RANK = {"high": 2, "medium": 1, "low": 0}
+
+# Where each case sits on the feed, top first. Stakes decide it for
+# everything but a QUESTION, which has a band of its own just under the
+# high-stakes problems: a guess is two taps against a problem's
+# read-and-decide, and burying the cheap decisions under every warning —
+# which `low` stakes did, and every millisecond-stamped opportunity beside
+# them did as well — is how a queue capped at three sat unanswered for a
+# fortnight and expired. A freezing pipe still outranks it; a warning
+# does not.
+_BAND = {"high": 3, "question": 2, "medium": 1, "low": 0}
 
 # ---------------------------------------------------------------------------
 # Not now
@@ -217,6 +240,39 @@ _ENDINGS: dict[tuple[str, str], tuple[str, str]] = {
     ("chore", "wrong"): ("todo_drop", ""),
 }
 
+# The same table for a kind that lives in a store other than its usual
+# one, which is checked FIRST. The Resident files opportunities and
+# questions into the FINDINGS store — an investigation's case is a row
+# there whatever its kind — and routing them by kind alone sent "Make the
+# change", "Yes" and "No" to the proposal and hypothesis hooks with a
+# finding's ts: every press failed with "already answered" (or acted on a
+# guess that happened to share the number), and the only answer that
+# worked was Dismiss.
+_STORE_ENDINGS: dict[tuple[str, str, str], tuple[str, str]] = {
+    # An improvement brAIn noticed: yes, I will do it — onto the list,
+    # exactly as a problem's *Add to list*.
+    ("findings", "opportunity", "do"): ("finding_todo", ""),
+    ("findings", "opportunity", "wrong"): ("end_finding", "wrong"),
+    # A question only the homeowner can answer: Yes files what the case
+    # said it would teach (its `memory_hint`), No is a correction.
+    ("findings", "question", "do"): ("end_finding", "confirm"),
+    ("findings", "question", "wrong"): ("end_finding", "wrong"),
+}
+
+
+# Producers that are not a RULE, so "Stop raising these" means nothing
+# about them. The Resident files whatever an investigation found — one
+# source for every kind of judgement — so muting it deleted every open
+# Resident case on the list, a live safety case included, while nothing
+# on its path ever read the mute and new cases went on arriving. The
+# safety lane is the rule that reports leaks, smoke and gas; that is not
+# a rule this panel offers a press to silence. What a person means on one
+# of these is "not this kind of thing", which is what *Not a problem* and
+# its reason box already teach, case by case.
+# `security` is the tripwire (`security.py`): a producer nobody should be
+# able to silence with one press, any more than the safety lane.
+UNMUTABLE_SOURCES = frozenset({"resident", "safety", "security"})
+
 
 # ---------------------------------------------------------------------------
 # Identity
@@ -290,24 +346,54 @@ def _snooze_until(case: dict, now: float) -> int:
     """When a "not now" on this case should bring it back.
 
     Per kind, in that kind's own terms, which is the whole reason the
-    agent picks rather than the person: a question's answer is its own
-    expiry (the queue retires it at fourteen days, so quiet until then is
-    the honest reading of "not now" on a guess), a chore's is a week, and
-    a problem's is keyed on how much it matters.
+    agent picks rather than the person: a chore's is a week, and
+    everything else is keyed on how much it matters — a question
+    included. A question used to go quiet until its own fourteen-day
+    expiry, which is the queue retiring it rather than bringing it back:
+    the button said "brAIn brings it back later", the toast said "back in
+    13 days", and on the thirteenth day it was gone. It is the stakes
+    table now and the queue keeps it alive across the snooze
+    (`hypotheses.snooze` restarts its clock when it returns).
     """
     kind = case.get("kind")
     if kind == "chore":
         return int(now + CHORE_SNOOZE_S)
-    if kind == "question":
-        expires = int(case.get("ts") or now) + hypotheses.TTL_DAYS * 86400
-        return int(max(expires, now + MIN_SNOOZE_S))
     stakes = case.get("stakes") if case.get("stakes") in STAKES else "medium"
     return int(now + max(SNOOZE_BY_STAKES[stakes], MIN_SNOOZE_S))
+
+
+def snooze_until(case: dict, now: float | None = None) -> int:
+    """`_snooze_until`, for the one other door a Dismiss arrives through.
+
+    A notification's Dismiss and the feed's are one press, so they buy one
+    length of quiet: a request from Home Assistant that does not name its
+    own hours is given this rather than a flat day (`finding_requests`
+    leaves `hours` empty for exactly that). Repairs' "Remind me tomorrow"
+    names 24 and keeps it, because that one says so on the button.
+    """
+    return _snooze_until(case, time.time() if now is None else now)
 
 
 # ---------------------------------------------------------------------------
 # The read model
 # ---------------------------------------------------------------------------
+
+def _seconds(ts) -> int:
+    """A store's stamp as epoch SECONDS.
+
+    A finding's and a guess's ts are seconds, a proposal's and a to-do
+    item's id are milliseconds, and sorting the feed on the raw number put
+    every proposal above every question whatever their ages — a
+    millisecond stamp is a thousand times larger than any second one. A
+    seconds epoch passes 1e11 in the year 5138, so anything above it is a
+    millisecond one.
+    """
+    try:
+        value = float(ts or 0)
+    except (TypeError, ValueError):
+        return 0
+    return int(value / 1000) if value > 1e11 else int(value)
+
 
 def _stakes_of(row: dict) -> str:
     """What the row says, or what its severity implies. A Resident case
@@ -335,6 +421,10 @@ def _base(store: str, key, *, kind: str, claim: str, detail: str,
         "source": source,
         "source_title": source_title,
         "ts": int(ts or 0),
+        # When it was raised, in seconds whatever the store counts in —
+        # what the feed sorts on, because `ts` is each store's own id and
+        # two of the four count in milliseconds.
+        "created_at": _seconds(ts),
         "origin": {"store": store, "key": key},
         "memory_hint": "",
         "investigation": None,
@@ -405,6 +495,16 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
         "fix_ended": float(row.get("fix_ended") or 0),
         "fix_files": int(row.get("fix_files") or 0),
         "fix_calls": int(row.get("fix_calls") or 0),
+        # What the fix run said it did, and the list of what it changed —
+        # the fixer's own report (`_run_fix`), and on a `needs_you` row the
+        # one sentence that matters most: why brAIn concluded a person has
+        # to do this, and how. Dropped here, the feed showed a fixed card
+        # as two counts under the stale "How brAIn would fix it", and a
+        # failed or needs-you one as an ordinary problem whose first button
+        # bought another plan run to reach the same conclusion.
+        "result": str(row.get("result") or ""),
+        "changed": [str(c) for c in row.get("changed") or []
+                    if isinstance(c, str)],
         "checked_at": int(row.get("checked_at") or 0),
         "triage": dict(row.get("triage") or {}),
         # The store's own rule, not a second reading of it: absent means
@@ -438,7 +538,9 @@ def _from_proposal(row: dict, snoozes: dict[str, int]) -> dict:
     *Do it* performs it, so composing an action row here would be this
     module asserting a shape — "edit a file", "write an automation" — that
     nothing in the store wrote down, about somebody's house. The kind and
-    the origin are what tell the feed what yes means.
+    the origin are what tell a reader what yes means. The feed is not one
+    of those readers any more (`FEED_STORES`); this is what `get` and the
+    Resident's "already said" list are handed.
     """
     case = _base(
         "proposals", row.get("ts") or 0,
@@ -458,6 +560,11 @@ def _from_proposal(row: dict, snoozes: dict[str, int]) -> dict:
     # notifier already treats as "a card will do".
     case["severity"] = "info"
     case["stakes"] = "low"
+    # No evidence rides here any more. It did while the feed rendered
+    # proposals (the replay, the trial's grade, the composed case); the
+    # Proposals tab is the one surface for them now and carries all of it
+    # off the store row, so a copy on a case nothing renders would be a
+    # second shape to keep true.
     return case
 
 
@@ -478,7 +585,11 @@ def _from_hypothesis(row: dict, snoozes: dict[str, int]) -> dict:
         source="hypothesis",
         source_title=row.get("topic") or "",
     )
-    case["snoozed_until"] = int(snoozes.get(case["id"], 0))
+    # The queue carries its own snooze now (`hypotheses.snooze`), which is
+    # the field this reads first; the sidecar is the floor for a guess
+    # dismissed by a release before the queue could hold one.
+    case["snoozed_until"] = max(int(row.get("snoozed_until") or 0),
+                                int(snoozes.get(case["id"], 0)))
     case["severity"] = "info"
     case["stakes"] = "low"
     return case
@@ -512,29 +623,52 @@ def _from_todo(item: dict, snoozes: dict[str, int]) -> dict:
     return case
 
 
-def _all_cases(snoozes: dict[str, int]) -> list[dict]:
-    """Every case the four stores currently hold, unfiltered and unsorted."""
-    out = [_from_finding(row, snoozes) for row in findings_store.list_all()
-           if row.get("text") and row.get("status") in _FINDING_STATUS]
-    out += [_from_proposal(row, snoozes) for row in proposals.listing()
-            if row.get("status") in proposals.OPEN_STATUSES]
-    out += [_from_hypothesis(row, snoozes) for row in hypotheses.list_all("open")]
-    listed = todo_store.listing()
-    out += [_from_todo(item, snoozes) for item in listed["items"]]
-    out += [_from_todo(item, snoozes) for item in listed["done"]]
+def _all_cases(snoozes: dict[str, int], stores=STORES) -> list[dict]:
+    """Every case the named stores currently hold, unfiltered and unsorted.
+
+    A store nobody asked for is not read at all: the feed is asked for on
+    every visit and a proposals load it would then throw away is a read
+    nobody wanted."""
+    stores = set(stores)
+    out: list[dict] = []
+    if "findings" in stores:
+        out += [_from_finding(row, snoozes) for row in findings_store.list_all()
+                if row.get("text") and row.get("status") in _FINDING_STATUS]
+    if "proposals" in stores:
+        out += [_from_proposal(row, snoozes) for row in proposals.listing()
+                if row.get("status") in proposals.OPEN_STATUSES]
+    if "hypotheses" in stores:
+        out += [_from_hypothesis(row, snoozes)
+                for row in hypotheses.list_all("open")]
+    if "todo" in stores:
+        listed = todo_store.listing()
+        out += [_from_todo(item, snoozes) for item in listed["items"]]
+        out += [_from_todo(item, snoozes) for item in listed["done"]]
     return out
 
 
+def _band(case: dict) -> int:
+    """Which band of the feed a case sits in (`_BAND`)."""
+    if case.get("kind") == "question":
+        return _BAND["question"]
+    return _BAND.get(case.get("stakes") or "medium", _BAND["medium"])
+
+
 def _sort(cases: list[dict]) -> list[dict]:
-    """Highest stakes first, then newest. The feed is read top-down on a
-    phone, so the two questions it answers in that order are "what matters
-    most" and "what has just happened"."""
-    return sorted(cases, key=lambda c: (_STAKES_RANK.get(c["stakes"], 1),
-                                        c["ts"]), reverse=True)
+    """By band, then newest. The feed is read top-down on a phone, so the
+    two questions it answers in that order are "what matters most" and
+    "what has just happened" — with the cheap decisions, the guesses,
+    kept near the top rather than under every warning (`_BAND`).
+
+    Newest is `created_at`, never `ts`: two of the four stores count in
+    milliseconds, and a raw-ts sort put every proposal above every
+    question whatever their ages."""
+    return sorted(cases, key=lambda c: (_band(c), c.get("created_at") or 0),
+                  reverse=True)
 
 
 def list_cases(status: str | None = None, kinds=None,
-               now: float | None = None) -> list[dict]:
+               now: float | None = None, stores=None) -> list[dict]:
     """The feed.
 
     ``status`` is one of `STATUSES`, the sentinel ``"snoozed"``, or None
@@ -556,10 +690,14 @@ def list_cases(status: str | None = None, kinds=None,
     chore is work already accepted and lives on the To-do tab, so a caller
     that wants one (a diagnostics count, a prompt saying what the house
     already knows about) asks for it by name — `kinds=KINDS`.
+
+    ``stores`` defaults to `FEED_STORES`, every store but the proposals,
+    which live on their own tab; a caller that wants them names them —
+    `stores=STORES`.
     """
     now = time.time() if now is None else now
     snoozes = _read_snoozes()
-    cases = _all_cases(snoozes)
+    cases = _all_cases(snoozes, stores if stores else FEED_STORES)
     wanted = set(kinds) if kinds else set(FEED_KINDS)
     out = []
     for case in cases:
@@ -604,7 +742,8 @@ def open_count(now: float | None = None) -> int:
     — a run in flight and a guess brAIn is still watching are not
     decisions anybody can make yet — and so is every chore, finished or
     not: accepting a finding is the press that takes it OFF this count,
-    and the To-do tab carries its own (`FEED_KINDS`).
+    and the To-do tab carries its own (`FEED_KINDS`). So is every proposal,
+    which the Proposals tab's own badge counts (`FEED_STORES`).
     """
     return len(list_cases("open", now=now))
 
@@ -682,6 +821,12 @@ def end(value: str, verb: str, note: str = "", *, hooks: Hooks,
             # this come back", in the place every other reader of a
             # finding already looks.
             findings_store.snooze(int(key), until)
+        elif store == "hypotheses" and hypotheses.snooze(int(key), until):
+            # The queue holds its own now, for the finding's reason and one
+            # more: only the queue can stop a sleeping guess holding one of
+            # its three slots, and only the queue can keep it from expiring
+            # before it comes back.
+            pass
         else:
             rows = _read_snoozes()
             rows[case["id"]] = until
@@ -689,7 +834,8 @@ def end(value: str, verb: str, note: str = "", *, hooks: Hooks,
         return {"id": case["id"], "kind": case["kind"], "verb": verb,
                 "when": int(now), "snoozed_until": until, "result": None}
 
-    spec = _ENDINGS.get((case["kind"], verb))
+    spec = (_STORE_ENDINGS.get((store, case["kind"], verb))
+            or _ENDINGS.get((case["kind"], verb)))
     if spec is None:
         return None
     hook_name, word = spec
@@ -778,7 +924,7 @@ def overflow(case: dict) -> list[dict]:
             add("unfix", "Put it back", f"/api/finding/{key}/unfix")
         add("discuss", "Talk about it", f"/api/finding/{key}/discuss")
         add("advice", "Say what to do", f"/api/finding/{key}/advice")
-        if case.get("source"):
+        if case.get("source") and case["source"] not in UNMUTABLE_SOURCES:
             # The press for the RULE rather than for the row. It carries
             # no id because it is about a producer, which is why it is the
             # one route here that is not under `/api/finding/{id}/`.
@@ -795,8 +941,10 @@ def overflow(case: dict) -> list[dict]:
 
 
 __all__ = [
-    "CHORE_SNOOZE_S", "Hooks", "KINDS", "FEED_KINDS", "LIVE_STATUSES", "MAX_SNOOZED",
+    "CHORE_SNOOZE_S", "Hooks", "KINDS", "FEED_KINDS", "FEED_STORES", "LIVE_STATUSES",
+    "MAX_SNOOZED", "UNMUTABLE_SOURCES",
     "MIN_SNOOZE_S", "PREFIXES", "SNOOZE_BY_STAKES", "SNOOZE_FILE", "STAKES",
     "STATUSES", "STORES", "VERBS", "answers", "case_id", "end", "get",
-    "list_cases", "more", "open_count", "overflow", "situation", "split_id",
+    "list_cases", "more", "open_count", "overflow", "situation",
+    "snooze_until", "split_id",
 ]

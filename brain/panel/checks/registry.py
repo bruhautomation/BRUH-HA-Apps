@@ -86,7 +86,7 @@ def hardware_name(snap: dict, now: float) -> list[dict]:
             continue
         name = house.name(eid)
         token = hardware_token(name)
-        if token:
+        if token and house.should_report(eid, "reg.hardware_name"):
             hits.append((eid, name, token))
     if not hits:
         return []
@@ -98,8 +98,10 @@ def hardware_name(snap: dict, now: float) -> list[dict]:
                   + join_names(shown, limit=6)
                   + ". A name like that is unfindable in a picker and "
                     "unsayable to Assist.",
-        "fix": "Rename them in Settings > Devices & services > Entities — "
-               "or ask brAIn to suggest names from where each one is.",
+        "fix": "Press Fix it and brAIn suggests a name for each, in the "
+               "style the rest of the house uses, for you to tick through "
+               "under House → Upkeep — or rename them in Settings > "
+               "Devices & services > Entities.",
         "severity": "info",
         "fixable": True,
         "entity_id": hits[0][0],
@@ -124,6 +126,8 @@ def no_area(snap: dict, now: float) -> list[dict]:
             continue
         if (house.registry.get(eid) or {}).get("area_id"):
             continue  # the entity overrides its device's area
+        if not house.should_report(eid, "reg.no_area"):
+            continue
         by_device.setdefault(dev["id"], []).append(eid)
     if not by_device:
         return []
@@ -134,7 +138,10 @@ def no_area(snap: dict, now: float) -> list[dict]:
                   + ". Anything not in an area is invisible to \"turn off "
                     "the kitchen\", to area cards, and to every automation "
                     "that targets a room.",
-        "fix": "Assign each one in Settings > Devices & services > Devices.",
+        "fix": "Press Fix it and brAIn suggests a room for each, saying "
+               "which automations a move changes, for you to tick through "
+               "under House → Upkeep — or assign them in Settings > "
+               "Devices & services > Devices.",
         "severity": "info",
         "fixable": True,
         "entity_id": sorted(by_device[sorted(by_device)[0]])[0],
@@ -179,7 +186,8 @@ def unused_helper(snap: dict, now: float) -> list[dict]:
     if not candidates:
         return []
     refs = _referenced(house)
-    unused = sorted(e for e in candidates if e not in refs)
+    unused = sorted(e for e in candidates if e not in refs
+                    and house.should_report(e, "reg.unused_helper"))
     if not unused:
         return []
     names = [f"{house.name(e)} ({e})" for e in unused]

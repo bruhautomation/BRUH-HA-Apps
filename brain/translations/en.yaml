@@ -14,9 +14,9 @@ configuration:
   enable_insights:
     name: Insights tab
     description: >-
-      Show the Insights and Proposals tabs, and let cards regenerate on
-      their schedule. Turning this off stops every scheduled Claude run.
-      Findings stays either way: the house checks cost nothing to run and
+      Show the Insights tab, and let cards regenerate on their schedule.
+      Turning this off stops every scheduled Claude run. Findings and
+      Proposals stay either way: the house checks cost nothing to run and
       still file there.
   auto_launch_claude:
     name: Start Claude in the terminal
@@ -50,12 +50,22 @@ configuration:
       Add an arrow-key and modifier toolbar to the terminal on phones and
       tablets, plus the iOS dictation fix. No effect on desktop.
   dangerously_skip_permissions:
-    name: Skip permission prompts in the terminal
+    name: Let brAIn act without asking
     description: >-
-      Stop Claude asking before it edits a file or runs a command in the
-      interactive terminal. Convenient, and exactly as risky as it sounds
-      — everything brAIn can reach, it can then change without asking.
-      Background listeners ignore this and use their own allow-list.
+      Off (the default), the terminal and the chat ask before Claude runs a
+      command, edits a file or changes something in Home Assistant. Only
+      reading is pre-approved. On, they stop asking. Still guarded: brAIn's
+      Home Assistant tools refuse protected entities. So do plain shell
+      service calls, and YAML edits made with Claude's file tools, that name
+      one. A shell command that reaches one some other way is not checked.
+      brAIn's own deny-list holds, conversations about a finding still ask,
+      and voice and background runs keep their own rules. Edits made with
+      Claude's file
+      tools can be undone with brain undo; shell changes cannot. Applies to
+      the next terminal session and the chat's next message, with no
+      restart. A terminal session already open keeps the setting it started
+      with until you end it with /exit. The same switch is in ⚙ → Terminal
+      & chat.
   assist_fast_mode:
     name: Fast voice responses
     description: >-
@@ -232,7 +242,8 @@ configuration:
       chat, Fix it, voice and automations. One entity id per line
       (lock.front_door), or a whole domain (alarm_control_panel.*). They can
       still be looked at; a service call that targets one, or an area or
-      device that contains one, is refused.
+      device that contains one, is refused, and while the list is set Claude
+      may not call services from a shell or write YAML that names one.
   edit_journal_days:
     name: Keep undo history for
     description: >-

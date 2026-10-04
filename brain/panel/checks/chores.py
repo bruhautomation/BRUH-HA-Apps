@@ -62,12 +62,21 @@ STALE_HOURS = 14.0
 MAX_ROWS = 3
 
 
-def kind_of(name: str) -> str:
+def kind_of(name: str, world=None, entity_id: str = "") -> str:
     """Which of the three machines this name is, or "".
 
     Longest phrase first, so "washing machine" is not read as a dryer by
     a name that happens to contain both words.
+
+    With `world` and the entity id, a confident `world_model` reading
+    answers first — `Wasmachine` is a washer in any language — and the
+    phrase match below is the fallback it always was.
     """
+    if world and entity_id:
+        import world_model  # noqa: PLC0415
+
+        return world_model.chore_machine(
+            world, entity_id, lambda: kind_of(name))
     text = str(name or "").lower()
     best, longest = "", 0
     for kind, words in WAITING_KINDS.items():
@@ -92,10 +101,11 @@ def waiting(snap: dict, now: float) -> list[dict]:
     for eid, shape in shapes.items():
         if not house.enabled(eid):
             continue
-        kind = kind_of(shape.get("name") or house.name(eid) or eid)
+        kind = kind_of(shape.get("name") or house.name(eid) or eid,
+                       house.world, eid)
         if not kind:
             continue
-        if house.excepted(eid, "chore.waiting"):
+        if not house.should_report(eid, "chore.waiting"):
             continue
         reading = appliances.state_at(shape, recent.get(eid) or [], now)
         if reading.get("state") != appliances.FINISHED:
@@ -108,7 +118,13 @@ def waiting(snap: dict, now: float) -> list[dict]:
             continue
         hits.append((finished, kind, eid, shape))
 
-    if not hits or len(hits) > MAX_ROWS:
+    if len(hits) > MAX_ROWS:
+        house.gave_up("chore.waiting", [{"entity_id": h[2]} for h in hits],
+                      f"{len(hits)} machines looked finished at once — past "
+                      f"{MAX_ROWS} that is a measurement gone wrong, not a "
+                      "house full of washing")
+        return []
+    if not hits:
         return []
     # Oldest first: the one that has been sitting longest is the one to
     # deal with.

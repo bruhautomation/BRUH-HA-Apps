@@ -108,7 +108,7 @@ KINDS = (
 #   text      one short line, taken from whatever raised it and never
 #             composed into an opinion here. What `prompt_rows` renders.
 SIGNAL_KEYS = ("kind", "subject", "salience", "evidence", "seen_at",
-               "source", "hot", "repeats", "text")
+               "source", "hot", "repeats", "text", "safety", "protected")
 
 # An evidence row is a thing that was read off the house, so all three
 # fields are somebody else's data and all three are capped.
@@ -206,6 +206,11 @@ HOT_SAFETY_CLASSES = frozenset({"smoke", "gas", "carbon_monoxide",
                                 "moisture"})
 # The states those sensors are in when they mean it.
 HOT_SAFETY_STATES = frozenset({"on", "detected", "wet", "unsafe"})
+# The checks whose rows are about the same kind of harm, and so carry the
+# `safety` flag a tripped detector does. By id, never by a word in the
+# id: `climate.freeze` is pipes by morning, and the guard that refuses to
+# let a model ignore water has no business ignoring the cause of it.
+SAFETY_CHECKS = frozenset({"climate.freeze"})
 
 # Person-level domains. A `person` is Home Assistant's own idea of a
 # household member; a `device_tracker` is a phone, which is a weaker
@@ -335,15 +340,23 @@ class RegistryContext:
     own attributes, which is why they take one.
     """
 
-    __slots__ = ("protected", "known", "built_at")
+    __slots__ = ("protected", "known", "built_at", "added_safety")
 
     def __init__(self, protected: list[str] | None = None,
                  known: set[str] | frozenset[str] | None = None,
-                 built_at: float = 0.0):
+                 built_at: float = 0.0,
+                 added_safety: dict[str, str] | None = None):
         self.protected = [str(p).strip().lower()
                           for p in (protected or []) if str(p).strip()]
         self.known = frozenset(known or ())
         self.built_at = float(built_at or 0.0)
+        # Safety classes a confident `world_model` reading ADDED to a
+        # binary sensor that carries none (`world_model.added_safety`).
+        # Only ever consulted after the entity's own device class, so a
+        # reading can make a sensor louder and never quieter.
+        self.added_safety = {
+            str(k): str(v) for k, v in (added_safety or {}).items()
+            if str(v) in HOT_SAFETY_CLASSES}
 
     def is_protected(self, entity_id: str) -> bool:
         """`automation_writer.is_protected`, never a second matcher.
@@ -385,6 +398,22 @@ class RegistryContext:
         klass = str((attrs or {}).get("device_class") or "").strip().lower()
         return klass if klass in HOT_SAFETY_CLASSES else ""
 
+    def safety_class_of(self, entity_id: str, attrs: dict | None = None) -> str:
+        """The entity's own safety class, else one a reading added.
+
+        The order IS the guardrail: Home Assistant's device class is asked
+        first and answers whatever a reading says, so `world_model` can
+        put a sensor HA never classified on the watch list and can never
+        take a classified one off it. The deterministic safety lane does
+        not read this — it pages through quiet hours with no model and no
+        gate, so what may start it is the device class and nothing a
+        model filed.
+        """
+        own = self.safety_class(attrs)
+        if own:
+            return own
+        return self.added_safety.get(str(entity_id or ""), "")
+
 
 def domain_of(entity_id: str) -> str:
     return str(entity_id or "").split(".", 1)[0]
@@ -417,13 +446,24 @@ def evidence_row(entity: str, value, when: float) -> dict:
 def make(kind: str, subject: str, *, now: float, source: str = "",
          text: str = "", evidence: list[dict] | None = None,
          salience: float = 0.0, hot: bool = False,
-         repeats: int = 1) -> dict:
+         repeats: int = 1, safety: bool = False,
+         protected: bool = False) -> dict:
     """One signal, in the one shape. Every adapter ends here.
 
     A kind outside :data:`KINDS` is refused rather than filed as
     something: a reader switching on an unknown word would take whichever
     branch happened to be last, and a signal nobody can read is worse than
     a signal that was never made.
+
+    **`safety` and `protected` are facts the producer already holds, and
+    they are on the signal because the guard downstream reads them.**
+    `resident.never_ignore` floors a verdict on exactly these two flags,
+    and for two releases nothing could set them: the key set was closed
+    without them, so the floor that exists to stop a model ignoring a
+    tripped leak detector was reachable only from a test that hand-built a
+    dict this function would have refused. `safety` means a safety-class
+    sensor is TRIPPED now (a detector clearing is good news, not a floor),
+    and `protected` means the entity is on the protected list.
     """
     if kind not in KINDS:
         raise ValueError(f"unknown signal kind: {kind!r}")
@@ -438,6 +478,8 @@ def make(kind: str, subject: str, *, now: float, source: str = "",
         "hot": bool(hot),
         "repeats": max(1, int(repeats)),
         "text": str(text or "")[:MAX_TEXT],
+        "safety": bool(safety),
+        "protected": bool(protected),
     }
 
 
@@ -510,14 +552,20 @@ def from_finding(row: dict, now: float,
     # *a rule wrote a row about this*, which is as true of an insight run's
     # side channel as of `dev.frozen` — and the producer is already on
     # `source`, which is what a mute, a scorecard and the weights key on.
+    protected = ctx.is_protected(entity) if entity else False
     return make(
         "check", subject, now=now, source=source or "finding",
-        text=f"{title}: {text}" if title else text,
-        evidence=ev,
+        # The severity rides in the sentence because a look judged rows
+        # blind to it — a `critical` freeze and an `info` tidy-up read the
+        # same — and a signal has no key for it on purpose.
+        text=(f"{title} [{severity}]: {text}" if title
+              else f"[{severity}] {text}"),
+        evidence=ev, protected=protected,
+        safety=_check_id(source) in SAFETY_CHECKS,
         salience=score(
             "check", severity=severity,
             urgency=notify_router.urgency_of(row),
-            protected=ctx.is_protected(entity) if entity else False,
+            protected=protected,
             known=ctx.is_known(entity) if entity else False,
             age_s=max(0.0, now - seen_at)),
     )
@@ -560,7 +608,7 @@ def from_state_change(event: dict, ctx: RegistryContext, now: float,
     ctx = ctx or EMPTY_CONTEXT
     protected = ctx.is_protected(entity)
     person = ctx.is_person(entity)
-    safety_class = ctx.safety_class(attrs)
+    safety_class = ctx.safety_class_of(entity, attrs)
     closure = ctx.is_closure(entity, attrs)
     known = ctx.is_known(entity)
     if not (protected or person or safety_class or closure or known):
@@ -582,7 +630,7 @@ def from_state_change(event: dict, ctx: RegistryContext, now: float,
     return make(
         kind, entity, now=now, source="eventbus", text=text,
         evidence=[evidence_row(entity, value, now)],
-        hot=hot,
+        hot=hot, safety=tripped, protected=protected,
         salience=score(
             kind,
             # A leak detector reading wet is the one state change that is
@@ -922,6 +970,11 @@ def _folded(run: list[dict]) -> dict:
     # cleared and tripped again is still a leak sensor that tripped, and
     # reading only the newest would let the clear cancel the trip.
     folded["hot"] = any(bool(s.get("hot")) for s in run)
+    # The two guard flags survive the same way, for the same reason: a
+    # fold that kept only the newest member's flags would let a detector
+    # that cleared un-protect the trip the guard was there for.
+    folded["safety"] = any(bool(s.get("safety")) for s in run)
+    folded["protected"] = any(bool(s.get("protected")) for s in run)
     extra = W_REPEAT_EACH * min(repeats - 1, REPEAT_CAP) \
         - W_REPEAT_EACH * min(max(int(newest.get("repeats") or 1) - 1, 0),
                               REPEAT_CAP)
@@ -978,11 +1031,14 @@ def batch(signals: list[dict], cap: int = MAX_BATCH) -> dict:
 # What the first look reads
 # ---------------------------------------------------------------------------
 
-# One line per signal, and a line is a line. A hundred and twenty
-# characters is about what fits on a terminal row and about what a model
-# reads as one item; past it a row starts carrying a paragraph, which is
-# how a batch of twenty-four becomes a prompt nobody costed.
-ROW_CHARS = 120
+# One line per signal, and a line is a line — but it has to hold the
+# sentence. A hundred and twenty characters was a terminal row, and a
+# check's title plus its finding plus one reading routinely ran past it,
+# so the look judged rows cut off before the value that made them
+# interesting. Two hundred keeps the sentence and its reading; past it a
+# row starts carrying a paragraph, which is how a batch of thirty becomes
+# a prompt nobody costed.
+ROW_CHARS = 200
 # How many evidence values ride on the row before the rest are left to the
 # investigation that asks for them. Two, because the useful pair is nearly
 # always "what it reads now" and "what it read before".
@@ -1005,8 +1061,8 @@ def prompt_rows(signals: list[dict], now: float | None = None, *,
 
     **`numbered=False` is for a caller that numbers them itself.** A
     signal is named back to a model by its POSITION and never by its
-    subject — `triage.frame`'s rule, because a model retyping an entity id
-    can name the wrong entity and a number cannot be nearly right — so a
+    subject, because a model retyping an entity id can name the wrong
+    entity and a number cannot be nearly right — so a
     prompt builder that lays the rows out in its own list is doing the
     right thing, and two numbers on one row (`1. 1. [check] …`) is the
     shape where a reply that says "3" means two different signals
@@ -1023,6 +1079,10 @@ def prompt_rows(signals: list[dict], now: float | None = None, *,
             f" s={float(sig.get('salience') or 0.0):.2f}")
         if sig.get("hot"):
             head += " HOT"
+        if sig.get("safety"):
+            head += " SAFETY"
+        if sig.get("protected"):
+            head += " PROTECTED"
         repeats = int(sig.get("repeats") or 1)
         if repeats > 1:
             head += f" x{repeats}"
@@ -1055,6 +1115,7 @@ def _ago(seconds: float) -> str:
 __all__ = [
     "BRAIN_ID_PREFIX", "DEDUPE_WINDOW_S", "EMPTY_CONTEXT",
     "HOT_SAFETY_CLASSES", "HOT_SAFETY_STATES", "KINDS", "KIND_BASE",
+    "SAFETY_CHECKS",
     "MAX_BATCH", "MAX_EVIDENCE", "MAX_TEXT", "NIGHT_END_H", "NIGHT_START_H",
     "PERSON_DOMAINS", "REPEAT_CAP", "ROW_CHARS", "RegistryContext",
     "SEVERITY_WEIGHT", "SIGNAL_KEYS", "URGENCY_WEIGHT", "W_KNOWN",

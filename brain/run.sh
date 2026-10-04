@@ -51,6 +51,46 @@ _replace_dir_with_symlink() {
     ln -sfn "$link_dest" "$dir_path"
 }
 
+# Write "Let brAIn act without asking" where a terminal session reads it when
+# it starts (scripts/brain-permissions.sh; panel/permission_mode.py is the
+# panel's writer of the same file). One word: `bypass` or `ask`.
+#
+# Written at boot, BEFORE ttyd starts, because the file lives in /data and
+# outlives a restart: without this, a value the panel published last boot
+# would answer for an option changed on the Configuration tab since — and a
+# stale `bypass` is the one stale value that fails open.
+#
+# So a write that fails leaves the file EMPTY, never gone. An empty file
+# reads as asking; a gone one hands the answer to the fallback in
+# /data/.brain_env, which at this point in boot still holds the LAST boot's
+# value — the flag, on an add-on that was started with the switch on.
+# Truncating needs no free space, which is the likeliest reason the write
+# failed. Removing the file is the last resort, for a path that cannot even
+# be truncated.
+publish_permission_switch() {
+    local skip="$1"
+    local file="${BRAIN_PERMISSIONS_FILE:-/data/brain-permissions}"
+    local word="ask"
+    if [ "$skip" = "true" ]; then
+        word="bypass"
+    fi
+    if ! { printf '%s\n' "$word" > "${file}.tmp" \
+            && chmod 644 "${file}.tmp" \
+            && mv -f "${file}.tmp" "$file"; } 2>/dev/null; then
+        rm -f "${file}.tmp" 2>/dev/null || true
+        # A symlink would be followed by the truncation; take it away first.
+        if [ -L "$file" ]; then
+            rm -f "$file" 2>/dev/null || true
+        fi
+        if { : > "$file"; } 2>/dev/null || [ -d "$file" ]; then
+            bashio::log.warning "Could not write ${file}; left it empty, so new terminal sessions will ask"
+        else
+            rm -f "$file" 2>/dev/null || true
+            bashio::log.warning "Could not write or clear ${file}; new terminal sessions will use the boot value"
+        fi
+    fi
+}
+
 init_environment() {
     local data_home="/data/home"
     local config_dir="/data/.config"
@@ -300,15 +340,17 @@ MEMORYMD
         chmod 644 "$data_home/.tmux.conf"
     fi
 
-    # Read the permissions toggle.  This controls the interactive terminal ONLY.
-    # Background listeners (Assist, Automation) do NOT use this flag — they get
-    # tool permissions from /config/.claude/settings.local.json instead.
+    # Read the permissions switch ("Let brAIn act without asking"). It
+    # reaches the interactive terminal and the panel's chat; background
+    # listeners (Assist, Automation) never use it — they get their tool
+    # permissions from /config/.brain/headless_settings.json instead.
     local skip_perms
     skip_perms=$(bashio::config 'dangerously_skip_permissions' 'false')
     local perms_flag=""
     if [ "$skip_perms" = "true" ]; then
         perms_flag="--dangerously-skip-permissions"
     fi
+    publish_permission_switch "$skip_perms"
 
     # Write environment file for background processes (listeners, etc.)
     # These processes may lose env vars due to with-contenv shebang reloading
@@ -318,7 +360,9 @@ MEMORYMD
     # always have valid auth, even if the listener process doesn't inherit
     # the token from the s6 environment for any reason.
     #
-    # NOTE: BRAIN_CLAUDE_PERMS_FLAG is used by the interactive terminal only.
+    # NOTE: BRAIN_CLAUDE_PERMS_FLAG is the terminal's FALLBACK — what a
+    # session starts with when /data/brain-permissions is absent. The file
+    # is the current answer (see publish_permission_switch).
     # There is no turn cap here any more. `assist_max_turns`,
     # `automation_max_turns` and `study_max_turns` were options whose
     # only effect was to TRUNCATE a run that needed one more step — the
@@ -456,6 +500,8 @@ export TZ="${TZ:-}"
 export CLAUDE_CODE_DISABLE_MCP_DISCOVERY=1
 export CLAUDE_MCP_SERVERS_OVERRIDE="/config/.mcp.json"
 export DISABLE_AUTOUPDATER=1
+export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
+export BRAIN_HEADLESS_SETTINGS="/config/.brain/headless_settings.json"
 ENVEOF
 
     # Which model does which job: the panel plans every run off
@@ -503,6 +549,104 @@ ENVEOF
 }
 
 # ============================================================================
+# Home Assistant's user-editable config, handed to the claude user
+# ============================================================================
+#
+# Claude Code runs as `claude`; Home Assistant runs as root, so the YAML it
+# writes is root's — and its UI editors save automations.yaml, scripts.yaml
+# and scenes.yaml by writing a new file and renaming it over the old one,
+# so even a file handed over here is root's again after the next save from
+# the automation editor. A run that met one asked the homeowner to type
+# `sudo chown`, which nobody should ever be asked. This is the boot half;
+# the runtime half is the edit hook, `brain own` and the panel's sweep
+# (panel/ownership.py), which re-own what drifts back.
+#
+# What is handed over: the top-level *.yaml/*.yml, and these folders when
+# they exist — packages, blueprints, esphome, themes, custom_templates,
+# python_scripts — plus any folder configuration.yaml names with
+# !include_dir_*. Never `secrets.yaml`, never anything under a hidden folder
+# (.storage is Core's own state, rewritten continuously; .esphome is build
+# output), never a file with other hard links (one of its names may be
+# somewhere this must not reach — the panel's route and sweep refuse the
+# same), and never through a symbolic link: find does not follow links,
+# a linked folder is skipped, and chown -h acts on a link rather than on
+# what it points at. Bounded by BRAIN_OWN_MAX and quiet: one log line, and
+# the count in it is what changed hands, read back afterwards — not what
+# was asked for, which a filesystem that refuses chown would make a lie.
+#
+# Takes the root and the owner as arguments so the test can run this exact
+# function over a temporary tree.
+own_ha_config() {
+    local root="${1:-/config}" owner="${2:-claude:claude}"
+    local user="${owner%%:*}" cap="${BRAIN_OWN_MAX:-20000}"
+    { [ -d "$root" ] && [ ! -L "$root" ]; } || return 0
+    local real_root d f
+    real_root=$(readlink -f "$root" 2>/dev/null) || return 0
+    local -a dirs=(packages blueprints esphome themes custom_templates python_scripts)
+    local -a found=()
+
+    # Folders configuration.yaml includes, read as text: a relative path
+    # with no hidden or `..` component, or it is not ours to walk.
+    if [ -f "$root/configuration.yaml" ]; then
+        while IFS= read -r d; do
+            d="${d#./}"; d="${d%/}"
+            case "/$d/" in
+                *"/../"*|*"/./"*|*"/."*) continue ;;
+            esac
+            case "$d" in ""|/*) continue ;; esac
+            dirs+=("$d")
+        done < <(sed -n 's/.*!include_dir_[a-z_]*[[:space:]]\{1,\}\([^[:space:]#]*\).*/\1/p' \
+                    "$root/configuration.yaml" 2>/dev/null | tr -d "\"'")
+    fi
+
+    # Everything that is not the user's yet, NUL-separated. Run once to
+    # hand it over and once more to count what is still left.
+    _own_ha_config_list() {
+        local d top real
+        local -A seen=()
+        find "$root" -maxdepth 1 -type f -links 1 \( -name '*.yaml' -o -name '*.yml' \) \
+            ! -name secrets.yaml ! -user "$user" -print0 2>/dev/null
+        for d in "${dirs[@]}"; do
+            [ -n "${seen[$d]:-}" ] && continue
+            seen[$d]=1
+            top="$root/$d"
+            { [ -d "$top" ] && [ ! -L "$top" ]; } || continue
+            real=$(readlink -f "$top" 2>/dev/null) || continue
+            case "$real" in "$real_root"/*) ;; *) continue ;; esac
+            find "$top" \( -type d -name '.*' ! -path "$top" -prune \) -o \
+                \( \( -type f -links 1 -o -type d \) ! -name secrets.yaml \
+                   ! -user "$user" -print0 \) 2>/dev/null
+        done
+    }
+
+    while IFS= read -r -d '' f; do
+        found+=("$f")
+    done < <(_own_ha_config_list)
+
+    local total=${#found[@]} n=${#found[@]} left=0
+    if [ "$n" -gt "$cap" ]; then
+        bashio::log.warning "Config ownership: ${n} entries need handing to ${user}; doing the first ${cap}, the edit hook and brain own take care of the rest"
+        found=("${found[@]:0:$cap}")
+        n=$cap
+    fi
+    if [ "$n" -gt 0 ]; then
+        printf '%s\0' "${found[@]}" | xargs -0 chown -h "$owner" 2>/dev/null || true
+        while IFS= read -r -d '' f; do
+            left=$((left + 1))
+        done < <(_own_ha_config_list)
+    fi
+    local handed=$((total - left))
+    if [ "$handed" -lt 0 ]; then
+        handed=0
+    fi
+    if [ "$handed" -lt "$n" ]; then
+        bashio::log.warning "Config ownership: handed ${handed} of ${n} file(s) and folder(s) under ${root} to ${user}; $((n - handed)) could not be changed (the edit hook and brain own try again when Claude needs one)"
+    else
+        bashio::log.info "Config ownership: ${handed} file(s) and folder(s) under ${root} handed to ${user}"
+    fi
+}
+
+# ============================================================================
 # Non-root User Setup (for --dangerously-skip-permissions)
 # ============================================================================
 
@@ -546,6 +690,17 @@ setup_claude_user() {
     touch /data/run-sources.jsonl 2>/dev/null || true
     chown claude:claude /data/run-sources.jsonl 2>/dev/null || true
     chmod 664 /data/run-sources.jsonl 2>/dev/null || true
+    # The run journal and the usage nudge have the same two writers: the
+    # panel (root) and the shell half's runs, which record themselves with
+    # `journal.py record` from the process that ran the model — the
+    # consolidator and study as the claude user. Same arrangement, same
+    # reason: root can write a claude-owned file, not the reverse, and a
+    # failed append there is silent by design.
+    for f in /data/journal.jsonl /data/usage-nudge; do
+        touch "$f" 2>/dev/null || true
+        chown claude:claude "$f" 2>/dev/null || true
+        chmod 664 "$f" 2>/dev/null || true
+    done
     # The edit journal has the same two writers in the same two users: the
     # PreToolUse hook (`brain-edit-snapshot.py`, under the claude user
     # every Claude edit runs as) and the panel's automation_writer (root,
@@ -564,6 +719,8 @@ setup_claude_user() {
     chown claude:claude /config 2>/dev/null || true
     chown -R claude:claude /config/.brain 2>/dev/null || true
     chown -R claude:claude /config/custom_components 2>/dev/null || true
+    # And the YAML Home Assistant's editors write as root (see own_ha_config).
+    own_ha_config /config claude:claude
 
     # Grant ownership of enabled volume mounts
     [ -n "${SHARE_DIR:-}" ] && chown claude:claude /share 2>/dev/null || true
@@ -617,10 +774,39 @@ fi
 if [ -r /opt/scripts/brain-auth-env.sh ]; then
     . /opt/scripts/brain-auth-env.sh
 fi
+# A run that cannot be asked anything gets the headless allow-list.
+# /config/.claude/settings.local.json pre-approves only reading tools, so
+# the terminal and the chat ask before anything acts; a `-p` run with no
+# prompt tool has nobody to ask, and one that names no settings of its own
+# is a listener, a full-access voice worker or `brain ask` — the callers
+# the old project-wide grant was written for. A run that names its own
+# `--settings` (a voice agent's scoping, an engine run) or a prompt tool
+# (the chat) is left exactly as it asked.
+headless=0
+named=0
+for arg in "$@"; do
+    case "$arg" in
+        -p|--print) headless=1 ;;
+        --settings|--settings=*|--permission-prompt-tool|--permission-prompt-tool=*) named=1 ;;
+    esac
+done
+headless_settings="${BRAIN_HEADLESS_SETTINGS:-/config/.brain/headless_settings.json}"
+if [ "$headless" = 1 ] && [ "$named" = 0 ] && [ -r "$headless_settings" ]; then
+    set -- --settings "$headless_settings" "$@"
+    # The advisor is a second model attached to the run, counted by
+    # nothing a headless run reports.
+    export CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1
+fi
+# A run on a terminal has somebody in front of it: the action gate may
+# ASK there, where an unmarked run (nobody watching) is refused instead.
+if [ -z "${BRAIN_CHANNEL:-}" ] && [ -t 0 ]; then
+    export BRAIN_CHANNEL=terminal
+fi
 if [ "$(id -u)" = "0" ]; then
     exec su-exec claude \
         env ${ANTHROPIC_API_KEY:+ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"} \
             ${CLAUDE_CODE_OAUTH_TOKEN:+CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"} \
+            ${CLAUDE_CODE_DISABLE_ADVISOR_TOOL:+CLAUDE_CODE_DISABLE_ADVISOR_TOOL="$CLAUDE_CODE_DISABLE_ADVISOR_TOOL"} \
         /root/.local/bin/claude "$@"
 else
     exec /root/.local/bin/claude "$@"
@@ -1253,16 +1439,24 @@ setup_mcp_server() {
 
 # Voice tool scoping: the assist channel loads this deny-list via --settings
 # for every agent below Full admin (its own level decides; see the worker
-# pool's resolve_access). Deny wins over the project
-# allowlist, so voice keeps every MCP device tool but can't run shell
-# commands, edit files, or reach the web. Automations keep full access.
+# pool's resolve_access). It carries its own `mcp__home-assistant__*`
+# allow, because the project file now pre-approves only reading tools and
+# a voice worker cannot be asked; deny wins over any allow, so voice keeps
+# every MCP device tool but can't run shell commands, edit files, reach the
+# web, or use the platform's cross-session tools. Automations keep full
+# access through headless_settings.json.
 setup_assist_scoping() {
     mkdir -p /config/.brain
     cat > /config/.brain/assist_settings.json << 'SCOPE'
 {
   "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": ["home-assistant"],
+  "crossSessionInbound": "refuse",
+  "autoMemoryEnabled": false,
   "permissions": {
+    "allow": [
+      "mcp__home-assistant__*"
+    ],
     "deny": [
       "Bash",
       "Bash(*)",
@@ -1275,7 +1469,20 @@ setup_assist_scoping() {
       "WebFetch",
       "WebSearch",
       "Agent",
-      "Skill"
+      "Skill",
+      "SendMessage",
+      "ListAgents",
+      "ListPeers",
+      "RemoteTrigger",
+      "PushNotification",
+      "SendUserMessage",
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "ScheduleWakeup",
+      "Monitor",
+      "TeamCreate",
+      "TeamDelete"
     ]
   }
 }
@@ -1287,7 +1494,34 @@ SCOPE
 
 setup_claude_settings() {
     local claude_settings_dir="/config/.claude"
-    mkdir -p "$claude_settings_dir"
+    local brain_settings_dir="/config/.brain"
+    mkdir -p "$claude_settings_dir" "$brain_settings_dir"
+    # Two files, because two kinds of run read /config's settings and they
+    # must not be granted the same things.
+    #
+    # settings.local.json is the PROJECT file, and every Claude process
+    # started in /config reads it — the interactive terminal and the chat
+    # as much as the listeners. It used to pre-approve Bash(*), Write, Edit
+    # and every Home Assistant tool for all of them, so the terminal never
+    # asked before a shell command or an edit, `dangerously_skip_permissions`
+    # changed almost nothing, and the chat's approval card could never
+    # appear. It now pre-approves only the analyst's READING tools (filled
+    # in below from engine.ANALYST_TOOLS, the one list of them), so a person
+    # in the terminal or the chat is asked before anything acts.
+    #
+    # headless_settings.json is the old allow-list, for the runs that cannot
+    # be asked anything: claude-run adds it to a `-p` run that names no
+    # settings of its own and no prompt tool (the automation listener, a
+    # full-access voice worker, `brain ask`), and engine.run_agent — the
+    # Fix it run — names it explicitly.
+    #
+    # Both carry the platform deny-list (cross-session messaging, remote
+    # triggers, push, cron, Monitor: tools that act outside the run with no
+    # prompt — engine.PLATFORM_DENIED, which tests/test_security.py holds
+    # these lists to), refuse inbound cross-session messages, and switch
+    # Claude Code's own auto-memory off: brAIn has one memory and it is
+    # memory.md.
+    #
     # enableAllProjectMcpServers / enabledMcpjsonServers pre-APPROVE the
     # project-scoped home-assistant server declared in /config/.mcp.json.
     # Current Claude Code requires project .mcp.json servers to be trusted
@@ -1298,10 +1532,88 @@ setup_claude_settings() {
     # interactive trust dialog) makes the HA tools load in every headless run.
     # NOTE: this is separate from the permissions.allow entry below, which
     # only governs whether an already-loaded tool may run without a prompt.
+    #
+    # The hooks: brain-edit-snapshot.py snapshots a file before Claude edits
+    # it (what `brain undo` and a fix's undo put back), brain-protect-hook.py
+    # refuses a shell service call or a YAML edit that would reach a
+    # `protected_entities` entity around the MCP chokepoint, and the Stop
+    # hook teaches memory from the terminal and the chat.
     cat > "$claude_settings_dir/settings.local.json" << 'SETTINGS'
 {
   "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": ["home-assistant"],
+  "crossSessionInbound": "refuse",
+  "autoMemoryEnabled": false,
+  "permissions": {
+    "allow": [],
+    "deny": [
+      "SendMessage",
+      "ListAgents",
+      "ListPeers",
+      "RemoteTrigger",
+      "PushNotification",
+      "SendUserMessage",
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "ScheduleWakeup",
+      "Monitor",
+      "TeamCreate",
+      "TeamDelete"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/scripts/brain-edit-snapshot.py"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__home-assistant__.*|Bash|Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/scripts/brain-action-gate.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/scripts/brain-protect-hook.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/scripts/brain-memory-extract.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+SETTINGS
+    cat > "$brain_settings_dir/headless_settings.json" << 'HEADLESS'
+{
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": ["home-assistant"],
+  "crossSessionInbound": "refuse",
+  "autoMemoryEnabled": false,
   "permissions": {
     "allow": [
       "mcp__home-assistant__*",
@@ -1322,6 +1634,21 @@ setup_claude_settings() {
       "TaskList",
       "TodoWrite",
       "TodoRead"
+    ],
+    "deny": [
+      "SendMessage",
+      "ListAgents",
+      "ListPeers",
+      "RemoteTrigger",
+      "PushNotification",
+      "SendUserMessage",
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "ScheduleWakeup",
+      "Monitor",
+      "TeamCreate",
+      "TeamDelete"
     ]
   },
   "hooks": {
@@ -1334,14 +1661,23 @@ setup_claude_settings() {
             "command": "python3 /opt/scripts/brain-edit-snapshot.py"
           }
         ]
-      }
-    ],
-    "Stop": [
+      },
       {
+        "matcher": "mcp__home-assistant__.*|Bash|Write|Edit|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /opt/scripts/brain-memory-extract.py",
+            "command": "python3 /opt/scripts/brain-action-gate.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/scripts/brain-protect-hook.py",
             "timeout": 10
           }
         ]
@@ -1349,7 +1685,41 @@ setup_claude_settings() {
     ]
   }
 }
-SETTINGS
+HEADLESS
+    # The project file's reading allow-list, out of engine.py rather than
+    # typed here: two answers to "which tools only read" is how an acting
+    # tool reaches the terminal unasked. A list that cannot be read leaves
+    # `allow` empty, which is the direction where being wrong costs a
+    # prompt rather than an action.
+    local panel_dir="${BRAIN_PANEL_DIR:-/opt/panel}" reading
+    if reading=$(BRAIN_PANEL_DIR="$panel_dir" python3 - <<'PYREAD' 2>/dev/null
+import json
+import os
+import sys
+sys.path.insert(0, os.environ.get("BRAIN_PANEL_DIR", "/opt/panel"))
+import engine
+print(json.dumps(list(engine.ANALYST_TOOLS)))
+PYREAD
+    ) && [ -n "$reading" ]; then
+        local filled
+        # offer_resolutions is the one tool beside them that changes
+        # nothing: it puts buttons on the chat's own screen, and an
+        # approval card in front of an offer of buttons is a press for
+        # nothing. `brain own` is the other card that would be a press for
+        # nothing: it hands a file the claude user already owns the folder
+        # of back to that user (panel/ownership.py), and a card asking the
+        # person to approve fixing a permission is the complaint it exists
+        # to end, one click shorter.
+        if filled=$(jq --argjson read "$reading" \
+                '.permissions.allow = ($read + ["mcp__home-assistant__offer_resolutions", "Bash(brain own:*)"])' \
+                "$claude_settings_dir/settings.local.json" 2>/dev/null); then
+            printf '%s\n' "$filled" > "$claude_settings_dir/settings.local.json"
+        fi
+    else
+        bashio::log.warning "Could not read the analyst's reading tools from ${panel_dir}/engine.py; the terminal and the chat will ask before every tool"
+    fi
+    chown claude:claude "$brain_settings_dir/headless_settings.json" 2>/dev/null || true
+    chmod 644 "$brain_settings_dir/headless_settings.json" 2>/dev/null || true
     chown -R claude:claude "$claude_settings_dir" 2>/dev/null || true
     # Slash commands. /learn is the terminal-native face of a study session:
     # you watch it work and can correct it mid-flight, which a scheduled run
@@ -1775,33 +2145,23 @@ setup_automation_integration() {
 # Session Launch
 # ============================================================================
 
-# Returns "--dangerously-skip-permissions" if the user has opted in via config,
-# or an empty string if disabled. This flag tells Claude Code to execute tool
-# calls (file edits, shell commands, etc.) without interactive confirmation.
+# "Let brAIn act without asking" reaches the terminal as a FILE, read when a
+# session starts (scripts/brain-permissions.sh), rather than as a flag baked
+# into the command ttyd was launched with — which is what made a change need
+# an add-on restart. brain-terminal-start and the session picker both ask the
+# file; the panel rewrites it whenever the switch moves (⚙ → Terminal & chat,
+# or the Configuration tab, read back within a poll).
 #
-# This flag controls the INTERACTIVE TERMINAL only. Background listeners
-# (Assist conversation agents, Automation tasks) get their tool permissions
-# from /config/.claude/settings.local.json, which pre-approves MCP tools,
-# Bash, Read, Write, and Edit — so they never need this flag.
-#
-# The flag is OFF by default.  The project-level settings.local.json already
-# grants the permissions Claude Code needs to work with Home Assistant, so
-# most users do not need to enable this.  Turning it on skips ALL permission
-# prompts, including for operations not in the allowlist.
-#
-# SECURITY NOTE: Even with this flag enabled, Claude Code still runs as a
-# non-root user (UID 1000) inside an isolated container. It cannot access the
-# host OS or other add-ons.
-get_permissions_flag() {
-    local skip_perms
-    skip_perms=$(bashio::config 'dangerously_skip_permissions' 'false')
-
-    if [ "$skip_perms" = "true" ]; then
-        echo "--dangerously-skip-permissions"
-    else
-        echo ""
-    fi
-}
+# Off still means something: the project file (settings.local.json)
+# pre-approves only Home Assistant's reading tools, so the terminal asks
+# before a shell command, an edit or a service call. On skips those
+# prompts. brain-protect-hook.py still refuses a shell service call or a
+# file-tool YAML edit that would reach a `protected_entities` entity either
+# way (a hook's refusal is not a prompt) — though a shell command that
+# reaches one some other way is not checked, and that is said wherever the
+# switch is — the platform deny-list still holds (deny rules are checked
+# before the mode), and Claude Code still runs as the non-root `claude` user
+# inside the container.
 
 # The terminal starts in /config, explicitly.
 #
@@ -1821,20 +2181,19 @@ CLAUDE_PROJECT_DIR="/config"
 get_claude_launch_command() {
     local auto_launch_claude
     auto_launch_claude=$(bashio::config 'auto_launch_claude' 'true')
-    local perms_flag
-    perms_flag=$(get_permissions_flag)
 
     if [ "$auto_launch_claude" = "true" ]; then
         # brain-terminal-start, not claude-run directly: it checks whether the
-        # chat tab has handed a conversation over and resumes it if so, then
-        # execs claude-run with these same flags.
-        echo "tmux new-session -A -s claude -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/brain-terminal-start ${perms_flag}'"
+        # chat tab has handed a conversation over and resumes it if so, and it
+        # reads the permission switch when the session STARTS — no flag is
+        # baked in here, or a change would wait for the next add-on restart.
+        echo "tmux new-session -A -s claude -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/brain-terminal-start'"
     else
         if [ -f /usr/local/bin/brain-menu ]; then
             echo "tmux new-session -A -s claude-picker -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/brain-menu'"
         else
             bashio::log.warning "Session picker not found, falling back to auto-launch"
-            echo "tmux new-session -A -s claude -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/brain-terminal-start ${perms_flag}'"
+            echo "tmux new-session -A -s claude -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/brain-terminal-start'"
         fi
     fi
 }
@@ -1898,7 +2257,7 @@ start_web_terminal() {
     bashio::log.info "  CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR}"
     bashio::log.info "  HOME=${HOME}"
     bashio::log.info "  HA MCP Server: $(bashio::config 'enable_ha_mcp_server' 'true')"
-    bashio::log.info "  Skip permissions: $(bashio::config 'dangerously_skip_permissions' 'false')"
+    bashio::log.info "  Act without asking (terminal + chat): $(bashio::config 'dangerously_skip_permissions' 'false')"
 
     local launch_command
     launch_command=$(get_claude_launch_command)
@@ -1984,6 +2343,9 @@ start_panel() {
     export BRAIN_HISTORY_KEEP_RUNS="$(bashio::config 'history_keep_runs' '40')"
     export BRAIN_HISTORY_KEEP_DAYS="$(bashio::config 'history_keep_days' '30')"
     export BRAIN_MODEL="$(bashio::config 'model' '')"
+    # The floor under the panel's live read of the permission switch, the
+    # way BRAIN_MODEL is under the model's (permission_mode.startup()).
+    export BRAIN_SKIP_PERMISSIONS="$(bashio::config 'dangerously_skip_permissions' 'false')"
     export BRAIN_TIMEOUT_MIN="$(bashio::config 'generation_timeout_minutes' '8')"
     export BRAIN_LOG_LEVEL="$(bashio::config 'log_level' 'info')"
     # One switch for "tell me everything": at debug the panel logs every

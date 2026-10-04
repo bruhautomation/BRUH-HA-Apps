@@ -50,6 +50,11 @@ if [ -r /data/.brain_env ]; then
     source /data/.brain_env
 fi
 
+# Which door a Claude run came through, for the MCP server every turn
+# launches (it inherits this environment): the pool sets the same word on
+# its workers, so the two voice implementations cannot answer it twice.
+export BRAIN_CHANNEL=voice
+
 SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}"
 SHARED_DIR="/config/.brain"
 REQUESTS_DIR="$SHARED_DIR/requests"
@@ -115,6 +120,23 @@ if [ ! -x /usr/local/bin/claude-run ]; then
         CLAUDE_BIN="su-exec claude /root/.local/bin/claude"
     fi
 fi
+
+# Two optional flags, asked of the installed CLI once (the pool's
+# `cli_supports`, in shell): `--effort` for the plan's voice depth, and
+# `--system-prompt-snapshot off` so a RESUMED conversation is answered
+# under this request's system prompt rather than the one its first turn
+# recorded — yesterday's area map, an agent profile since changed. A flag
+# the CLI does not list is not sent: an unknown one ends the run unspoken.
+CLI_HELP=$(${CLAUDE_BIN} --help < /dev/null 2>&1 || true)
+CLI_HAS_EFFORT=0
+CLI_HAS_SNAPSHOT=0
+case "$CLI_HELP" in *--effort*) CLI_HAS_EFFORT=1 ;; esac
+case "$CLI_HELP" in *--system-prompt-snapshot*) CLI_HAS_SNAPSHOT=1 ;; esac
+unset CLI_HELP
+
+# What a person does about a credential that will not work: the panel's
+# own button, never `/login` in a terminal `enable_terminal` can remove.
+AUTH_REMEDY="Open brAIn from the sidebar and press Settings, then Claude account, then Sign in again — Assist picks up the fresh sign-in automatically."
 
 bashio::log.info "Assist listener starting (UID=$(id -u), claude=$CLAUDE_BIN, max_turns=$MAX_TURNS, default_timeout=${CLAUDE_TIMEOUT}s)..."
 bashio::log.info "Watching $REQUESTS_DIR for conversation requests"
@@ -470,7 +492,10 @@ invoke_claude() {
     local limit="$1" session_spec="$2" message="$3"
     local session_args=()
     case "$session_spec" in
-        resume:*) session_args=(--resume "${session_spec#resume:}") ;;
+        resume:*)
+            session_args=(--resume "${session_spec#resume:}")
+            [ "$CLI_HAS_SNAPSHOT" = "1" ] && session_args+=(--system-prompt-snapshot off)
+            ;;
         new:*)    session_args=(--session-id "${session_spec#new:}") ;;
     esac
 
@@ -491,7 +516,7 @@ invoke_claude() {
         ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" \
         --system-prompt "$final_system_prompt" \
         "${session_args[@]}" "${scope_args[@]}" \
-        ${model_flag} > "$output_file" 2>"$stderr_file")
+        ${model_flag} ${effort_flag} > "$output_file" 2>"$stderr_file")
 }
 
 # The landing for a request that ended on the turn cap: the same command
@@ -505,6 +530,9 @@ land_claude() {
     if [ "$(mcp_only_flag)" = "1" ] && [ -f "$SHARED_DIR/assist_settings.json" ]; then
         scope_args=(--settings "$SHARED_DIR/assist_settings.json")
     fi
+    # The landing is a resume too, so it is answered under this request's
+    # system prompt for invoke_claude's reason.
+    [ "$CLI_HAS_SNAPSHOT" = "1" ] && scope_args+=(--system-prompt-snapshot off)
     # Into a scratch file, moved over only on success: a landing refused
     # for want of time or a session must not take the run's own output
     # with it.
@@ -514,7 +542,7 @@ land_claude() {
         brain_land "$sid" "$limit" "$stderr_file" -- \
         ${CLAUDE_BIN} -p --verbose \
         --system-prompt "$final_system_prompt" \
-        "${scope_args[@]}" ${model_flag} > "${output_file}.land"); then
+        "${scope_args[@]}" ${model_flag} ${effort_flag} > "${output_file}.land"); then
         mv -f "${output_file}.land" "$output_file"
         return 0
     fi
@@ -533,6 +561,7 @@ process_request() {
     mv "$req_file" "$work_file" 2>/dev/null || return 0
 
     local req_id text system_prompt history_json model conv_id req_ts req_timeout
+    local context_json
 
     req_id=$(jq -r '.id // empty' "$work_file" 2>/dev/null)
     text=$(jq -r '.text // empty' "$work_file" 2>/dev/null)
@@ -547,6 +576,10 @@ process_request() {
     conv_id=$(jq -r '.conversation_id // .id // empty' "$work_file" 2>/dev/null | tr -cd 'A-Za-z0-9_-')
     req_ts=$(jq -r '.ts // empty' "$work_file" 2>/dev/null)
     req_timeout=$(jq -r '.timeout // empty' "$work_file" 2>/dev/null)
+    # Where the request came from and who asked (the integration resolves
+    # the satellite to a room and the user to a person). Read now, while
+    # the file exists; turned into words below, in the TURN.
+    context_json=$(jq -c 'if (.context | type) == "object" then .context else {} end' "$work_file" 2>/dev/null)
 
     if [ -z "$req_id" ] || [ -z "$text" ]; then
         bashio::log.warning "Invalid request file: $req_file"
@@ -608,7 +641,7 @@ ALWAYS give times in the user's local timezone (stamped on each message), never 
 Use your MCP tools (control_light, control_climate, control_media_player, control_cover, control_fan, control_switch, control_lock, control_alarm, control_vacuum, call_service, get_all_states, get_areas, activate_scene, run_script, send_notification, get_service_details).
 For questions about the PAST ('how cold did it get last night', 'when did the garage open'), use get_history (recent detail) or get_statistics (daily min/max/mean over weeks).
 For FORECASTS ('weather tomorrow / this week'), use get_weather_forecast; get_entity_state on the weather entity only gives current conditions.
-To CHECK A CAMERA or visually verify something, use get_camera_snapshot and describe what you see."
+A camera answers get_camera_snapshot only if the homeowner has allowed brAIn to look at it; if it refuses, say so in one sentence and do not try another camera."
 
     local base_system_prompt
     if [ -n "$system_prompt" ]; then
@@ -673,9 +706,18 @@ ${memory_text}"
     # a local-time stamp so time questions need zero tool calls.
     local time_line
     time_line=$(local_time_line)
+    # The context block, from the one module that writes it (the pool
+    # imports the same file), between the time stamp and the words.
+    local context_block=""
+    if [ -n "$context_json" ] && [ "$context_json" != "{}" ]; then
+        context_block=$(printf '%s' "$context_json" | python3 \
+            "${BRAIN_SCRIPTS_DIR:-/opt/scripts}/brain_voice_context.py" preamble 2>/dev/null || true)
+    fi
     local stamped_text="$text"
-    [ -n "$time_line" ] && stamped_text="${time_line}
+    [ -n "$context_block" ] && stamped_text="${context_block}
 ${text}"
+    [ -n "$time_line" ] && stamped_text="${time_line}
+${stamped_text}"
     local message_resume="$stamped_text"
     local message_fresh="$stamped_text"
     local history_text
@@ -690,8 +732,14 @@ USER: ${stamped_text}"
     # Build model flag (each conversation agent can specify its own model)
     # A conversation agent that names no model takes the plan's tier for
     # voice (`BRAIN_MODEL_VOICE`, off panel/model_plan.py via /data/.brain_env).
+    local effort_flag=""
     if [ -z "$model" ] || [ "$model" = "default" ]; then
         model="${BRAIN_MODEL_VOICE:-}"
+        # The plan's depth rides with the plan's model and only with it —
+        # an agent that chose a model chose what it gets (engine's rule).
+        if [ -n "$model" ] && [ -n "${BRAIN_EFFORT_VOICE:-}" ] && [ "$CLI_HAS_EFFORT" = "1" ]; then
+            effort_flag="--effort ${BRAIN_EFFORT_VOICE}"
+        fi
     fi
     local model_flag=""
     if [ -n "$model" ]; then
@@ -816,6 +864,10 @@ USER: ${stamped_text}"
         printf '%s' "$new_session" > "$session_file" 2>/dev/null || true
     fi
 
+    # Whether this turn FAILED, as the closed word the pool writes too
+    # (timeout, auth, empty, error); empty means it answered.
+    local fail_code=""
+
     # If response is empty, something went wrong — check stderr for clues
     if [ -z "$response" ]; then
         bashio::log.error "Empty response for [$req_id] after ${duration}s (exit=$exit_code)"
@@ -823,38 +875,76 @@ USER: ${stamped_text}"
         if [ "$exit_code" -ge 124 ] 2>/dev/null && [ "$duration" -ge "$((claude_limit - 5))" ] 2>/dev/null; then
             response="Claude timed out after ${duration}s. This may be caused by a broken MCP server connection. Try restarting the brAIn add-on."
             bashio::log.error "Claude process timed out (exit=$exit_code, limit=${claude_limit}s)"
+            fail_code="timeout"
         elif echo "$stderr_output" | grep -qi "not logged in\|please log in\|authentication"; then
-            response="Claude is not logged in. Please open the brAIn sidebar and complete the OAuth login first."
+            response="Claude is not signed in. ${AUTH_REMEDY}"
+            fail_code="auth"
         elif echo "$stderr_output" | grep -qi "/api/mcp\|invalid authentication.*mcp"; then
             response="Claude encountered a broken MCP server connection (/api/mcp auth error). Restart the brAIn add-on to clean it up."
             bashio::log.error "Detected /api/mcp auth error — running deep MCP cleanup for the next request"
             verify_mcp_config_full
+            fail_code="error"
         elif echo "$stderr_output" | grep -qi "permission\|not allowed\|denied"; then
             response="Claude encountered a permission error. Check the add-on logs for details."
+            fail_code="error"
         else
             response="Sorry, Claude didn't produce a response. Check the brAIn add-on logs for details."
+            fail_code="empty"
         fi
+    fi
+
+    # Auth failures in plain-text -p mode arrive as the answer itself.
+    if [ -z "$fail_code" ] && printf '%s' "$response" | grep -qiE "OAuth session expired|OAuth token (refresh failed|revoked)|failed to authenticate|please run /login|invalid api key"; then
+        bashio::log.error "Claude auth failure for [$req_id]: ${response:0:200}"
+        response="Claude's saved login has expired and could not be refreshed automatically. ${AUTH_REMEDY}"
+        fail_code="auth"
     fi
 
     # Log the response for debugging
     log_response_debug "$req_id" "$response" "$duration" "$stderr_output"
 
-    bashio::log.info "Assist response [$req_id]: ${duration}s, ${#response} chars (session=$session_mode)"
+    bashio::log.info "Assist response [$req_id]: ${duration}s, ${#response} chars (session=$session_mode)${fail_code:+ — $fail_code}"
 
     # Check for auth errors in the response text
     if echo "$response" | grep -qi "not logged in\|please log in\|authentication required"; then
-        response="Claude is not logged in. Please open the brAIn sidebar and complete the OAuth login first."
-        bashio::log.error "Claude auth error - user needs to log in via the terminal"
+        response="Claude is not signed in. ${AUTH_REMEDY}"
+        fail_code="auth"
+        bashio::log.error "Claude auth error - user needs to sign in from the panel"
     fi
 
-    # Write response file (atomic via tmp + rename)
+    # Write response file (atomic via tmp + rename). A failure carries its
+    # word beside the sentence so the integration can answer it as an
+    # error rather than speak it as a reply; an answer is the file it
+    # always was.
     local resp_file="$RESPONSES_DIR/${req_id}.json"
     local tmp_file="${resp_file}.tmp"
-    jq -n --arg id "$req_id" --arg text "$response" \
-        '{"id": $id, "text": $text}' > "$tmp_file"
+    if [ -n "$fail_code" ]; then
+        jq -n --arg id "$req_id" --arg text "$response" --arg error "$fail_code" \
+            '{"id": $id, "text": $text, "error": $error}' > "$tmp_file"
+    else
+        jq -n --arg id "$req_id" --arg text "$response" \
+            '{"id": $id, "text": $text}' > "$tmp_file"
+    fi
     mv "$tmp_file" "$resp_file"
 
     bashio::log.info "Assist response sent [$req_id]"
+
+    # One journal row for the turn, after the answer is on its way — the
+    # pool's `journal_turn` in shell, through the same module. Plain-text
+    # output carries no envelope, so the session id stands in for it.
+    local journal_py="${BRAIN_SCRIPTS_DIR:-/opt/scripts}/brain_run_journal.py"
+    if [ -r "$journal_py" ]; then
+        local outcome="ok" run_id="${new_session:-$resume_session}"
+        case "$fail_code" in
+            '') outcome="ok" ;;
+            auth|timeout) outcome="$fail_code" ;;
+            *) outcome="error" ;;
+        esac
+        (python3 "$journal_py" record voice "$outcome" --duration "$duration" \
+            --model "${model:-}" --run-id "$run_id" \
+            --error "$([ -n "$fail_code" ] && printf '%s' "${response:0:200}")" \
+            --extra "mode=classic" > /dev/null 2>&1 || true) &
+    fi
 }
 
 # Watch for new request files using inotifywait if available, fall back to polling

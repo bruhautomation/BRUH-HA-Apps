@@ -12,8 +12,9 @@ the planted row":
     open rows only for checks that ran, and the run/skip bookkeeping in
     ``run_all`` is what it keys on.
 
-The snapshot loaders are exercised on real files (a YAML with HA's tags,
-a traces store in both shapes HA has used) rather than described.
+The snapshot loaders are exercised on real files (a YAML with HA's tags)
+rather than described; the live trace fetch is driven against a fake Core
+speaking the WebSocket protocol in ``tests/test_live_traces.py``.
 """
 
 import json
@@ -48,6 +49,26 @@ def iso(seconds_ago: float) -> str:
     return dt.datetime.fromtimestamp(NOW - seconds_ago, tz=dt.timezone.utc).isoformat()
 
 
+def core_run(run_id: str, execution: str, seconds_ago: float, *,
+             item_id: str = "morning-1", error: str | None = None,
+             last_step: str | None = "action/0", **extra) -> dict:
+    """One run as Core's `trace/list` sends it — `ActionTrace.as_short_dict`
+    plus `AutomationTrace`'s `trigger` (homeassistant/components/trace/
+    models.py, automation/trace.py). `error` is present only when there
+    was one, exactly as Core writes it.
+    """
+    row = {"last_step": last_step, "run_id": run_id, "state": "stopped",
+           "script_execution": execution,
+           "timestamp": {"start": iso(seconds_ago),
+                         "finish": iso(max(0.0, seconds_ago - 1))},
+           "domain": "automation", "item_id": item_id,
+           "trigger": "time"}
+    if error is not None:
+        row["error"] = error
+    row.update(extra)
+    return row
+
+
 def house(**over) -> dict:
     """A small, healthy house. Every planted defect is an override."""
     snap = {
@@ -56,13 +77,19 @@ def house(**over) -> dict:
             "states", "registry", "services", "automations", "traces",
             "stats", "battery_stats", "dashboards", "supervisor",
             "updates", "recorder", "zha_devices", "config_entries", "actions",
-                          "baselines", "closures", "appliances", "thermal")},
+                          "baselines", "closures", "appliances", "thermal",
+            # The access steward's keys (checks/security.py): read, and
+            # nothing in them anybody has to look at twice.
+            "users", "exposure", "posture", "ip_bans")},
         "errors": {},
         "blueprints_dir": "",
         "states": {
             "automation.morning": {
                 "state": "on",
+                # `id` is the config id Core publishes on every
+                # automation's state, and the key its traces live under.
                 "attributes": {"friendly_name": "Morning lights",
+                               "id": "morning-1",
                                "last_triggered": iso(3600)},
                 "last_changed": iso(30 * DAY)},
             "light.kitchen": {
@@ -120,9 +147,10 @@ def house(**over) -> dict:
         }],
         "scripts": {},
         "scenes": [],
-        "traces": {"automation.morning": [
-            {"run_id": "1", "script_execution": "finished",
-             "timestamp": {"start": iso(3600)}}]},
+        # Keyed the way Core keys a trace — `automation.<config id>`,
+        # never the entity id — and each row a `short_dict` as
+        # `trace/list` sends it (see `core_run`).
+        "traces": {"automation.morning-1": [core_run("1", "finished", 3600)]},
         "stats": {"sensor.hall_temp": [
             {"start": NOW - d * DAY, "mean": 21 + d * 0.3, "min": 20 + d * 0.2,
              "max": 22 + d * 0.1} for d in range(7)]},
@@ -250,6 +278,14 @@ def house(**over) -> dict:
                 {"start": NOW - (45 - i * 5) * 60, "mean": 2.0}
                 for i in range(10)]},
         },
+        # One owner, a light exposed to Assist and nothing that opens the
+        # house exposed anywhere, the terminal asking before it acts, and no
+        # address banned — the house `sec.*` must say nothing about.
+        "users": [{"id": "u1", "name": "Ben", "admin": True, "owner": True,
+                   "active": True, "system": False, "local_only": False}],
+        "exposure": {"light.kitchen": {"conversation": True}},
+        "posture": {"dangerously_skip_permissions": False},
+        "ip_bans": [],
         # A day of the house behaving: an automation acted, a person acted,
         # and nobody undid anybody.
         "actions": {
@@ -343,49 +379,55 @@ class TestAutomationChecks(unittest.TestCase):
 
     def test_trace_error_reports_only_the_latest_run(self):
         snap = house()
-        snap["traces"]["automation.morning"] = [
-            {"run_id": "1", "script_execution": "error", "error": "boom",
-             "last_step": "action/0", "timestamp": {"start": iso(7200)}},
-            {"run_id": "2", "script_execution": "finished",
-             "timestamp": {"start": iso(60)}},
+        snap["traces"]["automation.morning-1"] = [
+            core_run("1", "error", 7200, error="boom"),
+            core_run("2", "finished", 60),
         ]
         self.assertEqual(automations.trace_error(snap, NOW), [])
-        snap["traces"]["automation.morning"].reverse()
-        snap["traces"]["automation.morning"][1]["timestamp"]["start"] = iso(30)
+        snap["traces"]["automation.morning-1"] = [
+            core_run("2", "finished", 7200),
+            core_run("1", "error", 30, error="boom"),
+        ]
         found = automations.trace_error(snap, NOW)
         self.assertEqual(len(found), 1)
         self.assertIn("boom", found[0]["detail"])
         self.assertIn("action/0", found[0]["detail"])
+        self.assertEqual(found[0]["entity_id"], "automation.morning")
 
     def test_condition_never_passes_needs_every_recent_run_to_stop_there(self):
         snap = house()
-        snap["traces"]["automation.morning"] = [
-            {"run_id": str(i), "script_execution": "failed_conditions",
-             "timestamp": {"start": iso(i * 3600)}} for i in range(4)]
+        # Its actions have not run for a month, so the condition really
+        # has not let it act — see CONDITION_PASSED_DAYS.
+        snap["states"]["automation.morning"]["attributes"][
+            "last_triggered"] = iso(30 * DAY)
+        snap["traces"]["automation.morning-1"] = [
+            core_run(str(i), "failed_conditions", i * 3600, last_step=None)
+            for i in range(4)]
         found = automations.condition_never_passes(snap, NOW)
         self.assertEqual(len(found), 1)
         self.assertIn("last 4 runs", found[0]["detail"])
-        snap["traces"]["automation.morning"][0]["script_execution"] = "finished"
+        snap["traces"]["automation.morning-1"][0]["script_execution"] = "finished"
         self.assertEqual(automations.condition_never_passes(snap, NOW), [])
 
     def test_condition_check_stays_quiet_on_a_disabled_automation(self):
         snap = house()
         snap["states"]["automation.morning"]["state"] = "off"
-        snap["traces"]["automation.morning"] = [
-            {"run_id": str(i), "script_execution": "failed_conditions",
-             "timestamp": {"start": iso(i * 3600)}} for i in range(4)]
+        snap["states"]["automation.morning"]["attributes"][
+            "last_triggered"] = None
+        snap["traces"]["automation.morning-1"] = [
+            core_run(str(i), "failed_conditions", i * 3600, last_step=None)
+            for i in range(4)]
         self.assertEqual(automations.condition_never_passes(snap, NOW), [])
 
     def test_already_running_counts_only_the_last_day(self):
         snap = house()
-        snap["traces"]["automation.morning"] = [
-            {"run_id": str(i), "script_execution": "failed_single",
-             "timestamp": {"start": iso(i * 600)}} for i in range(3)]
+        snap["traces"]["automation.morning-1"] = [
+            core_run(str(i), "failed_single", i * 600) for i in range(3)]
         found = automations.already_running(snap, NOW)
         self.assertEqual(len(found), 1)
         self.assertIn("mode: queued", found[0]["fix"])
-        for row in snap["traces"]["automation.morning"]:
-            row["timestamp"]["start"] = iso(3 * DAY)
+        snap["traces"]["automation.morning-1"] = [
+            core_run(str(i), "failed_single", 3 * DAY) for i in range(3)]
         self.assertEqual(automations.already_running(snap, NOW), [])
 
     def test_never_fired_needs_age_and_an_ordinary_trigger(self):
@@ -1349,19 +1391,6 @@ class TestSnapshotLoaders(unittest.TestCase):
             self.assertIsNone(cfg["automations"])
             self.assertEqual(cfg["scripts"]["wake"]["alias"], "Wake")
             self.assertIsNone(cfg["scenes"])
-
-    def test_traces_in_both_shapes_home_assistant_has_used(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            flat = Path(tmp, "flat.json")
-            flat.write_text(json.dumps({"data": {
-                "automation.a": [{"run_id": "1", "script_execution": "finished"}]}}))
-            self.assertEqual(snapshot.load_traces(str(flat))["automation.a"][0]["run_id"], "1")
-            nested = Path(tmp, "nested.json")
-            nested.write_text(json.dumps({"data": {
-                "automation": {"b": {"r1": {"run_id": "r1"}, "r2": {"run_id": "r2"}}}}}))
-            rows = snapshot.load_traces(str(nested))["automation.b"]
-            self.assertEqual({r["run_id"] for r in rows}, {"r1", "r2"})
-            self.assertIsNone(snapshot.load_traces(str(Path(tmp, "nope.json"))))
 
     def test_the_recorder_database_is_stat_ed_and_its_purge_read(self):
         with tempfile.TemporaryDirectory() as tmp:

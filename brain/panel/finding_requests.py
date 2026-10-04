@@ -57,7 +57,7 @@ REQUEST_DIR = Path(os.environ.get(
 # house", and "not now". Anything else — a fix run, a regeneration — is
 # work rather than an answer, and belongs behind the panel where the
 # thing it starts can be watched.
-ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack")
+ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack", "undo")
 
 # ...and the tab's own verb for each, so the two front doors settle a
 # finding through exactly the same code. "fixed" is the tab's "done" —
@@ -70,7 +70,9 @@ ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack")
 VERBS = {"fixed": "done", "wrong": "wrong", "ack": "ack"}
 # `reply` and `snooze` are deliberately absent: neither ends a finding.
 # A reply is a turn in the case's conversation and is answered, not
-# applied.
+# applied. `undo` is the Undo on the confirmation a reply is answered with
+# — the toast's own token, found by the row's id — and is absent for the
+# opposite reason: it takes an ending back.
 
 # A request is a few hundred bytes. Anything larger is not one.
 MAX_BYTES = 16 * 1024
@@ -83,6 +85,13 @@ MAX_PER_PASS = 50
 MAX_QUEUED = 500
 KEEP_S = 14 * 86400
 NOTE_MAX = 500
+# What a snooze that names no length USED to buy, and what one naming
+# nonsense is bounded by. A request that names no `hours` now carries
+# None, and the panel gives it the feed's own stakes-based quiet
+# (`cases.snooze_until`): a notification's Dismiss and the feed's are one
+# press, and a flat day here against one, three or seven there was one
+# word meaning three different things. Repairs' "Remind me tomorrow"
+# names its 24 hours on the button and sends them, so it keeps them.
 SNOOZE_DEFAULT_H = 24
 SNOOZE_MAX_H = 24 * 30
 
@@ -96,6 +105,15 @@ TODO_TEXT_MAX = 200
 # here applies it — `server._apply_finding_requests` starts the pass, and
 # starting one is the panel's alone.
 CHECKS_KIND = "checks"
+
+# The fourth: an answer to one of brAIn's guesses, from `brain.answer_question`.
+# Yes or no and nothing else, because a guess is a yes/no question; the
+# reason a "no" may carry rides as the note, exactly as the tab's own No
+# takes one. Applied by `server._answer_hypothesis` — the code the Findings
+# tab's buttons run — so a guess answered from an automation teaches brAIn
+# what the same press on the tab would have.
+HYPOTHESIS_KIND = "hypothesis"
+HYPOTHESIS_ACTIONS = ("confirm", "reject")
 
 
 def parse(obj) -> dict | None:
@@ -116,6 +134,8 @@ def parse(obj) -> dict | None:
         return _parse_todo(obj)
     if kind == "checks":
         return _parse_checks(obj)
+    if kind == HYPOTHESIS_KIND:
+        return _parse_hypothesis(obj)
     ts = obj.get("ts")
     if isinstance(ts, bool) or not isinstance(ts, (int, float)):
         return None
@@ -124,8 +144,9 @@ def parse(obj) -> dict | None:
         return None
     hours = obj.get("hours")
     if isinstance(hours, bool) or not isinstance(hours, (int, float)):
-        hours = SNOOZE_DEFAULT_H
-    hours = max(1.0, min(float(hours), SNOOZE_MAX_H))
+        hours = None
+    else:
+        hours = max(1.0, min(float(hours), SNOOZE_MAX_H))
     return {
         "ts": int(ts),
         "action": action,
@@ -178,6 +199,30 @@ def _parse_checks(obj: dict) -> dict:
     reason to drop somebody's press.
     """
     return {"kind": "checks", "via": str(obj.get("via") or "")[:32]}
+
+
+def _parse_hypothesis(obj: dict) -> dict | None:
+    """A validated answer to a guess, or None. Every field is another process's.
+
+    The id is an int or the request is dropped, the answer is one of two
+    words, and the note is capped where a typed note is capped — the same
+    three checks a finding's ending gets, for the same reason.
+    """
+    ts = obj.get("ts")
+    if isinstance(ts, bool) or not isinstance(ts, (int, float)) or not ts:
+        return None
+    action = str(obj.get("action") or "").strip().lower()
+    if action not in HYPOTHESIS_ACTIONS:
+        return None
+    return {
+        "kind": HYPOTHESIS_KIND,
+        "ts": int(ts),
+        "action": action,
+        # Only a "no" has anything to say: a yes files the guess's own claim.
+        "note": (str(obj.get("note") or "").strip()[:NOTE_MAX]
+                 if action == "reject" else ""),
+        "via": str(obj.get("via") or "")[:32],
+    }
 
 
 def verb_for(action: str) -> str:
@@ -265,7 +310,7 @@ def pending() -> int:
 
 
 __all__ = [
-    "ACTIONS", "CHECKS_KIND", "KEEP_S", "MAX_BYTES", "MAX_PER_PASS", "MAX_QUEUED",
+    "ACTIONS", "CHECKS_KIND", "HYPOTHESIS_ACTIONS", "HYPOTHESIS_KIND", "KEEP_S", "MAX_BYTES", "MAX_PER_PASS", "MAX_QUEUED",
     "NOTE_MAX", "REQUEST_DIR", "SNOOZE_DEFAULT_H", "SNOOZE_MAX_H",
     "TODO_ACTIONS", "TODO_TEXT_MAX",
     "collect", "parse", "pending", "verb_for",

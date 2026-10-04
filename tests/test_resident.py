@@ -340,10 +340,10 @@ class WatchCase(unittest.TestCase):
 
 
 class TestTheWatchList(WatchCase):
-    def test_watching_records_the_repeat_count_it_started_from(self):
+    def test_watching_starts_counting_from_nothing(self):
         entry = resident.watch(signal(repeats=4), "one reading is not a trend",
                                now=1000.0)
-        self.assertEqual(entry["repeats"], 4)
+        self.assertEqual(entry["seen"], 0)
         self.assertEqual(resident.watched()["sensor.hall_temperature"]["why"],
                          "one reading is not a trend")
 
@@ -351,20 +351,33 @@ class TestTheWatchList(WatchCase):
         self.assertTrue(resident.rejudge_due(signal(), now=1000.0))
 
     def test_a_watched_subject_waits_for_evidence_and_not_for_the_clock(self):
-        resident.watch(signal(repeats=4), "if it happens again", now=1000.0)
-        # A year later, with nothing further seen: still held. The clock
-        # buys the identical answer over the identical data.
+        resident.watch(signal(repeats=1), "if it happens again", now=1000.0)
+        # Nearly a fortnight later, with nothing further seen: still held.
+        # The clock buys the identical answer over the identical data.
         self.assertFalse(resident.rejudge_due(
-            signal(repeats=4), now=1000.0 + resident.WATCH_TTL_S - 1))
-        # One more occurrence is not enough either.
-        self.assertFalse(resident.rejudge_due(signal(repeats=5), now=2000.0))
+            signal(repeats=1), now=1000.0 + resident.WATCH_TTL_S - 1))
+        # A burst that is itself big enough is evidence on its own.
         self.assertTrue(resident.rejudge_due(
-            signal(repeats=4 + resident.WATCH_RETRY_REPEATS), now=2000.0))
+            signal(repeats=resident.WATCH_RETRY_REPEATS), now=2000.0))
+
+    def test_separate_occurrences_add_up_where_a_burst_count_never_did(self):
+        """`repeats` is a count within ONE burst — almost always 1 — so the
+        old test (this signal's repeats against the watched one's) could not
+        see three separate nights of a door at 03:00, and a watch was a
+        fourteen-day mute. What the watch withholds is counted onto it."""
+        resident.watch(signal(repeats=1), "if it happens again", now=1000.0)
+        for night in range(resident.WATCH_RETRY_REPEATS - 1):
+            sig = signal(repeats=1)
+            self.assertFalse(resident.rejudge_due(sig, now=2000.0 + night))
+            resident.note_withheld([sig], now=2000.0 + night)
+        self.assertTrue(resident.rejudge_due(signal(repeats=1), now=9000.0))
+        self.assertIn("watched because", resident.watch_note(
+            "sensor.hall_temperature"))
 
     def test_a_watch_that_has_aged_out_lets_the_next_signal_through(self):
-        resident.watch(signal(repeats=4), "if it happens again", now=1000.0)
+        resident.watch(signal(repeats=1), "if it happens again", now=1000.0)
         self.assertTrue(resident.rejudge_due(
-            signal(repeats=4), now=1000.0 + resident.WATCH_TTL_S + 1))
+            signal(repeats=1), now=1000.0 + resident.WATCH_TTL_S + 1))
 
     def test_a_watch_cannot_hold_a_leak_back(self):
         resident.watch(signal(kind="leak", repeats=1), "quiet", now=1000.0)

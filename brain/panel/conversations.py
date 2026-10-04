@@ -544,6 +544,76 @@ def transcript(cwd: str, session_id: str, limit: int = REPLAY_EVENTS) -> list[di
     return _budget(events, limit)
 
 
+# What a run's tool traffic may cost to read. Generous — an investigation
+# reads histories — and bounded, because this is read once per case on
+# the loop's thread pool and a pathological transcript must not stall it.
+MAX_TOOL_TRAFFIC_CHARS = 2_000_000
+
+
+def tool_traffic(cwd: str, session_id: str) -> str | None:
+    """Everything a run SENT to its tools and got back, as one string.
+
+    What `parse_case`'s invented-evidence guard has to read. It used to
+    read the CLI's final reply instead, which is the one place the answer
+    under test is written — so on a CLI that echoes its JSON every cited
+    id was "read" and the guard was vacuous, and on one that answers with
+    validated `structured_output` and a line of prose no neighbour was
+    ever "read" and a real case was thrown away. Tool inputs and tool
+    results are what the run actually touched; the assistant's own text
+    is deliberately left out, final answer included.
+
+    None — never "" — for a transcript that cannot be found or read,
+    because "I could not look" and "it looked at nothing" are different
+    claims, and only the second may refuse a case.
+    """
+    directory = project_dir(cwd)
+    if directory is None:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,120}", session_id or ""):
+        return None
+    path = directory / f"{session_id}.jsonl"
+    if not path.is_file():
+        return None
+    parts: list[str] = []
+    size = 0
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                message = entry.get("message") if isinstance(entry, dict) else None
+                content = message.get("content") if isinstance(message, dict) else None
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") == "tool_use":
+                        piece = json.dumps(block.get("input") or {})
+                    elif block.get("type") == "tool_result":
+                        piece = _result_text(block.get("content"))
+                    else:
+                        continue
+                    parts.append(piece)
+                    size += len(piece)
+                    if size > MAX_TOOL_TRAFFIC_CHARS:
+                        return "\n".join(parts)
+    except OSError:
+        return None
+    return "\n".join(parts)
+
+
+def _result_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(str(c.get("text") or "") for c in content
+                         if isinstance(c, dict))
+    return ""
+
+
 def _budget(events: list[dict], limit: int = REPLAY_EVENTS) -> list[dict]:
     """The newest ``limit`` events, spent on the conversation first.
 

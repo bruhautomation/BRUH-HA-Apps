@@ -131,6 +131,12 @@ jobs:
       - name: Measure the Settings dialog
         run: node tests/manual/measure-settings.mjs
 
+      # The chat's approval card is where the asking happens, so it is
+      # where the way out of asking has to be: "Always allow" with what it
+      # adds said in words, and "Stop asking…" landing on the switch in ⚙.
+      - name: Measure the chat approval card
+        run: node tests/manual/measure-permcard.mjs
+
       # A live card has two ages; the foot used to report one of them.
       - name: Measure a live card's two ages
         run: node tests/manual/measure-cardlive.mjs
@@ -150,6 +156,13 @@ jobs:
 
       - name: Measure the resolutions card
         run: node tests/manual/measure-chatres.mjs
+
+      # Upkeep: a house book sentence with no source reads like a cited
+      # one, a tidy row with no tick or a room move that does not name the
+      # automation it changes is a review nobody can do, and an upgrade
+      # verdict without both quotes is an opinion.
+      - name: Measure the Upkeep pane
+        run: node tests/manual/measure-upkeep.mjs
 
       # A card nothing checked must not read like one something did.
       - name: Measure the triage view

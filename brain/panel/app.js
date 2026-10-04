@@ -526,13 +526,15 @@ function renderAuth() {
   $("#onboard").classList.toggle("hidden", signIn || obState.onboarded);
   $("#dash").classList.toggle("hidden", !ready);
   $("#settingsBtn").classList.toggle("hidden", !s.authenticated);
-  // `enable_insights: false` takes the two tabs that are only ever filled
-  // by a Claude run the scheduler would have queued; Findings stays, since
-  // the house checks cost nothing and still file there.
+  // `enable_insights: false` takes the one tab only ever filled by a
+  // Claude run the scheduler would have queued; Findings stays, since the
+  // house checks cost nothing and still file there — and so does
+  // Proposals, which the checks pass fills too and which is now the one
+  // surface a proposal is offered on.
   const insightsOn = s.insights_enabled !== false;
-  document.querySelectorAll('.subtab[data-view="insights"], .subtab[data-view="proposals"]')
+  document.querySelectorAll('.subtab[data-view="insights"]')
     .forEach((b) => b.classList.toggle("gone", !insightsOn));
-  if (!insightsOn && (currentView === "insights" || currentView === "proposals")) {
+  if (!insightsOn && currentView === "insights") {
     switchView("findings");
   } else {
     syncTabs(currentView);
@@ -1284,6 +1286,41 @@ function cardMenuButton(items) {
   return btn;
 }
 
+// "Make this an automation": what a card says the house is missing, from
+// its menu. The server already offered what it could on the Proposals tab
+// (`_offer_card_opportunities`) — this is the door for the rest: one it did
+// not send (paused, the day's cap, a question rather than a rule) goes into
+// the ask bar for a person to read and send, and a card with none still
+// offers the bar with "When " in it, because a person reading a card is the
+// moment they think of the rule. Never sent from here: the ask bar is where
+// somebody can read what they are about to ask for.
+function cardAutomationItems(shown) {
+  const opps = Array.isArray(shown.opportunities) ? shown.opportunities : [];
+  const items = opps.slice(0, 2).map((opp) => (opp.queued
+    ? ["⚡", "See the automation it suggested",
+      `On the Proposals tab: “${opp.text}”`,
+      () => switchView("proposals")]
+    : ["⚡", "Make this an automation",
+      `“${opp.text}”${opp.why ? ` — not offered yet: ${opp.why}` : ""}`,
+      () => seedAsk(opp.sentence || opp.text)]));
+  if (!opps.some((opp) => !opp.queued)) {
+    items.push(["⚡", "Make an automation from this",
+      "Describe it in the ask bar — brAIn replays it over your history "
+      + "before it offers it", () => seedAsk("When ")]);
+  }
+  return items;
+}
+
+function seedAsk(text) {
+  switchView("insights");
+  const input = $("#askInput");
+  if (!input) return;
+  input.value = text;
+  input.scrollIntoView({ block: "center", behavior: "smooth" });
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
 function makeCard(catInfo, insight, fallbackId) {
   const id = (insight && insight.id) || (catInfo && catInfo.id) || fallbackId;
   const job = jobFor(id);
@@ -1377,6 +1414,9 @@ function makeCard(catInfo, insight, fallbackId) {
   if (insight) {
     menu.push(["#", "Edit tags", "What this card can be filtered by",
       () => { state.editingTags = id; render(); }]);
+  }
+  if (shown && !active) {
+    cardAutomationItems(shown).forEach((item) => menu.push(item));
   }
   // ✕ deletes every card — including one whose only trace is a job, so a
   // failed Ask can be cleared away instead of sitting there forever.
@@ -1903,6 +1943,14 @@ async function generate(categoryOrId, question, inPlace = false) {
         ? { question }
         : { category: categoryOrId };
     const res = await api("api/generate", { method: "POST", body: JSON.stringify(body) });
+    // The interpreter read the sentence (`interpret`) and may have sent it
+    // more than one way at once. `routes` is what it read; every key below
+    // is where each part landed, and each says so in its own words.
+    if (res && Array.isArray(res.routes)) {
+      showRouted(res);
+      if ((res.queued || []).length) { await refreshStatus(); fastPoll(); }
+      return;
+    }
     // "learn about the boiler" isn't a card — the server routed it to a study
     // session instead, and there is nothing on the dashboard to wait for.
     if (res && "learning" in res) {
@@ -1938,6 +1986,91 @@ async function generate(categoryOrId, question, inPlace = false) {
   } catch (e) {
     toast(e.message);
   }
+}
+
+// What the interpreter did with one sentence, said once. The parts are the
+// same toasts the ask bar's patterns always produced, joined, plus the two
+// the patterns never had: a fact kept, and a "why" being looked into.
+function showRouted(res) {
+  const said = [];
+  if ((res.queued || []).length) said.push("Making a card for that");
+  if ("intent" in res) {
+    said.push("working out the automation — it lands on Proposals, and "
+      + "nothing runs until you accept it");
+  }
+  if ("learning" in res) {
+    said.push(res.learning ? `studying ${res.learning} in the background`
+      : "studying what brAIn knows least about");
+  }
+  if ((res.remembered || []).length) said.push("kept that in memory");
+  if ("scenes" in res) said.push(`designing four scenes for the ${res.scenes}`);
+  if (res.refused) said.push(res.refused);
+  if (res.explain) {
+    said.push("looking into why");
+    watchExplain(res.explain);
+  }
+  if (said.length) {
+    const text = said.join("; ");
+    toast(text.charAt(0).toUpperCase() + text.slice(1) + ".");
+  }
+}
+
+// A why-answer, polled until it lands. One at a time: a second question
+// replaces the first, because the block under the bar is one answer.
+let explainWatch = null;
+async function watchExplain(id) {
+  const box = $("#askExplain");
+  if (!box) return;
+  explainWatch = id;
+  box.classList.remove("hidden");
+  box.replaceChildren(el("p", "askexplain-wait", "Looking into why…"));
+  for (let i = 0; i < 120 && explainWatch === id; i++) {
+    let got = null;
+    try {
+      got = await api(`api/explain/${encodeURIComponent(id)}`);
+    } catch (e) {
+      got = { state: "error", answer: e.message };
+    }
+    if (got && got.state !== "running") {
+      if (explainWatch === id) renderExplain(box, got);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
+function renderExplain(box, got) {
+  const head = el("div", "askexplain-head");
+  head.append(el("b", null, got.question || "Why"));
+  const close = el("button", "btn small ghost", "✕");
+  tip(close, "Close this answer");
+  close.type = "button";
+  close.addEventListener("click", () => {
+    explainWatch = null;
+    box.classList.add("hidden");
+    box.replaceChildren();
+  });
+  head.append(close);
+  const body = [head, el("p", "askexplain-answer", got.answer || "")];
+  if ((got.cited || []).length) {
+    const list = el("ul", "askexplain-cited");
+    got.cited.forEach((c) => list.append(el("li", null, c)));
+    body.push(list);
+  }
+  if (got.offer) {
+    // The change is the NEXT turn, not this one: it fills the bar and the
+    // person sends it, which is the card menu's "Make this an automation".
+    const next = el("button", "btn small", got.offer);
+    next.type = "button";
+    tip(next, "Put this in the question bar to ask for it");
+    next.addEventListener("click", () => {
+      const input = $("#askInput");
+      input.value = got.offer;
+      input.focus();
+    });
+    body.push(next);
+  }
+  box.replaceChildren(...body);
 }
 
 // One ✕ for every kind of card, and it means the same thing for all of them:
@@ -2421,6 +2554,10 @@ function renderSettingsForm(data) {
   $("#setCapture").checked = data.settings.capture === true;
   $("#setTerminalUi").value = data.settings.terminal_ui || "chat";
   $("#setChatSessions").value = String(data.settings.chat_max_sessions || 3);
+  // Only an explicit true ticks it: a value that arrived missing or
+  // malformed is asking, which is what the terminal and the chat will do.
+  $("#setSkipPerms").checked = data.settings.dangerously_skip_permissions === true;
+  renderSkipPermsNote(data);
   $("#setGatherMode").value = data.settings.gather_mode || "search";
   $("#setRefreshMode").value = data.settings.refresh_mode || "changed";
   $("#setThinking").value = data.settings.thinking || "normal";
@@ -2433,6 +2570,7 @@ function renderSettingsForm(data) {
     $("#" + id).value = val == null ? "" : String(val);
   });
   renderModelField(data);
+  renderNotifyPolicy(data.settings || {});
   $("#setSyncNote").textContent = data.options_synced
     ? "These are the add-on's own Configuration options — edit them here or on "
       + "the Configuration tab, it's the same setting either way. Changes apply "
@@ -2459,6 +2597,7 @@ function restoreSettingsSections() {
     box.addEventListener("toggle", () => {
       prefSet(setSectionKey(name), box.open ? "1" : "0");
       if (name === "advanced" && box.open) loadAdvanced();
+      if (name === "defaults" && box.open) loadCameras();
     });
   });
 }
@@ -2487,10 +2626,66 @@ function loadAdvanced() {
   loadRehearsal(true);
 }
 
+// The line under "Let brAIn act without asking". The switch reaches a
+// terminal session only when it STARTS — ttyd re-attaches to the same tmux
+// session on every visit — so a flip leaves any open one as it began: still
+// acting after "off", still asking after "on". The server counts what is
+// running (`permission_sessions`, null when it could not look) and this
+// says which open session did not get the current value, and how to end
+// it. Nothing here ends one: a terminal is somebody's work.
+const SKIP_PERMS_NOTE = "Applies to the next terminal session and chat message. "
+  + "Protected entities are refused through brAIn's own tools, not every shell command.";
+
+function skipPermsStale(data) {
+  const on = data.settings && data.settings.dangerously_skip_permissions === true;
+  const live = data.permission_sessions || null;
+  if (!live) return "";
+  const acting = Number(live.acting) || 0;
+  const asking = Number(live.asking) || 0;
+  if (!on && acting > 0) {
+    return acting > 1
+      ? `${acting} terminal sessions started while this was on are still open and still act without asking. End them with /exit; the next one asks.`
+      : "A terminal session started while this was on is still open and still acts without asking. End it with /exit; the next one asks.";
+  }
+  if (on && asking > 0) {
+    return asking > 1
+      ? `${asking} terminal sessions already open still ask. End them with /exit and the next one won't.`
+      : "The terminal session already open still asks. End it with /exit and the next one won't.";
+  }
+  return "";
+}
+
+function renderSkipPermsNote(data) {
+  const note = $("#setSkipPermsNote");
+  if (!note) return;
+  const stale = skipPermsStale(data);
+  note.textContent = stale || SKIP_PERMS_NOTE;
+  note.classList.toggle("warn", !!stale);
+}
+
+// Open ⚙ at one control: the section it lives in opened, the control
+// scrolled into view, focused and briefly marked. What "Stop asking" on a
+// chat approval card does — the switch is found where the asking happens,
+// and flipped where its consequences are written down.
+async function openSettingsAt(id) {
+  await openSettings();
+  const target = document.getElementById(id);
+  if (!target) return;
+  const sec = target.closest(".setsec");
+  if (sec && !sec.open) sec.open = true;
+  const row = target.closest(".setrow") || target;
+  row.scrollIntoView({ block: "center" });
+  try { target.focus({ preventScroll: true }); } catch (e) { /* not focusable */ }
+  row.classList.add("setflash");
+  setTimeout(() => row.classList.remove("setflash"), 2400);
+}
+
 async function openSettings() {
   openBox("#setModal");
   loadAuth();
   advancedLoaded = false;
+  camerasLoaded = false;
+  if ($("#setsecDefaults") && $("#setsecDefaults").open) loadCameras();
   // Its open state survived the close (it is remembered), so a visit that
   // lands on an already-expanded Advanced still has to fetch: the section
   // being open is not the same claim as its rows being current.
@@ -2516,6 +2711,9 @@ async function refreshOpenSettings() {
 // `note` is what to say when the save came from somewhere that isn't the
 // Settings dialog — "Saved" is only meaningful next to the field you just
 // changed, and the topbar chip is nowhere near one.
+// `note` may be a function of the saved payload, for a toast whose words
+// depend on what the server found (the permission switch's). Answers the
+// payload, or null when the save failed, so a control can put itself back.
 async function saveSettings(fields, note) {
   try {
     const data = await api("api/settings", {
@@ -2534,9 +2732,11 @@ async function saveSettings(fields, note) {
     chatState.defaultModelLabel = data.model_label || "";
     renderUsageChip();
     renderPausedChip();
-    toast(note || "Saved");
+    toast((typeof note === "function" ? note(data) : note) || "Saved");
+    return data;
   } catch (e) {
     toast(e.message);
+    return null;
   }
 }
 
@@ -2857,6 +3057,7 @@ function renderDiagnostics(d) {
     // An empty roll-call is /proc unreadable, not seven dead daemons.
     rows.push(diagRow("Background daemons", "could not read /proc"));
   }
+  rows.push(...actingDiagRows(d));
   if (failures.length) {
     const items = failures.slice(0, 5).map((f) =>
       `<li><b>${esc(f.source || "?")}</b> · ${esc(f.outcome || "?")}`
@@ -3662,6 +3863,34 @@ $("#setRefreshMode").addEventListener("change", async () => {
 // closes the oldest idle one to make room.
 $("#setChatSessions").addEventListener("change", () =>
   saveSettings({ chat_max_sessions: Number($("#setChatSessions").value) }));
+// One switch with two doors: saving it writes the add-on's own
+// `dangerously_skip_permissions` option, so the Configuration tab moves with
+// it, and the server republishes it to the file a terminal session reads
+// when it starts. The chat picks it up on its next message. The toast says
+// what changed and what did NOT: a terminal session already open keeps the
+// setting it started with, in both directions, and "off" is the direction
+// where saying otherwise would be a lie about something still acting.
+function skipPermsToast(on, data) {
+  const parts = [on
+    ? "On — new terminal sessions and the chat's next message act without asking."
+    : "Off — new terminal sessions and the chat's next message ask first."];
+  const stale = skipPermsStale(data);
+  if (stale) parts.push(stale);
+  else parts.push("A chat answer already being written finishes first.");
+  if ((data.saved_locally || []).includes("dangerously_skip_permissions")) {
+    parts.push("Saved in brAIn only: the add-on's Configuration tab could not be updated.");
+  }
+  return parts.join(" ");
+}
+
+$("#setSkipPerms").addEventListener("change", async () => {
+  const box = $("#setSkipPerms");
+  const on = box.checked;
+  const data = await saveSettings({ dangerously_skip_permissions: on },
+    (saved) => skipPermsToast(on, saved));
+  // A refused save leaves the switch where it was, and so does the box.
+  if (!data) box.checked = !on;
+});
 // Applied straight away rather than on the next status poll, so the Terminal
 // tab has already changed by the time the dialog is closed — and through the
 // same path as the tab's own switch, so changing it here carries the
@@ -4226,6 +4455,7 @@ function planBlock(f) {
     box.appendChild(list);
   }
   if (plan.risk) box.appendChild(el("p", "findrisk", `What could go wrong: ${plan.risk}`));
+  planContract(box, plan);
   return box;
 }
 
@@ -4472,6 +4702,7 @@ function makeFinding(f) {
       back.addEventListener("click", () => findAction(
         f, "unfix", "Put back — read what it says", btns));
     }
+    if (findCanUndo(f) && (f.fix_calls || 0) > 0) addRestoreButton(f, add, btns);
   } else if (f.status === "ignored") {
     // A row dismissed before the settled ledger existed, still on disk
     // until startup moves it. Startup normally gets there first.
@@ -4523,12 +4754,16 @@ function makeFinding(f) {
       again.addEventListener("click", () => recheckFinding(f, btns, again));
     }
 
-    // Talk about it before deciding. The discussion is read-only by
-    // construction — the prompt says so — because "explain this to me" and
-    // "go change my house" are different consents, and Fix it is the one
-    // that gives the second.
+    // Talk about it before deciding. "Explain this to me" and "go change
+    // my house" are different consents, and this used to promise the
+    // first with nothing but a sentence in the prompt holding it — the
+    // conversation had every acting tool pre-approved. It is the session
+    // that holds it now: a discussion's acting tools ask first
+    // (`chat_session.DISCUSS_ASK`), and a change it agrees on is offered
+    // as a plan for this card, which is Fix it's own path to Apply.
     const talk = add(el("button", "btn small", "💬  Discuss"));
-    tip(talk, "Ask brAIn about this one in the chat, without changing anything");
+    tip(talk, "Talk it through in the chat. Anything it would change asks you "
+      + "first, and a change you agree on becomes a plan on this card");
     talk.addEventListener("click", () => discussFinding(f, btns));
 
     // The two endings, in the words of what they mean rather than of what
@@ -4891,12 +5126,15 @@ async function runAnswer(row, answer, btns, note) {
 function askThenRun(row, answer, btns) {
   openNoteForm(btns.card, btns.actions,
     (text, formBtns) => runAnswer(row, answer, btns.concat(formBtns), text), {
-      hint: answer.verb === "no"
+      // `ask`/`placeholder` are the answer's own words where it has them —
+      // a house book question wants an answer, not a reason.
+      hint: answer.ask || (answer.verb === "no"
         ? "Say why if you can — the reason retires every guess built on "
           + "the same misreading. Optional."
         : "Optional. Say why, and brAIn learns from the reason rather than "
-          + "just dropping the card.",
-      placeholder: answer.prefill || "That sensor always reads on — it's not stuck.",
+          + "just dropping the card."),
+      placeholder: answer.placeholder || answer.prefill
+        || "That sensor always reads on — it's not stuck.",
       send: answer.label,
       prefill: answer.prefill || "",
     });
@@ -4919,7 +5157,9 @@ function caseOverflow(row, btns) {
 function caseOverflowHint(item) {
   if (item.hint) return item.hint;
   if (item.verb === "mute") return "Stop this rule raising anything at all";
-  if (item.verb === "discuss") return "Talk about it in the chat, changing nothing";
+  if (item.verb === "discuss") {
+    return "Talk it through in the chat — any change asks you first";
+  }
   if (item.verb === "recheck") return "Run the check that found this, now";
   if (item.verb === "fix") return "Work out what it would change, and ask first";
   if (item.verb === "advice") return "Write what you'd do, onto the card";
@@ -5069,7 +5309,17 @@ function makeCase(row) {
     card.appendChild(chip);
   }
 
-  if (row.fix) {
+  // What a fix run reported, where one has run. It REPLACES the fix
+  // sentence on a row the run finished (`fixed`) or handed back
+  // (`needs_you`), because a stale "How brAIn would fix it" under a run
+  // that already did — or already concluded it could not — is how you
+  // lose track of what the house looks like; the old Findings card held
+  // that rule and the feed lost it with the field.
+  const result = caseResultNode(row);
+  if (result) card.appendChild(result);
+  const ranItsCourse = result
+    && (row.finding_status === "fixed" || row.finding_status === "needs_you");
+  if (row.fix && !ranItsCourse) {
     const box = el("div", "findfix");
     box.appendChild(el("span", "findfixlabel", fixHeading(row.fixable)));
     const text = el("span", null, prettyText(row.fix));
@@ -5136,6 +5386,30 @@ function makeCase(row) {
   }
   card.appendChild(actions);
   return card;
+}
+
+// The fixer's own report, headed by what kind of report it is. Absent
+// when nothing has run — a card does not grow a box to say so.
+const CASE_RESULT_HEADS = {
+  fixed: "What brAIn did",
+  needs_you: "brAIn looked — this one needs you",
+  failed: "The fix did not finish",
+};
+
+function caseResultNode(row) {
+  if (!row.result) return null;
+  const box = el("div", "findresult");
+  box.appendChild(el("span", "findfixlabel",
+    CASE_RESULT_HEADS[row.finding_status] || "Last time brAIn looked"));
+  String(row.result).split("\n\n").forEach((para) => {
+    if (para.trim()) box.appendChild(el("p", null, prettyText(para)));
+  });
+  if ((row.changed || []).length) {
+    const list = el("ul", "findchanged");
+    row.changed.slice(0, 8).forEach((c) => list.appendChild(el("li", null, prettyText(c))));
+    box.appendChild(list);
+  }
+  return box;
 }
 
 // Everything that makes the claim checkable, behind one disclosure: what
@@ -5288,12 +5562,13 @@ function renderFindings() {
   }
   const active = FIND_FILTERS.find((f) => f.id === state.findFilter) || FIND_FILTERS[0];
   const shown = state.findings.filter(active.match);
-  // Guesses go at the top of the live list. They are two taps against a
-  // finding's read-and-decide, and burying the cheap decisions under the
-  // expensive ones is how a queue capped at three sat unanswered for a
-  // fortnight and expired.
-  const claims = state.findFilter === "live" ? state.hypotheses : [];
   if (state.findFilter === "live") {
+    // Guesses sit near the top of the feed — under the problems that
+    // matter a lot, over everything else — and that order is the
+    // server's (`cases._BAND`), not this file's: a rule here used to say
+    // "guesses go at the top" over a list it no longer sorted, while the
+    // server put every guess under every warning.
+    const claims = state.hypotheses || [];
     // The feed: every case, then anything live that no case covers. On a
     // real install the second half is empty, because a case is derived
     // from exactly these rows — and when the derivation could not be read
@@ -5318,11 +5593,10 @@ function renderFindings() {
     paintResidentFoot();
     return;
   }
-  if (!shown.length && !claims.length) {
+  if (!shown.length) {
     list.appendChild(el("div", "findempty", "Nothing here yet."));
     return;
   }
-  claims.forEach((h) => list.appendChild(makeHypothesis(h)));
   shown.forEach((f) => list.appendChild(makeFinding(f)));
 }
 
@@ -5486,9 +5760,9 @@ function makeIdea(idea) {
     idea, "accept", "Added — it's on Insights now", btns));
 
   const no = add(el("button", "btn small ghost", "✕  Not for this house"));
-  tip(no, "Take it off the list. brAIn won't suggest it again.");
-  no.addEventListener("click", () => ideaAction(
-    idea, "dismiss", "Won't suggest that again", btns));
+  tip(no, "Take it off the list, and say why if you like — brAIn won't "
+    + "suggest it again, and the reason reaches every later look.");
+  no.addEventListener("click", () => ideaReasonBox(idea, card, actions));
 
   card.appendChild(actions);
   return card;
@@ -6232,6 +6506,7 @@ async function refreshHouse() {
       }
     })(),
     refreshMilestones(),
+    refreshDeepReview(),
   ]);
   renderHouse();
 }
@@ -6865,11 +7140,64 @@ function drillThermal(box, payload) {
   ]);
   const ok = drillTable(box,
     ["Room", "Loss k /h", "τ hours", "Gain", "To warm"], rows);
-  if (ok && payload.outdoor) {
-    box.appendChild(el("div", "kfoot",
-      `Measured against ${payload.outdoor}${payload.unit ? ` (${payload.unit})` : ""}.`));
-  }
+  thermalReference(box, payload);
   return ok;
+}
+
+// Every room above is measured against ONE outdoor thermometer, so which
+// one, and why, is said under the table — and the person who knows better
+// can change it. A reference nobody can check is one nobody can correct.
+// Drawn even when no room was measured, because a wrong reference is the
+// likeliest reason none was. The choice is a panel setting
+// (`thermal_outdoor`) and takes effect at the next measuring pass, which
+// is started on the spot rather than left for tonight.
+function thermalReference(box, payload) {
+  const cands = Array.isArray(payload.outdoor_candidates)
+    ? payload.outdoor_candidates : [];
+  if (!payload.outdoor && !cands.length) return;
+  const wrap = el("div", "kref");
+  wrap.appendChild(el("div", "kfoot", payload.outdoor
+    ? `Measured against ${payload.outdoor}${payload.unit ? ` (${payload.unit})` : ""}.`
+    : "No outdoor reference yet."));
+  if (payload.outdoor_why) wrap.appendChild(el("div", "kfoot", payload.outdoor_why));
+  const choice = payload.outdoor_choice || "";
+  if (choice && choice !== payload.outdoor) {
+    wrap.appendChild(el("div", "kfoot",
+      `${choice} was chosen and is measured against from the next measuring pass.`));
+  }
+  if (cands.length) {
+    const label = el("label", "kreflabel", "Outdoor reference ");
+    const sel = el("select");
+    sel.appendChild(new Option("Let brAIn choose", ""));
+    const listed = new Set();
+    cands.forEach((c) => {
+      listed.add(c.entity_id);
+      sel.appendChild(new Option(
+        `${c.name || c.entity_id} (${c.entity_id})`
+        + (c.ruled_out ? ` — ${c.ruled_out}` : ""), c.entity_id));
+    });
+    if (choice && !listed.has(choice)) sel.appendChild(new Option(choice, choice));
+    sel.value = choice;
+    sel.addEventListener("change", async () => {
+      sel.disabled = true;
+      try {
+        await api("api/settings", {
+          method: "PUT", body: JSON.stringify({ thermal_outdoor: sel.value || null }) });
+        // A 409 is a pass already running, which will read the choice too.
+        await api("api/baselines/run", { method: "POST" }).catch(() => null);
+        toast(sel.value
+          ? `Re-measuring the rooms against ${sel.value} — a few minutes`
+          : "Re-measuring, with brAIn choosing the reference — a few minutes");
+      } catch (e) {
+        toast(e.message);
+      } finally {
+        sel.disabled = false;
+      }
+    });
+    label.appendChild(sel);
+    wrap.appendChild(label);
+  }
+  box.appendChild(wrap);
 }
 
 // ---- closures: how much of each hour of the week each door is open. A
@@ -7697,6 +8025,29 @@ function renderOnboarding() {
       "Studied everything — waiting for what it found to be filed into memory.";
   }
 
+  // What the sessions have found, as it lands — newest first, a handful.
+  // Shown while learning and while the suggestions are one press away,
+  // never over the step-0 question or the list of cards to tick.
+  const found = Array.isArray(learning.reveals) ? learning.reveals : [];
+  const foundList = $("#obFoundList");
+  foundList.textContent = "";
+  found.forEach((r) => {
+    const li = el("li", "obfoundrow");
+    if (r.topic) li.appendChild(el("span", "obfoundtopic", r.topic));
+    li.appendChild(el("span", "obfoundfact", r.fact));
+    foundList.appendChild(li);
+  });
+  $("#obFound").classList.toggle("hidden",
+    step0 || manual || chose || !found.length);
+
+  // The one automation to try, when the recommend pass found a reason.
+  const tryRule = obState.try_rule;
+  $("#obTryBlock").classList.toggle("hidden", !tryRule || !tryRule.sentence);
+  if (tryRule && tryRule.sentence) {
+    $("#obTryText").textContent = tryRule.sentence;
+    $("#obTryWhy").textContent = tryRule.why || "";
+  }
+
   if (obState.sparse) {
     $("#obSparseText").textContent = obState.missing
       || "There isn't enough here yet for brAIn to suggest anything useful.";
@@ -7754,7 +8105,8 @@ function renderOnboarding() {
 function obChooseNote() {
   const note = $("#obChooseNote");
   if (!note) return;
-  const picked = $("#obChoose").querySelectorAll("input:checked").length;
+  const picked = $("#obChoose").querySelectorAll(
+    "input[data-index]:checked, input[data-shipped]:checked").length;
   note.textContent = picked
     ? `${picked} card${picked === 1 ? "" : "s"} will be on your Insights tab. `
       + "You can add, edit or remove cards any time."
@@ -7881,14 +8233,19 @@ $("#obAccept").addEventListener("click", async (ev) => {
     .map((cb) => Number(cb.dataset.index));
   const shipped = Array.from($("#obShipped").querySelectorAll("input:checked"))
     .map((cb) => cb.dataset.shipped);
+  const tryIt = !$("#obTryBlock").classList.contains("hidden")
+    && $("#obTry").checked;
   const res = await obCall("api/onboarding/accept",
-    { accept: picked, shipped }, ev.target);
+    { accept: picked, shipped, try_rule: tryIt }, ev.target);
   if (!res) return;
   obState.onboarded = true;
   const total = picked.length + shipped.length;
-  toast(total
-    ? `${total} card${total === 1 ? "" : "s"} on your Insights tab`
-    : "Done — your Insights tab starts empty");
+  const tried = res.tried
+    ? " One automation is being simulated — its week starts under Home → Proposals."
+    : "";
+  toast((total
+    ? `${total} card${total === 1 ? "" : "s"} on your Insights tab.`
+    : "Done — your Insights tab starts empty.") + tried);
   await Promise.all([refreshStatus(), refreshInsights()]);
   render();
 });
@@ -9147,6 +9504,7 @@ function switchView(name) {
     // (Looked at, Answered) read the findings store directly.
     renderFindings();
     Promise.all([refreshCases(), refreshFindings()]).then(renderFindings);
+    refreshHouseNow();
   }
   if (name === "terminal") {
     if (chatState.session === "classic") {
@@ -9180,6 +9538,7 @@ function switchView(name) {
     });
   }
   if (name === "memory") renderKnowledge();
+  if (name === "upkeep") { renderUpkeep(); refreshUpkeep().then(renderUpkeep); }
   if (name === "docs") renderDocs();
   // Re-fetched on every entry rather than kept: the window ends "now", and
   // a timeline showing the state of the house when you last looked is the
@@ -9566,12 +9925,47 @@ function chatApprovalCard(ev) {
   const row = el("div", "permrow");
   const allow = el("button", "btn small primary", "Allow once");
   const deny = el("button", "btn small", "Don't allow");
+  const buttons = [allow, deny];
+  // "Always allow" only where the CLI itself suggested a rule — the server
+  // hands back exactly that suggestion, and says how long it lasts, so the
+  // line under the row is the whole of what the press adds.
+  let always = null;
+  if (ev.always) {
+    always = el("button", "btn small", "Always allow");
+    buttons.push(always);
+  }
   allow.addEventListener("click", () =>
-    chatPermissionPost({ id: ev.id, allow: true }, [allow, deny]));
+    chatPermissionPost({ id: ev.id, allow: true }, buttons));
   deny.addEventListener("click", () =>
-    chatPermissionPost({ id: ev.id, allow: false }, [allow, deny]));
+    chatPermissionPost({ id: ev.id, allow: false }, buttons));
+  if (always) {
+    always.addEventListener("click", () =>
+      chatPermissionPost({ id: ev.id, allow: true, always: true }, buttons));
+  }
   row.append(allow, deny);
+  if (always) row.appendChild(always);
   card.appendChild(row);
+  if (ev.always) {
+    const until = ev.always_until === "conversation"
+      ? "for the rest of this conversation"
+      : "in the terminal and every chat, until the add-on restarts";
+    card.appendChild(el("div", "permscope",
+      `Always allow adds ${ev.always} — ${until}.`));
+  }
+  // The switch that stops the asking altogether, found where the asking
+  // happens. It opens ⚙ at the switch rather than flipping it: the dialog
+  // is where what stays guarded is written down, and a one-press "never ask
+  // again" on a card about one command is a bigger answer than the
+  // question. This card still wants its own answer either way.
+  if (ev.stop_asking) {
+    const foot = el("div", "permfoot");
+    const stop = el("button", "btn small ghost permstop", "Stop asking…");
+    stop.type = "button";
+    stop.title = "Open the switch that lets brAIn act without asking";
+    stop.addEventListener("click", () => openSettingsAt("setSkipPerms"));
+    foot.appendChild(stop);
+    card.appendChild(foot);
+  }
   return card;
 }
 
@@ -9674,10 +10068,13 @@ function chatPermissionDone(ev) {
   if (row) {
     const q = card.dataset.kind === "question";
     row.replaceWith(el("div", "permnote",
-      ev.answered ? (ev.allow ? (q ? "Answered" : "Allowed")
+      ev.answered ? (ev.allow ? (q ? "Answered" : (ev.always ? "Always allowed" : "Allowed"))
                               : (q ? "Skipped" : "Not allowed"))
                   : "Withdrawn"));
   }
+  // What the buttons offered goes with them: a line about what "Always
+  // allow" would add, under a card already answered, reads as still on offer.
+  card.querySelectorAll(".permscope, .permfoot").forEach((n) => n.remove());
   chatState.permCard = null;
 }
 
@@ -10466,6 +10863,16 @@ const RESOLUTION_KINDS = {
     does: "Puts this on the card as what to do — the finding stays open",
     toast: "Updated what to do on the card",
   },
+  // The change the conversation agreed, made the way every change on a
+  // card is made: a read-only plan of exactly this, which waits on the
+  // card for Apply, and then an Undo. The conversation itself does not
+  // act — that is what makes it a conversation rather than a side door.
+  plan: {
+    does: "brAIn works out exactly this change for you to read — nothing "
+      + "changes until you press Apply on the card",
+    toast: "Working out exactly that — the steps land on the card, and "
+      + "nothing changes until you press Apply",
+  },
 };
 
 function chatResolutionsNode(ev) {
@@ -10518,6 +10925,27 @@ function chatResolutionsNode(ev) {
 async function chooseResolution(ev, option, finding, btns, paint) {
   const spec = RESOLUTION_KINDS[option.verb];
   if (!spec) return;
+  if (option.verb === "plan") {
+    // Not an ending either: the row moves to `planning`, and the plan
+    // lands on its card. The press is Fix it's own route with the agreed
+    // change as the run's brief — one plan path, whichever surface asked.
+    btns.forEach((b) => { b.disabled = true; });
+    try {
+      const data = await api(`api/finding/${finding.ts}/fix`, {
+        method: "POST", body: JSON.stringify({ change: option.label }) });
+      takeFindings(data);
+      syncFeed();
+      renderFindings();
+      refreshStatus().catch(() => {}); fastPoll();
+      toast(spec.toast);
+      chatState.chosen[ev.id] = option.label;
+      paint();
+    } catch (e) {
+      toast(e.message);
+      btns.forEach((b) => { b.disabled = false; });
+    }
+    return;
+  }
   if (option.verb === "advice") {
     // The one press here that ends nothing: the sentence goes onto the
     // card and the finding stays, so the strip stays too and the card
@@ -11203,9 +11631,12 @@ async function chatHandoff() {
 }
 
 // Coming back the other way. We can't ask the tmux Claude what it is doing,
-// but Claude Code writes every conversation as it goes, so the most recently
-// written one IS what the terminal was last on — the server picks it up and
-// resumes it here. That Claude is left running: it is somebody's shell.
+// but the handoff left a record and Claude Code writes every conversation
+// as it goes, so the server picks the conversation the chat handed over —
+// or the one the terminal has written to since — and never one a chat in
+// the background is still holding (`chat_session.pick_adopted`). It opens
+// it through the registry, so nothing here is stopped to make the switch.
+// That Claude is left running: it is somebody's shell.
 async function chatAdopt() {
   try {
     return await api("api/chat/adopt", { method: "POST" });
@@ -12076,3 +12507,998 @@ document.addEventListener("visibilitychange", () => {
     if (["starting", "awaiting_code", "working"].includes(st.phase)) pollSetup();
   } catch (e) { /* ignore */ }
 })();
+
+// --------------------------------------------------------------- upkeep
+// Home Assistant's own maintainer: the house book, names and rooms, the
+// upgrade advisor and the overnight check. Five GETs read what each has;
+// every press STARTS a run and the section polls its own GET until the run
+// is no longer `running` — a run is minutes, and ingress will not hold a
+// request that long. Drawn from what we have, then again once the fetch
+// lands, so opening the tab is never a blank frame.
+const upState = {
+  tidy: null, upgrades: null, sre: null, book: null, access: null,
+  ticked: new Set(), polls: {},
+};
+
+async function refreshUpkeep() {
+  const get = (path) => api(path).catch((e) => ({ fetch_error: e.message }));
+  const [tidy, upgrades, sre, book, access] = await Promise.all([
+    get("api/tidy"), get("api/upgrades"), get("api/sre"),
+    get("api/house_book"), get("api/access")]);
+  Object.assign(upState, { tidy, upgrades, sre, book, access });
+  // A new proposal ticks every row by default: the table is a review, and
+  // untick-what-you-disagree-with is one press per objection.
+  const rows = ((tidy && tidy.proposal) || {}).rows || [];
+  const ids = new Set(rows.map((r) => r.id));
+  if (![...upState.ticked].every((i) => ids.has(i)) || !upState.ticked.size) {
+    upState.ticked = ids;
+  }
+}
+
+function renderUpkeep() {
+  renderUpBook();
+  renderUpTidy();
+  renderUpUpdates();
+  renderUpHealth();
+}
+
+// Poll one section's GET while its run is in flight.
+function upWatch(key, path) {
+  clearTimeout(upState.polls[key]);
+  const tick = async () => {
+    try {
+      upState[key] = await api(path);
+    } catch (e) { /* keep what we had */ }
+    renderUpkeep();
+    if (upState[key] && upState[key].running && currentView === "upkeep") {
+      upState.polls[key] = setTimeout(tick, 3000);
+    } else if (key === "tidy") {
+      await refreshUpkeep();
+      renderUpkeep();
+    }
+  };
+  upState.polls[key] = setTimeout(tick, 1500);
+}
+
+async function upPress(btn, key, path, body, done) {
+  btn.disabled = true;
+  try {
+    const data = await api(path, {
+      method: "POST", ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    if (data && typeof data === "object" && key) upState[key] = { ...upState[key], ...data };
+    if (done) toast(done(data));
+    renderUpkeep();
+    if (data && data.running) upWatch(key, `api/${key === "book" ? "house_book" : key}`);
+    return data;
+  } catch (e) {
+    toast(e.message || "that didn't work");
+    btn.disabled = false;
+    return null;
+  }
+}
+
+function upLine(text, cls) {
+  return el("p", "upline" + (cls ? " " + cls : ""), text);
+}
+
+function upStatus(state, runningText) {
+  const box = el("div", "upstatus");
+  if (!state) return box;
+  if (state.fetch_error) box.appendChild(upLine("Could not ask the add-on: " + state.fetch_error, "warn"));
+  if (state.running) box.appendChild(upLine(runningText, "busy"));
+  if (state.last_error) box.appendChild(upLine("The last run did not finish: " + state.last_error, "warn"));
+  if (state.held) box.appendChild(upLine("Not run on its schedule: " + state.held, "muted"));
+  return box;
+}
+
+function upButton(label, hint, primary) {
+  const b = el("button", "btn small" + (primary ? " primary" : ""), label);
+  if (hint) tip(b, hint);
+  return b;
+}
+
+// -- the house book
+function renderUpBook() {
+  const host = $("#upBook");
+  if (!host) return;
+  const st = upState.book || {};
+  host.textContent = "";
+  host.appendChild(upStatus(st, "Writing the house book…"));
+  const book = st.book;
+  const actions = el("div", "upactions");
+  const run = upButton(book ? "Rewrite it now" : "Write the house book",
+    "One Claude run over your automations, scripts, scenes and what brAIn has learned.",
+    !book);
+  run.disabled = !!st.running;
+  run.addEventListener("click", () => upPress(run, "book", "api/house_book/run", null,
+    () => "Writing — it takes a minute or two"));
+  actions.appendChild(run);
+  if (book && !st.published) {
+    const pub = upButton("Publish a link",
+      "Puts a copy at a private address Home Assistant serves, for a sitter's phone. Codes are never in it.");
+    pub.addEventListener("click", () => upPress(pub, "book", "api/house_book/publish", null,
+      () => "Published — the link is below"));
+    actions.appendChild(pub);
+  }
+  host.appendChild(actions);
+  if (st.published) {
+    const wrap = el("div", "uplink");
+    const url = location.origin + st.published.path;
+    wrap.appendChild(el("span", null, "Published at "));
+    const a = el("a", null, url);
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    wrap.appendChild(a);
+    const revoke = upButton("Take the link down",
+      "Deletes the copy and changes the address, so the old link stops working even for somebody who saved it.");
+    revoke.addEventListener("click", () => upPress(revoke, "book", "api/house_book/revoke", null,
+      () => "Taken down — that link is dead"));
+    wrap.appendChild(revoke);
+    host.appendChild(wrap);
+  }
+  if (!book) {
+    if (!st.running) host.appendChild(upLine("No house book yet. Writing one costs a single run; after that brAIn rewrites it weekly, and only when your automations or what it knows have changed.", "muted"));
+    return;
+  }
+  const when = book.at ? timeAgo(new Date(book.at * 1000).toISOString()) : "";
+  const count = (book.sections || []).reduce((n, s) => n + (s.entries || []).length, 0);
+  host.appendChild(upLine(`Written ${when} · ${count} entr${count === 1 ? "y" : "ies"}`
+    + (book.uncited ? ` · ${book.uncited} sentence${book.uncited === 1 ? " was" : "s were"} left out for citing nothing brAIn could check` : ""), "muted"));
+  for (const section of book.sections || []) {
+    const sec = el("div", "upbooksec");
+    sec.appendChild(el("h3", null, section.title));
+    const ul = el("ul", "upbooklist");
+    for (const entry of section.entries || []) {
+      const li = el("li");
+      li.appendChild(el("span", null, entry.text));
+      const chips = el("span", "upchips");
+      for (const src of entry.sources || []) chips.appendChild(el("span", "upchip", src.label));
+      li.appendChild(chips);
+      ul.appendChild(li);
+    }
+    sec.appendChild(ul);
+    host.appendChild(sec);
+  }
+}
+
+// -- names, rooms and aliases
+const UP_KIND_WORDS = { name: "Rename", area: "Room", alias: "Alias" };
+
+function upTidyRow(row) {
+  const label = el("label", "uprow");
+  const box = el("input");
+  box.type = "checkbox";
+  box.checked = upState.ticked.has(row.id);
+  box.addEventListener("change", () => {
+    if (box.checked) upState.ticked.add(row.id); else upState.ticked.delete(row.id);
+    renderUpTidy();
+  });
+  label.appendChild(box);
+  const body = el("span", "uprowbody");
+  const head = el("span", "uprowhead");
+  head.appendChild(el("span", "upchip kind", UP_KIND_WORDS[row.kind] || row.kind));
+  const after = row.kind === "area" ? row.area_name : row.value;
+  const before = row.kind === "area" ? (row.from_area || "no room") : row.label;
+  head.appendChild(el("span", null, row.kind === "alias"
+    ? `${row.label}: also answer to “${after}”`
+    : `${before} → ${after}`));
+  body.appendChild(head);
+  if (row.kind === "area" && row.label) body.appendChild(el("span", "upwhy", row.label));
+  if (row.why) body.appendChild(el("span", "upwhy", row.why));
+  for (const r of row.reach || []) {
+    body.appendChild(el("span", "upreach", `Changes what “${r.alias}” reaches: it ${r.change} (${r.area}).`));
+  }
+  label.appendChild(body);
+  return label;
+}
+
+function renderUpTidy() {
+  const host = $("#upTidy");
+  if (!host) return;
+  const st = upState.tidy || {};
+  host.textContent = "";
+  host.appendChild(upStatus(st, "Looking through the registries…"));
+  if (st.unreadable) host.appendChild(upLine("brAIn could not read its own tidy store, so it is not offering anything to apply or undo.", "warn"));
+  const proposal = st.proposal;
+  const rows = (proposal && proposal.rows) || [];
+  const actions = el("div", "upactions");
+  const run = upButton(rows.length ? "Suggest again" : "Suggest names and rooms",
+    "One Claude run over the registries. Nothing changes until you tick rows and press Apply.",
+    !rows.length);
+  run.disabled = !!st.running;
+  run.addEventListener("click", () => upPress(run, "tidy", "api/tidy/run", null,
+    () => "Suggesting — the table appears here"));
+  actions.appendChild(run);
+  if (rows.length) {
+    const ticked = rows.filter((r) => upState.ticked.has(r.id)).map((r) => r.id);
+    const apply = upButton(`Apply ${ticked.length} ticked`,
+      "Writes the ticked rows into Home Assistant's registries. Undo puts them back for 30 days.", true);
+    apply.disabled = !ticked.length || !!st.running;
+    apply.addEventListener("click", async () => {
+      const data = await upPress(apply, "tidy", "api/tidy/apply", { ids: ticked });
+      if (data && data.result) {
+        const n = data.result.applied.length;
+        const skipped = data.result.skipped.length;
+        toast(`Applied ${n}` + (skipped ? ` · ${skipped} not taken` : ""));
+      }
+    });
+    actions.appendChild(apply);
+    const discard = upButton("Discard", "Throw this table away. Nothing was changed.");
+    discard.addEventListener("click", () => upPress(discard, "tidy", "api/tidy/discard", null,
+      () => "Discarded"));
+    actions.appendChild(discard);
+  }
+  host.appendChild(actions);
+  if (proposal && !rows.length && !st.running) {
+    host.appendChild(upLine(st.last_note || "Nothing left to suggest.", "muted"));
+  }
+  if (rows.length) {
+    const list = el("div", "uplist");
+    rows.forEach((r) => list.appendChild(upTidyRow(r)));
+    host.appendChild(list);
+  }
+  const refused = (proposal && proposal.refused) || [];
+  if (refused.length) {
+    const det = el("details", "uprefused");
+    det.appendChild(el("summary", null, `${refused.length} suggestion${refused.length === 1 ? "" : "s"} brAIn refused`));
+    for (const r of refused) {
+      det.appendChild(upLine(`${UP_KIND_WORDS[r.kind] || r.kind} ${r.label || r.subject} → ${r.value}: ${r.refused}`, "muted"));
+    }
+    host.appendChild(det);
+  }
+  for (const batch of st.batches || []) {
+    const row = el("div", "upbatch");
+    const when = timeAgo(new Date(batch.at * 1000).toISOString());
+    row.appendChild(el("span", null, `Applied ${when} · ${batch.entries.length} change${batch.entries.length === 1 ? "" : "s"}`));
+    const undo = upButton("Undo", "Puts back each field that still holds what brAIn wrote. A field you changed since is left alone.");
+    undo.addEventListener("click", async () => {
+      const data = await upPress(undo, "tidy", `api/tidy/undo/${batch.id}`);
+      if (data && data.result) {
+        const kept = data.result.kept.length;
+        toast(`Put back ${data.result.restored.length}` + (kept ? ` · ${kept} left as you changed them` : ""));
+      }
+    });
+    row.appendChild(undo);
+    host.appendChild(row);
+  }
+}
+
+// -- updates
+const UP_VERDICT_WORDS = { safe_tonight: "Safe tonight", wait: "Wait", unknown: "Can't tell" };
+
+function renderUpUpdates() {
+  const host = $("#upUpdates");
+  if (!host) return;
+  const st = upState.upgrades || {};
+  host.textContent = "";
+  host.appendChild(upStatus(st, "Reading the release notes against your configuration…"));
+  if (st.readable === false) {
+    host.appendChild(upLine("Home Assistant did not answer for its update entities, so brAIn could not look. This is not the same as being up to date.", "warn"));
+    return;
+  }
+  const updates = st.updates || [];
+  if (!updates.length) {
+    if (st.readable) host.appendChild(upLine("Nothing is waiting to be installed.", "muted"));
+    return;
+  }
+  for (const u of updates) {
+    const card = el("div", "upupdate");
+    const head = el("div", "upupdatehead");
+    head.appendChild(el("strong", null, u.title));
+    head.appendChild(el("span", "upwhy", `${u.installed || "?"} → ${u.latest || "?"}`));
+    card.appendChild(head);
+    const advice = u.advice;
+    const busy = st.running && st.subject === u.entity_id;
+    const ask = upButton(advice ? "Check again" : "Is it safe tonight?",
+      "One Claude run reads this update's notes against your config. It never installs anything.",
+      !advice);
+    ask.disabled = !!st.running;
+    ask.addEventListener("click", () => upPress(ask, "upgrades", "api/upgrades/advise",
+      { entity_id: u.entity_id }, () => "Reading the notes…"));
+    if (busy) card.appendChild(upLine("Reading the notes…", "busy"));
+    if (advice) {
+      const verdict = el("div", "upverdict " + advice.verdict);
+      verdict.appendChild(el("span", "upchip verdict", UP_VERDICT_WORDS[advice.verdict] || advice.verdict));
+      verdict.appendChild(el("span", null, advice.reason || ""));
+      card.appendChild(verdict);
+      if (advice.note_quote) {
+        const q = el("blockquote", "upquote");
+        q.appendChild(el("span", "upwhy", "From the release notes"));
+        q.appendChild(el("span", null, advice.note_quote));
+        card.appendChild(q);
+      }
+      if (advice.config_quote) {
+        const q = el("blockquote", "upquote");
+        q.appendChild(el("span", "upwhy", "From your configuration"));
+        q.appendChild(el("code", null, advice.config_quote));
+        card.appendChild(q);
+      }
+      if (advice.edit) {
+        const det = el("details", "upedit");
+        det.appendChild(el("summary", null, "The change brAIn would make first"));
+        det.appendChild(el("pre", null, advice.edit));
+        card.appendChild(det);
+      }
+    }
+    card.appendChild(ask);
+    host.appendChild(card);
+  }
+}
+
+// -- overnight health and the access review
+function renderUpHealth() {
+  const host = $("#upHealth");
+  if (!host) return;
+  host.textContent = "";
+  const sre = upState.sre || {};
+  host.appendChild(el("h3", null, "Overnight health check"));
+  host.appendChild(upStatus(sre, "Reading the log and the mesh…"));
+  const last = sre.last;
+  if (last) {
+    const when = timeAgo(new Date(last.at * 1000).toISOString());
+    host.appendChild(upLine(last.note
+      ? `Last run ${when}: ${last.note}.`
+      : `Last run ${when}: ${last.records} record${last.records === 1 ? "" : "s"} read, `
+        + `${last.causes} cause${last.causes === 1 ? "" : "s"} found, ${last.filed} new on Findings, `
+        + `${last.cleared} cleared.`, last.note ? "muted" : ""));
+  } else if (!sre.running) {
+    host.appendChild(upLine("It runs once a night, after 03:00, and costs nothing on a night with nothing in the log or the mesh worth a look.", "muted"));
+  }
+  const runSre = upButton("Run the check now",
+    "Reads the system log, the Zigbee mesh and Z-Wave statistics, and files one finding per root cause.");
+  runSre.disabled = !!sre.running;
+  runSre.addEventListener("click", () => upPress(runSre, "sre", "api/sre/run", null,
+    () => "Checking — anything it finds lands on Findings"));
+  const a1 = el("div", "upactions");
+  a1.appendChild(runSre);
+  host.appendChild(a1);
+
+  const access = upState.access || {};
+  host.appendChild(el("h3", null, "Who can reach the house"));
+  host.appendChild(upStatus(access, "Reviewing…"));
+  if (access.sentence) {
+    host.appendChild(el("p", "upsentence", access.sentence));
+    if (access.at) host.appendChild(upLine("Reviewed " + timeAgo(new Date(access.at * 1000).toISOString()), "muted"));
+  } else if (!access.running) {
+    host.appendChild(upLine("A sentence once a week about users, what voice assistants can reach, add-on privileges and brAIn's own settings.", "muted"));
+  }
+  if (access.open) host.appendChild(upLine(`${access.open} security finding${access.open === 1 ? "" : "s"} open on Findings.`));
+  const runAccess = upButton("Review now", "One short Claude run over what the last checks pass read.");
+  runAccess.disabled = !!access.running;
+  runAccess.addEventListener("click", () => upPress(runAccess, "access", "api/access/run", null,
+    () => "Reviewing…"));
+  const a2 = el("div", "upactions");
+  a2.appendChild(runAccess);
+  host.appendChild(a2);
+}
+
+// ------------------------------------------------------------ the house now
+// One line at the top of the Findings feed: what brAIn reads the house as
+// doing (`/api/situation`, built by `panel/situation.py`) and what is
+// coming up. Built here rather than in index.html so the block is one
+// contiguous piece, and the node is made the first time it is needed.
+//
+// The mode is a WORD and never a colour alone, a reading that has stopped
+// being refreshed says so rather than showing the last mode it saw, and a
+// sentence the server marked stale is labelled "earlier" — a sentence
+// about the house an hour ago is not a sentence about it now.
+const HOUSE_MODE_WORDS = {
+  home: "Someone's home",
+  away: "Nobody's home",
+  asleep: "Settled for the night",
+  waking: "Waking up",
+  guests: "Guests are here",
+  unknown: "Not sure what the house is doing",
+};
+// The frame is rebuilt every three minutes; asking more often than that
+// asks for an answer that cannot have changed.
+const HOUSE_NOW_POLL_MS = 180000;
+const houseNow = { data: null, timer: 0, calendars: null, saving: false };
+
+function houseNowNode() {
+  let node = document.getElementById("houseNow");
+  if (node) return node;
+  const head = document.querySelector("#viewFindings .findhead");
+  if (!head) return null;
+  node = el("div", "housenow");
+  node.id = "houseNow";
+  node.hidden = true;
+  head.after(node);
+  return node;
+}
+
+function renderHouseNow() {
+  const node = houseNowNode();
+  if (!node) return;
+  const d = houseNow.data;
+  // A refresh rebuilds the block; one somebody had open stays open.
+  const wasOpen = !!node.querySelector(".housenow-cals[open]");
+  node.textContent = "";
+  if (!d) { node.hidden = true; return; }
+  const mode = HOUSE_MODE_WORDS[d.house_mode] ? d.house_mode : "unknown";
+  const top = el("div", "housenow-top");
+  top.appendChild(el("span", "housenow-mode housenow-" + mode,
+    HOUSE_MODE_WORDS[mode]));
+  if (d.sentence) {
+    const said = el("span", "housenow-sentence" + (d.sentence_stale ? " stale" : ""),
+      d.sentence_stale ? `Earlier: ${d.sentence}` : d.sentence);
+    top.appendChild(said);
+  }
+  node.appendChild(top);
+  if (mode === "unknown" && d.reason) {
+    node.appendChild(el("div", "housenow-reason", d.reason));
+  }
+  const coming = (d.occasions || []).filter(Boolean);
+  if (coming.length) {
+    node.appendChild(el("div", "housenow-coming", "Coming up: " + coming.join(" · ")));
+  }
+  const cals = houseCalendarsNode();
+  if (wasOpen) cals.open = true;
+  node.appendChild(cals);
+  node.hidden = false;
+}
+
+// Which calendars brAIn may read for what is coming up. Off until somebody
+// ticks one: a calendar is the most personal thing a house holds, so the
+// choice lives where its effect is shown.
+function houseCalendarsNode() {
+  const box = el("details", "housenow-cals");
+  const sum = el("summary", null, "Calendars brAIn may read");
+  box.appendChild(sum);
+  box.addEventListener("toggle", () => {
+    if (box.open && !houseNow.calendars) loadHouseCalendars(box);
+  });
+  if (houseNow.calendars) fillHouseCalendars(box);
+  return box;
+}
+
+async function loadHouseCalendars(box) {
+  try {
+    houseNow.calendars = await api("api/occasions");
+  } catch (err) {
+    box.appendChild(el("div", "housenow-reason", "Could not read the calendars: " + err.message));
+    return;
+  }
+  fillHouseCalendars(box);
+}
+
+function fillHouseCalendars(box) {
+  box.querySelectorAll(".housenow-callist").forEach((n) => n.remove());
+  const data = houseNow.calendars || {};
+  const list = el("div", "housenow-callist");
+  const available = data.available || [];
+  const chosen = new Set(data.calendars || []);
+  if (!available.length) {
+    list.appendChild(el("div", "housenow-reason",
+      "No calendars yet — brAIn lists the ones the last house check saw."));
+  }
+  available.forEach((cal) => {
+    const label = el("label", "housenow-cal");
+    const tick = document.createElement("input");
+    tick.type = "checkbox";
+    tick.checked = chosen.has(cal.entity_id);
+    tick.addEventListener("change", () => saveHouseCalendars(list));
+    tick.dataset.cal = cal.entity_id;
+    label.appendChild(tick);
+    label.appendChild(el("span", null, cal.name || cal.entity_id));
+    list.appendChild(label);
+  });
+  list.appendChild(el("div", "housenow-reason",
+    "Only what is ticked is read, once or twice a day, for the next three days. " +
+    "What it says is treated as information, never as an instruction."));
+  box.appendChild(list);
+}
+
+async function saveHouseCalendars(list) {
+  if (houseNow.saving) return;
+  houseNow.saving = true;
+  const picked = [...list.querySelectorAll("input[data-cal]")]
+    .filter((t) => t.checked).map((t) => t.dataset.cal);
+  try {
+    await api("api/settings", { method: "PUT",
+      body: JSON.stringify({ occasion_calendars: picked }) });
+    if (houseNow.calendars) houseNow.calendars.calendars = picked;
+    toast(picked.length ? "brAIn will read those calendars tonight." :
+      "brAIn will not read any calendar.");
+  } catch (err) {
+    toast("Could not save: " + err.message);
+  } finally {
+    houseNow.saving = false;
+  }
+}
+
+async function refreshHouseNow() {
+  try {
+    houseNow.data = await api("api/situation");
+  } catch (_err) {
+    // An unreadable reading is no line rather than a stale one: the feed
+    // under it is the thing somebody came here for.
+    houseNow.data = null;
+  }
+  renderHouseNow();
+  clearTimeout(houseNow.timer);
+  houseNow.timer = setTimeout(() => {
+    if (currentView === "findings") refreshHouseNow();
+  }, HOUSE_NOW_POLL_MS);
+}
+
+// ---------------------------------------------------------------------------
+// Who hears what, when — the household's notification sentence (W2D)
+// ---------------------------------------------------------------------------
+//
+// One sentence in the household's own words, saved on change like every
+// other control in ⚙, and under it the lines a learned suggestion added —
+// each on its own row with its own Remove, because a clause spliced into
+// somebody's sentence is one they cannot find again to take out. The box
+// is not overwritten while it has focus: `refreshOpenSettings` already
+// skips a dialog with focus inside it, and a save re-renders only after
+// the change that triggered it has landed.
+function renderNotifyPolicy(settings) {
+  // Speaking first is strictly opt-in, so only an explicit true ticks it:
+  // a setting that arrived missing or malformed reads as off.
+  const speak = $("#setSpeakFirst");
+  if (speak) speak.checked = settings.speak_first === true;
+  const box = $("#setNotifyPolicy");
+  if (!box) return;
+  if (document.activeElement !== box) box.value = settings.notify_policy || "";
+  const list = $("#setNotifyLearned");
+  const learned = Array.isArray(settings.notify_policy_learned)
+    ? settings.notify_policy_learned : [];
+  const wasOpen = !!list.querySelector("details[open]");
+  list.textContent = "";
+  list.classList.toggle("hidden", !learned.length);
+  if (!learned.length) return;
+  // Behind a disclosure that names how many: each line is a long sentence
+  // (it names its subject both ways, for a person and for a model), and a
+  // dialog measured against a height budget cannot spend a paragraph per
+  // answer somebody once gave. It stays open across a re-render, because
+  // a Remove re-renders and closing the list under the press reads as the
+  // press having taken everything.
+  const fold = document.createElement("details");
+  fold.open = wasOpen;
+  fold.appendChild(el("summary", null, learned.length === 1
+    ? "1 line added from your answers"
+    : `${learned.length} lines added from your answers`));
+  learned.forEach((item) => {
+    const row = el("div", "setlearnedrow");
+    row.appendChild(el("span", "setlearnedtext", item.clause || ""));
+    const remove = el("button", "btn ghost", "Remove");
+    remove.type = "button";
+    remove.setAttribute("aria-label", "Remove: " + (item.clause || ""));
+    remove.addEventListener("click", () => {
+      const keep = learned.filter((c) => c.id !== item.id);
+      saveSettings({ notify_policy_learned: keep }, "Removed — that line no longer applies");
+    });
+    row.appendChild(remove);
+    fold.appendChild(row);
+  });
+  list.appendChild(fold);
+}
+
+$("#setNotifyPolicy").addEventListener("change", () =>
+  saveSettings({ notify_policy: $("#setNotifyPolicy").value.trim() },
+    "Saved — brAIn will time and word notifications by it"));
+
+$("#setSpeakFirst").addEventListener("change", () => {
+  const on = $("#setSpeakFirst").checked;
+  saveSettings({ speak_first: on }, on
+    ? "On — an urgent problem is said aloud where somebody is, then sent to the phone"
+    : "Off — problems go to the phone only");
+});
+
+// ---------------------------------------------------------------------------
+// Every change is a contract: what a plan will do, exactly; the restore a
+// fix's calls can be undone with; and what the acting half has done lately.
+// ---------------------------------------------------------------------------
+
+// The typed half of a plan, under its steps: why it cannot be applied, what
+// will be different, how brAIn will check it held, and — for an edit to an
+// automation — the exact bytes it will change and what a replay of the
+// old and new config says. Every sentence here is the server's; this only
+// lays them out.
+function planContract(box, plan) {
+  if (plan.ops_refused) box.appendChild(el("p", "findrisk", plan.ops_refused));
+  if (!plan.can_fix) return;
+  if (plan.expected_effect) {
+    box.appendChild(el("p", "planeffect", `Once it works: ${plan.expected_effect}`));
+  }
+  (plan.preview || []).forEach((p) => {
+    if (!p || !p.diff) return;
+    const det = el("details", "plandiff");
+    det.appendChild(el("summary", null, "The exact change to automations.yaml"));
+    det.appendChild(el("pre", null, p.diff));
+    box.appendChild(det);
+    const line = planReplayLine(p);
+    if (line) box.appendChild(el("p", "planreplay", line));
+  });
+  if (plan.verify_text) box.appendChild(el("p", "planverify", plan.verify_text));
+}
+
+function planReplayLine(p) {
+  const r = p.replay;
+  if (p.replay_note) return p.replay_note;
+  if (!r) return "";
+  if (r.refused || r.error) return `brAIn could not replay it: ${r.error || "unknown"}`;
+  const days = Math.round(r.days ?? 7);
+  const after = r.would_run ?? 0;
+  const was = p.replay_before;
+  const times = (n) => `${n} ${n === 1 ? "time" : "times"}`;
+  if (was && !was.refused && !was.error) {
+    return `Over the last ${days} days it ran ${times(was.would_run ?? 0)} as it `
+      + `is; with this change it would have run ${times(after)}.`;
+  }
+  return `Over the last ${days} days the changed automation would have run ${times(after)}.`;
+}
+
+// A press, never a timer: the server sets each entity back to the state the
+// chokepoint recorded before brAIn's call, then reads it again and answers
+// per entity. Refusals (protected, less secure, a reading) come back as
+// lines too, so the toast is the summary and the card carries the detail.
+function addRestoreButton(f, add, btns) {
+  const b = add(el("button", "btn small ghost", "⟲  Put them back"));
+  tip(b, "Set what brAIn's service calls changed back to how brAIn recorded "
+    + "it before. Each entity answers for itself; you press this, brAIn "
+    + "never does it on its own.");
+  b.addEventListener("click", async () => {
+    btns.forEach((x) => { x.disabled = true; });
+    try {
+      const data = await api(`api/finding/${f.ts}/restore`, { method: "POST" });
+      takeFindings(data);
+      syncFeed();
+      renderFindings();
+      const back = (data.restored || []).filter((r) => r.restored).length;
+      const total = (data.restored || []).length;
+      toast(`Put back ${back} of ${total} — the card says which`);
+    } catch (e) {
+      toast("Could not put them back: " + e);
+      btns.forEach((x) => { x.disabled = false; });
+    }
+  });
+}
+
+function actingDiagRows(d) {
+  const a = (d && d.acting) || null;
+  if (!a) return [];
+  if (a.error) return [diagRow("Changes and the action gate", esc(a.error), true)];
+  const iv = a.interventions || {};
+  const g = a.gate || {};
+  const t = a.tripwire || {};
+  const fu = a.followup || {};
+  const items = [
+    `<li>${iv.rows ?? 0} change${iv.rows === 1 ? "" : "s"} brAIn made: `
+      + `${iv.watching ?? 0} being watched, ${iv.held ?? 0} held, `
+      + `${iv.regressed ?? 0} came back, ${iv.could_not_check ?? 0} could not be checked`
+      + (iv.next_look_at ? ` — next look ${esc(timeUntil(iv.next_look_at))}` : "")
+      + "</li>",
+    `<li>Follow-up looks: ${fu.looks ?? 0} taken, ${fu.deferred ?? 0} held by a gate`
+      + (fu.last_error ? ` — <i>${esc(fu.last_error)}</i>` : "") + "</li>",
+    `<li>Action gate: ${g.asked ?? 0} asked — ${g.allow ?? 0} let through, `
+      + `${g.ask ?? 0} asked you, ${g.deny ?? 0} refused (${g.fast_path ?? 0} with no `
+      + `model, ${g.undecided ?? 0} undecided)</li>`,
+    `<li>Tripwire: ${t.entities ? `${t.entities} guarded` : "none set up"}`
+      + (t.tripped ? `, tripped ${t.tripped} time${t.tripped === 1 ? "" : "s"}` : "")
+      + (t.file_error ? ` — <i>${esc(t.file_error)}</i>` : "") + "</li>",
+  ];
+  const hr = a.house_rules || {};
+  items.push(`<li>House rules: ${hr.rules ? `${hr.compiled ?? 0} of ${hr.rules} `
+    + "checked on every action" : "none written"}`
+    + ((hr.not_compiled || []).length ? ` — <i>not understood: `
+      + `${(hr.not_compiled || []).map(esc).join("; ")}</i>` : "")
+    + (hr.error ? ` — <i>${esc(hr.error)}</i>` : "") + "</li>");
+  const button = t.entities ? "" : '<button class="btn small" id="tripwireMake">'
+    + "Make a tripwire entity</button>";
+  const rules = '<details class="houserules"><summary>Write house rules</summary>'
+    + '<p class="hint">One per line, in your own words — “never turn the heating '
+    + "above 23”, “don’t open the garage after 22:00”. Each is checked against "
+    + "every action brAIn takes, and can only make it more careful.</p>"
+    + '<textarea id="houseRulesText" rows="4"></textarea>'
+    + '<button class="btn small" id="houseRulesSave">Save rules</button></details>';
+  return [diagRow("Changes and the action gate",
+    `<ul>${items.join("")}</ul>${button}${rules}`,
+    !!(iv.error || t.file_error || hr.error))];
+}
+
+document.addEventListener("toggle", async (e) => {
+  const det = e.target;
+  if (!(det instanceof HTMLElement) || !det.classList.contains("houserules")
+      || !det.open) return;
+  try {
+    const data = await api("api/house-rules");
+    const box = det.querySelector("#houseRulesText");
+    if (box) box.value = (data.rules || []).map((r) => r.text).join("\n");
+  } catch (err) { /* the box stays empty; saving still works */ }
+}, true);
+
+document.addEventListener("click", async (e) => {
+  const btn = e.target.closest && e.target.closest("#houseRulesSave");
+  if (!btn) return;
+  const box = document.querySelector("#houseRulesText");
+  const rules = (box ? box.value : "").split("\n").map((t) => t.trim())
+    .filter(Boolean);
+  btn.disabled = true;
+  try {
+    const data = await api("api/house-rules", {
+      method: "POST", body: JSON.stringify({ rules }) });
+    const missed = (data.rules || []).filter((r) => !r.compiled);
+    toast(missed.length
+      ? `Saved — ${missed.length} not understood: ${missed[0].error}`
+      : "House rules saved");
+    loadDiagnostics();
+  } catch (err) {
+    toast("Could not save the rules: " + err);
+    btn.disabled = false;
+  }
+});
+
+// Delegated, because the diagnostics body is rebuilt on every open.
+document.addEventListener("click", async (e) => {
+  const btn = e.target.closest && e.target.closest("#tripwireMake");
+  if (!btn) return;
+  btn.disabled = true;
+  try {
+    const r = await api("api/security/honeytoken", { method: "POST" });
+    toast(r.created ? "Tripwire made — nothing should ever act on it"
+                    : "The tripwire is already there");
+    loadDiagnostics();
+  } catch (err) {
+    toast("Could not make the tripwire: " + err);
+    btn.disabled = false;
+  }
+});
+
+
+// ---------------------------------------------- ideas: the reason a no
+//
+// "Not for this house" took nothing but the title, so the next pass was
+// told only that ONE wording had been turned down and could offer the
+// same kind of card under another — "we don't care about standby power"
+// is a sentence that rules out a family of ideas, and nothing on the page
+// could carry it. The route always took a reason (`ideas.dismiss`); this
+// is the box. It opens IN PLACE of the buttons, inside the card, for the
+// reason every other reason box in the panel does — you are explaining
+// this card and it has to stay on screen while you write — and it is never
+// required: an empty box is a plain dismissal, because a mandatory field
+// fills with "no".
+function ideaReasonBox(idea, card, actions) {
+  if (card.querySelector(".propnote")) return;
+  actions.classList.add("hidden");
+  const box = el("div", "propnote ideanote");
+  const area = el("textarea");
+  area.placeholder = "Why not? (optional — it rules out cards like this one, "
+    + "not just this title)";
+  area.rows = 2;
+  area.maxLength = 200;
+  box.appendChild(area);
+  const row = el("div", "propbtns");
+  const send = el("button", "btn small", "Not for this house");
+  const back = el("button", "btn small ghost", "Cancel");
+  send.addEventListener("click", async () => {
+    send.disabled = true;
+    back.disabled = true;
+    const reason = area.value.trim();
+    try {
+      takeIdeas(await api(`api/idea/${idea.id}/dismiss`, {
+        method: "POST", body: JSON.stringify({ reason }) }));
+      renderIdeas();
+      toast(reason ? "Won't suggest that, or anything like it"
+        : "Won't suggest that again");
+    } catch (err) {
+      send.disabled = false;
+      back.disabled = false;
+      toast(err.message || "that didn't work");
+    }
+  });
+  back.addEventListener("click", () => {
+    box.remove();
+    actions.classList.remove("hidden");
+  });
+  row.append(send, back);
+  box.appendChild(row);
+  card.appendChild(box);
+  area.focus();
+}
+
+
+// ---------------------------------------------------------------------------
+// The deep review (House → Knowledge). The one run on the top tier, and only
+// by a press: the button says what it will roughly cost before it is
+// pressed (an estimate read off the reviews this house has already paid
+// for, and a first guess before there are any), and what the review said
+// stays here to be read. It files nothing on any other tab.
+// ---------------------------------------------------------------------------
+const reviewState = { data: null, error: "", timer: null, pressing: false };
+
+async function refreshDeepReview() {
+  try {
+    reviewState.data = await api("api/deep-review");
+    reviewState.error = "";
+  } catch (e) {
+    reviewState.error = "Could not read the deep review: " + e.message;
+  }
+  renderDeepReview();
+  // While one is running the tab watches for it landing — and only while
+  // the tab is the one on screen: a poll behind a pane nobody is looking at
+  // is a request per minute for an answer nobody will read.
+  clearTimeout(reviewState.timer);
+  if (reviewState.data && reviewState.data.running && currentView === "memory") {
+    reviewState.timer = setTimeout(refreshDeepReview, 8000);
+  }
+}
+
+function reviewCostText(est) {
+  if (!est || !Number(est.tokens)) return "";
+  const k = Math.max(1, Math.round(Number(est.tokens) / 1000));
+  let text = `About ${k}k tokens`;
+  if (est.percent !== null && est.percent !== undefined) {
+    text += ` — roughly ${est.percent}% of a five-hour session on your plan`;
+  }
+  return `${text}. An estimate: ${est.basis}.`;
+}
+
+const REVIEW_KIND_WORD = {
+  problem: "Problem", opportunity: "Could be better",
+  question: "Worth asking", working: "Working well",
+};
+
+function renderDeepReview() {
+  const box = $("#kReview");
+  if (!box) return;
+  box.textContent = "";
+  if (reviewState.error) {
+    box.appendChild(el("p", "kbrieftext off", reviewState.error));
+    return;
+  }
+  const d = reviewState.data;
+  if (!d) return;
+
+  const run = el("div", "kreviewrun");
+  const btn = el("button", "btn primary",
+    d.running ? "Reviewing…" : "Run a deep review");
+  btn.type = "button";
+  btn.disabled = Boolean(d.running) || reviewState.pressing || !d.authenticated;
+  tip(btn, "Claude's top model reads the whole house with read-only tools and "
+    + "says what it adds up to. It changes nothing and files nothing.");
+  btn.addEventListener("click", () => runDeepReview(btn));
+  run.appendChild(btn);
+  run.appendChild(el("p", "kreviewcost", d.running
+    ? `Started ${agoAt(d.started_at)} — a review takes several minutes, and lands here.`
+    : reviewCostText(d.estimate)));
+  box.appendChild(run);
+
+  if (!d.authenticated) {
+    box.appendChild(el("p", "kbrieftext off",
+      "Connect your Claude account first — ⚙ → Claude account."));
+  }
+  if (d.last_error) {
+    box.appendChild(el("p", "kbrieftext off",
+      `The last review did not finish: ${d.last_error}`));
+  }
+  if (d.error) box.appendChild(el("p", "kbrieftext off", d.error));
+
+  const r = d.latest;
+  if (!r) {
+    if (!d.error) {
+      box.appendChild(el("p", "kbrieftext off",
+        "No review yet. It reads the whole house, not one card's worth, and "
+        + "says what nothing else in brAIn has said."));
+    }
+    return;
+  }
+  const bits = [dateAt(r.at)];
+  if (r.model) bits.push(String(r.model));
+  if (Number(r.tokens)) bits.push(`${Math.round(Number(r.tokens) / 1000)}k tokens`);
+  box.appendChild(el("div", "kbriefwhen", bits.filter(Boolean).join(" · ")));
+  if (r.summary) box.appendChild(el("p", "kbrieftext", r.summary));
+  if (r.one_thing) {
+    const one = el("div", "kreviewone");
+    one.appendChild(el("div", "kreviewlabel", "The one thing this month"));
+    one.appendChild(el("p", "kbrieftext", r.one_thing));
+    box.appendChild(one);
+  }
+  const obs = Array.isArray(r.observations) ? r.observations : [];
+  if (obs.length) {
+    const list = el("ul", "kreviewobs");
+    obs.forEach((o) => {
+      const li = el("li", "kreviewob");
+      li.appendChild(el("div", "kreviewlabel",
+        REVIEW_KIND_WORD[o.kind] || "Problem"));
+      li.appendChild(el("div", "kreviewtitle", prettyText(String(o.title || ""))));
+      if (o.detail) li.appendChild(el("p", "kreviewdetail", prettyText(String(o.detail))));
+      list.appendChild(li);
+    });
+    box.appendChild(list);
+  }
+  const older = Array.isArray(d.history) ? d.history : [];
+  if (older.length) {
+    box.appendChild(el("p", "kreviewcost",
+      "Earlier reviews: " + older.map((h) => dateAt(h.at)).filter(Boolean).join(", ")));
+  }
+}
+
+async function runDeepReview(btn) {
+  reviewState.pressing = true;
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch("api/deep-review/run", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    });
+    let body = {};
+    try { body = await resp.json(); } catch (e) { body = {}; }
+    if (!resp.ok) {
+      toast(body.error || `Could not start a review (HTTP ${resp.status})`);
+    } else {
+      reviewState.data = body;
+      toast("Reviewing the house — it lands here in a few minutes");
+    }
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    reviewState.pressing = false;
+    refreshDeepReview();
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// ⚙ → Generation defaults → Cameras. One tick per camera brAIn may look at
+// on its own; empty until somebody ticks one. Read when the section opens,
+// never on the way into the dialog, and saved through the ordinary
+// settings PUT, so there is one route that changes a setting.
+// ---------------------------------------------------------------------------
+let camerasLoaded = false;
+
+async function loadCameras() {
+  if (camerasLoaded) return;
+  camerasLoaded = true;
+  const box = $("#setCameras");
+  if (!box) return;
+  try {
+    renderCameras(await api("api/cameras"));
+  } catch (e) {
+    camerasLoaded = false;
+    box.textContent = "Could not read your cameras: " + e.message;
+  }
+}
+
+function renderCameras(data) {
+  const box = $("#setCameras");
+  if (!box) return;
+  box.textContent = "";
+  const cams = Array.isArray(data.cameras) ? data.cameras : [];
+  if (!cams.length) {
+    box.appendChild(el("p", "hint tight", data.registry_read
+      ? "This house has no cameras brAIn can see."
+      : "brAIn has not read your devices yet — this list fills in after the first house check."));
+    return;
+  }
+  cams.forEach((cam) => {
+    const label = el("label", "check setcam");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = Boolean(cam.allowed);
+    input.dataset.entity = cam.entity_id;
+    input.addEventListener("change", saveCameras);
+    label.appendChild(input);
+    const words = el("span", null, cam.name || cam.entity_id);
+    if (cam.name && cam.name !== cam.entity_id) {
+      words.appendChild(el("span", "subtext", ` ${cam.entity_id}`));
+    }
+    label.appendChild(words);
+    box.appendChild(label);
+  });
+  const used = Number(data.used_today) || 0;
+  const cap = Number(data.per_day) || 0;
+  box.appendChild(el("p", "hint tight", data.error
+    ? `brAIn will not look at any camera until it can count again: ${data.error}`
+    : `Looked ${used} of ${cap} times today.`));
+}
+
+async function saveCameras() {
+  const picked = [...document.querySelectorAll("#setCameras input[data-entity]")]
+    .filter((i) => i.checked).map((i) => i.dataset.entity);
+  await saveSettings({ camera_confirm: picked },
+    picked.length ? `brAIn may look at ${picked.length} camera${picked.length > 1 ? "s" : ""}`
+      : "brAIn will not look at any camera on its own");
+}

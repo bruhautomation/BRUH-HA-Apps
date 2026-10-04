@@ -16,13 +16,40 @@
 # It expires. A stale id would silently reopen last week's conversation the
 # next time the add-on restarted, which is worse than starting fresh.
 #
-# Every argument is passed through to claude-run, so the permissions flag
-# the add-on decides on still applies.
+# Every other argument is passed through to claude-run. The permissions
+# flag is NOT one of them any more: it is decided HERE, when the session
+# starts, from the switch's current value (brain-permissions.sh) — the flag
+# used to be baked into the command ttyd was started with at boot, so
+# "Let brAIn act without asking" needed an add-on restart to reach a new
+# session, and a window the chat opened on a handoff never carried it at
+# all. A flag handed in by an older launch command is dropped and decided
+# again, so what the switch says now is the only answer.
 
 set -uo pipefail
 
 HANDOFF_FILE="${BRAIN_TERMINAL_HANDOFF:-/data/terminal-handoff.json}"
 HANDOFF_MAX_AGE=600     # seconds
+CLAUDE_RUN="${BRAIN_CLAUDE_RUN:-/usr/local/bin/claude-run}"
+
+perms_lib="${BRAIN_PERMS_LIB:-/opt/scripts/brain-permissions.sh}"
+if [ ! -r "$perms_lib" ]; then
+    perms_lib="$(dirname "${BASH_SOURCE[0]}")/brain-permissions.sh"
+fi
+
+args=()
+for arg in "$@"; do
+    [ "$arg" = "--dangerously-skip-permissions" ] || args+=("$arg")
+done
+# No library is no flag: a session that cannot ask the switch asks you.
+if [ -r "$perms_lib" ]; then
+    # shellcheck disable=SC1090
+    . "$perms_lib"
+    perms_flag=$(brain_perms_flag)
+    if [ -n "$perms_flag" ]; then
+        args=("$perms_flag" ${args[@]+"${args[@]}"})
+    fi
+fi
+set -- ${args[@]+"${args[@]}"}
 
 resume_id=""
 
@@ -51,8 +78,8 @@ if [ -n "$resume_id" ]; then
     # --resume can fail (the CLI pruned it, or it is from an incompatible
     # version). Falling through to a normal session beats a terminal that
     # exits on open.
-    /usr/local/bin/claude-run "$@" --resume "$resume_id" && exit 0
+    "$CLAUDE_RUN" "$@" --resume "$resume_id" && exit 0
     echo "That conversation could not be resumed — starting a new session."
 fi
 
-exec /usr/local/bin/claude-run "$@"
+exec "$CLAUDE_RUN" "$@"

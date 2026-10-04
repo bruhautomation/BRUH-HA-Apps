@@ -93,12 +93,31 @@ SOURCES: dict[str, dict[str, str]] = {
     "resident": {"label": "Resident",
                  "blurb": "watching the house, and looking into what it saw",
                  "store": "engine"},
+    # The action gate's model question (`gate.py`): a probe, never a
+    # conversation — it is shown the person's words, a proposed call and
+    # what it reaches, and answers one word.
+    "gate": {"label": "Action gate",
+             "blurb": "checking an action against what you asked for",
+             "store": "engine"},
+    # A follow-up look at a fix brAIn made a day, a week or a month ago,
+    # when nothing deterministic could say whether it held.
+    "followup": {"label": "Follow-up",
+                 "blurb": "checking a fix brAIn made is still holding",
+                 "store": "engine"},
     # `tests/corpus/replay.py` — the same argument as `doctor`, one step
     # further from a person: a replay re-runs somebody else's captured
     # prompt to score this release's version of it, so every turn is a
     # measurement and none of it is a conversation anybody had.
     "replay": {"label": "Replay", "blurb": "a corpus run, scoring a prompt",
                "store": "engine"},
+    # Home Assistant's own maintainer: names and rooms proposed for
+    # review, the house book, the overnight health check, an upgrade
+    # verdict and the access review. Probes over a digest, never a
+    # conversation anybody had — and the one whose transcript a person may
+    # open on purpose, to see what an upgrade verdict actually read.
+    "maintenance": {"label": "Upkeep",
+                    "blurb": "tidying, the house book, health and updates",
+                    "store": "engine"},
 }
 
 # The sources whose transcripts live in the engine's project directory

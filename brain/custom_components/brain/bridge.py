@@ -63,6 +63,40 @@ class _StreamBrokenError(RuntimeError):
     re-sending is NOT safe (the command may already be executing)."""
 
 
+class BrainRunError(RuntimeError):
+    """The add-on ran the request and it FAILED, in the add-on's own words.
+
+    The text is the sentence a person should read — "Claude's saved login
+    has expired…", "Claude timed out after 100s…" — and `code` is the
+    closed word for which failure it was (`auth`, `timeout`, `empty`,
+    `refused`, `partial`, …), written by the listener or the pool beside
+    the text.
+
+    It exists because until it did, no failure crossed into Home Assistant
+    as a failure: the listener wrote `status: completed` over an expired
+    login, the bridge never read the status, and the services handed the
+    sentence back as `response` with `data: None` — so an automation that
+    branched on `brain.ask`'s data read "nothing unusual" off a run that
+    never happened, and an insight job pushed the login error to a phone
+    as that morning's report. The bridge raises; whoever called it decides
+    what a failure looks like on their surface (a service raises
+    `HomeAssistantError` so the trace shows the sentence, the conversation
+    agent sets an error response, an insight job records `error`).
+    """
+
+    def __init__(self, text: str, code: str = "error") -> None:
+        super().__init__(text)
+        self.text = str(text or "")
+        self.code = str(code or "error")
+
+
+# The listener's word for a task that ran to its end. Anything else in
+# `status` is a failure; a result file with NO status is from a listener
+# that predates the field and is read as completed, which is exactly what
+# every result it ever wrote claimed.
+TASK_COMPLETED = "completed"
+
+
 class ClaudeBridge:
     """Handles file-based communication with the Claude Terminal add-on."""
 
@@ -107,8 +141,14 @@ class ClaudeBridge:
         model: str | None = None,
         denied_services: list | None = None,
         access: str | None = None,
+        context: dict | None = None,
     ) -> str:
-        """Send a conversation request and wait for the response."""
+        """Send a conversation request and wait for the response.
+
+        Raises `BrainRunError` when the add-on says the turn failed, and
+        `TimeoutError` when nothing came back in time — never returns a
+        failure as if it were an answer.
+        """
         conv_id = conversation_id or uuid.uuid4().hex
         # Unique per request so concurrent/stale files can never collide
         request_id = uuid.uuid4().hex
@@ -135,6 +175,8 @@ class ClaudeBridge:
             request["denied_services"] = denied_services
         if access:
             request["access"] = access
+        if context:
+            request["context"] = context
 
         req_file = os.path.join(self.requests_dir, f"{request_id}.json")
         resp_file = os.path.join(self.responses_dir, f"{request_id}.json")
@@ -152,7 +194,11 @@ class ClaudeBridge:
         )
 
         # Poll for response
-        response_text = await self._poll_for_response(resp_file, timeout)
+        answer = await self._poll_for_result(resp_file, timeout)
+        if answer.get("error"):
+            # A failure is not an exchange worth replaying to the next turn.
+            raise BrainRunError(answer["text"], answer["error"])
+        response_text = answer["text"]
 
         self._append_history(conv_id, text, response_text)
 
@@ -205,6 +251,41 @@ class ClaudeBridge:
         except Exception:  # noqa: BLE001 — any failure means "not healthy via HTTP"
             return None
 
+    async def async_llm_tool(self, name: str, args: dict,
+                             timeout: int = 45) -> dict:
+        """One of brAIn's read-only measurements, from the add-on's API.
+
+        For the LLM API other agents use (`llm_api.py`). Answers with the
+        tool's own result, or ``{"error": ...}`` — a measurement that could
+        not be fetched is a sentence the asking model can repeat, never an
+        exception in somebody else's conversation.
+        """
+        api = await self.async_api_config()
+        if not api:
+            return {"error": ("brAIn's add-on API is not up (it runs with "
+                              "the add-on's fast voice mode), so its "
+                              "measurements cannot be read right now.")}
+        base_url, token = api
+        try:
+            import aiohttp
+            from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+            session = async_get_clientsession(self._hass)
+            async with session.post(
+                f"{base_url}/llm/tool",
+                json={"name": name, "args": args},
+                headers={"X-BRUH-Token": token},
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                if resp.status != 200:
+                    return {"error": f"brAIn's add-on answered HTTP {resp.status}"}
+                payload = await resp.json()
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"brAIn's add-on did not answer: {exc}"}
+        result = payload.get("result") if isinstance(payload, dict) else None
+        return result if isinstance(result, dict) else {
+            "error": "brAIn's add-on answered with nothing readable"}
+
     async def async_send_conversation_streaming(
         self,
         text: str,
@@ -215,25 +296,35 @@ class ClaudeBridge:
         delta_listener=None,
         denied_services: list | None = None,
         access: str | None = None,
+        context: dict | None = None,
     ) -> str:
         """Send a conversation over HTTP/SSE when available (deltas pushed to
-        delta_listener as they arrive), else fall back to the file protocol."""
+        delta_listener as they arrive), else fall back to the file protocol.
+
+        A turn the add-on says failed raises `BrainRunError` on either
+        transport, and so does a stream that broke after the pool accepted
+        it — that one with code `partial`, because the command may already
+        have run and the caller must not present the apology as an answer.
+        """
         api = await self.async_api_config()
         if api:
             try:
                 return await self._http_conversation(
                     api, text, conversation_id, timeout, system_prompt, model,
-                    delta_listener, denied_services, access,
+                    delta_listener, denied_services, access, context,
                 )
+            except BrainRunError:
+                raise
             except _StreamBrokenError as exc:
                 # The pool ACCEPTED the request before the stream broke — it
                 # may already be executing the command, so re-sending could
                 # run it twice. Report instead of retrying.
                 _LOGGER.warning("Conversation stream broke mid-flight: %s", exc)
-                return (
+                raise BrainRunError(
                     "Sorry, the connection to Claude dropped mid-response. "
-                    "The command may still have completed — check before retrying."
-                )
+                    "The command may still have completed — check before retrying.",
+                    "partial",
+                ) from exc
             except Exception as exc:  # noqa: BLE001 — pre-acceptance: safe to retry
                 _LOGGER.warning(
                     "HTTP transport unavailable (%s) — falling back to file IPC", exc
@@ -246,11 +337,12 @@ class ClaudeBridge:
             model=model,
             denied_services=denied_services,
             access=access,
+            context=context,
         )
 
     async def _http_conversation(
         self, api, text, conversation_id, timeout, system_prompt, model,
-        delta_listener, denied_services=None, access=None,
+        delta_listener, denied_services=None, access=None, context=None,
     ) -> str:
         import aiohttp
         from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -275,9 +367,12 @@ class ClaudeBridge:
             request["denied_services"] = denied_services
         if access:
             request["access"] = access
+        if context:
+            request["context"] = context
 
         session = async_get_clientsession(self._hass)
         result_text: str | None = None
+        result_error = ""
         accepted = False
         try:
             async with session.post(
@@ -306,6 +401,10 @@ class ClaudeBridge:
                             _LOGGER.exception("delta listener failed")
                     elif etype == "result":
                         result_text = event.get("text") or ""
+                        # The pool's word for a turn that failed, beside
+                        # the sentence it wrote about it. Absent on every
+                        # answer and on every pool that predates it.
+                        result_error = str(event.get("error") or "")
                         break
                     elif etype == "error":
                         raise RuntimeError(event.get("message") or "stream error")
@@ -321,6 +420,8 @@ class ClaudeBridge:
             # the broken-stream case, and always falls back to file IPC —
             # the `RuntimeError` this used to raise instead was unreachable.
             raise _StreamBrokenError("stream ended without a result event")
+        if result_error:
+            raise BrainRunError(result_text, result_error)
         self._append_history(conv_id, text, result_text)
         return result_text
 
@@ -379,11 +480,15 @@ class ClaudeBridge:
         model: str | None = None,
         tools: str | None = None,
         schema: dict | None = None,
+        memory: bool = False,
+        scheduled: bool = False,
+        cameras: bool = False,
     ) -> str:
         """Send an automation task and wait for the result's text."""
         answer = await self.async_send_task_full(
             prompt, notify=notify, notify_entity=notify_entity,
-            timeout=timeout, model=model, tools=tools, schema=schema)
+            timeout=timeout, model=model, tools=tools, schema=schema,
+            memory=memory, scheduled=scheduled, cameras=cameras)
         return answer["text"]
 
     async def async_send_task_full(
@@ -395,6 +500,9 @@ class ClaudeBridge:
         model: str | None = None,
         tools: str | None = None,
         schema: dict | None = None,
+        memory: bool = False,
+        scheduled: bool = False,
+        cameras: bool = False,
     ) -> dict:
         """Send a task and wait for the whole result: ``{"text", "data"}``.
 
@@ -404,6 +512,17 @@ class ClaudeBridge:
         too old for the flag, or the reply did not validate — the text is
         still the text either way, so `brain.ask` never answers with
         nothing.
+
+        `memory` asks the listener to put what brAIn knows about this
+        house in front of the prompt — the panel's own retrieval, read by
+        the listener, rather than a byte-cut of memory.md here. `scheduled`
+        says nobody pressed anything: the listener holds such a task to
+        the panel's pause switch and usage budget, the gate every other
+        unattended run answers to.
+
+        Raises `BrainRunError` when the listener says the task failed —
+        refused, timed out, signed out, produced nothing — and
+        `TimeoutError` when nothing came back at all.
         """
         task_id = uuid.uuid4().hex
         # Tasks default to a longer window than conversations — the add-on
@@ -430,6 +549,17 @@ class ClaudeBridge:
             task["tools"] = tools
         if isinstance(schema, dict) and schema:
             task["schema"] = schema
+        # Both written only when true, for `tools`' reason: a task that asks
+        # for neither puts the same JSON on disk it always did.
+        if memory:
+            task["memory"] = True
+        if scheduled:
+            task["scheduled"] = True
+        # The snapshot tool on a narrow scope, which the listener otherwise
+        # denies. Every frame is still asked of the panel's opt-in list and
+        # daily count at the MCP server; this only lets the run ask.
+        if cameras:
+            task["cameras"] = True
 
         task_file = os.path.join(self.tasks_dir, f"{task_id}.json")
         result_file = os.path.join(self.task_results_dir, f"{task_id}.json")
@@ -440,29 +570,24 @@ class ClaudeBridge:
 
         _LOGGER.debug("Task %s written (timeout=%ds)", task_id, timeout)
 
-        return await self._poll_for_result(result_file, timeout)
+        answer = await self._poll_for_result(result_file, timeout)
+        status = answer.get("status")
+        if status and status != TASK_COMPLETED:
+            raise BrainRunError(answer["text"], answer.get("error") or status)
+        return answer
 
     async def _poll_for_result(self, path: str, timeout: int) -> dict:
-        """`_poll_for_response`, keeping the whole file rather than its text."""
+        """Poll for a result or response file and return the whole of it.
+
+        One reader for both directories: a conversation's response and a
+        task's result are the same shape (`text`, and beside it the
+        `status`/`error` a failure carries), and a second reader is how one
+        of them stopped reading the failure.
+        """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             result = await self._hass.async_add_executor_job(
                 self._read_json_and_remove, path
-            )
-            if result is not None:
-                return result
-            await asyncio.sleep(POLL_INTERVAL)
-
-        raise TimeoutError(
-            f"No response within {timeout}s for {os.path.basename(path)}"
-        )
-
-    async def _poll_for_response(self, path: str, timeout: int) -> str:
-        """Poll for a response file, return its content or raise TimeoutError."""
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            result = await self._hass.async_add_executor_job(
-                self._read_and_remove, path
             )
             if result is not None:
                 return result
@@ -486,12 +611,12 @@ class ClaudeBridge:
 
     @classmethod
     def _read_json_and_remove(cls, path: str) -> dict | None:
-        """A result file as ``{"text", "data"}``, deleted once read.
+        """A result file as ``{"text", "data", "status", "error"}``, deleted once read.
 
         `data` is the listener's `data` field when it wrote one — the
         object the CLI validated against the task's schema — and `None`
-        otherwise. The text is read exactly as `_read_and_remove` reads
-        it, so the two readers cannot disagree about a corrupt file.
+        otherwise. A corrupt file is a failure (`error: corrupt`), never
+        an answer.
         """
         if not os.path.isfile(path):
             return None
@@ -503,10 +628,12 @@ class ClaudeBridge:
             try:
                 os.remove(path)
             except OSError:
-                # As below: the next pass reports the same corruption.
+                # The retry loop is what this delete protects. If the file
+                # will not go, the next pass reports the same corruption —
+                # no worse than now.
                 pass
             return {"text": "Error: received corrupt response from Claude Terminal.",
-                    "data": None}
+                    "data": None, "status": "failed", "error": "corrupt"}
         except OSError as exc:
             _LOGGER.warning("Failed to read response %s: %s", path, exc)
             return None
@@ -515,34 +642,18 @@ class ClaudeBridge:
         except OSError as exc:
             _LOGGER.warning("Could not remove response %s: %s", path, exc)
         if not isinstance(data, dict):
-            return {"text": json.dumps(data), "data": None}
+            return {"text": json.dumps(data), "data": None, "status": None,
+                    "error": ""}
         structured = data.get("data")
+        status = data.get("status")
         return {"text": data.get("text", data.get("result", json.dumps(data))),
-                "data": structured if isinstance(structured, (dict, list)) else None}
-
-    @staticmethod
-    def _read_and_remove(path: str) -> str | None:
-        """Read a JSON response file if it exists, delete it, return the text."""
-        if not os.path.isfile(path):
-            return None
-        try:
-            with open(path) as fh:
-                data = json.load(fh)
-            os.remove(path)
-            return data.get("text", data.get("result", json.dumps(data)))
-        except json.JSONDecodeError as exc:
-            _LOGGER.warning("Corrupt response file %s: %s", path, exc)
-            # Remove corrupt file to avoid infinite retry loop
-            try:
-                os.remove(path)
-            except OSError:
-                # The retry loop is what this delete protects. If the file will not go,
-                # the next pass reports the same corruption — no worse than now.
-                pass
-            return "Error: received corrupt response from Claude Terminal."
-        except OSError as exc:
-            _LOGGER.warning("Failed to read response %s: %s", path, exc)
-            return None
+                "data": structured if isinstance(structured, (dict, list)) else None,
+                # `status` is the task listener's ("completed" | "failed");
+                # `error` is the closed word either half writes beside a
+                # failure. Both absent on everything an older add-on wrote,
+                # which every caller reads as an answer.
+                "status": status if isinstance(status, str) else None,
+                "error": str(data.get("error") or "")}
 
     @staticmethod
     def _remove_session_files(sessions_dir: str, conversation_id: str | None) -> None:

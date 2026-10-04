@@ -48,8 +48,10 @@ _LOGGER = logging.getLogger(__name__)
 # the notification's reply box, on its way to the case's conversation.
 # `todo` (the feed's *Add to to-do*) and `ack` (*Got it* on a change
 # brAIn made) are the panel's own presses carried out here, so Repairs
-# and a notification offer what the card offers.
-ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack")
+# and a notification offer what the card offers. `undo` is the Undo on
+# the confirmation a reply is answered with ("Got it — I'll stop flagging
+# it until October"), which the panel resolves to the toast's own token.
+ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack", "undo")
 
 # What can be asked of the to-do list from out here. They are the tab's
 # own presses and nothing new: tick one off, take it off the list, put a
@@ -160,6 +162,34 @@ def write_checks_request(hass: HomeAssistant, via: str = "") -> bool:
     return _drop(hass, requests_dir(hass), {"kind": "checks",
                                             "via": str(via or "")[:32]},
                  what="a house checks pass")
+
+
+# The two answers a guess can be given. The panel's own Yes and No, and
+# nothing else: a guess is a yes/no question by construction.
+HYPOTHESIS_ACTIONS = ("confirm", "reject")
+
+
+def write_hypothesis_request(hass: HomeAssistant, ts: int, action: str, *,
+                             note: str = "", via: str = "") -> bool:
+    """Drop an answer to one of brAIn's guesses. Returns whether it landed.
+
+    A fourth kind on the same queue, for `write_checks_request`'s reason:
+    the order between kinds matters, and a guess answered in the same
+    burst as a finding it is about has to be applied in the order the
+    answers were given. The panel applies it through `_answer_hypothesis`,
+    the code the Findings tab's own Yes and No run — the claim filed as
+    memory on a yes, the dead end and the reason on a no.
+    """
+    if action not in HYPOTHESIS_ACTIONS:
+        _LOGGER.warning("refusing to write an unknown guess answer: %s", action)
+        return False
+    if not ts:
+        _LOGGER.warning("refusing to answer a guess with no id")
+        return False
+    body = {"kind": "hypothesis", "ts": int(ts), "action": action,
+            "note": str(note or "")[:500], "via": str(via or "")[:32]}
+    return _drop(hass, requests_dir(hass), body,
+                 what=f"the answer to guess {ts}")
 
 
 def _drop(hass: HomeAssistant, directory: str, body: dict,

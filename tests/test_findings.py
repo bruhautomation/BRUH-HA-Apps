@@ -393,11 +393,18 @@ class NotifyCase(StoreCase):
             self.payloads.append(data)
 
         self.ha_data.send_notification = record
+        # Every send is written to the delivery ledger, whose default is the
+        # real /data — which exists on a shared machine, so a notify test
+        # that does not point it here writes into it.
+        self.deliveries = self.server.deliveries
+        self._old_deliveries = self.deliveries.DELIVERIES_FILE
+        self.deliveries.DELIVERIES_FILE = Path(self.tmp.name) / "deliveries.jsonl"
         os.environ.pop("BRAIN_FINDINGS_NOTIFY", None)
         os.environ.pop("BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY", None)
 
     def tearDown(self):
         self.ha_data.send_notification = self._old_send
+        self.deliveries.DELIVERIES_FILE = self._old_deliveries
         os.environ.pop("BRAIN_FINDINGS_NOTIFY", None)
         os.environ.pop("BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY", None)
         super().tearDown()
@@ -504,10 +511,16 @@ class TestButtonsOnTheMessage(NotifyCase):
             self.assertEqual(self.payloads, [None], service)
 
     def test_a_batch_carries_none_because_it_could_not_say_which(self):
+        # No BUTTONS: a digest is several problems and a button on it would
+        # have to guess which. The companion app still gets the delivery's
+        # `tag`, which carries no action — it is how a swipe on the phone
+        # finds its way back to the line in the delivery ledger.
         os.environ["BRAIN_FINDINGS_NOTIFY"] = "notify.mobile_app_pixel"
         rows = [findings_store.add(f"Problem {i}")[0] for i in range(3)]
         self._announce(rows)
-        self.assertEqual(self.payloads, [None])
+        [data] = self.payloads
+        self.assertNotIn("actions", data or {})
+        self.assertEqual(set(data or {}) - {"tag"}, set())
 
 
 class TestQuietHoursRouting(NotifyCase):
@@ -1963,7 +1976,10 @@ class TestSnoozeAndDiscussRoutes(ServerCase):
         self.assertIn("The trigger cannot fire", prompt)
         self.assertIn("Invert the condition", prompt)
         self.assertIn("light.porch", prompt)
-        self.assertIn("Do not change anything", prompt)
+        # A change is asked for, never made, and an agreed one becomes a
+        # plan on the card (test_discuss_safety drives the ask rules).
+        self.assertIn("asks me first", prompt)
+        self.assertIn("`plan` option", prompt)
 
     def test_discussing_a_finding_that_does_not_exist_is_a_404(self):
         async def run():

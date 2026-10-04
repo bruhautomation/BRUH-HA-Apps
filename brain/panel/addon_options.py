@@ -8,7 +8,8 @@ indirectly (as startup environment variables) and kept its own overrides in
 whichever was edited last silently won.
 
 This module makes the Supervisor the single source of truth for the six
-generation options:
+generation options, and for the one switch that decides whether the
+terminal and the chat ask before acting (`dangerously_skip_permissions`):
 
   * read  — GET  /addons/self/info   → data.options   (cached, polled)
   * write — POST /addons/self/options with the FULL options object
@@ -45,6 +46,9 @@ OPTION_KEYS = {
     "history_keep_days": "history_keep_days",
     "model": "model",
     "timeout_minutes": "generation_timeout_minutes",
+    # Not a generation option, and mirrored the same way so ⚙ → Terminal &
+    # chat and the Configuration tab are one switch (permission_mode.py).
+    "dangerously_skip_permissions": "dangerously_skip_permissions",
 }
 
 CACHE_TTL = 10.0

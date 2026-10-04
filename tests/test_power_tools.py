@@ -54,6 +54,15 @@ PRE_EXISTING_SERVICES = {
 }
 
 
+
+def service_posts(api):
+    """The calls that reached Core as a service call. The chokepoint also
+    reads each named entity's state first (the before-state the action
+    ledger records), and those GETs are not the call being asserted."""
+    return [c for c in api.call_args_list
+            if str(c.args[0] if c.args else c.kwargs.get("endpoint", ""))
+            .startswith("/api/services/")]
+
 class TestPowerToolCatalog(unittest.TestCase):
     """The catalog is the contract: code, services.yaml, strings, and icons
     must always agree on the set of services."""
@@ -94,6 +103,10 @@ class TestPowerToolCatalog(unittest.TestCase):
             "rename_label", "update_label", "set_area_icon", "update_floor",
             "delete_device", "delete_orphaned_devices", "delete_integration",
             "rename_person",
+            # What a device shows as — and the helper it can make has the
+            # service that takes it away again.
+            "set_device_class", "show_switch_as", "stop_showing_switch_as",
+            "set_sensor_display",
         ):
             self.assertIn(expected, services)
 
@@ -152,11 +165,10 @@ class TestInitWiring(unittest.TestCase):
         cls.source = Path(INTEGRATION_DIR, "__init__.py").read_text(encoding="utf-8")
 
     def test_imports_power_tools(self):
-        self.assertIn(
-            "from .power_tools import POWER_TOOL_SERVICES, "
-            "async_register_power_tools",
-            self.source,
-        )
+        self.assertIn("from .power_tools import (", self.source)
+        for name in ("POWER_TOOL_SERVICES", "async_register_power_tools",
+                     "async_require_admin"):
+            self.assertIn(f"    {name},", self.source)
 
     def test_registers_power_tools(self):
         self.assertIn("async_register_power_tools(hass)", self.source)
@@ -176,7 +188,11 @@ class TestPowerToolsModuleShape(unittest.TestCase):
     def test_admin_gate_present(self):
         """Every handler goes through the admin gate wrapper."""
         self.assertIn("def _admin_gated", self.source)
-        self.assertIn("Unauthorized(context=call.context)", self.source)
+        # The check itself is `async_require_admin`, shared with the core
+        # services that reach a shell or memory; tests/test_ha_admin_gates.py
+        # drives it with a real non-admin context.
+        self.assertIn("await async_require_admin(hass, call.context)", self.source)
+        self.assertIn("raise Unauthorized(context=context)", self.source)
         self.assertIn("_admin_gated(hass, tool)", self.source)
 
     def test_orphan_cleanup_defaults_to_dry_run(self):
@@ -453,7 +469,7 @@ class TestMcpCallServiceResponse(unittest.TestCase):
         ) as rest, patch.object(ha_mcp_server, "_ws_command") as ws:
             ha_mcp_server.call_service("light", "turn_on",
                                        {"entity_id": "light.x"})
-        rest.assert_called_once()
+        self.assertEqual(len(service_posts(rest)), 1)
         ws.assert_not_called()
 
 

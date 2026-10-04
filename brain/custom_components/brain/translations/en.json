@@ -133,7 +133,7 @@
         },
         "source": {
           "name": "Source",
-          "description": "Where this fact came from (defaults to service)."
+          "description": "Where this fact came from (defaults to service). correction, confirmed and person are kept for the homeowner's own answers and are refused."
         },
         "confidence": {
           "name": "Confidence",
@@ -142,16 +142,20 @@
       }
     },
     "answer_question": {
-      "name": "Answer memory question",
-      "description": "Answer an open question from Claude's memory system. The answer is recorded and also queued as a memory fact.",
+      "name": "Answer one of brAIn's guesses",
+      "description": "Answer one of the guesses brAIn is waiting on, yes or no — the same as pressing Yes or No on the Findings tab. A yes files the guess as something brAIn knows; a no closes it, and a reason after the no is kept as a correction.",
       "fields": {
+        "ts": {
+          "name": "Guess id",
+          "description": "The guess's id, from the \"Waiting on you\" sensor's questions. Use this or the question."
+        },
         "question": {
           "name": "Question",
-          "description": "The open question being answered."
+          "description": "The guess being answered, as it is worded (or enough of it to pick out just one). Use this or the id."
         },
         "answer": {
           "name": "Answer",
-          "description": "Your answer."
+          "description": "Start with yes or no. Anything after a no is kept as the reason."
         },
         "source": {
           "name": "Source",
@@ -181,11 +185,11 @@
         },
         "timeout": {
           "name": "Timeout",
-          "description": "Maximum seconds to wait for the task to complete (default 120)."
+          "description": "Maximum seconds to wait for the task to complete (default 300)."
         },
         "tools": {
           "name": "Tools",
-          "description": "What this task is allowed to touch. full (default) keeps today's behaviour: the shell, file edits, web access and every Home Assistant tool. house drops the shell, file edits and the web and leaves every Home Assistant tool. read_only is the same list the scheduled analyst runs with \u2014 it can look at anything and change nothing."
+          "description": "What this task is allowed to touch. full (default) keeps today's behaviour: the shell, file edits, web access and every Home Assistant tool. house drops the shell, file reads and edits, and the web, and leaves every Home Assistant tool. read_only is the same list the scheduled analyst runs with — it can look at anything in Home Assistant and change nothing, and it cannot read files. Anything wider than read_only needs a Home Assistant administrator (an automation runs as the system and may ask for any)."
         }
       }
     },
@@ -1234,6 +1238,84 @@
     "check": {
       "name": "Run house checks",
       "description": "Ask brAIn to run its house checks now rather than waiting for the next scheduled pass. Returns immediately — a pass takes a minute or two, and what it finds arrives on the Findings tab."
+    },
+    "study": {
+      "name": "Study the home",
+      "description": "Send brAIn off to investigate one topic and write down what it finds. Returns immediately; the results arrive in memory, not in a response. Needs a Home Assistant administrator.",
+      "fields": {
+        "topic": {
+          "name": "Topic",
+          "description": "What to study. Leave empty to study whatever has gone stalest."
+        }
+      }
+    },
+    "set_device_class": {
+      "name": "Set device class",
+      "description": "Change what kind of device an entity is shown as — the \"Show as\" setting. A binary sensor as a door, window, motion, moisture or smoke sensor; a cover as a garage door, blind or shutter; a switch as an outlet. Leave the device class empty to give back the integration's own. The value is checked against the device classes Home Assistant offers for that kind of entity. Sensors and numbers are refused, because their device class decides the unit and the long-term statistics. Returns the device class now in effect and the integration's original.",
+      "fields": {
+        "entity_id": {
+          "name": "Entities",
+          "description": "Entities to change. They must all be of a kind that has device classes."
+        },
+        "device_class": {
+          "name": "Device class",
+          "description": "What to show it as, e.g. door, window, moisture, garage, outlet. Leave empty to give back the integration's own."
+        },
+        "confirm_safety": {
+          "name": "Confirm safety change",
+          "description": "Needed to take a smoke, gas, carbon monoxide or leak sensor out of that class, because brAIn's safety lane stops treating it as one. Turn it on only once the homeowner has said yes."
+        }
+      }
+    },
+    "show_switch_as": {
+      "name": "Show switch as",
+      "description": "Show a switch — a smart plug running a fan or a lamp — as a light, fan, lock, cover, siren or valve, through Home Assistant's own \"Change device type of a switch\" helper. The original switch is hidden and keeps working. A switch already shown as something else is moved to the new type. Only switches can be shown this way; a fan cannot be shown as a light. Returns the new entity's id. Undo with stop_showing_switch_as.",
+      "fields": {
+        "entity_id": {
+          "name": "Switch",
+          "description": "The switch to show as something else (or the entity it is already shown as)."
+        },
+        "target_domain": {
+          "name": "Show as",
+          "description": "The kind of device to show it as. Checked against what this Home Assistant offers."
+        },
+        "invert": {
+          "name": "Invert",
+          "description": "Invert the state (cover, lock and valve only; Home Assistant 2024.2 or newer)."
+        }
+      }
+    },
+    "stop_showing_switch_as": {
+      "name": "Stop showing switch as",
+      "description": "Undo show_switch_as — remove the helper so the switch shows as a switch again and is no longer hidden. Takes the switch or the entity it is shown as. Set dry_run to preview what goes and which automations, scripts and scenes refer to it.",
+      "fields": {
+        "entity_id": {
+          "name": "Entity",
+          "description": "The switch, or the light/fan/lock/cover/siren/valve it is shown as."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change — nothing is modified."
+        }
+      }
+    },
+    "set_sensor_display": {
+      "name": "Set sensor display",
+      "description": "Change how a sensor is shown — its display precision (decimal places) and, where Home Assistant can convert it, its unit. Only the fields named change; null puts back the integration's own. A unit is checked against the units Home Assistant can convert that sensor to.",
+      "fields": {
+        "entity_id": {
+          "name": "Sensors",
+          "description": "Sensors to change."
+        },
+        "display_precision": {
+          "name": "Display precision",
+          "description": "Decimal places to show, 0 to 6."
+        },
+        "unit_of_measurement": {
+          "name": "Unit",
+          "description": "The unit to show it in, e.g. °F or kWh. Only for sensors Home Assistant can convert."
+        }
+      }
     }
   },
   "issues": {

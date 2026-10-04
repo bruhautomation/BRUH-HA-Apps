@@ -135,18 +135,30 @@ def _words(*parts: str) -> set[str]:
     return {w for w in out if w}
 
 
-def measures_something_hot(eid: str, name: str) -> bool:
+def _hot_by_name(eid: str, name: str) -> bool:
+    words = _words(eid, name)
+    if words & _HOT_WORDS:
+        return True
+    return bool(words & _HOT_WHEN_PAIRED and words & _PAIR_WORDS)
+
+
+def measures_something_hot(eid: str, name: str, world=None) -> bool:
     """Whether this sensor plainly measures something other than room air.
 
     Public because `base.unusual` stands down for what `dev.implausible`
     claims, and the two have to agree about which sensors those are —
     the same reason `out_of_range` is shared and `_zwave_dead_devices`
     is.
+
+    `world` is the snapshot's entity readings (`world_model`): a
+    confident reading of `heater` or `room_air` answers in any language,
+    and the word list above answers whenever there is no reading or it
+    was unsure — which is exactly how this answered before.
     """
-    words = _words(eid, name)
-    if words & _HOT_WORDS:
-        return True
-    return bool(words & _HOT_WHEN_PAIRED and words & _PAIR_WORDS)
+    import world_model  # noqa: PLC0415 — panel-local, a leaf
+
+    return world_model.measures_heat(world, eid,
+                                     lambda: _hot_by_name(eid, name))
 
 
 # brAIn's own integration. Its entities are readings ABOUT this add-on — the
@@ -240,6 +252,8 @@ def unavailable(snap: dict, now: float) -> list[dict]:
         dev = house.devices[dev_id]
         rows.sort(key=lambda r: r[1], reverse=True)
         first, longest = rows[0]
+        if not house.should_report(first, "dev.unavailable"):
+            continue
         name = house.device_name(dev)
         out.append({
             "text": f"{name} has been unavailable for more than a day",
@@ -255,6 +269,8 @@ def unavailable(snap: dict, now: float) -> list[dict]:
             "entity_id": first,
         })
     for eid, age in loose:
+        if not house.should_report(eid, "dev.unavailable"):
+            continue
         out.append({
             "text": f"{house.name(eid)} has been unavailable for more than "
                     "a day",
@@ -278,11 +294,98 @@ def _is_battery(st: dict) -> bool:
         "unit_of_measurement") == "%"
 
 
+# Batteries somebody CHARGES rather than replaces. A phone sits under 15%
+# most evenings and is plugged in at bedtime; an EV, a home battery and a
+# UPS run their charge down and back up by design; a robot vacuum goes
+# back to its dock. Every one of them carries `device_class: battery` in
+# percent, so `dev.battery_low` filed "Replace the battery." about a
+# phone — the wrong remedy on a row that was never a fault, and a fresh
+# one on every dip, because the row clears the moment it recharges.
+#
+# Decided by the integration that provides the battery and by what else
+# the device is, never by its name. The platforms are the ones whose
+# battery is the rechargeable kind by construction: the companion app
+# (phones, watches, tablets, laptops), UPS monitors, home batteries and
+# inverters, EVs, and robot vacuums and mowers. An integration that
+# covers both kinds (Xiaomi's, Gardena's — a vacuum and a water timer on
+# AA cells) is deliberately absent and decided by what else the device is.
+#
+# What none of those signals can settle — a battery on a device whose
+# integration is not on the list and that has nothing else beside it — is
+# asked of the house's own reading (`world_model`), which reads the maker,
+# model and name in whatever language the house uses, and is believed only
+# above its confidence floor. It comes LAST: a reading may add a charged
+# battery the integration could not name, and never takes one away.
+RECHARGEABLE_PLATFORMS = frozenset({
+    "mobile_app",
+    "nut", "apcupsd",
+    "powerwall", "enphase_envoy", "solaredge", "fronius", "growatt_server",
+    "goodwe", "solax", "huawei_solar", "sonnen", "victron_remote_monitoring",
+    "tesla_fleet", "teslemetry", "tessie", "renault", "bmw_connected_drive",
+    "volvo", "nissan_leaf", "mercedes_me", "kia_uvo", "smartcar",
+    "polestar", "audiconnect", "volkswagen_carnet", "ohme", "zappi",
+    "roborock", "ecovacs", "roomba", "neato", "sharkiq", "dreame",
+    "husqvarna_automower",
+})
+# And a device that IS one of these, whoever provides its battery: a
+# vacuum or a mower docks to charge, and anything that reports itself
+# charging is charged.
+RECHARGEABLE_DOMAINS = frozenset({"vacuum", "lawn_mower"})
+
+
+def rechargeable(house: House, eid: str) -> bool:
+    """Whether this battery is charged rather than replaced.
+
+    Shared with `forecast.battery`, whose remedy ("have a replacement
+    ready") is wrong in the same way, so the two cannot disagree about
+    which batteries those are.
+    """
+    reg = house.registry.get(eid) or {}
+    if str(reg.get("platform") or "") in RECHARGEABLE_PLATFORMS:
+        return True
+    device = reg.get("device_id")
+    if not device:
+        return _read_as_rechargeable(house, eid)
+    for row in house.entities:
+        if row.get("device_id") != device or not row.get("entity_id"):
+            continue
+        other = str(row["entity_id"])
+        if domain_of(other) in RECHARGEABLE_DOMAINS:
+            return True
+        attrs = (house.states.get(other) or {}).get("attributes") or {}
+        cls = (attrs.get("device_class") or row.get("device_class")
+               or row.get("original_device_class"))
+        if domain_of(other) == "binary_sensor" and cls == "battery_charging":
+            return True
+    return _read_as_rechargeable(house, eid)
+
+
+def _read_as_rechargeable(house: House, eid: str) -> bool:
+    """A confident world-model reading, and nothing guessed from a name.
+
+    No fallback on purpose: a word list here would be the rule this
+    function exists to replace, and "I could not tell" keeps the battery
+    on the list of things somebody has to go and change.
+    """
+    import world_model  # noqa: PLC0415 — a leaf; imported where it is read
+    return world_model.battery_kind(house.world, eid, None) == "rechargeable"
+
+
 def battery_low(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     out = []
     for eid, st in _live_hardware(house):
         if not _is_battery(st):
+            continue
+        # Charged, not replaced: see RECHARGEABLE_PLATFORMS. Both halves
+        # of this check are about a cell somebody has to go and change,
+        # and neither is true of a phone at 9% or an app that has not
+        # reported since it was uninstalled.
+        if rechargeable(house, eid):
+            continue
+        # Wrong on one of these rows writes an exception fact, and the
+        # check has to read it, or it files the same row in new words.
+        if not house.should_report(eid, "dev.battery_low"):
             continue
         level = num(st.get("state"))
         dev = house.device_of(eid)
@@ -324,7 +427,7 @@ def battery_low(snap: dict, now: float) -> list[dict]:
 # dev.implausible — a reading no sensor should give
 # ---------------------------------------------------------------------------
 
-def out_of_range(state: dict, entity_id: str = "") -> bool:
+def out_of_range(state: dict, entity_id: str = "", world=None) -> bool:
     """True when a reading is outside what its kind of sensor can produce.
 
     Shared with `base.unusual`, which stands down for exactly these: a
@@ -348,7 +451,8 @@ def out_of_range(state: dict, entity_id: str = "") -> bool:
     # and every oven, kettle, boiler and print head in the house.
     if (attrs.get("device_class") == "temperature"
             and measures_something_hot(entity_id,
-                                       attrs.get("friendly_name") or "")):
+                                       attrs.get("friendly_name") or "",
+                                       world)):
         return False
     return not bounds[0] <= value <= bounds[1]
 
@@ -366,9 +470,9 @@ def implausible(snap: dict, now: float) -> list[dict]:
         if value is None:
             continue
         lo, hi = bounds
-        if not out_of_range(st, eid):
+        if not out_of_range(st, eid, house.world):
             continue
-        if house.excepted(eid, "dev.implausible"):
+        if not house.should_report(eid, "dev.implausible"):
             continue
         out.append({
             "text": f"{house.name(eid)} is reporting an impossible value",
@@ -419,7 +523,7 @@ def frozen(snap: dict, now: float) -> list[dict]:
         if abs(lo) < 1e-9:
             # A power sensor on an idle plug reads 0 for a week and is fine.
             continue
-        if house.excepted(eid, "dev.frozen"):
+        if not house.should_report(eid, "dev.frozen"):
             # "It is a contact on a cupboard nobody opens" — said once,
             # on the Wrong button, and read here ever after.
             continue
@@ -437,8 +541,13 @@ def frozen(snap: dict, now: float) -> list[dict]:
         })
     # Past the cap this says nothing at all, rather than saying it more
     # quietly: a dozen at once is a fact about the statistics rather than
-    # about the sensors.
-    return [] if len(out) > FROZEN_MAX_ROWS else out
+    # about the sensors. And it says on the decision trail that it did.
+    if len(out) > FROZEN_MAX_ROWS:
+        house.gave_up("dev.frozen", out, f"{len(out)} sensors read one value "
+                      f"for a week at once — past {FROZEN_MAX_ROWS} that is a "
+                      "recorder purge or a reload rather than broken sensors")
+        return []
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +564,9 @@ def restored(snap: dict, now: float) -> list[dict]:
         by_platform.setdefault(str(reg.get("platform") or "unknown"), []).append(eid)
     out = []
     for platform, eids in sorted(by_platform.items()):
-        eids.sort()
+        eids = sorted(e for e in eids if house.should_report(e, "dev.restored"))
+        if not eids:
+            continue
         out.append({
             "text": f"Entities from the '{platform}' integration are left "
                     "over with nothing providing them",

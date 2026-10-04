@@ -55,7 +55,17 @@ STATE_FILE = Path(os.environ.get("BRAIN_ONBOARDING_STATE", "/data/onboarding.jso
 FIRST_TOPICS = ("naming", "presence", "energy", "climate", "devices")
 
 MAX_RECOMMENDATIONS = 8
-MIN_MEMORY_CHARS = 200
+# What "something has been learned" means: at least this many FACT lines,
+# in the document or still waiting in the inbox. It used to be 200
+# characters of the document, and the template run.sh seeds is 311 of
+# headings and comments — so the Recommend step opened the moment the fifth
+# topic was recorded, on a document with nothing in it.
+MIN_MEMORY_LINES = 1
+# How long a finished syllabus waits for anything to land before the step
+# opens anyway. Five sessions that found nothing is an answer too, and a
+# screen that waited for ever on it would be the flow dead-ending.
+READY_AFTER_S = 15 * 60
+INBOX_DIR = MEMORY_DIR / "inbox"
 
 # The one card that exists before anything has been studied. It runs from
 # the orientation map in search mode, so it costs a small prompt and a
@@ -91,10 +101,14 @@ Reply with ONE JSON object and nothing else:
                       "why": "One sentence to the homeowner explaining why this is worth having, citing what was found."}],
  "shipped": [{"id": "one of the general card ids you were given",
               "why": "One sentence on why this home in particular has enough for it."}],
+ "try": {"sentence": "One automation this home would benefit from, said the way a person would say it: 'When the back door opens after sunset, turn on the patio light.'",
+         "why": "One sentence citing what you found that makes it worth trying."},
  "sparse": false,
  "missing": "Only when sparse is true: one sentence on what this home would need before insights are worth generating."}
 
 Propose at most 8, and fewer is better — four sharp cards beat eight vague ones.
+
+"try" is AT MOST ONE automation, and it is optional: leave it out unless you found something it rests on — entities that really exist here and a habit, a gap or a nuisance you actually saw. It will be simulated over this home's own recorded history before anything is written, so it must trigger on something the recorder keeps (a time, a state change, a number crossing a line) and act on named entities. Never a lock, an alarm or anything that opens the house.
 
 If what this home HAS is too thin to justify ANY card — barely any entities, no history, nothing learned — set "sparse": true, return an empty recommendations list, and say plainly in "missing" what is absent. Do not pad with generic cards; a card about a home you know nothing about wastes tokens on every run and teaches the homeowner to ignore the dashboard."""
 
@@ -310,22 +324,138 @@ def request_study(topic: str = "", tag: str = "ask",
     return topic
 
 
-def learning_progress() -> dict:
+def pending_facts(limit: int = 200) -> list[str]:
+    """The facts still waiting in the memory inbox, oldest file first.
+
+    What the five study sessions found, before any consolidation pass has
+    filed it — which is most of the time at the moment this flow asks: a
+    pass runs when twenty lines are waiting or once a day, and the
+    syllabus is five sessions of whatever each one found.
+    """
+    out: list[str] = []
+    try:
+        paths = sorted(INBOX_DIR.glob("*.jsonl"))
+    except OSError:
+        return out
+    for path in paths:
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in raw.splitlines():
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            fact = str((obj or {}).get("fact") or "").strip() \
+                if isinstance(obj, dict) else ""
+            if fact and not fact.upper().startswith("FORGET:") \
+                    and fact not in out:
+                out.append(fact)
+            if len(out) >= limit:
+                return out
+    return out
+
+
+# How many of the study sessions' findings the onboarding screen shows as
+# they land. Enough to read as "it is finding things about THIS house",
+# few enough to read at all.
+MAX_REVEALS = 8
+MAX_REVEAL_CHARS = 240
+
+
+def reveals(since: float = 0.0, limit: int = MAX_REVEALS) -> list[dict]:
+    """What the opening study sessions have found, newest first.
+
+    The first half hour of an install was a progress bar: five sessions
+    each spending minutes in somebody's house, and nothing on screen said
+    what any of them had learned until a recommend pass turned it into a
+    list of cards. So the facts are shown AS THEY LAND — read off the
+    memory inbox the sessions write to, and off `processed/` beside it,
+    because a consolidation pass that filed a line moments ago must not
+    take it off the screen that was showing it. Only lines a study session
+    wrote (`study:<topic>`) and only from this onboarding (`since`): the
+    screen is about what was found just now, not everything ever queued.
+    Read-only, and a file it cannot read is skipped.
+    """
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for folder in (INBOX_DIR / "processed", INBOX_DIR):
+        try:
+            paths = sorted(folder.glob("*.jsonl"))
+        except OSError:
+            continue
+        for path in paths:
+            try:
+                raw = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for line in raw.splitlines():
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+                source = str(obj.get("source") or "")
+                if not source.startswith("study:"):
+                    continue
+                fact = " ".join(str(obj.get("fact") or "").split())
+                ts = obj.get("ts")
+                ts = int(ts) if isinstance(ts, (int, float)) and not isinstance(
+                    ts, bool) else 0
+                if (not fact or fact.upper().startswith("FORGET:")
+                        or ts < since or fact in seen):
+                    continue
+                seen.add(fact)
+                topic = source.split(":", 1)[1]
+                rows.append({"fact": fact[:MAX_REVEAL_CHARS], "ts": ts,
+                             "topic": topic if topic in FIRST_TOPICS else ""})
+    rows.sort(key=lambda r: -r["ts"])
+    return rows[:max(0, int(limit))]
+
+
+def _studied_at() -> int:
+    """When the last opening topic was recorded, or 0."""
+    try:
+        data = json.loads(CURRICULUM_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    if not isinstance(data, dict):
+        return 0
+    stamps = [int(v.get("ts") or 0) for k, v in data.items()
+              if k in FIRST_TOPICS and isinstance(v, dict)]
+    return max(stamps) if stamps else 0
+
+
+def learning_progress(now: float | None = None) -> dict:
+    now = time.time() if now is None else now
     studied = _studied_topics()
     done = [t for t in FIRST_TOPICS if t in studied]
     try:
-        memory_chars = len(MEMORY_FILE.read_text(encoding="utf-8"))
+        document = MEMORY_FILE.read_text(encoding="utf-8")
     except OSError:
-        memory_chars = 0
+        document = ""
+    lines = len(shipped_categories.document_lines(document))
+    pending = len(pending_facts())
+    complete = len(done) == len(FIRST_TOPICS)
+    waited = complete and now - _studied_at() >= READY_AFTER_S
     return {
         "topics": list(FIRST_TOPICS),
         "done": done,
         "remaining": [t for t in FIRST_TOPICS if t not in studied],
-        "complete": len(done) == len(FIRST_TOPICS),
-        "memory_chars": memory_chars,
-        # Facts reach the document only at consolidation, so a finished
-        # syllabus with an empty document means "wait", not "nothing found".
-        "memory_ready": memory_chars >= MIN_MEMORY_CHARS,
+        "complete": complete,
+        "memory_chars": len(document),
+        "memory_lines": lines,
+        "pending_facts": pending,
+        # Something learned, wherever it is: filed in the document or
+        # still in the inbox — the recommend pass reads both
+        # (`_shared_blocks`). A finished syllabus that has found nothing
+        # yet means "wait", and past READY_AFTER_S it means "go on".
+        "memory_ready": (lines + pending) >= MIN_MEMORY_LINES or waited,
+        # What the sessions have found so far, as it lands — the screen
+        # shows these while the bar fills, rather than a bar alone.
+        "reveals": reveals(since=float(_read_state().get("started_at") or 0)),
     }
 
 
@@ -345,14 +475,41 @@ def shipped_choices() -> list[dict]:
             for c in shipped_categories.CATEGORIES]
 
 
-def _shared_blocks(memory: str) -> list[str]:
+# What the waiting facts may cost the recommend prompt. The document has
+# its own cap (`memory_max_kb`); this is the inbox beside it.
+PENDING_CHARS = 6_000
+
+
+def _shared_blocks(memory: str, pending=None) -> list[str]:
     """Everything the two recommend prompts say before the data.
 
     Shared rather than written twice for `_CARD_CONTRACT`'s reason: a second
     copy of what this home has learned, which cards ship, and what the
     homeowner has already rejected is a second copy that drifts.
+
+    ``pending`` is what the study sessions found that no consolidation
+    pass has filed yet — read from the inbox when not handed in. The
+    document alone was usually the empty template at this moment, so the
+    card set the five paid-for studies existed to ground was proposed from
+    a quick tool search instead.
     """
-    parts = ["WHAT HAS BEEN LEARNED ABOUT THIS HOME:", memory.strip() or "(nothing yet)"]
+    if pending is None:
+        pending = pending_facts()
+    filed = "\n".join(shipped_categories.document_lines(memory))
+    parts = ["WHAT HAS BEEN LEARNED ABOUT THIS HOME:",
+             memory.strip() if filed else "(nothing filed into memory yet)"]
+    waiting: list[str] = []
+    used = 0
+    for fact in pending or []:
+        line = f"- {fact}"
+        if used + len(line) + 1 > PENDING_CHARS:
+            break
+        waiting.append(line)
+        used += len(line) + 1
+    if waiting:
+        parts.append("\nWHAT THE STUDY SESSIONS FOUND, NOT YET FILED INTO "
+                     "MEMORY — just as true, read it the same way:")
+        parts += waiting
     parts.append("\nGENERAL CARDS THAT SHIP WITH THE ADD-ON — pick the few "
                  "that fit this home, by id:")
     parts += [f"- {c['id']}: {c['title']} — {c['description']}"
@@ -469,13 +626,35 @@ def parse_recommendations(text: str) -> dict:
         "shipped": picked,
         "sparse": sparse,
         "missing": str(obj.get("missing") or "").strip()[:400] if sparse else "",
+        "try_rule": parse_try(obj.get("try")),
     }
+
+
+MAX_TRY_CHARS = 300
+
+
+def parse_try(value) -> dict | None:
+    """The one automation offered to try, or None.
+
+    Only the sentence is taken: it goes through the ask bar's own drop
+    (`intents.request`) and so through `authoring.build`'s refusals and
+    two simulations exactly as a typed sentence does. A config written
+    here would be a second path from a sentence to a rule.
+    """
+    if not isinstance(value, dict):
+        return None
+    sentence = " ".join(str(value.get("sentence") or "").split())[:MAX_TRY_CHARS]
+    if not sentence or sentence.endswith("?"):
+        return None
+    return {"sentence": sentence,
+            "why": " ".join(str(value.get("why") or "").split())[:MAX_TRY_CHARS]}
 
 
 def save_recommendations(result: dict) -> dict:
     _patch_state(phase="choosing", recommendations=result["recommendations"],
                  shipped=result.get("shipped") or [],
                  sparse=result["sparse"], missing=result["missing"],
+                 try_rule=result.get("try_rule"),
                  recommended_at=int(time.time()))
     return result
 
@@ -487,7 +666,14 @@ def stored_recommendations() -> dict:
         "shipped": state.get("shipped") or [],
         "sparse": bool(state.get("sparse")),
         "missing": state.get("missing") or "",
+        "try_rule": parse_try(state.get("try_rule")),
+        "tried_rule": state.get("tried_rule") or "",
     }
+
+
+def mark_tried(sentence: str) -> None:
+    """Remember that the onboarding automation was sent to be simulated."""
+    _patch_state(tried_rule=str(sentence or "")[:MAX_TRY_CHARS])
 
 
 # ---------------------------------------------------------------------------

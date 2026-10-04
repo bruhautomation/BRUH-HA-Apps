@@ -174,9 +174,23 @@ const DRILLS = {
     { entity_id: 'sensor.boiler_flow', name: 'Boiler flow',
       unit: '°C', flat: true, buckets_n: 0, trend: null },
   ],
-  // _thermal_payload()
+  // _thermal_payload() — the reference, why it won, the others it beat
+  // and the person's own choice (none yet).
   thermal: {
     outdoor: 'sensor.outside_temperature', unit: '°C',
+    outdoor_source: 'ranked',
+    outdoor_why: 'Outside temperature (sensor.outside_temperature) is in no '
+      + 'area and reads within 0.4°C of weather.home.',
+    outdoor_choice: null,
+    outdoor_candidates: [
+      { entity_id: 'sensor.outside_temperature', name: 'Outside temperature',
+        unit: '°C', score: 6, reasons: [], ruled_out: '', eligible: true },
+      { entity_id: 'sensor.heat_pump_outdoor_coil', name: 'Heat pump outdoor coil',
+        unit: '°C', score: 0, reasons: [], ruled_out: '', eligible: false },
+      { entity_id: 'sensor.ac_ambient', name: 'AC ambient', unit: '°C',
+        score: 1, reasons: [], ruled_out: 'is in the Lounge area, which is indoors',
+        eligible: false },
+    ],
     rooms: [
       { id: 'sensor.bedroom_temp', name: 'Bedroom', area: 'Bedroom',
         k: 0.081, tau_h: 12.3, gain: 1.9, warmest: 21.5, coolest: 16.1,
@@ -254,6 +268,14 @@ window.fetch = async (url, opts) => {
   const p = String(url);
   const answer = (body, status) => new Response(JSON.stringify(body), {
     status: status || 200, headers: { 'Content-Type': 'application/json' } });
+  // The deep review: the run press records itself and answers running.
+  if (p.includes('api/deep-review/run')) {
+    window.__reviewPresses = (window.__reviewPresses || 0) + 1;
+    window.__review = Object.assign({}, window.__review || {},
+      { running: true, started_at: ${NOW} });
+    return answer(window.__review);
+  }
+  if (p.includes('api/deep-review')) return answer(window.__review || {});
   // Before the bare \`api/knowledge\` branch: these paths contain it.
   if (p.includes('api/knowledge/card/')) {
     // The 409 is not an error state — the measurement really has no answer
@@ -347,7 +369,12 @@ window.fetch = async (url, opts) => {
     });
   }
   if (p.includes('api/onboarding')) return answer({ onboarded: true });
-  if (p.includes('api/settings')) return answer({});
+  if (p.includes('api/settings')) {
+    if (opts && opts.method === 'PUT') {
+      (window.__settingsPuts = window.__settingsPuts || []).push(JSON.parse(opts.body));
+    }
+    return answer({});
+  }
   if (p.includes('api/insights')) return answer({ insights: [] });
   if (p.includes('api/findings')) {
     return answer({ findings: [], hypotheses: [], open: 0, settled: [] });
@@ -495,7 +522,7 @@ for (const width of WIDTHS) {
     note(`${width}px`, 'the brief does not say when it was sent');
   }
   // Four sections, in order.
-  const order = ['This morning', 'What brAIn has measured',
+  const order = ['This morning', 'Deep review', 'What brAIn has measured',
                  "How brAIn's memory works", 'Memory document',
                  'Waiting to be filed', 'Facts brAIn has learned'];
   const found = order.map((h) => m.sections.findIndex((t) => t.startsWith(h)));
@@ -547,6 +574,36 @@ for (const width of WIDTHS) {
   // Sorted by τ: the fastest-losing room is the one somebody is looking for.
   if (thermalText.indexOf('Hall') > thermalText.indexOf('Bedroom')) {
     note(`${width}px`, 'thermal rooms are not sorted by time constant');
+  }
+  // Every room is measured against ONE outdoor thermometer, so the drill
+  // says which, says why, and lets somebody who knows better change it.
+  if (!/within 0\.4/.test(thermalText)) {
+    note(`${width}px`, 'the thermal drill-down does not say why that reference');
+  }
+  const picker = await page.evaluate(() => {
+    const sel = document.querySelector('.kdrill[data-store="thermal"] .kref select');
+    if (!sel) return null;
+    const box = sel.getBoundingClientRect();
+    return { options: [...sel.options].map((o) => o.value), value: sel.value,
+             right: box.right, width: window.innerWidth };
+  });
+  if (!picker) {
+    note(`${width}px`, 'the thermal drill-down has no outdoor reference picker');
+  } else {
+    if (picker.value !== '' || picker.options[0] !== ''
+        || !picker.options.includes('sensor.heat_pump_outdoor_coil')) {
+      note(`${width}px`, `the picker's options are wrong: ${JSON.stringify(picker)}`);
+    }
+    if (picker.right > picker.width + 0.5) {
+      note(`${width}px`, 'the outdoor reference picker runs off the page');
+    }
+    await page.selectOption('.kdrill[data-store="thermal"] .kref select',
+      'sensor.heat_pump_outdoor_coil');
+    await page.waitForTimeout(120);
+    const puts = await page.evaluate(() => window.__settingsPuts || []);
+    if (!puts.some((b) => b.thermal_outdoor === 'sensor.heat_pump_outdoor_coil')) {
+      note(`${width}px`, `choosing a reference saved nothing: ${JSON.stringify(puts)}`);
+    }
   }
 
   // A store with no rows says why, in its own words, rather than nothing.
@@ -1192,6 +1249,76 @@ for (const width of WIDTHS) {
   console.log(`${failures.length ? 'ok? ' : 'ok  '}milestones `
     + `${String(width).padStart(4)}px  1 card under its row, `
     + `${pend.length} pending lines`);
+  await context.close();
+}
+
+// ------------------------------------------------------------ deep review
+// One press on the top tier: the price is on the screen before the press,
+// the last review is readable under it, and the press says it started.
+// The shape is `server._deep_review_payload`'s, copied rather than guessed.
+const REVIEW = {
+  running: false, started_at: 0, last_error: '', error: '', authenticated: true,
+  model: 'fable', effort: 'high',
+  estimate: { tokens: 146000, basis: 'what the last 1 review on this house cost',
+              percent: 49 },
+  latest: {
+    id: 1, at: NOW - 5 * 86400, model: 'fable', tokens: 146000,
+    summary: 'The house is mostly well set up; one hub is carrying too much.',
+    one_thing: 'Move the Zigbee hub away from the microwave.',
+    observations: [
+      { title: 'Three plugs drop out together', kind: 'problem',
+        detail: 'The kettle, toaster and coffee plugs go unavailable in the same minute most mornings.',
+        entities: ['switch.kettle'] },
+      { title: 'The hall lights follow the house well', kind: 'working',
+        detail: 'The motion rule has not been overridden in a month.', entities: [] },
+    ],
+  },
+  history: [{ id: 0, at: NOW - 40 * 86400, tokens: 151000 }],
+};
+for (const width of WIDTHS) {
+  const touch = width < 800;
+  const at = `review ${width}px`;
+  const { context, page } = await openPanel(width,
+    `window.__review = ${JSON.stringify(REVIEW)};`, touch);
+  await page.click('.viewtab[data-view="memory"]');
+  await page.waitForSelector('#kReview .kreviewrun', { timeout: 5000 })
+    .catch(() => note(at, 'the deep review section never rendered'));
+  const r = await page.evaluate(() => {
+    const box = document.getElementById('kReview');
+    const btn = box && box.querySelector('.kreviewrun .btn');
+    const b = btn ? btn.getBoundingClientRect() : { height: 0 };
+    return {
+      text: box ? box.textContent : '',
+      btnText: btn ? btn.textContent : '',
+      btnH: Math.round(b.height),
+      disabled: btn ? btn.disabled : null,
+      obs: box ? box.querySelectorAll('.kreviewob').length : 0,
+      docWidth: document.documentElement.scrollWidth,
+    };
+  });
+  if (!/146k tokens/.test(r.text)) note(at, 'the price is not on the screen before the press');
+  if (!/49%/.test(r.text)) note(at, 'the price does not say what share of a session it is');
+  if (!/estimate/i.test(r.text)) note(at, 'the price does not say it is an estimate');
+  if (r.obs !== 2) note(at, `${r.obs} observations rendered, not 2`);
+  if (!/Move the Zigbee hub/.test(r.text)) note(at, 'the one thing this month is missing');
+  if (!/Earlier reviews/.test(r.text)) note(at, 'the earlier reviews are not named');
+  if (r.btnH < MIN_TARGET) note(at, `the review button is ${r.btnH}px`);
+  if (r.disabled) note(at, 'the review button is disabled with nothing running');
+  if (r.docWidth > width + 0.5) note(at, `page scrolls sideways (${r.docWidth}px)`);
+  await page.click('#kReview .kreviewrun .btn');
+  await page.waitForTimeout(300);
+  const after = await page.evaluate(() => ({
+    presses: window.__reviewPresses || 0,
+    btn: (document.querySelector('#kReview .kreviewrun .btn') || {}).textContent || '',
+    disabled: (document.querySelector('#kReview .kreviewrun .btn') || {}).disabled,
+    toast: (document.getElementById('toast') || {}).textContent || '',
+  }));
+  if (after.presses !== 1) note(at, `the press reached the server ${after.presses} times`);
+  if (!/Reviewing/.test(after.btn) || !after.disabled) {
+    note(at, 'a running review does not say so on its own button');
+  }
+  if (!/lands here/.test(after.toast)) note(at, `the press said "${after.toast}"`);
+  console.log(`${failures.length ? 'ok? ' : 'ok  '}deep review ${String(width).padStart(4)}px`);
   await context.close();
 }
 

@@ -161,6 +161,20 @@ def is_protected(entity_id: str, patterns: list[str]) -> bool:
     return any(p in (target, f"{domain}.*", "*") for p in patterns)
 
 
+_SELF_TEMPLATE = "{{this.entity_id}}"
+
+
+def _acts_on_itself(call: dict, entity) -> bool:
+    """`automation.turn_off` on ``{{ this.entity_id }}``, and nothing wider.
+
+    `this` is the automation running the action, so the call can switch
+    off exactly one thing — itself — whatever the protected list says.
+    Spaces inside the braces are the template author's and mean nothing.
+    """
+    return (str(call.get("service") or "") == "automation.turn_off"
+            and "".join(str(entity or "").split()) == _SELF_TEMPLATE)
+
+
 def _protected_refusal(config: dict, patterns: list[str]) -> str | None:
     """Why this automation may not be written, or None."""
     if not patterns:
@@ -182,6 +196,11 @@ def _protected_refusal(config: dict, patterns: list[str]) -> str | None:
         entity = call.get("entity_id")
         ids = [entity] if isinstance(entity, str) else list(entity or [])
         for eid in ids:
+            if _acts_on_itself(call, eid):
+                # The one template that names a single, knowable entity:
+                # the automation running the action. A one-off disarms
+                # itself this way, and it can reach nothing else.
+                continue
             if is_protected(str(eid), patterns):
                 return (f"{eid} is on the protected entities list, so brAIn "
                         "will not write an automation that acts on it")
@@ -351,6 +370,58 @@ def slugify(text: str) -> str:
     return out or "automation"
 
 
+# The sentence somebody dictated, carried into the automation it became.
+# Long enough for any sentence the ask bar takes (`intents.MAX_SENTENCE`)
+# with room for the frame around it.
+DESCRIPTION_SAID_MAX = 320
+
+
+def _said(row: dict) -> tuple[str, str]:
+    """`(sentence, via)` for a proposal that came from words, or `("", "")`.
+
+    A standing rule carries them under `spoken` and a one-off under
+    `intent` (`authoring.build` / `intents.build`); `via` is stamped there
+    by the drain, so a card's suggestion is told apart from a person's
+    own sentence. One line, capped: it is going into a YAML scalar a person
+    will read in Home Assistant's editor.
+    """
+    for key in ("spoken", "intent"):
+        said = row.get(key)
+        if not isinstance(said, dict):
+            continue
+        sentence = " ".join(str(said.get("sentence") or "").split())
+        if sentence:
+            return (sentence[:DESCRIPTION_SAID_MAX],
+                    str(said.get("via") or "")[:32])
+    return "", ""
+
+
+def description_for(row: dict, now: float | None = None) -> str:
+    """What the automation says about itself in Home Assistant's editor.
+
+    A rule asked for in a sentence keeps the SENTENCE. "Why does this rule
+    exist" is the question somebody opens an automation six months later
+    to answer, and the fixed line every accept used to stamp — *proposed
+    by brAIn from what you do by hand* — was wrong for every rule anybody
+    typed and said nothing even where it was right. The person's own
+    words are the one answer nothing else in the house records, and the
+    `explain` path reads them back through `get_automation_config`.
+
+    A card's suggestion is quoted as the card's, never as the person's:
+    putting words in somebody's mouth inside their own automations file
+    is the one thing this must not do.
+    """
+    now = time.time() if now is None else now
+    day = time.strftime("%Y-%m-%d", time.localtime(now))
+    sentence, via = _said(row)
+    if sentence and via.startswith("card:"):
+        return (f"Suggested by a brAIn insight card: “{sentence}” "
+                f"— accepted on {day}.")
+    if sentence:
+        return f"Asked for in brAIn: “{sentence}” — accepted on {day}."
+    return f"Proposed by brAIn from what you do by hand; accepted on {day}."
+
+
 def entry_for(row: dict, now: float | None = None) -> dict:
     """The automation, as it goes into the file.
 
@@ -373,9 +444,7 @@ def entry_for(row: dict, now: float | None = None) -> dict:
         "id": named if named.startswith(ID_PREFIX) and len(named) <= 64
               else f"{ID_PREFIX}{int(row.get('ts') or 0)}",
         "alias": str(row.get("title") or "brAIn automation")[:255],
-        "description": (
-            "Proposed by brAIn from what you do by hand; accepted on "
-            f"{time.strftime('%Y-%m-%d', time.localtime(now))}."),
+        "description": description_for(row, now),
     }
     for key in ("trigger", "triggers", "condition", "conditions",
                 "action", "actions", "mode"):
@@ -961,7 +1030,8 @@ def remove(entry_id: str, *, config_dir: str | None = None,
 __all__ = ["AUTOMATIONS_FILE", "CONFIGURATION_FILE", "ID_PREFIX", "INCLUDE_RE",
            "entry_ids",
            "SCENES_FILE", "SCENE_INCLUDE_RE", "TARGETS",
-           "INDEX", "JOURNAL_DIR", "SNAP_DIR", "TOOL", "apply", "apply_edit", "entry_for",
+           "INDEX", "JOURNAL_DIR", "SNAP_DIR", "TOOL", "apply", "apply_edit",
+           "description_for", "entry_for",
            "in_config_tree",
            "is_protected", "locate", "protected_patterns", "remove",
            "remove_entry",

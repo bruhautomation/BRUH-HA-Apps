@@ -105,9 +105,17 @@ def left_open(snap: dict, now: float) -> list[dict]:
         # None is "not watched at this hour", which is not "never open".
         if usual is None or usual > RARE_OPEN:
             continue
+        if not house.should_report(eid, "evening.left_open"):
+            continue
         hits.append((usual, eid, entry))
 
-    if not hits or len(hits) > MAX_ROWS:
+    if len(hits) > MAX_ROWS:
+        house.gave_up("evening.left_open", [{"entity_id": h[1]} for h in hits],
+                      f"{len(hits)} doors and windows were open at once at "
+                      f"bedtime — past {MAX_ROWS} that is a house being aired, "
+                      "not doors left open by mistake")
+        return []
+    if not hits:
         return []
     hits.sort()
 

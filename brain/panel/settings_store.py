@@ -28,6 +28,16 @@ the panel's ⚙ dialog edits at runtime — no add-on restart needed:
                     by default: a house's entity names are a floor plan,
                     and nothing leaves the add-on until a person exports
                     one from ⚙ → Diagnostics.
+  thermal_outdoor — the outdoor temperature sensor every room's heat-loss
+                    model is measured against, when somebody has chosen
+                    one on the Knowledge tab. None means "let brAIn rank
+                    them" (`thermal.choose_outdoor`), which is the
+                    default; a choice is only ever an entity id.
+  camera_confirm  — the cameras brAIn may look at on its own (voice, a
+                    task, the Resident confirming a trip): empty by
+                    default, a list of camera entity ids, validated by
+                    `camera_policy.clean_cameras`. A person in the chat or
+                    the terminal is not asked; they are the one looking.
   chat_model      — the chat terminal's own model, chosen from the chat
                     itself. None means "follow the global model option":
                     the chat is where a different model is most often
@@ -36,7 +46,7 @@ the panel's ⚙ dialog edits at runtime — no add-on restart needed:
                     costs.
 
 It can also hold the add-on's Configuration-tab options, but only as a
-FALLBACK: those six settings normally live in the add-on's own options via
+FALLBACK: those seven settings normally live in the add-on's own options via
 the Supervisor (see addon_options.py), so the panel and the Configuration
 tab always agree. When the Supervisor isn't reachable the panel stores them
 here instead; each is None when unset, meaning "use the startup value":
@@ -47,6 +57,12 @@ here instead; each is None when unset, meaning "use the startup value":
   history_keep_days  — days past runs are kept (0-365)
   model              — Claude model override ("" is treated as unset)
   timeout_minutes    — per-generation hard timeout (2-30)
+  dangerously_skip_permissions — "Let brAIn act without asking": the
+                       terminal and the chat stop asking before each change
+                       (`permission_mode.py`). A boolean, and the one option
+                       here that is not about generation — it is mirrored
+                       the same way so ⚙ and the Configuration tab are one
+                       switch with two doors.
 
 File shape: {"auto_enabled": true, "plan": "pro", "budget_percent": 25,
 "refresh_hours": 12, ...} — option keys may be absent or null (= unset).
@@ -57,6 +73,7 @@ without the add-on runtime.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -117,6 +134,10 @@ OPTION_RANGES = {
 }
 MAX_MODEL_CHARS = 100
 
+# Boolean add-on options mirrored the same way: name → nothing to clamp.
+# Kept apart from OPTION_RANGES because an int check would read True as 1.
+OPTION_BOOLS = ("dangerously_skip_permissions",)
+
 # The chat's live-process cap. A range rather than a free integer for the
 # same reason budget_percent has one: the low end has to leave the chat
 # usable and the high end has to leave the box usable.
@@ -160,6 +181,7 @@ DEFAULTS = {
     "history_keep_days": None,
     "model": None,
     "timeout_minutes": None,
+    "dangerously_skip_permissions": None,
     "chat_model": None,
     "chat_max_sessions": DEFAULT_CHAT_SESSIONS,
     # How hard brAIn thinks, as one word rather than a model per job. The
@@ -181,7 +203,51 @@ DEFAULTS = {
     # looking at the row that earned it, and because the scorecard that
     # argues for it lives on the same tab.
     "muted_sources": [],
+    # See the module docstring. A panel setting because it is chosen while
+    # looking at the reference brAIn picked and the reasons it gave.
+    "thermal_outdoor": None,
+    # The calendars brAIn may read for what is coming up (`occasions.py`),
+    # as entity ids. EMPTY by default and only ever what somebody ticked:
+    # a calendar is the most personal thing a house holds, and "brAIn read
+    # my calendar" has to be a thing a person chose.
+    "occasion_calendars": [],
+    # Entities a person has named as tripwires (`security.py`): any acting
+    # call on one is refused by the MCP chokepoint and files a security
+    # case. Beside the one brAIn creates on a press, not instead of it.
+    "honeytoken_entities": [],
+    # See the module docstring and `camera_policy`. Empty: no camera is
+    # looked at unattended until somebody ticks it.
+    "camera_confirm": [],
 }
+
+# An entity id, and nothing else: this one is read by the nightly pass
+# and compared against the states, so it has no business holding prose.
+_ENTITY_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
+MAX_ENTITY_CHARS = 255
+
+MAX_CALENDARS = 10
+_CALENDAR_RE = re.compile(r"^calendar\.[a-z0-9_]{1,120}$")
+
+
+def clean_calendars(value) -> list[str]:
+    """A list of calendar entity ids — checked, deduped, capped — or a
+    ValueError. An id that is not a calendar's is refused rather than
+    dropped: a typo silently reading nothing is the failure to avoid."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("occasion_calendars must be a list of calendar ids")
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not _CALENDAR_RE.match(item.strip()):
+            raise ValueError(f"{str(item)[:60]!r} is not a calendar entity id")
+        item = item.strip()
+        if item not in out:
+            out.append(item)
+    if len(out) > MAX_CALENDARS:
+        raise ValueError(f"at most {MAX_CALENDARS} calendars")
+    return out
+
 
 # How many producers may be muted. There are about forty checks and a
 # handful of categories; a list past this is a Findings tab switched off
@@ -264,21 +330,72 @@ def load() -> dict:
         val = data.get(name)
         if isinstance(val, int) and not isinstance(val, bool) and lo <= val <= hi:
             out[name] = val
+    for name in OPTION_BOOLS:
+        if isinstance(data.get(name), bool):
+            out[name] = data[name]
     lo, hi = CHAT_SESSIONS_RANGE
     sessions = data.get("chat_max_sessions")
     if isinstance(sessions, int) and not isinstance(sessions, bool) \
             and lo <= sessions <= hi:
         out["chat_max_sessions"] = sessions
     try:
+        out["occasion_calendars"] = clean_calendars(
+            data.get("occasion_calendars"))
+    except ValueError:
+        # Unreadable is NONE: the wrong direction here reads a calendar
+        # nobody chose.
+        pass
+    try:
         out["muted_sources"] = clean_sources(data.get("muted_sources"))
     except ValueError:
         # A list that cannot be read mutes nothing: the wrong direction
         # here hides a card.
         pass
+    _load_notify_policy(data, out)
     for key in ("model", "chat_model"):
         value = data.get(key)
         if isinstance(value, str) and value.strip():
             out[key] = value.strip()[:MAX_MODEL_CHARS]
+    outdoor = data.get("thermal_outdoor")
+    if isinstance(outdoor, str) and _ENTITY_RE.match(outdoor) \
+            and len(outdoor) <= MAX_ENTITY_CHARS:
+        out["thermal_outdoor"] = outdoor
+    try:
+        out["honeytoken_entities"] = clean_entity_list(
+            data.get("honeytoken_entities"))
+    except ValueError:
+        # A list that cannot be read is no tripwire rather than a crash on
+        # every settings read; the MCP chokepoint's other floors still hold.
+        pass
+    try:
+        import camera_policy  # noqa: PLC0415 — the one validator
+        out["camera_confirm"] = camera_policy.clean_cameras(
+            data.get("camera_confirm"))
+    except (ValueError, ImportError):
+        # A list that cannot be read allows no camera: the wrong direction
+        # here takes a picture.
+        out["camera_confirm"] = []
+    return out
+
+
+MAX_HONEYTOKENS = 10
+
+
+def clean_entity_list(value) -> list[str]:
+    """A short list of entity ids, or a ValueError naming the bad one."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("honeytoken_entities must be a list of entity ids")
+    out: list[str] = []
+    for item in value:
+        eid = str(item or "").strip().lower()
+        if not _ENTITY_RE.match(eid) or len(eid) > MAX_ENTITY_CHARS:
+            raise ValueError(f"{str(item)[:60]!r} is not an entity id")
+        if eid not in out:
+            out.append(eid)
+    if len(out) > MAX_HONEYTOKENS:
+        raise ValueError(f"at most {MAX_HONEYTOKENS} tripwire entities")
     return out
 
 
@@ -301,12 +418,19 @@ def clean_option(key: str, value):
         if value is not None and not isinstance(value, str):
             raise ValueError("model must be a string or null")
         return (value or "").strip()[:MAX_MODEL_CHARS] or None
+    if key in OPTION_BOOLS:
+        # A boolean or nothing. A string "true" is refused rather than
+        # read, because a switch that turns off asking is the one setting
+        # a typo must not be able to turn on.
+        if value is not None and not isinstance(value, bool):
+            raise ValueError(f"{key} must be true, false or null")
+        return value
     raise ValueError(f"unknown option: {key}")
 
 
 def is_option(key: str) -> bool:
     """True for the settings that mirror an add-on Configuration option."""
-    return key in OPTION_RANGES or key == "model"
+    return key in OPTION_RANGES or key == "model" or key in OPTION_BOOLS
 
 
 def option_overrides() -> dict:
@@ -350,6 +474,12 @@ def save(fields: dict) -> dict:
             clean[key] = value
         elif key == "muted_sources":
             clean[key] = clean_sources(value)
+        elif key == "occasion_calendars":
+            clean[key] = clean_calendars(value)
+        elif key in NOTIFY_POLICY_KEYS or key == "speak_first":
+            clean[key] = clean_notify_policy(key, value)
+        elif key == "honeytoken_entities":
+            clean[key] = clean_entity_list(value)
         elif key == "plan":
             if value not in PLANS:
                 raise ValueError(f"plan must be one of {', '.join(PLANS)}")
@@ -400,6 +530,18 @@ def save(fields: dict) -> dict:
                 raise ValueError(
                     f"chat_max_sessions must be an integer {lo}-{hi}")
             clean[key] = value
+        elif key == "thermal_outdoor":
+            # None (or "") is "let brAIn rank them".
+            if value is not None and not isinstance(value, str):
+                raise ValueError("thermal_outdoor must be an entity id or null")
+            value = (value or "").strip()
+            if value and (not _ENTITY_RE.match(value)
+                          or len(value) > MAX_ENTITY_CHARS):
+                raise ValueError("thermal_outdoor must be an entity id")
+            clean[key] = value or None
+        elif key == "camera_confirm":
+            import camera_policy  # noqa: PLC0415 — the one validator
+            clean[key] = camera_policy.clean_cameras(value)
         elif key == "chat_model":
             # A panel setting, not a Configuration-tab option: it never
             # reaches the add-on's options, so an empty chat picker cannot
@@ -445,3 +587,131 @@ def clean_schedule(value) -> list[str] | None:
     if len(times) > MAX_SCHEDULE_TIMES:
         raise ValueError(f"at most {MAX_SCHEDULE_TIMES} schedule times")
     return sorted(times) or None
+
+
+# ---------------------------------------------------------------------------
+# Who hears what, when — the household's own sentence (W2D)
+# ---------------------------------------------------------------------------
+#
+#   notify_policy         — one sentence, in the household's own words, about
+#                           what is worth an interruption and when: "wake me
+#                           for water, smoke, the freezer or the front door
+#                           at night; batteries can wait for Saturday". The
+#                           dispatcher (`dispatch.py`) reads it before a
+#                           notify-tier finding is sent. Free text on
+#                           purpose: the alternative is the dozen options it
+#                           replaces, and nobody can say which of a severity
+#                           floor, an urgency table and two hour boxes they
+#                           meant when what they meant was a sentence.
+#   notify_policy_learned — clauses the household AGREED to from a learned
+#                           suggestion ("Notifications about the garden
+#                           lights can wait for the morning list."). Kept
+#                           apart from the sentence so each one is shown on
+#                           its own and can be taken back on its own — a
+#                           clause spliced into somebody's sentence is one
+#                           they cannot find again to remove.
+#
+# Neither can widen anything. The sentence is read by a model whose every
+# answer is checked in code (a closed vocabulary, a bounded hold, words that
+# may name only the row's own entities), and nothing it says can delay or
+# reword an escalating row or mute a critical one.
+NOTIFY_POLICY_KEYS = ("notify_policy", "notify_policy_learned")
+NOTIFY_POLICY_MAX = 400
+NOTIFY_LEARNED_MAX = 12
+NOTIFY_CLAUSE_MAX = 200
+#   speak_first           — say a serious, urgent house-check finding out
+#                           loud on the voice satellite in the room somebody
+#                           is in, as well as sending it to the phone. OFF by
+#                           default: a voice in the room is louder than a
+#                           phone in a pocket, and nobody should meet it
+#                           without having asked for it (`household.py`).
+DEFAULTS.update({"notify_policy": "", "notify_policy_learned": [],
+                 "speak_first": False})
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
+
+
+def _one_line(value: str, cap: int) -> str:
+    """Whitespace collapsed and control characters gone: the sentence is
+    pasted into a prompt between fences, and a newline is how a block of
+    text stops looking like one line somebody typed."""
+    return " ".join(_CONTROL.sub(" ", value).split())[:cap]
+
+
+def _clean_clause(item) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    clause = _one_line(str(item.get("clause") or ""), NOTIFY_CLAUSE_MAX)
+    if not clause:
+        return None
+    ident = re.sub(r"[^a-z0-9]", "", str(item.get("id") or "").lower())[:16]
+    at = item.get("at")
+    # A clause written without an id gets one from its own words, so the
+    # same clause read twice is the same clause to the ✕ that removes it.
+    ident = ident or hashlib.sha1(clause.encode("utf-8")).hexdigest()[:8]
+    return {"id": ident,
+            "clause": clause,
+            "subject": _one_line(str(item.get("subject") or ""), 120),
+            "at": int(at) if isinstance(at, (int, float))
+            and not isinstance(at, bool) else 0}
+
+
+def clean_notify_policy(key: str, value):
+    """The stored form of one of the three, or a ValueError."""
+    if key == "speak_first":
+        if not isinstance(value, bool):
+            raise ValueError("speak_first must be a boolean")
+        return value
+    if key == "notify_policy":
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError("notify_policy must be a sentence (a string)")
+        return _one_line(value, NOTIFY_POLICY_MAX)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("notify_policy_learned must be a list of clauses")
+    out: list[dict] = []
+    seen: set[str] = set()
+    for item in value:
+        clause = _clean_clause(item)
+        if clause is None:
+            raise ValueError("every learned clause has a non-empty clause")
+        if clause["clause"].lower() in seen:
+            continue
+        seen.add(clause["clause"].lower())
+        out.append(clause)
+    if len(out) > NOTIFY_LEARNED_MAX:
+        raise ValueError(f"at most {NOTIFY_LEARNED_MAX} learned clauses")
+    return out
+
+
+def _load_notify_policy(data: dict, out: dict) -> None:
+    """Read the two back. An unreadable value is the default — an empty
+    sentence and no clauses — which is the deterministic path, the one
+    every release before this sent."""
+    for key in NOTIFY_POLICY_KEYS:
+        try:
+            out[key] = clean_notify_policy(key, data.get(key))
+        except ValueError:
+            out[key] = DEFAULTS[key] if key == "notify_policy" else []
+    # Anything but an explicit True is off: a value that could not be read
+    # must not start a voice in somebody's kitchen.
+    out["speak_first"] = data.get("speak_first") is True
+
+
+def notify_policy_text(settings: dict | None = None) -> str:
+    """The sentence and the agreed clauses, as the dispatcher reads them.
+
+    One string with the clauses after the sentence, because a model
+    reading two lists has to decide which wins, and the household's own
+    sentence was written first and is the one they can see.
+    """
+    settings = settings if settings is not None else load()
+    parts = [str(settings.get("notify_policy") or "").strip()]
+    parts += [str(c.get("clause") or "").strip()
+              for c in settings.get("notify_policy_learned") or []
+              if isinstance(c, dict)]
+    return " ".join(p if p.endswith((".", "!", "?", ";")) else p + "."
+                    for p in parts if p)

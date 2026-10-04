@@ -74,7 +74,7 @@ try:
         "daily_briefing": "Daily briefing — what's notable right now (anomalies, batteries, weather that matters)",
         "anomaly_watch": "Anomaly watch — only problems; says 'All quiet.' otherwise",
         "battery_maintenance": "Battery & maintenance — what to replace now / soon",
-        "camera_check": "Camera check — looks at every camera, reports anything notable",
+        "camera_check": "Camera check — looks at the cameras you allowed in the brAIn panel, reports anything notable",
         "custom": "Custom — use my prompt below",
     }
 
@@ -117,6 +117,32 @@ CURATED_DENY_PATTERNS = [
     # The 65 BRUH Power Tools registry-admin services, including
     # brain.create_user — which can mint an admin login. A restricted
     # voice agent has no business administering the registry.
+    "brain.*",
+]
+
+# What a NEW agent is created denying, ticked in the form so it is seen: the
+# administration half of the list above and none of the device half. Every
+# one of these is a service a misheard sentence, a guest or a TV in the room
+# should not be able to reach through a voice assistant — restarting or
+# powering off the host, installing an update, purging history, a shell
+# command, minting a login — and none of them is something a person asks a
+# voice assistant for. The MCP server refuses them on a "Voice assistant"
+# level agent anyway (it scopes that level by service, not only by entity);
+# seeding them here is what reaches an agent somebody sets to "Whole house",
+# and what makes the policy visible on the screen that changes it.
+# `lock.unlock`, `cover.open_cover`, `script.*` and the rest of the curated
+# list stay one click away rather than ticked: "open the blinds" and "run the
+# goodnight script" are what people say to a voice assistant, and a new agent
+# that refused them would teach people to switch the list off.
+NEW_AGENT_DENIED_SERVICES = [
+    "homeassistant.restart",
+    "homeassistant.stop",
+    "hassio.host_reboot",
+    "hassio.host_shutdown",
+    "update.install",
+    "recorder.purge",
+    "shell_command.*",
+    "backup.create",
     "brain.*",
 ]
 
@@ -295,6 +321,7 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_MODEL: DEFAULT_MODEL,
                         CONF_SYSTEM_PROMPT: DEFAULT_SYSTEM_PROMPT,
                         CONF_TIMEOUT: DEFAULT_TIMEOUT,
+                        CONF_DENIED_SERVICES: list(NEW_AGENT_DENIED_SERVICES),
                     },
                 )
 
@@ -341,12 +368,14 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                             CONF_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT
                         ),
                         CONF_ACCESS: user_input.get(CONF_ACCESS, DEFAULT_ACCESS),
-                        CONF_DENIED_SERVICES: user_input.get(CONF_DENIED_SERVICES, []),
+                        CONF_DENIED_SERVICES: user_input.get(
+                            CONF_DENIED_SERVICES, list(NEW_AGENT_DENIED_SERVICES)),
                         CONF_TIMEOUT: user_input.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
                     },
                 )
 
-        deny_key, deny_field = denied_services_field(self.hass, [])
+        deny_key, deny_field = denied_services_field(
+            self.hass, list(NEW_AGENT_DENIED_SERVICES))
         return self.async_show_form(
             step_id="add_agent",
             data_schema=vol.Schema(
@@ -407,6 +436,7 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_MODEL: DEFAULT_MODEL,
                     CONF_TIMEOUT: DEFAULT_TIMEOUT,
                     CONF_SYSTEM_PROMPT: DEFAULT_SYSTEM_PROMPT,
+                    CONF_DENIED_SERVICES: list(NEW_AGENT_DENIED_SERVICES),
                 },
             )
 

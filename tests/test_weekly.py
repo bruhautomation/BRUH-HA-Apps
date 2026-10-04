@@ -431,7 +431,7 @@ class TestThePanelWiring(unittest.TestCase):
         self.server.WEEKLY_STATE["last_sent"] = 0.0
         sent = []
 
-        async def nothing(now):
+        async def nothing(now, **_kw):
             sent.append(now)
             return ""
 
@@ -449,7 +449,7 @@ class TestThePanelWiring(unittest.TestCase):
         self.with_options({"findings_notify_service": "notify.notify"})
         self.server.WEEKLY_STATE["last_sent"] = 0.0
 
-        async def something(now):
+        async def something(now, **_kw):
             return "a report"
 
         old = self.server._send_weekly
@@ -489,7 +489,7 @@ class TestThePanelWiring(unittest.TestCase):
         old = self.server._weekly_state
         old_run, old_notify = engine.run_analyst, self.server._send_notification
 
-        async def swallow(rows):
+        async def swallow(rows, *a, **k):
             return None
 
         engine.run_analyst = lambda *a, **k: {"ok": True, "text": "x" * 80}

@@ -35,6 +35,12 @@ def load_pool_module(tmp_path: Path, monkeypatch, **extra_env):
     monkeypatch.setenv("BRAIN_CLAUDE_BIN", f"{sys.executable} {FAKE_CLAUDE}")
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "argv.log"))
     monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
+    # The voice tier's plan, the run journal and the usage nudge all have
+    # real /data paths as their defaults; a suite that wrote any of them on
+    # the machine running it would be a suite with a side effect.
+    monkeypatch.setenv("BRAIN_ENV_FILE", str(tmp_path / "brain_env"))
+    monkeypatch.setenv("BRAIN_JOURNAL_FILE", str(tmp_path / "journal.jsonl"))
+    monkeypatch.setenv("BRAIN_USAGE_NUDGE", str(tmp_path / "usage-nudge"))
     monkeypatch.delenv("FAKE_MODE", raising=False)
     for key, value in extra_env.items():
         monkeypatch.setenv(key, value)
@@ -46,6 +52,12 @@ def load_pool_module(tmp_path: Path, monkeypatch, **extra_env):
     for d in (mod.REQUESTS_DIR, mod.RESPONSES_DIR, mod.SESSIONS_DIR,
               mod.CACHE_DIR, mod.LOG_DIR):
         os.makedirs(d, exist_ok=True)
+    # A turn's journal row is written off the request thread through the
+    # panel's own `journal` module, which another test may already have
+    # imported against the real /data path — so it is recorded here, and
+    # driven for real in tests/test_voice_run_contract.py.
+    mod.journaled = []
+    mod.journal_turn = lambda *a, **kw: mod.journaled.append((a, kw))
     return mod
 
 
@@ -435,12 +447,19 @@ def test_bridge_does_not_resend_after_accepted_stream_break(tmp_path, monkeypatc
         try:
             bridge = bridge_mod.ClaudeBridge(hass, timeout=10)
             deltas = []
-            text = await bridge.async_send_conversation_streaming(
-                "toggle the lights", conversation_id="convBRK",
-                delta_listener=deltas.append,
-            )
-            # Apology, not a retry
-            assert "dropped mid-response" in text
+            # Apology, not a retry — and an apology RAISED, coded `partial`,
+            # so the agent sets it as the turn's error rather than speaking
+            # it as though it were an answer.
+            try:
+                await bridge.async_send_conversation_streaming(
+                    "toggle the lights", conversation_id="convBRK",
+                    delta_listener=deltas.append,
+                )
+            except bridge_mod.BrainRunError as exc:
+                assert "dropped mid-response" in exc.text
+                assert exc.code == "partial"
+            else:
+                raise AssertionError("a broken stream must raise, not answer")
             # And crucially: nothing was re-sent over the file protocol
             req_files = [f for f in os.listdir(bridge.requests_dir)
                          if f.endswith(".json")] \

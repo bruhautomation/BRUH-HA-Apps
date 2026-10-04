@@ -147,16 +147,24 @@ def normalize(text: str) -> str:
     return _WS_RE.sub(" ", text).strip()
 
 
-def fact_id(subject: str, text: str) -> str:
+def fact_id(subject: str, text: str, predicate: str = "") -> str:
     """The id of a fact, derived from what it says about what.
 
     Content, not a stamp: nothing that writes into the memory inbox mints
     an id and `ts` is not unique — one insight run queues three facts
     inside the same second — so two lines that make the same claim about
     the same subject ARE one fact, whichever writer produced them.
+
+    An exception's predicate is part of WHAT it says. Two Wrongs on one
+    sensor under two checks carry the same pre-filled reason ("That is
+    normal for this sensor.") far more often than not, and keyed on the
+    text alone the second overwrote the first's predicate — so the rule
+    turned off first quietly came back on. An ordinary fact has no
+    predicate and keeps the id it always had.
     """
+    tail = f"\x00{predicate}" if predicate else ""
     return hashlib.sha256(
-        f"{subject}\x00{normalize(text)}".encode("utf-8", "replace")
+        f"{subject}\x00{normalize(text)}{tail}".encode("utf-8", "replace")
     ).hexdigest()[:16]
 
 
@@ -334,14 +342,26 @@ def _day(ts: float) -> str:
 def add(text: str, *, subject: str = "", source: str = "panel",
         confidence=DEFAULT_CONFIDENCE, run_id: str = "", predicate: str = "",
         expires: str = "", ts: float | None = None,
-        extra_subjects=()) -> tuple[dict | None, bool]:
+        extra_subjects=(), about: str = "", finding_key: str = "",
+        near_dedupe: bool = False) -> tuple[dict | None, bool]:
     """Record one fact. Returns ``(fact, created)``.
 
     A re-add is not a second fact: the id is the subject plus the
-    normalised text, so the same claim from the same subject refreshes
-    `ts` and `observed` — it is still true today — and keeps the
-    `first_seen` it already had, which is the date that says how long
-    this house has been like this.
+    normalised text (plus the predicate, for an exception), so the same
+    claim from the same subject refreshes `ts` and `observed` — it is
+    still true today — and keeps the `first_seen` it already had, which
+    is the date that says how long this house has been like this.
+
+    ``near_dedupe`` widens "the same claim" to a paraphrase of it, and is
+    what the inbox sweep asks for: the Stop-hook extractor reads
+    overlapping windows of one conversation and says the same thing in new
+    words on consecutive turns, and every one of those used to become a
+    row of its own. See `_near_duplicate` for what counts.
+
+    ``about`` and ``finding_key`` ride only on an exception: the report a
+    Wrong was pressed on, so a prompt reading the rule can say what it was
+    about, and that report's settled-ledger key, so the press that puts the
+    report back in play can also take the rule away.
     """
     text = str(text or "").strip()[:MAX_TEXT]
     if not text or not writable():
@@ -354,31 +374,47 @@ def add(text: str, *, subject: str = "", source: str = "panel",
         extra = str(extra or "").strip()[:MAX_SUBJECT]
         if extra and extra not in subjects and len(subjects) < MAX_SUBJECTS:
             subjects.append(extra)
-    key = fact_id(subject, text)
+    key = fact_id(subject, text, predicate if _is_exception_predicate(predicate)
+                  else "")
     with _locked():
         rows = _load()
+        same = None
         for row in rows:
             if row.get("id") == key:
-                row["ts"] = int(now)
-                row["observed"] = _day(now)
-                # A later sighting may know more than the first did —
-                # a run id, an expiry, a tighter subject list — and may
-                # not know less: an empty field is not a correction.
-                if run_id:
-                    row["run_id"] = str(run_id)[:64]
-                if predicate:
-                    row["predicate"] = predicate
-                if expires:
-                    row["expires"] = str(expires)[:10]
-                for extra in subjects:
-                    kept = row.get("subjects")
-                    if not isinstance(kept, list):
-                        kept = [row.get("subject") or subject]
-                    if extra not in kept and len(kept) < MAX_SUBJECTS:
-                        kept.append(extra)
-                    row["subjects"] = kept
-                _write(rows)
-                return dict(row), False
+                same = row
+                break
+        if same is None and near_dedupe and not predicate:
+            same = _near_duplicate(rows, text, subjects)
+        if same is not None:
+            row = same
+            row["ts"] = max(int(now), int(row.get("ts") or 0))
+            row["observed"] = _day(max(now, float(row.get("ts") or 0)))
+            # A later sighting may know more than the first did —
+            # a run id, an expiry, a tighter subject list — and may
+            # not know less: an empty field is not a correction.
+            if run_id:
+                row["run_id"] = str(run_id)[:64]
+            if predicate:
+                row["predicate"] = predicate
+            if expires:
+                row["expires"] = str(expires)[:10]
+            if about:
+                row["about"] = str(about)[:MAX_TEXT]
+            if finding_key:
+                row["finding_key"] = str(finding_key)[:MAX_TEXT]
+            # Seen again is seen again, whatever the reconcile last said:
+            # a fact somebody re-teaches is pending until the consolidator
+            # has had its say about it a second time.
+            row.pop("gone_since", None)
+            for extra in subjects:
+                kept = row.get("subjects")
+                if not isinstance(kept, list):
+                    kept = [row.get("subject") or subject]
+                if extra not in kept and len(kept) < MAX_SUBJECTS:
+                    kept.append(extra)
+                row["subjects"] = kept
+            _write(rows)
+            return dict(row), False
         entry = {
             "id": key,
             "subject": subject,
@@ -393,9 +429,73 @@ def add(text: str, *, subject: str = "", source: str = "panel",
             "run_id": str(run_id or "")[:64],
             "expires": str(expires or "")[:10],
         }
+        if about:
+            entry["about"] = str(about)[:MAX_TEXT]
+        if finding_key:
+            entry["finding_key"] = str(finding_key)[:MAX_TEXT]
         rows.append(entry)
         _write(_prune(rows))
     return dict(entry), True
+
+
+def _is_exception_predicate(predicate: str) -> bool:
+    return str(predicate or "").startswith(EXCEPTION_PREFIX)
+
+
+# What makes two sentences one fact, for the inbox sweep. Deliberately a
+# lexical test and never a model: it runs on the minute over every queued
+# line (`tag_subjects`' reason). The bar is high and the floor is real,
+# because the failure in the other direction is worse than a duplicate —
+# two claims merged into one is a claim the store no longer holds.
+NEAR_DUP_SHARE = 0.8
+NEAR_DUP_MIN_TOKENS = 3
+# Words the overlap stoplist drops that a SAME-FACT test may not: "the
+# porch light is on a timer" and "the porch light is not on a timer" share
+# every content word and say opposite things.
+_NEGATIONS = frozenset((
+    "not", "no", "never", "nor", "without", "cannot", "t", "isn", "aren",
+    "wasn", "weren", "don", "doesn", "didn", "won", "can", "shouldn",
+    "mustn", "off",
+))
+
+
+def _claim_tokens(text: str) -> set[str]:
+    return {w for w in normalize(text).split()
+            if w and (w not in _STOPWORDS or w in _NEGATIONS)}
+
+
+def _near_duplicate(rows: list[dict], text: str,
+                    subjects: list[str]) -> dict | None:
+    """The row this sentence is a rewording of, or None.
+
+    Same subject (any of them), no predicate, and a Jaccard overlap of the
+    claim's own words at `NEAR_DUP_SHARE` or better — with negations kept
+    as words, because a dedupe that read "is" and "is not" as the same
+    sentence would merge a fact into the correction that replaced it.
+    Short sentences are never merged: three words in common is most of a
+    four-word sentence and none of its meaning.
+    """
+    mine = _claim_tokens(text)
+    if len(mine) < NEAR_DUP_MIN_TOKENS:
+        return None
+    wanted = set(subjects)
+    best, best_share = None, 0.0
+    for row in rows:
+        if row.get("predicate"):
+            continue
+        if not (wanted & set(_subjects_of(row))):
+            continue
+        theirs = _claim_tokens(row.get("text", ""))
+        if len(theirs) < NEAR_DUP_MIN_TOKENS:
+            continue
+        # The negation guard is a hard one: if one sentence negates and
+        # the other does not, they are not the same claim at any overlap.
+        if (mine & _NEGATIONS) != (theirs & _NEGATIONS):
+            continue
+        share = len(mine & theirs) / len(mine | theirs)
+        if share >= NEAR_DUP_SHARE and share > best_share:
+            best, best_share = row, share
+    return best
 
 
 def _prune(rows: list[dict]) -> list[dict]:
@@ -438,6 +538,115 @@ def forget(fact_key: str) -> bool:
             return False
         _write(kept)
     return True
+
+
+def forget_ids(keys) -> int:
+    """Drop every fact named. What an undo token carries back.
+
+    A rule written by a Wrong press is an effect of that press, and the
+    toast's Undo promises to put back every effect of an ending — the
+    row, the settled key, the memory line and, since 2.2, this. Returns
+    how many went, because a caller that cannot tell "gone" from "never
+    there" cannot say which happened.
+    """
+    wanted = {str(k) for k in keys or () if k}
+    if not wanted:
+        return 0
+    with _locked():
+        rows = _load()
+        kept = [r for r in rows if str(r.get("id") or "") not in wanted]
+        if len(kept) == len(rows):
+            return 0
+        _write(kept)
+    return len(rows) - len(kept)
+
+
+def forget_exceptions(finding_key: str) -> int:
+    """Drop the rules a Wrong press on this report wrote.
+
+    "Let brAIn raise it again" holds the report's settled key and nothing
+    else — the row is long gone — so the rule is found by the key it was
+    written under. Without this the press released the wording and left
+    the rule muting the very check it was asking to hear from.
+    """
+    key = str(finding_key or "").strip()
+    if not key:
+        return 0
+    with _locked():
+        rows = _load()
+        kept = [r for r in rows
+                if not (_is_exception_predicate(r.get("predicate"))
+                        and str(r.get("finding_key") or "") == key)]
+        if len(kept) == len(rows):
+            return 0
+        _write(kept)
+    return len(rows) - len(kept)
+
+
+def forget_text(text: str, source: str = "") -> int:
+    """Drop the facts one queued line became. The inbox's own ✕.
+
+    The line's id is its source and its text (`server._inbox_id`), so the
+    fact it was filed as is found the same way: the same normalised
+    sentence from the same writer, under whatever subject the tagger gave
+    it. An exception is never matched — it did not come out of the inbox.
+    """
+    key = normalize(text)
+    if not key:
+        return 0
+    source = str(source or "")
+    with _locked():
+        rows = _load()
+        kept = [r for r in rows
+                if _is_exception_predicate(r.get("predicate"))
+                or normalize(r.get("text", "")) != key
+                or (source and str(r.get("source") or "") != source)]
+        if len(kept) == len(rows):
+            return 0
+        _write(kept)
+    return len(rows) - len(kept)
+
+
+# A `FORGET:` line names content rather than quoting a row, so it is
+# matched the way the consolidator is told to match it — "the matching
+# content, including rewordings of it" — and the bar is the share of the
+# REQUEST's words a fact must carry. One word is too little to stand on:
+# "brain memory forget fridge" is not a request to forget every fact that
+# mentions one, so a single-word request only takes an exact match.
+FORGET_SHARE = 0.8
+FORGET_MIN_TOKENS = 2
+
+
+def forget_matching(request: str) -> int:
+    """Drop the facts a `FORGET:` line asks to have removed.
+
+    `brain memory forget` reached the document and nothing else, so the
+    runs reading this store went on asserting — under "do not contradict
+    them" — exactly what somebody had asked brAIn to stop believing.
+    Exceptions are included: a person asking brAIn to forget something it
+    was told is asking about the telling, whatever shape it was stored in.
+    """
+    want = _claim_tokens(request)
+    exact = normalize(request)
+    if not exact:
+        return 0
+    with _locked():
+        rows = _load()
+        kept = []
+        for row in rows:
+            text = row.get("text", "")
+            if normalize(text) == exact:
+                continue
+            if len(want) >= FORGET_MIN_TOKENS:
+                theirs = _claim_tokens(text)
+                if (want & _NEGATIONS) == (theirs & _NEGATIONS) and \
+                        len(want & theirs) / len(want) >= FORGET_SHARE:
+                    continue
+            kept.append(row)
+        if len(kept) == len(rows):
+            return 0
+        _write(kept)
+    return len(rows) - len(kept)
 
 
 # ---------------------------------------------------------------------------
@@ -489,7 +698,7 @@ def recall(query: str = "", subject: str = "", subjects=(), limit: int = 20,
     terms = _tokens(query)
     scored: list[tuple] = []
     for row in _load():
-        if _expired(row, now):
+        if not _live_for_retrieval(row, now):
             continue
         mine = set(_subjects_of(row))
         exact = 1 if (wanted & mine) else 0
@@ -690,6 +899,19 @@ CORE_SHARE = 0.4
 
 
 def _is_core(row: dict) -> bool:
+    """A standing fact every run is told — unless the consolidator dropped it.
+
+    `house` and `person:*` are the facts that are not about any one thing,
+    which is what makes them worth telling every run. But they arrive
+    raw, within a minute of being queued, and the consolidator — which is
+    told to drop transient states, one-off commands and reports that were
+    marked wrong — has not been asked about them yet. A row it has since
+    left out of the document (`curation: dropped`, see `reconcile`) keeps
+    its subjects and still answers a question about one of them; what it
+    loses is the right to be read to every run as a standing truth.
+    """
+    if row.get("curation") == "dropped":
+        return False
     for subject in _subjects_of(row):
         if subject in CORE_SUBJECTS or subject_kind(subject) == "person":
             return True
@@ -700,7 +922,39 @@ def _line(row: dict) -> str:
     source = str(row.get("source") or "")
     observed = str(row.get("observed") or "")
     stamp = ", ".join([p for p in (source, observed) if p])
-    return f"- ({stamp}) {row.get('text', '')}" if stamp else f"- {row.get('text', '')}"
+    text = str(row.get("text", ""))
+    predicate = str(row.get("predicate") or "")
+    if _is_exception_predicate(predicate):
+        # A rule's text is the homeowner's reason, which on its own does
+        # not say what it was a reason ABOUT — "that is normal for this
+        # sensor" under no report is a sentence a run cannot use. The
+        # report rides with it, and so does what the rule stands down.
+        about = str(row.get("about") or "").strip()
+        if about and normalize(about) not in normalize(text):
+            text = f'Reported "{about}" — marked wrong: {text}'
+        rule = predicate[len(EXCEPTION_PREFIX):] or "*"
+        text = (f"{text} [not to be reported again: {rule} on "
+                f"{row.get('subject') or 'house'}]")
+    return f"- ({stamp}) {text}" if stamp else f"- {text}"
+
+
+def _live_for_retrieval(row: dict, now: float) -> bool:
+    """Expired, or about something that is no longer in the house, is not
+    something to tell a run. Both rows stay in the store — a person can
+    still see them on the Knowledge tab — and the second goes for good
+    once it has been gone long enough to be sure (`reconcile`)."""
+    return not _expired(row, now) and not row.get("gone_since")
+
+
+def _related_floor(terms: set[str]) -> int:
+    """How many of a question's words a fact must share to be about it.
+
+    One is enough for a short question — "is the lounge cold?" names the
+    room and nothing else — and a quarter of them for a long one, so a
+    paragraph of question does not pull in every fact that shares a
+    word with it.
+    """
+    return max(1, -(-len(terms) // 4))
 
 
 def retrieval_block(*, entities=(), areas=(), domains=(), person: str = "",
@@ -712,7 +966,16 @@ def retrieval_block(*, entities=(), areas=(), domains=(), person: str = "",
     the person asking — plus the facts about the entities and areas the
     run is reading. `domains` widens that to every fact about an entity
     in one of them, which is what a category-shaped run (all the lights,
-    all the climate) actually wants.
+    all the climate) actually wants. `query` is the question, and a fact
+    sharing enough of its words is about it whatever it is tagged with —
+    the lexical overlap `recall` ranks by, applied to the one call that
+    used to take the argument and read nothing of it.
+
+    A subject the run did not name may carry at most `PER_SUBJECT_CAP`
+    rows: a house with forty facts about the boiler would otherwise answer
+    every question about the heating with the boiler. `house` and the
+    people are not capped — they are not one thing, they are everything
+    that is not about one thing.
 
     Empty when there is nothing relevant, which matters: the caller
     falls back to the document's own head on an empty answer, so a fresh
@@ -725,45 +988,95 @@ def retrieval_block(*, entities=(), areas=(), domains=(), person: str = "",
     if person:
         wanted.add(f"person:{person}")
     domain_set = {str(d) for d in domains if d}
+    terms = _tokens(query)
+    floor = _related_floor(terms) if terms else 0
 
     core: list[tuple] = []
     matched: list[tuple] = []
+    related: list[tuple] = []
     for row in _load():
-        if _expired(row, now):
+        if not _live_for_retrieval(row, now):
             continue
         mine = set(_subjects_of(row))
-        hit = bool(wanted & mine) or any(
+        named = bool(wanted & mine)
+        hit = named or any(
             subject_kind(s) == "entity" and s.split(".", 1)[0] in domain_set
             for s in mine)
-        rank = (-_score(row, now), -int(row.get("ts") or 0),
-                str(row.get("id") or ""), row)
+        overlap = len(terms & _tokens(row.get("text", ""))) if terms else 0
+        rank = (-overlap, -_score(row, now), -int(row.get("ts") or 0),
+                str(row.get("id") or ""), row, named)
         if hit:
             matched.append(rank)
         elif _is_core(row):
             core.append(rank)
-    if not core and not matched:
+        elif terms and overlap >= floor:
+            related.append(rank)
+    if not core and not matched and not related:
         return ""
-    core.sort(key=lambda item: item[:3])
-    matched.sort(key=lambda item: item[:3])
+    for pool in (core, matched, related):
+        pool.sort(key=lambda item: item[:4])
 
     # The core facts get a share of the budget rather than the front of
     # it: a house with forty standing preferences would otherwise spend
     # the whole block on them and tell the run nothing about the entities
     # it is reading, which is the failure this replaced one size up.
     budget = max(0, int(limit_chars) - len(MEMORY_HEAD) - 1)
-    core_budget = int(budget * CORE_SHARE) if matched else budget
+    core_budget = int(budget * CORE_SHARE) if (matched or related) else budget
     lines: list[str] = []
     used = 0
-    for pool, allowance in ((core, core_budget), (matched, budget)):
+    per_subject: dict[str, int] = {}
+    for pool, allowance in ((core, core_budget), (matched, budget),
+                            (related, budget)):
         for item in pool:
-            line = _line(item[3])
+            row, named = item[4], item[5]
+            head = str(row.get("subject") or "house")
+            capped = (not named and head not in wanted
+                      and subject_kind(head) in ("entity", "area"))
+            if capped and per_subject.get(head, 0) >= PER_SUBJECT_CAP:
+                continue
+            line = _line(row)
             if used + len(line) + 1 > allowance:
                 break
             lines.append(line)
             used += len(line) + 1
+            if capped:
+                per_subject[head] = per_subject.get(head, 0) + 1
     if not lines:
         return ""
     return MEMORY_HEAD + "\n" + "\n".join(lines)
+
+
+def retrieval_fingerprint(*, entities=(), areas=(), domains=(),
+                          query: str = "", now: float | None = None) -> str:
+    """Which facts a run with these subjects would be told — as one digest.
+
+    The ids, never the lines: a line carries the date a fact was last
+    seen, and a fact re-taught today is the same fact it was yesterday.
+    What a card's refresh gate needs to know is whether the SET moved, and
+    an empty store answers "" so the caller can fall back to the document.
+    """
+    block_rows = []
+    now = time.time() if now is None else float(now)
+    wanted = {str(e) for e in entities if e}
+    wanted |= {str(a) if str(a).startswith("area:") else f"area:{a}"
+               for a in areas if a}
+    domain_set = {str(d) for d in domains if d}
+    terms = _tokens(query)
+    floor = _related_floor(terms) if terms else 0
+    for row in _load():
+        if not _live_for_retrieval(row, now):
+            continue
+        mine = set(_subjects_of(row))
+        hit = bool(wanted & mine) or any(
+            subject_kind(s) == "entity" and s.split(".", 1)[0] in domain_set
+            for s in mine)
+        overlap = len(terms & _tokens(row.get("text", ""))) if terms else 0
+        if hit or _is_core(row) or (terms and overlap >= floor):
+            block_rows.append(str(row.get("id") or ""))
+    if not block_rows:
+        return ""
+    return hashlib.sha256(
+        "\n".join(sorted(block_rows)).encode("utf-8")).hexdigest()[:16]
 
 
 # ---------------------------------------------------------------------------
@@ -825,7 +1138,10 @@ def ingest_inbox(inbox_dir, processed_dir, *, known_entities=frozenset(),
     seen: dict = state["files"]
     created = 0
     alive: set[str] = set()
-    for folder in (Path(inbox_dir), Path(processed_dir)):
+    # The archive first: what it holds is older than anything still
+    # waiting, and a `FORGET:` in the queue has to land AFTER the line it
+    # names, or it forgets nothing and the line is filed a moment later.
+    for folder in (Path(processed_dir), Path(inbox_dir)):
         try:
             paths = sorted(folder.glob("*.jsonl"))
         except OSError:
@@ -873,29 +1189,392 @@ def ingest_inbox(inbox_dir, processed_dir, *, known_entities=frozenset(),
     return created
 
 
+# How long a device-health observation is worth asserting. The same
+# thirty days the consolidator is told to drop such a line from the
+# document after (`brain-memory-consolidate.sh`'s dating rules), because a
+# battery replaced weeks ago must not still be reported dead — and this
+# store is what most panel runs read, not the document.
+TRANSIENT_DAYS = 30
+# What a device-health observation sounds like. A gate on the SHAPE of a
+# health claim rather than on a word: "spare batteries are in the kitchen
+# drawer" mentions a battery and is a durable fact about a house, where
+# "the hall sensor's battery is low" is a snapshot of one afternoon.
+_TRANSIENT_RE = re.compile(
+    r"\b(?:batter(?:y|ies)\s+(?:is|are|was|were|has been|have been|went|"
+    r"running)\s+(?:low|dead|flat|empty|out)|"
+    r"(?:is|are|was|were|has been|have been|went|keeps going|goes)\s+"
+    r"(?:unavailable|offline|unresponsive|unreachable|dead)|"
+    r"stopped\s+(?:reporting|responding|checking in|updating)|"
+    r"(?:is|was|has been)\s+(?:frozen|stuck)\b|"
+    r"(?:low|dead|flat)\s+batter(?:y|ies))", re.I)
+# What makes a line durable even though it describes health: a reason, a
+# habit, an interval. "Replaced the CR2032 — it's a 3-monthly job on that
+# sensor" is the maintenance fact the `done` ending exists to capture.
+_DURABLE_RE = re.compile(
+    r"\b(?:because|always|every|usually|by design|on purpose|wired|"
+    r"monthly|weekly|yearly|annual|normal|expected|they said)\b", re.I)
+
+
+def is_transient(text: str) -> bool:
+    """A device-health snapshot rather than a fact about the house."""
+    body = str(text or "")
+    return bool(_TRANSIENT_RE.search(body)) and not _DURABLE_RE.search(body)
+
+
+def _expiry_for(text: str, ts: float, given: str = "") -> str:
+    given = str(given or "").strip()[:10]
+    if given:
+        return given
+    if is_transient(text):
+        return _day(float(ts) + TRANSIENT_DAYS * 86400)
+    return ""
+
+
 def _ingest_line(obj, known_entities, areas) -> bool:
     if not isinstance(obj, dict):
         return False
     text = str(obj.get("fact") or "").strip()
-    if not text or text.upper().startswith(FORGET_PREFIX):
+    if not text:
+        return False
+    if text.upper().startswith(FORGET_PREFIX):
+        # Still not a fact: the store must not assert the very thing
+        # somebody asked to have removed. What changed is that it is no
+        # longer ignored — `brain memory forget` used to reach the
+        # document and leave the store saying the old thing to every run.
+        forget_matching(text[len(FORGET_PREFIX):].strip())
         return False
     source = str(obj.get("source") or "panel")
     person = str(obj.get("person") or "")
     named = str(obj.get("subject") or "").strip()
+    also = [str(x).strip() for x in (obj.get("subjects") or [])
+            if isinstance(x, str) and str(x).strip()]
     tagged = tag_subjects(text, known_entities=known_entities,
                           areas=areas or {}, person=person)
-    if named:
+    if named or also:
         # A writer that knows what its fact is about beats a scan of the
         # sentence: `remember_fact` takes a subject for exactly this, and
         # a tagger that overrode it would make the argument decorative.
-        tagged = [named] + [s for s in tagged if s != named]
+        # The scan's `house` fallback goes when a writer named anything —
+        # it means "about nothing in particular", which is now untrue.
+        lead = [named] if named else []
+        for extra in also:
+            if extra not in lead:
+                lead.append(extra)
+        tagged = lead + [s for s in tagged if s not in lead and s != "house"]
+    stamp = obj.get("ts") or None
+    try:
+        when = float(stamp) if stamp else time.time()
+    except (TypeError, ValueError):
+        when, stamp = time.time(), None
     _row, created = add(
         text, subject=tagged[0], extra_subjects=tagged[1:], source=source,
         confidence=obj.get("confidence", DEFAULT_CONFIDENCE),
         run_id=str(obj.get("run_id") or ""),
         predicate=str(obj.get("predicate") or ""),
-        ts=obj.get("ts") or None)
+        expires=_expiry_for(text, when, obj.get("expires") or ""),
+        ts=stamp, near_dedupe=True)
     return created
+
+
+# ---------------------------------------------------------------------------
+# Reconcile: the document, the queue, and the registry
+# ---------------------------------------------------------------------------
+#
+# The store is filed from the inbox within a minute, before the
+# consolidator has judged a line — and the consolidator is the one that
+# drops transient states, one-off commands and reports marked wrong, merges
+# rewordings, and applies `FORGET:`. A person editing `memory.md`, `brain
+# memory clear` and `brain memory undo` all change the document and
+# nothing else. So the store and the document drifted apart from the
+# moment the store existed, and the store is what most runs read.
+#
+# `reconcile` makes the document the curated truth the store answers to.
+# Every fact that came out of the queue is in one of three states:
+#
+#   * pending  — its line is still in the inbox: nobody has judged it yet,
+#                and it is told to runs exactly as it was before;
+#   * kept     — the document carries it (in its own words or close to);
+#   * dropped  — the consolidator has had it and the document does not:
+#                it keeps its subjects, and loses the right to be read to
+#                every run as a standing fact (`_is_core`).
+#
+# And one transition that is a removal: a fact the document carried and no
+# longer does left the document — a person deleted the line, a clear or an
+# undo took it, a `FORGET:` struck it, or the consolidator superseded it —
+# and is forgotten here too, because a store still asserting what the
+# curated document stopped saying is the drift this exists to end.
+#
+# The registry half is cheaper and older than any of that: a fact whose
+# every subject is an entity the house no longer has is about nothing, so
+# it stops being retrieved at once and is dropped after `ORPHAN_DAYS`.
+
+RECONCILE_STATE_FILE = Path(os.environ.get(
+    "BRAIN_FACTS_RECONCILE_STATE",
+    "/config/.brain/memory/facts-reconcile.json"))
+# What share of a fact's own words one line of the document must carry for
+# the document to be carrying it. Below the near-dedupe bar on purpose:
+# the consolidator rewrites what it files ("observed" markers, merged
+# sentences), and reading a reworded line as "gone" would forget a fact the
+# document still holds.
+REFLECT_SHARE = 0.6
+ORPHAN_DAYS = 30
+
+# What the document says, line by line — `categories.document_lines`, so
+# the facts store and onboarding agree on what a fact line is.
+document_lines = categories.document_lines
+
+
+def _reflected(tokens: set[str], index: dict[str, set[int]]) -> bool:
+    if not tokens:
+        return False
+    hits: dict[int, int] = {}
+    for tok in tokens:
+        for i in index.get(tok, ()):
+            hits[i] = hits.get(i, 0) + 1
+    if not hits:
+        return False
+    best = max(hits.values())
+    return best >= min(2, len(tokens)) and best / len(tokens) >= REFLECT_SHARE
+
+
+def _pending_keys(inbox_dir) -> set[str] | None:
+    """The normalised text of every line still waiting, or None.
+
+    None is "I could not look", and the caller then decides nothing about
+    any row — a queue that would not read is not a queue that is empty,
+    and reading it as one would mark every waiting fact dropped.
+    """
+    keys: set[str] = set()
+    try:
+        paths = sorted(Path(inbox_dir).glob("*.jsonl"))
+    except OSError:
+        return None
+    for path in paths:
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        for line in raw.splitlines():
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(obj, dict):
+                key = normalize(obj.get("fact") or "")
+                if key:
+                    keys.add(key)
+    return keys
+
+
+def _read_reconcile_state() -> dict:
+    try:
+        with open(RECONCILE_STATE_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def reconcile(document: str | None, inbox_dir, *,
+              known_entities=frozenset(), registry_fresh: bool = False,
+              now: float | None = None, force: bool = False) -> dict:
+    """Make the store answer to the document and the registry. Never raises.
+
+    ``document`` None is "the document could not be read", and then the
+    curation half is skipped whole rather than reading every fact as gone.
+    ``registry_fresh`` says `known_entities` is a real list from a recent
+    pass; without it nothing is called an orphan, for the same reason.
+
+    Cheap when nothing moved: the inputs are digested and a pass whose
+    digest matches the last one returns at once, because this is asked on
+    the minute and the document changes a few times a day.
+    """
+    out = {"forgotten": 0, "kept": 0, "dropped": 0, "pending": 0,
+           "orphaned": 0, "skipped": False}
+    if not writable():
+        out["skipped"] = True
+        return out
+    now = time.time() if now is None else float(now)
+    try:
+        pending = _pending_keys(inbox_dir) if document is not None else None
+        lines = document_lines(document) if document is not None else []
+        def inputs_digest() -> str:
+            try:
+                facts_stamp = str(os.stat(FACTS_FILE).st_mtime_ns)
+            except OSError:
+                facts_stamp = "none"
+            return hashlib.sha256("\x00".join([
+                hashlib.sha256(str(document).encode("utf-8", "replace"))
+                .hexdigest(),
+                ",".join(sorted(pending)) if pending is not None else "?",
+                facts_stamp,
+                str(len(known_entities)) if registry_fresh else "-",
+                _day(now),
+            ]).encode("utf-8", "replace")).hexdigest()
+
+        digest = inputs_digest()
+        state = _read_reconcile_state()
+        if not force and state.get("digest") == digest:
+            out["skipped"] = True
+            return out
+
+        index: dict[str, set[int]] = {}
+        for i, line in enumerate(lines):
+            for tok in _claim_tokens(line):
+                index.setdefault(tok, set()).add(i)
+        cleared = (document is not None and not lines
+                   and int(state.get("doc_lines") or 0) > 0)
+        known = set(known_entities or ())
+        with _locked():
+            rows = _load()
+            kept_rows: list[dict] = []
+            changed = False
+            for row in rows:
+                if _is_exception_predicate(row.get("predicate")):
+                    kept_rows.append(row)
+                    continue
+                # -- the document --------------------------------------
+                if pending is not None:
+                    key = normalize(row.get("text", ""))
+                    was = row.get("curation")
+                    if key in pending:
+                        now_is = "pending"
+                    elif _reflected(_claim_tokens(row.get("text", "")), index):
+                        now_is = "kept"
+                    elif was == "kept" or cleared:
+                        # It was in the document and is not any more.
+                        out["forgotten"] += 1
+                        changed = True
+                        continue
+                    else:
+                        now_is = "dropped"
+                    if was != now_is:
+                        row["curation"] = now_is
+                        changed = True
+                    out[now_is] += 1
+                kept_rows.append(row)
+            # -- the registry (exceptions included: a rule about an
+            # entity that is gone stands nothing down) ----------------
+            final: list[dict] = []
+            for row in kept_rows:
+                entity_subjects = [s for s in _subjects_of(row)
+                                   if subject_kind(s) == "entity"]
+                only_entities = (entity_subjects
+                                 and len(entity_subjects) == len(_subjects_of(row)))
+                if registry_fresh and known and only_entities:
+                    gone = not any(s in known for s in entity_subjects)
+                    if gone:
+                        since = int(row.get("gone_since") or 0)
+                        if not since:
+                            row["gone_since"] = int(now)
+                            changed = True
+                            out["orphaned"] += 1
+                        elif now - since > ORPHAN_DAYS * 86400:
+                            out["forgotten"] += 1
+                            changed = True
+                            continue
+                    elif row.get("gone_since"):
+                        row.pop("gone_since", None)
+                        changed = True
+                final.append(row)
+            if changed:
+                _write(final)
+                # The pass's own write moves the store's stamp, and a
+                # digest taken before it would make the next tick repeat
+                # a pass that has nothing left to do.
+                digest = inputs_digest()
+        try:
+            atomic_write.write_json(RECONCILE_STATE_FILE, {
+                "digest": digest, "at": int(now),
+                "doc_lines": len(lines) if document is not None
+                else int(state.get("doc_lines") or 0),
+                "last": {k: v for k, v in out.items() if k != "skipped"}})
+        except OSError:
+            # The reconcile itself is done; a state that would not write
+            # costs one repeat of it on the next tick.
+            pass
+    except Exception:  # noqa: BLE001 — accounting over a store, never a crash
+        out["skipped"] = True
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Migration
+# ---------------------------------------------------------------------------
+
+def export_rows() -> list[dict]:
+    """Every row, as stored — for `/api/memory/export`.
+
+    The rules a Wrong press wrote live here and nowhere else: the settled
+    ledger that rides beside them in an export suppresses one WORDING,
+    where an `exception:` fact stands a check down for an entity whatever
+    it says next. An export without this file was a migration that put
+    every corrected mistake back.
+    """
+    return [dict(r) for r in _load()]
+
+
+def _int_or(value, default: int) -> int:
+    try:
+        return int(value) if value not in (None, "") else default
+    except (TypeError, ValueError):
+        return default
+
+
+def merge_rows(rows) -> int:
+    """Fold another install's rows in. Existing ids win. Never raises.
+
+    A migration and not a sync, `findings_store.merge_rows`' rule: a fact
+    this install already holds is this install's, and an import must not
+    be able to rewrite it. Each incoming row is cleaned field by field —
+    it is JSON somebody carried here from somewhere else — and the cap
+    applies exactly as it does to a fact taught today.
+    """
+    if not isinstance(rows, list) or not writable():
+        return 0
+    added = 0
+    with _locked():
+        held = _load()
+        seen = {str(r.get("id") or "") for r in held}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            text = str(row.get("text") or "").strip()[:MAX_TEXT]
+            if not text:
+                continue
+            subject = str(row.get("subject") or "house").strip()[:MAX_SUBJECT] \
+                or "house"
+            predicate = str(row.get("predicate") or "").strip()[:MAX_PREDICATE]
+            key = fact_id(subject, text, predicate
+                          if _is_exception_predicate(predicate) else "")
+            if key in seen:
+                continue
+            subjects = [str(x).strip()[:MAX_SUBJECT]
+                        for x in (row.get("subjects") or [subject])
+                        if isinstance(x, str) and str(x).strip()][:MAX_SUBJECTS]
+            if subject not in subjects:
+                subjects.insert(0, subject)
+            stamp = _int_or(row.get("ts"), int(time.time()))
+            entry = {
+                "id": key, "subject": subject, "subjects": subjects,
+                "predicate": predicate, "text": text,
+                "source": str(row.get("source") or "import")[:32],
+                "confidence": _clean_confidence(row.get("confidence")),
+                "observed": str(row.get("observed") or _day(stamp))[:10],
+                "ts": stamp,
+                "first_seen": _int_or(row.get("first_seen"), stamp),
+                "run_id": str(row.get("run_id") or "")[:64],
+                "expires": str(row.get("expires") or "")[:10],
+            }
+            for field in ("about", "finding_key"):
+                if row.get(field):
+                    entry[field] = str(row[field])[:MAX_TEXT]
+            held.append(entry)
+            seen.add(key)
+            added += 1
+        if added:
+            _write(_prune(held))
+    return added
 
 
 # ---------------------------------------------------------------------------
@@ -915,6 +1594,8 @@ def summary(now: float | None = None) -> dict:
     by_kind: dict[str, int] = {}
     exceptions_n = 0
     expired = 0
+    by_curation: dict[str, int] = {}
+    gone = 0
     for row in rows:
         if _expired(row, now):
             expired += 1
@@ -925,7 +1606,13 @@ def summary(now: float | None = None) -> dict:
         by_kind[kind] = by_kind.get(kind, 0) + 1
         if str(row.get("predicate") or "").startswith(EXCEPTION_PREFIX):
             exceptions_n += 1
+        curation = str(row.get("curation") or "")
+        if curation:
+            by_curation[curation] = by_curation.get(curation, 0) + 1
+        if row.get("gone_since"):
+            gone += 1
     state = _read_state(INGEST_STATE_FILE)
+    reconciled = _read_reconcile_state()
     return {
         "count": len(rows) - expired,
         "expired": expired,
@@ -933,6 +1620,36 @@ def summary(now: float | None = None) -> dict:
         "by_source": dict(sorted(by_source.items())),
         "by_subject": dict(sorted(by_kind.items())),
         "exceptions": exceptions_n,
+        # What the document has made of what the queue said, and how many
+        # rows are about entities the house no longer has. A store whose
+        # every row is `dropped` is a consolidator that keeps refusing,
+        # which reads exactly like a quiet house from anywhere else.
+        "by_curation": dict(sorted(by_curation.items())),
+        "gone": gone,
         "last_ingest": state["last_ingest"],
         "ingested": state["ingested"],
+        "last_reconcile": int(reconciled.get("at") or 0),
     }
+
+
+# ---------------------------------------------------------------------------
+# Rows by predicate — what the Resident's nightly reflect pass rewrites
+# ---------------------------------------------------------------------------
+
+def with_predicate(prefix: str, now: float | None = None) -> list[dict]:
+    """Every live fact whose predicate starts with ``prefix``, oldest first.
+
+    `outcomes` files its `judgement:` facts here and has to find them again
+    to supersede or replace one — and an empty prefix would be every fact
+    in the store, which is never what a caller asking by predicate meant,
+    so it answers nothing instead.
+    """
+    prefix = str(prefix or "")
+    if not prefix:
+        return []
+    now = time.time() if now is None else float(now)
+    rows = [dict(r) for r in _load()
+            if str(r.get("predicate") or "").startswith(prefix)
+            and not _expired(r, now)]
+    rows.sort(key=lambda r: (int(r.get("ts") or 0), str(r.get("id") or "")))
+    return rows

@@ -47,8 +47,8 @@ from __future__ import annotations
 # off the package the way server.py calls it; its aiohttp import is lazy,
 # inside the collector, so this costs the test suite nothing.
 from . import (automations, baseline, chores, dashboards,  # noqa: F401
-               devices, evening, forecasts, registry, snapshot, system,
-               thermal)
+               devices, evening, forecasts, registry, security, snapshot,
+               system, thermal)
 
 # The catalog. Order is the order results are filed in, which is also the
 # order the Findings tab shows a fresh batch: what breaks an automation
@@ -59,6 +59,9 @@ CHECKS: list[dict] = [
     *dashboards.CHECKS,
     *registry.CHECKS,
     *system.CHECKS,
+    # Who and what can reach the house — read deterministically, and each
+    # rule fires only on a state somebody chose (see checks/security.py).
+    *security.CHECKS,
     *forecasts.CHECKS,
     # Last: everything above answers a question with a fixed answer, and
     # these answer one whose answer is different in every house.
@@ -107,6 +110,7 @@ GROUP_TITLES = {
     "evening": "Bedtime check",
     "chore": "Chore",
     "climate": "Climate check",
+    "sec": "Security check",
 }
 
 
@@ -131,9 +135,9 @@ def run_all(snap: dict, now: float | None = None,
 
     Returns ``{"findings": [...], "shadow": [...], "ran": [ids],
     "skipped": {id: reason}, "errors": {id: message}, "per_check":
-    {id: count}}``. A check that raises is reported under ``errors`` and
-    treated as not run: one bad rule must not take the batch down, and
-    must not clear anything either.
+    {id: count}, "withheld": [decision rows]}``. A check that raises is
+    reported under ``errors`` and treated as not run: one bad rule must
+    not take the batch down, and must not clear anything either.
 
     ``shadow`` is the rows from checks in :data:`SHADOW`, split out here
     rather than filtered by the caller — the catalog knows which rules are
@@ -145,6 +149,12 @@ def run_all(snap: dict, now: float | None = None,
     """
     import time as _time
     now = _time.time() if now is None else now
+    # A shallow copy carrying the decision trail's scratch list: what a
+    # check withheld (a correction, a cap) is written there by
+    # `House.should_report` / `House.gave_up` and handed back as
+    # ``withheld``, so the checks stay pure over the snapshot and the
+    # caller's own dict is never written to.
+    snap = {**snap, "_trail": []}
     available = snap.get("available") or {}
     out: list[dict] = []
     hidden: list[dict] = []
@@ -174,4 +184,5 @@ def run_all(snap: dict, now: float | None = None,
             f["source_title"] = title_for(cid)
             into.append(f)
     return {"findings": out, "shadow": hidden, "ran": ran, "skipped": skipped,
-            "errors": errors, "per_check": per_check}
+            "errors": errors, "per_check": per_check,
+            "withheld": list(snap["_trail"])}

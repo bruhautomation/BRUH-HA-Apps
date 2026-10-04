@@ -96,6 +96,89 @@ def rehearsal_house() -> dict:
     return snap
 
 
+def first_look_batch() -> tuple[list[dict], list[dict]]:
+    """A batch the Resident's first look could be handed, and its floors.
+
+    Built through the same doors the panel builds signals through —
+    `checks.run_all` over the planted house, `signals.from_finding` over
+    what it filed, `signals.from_state_change` for a tripped leak sensor
+    and a protected lock moving — so the shapes are the ones `signals.make`
+    publishes rather than dicts somebody typed (the Resident's own tests
+    passed for two releases on dicts `make` refused to build).
+
+    The floors are of two kinds and say which. A planted defect is real by
+    construction, so a look that ignores one has made the wrong call — a
+    floor of `watch`, graded only when a model is asked. The leak and the
+    lock carry floors the CODE applies after any reply
+    (`resident.never_ignore`), marked `guard`, which the free half checks
+    against an adversary that ignores everything.
+    """
+    import checks
+    import signals
+
+    now = fixture.NOW
+    snap = rehearsal_house()
+    filed = checks.run_all(snap, now)["findings"]
+    batch: list[dict] = []
+    labels: list[dict] = []
+    for i, row in enumerate(sorted(filed, key=lambda r: r["text"])):
+        sig = signals.from_finding({**row, "ts": int(now) - 300 - i}, now)
+        if sig is None:
+            continue
+        batch.append(sig)
+        labels.append({"signal": len(batch), "floor": "watch",
+                       "why": "a defect planted on purpose; ignoring it is "
+                              "the wrong call"})
+    leak = signals.from_state_change(
+        {"entity_id": "binary_sensor.kitchen_leak",
+         "old_state": {"state": "off"},
+         "new_state": {"state": "on", "attributes": {
+             "device_class": "moisture", "friendly_name": "Kitchen leak"}}},
+        signals.RegistryContext(), now)
+    batch.append(leak)
+    labels.append({"signal": len(batch), "floor": "act", "guard": True,
+                   "why": "a tripped leak sensor; no reply may lower it"})
+    lock = signals.from_state_change(
+        {"entity_id": "lock.front_door",
+         "old_state": {"state": "locked"},
+         "new_state": {"state": "unlocked",
+                       "attributes": {"friendly_name": "Front door"}}},
+        signals.RegistryContext(protected=["lock.front_door"]), now)
+    batch.append(lock)
+    labels.append({"signal": len(batch), "floor": "investigate",
+                   "guard": True,
+                   "why": "a protected entity moving; never ignored"})
+    # A scheduled moment, unlabelled on purpose: nothing about it is true
+    # or false, and a batch of nothing but things that matter is not the
+    # batch a real look is handed.
+    batch.append(signals.from_time("the evening pass", now,
+                                   text="the bedtime checks pass ran"))
+    return batch, labels
+
+
+def first_look_entry() -> dict:
+    batch, labels = first_look_batch()
+    return {
+        "schema": 1,
+        "kind": "first_look",
+        "id": "first-look-rehearsal",
+        "title": "One first look over the planted house, a leak and a lock",
+        "note": "The rehearsal's planted defects as the signals a checks "
+                "pass would offer the Resident, plus a tripped leak sensor "
+                "and a protected lock unlocking. The leak and the lock are "
+                "guard labels — floors the code enforces after any reply — "
+                "and the free replay proves they hold against a model that "
+                "ignores everything. The planted rows are graded only when "
+                "a real model is asked.",
+        "captured_at": int(fixture.NOW),
+        "source": "fixture",
+        "now": float(fixture.NOW),
+        "batch": batch,
+        "inputs": {},
+        "labels": labels,
+    }
+
+
 def entry(name: str, title: str, note: str, snap: dict,
           labels: list[dict]) -> dict:
     return {
@@ -111,7 +194,14 @@ def entry(name: str, title: str, note: str, snap: dict,
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Write the entries named on the command line, or every one.
+
+    Naming them is what lets a new entry be added without regenerating the
+    frozen ones beside it — which is the one thing this script must not do
+    by accident, since a regenerated entry cannot fail.
+    """
+    wanted = set(sys.argv[1:] if argv is None else argv)
     out = BASE / "entries"
     out.mkdir(parents=True, exist_ok=True)
 
@@ -135,8 +225,11 @@ def main() -> int:
             [{"check": row["check"], "entity_id": row["id"],
               "verdict": "found", "why": row["proves"]}
              for row in rehearsal.PLAN if row.get("check")]),
+        "first-look-rehearsal.json": first_look_entry(),
     }
     for name, data in files.items():
+        if wanted and name not in wanted and name[:-len(".json")] not in wanted:
+            continue
         (out / name).write_text(
             json.dumps(data, indent=1, sort_keys=True, ensure_ascii=False)
             + "\n", encoding="utf-8")

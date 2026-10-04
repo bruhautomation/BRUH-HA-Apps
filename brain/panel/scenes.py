@@ -250,6 +250,7 @@ def lights_in(snap, area: str, patterns: list[str] | None = None) -> tuple:
     knows the bulb is there is the point of showing it.
     """
     import automation_writer  # noqa: PLC0415 — panel-local
+    import world_model  # noqa: PLC0415 — a leaf
 
     house = _house(snap)
     patterns = list(patterns or [])
@@ -262,6 +263,12 @@ def lights_in(snap, area: str, patterns: list[str] | None = None) -> tuple:
             continue
         row = {"entity_id": eid, "name": house.name(eid),
                "capability": capability(state)}
+        # The night light, when a confident `world_model` reading says
+        # which it is — `nachtlampje` in any language. Absent otherwise,
+        # and `compose` falls back to the name the way it always did.
+        said = world_model.attribute(house.world, eid, "night_light", None)
+        if said in ("yes", "no"):
+            row["night_light"] = said == "yes"
         if automation_writer.is_protected(eid, patterns):
             skipped.append({**row, "reason": "protected"})
             continue
@@ -274,8 +281,10 @@ def compose(area: str, lights: list[dict],
     """Four scene entries for one room. Deterministic, top to bottom."""
     names = names or {}
     nightlights = [light for light in lights
-                   if is_nightlight(light["name"]) or is_nightlight(
-                       light["entity_id"].split(".", 1)[-1])]
+                   if (light["night_light"] if isinstance(
+                       light.get("night_light"), bool)
+                       else (is_nightlight(light["name"]) or is_nightlight(
+                           light["entity_id"].split(".", 1)[-1])))]
     out = []
     for mood in MOODS:
         # At night only a light that is for the night stays on — and if

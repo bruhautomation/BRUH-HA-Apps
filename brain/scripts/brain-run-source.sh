@@ -17,12 +17,12 @@ BRAIN_RUN_SOURCES="${BRAIN_RUN_SOURCES:-/data/run-sources.jsonl}"
 
 # Kept in step with SOURCES in panel/run_sources.py. An unknown source is
 # refused here rather than written and silently ignored on the way out.
-# card/fix/doctor/replay/curiosity/triage/resident are claimed by
+# card/fix/doctor/replay/curiosity/triage/resident/maintenance/gate/followup are claimed by
 # engine._run_cli rather than any shell caller, but both halves have to
 # agree on what a valid source IS.
 _brain_known_source() {
     case "$1" in
-        voice|automation|memory|study|card|fix|doctor|replay|curiosity|triage|resident) return 0 ;;
+        voice|automation|memory|study|card|fix|doctor|replay|curiosity|triage|resident|maintenance|gate|followup) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -73,5 +73,26 @@ _brain_prune_sources() {
     { tail -n 4000 "$BRAIN_RUN_SOURCES" > "${BRAIN_RUN_SOURCES}.tmp"; } 2>/dev/null \
         && { cat "${BRAIN_RUN_SOURCES}.tmp" > "$BRAIN_RUN_SOURCES"; } 2>/dev/null
     rm -f "${BRAIN_RUN_SOURCES}.tmp" 2>/dev/null
+    return 0
+}
+
+# Record one finished run in the panel's run journal — the shell half of
+# panel/journal.py's `record`, and the only route by which a run started
+# from a shell is counted, files a problem report when it fails, reaches the
+# usage breakdown, and nudges the usage reading:
+#
+#   brain_journal_record SOURCE EXIT [--stderr FILE] [--envelope FILE] \
+#       [--run-id ID] [--model M] [--duration S] [--error TEXT] [--extra k=v]
+#
+# Silent and always 0, this library's rule: bookkeeping about a run must
+# never be the reason a pass reports a failure.
+brain_journal_record() {
+    local source="$1" code="${2:-0}" panel="${BRAIN_PANEL_DIR:-/opt/panel}"
+    [ -n "$source" ] || return 0
+    shift 2 2>/dev/null || shift $#
+    [ -r "$panel/journal.py" ] || return 0
+    command -v python3 > /dev/null 2>&1 || return 0
+    { python3 "$panel/journal.py" record --source "$source" --exit "$code" "$@"; } \
+        > /dev/null 2>&1 || true
     return 0
 }

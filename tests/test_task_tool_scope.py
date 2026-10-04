@@ -46,6 +46,8 @@ sys.path.insert(0, str(PANEL_DIR))
 
 import engine  # noqa: E402
 
+FILE_READS = ("Read", "Glob", "Grep", "LS", "NotebookRead")
+
 
 def lift(name: str) -> str:
     """The named function, out of the real listener."""
@@ -103,7 +105,19 @@ class TestTheNarrowerScopes(unittest.TestCase):
     def test_read_only_is_the_analysts_own_pair(self):
         allow, deny = self._pairs("read_only")
         self.assertEqual(allow, list(engine.ANALYST_TOOLS))
-        self.assertEqual(deny, list(engine.ANALYST_DENIED))
+        self.assertEqual(deny[:len(engine.ANALYST_DENIED)],
+                         list(engine.ANALYST_DENIED))
+
+    def test_neither_narrow_scope_can_read_a_file(self):
+        """A task runs in /config with settings.local.json pre-approving
+        Read, so the analyst's own pair (which runs from CLAUDE_HOME and
+        never sees /config) handed a read-only task secrets.yaml — and a
+        non-admin may still ask for read_only through brain.ask."""
+        for mode in ("read_only", "house"):
+            allow, deny = self._pairs(mode)
+            for tool in FILE_READS:
+                self.assertIn(tool, deny, f"{mode} can still {tool}")
+                self.assertNotIn(tool, allow)
 
     def test_read_only_cannot_reach_a_shell_or_a_file(self):
         allow, deny = self._pairs("read_only")
@@ -269,6 +283,7 @@ class TestTheBridgeWritesIt(unittest.TestCase):
             "time": __import__("time"),
             "timeout": 300, "notify_entity": None,
             "model": None, "tools": None, "schema": None,
+            "memory": False, "scheduled": False, "cameras": False,
         }
         scope.update(kw)
         exec(compile(snippet.replace("\n        ", "\n"), "<bridge>", "exec"),
@@ -292,6 +307,26 @@ class TestTheBridgeWritesIt(unittest.TestCase):
         self.assertNotIn("schema", self._task(schema=None))
         self.assertNotIn("schema", self._task(schema={}))
         self.assertNotIn("schema", self._task(schema="not a dict"))
+
+    def test_an_insight_job_asks_for_memory_and_says_it_was_scheduled(self):
+        """The insight jobs' two flags ride only when set, so every other
+        task file is the JSON it always was: `memory` asks the listener for
+        the retrieval block, `scheduled` subjects the run to the pause and
+        the budget the panel's own scheduled runs answer to."""
+        plain = self._task()
+        self.assertNotIn("memory", plain)
+        self.assertNotIn("scheduled", plain)
+        job = self._task(memory=True, scheduled=True, tools="read_only")
+        self.assertIs(job["memory"], True)
+        self.assertIs(job["scheduled"], True)
+        self.assertEqual(job["tools"], "read_only")
+
+    def test_the_camera_preset_asks_for_the_camera_and_nothing_else_does(self):
+        """`cameras` rides only when set, for `memory`'s reason; it lifts the
+        snapshot tool off the narrow scope and nothing else (the opt-in list
+        and the daily count are asked at the MCP server)."""
+        self.assertNotIn("cameras", self._task(tools="read_only"))
+        self.assertIs(self._task(tools="read_only", cameras=True)["cameras"], True)
 
 
 class TestTheListenerAsksForTheShape(unittest.TestCase):

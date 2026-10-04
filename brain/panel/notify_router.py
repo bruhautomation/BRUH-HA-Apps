@@ -64,6 +64,7 @@ import datetime as dt
 import json
 import logging
 import os
+import time
 
 import answers
 
@@ -82,6 +83,15 @@ URGENCY = ("whenever", "today", "now")
 # promptly while somebody is awake, and waits when they are not.
 DEFAULT_URGENCY = "today"
 PRODUCER_URGENCY = {
+    # A smoke, leak, CO or gas detector that has just tripped. Filed by the
+    # deterministic safety lane (`server._safety_trip`) the moment the bus
+    # admits the transition, with no model in the way — and `now` is what
+    # lets it through quiet hours, which is the only hour a leak in a
+    # bedroom ceiling is ever reported in.
+    "safety": "now",
+    # The tripwire (`security.py`): something tried to act on an entity
+    # nothing should touch. That is now, whatever the hour.
+    "security": "now",
     # Something is happening in the house right now and waiting costs
     # something real.
     "check:dev.unavailable": "now",
@@ -119,6 +129,12 @@ PRODUCER_URGENCY = {
     "check:base.": "whenever",
     "check:reg.": "whenever",
     "check:auto.": "whenever",
+    # Who can reach the house. A lock a cloud speaker can open is as true
+    # at 08:00 as at 03:00, and a ban that already happened is history.
+    "check:sec.": "whenever",
+    # A question for the house book is never urgent — it is somebody being
+    # asked where the stopcock is, which keeps until they are up.
+    "house_book": "whenever",
 }
 
 # A queue that has grown past this is a notifier nobody has read for
@@ -276,13 +292,25 @@ def tier_of(finding: dict, min_severity: str | None = None) -> str:
     urgency half is `urgency_of`'s, which is declared per producer, so
     the set of rows that can wake a house is a set of lines of code
     rather than a set of sentences a model wrote.
+
+    **A case's own `stakes: high` is the other half of the pair**, for the
+    one producer whose rows are not one kind of thing: the Resident files
+    whatever an investigation found, so no single urgency fits its source.
+    `critical` is still required — and `resident.SEVERITY_BY_STAKES` tops
+    out at `serious`, so an investigation's own confidence cannot reach a
+    phone at three in the morning; only a row something deterministic
+    stamped `critical` can. Before this, the safety case the Resident
+    filed promised "sent straight through, whatever the hour" and was held
+    until morning, because `resident` had no entry in the table above.
     """
     sev = str((finding or {}).get("severity") or "warning")
     kept = worth_sending([finding or {}],
                          min_severity or DEFAULT_MIN_SEVERITY)
     if not kept:
         return "quiet"
-    if sev == "critical" and urgency_of(finding) == "now":
+    if sev == "critical" and (
+            urgency_of(finding) == "now"
+            or str((finding or {}).get("stakes") or "") == "high"):
         return "escalate"
     return "notify"
 
@@ -381,7 +409,8 @@ def hold(findings: list[dict], now: float, path: str | None = None) -> int:
 
 
 def take_queue(live_ids: set[int] | None = None,
-               path: str | None = None) -> list[dict]:
+               path: str | None = None,
+               now: float | None = None) -> list[dict]:
     """Empty the queue, dropping anything that is no longer waiting.
 
     `live_ids` is what the findings store still holds open. A row settled
@@ -390,14 +419,24 @@ def take_queue(live_ids: set[int] | None = None,
     messages are not about anything. `None` means the store could not be
     read, and then everything is sent — an unreadable store is not
     evidence that a problem is over.
+
+    A row the dispatcher held to a TIME (`until`, see `hold_timed`) stays
+    in the queue until that time has passed, and everything else leaves
+    exactly as it always did — a queue with no timed rows in it is emptied
+    by this the way it was before timed rows existed.
     """
     rows = load_queue(path)
     if not rows:
         return []
-    save_queue([], path)
+    now = time.time() if now is None else float(now)
+    due = [r for r in rows if held_until(r) <= now]
+    waiting = [r for r in rows if held_until(r) > now]
+    if live_ids is not None:
+        waiting = [r for r in waiting if int(r.get("ts") or 0) in live_ids]
+    save_queue(waiting, path)
     if live_ids is None:
-        return rows
-    return [r for r in rows if int(r.get("ts") or 0) in live_ids]
+        return due
+    return [r for r in due if int(r.get("ts") or 0) in live_ids]
 
 
 # ---------------------------------------------------------------------------
@@ -525,6 +564,23 @@ def prune_escalations(live_ids: set[int], path: str | None = None) -> list[int]:
             rows.pop(ts, None)
         save_escalations(rows, path)
     return gone
+
+
+def stop_escalation(ts: int, path: str | None = None) -> bool:
+    """Take one row off the ladder while it stays on the list.
+
+    `prune_escalations` stops a ladder when the row ENDS; this is the one
+    case where the row stays and the reminders should not: a safety
+    detector that reported clear. The card is still owed a look — water
+    that dried by itself still came from somewhere — but a phone told
+    three more times about a leak the sensor says is over is a phone that
+    is being argued with. Returns whether anything was climbing.
+    """
+    rows = load_escalations(path)
+    if rows.pop(int(ts), None) is None:
+        return False
+    save_escalations(rows, path)
+    return True
 
 
 def due_escalations(now: float, path: str | None = None) -> list[dict]:
@@ -803,6 +859,117 @@ def parse_action(identifier: str) -> tuple[str, int] | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Timed holds — the dispatcher's half of the transport (W2D)
+# ---------------------------------------------------------------------------
+#
+# The dispatcher (`dispatch.py`) decides when a notify-tier row is worth an
+# interruption; this module still carries it. A row it holds rides the same
+# queue the quiet hours already use — one queue, so one digest, one
+# "settled while it waited" rule and one row in /api/diagnostics — with
+# two additions: the moment it may leave (`until`) and the words the
+# dispatcher wrote for it. The flush runs only outside quiet hours, so a
+# hold that comes due inside them leaves when they end: the household's
+# window is the floor under every hold, and only an explicit `now` (which
+# the household's own sentence has to license) can break it.
+
+# The longest any hold may run. Past a day and a half a finding is not
+# being held, it is being hidden, and the Findings tab is where it already
+# is. `dispatch.parse` refuses a later time rather than clamping it.
+HOLD_MAX_S = 36 * 60 * 60
+# The lock screen. A title and a body the dispatcher writes must fit in
+# this between them, which is roughly what a phone shows before it cuts.
+WORDS_MAX = 160
+TITLE_MAX = 60
+
+
+def held_until(row: dict) -> float:
+    """When a queued row may leave: its `until`, or 0 for a quiet-hours
+    hold, which leaves on the next flush as it always did."""
+    try:
+        return float((row or {}).get("until") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def hold_timed(entries: list[dict], now: float,
+               path: str | None = None) -> int:
+    """Queue rows to leave at a time the dispatcher chose. Returns the depth.
+
+    Each entry is `{"finding", "until", "title", "body"}`. Deduped on `ts`
+    exactly as `hold` is, so a row already waiting keeps the slot it has.
+    """
+    rows = load_queue(path)
+    seen = {r.get("ts") for r in rows}
+    for entry in entries or []:
+        finding = (entry or {}).get("finding") or {}
+        row = _row(finding, now)
+        if not row["ts"] or row["ts"] in seen:
+            continue
+        seen.add(row["ts"])
+        row["until"] = int(min(float(entry.get("until") or now),
+                               now + HOLD_MAX_S))
+        title = str(entry.get("title") or "").strip()[:TITLE_MAX]
+        body = str(entry.get("body") or "").strip()[:WORDS_MAX]
+        if title and body:
+            row["title"], row["body"] = title, body
+        rows.append(row)
+    save_queue(rows, path)
+    return len(rows[-QUEUE_MAX:])
+
+
+def next_hold_at(path: str | None = None) -> float:
+    """The soonest timed hold, or 0. The flush loop's wait reads it, for
+    `next_escalation_at`'s reason: a hold due at 07:10 must not wait for a
+    poll that comes round at 07:15."""
+    due = [held_until(r) for r in load_queue(path) if held_until(r)]
+    return min(due) if due else 0.0
+
+
+def compose_released(rows: list[dict]) -> tuple[str, str]:
+    """The message for whatever the queue released.
+
+    Rows held only by the quiet hours compose exactly as they always did —
+    `compose(held=True)`, "held overnight". Once the dispatcher has held
+    something it is not necessarily overnight any more, and a row it wrote
+    words for is sent in those words when it leaves on its own.
+    """
+    rows = list(rows or [])
+    if not any(r.get("until") for r in rows):
+        return compose(rows, held=True)
+    if len(rows) == 1 and rows[0].get("title") and rows[0].get("body"):
+        return str(rows[0]["title"]), str(rows[0]["body"])
+    n = len(rows)
+    title = ("brAIn kept one thing for now" if n == 1
+             else f"brAIn kept {n} things for now")
+    lines = [str(r.get("body") or "").strip()
+             or f"[{r.get('severity', 'warning')}] {r.get('text', '')}"
+             for r in rows[:LINES_MAX]]
+    if n > LINES_MAX:
+        lines.append(f"…and {n - LINES_MAX} more on the Findings tab.")
+    return title, "\n".join(lines)[:MESSAGE_MAX]
+
+
+# ---------------------------------------------------------------------------
+# The two messages that are not about a problem (W2D)
+# ---------------------------------------------------------------------------
+#
+# The morning brief and the weekly report used to be handed to the
+# findings composer as a one-row "finding", so both arrived as "brAIn found
+# a problem" with "[info]" in front of the paragraph — on the two messages
+# whose whole design is that they are NOT a list of problems. Each has its
+# own title and goes out as the paragraph it is.
+
+def compose_brief(body: str) -> tuple[str, str]:
+    """The morning brief: a paragraph, under a title that says what it is."""
+    return "brAIn this morning", str(body or "").strip()[:MESSAGE_MAX]
+
+
+def compose_weekly(body: str) -> tuple[str, str]:
+    """The weekly report, likewise."""
+    return "brAIn: your week", str(body or "").strip()[:MESSAGE_MAX]
+
+
 __all__ = [
     "ACCEPTED_URGENCY", "ACTION_LABELS", "ACTION_PREFIX",
     "DEFAULT_MIN_SEVERITY", "DEFAULT_URGENCY", "ESCALATION_FILE",
@@ -812,6 +979,9 @@ __all__ = [
     "due_escalations", "escalation_state", "hold", "in_quiet_hours",
     "load_escalations", "load_queue", "next_escalation_at", "parse_action",
     "parse_hour", "prune_escalations", "quiet_ends_at", "record_reminder",
-    "save_escalations", "save_queue", "take_queue", "tier_of", "urgency_of",
-    "worth_sending",
+    "save_escalations", "save_queue", "stop_escalation", "take_queue",
+    "tier_of", "urgency_of", "worth_sending",
+    "HOLD_MAX_S", "TITLE_MAX", "WORDS_MAX", "compose_brief",
+    "compose_released", "compose_weekly", "held_until", "hold_timed",
+    "next_hold_at",
 ]

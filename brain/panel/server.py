@@ -100,8 +100,11 @@ PUT  /api/memory             — save a manual edit of the memory file {text}
 Runs on 0.0.0.0:8099. The HA Supervisor proxies the ingress URL into
 /api/hassio_ingress/<token>/...; we therefore use only relative links in the
 HTML and let aiohttp serve at /. Generation jobs run through a single-worker
-queue so only one Claude invocation is in flight at a time (subscription
-rate-limit friendly).
+queue, and every Claude run the server starts — that worker's and every
+other — takes a seat on the bounded, prioritised run queue (`run_queue`):
+safety, then a person's press, then scheduled work, with one seat always
+kept free of scheduled work. That queue, not the worker, is what keeps
+the subscription's rate limit and the box's memory safe.
 
 Dashboard cards are served by HA itself via a /local mirror: insight HTML is
 copied to /config/www/brain/ (created on first use of the ▦ dialog,
@@ -112,9 +115,11 @@ random token to keep the unauthenticated /local URLs unguessable.
 from __future__ import annotations
 
 import asyncio
+import collections
 import concurrent.futures
 import contextlib
 import fcntl
+import functools
 import hashlib
 import json
 import logging
@@ -149,7 +154,13 @@ import checks
 import cli_commands
 import conditions
 import conversations
+import camera_policy
+import corrections
 import curiosity
+import decision_trail
+import deep_review
+import deliveries
+import dispatch
 import doctor
 import energy
 import engine
@@ -164,20 +175,26 @@ import fixer
 import healing
 import health
 import house
+import household
 import habit_lookup
 import hypotheses
 import ideas
 import authoring
 import intents
+import interpret
 import journal
 import knowledge_store
 import manual_ledger
 import milestones
 import model_plan
 import music_assistant
+import notify_learn
 import notify_router
 import override_ledger
 import onboarding
+import outcomes
+import ownership
+import permission_mode
 import playbooks
 import prompt_store
 import proposals
@@ -186,6 +203,7 @@ import reports
 import resident
 import rhythm
 import routines
+import run_queue
 import run_sources
 import scenes
 import schedule_store
@@ -193,6 +211,7 @@ import settings_store
 import shadow
 import shadow_findings
 import signals
+import synthesis
 import terminal_proxy
 import thermal
 import todo_store
@@ -203,6 +222,26 @@ import unfix
 import usage_store
 import user_categories
 import weekly
+# Home Assistant's own maintainer: names and rooms, the house book, the
+# overnight health check and the upgrade advisor.
+import house_book
+import sre
+import tidy
+import upgrades
+# Understanding the house: what each entity is, what it is doing now, and
+# what is coming up.
+import occasions
+import situation
+import world_model
+# Every change is a contract: typed fixes, interventions, the action gate
+# and the tripwire (`_run_typed_fix` and its neighbours).
+import consequence
+import gate
+import house_rules
+import interventions
+import plan_ops
+import security
+import typed_fix
 # `_CARD_CONTRACT` and `_previous_block` are reached into deliberately, by
 # the prompt preview, which reports the size of every block a run is sent:
 # a second copy of the contract or of the previous-run renderer here would
@@ -212,8 +251,9 @@ import weekly
 # the point, two spellings of one dependency.
 from categories import (ANALYST_SYSTEM, CARD_SCHEMA, CATEGORIES, SYSTEM_PROMPT,
                         _CARD_CONTRACT, _previous_block,
-                        build_orientation_prompt, build_prompt, get_category,
-                        house_block, inject_styles, memory_excerpt, stores_for)
+                        build_orientation_prompt, build_prompt,
+                        document_lines, get_category, house_block,
+                        inject_styles, memory_excerpt, stores_for)
 
 HERE = Path(__file__).resolve().parent
 INSIGHTS_DIR = Path(os.environ.get("BRAIN_DIR", "/data/insights"))
@@ -414,6 +454,40 @@ def eff_model() -> str:
     return str(_opt("model", MODEL))
 
 
+def eff_skip_permissions() -> bool:
+    """"Let brAIn act without asking", as the terminal and the chat read it.
+
+    Only an explicit True means act. The precedence is the mirrored
+    options' — a local override, the add-on's live options, the value
+    run.sh exported at startup — with one turn that is about which stale
+    value is safe. A local override exists only because a write to the
+    Supervisor failed, and it outlives whatever is done on the
+    Configuration tab afterwards. A stale "ask" costs a prompt; a stale
+    "act" goes on acting after somebody turned the switch off there. So a
+    local False still wins, and a local True counts only where there is
+    no live Supervisor value to outrank it.
+    """
+    local = settings_store.load().get(permission_mode.OPTION)
+    if local is False:
+        return False
+    live = addon_options.get(permission_mode.OPTION)
+    if isinstance(live, bool):
+        return live
+    if local is True:
+        return True
+    return permission_mode.startup()
+
+
+def _publish_permission_mode() -> None:
+    """Write the switch where a terminal session reads it when it starts.
+
+    Called at startup, after a ⚙ save and after each poll of the add-on's
+    options, so a Configuration-tab edit reaches the next terminal session
+    without a restart. `publish` skips the write when nothing moved.
+    """
+    permission_mode.publish(eff_skip_permissions())
+
+
 def _answer(result: dict) -> dict | None:
     """The object a run answered with: the CLI's validated one first.
 
@@ -462,6 +536,7 @@ def startup_options() -> dict:
         "history_keep_days": HISTORY_KEEP_DAYS,
         "model": MODEL,
         "timeout_minutes": TIMEOUT_S // 60,
+        "dangerously_skip_permissions": permission_mode.startup(),
     }
 
 
@@ -495,6 +570,7 @@ def effective_options() -> dict:
         "history_keep_days": eff_keep_days(),
         "model": eff_model(),
         "timeout_minutes": eff_timeout_s() // 60,
+        "dangerously_skip_permissions": eff_skip_permissions(),
     }
 
 
@@ -648,16 +724,14 @@ def _rebind_resident_queue() -> None:
 # summary of the last one — which is what /api/checks, `brain check list`
 # and the diagnostics bundle read.
 CHECKS_STATE: dict = {"running": False, "last": None}
-# Whether a triage drain is in flight. A dict for `CHECKS_STATE`'s reason
-# rather than a module-level flag rebound through `global`: the two are
-# the same guard three lines apart in `run_checks`, and one of them
-# spelled differently is the drift a second idiom always produces.
-# `day`/`runs` are the per-day runaway guard (`triage.MAX_PER_DAY`):
+# The first look's per-day runaway guard. A dict for `CHECKS_STATE`'s
+# reason rather than module-level counters rebound through `global`.
+# `day`/`runs` count looks against `triage.MAX_PER_DAY`:
 # counted per local day and reset with it. In memory on purpose — it is a
 # guard against a loop and not a budget, and a restart that forgets it
 # costs at most one more day's worth of runs, where a guard that survived
 # a restart would need a store nothing else reads.
-TRIAGE_STATE: dict = {"running": False, "day": "", "runs": 0}
+TRIAGE_STATE: dict = {"day": "", "runs": 0}
 
 
 def _triage_runs_today(now: float) -> int:
@@ -713,10 +787,41 @@ RESIDENT_PENDING: list[dict] = []
 # already being judged — harmless (`record_triage` only touches a row still
 # in `triaging`) and still a wasted line of a batch.
 RESIDENT_INFLIGHT: set[int] = set()
+# Investigations a look decided on that the ledger could not pay for yet,
+# with the look's reason. Parked here rather than put back on the pending
+# list: back there they were re-judged by a fresh paid look every minute
+# while hot, with no memory of the verdict, and a hot one could spend the
+# day's whole look allowance asking the same question while Haiku went on
+# answering it the same way. The next allowance drains this with no new
+# look; capped, oldest dropped and counted.
+RESIDENT_PARKED: list[tuple[dict, str, int]] = []
+RESIDENT_PARKED_MAX = 50
 # The budget, per local day, per tier. On disk: a restart is the first thing
 # anybody does after changing an option, and an in-memory count makes
 # "twice a day" mean "twice per restart".
-LEDGER = resident.Ledger()
+#
+# The day is the HOUSE's: the reader is handed over rather than a zone,
+# because this is built at import and a zone read then is UTC for the life
+# of the process — the midnight-UTC day the class exists not to keep.
+LEDGER = resident.Ledger(tz=lambda: baselines.house_timezone()[0])
+
+
+def _resident_tier(job: str, thinking: str) -> str:
+    """The tier a Resident run of `job` is about to be charged to.
+
+    The plan as the dial and a typed model actually move it, never the
+    table's tier: `resident.tier_for` answers what a job is PLANNED at,
+    and a ledger asked about that let `generous` run investigations on
+    Opus against the Sonnet allowance, and a typed Opus run first looks
+    on Opus against nothing at all.
+    """
+    return model_plan.run_tier(job, thinking, eff_model())
+
+
+def _ran_tier(result: dict, job: str) -> str:
+    """The tier a finished run RAN on, read off the model the engine sent."""
+    sent = (result.get("meta") or {}).get("model") if isinstance(result, dict) else ""
+    return model_plan.tier_of(sent or "") or resident.tier_for(job)
 # The subscription. Built in `on_startup`, because it needs a loop.
 EVENT_BUS: eventbus.EventBus | None = None
 
@@ -774,7 +879,20 @@ RESIDENT_SIGNAL_TTL_S = 86400
 # of what is tripped now, not a history.
 SAFETY_SUBJECTS: dict[str, float] = {}
 SAFETY_SUBJECT_TTL_S = 6 * 3600
+# The producer every safety case files under, whoever filed it — the lane
+# or a Resident `act`. Its own source rather than `resident` so the
+# notifier can give it `now` (`notify_router.PRODUCER_URGENCY`) and so
+# "Stop raising these" can be refused for it by name: a mute on the rule
+# that reports leaks is not a thing this panel offers.
+SAFETY_SOURCE = "safety"
 MAX_SAFETY_SUBJECTS = 200
+# Doors, windows and locks the bus has seen change, and when — the index
+# `camera_policy.trip_kind` reads to decide whether an investigation may
+# use a camera. Filled by the same raw hook, for the same reason: the
+# device class lives on the event's attributes and a signal carries none.
+CLOSURE_SUBJECTS: dict[str, float] = {}
+CLOSURE_SUBJECT_TTL_S = 86400
+MAX_CLOSURE_SUBJECTS = 200
 
 
 CHECKS_FIRST_DELAY_S = 120
@@ -1116,8 +1234,11 @@ async def _call_ha_service(service: str, data: dict) -> bool:
         return False
 
 
-async def _submit_memory(fact: str, source: str = "insights") -> None:
-    await asyncio.to_thread(_queue_memory_fact, fact, source)
+async def _submit_memory(fact: str, source: str = "insights", **about) -> None:
+    """Queue a fact off the loop. ``about`` is `_queue_memory_fact`'s
+    keywords — the subject a writer knows, the run that taught it."""
+    await asyncio.to_thread(
+        lambda: _queue_memory_fact(fact, source, **about))
 
 
 # What a run is told the house is like, and how much of the document that
@@ -1135,8 +1256,15 @@ MEMORY_HEAD_CHARS = 800
 
 def _memory_block(*, entities=(), areas=(), domains=(), query: str = "",
                   head_chars: int = MEMORY_HEAD_CHARS) -> str:
-    """The retrieval block for these subjects, over the document's head."""
+    """The retrieval block for these subjects, over the document's head.
+
+    The entities' own rooms are added here, once, for every caller: a
+    fact about a room is filed `area:<id>`, and a run about the lounge
+    thermometer that was never handed the lounge never saw it.
+    """
     facts = ""
+    areas = list(areas or ()) + [a for a in _areas_of(entities)
+                                 if a not in (areas or ())]
     try:
         facts = facts_store.retrieval_block(
             entities=entities, areas=areas, domains=domains, query=query)
@@ -1160,6 +1288,40 @@ def _memory_block(*, entities=(), areas=(), domains=(), query: str = "",
 def _tok(n: int) -> str:
     """A token count as a person would say it: 41231 -> "41.2k"."""
     return f"{n / 1000:.1f}k" if n >= 1000 else str(int(n))
+
+
+# The engine's three runners. A run made through `_claude` with one of these
+# is told whether a person asked for it, which is the one thing that lets a
+# typed model reach a job a timer may not run on it (`model_plan`).
+def _engine_runners() -> tuple:
+    return (engine.run_claude, engine.run_analyst, engine.run_agent)
+
+
+async def _claude(fn, *args, priority: int = run_queue.SCHEDULED, **kwargs):
+    """Run one engine call on the Claude run queue, in its turn.
+
+    Every `engine.run_*` the server makes goes through here rather than
+    `asyncio.to_thread`: the default thread pool is where every store read
+    runs, and minutes-long Claude processes sharing it with them — fourteen
+    call sites, no limit and no order — is what let a Done pressed in Home
+    Assistant wait behind two investigations and a Reply. See `run_queue`.
+    `priority` is SAFETY, PRESS or SCHEDULED; a press is also `pressed`
+    to the engine.
+    """
+    if fn in _engine_runners() and "pressed" not in kwargs:
+        kwargs["pressed"] = priority == run_queue.PRESS
+    return await run_queue.run(fn, *args, priority=priority, **kwargs)
+
+
+def _job_priority(job_id: str) -> int:
+    """A queued job's priority: the scheduler's own runs say why they are
+    here (`because`), and everything else got here because somebody
+    pressed something — `_because_of`'s two kinds."""
+    job = JOBS.get(job_id) or {}
+    if job.get("kind") in ("fix", "plan", "doctor", "rehearse", "sweep"):
+        return run_queue.PRESS
+    return run_queue.SCHEDULED if str(job.get("because") or "").strip() \
+        else run_queue.PRESS
 
 
 def _record_usage(result: dict, insight_id: str) -> dict:
@@ -1303,11 +1465,18 @@ def _quiet_hours() -> tuple[int | None, int | None]:
 
 
 async def _send_notification(rows: list[dict], held: bool = False,
-                             message: tuple[str, str] | None = None) -> bool:
+                             message: tuple[str, str] | None = None,
+                             buttons: list[dict] | None = None, *,
+                             kind: str = "", dispatched: bool = False) -> bool:
     """Deliver one message. A failure is a log line, never an exception.
 
     The finding is already safe on the list before this is called, so a
     bad service name must not be able to fail the run that filed it.
+
+    Every message, sent or failed, is a line in the delivery ledger
+    (`deliveries.py`): `kind` says what it was where the caller knows
+    better than the rows can (a reminder, the brief), and `dispatched`
+    that the dispatcher chose its timing and words.
     """
     service, _sev = _findings_notify_target()
     if not service or not rows:
@@ -1318,18 +1487,35 @@ async def _send_notification(rows: list[dict], held: bool = False,
     title, body = message or notify_router.compose(rows, held=held)
     # Buttons, but only where they can be answered and only when the
     # message is about one finding — see `notify_router.actions_for`.
-    buttons = notify_router.actions_for(rows, service)
+    # A caller with its own (a confirmation's Undo) replaces them: the
+    # card's answers under "Got it — I'll stop flagging it" would offer to
+    # end a case that has just been ended. Gated the same way.
+    if buttons is None:
+        buttons = notify_router.actions_for(rows, service)
+    elif not notify_router.can_answer(service):
+        buttons = []
     # And where a tap lands: the panel, rather than Home Assistant's front
     # page with the row three taps away. Only where the notifier reads the
     # keys (`open_link`), and only once the Supervisor has said what this
     # add-on's slug is — a made-up path opens the wrong add-on or nothing.
+    # The delivery's own id rides as the companion app's `tag`, which the
+    # app hands back on every event about the message — the one thread
+    # from a swipe on a phone to the line that sent it (`deliveries.tag_of`).
+    delivery = deliveries.new_id()
+    kind = kind or _delivery_kind(rows, held, _sev)
     data = {**({"actions": buttons} if buttons else {}),
-            **notify_router.open_link(service, addon_options.panel_path())}
+            **notify_router.open_link(service, addon_options.panel_path()),
+            **({"tag": deliveries.tag_for(delivery)}
+               if notify_router.can_answer(service) else {})}
     import ha_data
     try:
         await ha_data.send_notification(
             service, title, body, data=data or None)
     except Exception as exc:  # noqa: BLE001 — a bad target can't fail the run
+        await asyncio.to_thread(
+            deliveries.record, kind, delivery_id=delivery, service=service,
+            title=title, body=body, rows=rows, ok=False, error=str(exc),
+            dispatched=dispatched)
         log.warning("findings notification via %s failed: %s", service, exc)
         NOTIFY_LAST.update(error=str(exc)[:200], at=int(time.time()),
                            service=service)
@@ -1338,6 +1524,9 @@ async def _send_notification(rows: list[dict], held: bool = False,
                       + (", held overnight" if held else ""))
         return False
     NOTIFY_LAST.update(error="", at=int(time.time()), service=service)
+    await asyncio.to_thread(
+        deliveries.record, kind, delivery_id=delivery, service=service,
+        title=title, body=body, rows=rows, dispatched=dispatched)
     log.info("notified %s of %d finding(s)%s", service, len(rows),
              " held overnight" if held else "")
     return True
@@ -1360,7 +1549,8 @@ async def _flush_held_findings() -> int:
     rows = notify_router.take_queue(live)
     if not rows:
         return 0
-    await _send_notification(rows, held=True)
+    await _send_notification(rows, held=True,
+                             message=notify_router.compose_released(rows))
     return len(rows)
 
 
@@ -1401,6 +1591,8 @@ def _notify_diagnostics() -> dict:
         "last_error": str(NOTIFY_LAST.get("error") or "")[:200],
         "last_error_at": int(NOTIFY_LAST.get("at") or 0),
         "last_service": str(NOTIFY_LAST.get("service") or ""),
+        # The dispatcher, the delivery ledger and the learned suggestions.
+        **_dispatch_diagnostics(),
     }
 
 
@@ -1439,6 +1631,18 @@ def _local_now(now: float):
 
     tz, _name = baselines.house_timezone()
     return datetime.datetime.fromtimestamp(now, tz)
+
+
+def _now_line(now: float) -> str:
+    """The house's clock as a model reads it: weekday, date, time, zone.
+
+    A prompt full of "3 h ago" says nothing about whether it is three in
+    the afternoon or three in the morning, and that is most of what makes
+    a door opening worth a look.
+    """
+    local = _local_now(now)
+    _tz, name = baselines.house_timezone()
+    return f"{local:%A} {local.day} {local:%B %Y}, {local:%H:%M} ({name})"
 
 
 def _brief_enabled() -> tuple[bool, int]:
@@ -1553,7 +1757,7 @@ async def _send_brief(now: float) -> str:
     state["house"] = await _house_prompt_block(now)
     state["memory"] = await asyncio.to_thread(_memory_block)
 
-    result = await asyncio.to_thread(
+    result = await _claude(
         engine.run_analyst, brief.frame(reasons, state), brief.SYSTEM,
         eff_model(), brief.TIMEOUT_S, brief.MAX_TURNS,
         "brief", job="brief")
@@ -1571,7 +1775,11 @@ async def _send_brief(now: float) -> str:
     BRIEF_STATE["last_error"] = ""
     BRIEF_STATE["last_text"] = body
     schedule_store.set_text(BRIEF_TEXT_KEY, body)
-    await _send_notification([{"text": body, "severity": "info"}])
+    # Its own title, not the findings composer's "brAIn found a problem"
+    # with "[info]" in front of the paragraph.
+    await _send_notification([{"text": body, "severity": "info"}],
+                             message=notify_router.compose_brief(body),
+                             kind="brief")
     return body
 
 
@@ -1752,7 +1960,7 @@ WEEKLY_SENT_KEY = "weekly_last_sent"
 WEEKLY_TEXT_KEY = "weekly_last_text"
 WEEKLY_STATE: dict = {"last_sent": schedule_store.get(WEEKLY_SENT_KEY),
                       "last_text": schedule_store.get_text(WEEKLY_TEXT_KEY),
-                      "last_error": "", "last_state": {}}
+                      "last_error": "", "last_state": {}, "last_pick": {}}
 
 
 def _weekly_enabled() -> tuple[bool, int]:
@@ -1795,12 +2003,69 @@ async def _weekly_state(now: float) -> dict:
     # the one thing to do.
     since = max(WEEKLY_STATE["last_sent"], now - weekly.WEEK_S)
     power = await _weekly_energy(now)
-    rows = await asyncio.to_thread(findings_store.list_all)
+    # The rows somebody can see, which is what "still open" means in a
+    # message to them. Unfiltered, the count took in `held` rows — the ones
+    # triage looked at and chose NOT to show — and `triaging` ones nothing
+    # has judged yet, so the report called rows brAIn had kept off the
+    # list "still open", and a week whose only material was held rows
+    # could spend a run saying so. The brief has always read "live".
+    rows = await asyncio.to_thread(findings_store.list_all, "live")
     settled = await asyncio.to_thread(findings_store.settled_listing)
     return weekly.gather(rows, settled, power, since, now=now)
 
 
-async def _send_weekly(now: float) -> str:
+async def _weekly_pick(state: dict, now: float, *,
+                       pressed: bool = False) -> dict:
+    """The one thing the report ends on: the synthesis job's, else the rank's.
+
+    `synthesis` holds the rules; this is the plumbing. Whatever happens the
+    severity pick is computed first and journaled beside the choice as the
+    baseline, so "does the synthesis earn its run" is a number in the
+    journal rather than an impression. A scheduled report answers to the
+    three gates every scheduled run answers to (`_resident_gate`); a send
+    pressed by hand needs only a credential, the ideas press's rule —
+    "automatic runs pause; asking by hand always runs". Every
+    way of not running — one candidate, a gate, a failed run, a reply that
+    named nothing it was shown — is the old pick with the reason recorded.
+    """
+    rows = await asyncio.to_thread(findings_store.list_all, "live")
+    cands = synthesis.candidates(rows, now)
+    baseline = cands[0] if cands else state.get("one_thing")
+    chosen = None
+    reason = ""
+    if not synthesis.worth_asking(cands):
+        reason = "fewer than two open problems to choose between"
+    else:
+        if pressed:
+            reason = "" if engine.get_auth() else "there is no Claude credential"
+        else:
+            reason = _resident_gate(settings_store.load())
+        if not reason:
+            result = await _claude(
+                engine.run_claude,
+                synthesis.frame(cands, weekly.week_lines(state), now,
+                                str(state.get("memory") or "")),
+                synthesis.SYSTEM, eff_model(), synthesis.TIMEOUT_S,
+                synthesis.MAX_TURNS, "weekly", job="synthesis",
+                schema=synthesis.SCHEMA,
+                priority=(run_queue.PRESS if pressed
+                          else run_queue.SCHEDULED))
+            if not result.get("ok"):
+                reason = "the synthesis run failed: " + str(
+                    result.get("error") or "no reply")[:80]
+            else:
+                chosen = synthesis.parse(_answer(result), cands)
+                if chosen is None:
+                    reason = "the reply named no problem it was shown"
+    picked = synthesis.decision(baseline, chosen, reason)
+    journal.record(synthesis.JOURNAL_SOURCE,
+                   "ok" if chosen is not None else "fallback", ok=True,
+                   extra=picked["extra"])
+    WEEKLY_STATE["last_pick"] = dict(picked["extra"])
+    return picked
+
+
+async def _send_weekly(now: float, *, pressed: bool = False) -> str:
     """Gather, decide, and only then ask. Returns what was sent, or ''."""
     state = await _weekly_state(now)
     # Numbers, not the content: `last_state` rides into /api/diagnostics
@@ -1830,10 +2095,17 @@ async def _send_weekly(now: float) -> str:
         log.info("weekly report: nothing to report, not sent")
         return ""
 
-    result = await asyncio.to_thread(
+    # Chosen only once the week is worth a message: a quiet week spends
+    # nothing on choosing what it will not say.
+    picked = await _weekly_pick(state, now, pressed=pressed)
+    state["one_thing"] = picked["pick"]
+    state["one_thing_why"] = picked["why"]
+
+    result = await _claude(
         engine.run_analyst, weekly.frame(state), weekly.SYSTEM,
         eff_model(), weekly.TIMEOUT_S, weekly.MAX_TURNS, "weekly",
-        job="weekly")
+        job="weekly",
+        priority=run_queue.PRESS if pressed else run_queue.SCHEDULED)
     if not result.get("ok"):
         WEEKLY_STATE["last_error"] = str(result.get("error") or "no reply")
         log.warning("weekly report failed: %s", WEEKLY_STATE["last_error"])
@@ -1848,7 +2120,9 @@ async def _send_weekly(now: float) -> str:
     WEEKLY_STATE["last_error"] = ""
     WEEKLY_STATE["last_text"] = body
     schedule_store.set_text(WEEKLY_TEXT_KEY, body)
-    await _send_notification([{"text": body, "severity": "info"}])
+    await _send_notification([{"text": body, "severity": "info"}],
+                             message=notify_router.compose_weekly(body),
+                             kind="weekly")
     return body
 
 
@@ -1892,6 +2166,10 @@ def _weekly_diagnostics() -> dict:
         "last_error": WEEKLY_STATE["last_error"],
         "last_chars": len(WEEKLY_STATE["last_text"]),
         "last_state": WEEKLY_STATE["last_state"],
+        # Which rule chose the one thing, and how often the synthesis has
+        # agreed with the rank: the number that says whether it earns its run.
+        "last_pick": WEEKLY_STATE.get("last_pick") or {},
+        "pick": synthesis.agreement(journal.tail(0)),
     }
 
 
@@ -1927,6 +2205,8 @@ async def _apply_finding_requests() -> list[dict]:
     would re-file what the answers in the same burst had just settled.
     """
     requests = await asyncio.to_thread(finding_requests.collect)
+    # What a button on a notification answered, in the delivery ledger.
+    await asyncio.to_thread(_deliveries_note_requests, requests)
     # A person answered. It is the highest base weight in the signals
     # table and deliberately not hot — somebody typing an answer is not an
     # emergency — and what it must not do is sit behind a hundred sensors,
@@ -1941,20 +2221,37 @@ async def _apply_finding_requests() -> list[dict]:
         if req.get("kind") == "todo":
             out.append(await _apply_todo_request(req))
             continue
+        if req.get("kind") == finding_requests.HYPOTHESIS_KIND:
+            out.append(await _apply_hypothesis_request(req))
+            continue
         ts, action = req["ts"], req["action"]
         result = {"ts": ts, "action": action, "via": req.get("via", ""),
                   "ok": False, "why": "no such finding"}
         if action == "snooze":
-            until = int(time.time() + req["hours"] * 3600)
+            until = await asyncio.to_thread(_request_snooze_until, ts,
+                                            req.get("hours"))
             row = await asyncio.to_thread(findings_store.snooze, ts, until)
             result["ok"] = bool(row)
         elif action == "reply":
             finding = await asyncio.to_thread(findings_store.get, ts)
             if finding:
-                ok, why = await _reply_to_finding(finding, req.get("note", ""))
+                # Started, never awaited: a reply is a Claude run of up to
+                # REPLY_TIMEOUT_S, and an ending given in the same burst —
+                # or the next one, fifteen seconds on — must not wait for it.
+                ok, why = _start_reply(finding, req.get("note", ""))
                 result["ok"] = ok
                 if not ok:
                     result["why"] = why
+        elif action == "undo":
+            # The Undo on a confirmation a reply was answered with
+            # (`_reply_routes`): the toast's own token, found by the row's
+            # id, so the phone's Undo puts back exactly what the tab's
+            # would — the row, the settled key, the memory line and every
+            # rule the correction wrote.
+            ok, why = await _undo_from_phone(ts)
+            result["ok"] = ok
+            if not ok:
+                result["why"] = why
         elif action == "todo":
             # The feed's own *Add to to-do*, from a Repairs dialog or a
             # notification button: the same move the tab makes, through
@@ -1970,12 +2267,23 @@ async def _apply_finding_requests() -> list[dict]:
         else:
             finding = await asyncio.to_thread(findings_store.get, ts)
             spec = FINDING_VERBS.get(finding_requests.verb_for(action))
+            note = str(req.get("note") or "")
+            if finding and spec and action == "wrong" and note.strip() \
+                    and req.get("via") == "repairs":
+                # The reason box on a Repairs dialog, read before it is
+                # filed: "remind me tomorrow" typed there is a defer, not a
+                # permanent rule (`_repairs_routes`). Unread — no
+                # credential, a failed run — it is the Wrong it always was.
+                routes = await _interpret(note, "repairs", case=finding)
+                if routes is not None:
+                    result["ok"] = await _repairs_routes(finding, note, routes)
+                    spec = None
             if finding and spec:
                 # No undo token: `undo_store` is the toast's, and there is
                 # no toast on a lock screen. By the time somebody un-ticks
                 # an item the row it stood for is already gone, so an
                 # offer nothing can accept would be worse than none.
-                await _end_finding(finding, spec, req.get("note", ""))
+                await _end_finding(finding, spec, note)
                 result["ok"] = True
         if result["ok"]:
             result["why"] = ""
@@ -1990,6 +2298,24 @@ async def _apply_finding_requests() -> list[dict]:
     if asked:
         out.append(_start_requested_checks(asked))
     return out
+
+
+def _request_snooze_until(ts: int, hours: float | None) -> int:
+    """When a snooze asked for from Home Assistant should end.
+
+    One that names its hours gets them — Repairs' "Remind me tomorrow"
+    says 24 on the button. One that does not is a Dismiss, and a Dismiss
+    is the feed's own press: it buys what the feed would have bought for
+    this case (`cases.snooze_until`, keyed on how much it matters), so a
+    phone and the panel cannot disagree about when a card comes back.
+    """
+    now = time.time()
+    if hours:
+        return int(now + float(hours) * 3600)
+    case = cases.get(f"f:{int(ts)}", now)
+    if case is None:
+        return int(now + finding_requests.SNOOZE_DEFAULT_H * 3600)
+    return cases.snooze_until(case, now)
 
 
 def _start_requested_checks(asked: list[dict]) -> dict:
@@ -2029,6 +2355,37 @@ def _start_requested_checks(asked: list[dict]) -> dict:
     REQUESTS_STATE["last"] = time.time()
     log.info("running the house checks — asked for by %s", via)
     return {**result, "ok": True, "why": ""}
+
+
+async def _apply_hypothesis_request(req: dict) -> dict:
+    """An answer to one of brAIn's guesses, given in Home Assistant.
+
+    Through `_answer_hypothesis`, the code the Findings tab's own Yes and
+    No run, so `brain.answer_question` closes the guess exactly as a press
+    would: a yes files the claim as memory, a no records the dead end and
+    files the reason as a correction. A guess that is no longer open — it
+    expired, or somebody answered it on the tab a moment earlier — is the
+    ordinary race every request here allows for, and is dropped and
+    logged rather than retried.
+
+    The undo token `_answer_hypothesis` records is never handed to
+    anybody: there is no toast on an automation, and it lapses on its own.
+    """
+    ts, action = req["ts"], req["action"]
+    result = {"kind": finding_requests.HYPOTHESIS_KIND, "ts": ts,
+              "action": action, "via": req.get("via", ""),
+              "ok": False, "why": "no such open guess"}
+    payload = await _answer_hypothesis(ts, action, req.get("note", ""))
+    if payload is not None:
+        result["ok"], result["why"] = True, ""
+        REQUESTS_STATE["applied"] += 1
+    else:
+        REQUESTS_STATE["missed"] += 1
+    REQUESTS_STATE["last"] = time.time()
+    log.info("guess %s: %s from %s%s", ts, action,
+             result["via"] or "elsewhere",
+             "" if result["ok"] else f" — {result['why']}")
+    return result
 
 
 async def _apply_todo_request(req: dict) -> dict:
@@ -2108,11 +2465,11 @@ async def _one_intent(req: dict, now: float) -> dict | None:
     # presumed the answer.
     started = time.time()
     try:
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_analyst, authoring.prompt(sentence, orientation),
             authoring.SYSTEM, eff_model(), intents.TIMEOUT_S,
             intents.MAX_TURNS, "intent", job="automation",
-            schema=authoring.SCHEMA)
+            schema=authoring.SCHEMA, priority=run_queue.PRESS)
     except Exception as exc:  # noqa: BLE001
         result = {"ok": False, "error": str(exc)}
     journal.record("intent", "ok" if result.get("ok") else "error",
@@ -2146,6 +2503,13 @@ async def _one_intent(req: dict, now: float) -> dict | None:
         builder, sentence, answer, int(now * 1000), protected)
     if obj.get("refused"):
         return await asyncio.to_thread(intents.note, obj, now)
+    # Who said it rides with what was said, so the automation's own
+    # description can quote a person as a person and a card as a card
+    # (`automation_writer.description_for`). Never part of the config, so
+    # never part of what `proposals.key_for` hashes.
+    for said in (obj.get("spoken"), obj.get("intent")):
+        if isinstance(said, dict):
+            said["via"] = str(req.get("via") or "")[:32]
 
     import aiohttp  # noqa: PLC0415 — as `_offer_routines` does
 
@@ -2175,6 +2539,15 @@ async def _one_intent(req: dict, now: float) -> dict | None:
     log.info("%s proposed from %s: %s",
              "standing automation" if standing else "one-off intent",
              log_safe(req.get("via") or "the panel"), log_safe(obj["title"]))
+    if standing and req.get("trial") and row.get("status") == "proposed":
+        # Asked for before the card existed ("try it for a week" on the
+        # onboarding screen). A trial writes nothing — it replays the week
+        # and grades it — so the press that asked is all the consent it
+        # needs; the accept at the end of the week is still a press.
+        tried = await asyncio.to_thread(proposals.start_trial, row["ts"])
+        if tried is not None:
+            log.info("its trial week started, as the request asked")
+            row = tried
     return row
 
 
@@ -2197,6 +2570,40 @@ async def _grade_against_you(session, config: dict, now: float, tz) -> dict:
         trials.evaluate, config, history, rows, start, now, tz, now)
 
 
+async def _service_routes(req: dict, now: float) -> int | None:
+    """`brain.intent`'s sentence, read. None: the intent path as it was.
+
+    An automation sent it, so it is an unattended surface and answers to
+    `auto_enabled` and the budget as well as a credential. A rule (one-off
+    or standing) goes to `_one_intent` with the words the reader picked
+    out; a fact to keep, a study and a change to an automation go where
+    the ask bar sends them. Returns how many routes produced something.
+    """
+    routes = await _interpret(req["sentence"], "service")
+    if routes is None:
+        return None
+    done = 0
+    for route in routes:
+        kind, text = route["kind"], route["text"]
+        if kind in ("one_off", "standing_rule"):
+            if await _one_intent({**req, "sentence": text}, now):
+                done += 1
+            now += 0.001
+        elif kind == "automation_edit":
+            card_id = _new_card_id()
+            done += int(_enqueue(
+                card_id, question=AUTOMATION_EDIT_FRAME.format(text)[:500]))
+        elif kind == "remember":
+            # An automation sent it, so it is not a fact a person typed and
+            # is not kept the way one is (`facts_store.KEEP_SOURCES`).
+            await _submit_memory(text, source="service")
+            done += 1
+        elif kind == "study":
+            await asyncio.to_thread(onboarding.request_study, text)
+            done += 1
+    return done
+
+
 async def _apply_intent_requests() -> int:
     """Drain the intent drop. Returns how many sentences were answered."""
     queued = await asyncio.to_thread(intents.collect)
@@ -2204,6 +2611,12 @@ async def _apply_intent_requests() -> int:
     answered = 0
     for req in queued:
         try:
+            if req.get("via") == "service":
+                handled = await _service_routes(req, now)
+                if handled is not None:
+                    answered += handled
+                    now += 0.001
+                    continue
             if await _one_intent(req, now):
                 answered += 1
         except Exception as exc:  # noqa: BLE001 — one bad sentence must
@@ -2249,6 +2662,12 @@ def _appliance_summary() -> dict:
         # profiled sensors and no chores means nothing here is named
         # like a machine somebody has to empty.
         "chore_capable": named,
+        # And what the nightly cap left unread, by count and by a sample of
+        # names: a washer the pass never read is a silence nothing else
+        # on any surface could explain.
+        "eligible": store.get("eligible", store.get("asked", 0)),
+        "cut": store.get("cut_count", 0),
+        "cut_sample": list(store.get("cut") or []),
     }
 
 
@@ -2372,12 +2791,37 @@ async def run_healing(reason: str = "schedule") -> dict:
         snapshot = await checks.snapshot.collect(started)
         rows = await asyncio.to_thread(findings_store.list_all, "open")
         patterns = automation_writer.protected_patterns()
+        history = dict(store.get("history") or {})
         planned = await asyncio.to_thread(
             healing.plan, rows, snapshot, patterns, done,
-            healing.MAX_PER_NIGHT, started)
+            healing.MAX_PER_NIGHT, started, history)
 
         attempts = list(store["attempts"]) if store.get("night") == night else []
         skips = list(store["skips"]) if store.get("night") == night else []
+        # A target that keeps needing the same heal stops being healed and
+        # becomes a finding (`healing.plan`'s `chronic`). Filed through the
+        # gate every producer files through, so it is looked at before it
+        # is shown, and deduped on its text, so a target that stays chronic
+        # night after night is one row.
+        chronic = planned.get("chronic") or []
+        if chronic:
+            tz, _tzname = await asyncio.to_thread(baselines.house_timezone)
+            # "With the logs read": the lines that say why, read now.
+            import aiohttp  # noqa: PLC0415
+
+            read = []
+            async with aiohttp.ClientSession() as log_session:
+                for c in chronic:
+                    read.append(await healing.read_logs(log_session, c))
+            rows_for = [healing.chronic_finding(c, c.get("heals") or [], tz,
+                                                logs, where)
+                        for c, (logs, where) in zip(chronic, read)]
+            # A direct call inside the thunk, so the sweep that holds every
+            # producer to the gate (`test_triage`) can see this one too.
+            await asyncio.to_thread(
+                lambda: findings_store.add_many(triage.gate(rows_for)))
+            log.info("healing: %d target(s) keep coming back — stopped and "
+                     "filed", len(chronic))
         for skipped in planned["skips"]:
             skips.append(skipped)
             journal.record("healing", healing.OUTCOME_SKIP, ok=False,
@@ -2393,7 +2837,10 @@ async def run_healing(reason: str = "schedule") -> dict:
                 row = {k: attempt.get(k) for k in
                        ("ts", "source", "remedy", "target", "label",
                         "sentence", "text")}
-                row.update({"ok": ok, "error": why, "at": int(time.time())})
+                at = int(time.time())
+                row.update({"ok": ok, "error": why, "at": at})
+                if ok:
+                    row["times"] = healing.record_heal(history, row, at)
                 attempts.append(row)
                 # Written after EVERY attempt, not at the end: a restart
                 # at three in the morning must not find a pass that made
@@ -2401,7 +2848,8 @@ async def run_healing(reason: str = "schedule") -> dict:
                 await asyncio.to_thread(
                     healing.save, {"night": night,
                                    "started_at": int(started),
-                                   "attempts": attempts, "skips": skips})
+                                   "attempts": attempts, "skips": skips,
+                                   "history": history})
                 journal.record(
                     "healing",
                     healing.OUTCOME_OK if ok else healing.OUTCOME_FAIL,
@@ -2414,7 +2862,11 @@ async def run_healing(reason: str = "schedule") -> dict:
 
         state = {"night": night, "started_at": int(started),
                  "finished_at": int(time.time()), "reason": reason,
-                 "attempts": attempts, "skips": skips}
+                 "attempts": attempts, "skips": skips, "history": history,
+                 "chronic": [{"target": c.get("target"),
+                              "remedy": c.get("remedy"),
+                              "heals": len(c.get("heals") or [])}
+                             for c in chronic]}
         await asyncio.to_thread(healing.save, state)
         HEAL_STATE["last"] = state
         log.info("healing pass (%s): %d attempted, %d skipped",
@@ -2560,7 +3012,7 @@ async def _escalation_tick() -> int:
         # "Replaced it" because its card does, and the ledger row carries
         # neither the check that raised it nor whether hands are needed.
         target = rows_live.get(int(row.get("ts") or 0), row)
-        await _send_notification([target], message=message)
+        await _send_notification([target], message=message, kind="reminder")
         notify_router.record_reminder(int(row.get("ts") or 0), time.time())
         sent += 1
     return sent
@@ -2601,6 +3053,12 @@ async def _notify_flush_loop():
             if due_at:
                 wait = max(ESCALATION_MIN_WAIT_S,
                            min(wait, due_at - time.time()))
+            # And a row the dispatcher held to a time (`hold_timed`): one
+            # due at 07:10 must not wait for a poll that comes at 07:15.
+            hold_at = notify_router.next_hold_at()
+            if hold_at:
+                wait = max(ESCALATION_MIN_WAIT_S,
+                           min(wait, hold_at - time.time()))
             await asyncio.sleep(wait)
         except asyncio.CancelledError:
             raise
@@ -2643,10 +3101,21 @@ async def _announce_findings(created: list[dict]) -> None:
     safe on the list, and the notification is the courtesy copy.
     """
     service, min_severity = _findings_notify_target()
-    if not service or not created:
+    if not created:
+        return
+    if not service:
+        # The one silence a person cannot see from anywhere else: a phone
+        # that never rang because nothing was set to ring it.
+        decision_trail.note_many(decision_trail.rows_for(
+            created, "no_target", "no notification service is set"))
         return
     tiers = notify_router.classify(created, min_severity)
     escalating, once = tiers["escalate"], tiers["notify"]
+    if tiers.get("quiet"):
+        decision_trail.note_many(decision_trail.rows_for(
+            tiers["quiet"], "notify_quiet",
+            f"below your notification floor ({min_severity}); it is on the "
+            "Findings list"))
     if not escalating and not once:
         return
 
@@ -2660,6 +3129,16 @@ async def _announce_findings(created: list[dict]) -> None:
         log.info("escalating %d of %d critical finding(s)",
                  started, len(escalating))
 
+    if not once:
+        return
+    # Said aloud in the room somebody is in, when it is switched on and the
+    # row is serious, urgent and a check's own sentence — before the phone,
+    # and never instead of it (`_speak_first`, off by default).
+    await _speak_first(once, now)
+    # The dispatcher decides the notify tier's timing and words, AFTER the
+    # escalating rows above have gone out — it never sees one. Whatever it
+    # could not decide comes back and is sent exactly as below.
+    once = await _dispatch_notify_tier(once, now)
     if not once:
         return
     start, end = _quiet_hours()
@@ -2677,9 +3156,488 @@ async def _announce_findings(created: list[dict]) -> None:
     if urgent:
         await _send_notification(urgent)
     if later:
+        decision_trail.note_many(decision_trail.rows_for(
+            later, "quiet_hold", f"held for quiet hours ({start}:00–{end}:00)"))
         depth = notify_router.hold(later, now)
         log.info("held %d finding(s) until quiet hours end (%d waiting)",
                  len(later), depth)
+
+
+# ---------------------------------------------------------------------------
+# Who hears what, when, in what words — the dispatcher, the delivery ledger
+# and the learned suggestions (W2D)
+# ---------------------------------------------------------------------------
+#
+# `_announce_findings` above keeps the tiers and the transport; what is
+# here decides the NOTIFY tier's timing and words (`dispatch.py`), records
+# what every message became (`deliveries.py`), and once a week asks the
+# household whether a kind of message it keeps swiping away should wait
+# for the morning (`notify_learn.py`). Every model answer is checked in
+# `dispatch.parse`; every way the dispatcher can fail hands the row back
+# to the deterministic path, which sends it exactly as it always did.
+
+DISPATCH_STATE: dict = {
+    "runs": 0, "fallbacks": 0, "last_at": 0, "last_fallback": "",
+    "last_error": "", "decisions": {}, "words_refused": 0,
+    "rows_deterministic": 0,
+}
+NOTIFY_LEARN_STATE: dict = {"last_at": 0, "filed": 0, "last_error": "",
+                            "last_filed": []}
+NOTIFY_LEARN_KEY = "notify_learn_last"
+NOTIFY_LEARN_POLL_S = 6 * 60 * 60
+NOTIFY_LEARN_FIRST_DELAY_S = 15 * 60
+
+
+def _delivery_kind(rows: list[dict], held: bool, min_severity: str) -> str:
+    """What a message was, when its caller did not say: a release from the
+    hold queue, or the tier its rows are in — one row escalating makes the
+    message an escalation, which is what the ledger is asked about."""
+    if held:
+        return "held"
+    try:
+        if any(notify_router.tier_of(r, min_severity) == "escalate"
+               for r in rows if isinstance(r, dict)):
+            return "escalate"
+    except Exception:  # noqa: BLE001 — a label, never a reason to not send
+        pass
+    return "notify"
+
+
+def _dispatch_names() -> dict[str, str]:
+    """`{entity_id: friendly name}` off the last checks pass — the map the
+    feed already reads, never a registry fetch for the dispatcher's sake."""
+    return {eid: str(row.get("name") or "") for eid, row in _NAMES.items()
+            if isinstance(row, dict) and row.get("name")}
+
+
+def _dispatch_fallback(reason: str) -> None:
+    DISPATCH_STATE["fallbacks"] += 1
+    DISPATCH_STATE["last_fallback"] = reason
+    log.info("the dispatcher stood down (%s); sending the deterministic way",
+             reason)
+
+
+def _deterministic_line(row: dict, now: float, quiet: tuple, tz) -> str:
+    """What `_announce_findings` would do with this row on its own — shown
+    to the dispatcher as the answer it is improving on."""
+    start, end = quiet
+    if not notify_router.in_quiet_hours(now, start, end, tz) \
+            or notify_router.urgency_of(row) == "now":
+        return "sent now"
+    return f"held until {int(end):02d}:00, when the quiet hours end"
+
+
+async def _dispatch_notify_tier(rows: list[dict], now: float) -> list[dict]:
+    """Decide the notify tier's timing and words. Returns the rows it did
+    NOT decide, for the deterministic path to send as it always has.
+
+    Every way this can fail returns its whole batch: the three gates every
+    scheduled Claude run answers to (`_resident_gate`), a batch past
+    `dispatch.MAX_ROWS`, a run that failed or timed out, and a reply
+    `dispatch.parse` cannot read. Never `feed_only` on a failure — an outage
+    of the dispatcher must not be an outage of the notifier. Never raises.
+    """
+    if not rows:
+        return rows
+    try:
+        settings = settings_store.load()
+        gate = _resident_gate(settings)
+        if gate:
+            _dispatch_fallback(gate)
+            return rows
+        if len(rows) > dispatch.MAX_ROWS:
+            _dispatch_fallback(f"{len(rows)} rows is past the batch cap")
+            return rows
+        start, end = _quiet_hours()
+        tz, tz_name = baselines.house_timezone()
+        try:
+            wake = rhythm.wake_minute(rhythm.profile(), _local_now(now))
+        except Exception:  # noqa: BLE001 — no rhythm is the fallback hour
+            wake = None
+        has_quiet = start is not None and end is not None and start != end
+        morning_at = dispatch.next_morning(now, tz, end if has_quiet else None,
+                                           wake)
+        names = _dispatch_names()
+        history = await asyncio.to_thread(deliveries.recent, now)
+        prompt = dispatch.frame(
+            rows, policy=settings_store.notify_policy_text(settings), now=now,
+            tz=tz, tz_name=tz_name, quiet=(start, end), history=history,
+            names=names, morning_at=morning_at,
+            deterministic={int(r.get("ts") or 0):
+                           _deterministic_line(r, now, (start, end), tz)
+                           for r in rows})
+    except Exception as exc:  # noqa: BLE001 — see the docstring
+        DISPATCH_STATE["last_error"] = str(exc)[:200]
+        _dispatch_fallback("the batch could not be framed")
+        return rows
+    DISPATCH_STATE["runs"] += 1
+    DISPATCH_STATE["last_at"] = int(now)
+    try:
+        # The wait includes the queue's: a dispatcher that cannot get a
+        # seat in time falls back to the fixed path like any failure.
+        result = await asyncio.wait_for(_claude(
+            engine.run_claude, prompt, dispatch.SYSTEM, eff_model(),
+            dispatch.TIMEOUT_S, 2, "dispatch", job=dispatch.JOB,
+            schema=dispatch.SCHEMA, priority=run_queue.SCHEDULED),
+            dispatch.TIMEOUT_S + 30)
+    except Exception as exc:  # noqa: BLE001 — a timeout included
+        DISPATCH_STATE["last_error"] = (str(exc) or type(exc).__name__)[:200]
+        _dispatch_fallback("the run failed")
+        return rows
+    if not isinstance(result, dict) or not result.get("ok"):
+        DISPATCH_STATE["last_error"] = str(
+            (result or {}).get("error") or "no reply")[:200]
+        _dispatch_fallback("the run failed")
+        return rows
+    decisions = dispatch.parse(_answer(result), rows, now=now, tz=tz,
+                               morning_at=morning_at, names=names)
+    if decisions is None:
+        DISPATCH_STATE["last_error"] = "the reply could not be read"
+        _dispatch_fallback("the reply could not be read")
+        return rows
+    DISPATCH_STATE["last_error"] = ""
+    left: list[dict] = []
+    send_now: list[dict] = []
+    holds: list[dict] = []
+    words: dict[int, tuple[str, str]] = {}
+    counts = DISPATCH_STATE["decisions"]
+    for row in rows:
+        ts = int(row.get("ts") or 0)
+        decided = decisions.get(ts)
+        if decided is None:
+            left.append(row)
+            continue
+        counts[decided["deliver"]] = counts.get(decided["deliver"], 0) + 1
+        if decided["words"]:
+            words[ts] = decided["words"]
+        elif decided["words_refused"]:
+            DISPATCH_STATE["words_refused"] += 1
+        if decided["deliver"] == "now":
+            send_now.append(row)
+        elif decided["deliver"] in ("hold_until", "digest"):
+            title, body = decided["words"] or ("", "")
+            holds.append({"finding": row, "until": decided["until"],
+                          "title": title, "body": body})
+        # feed_only: nothing is sent. The row is on the Findings tab, in
+        # `todo.brain` and in Repairs, which is where it was always going
+        # to be; `dispatch.parse` has already refused this on a critical row.
+    DISPATCH_STATE["rows_deterministic"] += len(left)
+    try:
+        if send_now:
+            await _send_notification(
+                send_now, message=dispatch.compose_batch(send_now, words),
+                kind="notify", dispatched=True)
+        if holds:
+            depth = await asyncio.to_thread(notify_router.hold_timed, holds,
+                                            now)
+            log.info("the dispatcher held %d finding(s) (%d waiting)",
+                     len(holds), depth)
+    except Exception as exc:  # noqa: BLE001 — never lose the rows over this
+        log.warning("dispatching failed (%s); sending the deterministic way",
+                    exc)
+        return rows
+    return left
+
+
+def _dispatch_diagnostics() -> dict:
+    """What the dispatcher decided, what the ledger holds and what the
+    household has been asked — the three silent halves of who hears what.
+    A dispatcher that always stands down and one that is working send the
+    same messages, so the fallbacks and their last reason are the payload."""
+    try:
+        ledger = deliveries.summary()
+    except Exception as exc:  # noqa: BLE001 — a diagnostics row, not a fault
+        ledger = {"available": False, "error": str(exc)[:120]}
+    try:
+        learned = len(settings_store.load().get("notify_policy_learned") or [])
+        has_policy = bool(settings_store.load().get("notify_policy"))
+    except Exception:  # noqa: BLE001
+        learned, has_policy = 0, False
+    return {
+        "dispatch": {**{k: v for k, v in DISPATCH_STATE.items()
+                        if k != "decisions"},
+                     "decisions": dict(DISPATCH_STATE["decisions"]),
+                     "policy_set": has_policy, "learned_clauses": learned,
+                     "timed_holds": sum(
+                         1 for r in notify_router.load_queue()
+                         if notify_router.held_until(r)),
+                     "next_hold_at": int(notify_router.next_hold_at())},
+        "deliveries": ledger,
+        "suggestions": dict(NOTIFY_LEARN_STATE),
+        "speak_first": {
+            "enabled": bool(_speak_enabled()),
+            **{k: v for k, v in SPEAK_STATE.items() if k != "said"},
+            "last_at": int(SPEAK_STATE.get("last_at") or 0)},
+    }
+
+
+# Speak first (W2D stretch): announce an urgent, serious house-check finding
+# on the satellite in the room somebody is in. Off by default; announce
+# only — see `household.py` for why it does not yet listen for an answer.
+SPEAK_STATE: dict = {"spoken": 0, "last_at": 0.0, "last_reason": "",
+                     "last_error": "", "said": {}}
+# A voice in the room is louder than a phone in a pocket, so it is rationed:
+# one announcement per this long, and one per finding ever.
+SPEAK_SPACING_S = 30 * 60
+SPEAK_SAID_MAX = 200
+
+
+def _speak_skip(reason: str) -> int:
+    SPEAK_STATE["last_reason"] = reason
+    return 0
+
+
+async def _speak_first(rows: list[dict], now: float) -> int:
+    """Say the first speakable row aloud. Returns how many were said.
+
+    Every refusal is `household.py`'s or one of three here — the switch,
+    the quiet hours, the spacing — and every failure is a line: the phone
+    goes out either way, so nothing here may raise or delay it by more than
+    the one bounded service call it makes.
+    """
+    try:
+        if not rows or not _speak_enabled():
+            return 0
+        _service, min_sev = _findings_notify_target()
+        said = SPEAK_STATE["said"]
+        cands = [r for r in rows
+                 if household.speakable(r, notify_router.tier_of(r, min_sev),
+                                        notify_router.urgency_of(r))
+                 and int(r.get("ts") or 0) not in said]
+        if not cands:
+            return 0
+        start, end = _quiet_hours()
+        tz, _name = baselines.house_timezone()
+        if notify_router.in_quiet_hours(now, start, end, tz):
+            return _speak_skip("inside the quiet hours")
+        if now - float(SPEAK_STATE["last_at"] or 0) < SPEAK_SPACING_S:
+            return _speak_skip("spoke less than half an hour ago")
+        import aiohttp
+        import ha_data
+        async with aiohttp.ClientSession() as session:
+            states = await ha_data._rest_get(session, "/states")
+            services = await ha_data._rest_get(session, "/services")
+        if not any(isinstance(d, dict) and d.get("domain") == "assist_satellite"
+                   and "announce" in (d.get("services") or {})
+                   for d in services or []):
+            return _speak_skip("this Home Assistant has no "
+                               "assist_satellite.announce")
+        areas = {eid: str(row.get("area") or "") for eid, row in _NAMES.items()
+                 if isinstance(row, dict)}
+        cast = household.roster(states if isinstance(states, list) else [],
+                                areas)
+        sat = household.pick_satellite(cast, household.occupied_areas(
+            states if isinstance(states, list) else [], areas, now))
+        if sat is None:
+            return _speak_skip("nobody is in a room with a voice satellite")
+        if automation_writer.is_protected(
+                sat["entity_id"], automation_writer.protected_patterns()):
+            return _speak_skip(f"{sat['entity_id']} is protected")
+        row = cands[0]
+        text = household.spoken_text(row, cast)
+        if not text:
+            return _speak_skip("its words name a person")
+        await ha_data.call_core_service(
+            "assist_satellite", "announce",
+            {"entity_id": sat["entity_id"], "message": text}, timeout=15)
+        said[int(row.get("ts") or 0)] = now
+        while len(said) > SPEAK_SAID_MAX:
+            said.pop(min(said, key=said.get), None)
+        SPEAK_STATE.update(last_at=now, last_reason="", last_error="",
+                           spoken=SPEAK_STATE["spoken"] + 1)
+        log.info("said a finding aloud on %s", sat["entity_id"])
+        return 1
+    except Exception as exc:  # noqa: BLE001 — the phone goes out regardless
+        SPEAK_STATE["last_error"] = str(exc)[:200]
+        log.warning("could not say a finding aloud: %s", exc)
+        return 0
+
+
+def _speak_enabled() -> bool:
+    try:
+        return settings_store.load().get("speak_first") is True
+    except Exception:  # noqa: BLE001 — unreadable is off
+        return False
+
+
+def _on_bus_event(event_type: str, data: dict) -> None:
+    """The bus's raw hook: the safety lane first, always, then a swipe.
+
+    One callable because the bus takes one; the lane is called before
+    anything else so nothing added here can delay or break it, and a
+    failure in the second half is caught here rather than by the bus.
+    """
+    _note_safety(event_type, data)
+    if event_type == "mobile_app_notification_cleared":
+        try:
+            deliveries.note_cleared(data if isinstance(data, dict) else {})
+        except Exception as exc:  # noqa: BLE001 — accounting, never the bus
+            log.debug("could not record a cleared notification: %s", exc)
+
+
+def _deliveries_note_requests(requests: list[dict]) -> int:
+    """A button on a notification answered a finding: that is the
+    message's outcome. Only `via: notification` — a tick in the To-do app
+    is an answer to the row, not to any message."""
+    noted = 0
+    for req in requests or []:
+        if not isinstance(req, dict) or req.get("kind"):
+            continue
+        if req.get("via") != "notification":
+            continue
+        try:
+            if deliveries.note_answer(req["ts"], req.get("action") or "",
+                                      via="notification"):
+                noted += 1
+        except Exception as exc:  # noqa: BLE001
+            log.debug("could not record an answered notification: %s", exc)
+    return noted
+
+
+def _producer_titles(folded: list[dict]) -> dict[str, str]:
+    """What each producer in the ledger is called, for a question's words:
+    a check's own title, never the group's, `_muted_rows`' rule."""
+    out: dict[str, str] = {}
+    for d in folded or []:
+        for src in d.get("sources") or []:
+            if src in out:
+                continue
+            title = ""
+            if src.startswith("check:"):
+                spec = checks.get_check(src[len("check:"):]) or {}
+                title = str(spec.get("title") or "")
+            out[src] = title or src
+    return out
+
+
+async def _notify_learn_pass(now: float) -> list[dict]:
+    """File this week's questions, if the ledger earns any. Returns them.
+
+    Deterministic and spends nothing, so no gate: it reads the ledger and
+    files at most `notify_learn.MAX_PER_PASS` question cases.
+    """
+    folded = await asyncio.to_thread(deliveries.fold, now)
+    NOTIFY_LEARN_STATE["last_at"] = int(now)
+    if folded is None:
+        NOTIFY_LEARN_STATE["last_error"] = "the delivery ledger could not be read"
+        return []
+    NOTIFY_LEARN_STATE["last_error"] = ""
+    # A question nobody answered in a week leaves the list the way a
+    # Resident case does — no memory line, no ledger entry — and may be
+    # asked again after `RE_ASK_DAYS`, never sooner.
+    await asyncio.to_thread(findings_store.expire_cases, now,
+                            (notify_learn.SOURCE,))
+    state = await asyncio.to_thread(notify_learn.load)
+    live = {int(f.get("ts") or 0)
+            for f in await asyncio.to_thread(findings_store.list_all)
+            if f.get("source") == notify_learn.SOURCE}
+    planned = notify_learn.plan(
+        folded, state, now, live, _dispatch_names(), _producer_titles(folded),
+        muted=notify_learn.SOURCE in settings_store.muted())
+    filed: list[dict] = []
+    for item in planned:
+        row = await asyncio.to_thread(findings_store.add_case, item["row"],
+                                      when=now)
+        if row:
+            notify_learn.record_asked(state, item["key"], int(row["ts"]),
+                                      item["clause"], item["subject"], now)
+            filed.append(row)
+    if filed:
+        await asyncio.to_thread(notify_learn.save, state)
+        log.info("asked about %d kind(s) of notification the household keeps "
+                 "dismissing", len(filed))
+    NOTIFY_LEARN_STATE["filed"] += len(filed)
+    NOTIFY_LEARN_STATE["last_filed"] = [r.get("claim") or "" for r in filed]
+    return filed
+
+
+async def _notify_learn_loop():
+    """Once a week, whenever the add-on is up for it. The stamp is on disk
+    (`schedule_store`), because a restart is not a new week."""
+    await asyncio.sleep(NOTIFY_LEARN_FIRST_DELAY_S)
+    while True:
+        try:
+            now = time.time()
+            last = schedule_store.get(NOTIFY_LEARN_KEY)
+            if now - last >= notify_learn.EVERY_S:
+                schedule_store.set(NOTIFY_LEARN_KEY, now)
+                await _notify_learn_pass(now)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
+            NOTIFY_LEARN_STATE["last_error"] = str(exc)[:200]
+            log.warning("notification suggestions pass failed: %s", exc)
+        await asyncio.sleep(NOTIFY_LEARN_POLL_S)
+
+
+async def _end_notify_suggestion(finding: dict, spec: dict,
+                                 note: str) -> tuple[dict, str]:
+    """Yes or No to "move these to the morning list?".
+
+    Yes appends the question's clause to the household's sentence —
+    shown on its own line in ⚙, removable there, and taken back by the
+    toast's Undo with the card. No is remembered so the subject is not
+    asked again. Neither writes a memory line: a preference about
+    notifications is the sentence's, and memory is facts about the house.
+    The list of clauses is capped and a full one REFUSES the Yes before
+    anything is settled (`todo_store`'s rule), because the room would be
+    made by dropping a clause somebody else agreed to.
+    """
+    state = await asyncio.to_thread(notify_learn.load)
+    key = notify_learn.key_for_finding(state, finding)
+    rec = dict(state.get(key) or {})
+    accept = spec.get("label") == "accepted"
+    if accept and rec.get("clause"):
+        learned = list(settings_store.load().get("notify_policy_learned") or [])
+        if not any(c.get("clause") == rec["clause"] for c in learned):
+            if len(learned) >= settings_store.NOTIFY_LEARNED_MAX:
+                raise web.HTTPConflict(
+                    text="Your notification sentence already carries "
+                         f"{settings_store.NOTIFY_LEARNED_MAX} learned lines — "
+                         "remove one in ⚙ Settings first.")
+            learned.append({"clause": rec["clause"],
+                            "subject": rec.get("subject") or "",
+                            "at": int(time.time())})
+            await asyncio.to_thread(settings_store.save,
+                                    {"notify_policy_learned": learned})
+
+    def settle() -> dict:
+        findings_store.settle_and_clear(finding["ts"], spec["kind"], note=note)
+        return _findings_payload()
+
+    payload = await asyncio.to_thread(settle)
+    if key:
+        rec["answer"] = "accepted" if accept else "declined"
+        rec["answered_at"] = int(time.time())
+        state[key] = rec
+        await asyncio.to_thread(notify_learn.save, state)
+    payload["notify_policy"] = {
+        k: settings_store.load().get(k) for k in settings_store.NOTIFY_POLICY_KEYS}
+    return payload, ""
+
+
+def _notify_learn_undo(entry: dict) -> None:
+    """Undo of a Yes takes its clause back; of either answer, the answer.
+    Best effort, `_record_exception`'s rule: an undo must not fail on it."""
+    finding = (entry or {}).get("finding") or {}
+    if finding.get("source") != notify_learn.SOURCE:
+        return
+    try:
+        state = notify_learn.load()
+        key = notify_learn.key_for_finding(state, finding)
+        rec = dict(state.get(key) or {})
+        if rec.get("answer") == "accepted" and rec.get("clause"):
+            learned = [c for c in settings_store.load().get(
+                "notify_policy_learned") or []
+                if c.get("clause") != rec["clause"]]
+            settings_store.save({"notify_policy_learned": learned})
+        if key and rec:
+            rec["answer"] = ""
+            rec.pop("answered_at", None)
+            state[key] = rec
+            notify_learn.save(state)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not undo a notification suggestion: %s", exc)
 
 
 async def _search_run(insight_id: str, cat: dict, framing: dict):
@@ -2699,7 +3657,11 @@ async def _search_run(insight_id: str, cat: dict, framing: dict):
     """
     import ha_data
     try:
-        orientation = await ha_data.collect_orientation(question=framing["question"])
+        # The card's domains go in so memory retrieval can find the facts
+        # about its kind of device — and the question's words, which
+        # `collect_orientation` passes on as the retrieval query.
+        orientation = await ha_data.collect_orientation(
+            question=framing["question"], domains=cat.get("domains") or ())
     except Exception as exc:  # noqa: BLE001 — a failed map is a fallback, not an error
         log.warning("%s: could not collect the orientation map (%s)", insight_id, exc)
         return None, None, None
@@ -2712,10 +3674,10 @@ async def _search_run(insight_id: str, cat: dict, framing: dict):
              "(~%s tokens in) — searching", insight_id,
              orientation.get("entity_count", 0), len(orientation.get("domains") or {}),
              len(prompt), _tok(len(prompt) // CHARS_PER_TOKEN))
-    result = await asyncio.to_thread(
+    result = await _claude(
         engine.run_analyst, prompt, ANALYST_SYSTEM, eff_model(),
         eff_timeout_s(), ANALYST_MAX_TURNS, "card",
-        job="card", schema=CARD_SCHEMA,
+        job="card", schema=CARD_SCHEMA, priority=_job_priority(insight_id),
     )
     return result, _record_usage(result, insight_id), {
         "gather_mode": "search", "bundle": orientation,
@@ -2746,9 +3708,10 @@ async def _snapshot_run(insight_id: str, cat: dict, framing: dict):
     log.info("snapshot for %s: %d entities, %d bundle chars, %d prompt chars "
              "(~%s tokens in)", insight_id, n_entities, len(json.dumps(bundle)),
              len(prompt), _tok(len(prompt) // CHARS_PER_TOKEN))
-    result = await asyncio.to_thread(
+    result = await _claude(
         engine.run_claude, prompt, SYSTEM_PROMPT, eff_model(), eff_timeout_s(),
         source="card", job="card", schema=CARD_SCHEMA,
+        priority=_job_priority(insight_id),
     )
     return result, _record_usage(result, insight_id), {
         "gather_mode": "snapshot", "bundle": bundle, "prompt_chars": len(prompt)}
@@ -2790,7 +3753,9 @@ async def _current_inputs(cat_id: str, eff: dict) -> dict | None:
     direction for a gate that cannot see.
     """
     try:
-        findings_text = await asyncio.to_thread(findings_store.prompt_block)
+        # Without this card's own rows: see `findings_store.prompt_block`.
+        findings_text = await asyncio.to_thread(
+            findings_store.prompt_block, (cat_id,))
         snap = await _house_snapshot()
         return await asyncio.to_thread(
             _card_inputs, cat_id, eff, findings_text, snap)
@@ -2826,6 +3791,135 @@ async def _house_prompt_block(now: float | None = None) -> str:
     return house_block(snap)
 
 
+# ---------------------------------------------------------------------------
+# What a card says this house is missing, offered as an automation
+# ---------------------------------------------------------------------------
+#
+# A card could say "the patio light should come on when the back door opens
+# after dark" only as prose in its summary, which nothing parses — so the
+# improvement the Automations focus and the milestone frame explicitly ask
+# for was a dead end, and acting on it meant retyping it into the ask bar.
+# The contract has an `opportunities` field now: the sentence the homeowner
+# would say to ask for it, and the entities it names. Each one is handed to
+# the ask bar's own third verb (`intents.request`), so it is drafted,
+# replayed over the recorder, graded against what this household did and
+# offered on the Proposals tab exactly as a typed sentence is — one
+# implementation of "a rule from a sentence", whichever surface had it.
+#
+# It is an UNATTENDED producer — a card refreshes on a schedule and the
+# authoring run behind each sentence is a Claude run nobody pressed — so it
+# answers to the three gates every scheduled run does (`_resident_gate`),
+# is capped per card and per day, and never re-offers what the same card
+# offered on its previous run. A sentence it did not queue keeps the reason
+# on the card, and the card's ⋯ offers to put it in the ask bar instead.
+MAX_CARD_OPPORTUNITIES = 2
+MAX_CARD_OPPORTUNITY_CHARS = 300
+MAX_CARD_OPPORTUNITY_ENTITIES = 8
+# A runaway guard, not a budget (`triage.MAX_PER_DAY`'s kind): nine cards
+# refreshing on one evening must not become eighteen authoring runs.
+CARD_OPPORTUNITIES_PER_DAY = 4
+CARD_OPPS_STATE: dict = {"day": "", "count": 0}
+
+
+def _opportunity_key(text: str) -> str:
+    return " ".join(re.sub(r"[^\w\s]", " ", str(text or "").lower()).split())
+
+
+def _card_opportunities(raw) -> list[dict]:
+    """The model's ``opportunities``, cleaned: a sentence each, real
+    entity ids only, deduped, capped. Anything else is dropped."""
+    out: list[dict] = []
+    if not isinstance(raw, list):
+        return out
+    seen: set[str] = set()
+    for item in raw:
+        if isinstance(item, str):
+            item = {"text": item}
+        if not isinstance(item, dict):
+            continue
+        text = " ".join(str(item.get("text") or "").split())
+        text = text[:MAX_CARD_OPPORTUNITY_CHARS]
+        key = _opportunity_key(text)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append({"text": text, "entities": _clean_entity_ids(
+            item.get("entities"), MAX_CARD_OPPORTUNITY_ENTITIES)})
+        if len(out) >= MAX_CARD_OPPORTUNITIES:
+            break
+    return out
+
+
+def _opportunity_sentence(text: str) -> str:
+    """The card's sentence in the shape the ask bar's third verb reads, or
+    "" for one that is a question rather than a rule."""
+    text = str(text or "").strip()
+    if not text or INTENT_QUESTION_RE.match(text) or text.endswith("?"):
+        return ""
+    if INTENT_RE.match(text):
+        return text
+    lowered = text[:1].lower() + text[1:] if text[1:2].islower() else text
+    return f"From now on, {lowered}"
+
+
+async def _offer_card_opportunities(insight_id: str, found: list[dict],
+                                    previous=None) -> list[dict]:
+    """Queue what this card says the house is missing, behind the gates.
+
+    Returns the card's own record of each: its sentence, its entities,
+    whether it was queued, and the reason when it was not — so the card
+    can say "offered on Proposals" or "not offered: automatic runs are
+    paused" rather than going quiet. Never raises: a card that wrote
+    itself must not fail over the automations it suggested.
+    """
+    if not found:
+        return []
+    before = {_opportunity_key(o.get("text")) for o in previous or []
+              if isinstance(o, dict) and o.get("queued")}
+    try:
+        why = _resident_gate(settings_store.load())
+    except Exception as exc:  # noqa: BLE001 — "I could not tell" holds
+        why = f"brAIn could not read its own settings ({exc})"
+    day = time.strftime("%Y-%m-%d")
+    if CARD_OPPS_STATE["day"] != day:
+        CARD_OPPS_STATE.update(day=day, count=0)
+    out: list[dict] = []
+    for opp in found:
+        sentence = _opportunity_sentence(opp.get("text"))
+        # `sentence` rides on the row because the card's ⋯ puts it in the
+        # ask bar, and the ask bar routes on its opening words: the panel
+        # must be handed the shape that routes, not a second copy of the
+        # rule that makes it.
+        row = {**opp, "sentence": sentence, "queued": False, "why": ""}
+        if _opportunity_key(opp.get("text")) in before:
+            # Offered when this card last ran; whatever was answered on
+            # Proposals then is the answer, and asking again would spend
+            # an authoring run to be told so.
+            row.update(queued=True, why="offered on an earlier run")
+        elif not sentence:
+            row["why"] = "it reads as a question rather than a rule"
+        elif why:
+            row["why"] = why
+        elif CARD_OPPS_STATE["count"] >= CARD_OPPORTUNITIES_PER_DAY:
+            row["why"] = ("brAIn has already offered "
+                          f"{CARD_OPPORTUNITIES_PER_DAY} automations from "
+                          "cards today")
+        else:
+            try:
+                queued = await asyncio.to_thread(
+                    intents.request, sentence, f"card:{insight_id}"[:32])
+            except Exception as exc:  # noqa: BLE001
+                queued = ""
+                row["why"] = f"it could not be queued ({exc})"
+            if queued:
+                CARD_OPPS_STATE["count"] += 1
+                row["queued"] = True
+                log.info("card %s offered an automation: %s",
+                         log_safe(insight_id), log_safe(sentence))
+        out.append(row)
+    return out
+
+
 async def _generate(insight_id: str) -> None:
     job = JOBS.get(insight_id, {})
     question = job.get("question")
@@ -2853,11 +3947,13 @@ async def _generate(insight_id: str) -> None:
         # refining one revises it rather than starting from nothing.
         knowledge = knowledge_store.prompt_block()
         previous = None
+        previous_opportunities = []
         if question is None or refine or _insight_path(insight_id).exists():
             try:
                 prev = json.loads(_insight_path(insight_id).read_text(encoding="utf-8"))
                 previous = {k: prev.get(k) for k in
                             ("generated_at", "title", "summary", "highlights", "learned")}
+                previous_opportunities = prev.get("opportunities") or []
             except (OSError, ValueError):
                 # No previous run to diff against — which is what a first generation
                 # for this card looks like.
@@ -2875,6 +3971,15 @@ async def _generate(insight_id: str) -> None:
         result = cost = sent = None
         if eff_gather_mode() == "search":
             result, cost, sent = await _search_run(insight_id, cat, framing)
+        if result is not None and _no_fallback(result):
+            # The snapshot is the floor under a search that could not FIND
+            # its answer — tools that misbehaved, turns that ran out. It
+            # is no floor under a search the account or the service
+            # refused: a rejected credential, a usage limit and an
+            # overloaded API refuse the snapshot exactly the same way, so
+            # running it bought a second refusal at the snapshot's price
+            # and held the queue for both.
+            raise RuntimeError(result.get("error") or "the search run failed")
         if result is None or not result["ok"]:
             # The snapshot path is the floor, not a mode: whatever the setting
             # says, a failed search must still produce a card. It costs more
@@ -2946,6 +4051,9 @@ async def _generate(insight_id: str) -> None:
              "run_id": run_id}
             for f in model_findings]))
         tags = card_tags.clean_tags(_clean_strings(obj.get("tags"), 4, 24))
+        opportunities = await _offer_card_opportunities(
+            insight_id, _card_opportunities(obj.get("opportunities")),
+            previous_opportunities)
         insight = {
             "id": insight_id,
             "category": cat["id"] if question is None else "custom",
@@ -2968,6 +4076,9 @@ async def _generate(insight_id: str) -> None:
             # card is written, so a stored `html` cannot later ask the
             # panel for an entity its author never declared.
             "live": _clean_entity_ids(obj.get("live"), MAX_LIVE_ENTITIES),
+            # What it says this house is missing, and whether each was
+            # offered on Proposals (see `_offer_card_opportunities`).
+            "opportunities": opportunities,
             "html": html,
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             # Why this run happened, in the words the person who reads
@@ -2982,12 +4093,29 @@ async def _generate(insight_id: str) -> None:
             # drift from the one the budget actually uses.
             "meta": {**result.get("meta", {}), "cost": cost},
         }
+        # Learn the durable discoveries: store NEW ones in our own knowledge
+        # base (dedup by content) and hand those on to the home's shared
+        # memory. Already-known ones are silently swallowed — the model was
+        # told not to repeat them, this enforces it.
+        learned_now = 0
+        for fact in learned:
+            _, created = knowledge_store.add_fact(
+                fact, source="insights", category=cat["id"])
+            if created:
+                # With the run that learned it, so "See the run" on the
+                # Knowledge tab opens the card's own conversation.
+                await _submit_memory(fact, run_id=run_id or "")
+                learned_now += 1
         # What the next run will be compared against. Taken AFTER the run
         # rather than before it: the question the gate asks is "has
         # anything moved since this card was made", and a fingerprint
         # from before a run that itself filed findings would answer it
-        # about the wrong instant.
+        # about the wrong instant. And after this card's own learned facts
+        # have reached the facts store, for the same reason: they are what
+        # the run said, not something that happened to the house since.
         if question is None:
+            if learned_now:
+                await asyncio.to_thread(_ingest_facts)
             fingerprint = await _current_inputs(cat["id"], cat)
             if fingerprint:
                 insight["inputs_fingerprint"] = fingerprint
@@ -3015,15 +4143,7 @@ async def _generate(insight_id: str) -> None:
                        "hypotheses": _clean_strings(obj.get("hypotheses"), 3, 300),
                        "tags": tags, "html_bytes": len(html.encode())},
                 tokens=cost or {})
-        # Learn the durable discoveries: store NEW ones in our own knowledge
-        # base (dedup by content) and hand those on to the home's shared
-        # memory. Already-known ones are silently swallowed — the model was
-        # told not to repeat them, this enforces it.
-        for fact in learned:
-            _, created = knowledge_store.add_fact(
-                fact, source="insights", category=cat["id"])
-            if created:
-                await _submit_memory(fact)
+        CARD_FAILURES.pop(insight_id, None)
         _set_job(insight_id, state="done", error="")
         log.info("insight %s generated (%s)%s%s", insight_id, insight["title"],
                  f", {len(filed)} new finding(s)" if filed else "",
@@ -3032,12 +4152,31 @@ async def _generate(insight_id: str) -> None:
         log.warning("insight %s failed: %s", insight_id, exc)
         journal.record("insight", journal.classify({"ok": False, "error": str(exc)}),
                        error=str(exc), extra={"id": insight_id})
+        # The scheduler backs off from this card until a run succeeds.
+        _note_card_failure(insight_id, str(exc))
         _set_job(insight_id, state="error", error=str(exc)[:500])
+
+
+def _no_fallback(result: dict) -> bool:
+    """Did a search run fail in a way the snapshot would fail too?"""
+    if result.get("ok"):
+        return False
+    if engine.overloaded(result):
+        return True
+    return journal.classify(result) in ("auth", "rate_limited")
 
 
 # ---------------------------------------------------------------------------
 # Fix workers — the plan, and the one path that lets Claude change the house
 # ---------------------------------------------------------------------------
+
+# The brief a plan run is handed when a conversation agreed the change.
+PLAN_CHANGE_MAX = 600
+PLAN_AGREED = (
+    "WHAT THE HOMEOWNER AGREED TO, in a conversation with you about this "
+    "finding — plan exactly this change, or say plainly why it cannot or "
+    "should not be made:\n{change}")
+
 
 async def _run_plan(job_id: str) -> None:
     """Work out what fixing one finding WOULD change, and change nothing.
@@ -3052,10 +4191,11 @@ async def _run_plan(job_id: str) -> None:
     rather than by instruction, because a prompt that says "change
     nothing" is a promise a model keeps and a tool list is a promise the
     CLI keeps. It claims the `fix` run source like the run it precedes,
-    since the Chats rail reads them as one face, and it rides the
-    generation queue for the fix's own reason: one Claude invocation in
-    flight across the add-on is what keeps a subscription's rate limit
-    intact.
+    since the Chats rail reads them as one face. It rides the generation
+    queue, and the run itself takes a PRESS seat on the Claude run queue
+    (`run_queue`) — the bound across every run the panel makes, which is
+    what protects a subscription's rate limit now that the generation
+    worker is no longer the only thing that spawns one.
 
     Every ending leaves the row somewhere a person can act: a plan that
     parsed lands on the card as `planned`, and a run that failed puts the
@@ -3072,18 +4212,22 @@ async def _run_plan(job_id: str) -> None:
         # the route already claimed it on disk — this is the in-memory half
         _set_job(job_id, state="planning", error="")
         memory = await asyncio.to_thread(_read_shared_memory)
+        change = str(job.get("change") or "").strip()
         prompt = fixer.build_plan_prompt(
             finding, memory=memory,
-            protected=automation_writer.protected_patterns())
-        result = await asyncio.to_thread(
+            protected=automation_writer.protected_patterns(),
+            context=(PLAN_AGREED.format(change=change) if change else ""))
+        result = await _claude(
             engine.run_analyst, prompt, fixer.PLAN_SYSTEM, eff_model(),
             PLAN_TIMEOUT_S, PLAN_MAX_TURNS, "fix",
-            job="fix_plan", schema=fixer.PLAN_SCHEMA)
+            job="fix_plan", schema=fixer.PLAN_SCHEMA, priority=run_queue.PRESS)
         _record_usage(result, job_id)
         if not result["ok"]:
             raise RuntimeError(result["error"] or "the plan run failed")
 
         plan = fixer.parse_plan(result["text"], result.get("data"))
+        # The floors asked at the plan, and an edit's diff and replay.
+        plan = await _typed_plan_extras(plan)
         row = await asyncio.to_thread(findings_store.set_plan, ts, plan)
         if row is None:
             # The finding was settled, or somebody pressed Cancel, while
@@ -3101,9 +4245,17 @@ async def _run_plan(job_id: str) -> None:
         # run whatever happened to it, and a second one would count this
         # failure twice — `_run_fix`'s arrangement, for its reason.
         log.warning("planning finding %s failed: %s", ts, exc)
-        await asyncio.to_thread(
-            findings_store.set_status, ts, "open",
-            f"brAIn could not work out what to change: {str(exc)[:400]}")
+        # Best-effort, and that is load-bearing: this is the error path,
+        # and a store write that raised here (a full or read-only /data —
+        # `atomic_write` re-raises the OSError) used to escape it and take
+        # the generation worker down with it. The job still says why.
+        try:
+            await asyncio.to_thread(
+                findings_store.set_status, ts, "open",
+                f"brAIn could not work out what to change: {str(exc)[:400]}")
+        except Exception as store_exc:  # noqa: BLE001 — see above
+            log.warning("could not put finding %s back to open: %s",
+                        ts, store_exc)
         _set_job(job_id, state="error", error=str(exc)[:500])
 
 
@@ -3128,9 +4280,11 @@ def _close_fix_window(ts: int, started: float, ended: float) -> None:
 async def _run_fix(job_id: str) -> None:
     """Fix one finding, agentically, because somebody pressed Apply on a plan.
 
-    Shares the generation queue on purpose: one Claude invocation at a time
-    across the whole add-on is what keeps a subscription's rate limit
-    intact, and a fix run is far too expensive to let race a card refresh.
+    It rides the generation queue, and its run takes a PRESS seat on the
+    Claude run queue (`run_queue`): there is no longer one invocation at a
+    time across the add-on — the Resident, triage, a Reply and the brief
+    all spawn runs of their own — so the bound and the order live there,
+    and a press is never queued behind scheduled work.
 
     The run is told to carry out the steps a person read rather than to
     work out its own — and the window it ran in is stamped on the row
@@ -3145,6 +4299,11 @@ async def _run_fix(job_id: str) -> None:
     finding = findings_store.get(ts)
     if finding is None:
         _set_job(job_id, state="error", error="that finding is gone")
+        return
+    if (finding.get("plan") or {}).get("ops"):
+        # A plan written as typed operations: the panel carries out the
+        # deterministic ones and the agentic one runs under its contract.
+        await _run_typed_fix(job_id, finding)
         return
     try:
         # the route already claimed it on disk — this is the in-memory half
@@ -3163,10 +4322,11 @@ async def _run_fix(job_id: str) -> None:
         started = time.time()
         await asyncio.to_thread(findings_store.set_fix_window, ts,
                                 started, None)
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_agent, prompt, fixer.FIX_SYSTEM, eff_model(),
             FIX_TIMEOUT_S, FIX_MAX_TURNS, "fix",
-            job="fix_apply", schema=fixer.RESULT_SCHEMA)
+            job="fix_apply", schema=fixer.RESULT_SCHEMA,
+            priority=run_queue.PRESS)
         # Counted here and stored, rather than on every fetch of the tab:
         # see `findings_store.set_fix_window`. This is also the last moment
         # at which the count is certainly about this run and nothing else.
@@ -3184,13 +4344,22 @@ async def _run_fix(job_id: str) -> None:
             status = "failed"
         findings_store.set_status(ts, status, result=fixer.result_text(parsed),
                                   changed=parsed["changed"])
+        if status == "fixed":
+            # The run's own reading of what it did is not the check that
+            # filed the row: that check is asked again once the change has
+            # had a moment to land, and a fault it still sees reopens the
+            # row as having come back (`_verify_fix`).
+            _spawn_fix_verification(ts)
         # A change to the house is durable knowledge about it — the next
         # analysis must not rediscover a problem brAIn itself resolved.
         if status == "fixed" and parsed["changed"]:
+            subjects = _finding_subjects(finding)
             await _submit_memory(
                 f"brAIn fixed this on {time.strftime('%Y-%m-%d')}: "
                 f"{finding['text']} — {'; '.join(parsed['changed'])}",
-                source="fix")
+                source="fix", subject=subjects[0] if subjects else "",
+                subjects=subjects[1:],
+                run_id=capture.run_id_from(result.get("meta") or {}))
         # Anything it noticed on the way in becomes its own finding rather
         # than an edit it was not asked to make — and goes through triage
         # like every other producer's, because "I saw this while I was in
@@ -3211,11 +4380,921 @@ async def _run_fix(job_id: str) -> None:
         # a question nothing can answer afterwards — the row will say
         # `failed` rather than offering the Undo, but what the run touched
         # is still bounded on disk for `brain undo` and for a report.
+        # Both best-effort, for `_run_plan`'s reason: a store write that
+        # raises on the error path is what used to kill the worker.
+        try:
+            findings_store.set_fix_window(ts, None, time.time())
+            findings_store.set_status(
+                ts, "failed",
+                result=f"The fix run did not complete: {str(exc)[:400]}")
+        except Exception as store_exc:  # noqa: BLE001 — see above
+            log.warning("could not record the failed fix on finding %s: %s",
+                        ts, store_exc)
+        _set_job(job_id, state="error", error=str(exc)[:500])
+
+
+# How long after a fix the check that filed the row is asked again. Past
+# `findings_store.FIX_SETTLE_S` on purpose: a row is only called back once
+# the change has had its settling moment.
+FIX_VERIFY_DELAY_S = 180
+_FIX_VERIFICATIONS: set = set()
+
+
+def _spawn_fix_verification(ts: int) -> None:
+    """Ask the originating check again, later, without holding anything up.
+
+    Kept in a set so the task is not collected mid-sleep (the loop holds
+    only a weak reference to a task), and dropped from it when done.
+    """
+    async def later() -> None:
+        try:
+            await asyncio.sleep(FIX_VERIFY_DELAY_S)
+            await _verify_fix(ts)
+        except asyncio.CancelledError:
+            # The panel is shutting down; the next scheduled pass of the
+            # same check is the verification this one would have been.
+            pass
+        except Exception as exc:  # noqa: BLE001 — a verification, not the fix
+            log.debug("could not verify the fix for %s: %s", ts, exc)
+    try:
+        task = asyncio.get_running_loop().create_task(later())
+    except RuntimeError:
+        return              # no loop: a caller outside the panel's own
+    _FIX_VERIFICATIONS.add(task)
+    task.add_done_callback(_FIX_VERIFICATIONS.discard)
+
+
+async def _verify_fix(ts: int) -> dict:
+    """Run the check that filed a row brAIn just fixed, and believe it.
+
+    What makes `fixed` a claim about the house rather than about a run.
+    Only a house check's row can be verified this way — a model's report
+    has no rule to re-run — and only a check that RAN may answer: a
+    snapshot key that would not fetch is "I could not look", which leaves
+    the row exactly as the fix left it. The answer goes through
+    `clear_resolved`, the same door the scheduled pass and "Check again"
+    use, so the reopen (`findings_store._came_back`) and the answer's
+    lapse are one rule with three callers rather than three rules.
+    """
+    finding = await asyncio.to_thread(findings_store.get, ts)
+    if finding is None or finding.get("status") != "fixed":
+        return {"checked": False, "why": "the row moved on"}
+    source = str(finding.get("source") or "")
+    check_id = source[6:] if source.startswith("check:") else ""
+    if (not check_id or checks.get_check(check_id) is None
+            or checks.is_shadow(check_id)):
+        return {"checked": False, "why": "not a house check's row"}
+    if CHECKS_STATE["running"]:
+        # That pass is about to answer the same question.
+        return {"checked": False, "why": "a checks pass is running"}
+    started = time.time()
+    snapshot = await checks.snapshot.collect(started)
+    result = checks.run_all(snapshot, started, only=[check_id])
+    if check_id not in result["ran"]:
+        return {"checked": False,
+                "why": (result["skipped"].get(check_id)
+                        or result["errors"].get(check_id)
+                        or "it could not run")}
+    keys = {findings_store.normalize(f["text"]) for f in result["findings"]}
+    await asyncio.to_thread(findings_store.clear_resolved,
+                            {checks.source_for(check_id)}, keys)
+    still = findings_store.normalize(finding.get("text", "")) in keys
+    if still:
+        log.info("finding %s came back: %s still reports it after the fix",
+                 ts, check_id)
+    return {"checked": True, "came_back": still}
+
+
+# ---------------------------------------------------------------------------
+# Every change is a contract — typed fixes, interventions, the action gate
+# and the tripwire. The policy lives in plan_ops / typed_fix / interventions
+# / consequence / gate / security; this block is the glue that hands them
+# Core and the stores.
+# ---------------------------------------------------------------------------
+
+PREVIEW_REPLAY_DAYS = typed_fix.REPLAY_DAYS
+
+
+def _refuse_plan(plan: dict, why: str) -> dict:
+    """A plan the floors (or the writer) would refuse, offered as nothing.
+
+    `parse_plan`'s rule: a list of changes under a refusal reads as a plan
+    somebody can approve, so the ops and the steps go with it."""
+    summary = str(plan.get("summary") or "").strip()
+    return {**plan, "can_fix": False, "ops": [], "steps": [], "preview": [],
+            "summary": (summary + " " if summary else "")
+            + f"brAIn will not offer this as a change it can make: {why}."}
+
+
+async def _typed_plan_extras(plan: dict) -> dict:
+    """The floors asked at the PLAN, and the preview an edit carries.
+
+    The chokepoint asks again at call time and the writer at write time;
+    this is the ask that keeps a card from offering an Apply something
+    downstream will refuse. An `edit_automation` op carries the diff of the
+    bytes it will change and a replay of the old and new config over the
+    recorder's week, so what is approved is what will be written."""
+    if not plan.get("can_fix") or not plan.get("ops"):
+        return plan
+    tokens = await asyncio.to_thread(security.honeytoken_ids)
+    refusal = plan_ops.protected_refusal(plan["ops"], None, tokens)
+    if refusal:
+        return _refuse_plan(plan, refusal)
+    previews: list[dict] = []
+    tz = None
+    for op in plan["ops"]:
+        if op.get("op") != "edit_automation":
+            previews.append({})
+            continue
+        shown = await asyncio.to_thread(typed_fix.edit_preview, op)
+        if shown.get("error"):
+            return _refuse_plan(plan, shown["error"])
+        entry: dict = {"diff": shown["diff"]}
+        try:
+            import aiohttp  # noqa: PLC0415
+
+            if tz is None:
+                tz, _name = await asyncio.to_thread(baselines.house_timezone)
+            end = time.time()
+            start = end - PREVIEW_REPLAY_DAYS * 86400
+            async with aiohttp.ClientSession() as session:
+                entry["replay"] = await _replay_config(
+                    session, op["new_config"], start, end, tz)
+                if shown.get("before_config"):
+                    entry["replay_before"] = await _replay_config(
+                        session, shown["before_config"], start, end, tz)
+        except Exception as exc:  # noqa: BLE001 — the diff still stands
+            entry["replay_note"] = f"brAIn could not replay it: {exc}"[:300]
+        previews.append(entry)
+    plan["preview"] = previews
+    return plan
+
+
+def _typed_hooks() -> typed_fix.Hooks:
+    """Core, for `typed_fix.execute`. The same doors every other press uses."""
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    async def apply_edit(row: dict):
+        # The entity Core registered for this config id, read back rather
+        # than derived from the alias — `_registry_entity_id`'s rule.
+        real, _looked = await _registry_entity_id(str(row.get("edits") or ""))
+        if real:
+            row = {**row, "automation": {"entity_id": real}}
+        return await _apply_accepted(row)
+
+    async def revert_edit(written: dict) -> str:
+        reverted = await asyncio.to_thread(automation_writer.revert, written)
+        try:
+            await ha_data.call_core_service("automation", "reload")
+        except Exception as exc:  # noqa: BLE001 — the bytes are back
+            log.warning("could not reload after putting a fix back: %s", exc)
+        return "" if reverted.get("ok") else str(reverted.get("error") or
+                                                  "it could not be put back")
+
+    async def call(domain: str, service: str, data: dict):
+        return await ha_data.call_core_service(domain, service, data)
+
+    async def state(entity_id: str):
+        return await ha_data.entity_state(entity_id)
+
+    async def ws(commands: list[dict]) -> list[dict]:
+        async with aiohttp.ClientSession() as session:
+            return await ha_data._ws_calls(session, commands)
+
+    def ledger(row: dict) -> None:
+        typed_fix.append_ledger(row, actions.LEDGER_FILE)
+
+    return typed_fix.Hooks(apply_edit=apply_edit, revert_edit=revert_edit,
+                           call=call, state=state, ws=ws, ledger=ledger)
+
+
+async def _run_typed_fix(job_id: str, finding: dict) -> None:
+    """Carry out an approved plan: the panel's ops first, then the agentic
+    one under its contract. Never on a schedule — only `_run_fix` calls
+    this, and only `h_finding_apply` queues that.
+
+    The deterministic ops are the panel's own (no model, no shell); the
+    `agentic` op is the one `run_agent` run, and it carries
+    `BRAIN_CHANGE_CONTRACT` so the MCP chokepoint and the action gate refuse
+    anything off the approved list. Every applied plan becomes an
+    intervention the follow-up looks come back to."""
+    ts = int(finding["ts"])
+    plan = finding.get("plan") or {}
+    ops = plan.get("ops") or []
+    intervention = interventions.new_id(ts)
+    try:
+        _set_job(job_id, state="fixing", error="")
+        started = time.time()
+        await asyncio.to_thread(findings_store.set_fix_window, ts,
+                                started, None)
+        protected = automation_writer.protected_patterns()
+        tokens = await asyncio.to_thread(security.honeytoken_ids)
+        done = await typed_fix.execute(ops, _typed_hooks(),
+                                       intervention=intervention,
+                                       protected=protected, honeytokens=tokens)
+        status, result_text, changed, also = "fixed", "", [], []
+        run_meta: dict = {}
+        if not done["ok"]:
+            status = "failed"
+            back = (" What it had already changed was put back."
+                    if done["rolled_back"] else "")
+            result_text = (f"brAIn did not finish this change: "
+                           f"{done['error']}.{back}")
+        elif plan_ops.has_agentic(ops):
+            contract = plan_ops.contract_for(ops, intervention)
+            memory = await asyncio.to_thread(_read_shared_memory)
+            prompt = fixer.build_prompt(finding, memory=memory,
+                                        protected=protected, plan=plan)
+            env = {"BRAIN_CHANGE_CONTRACT": json.dumps(contract),
+                   "BRAIN_CHANNEL": "fix",
+                   "BRAIN_INTERVENTION_ID": intervention}
+            result = await _claude(
+                engine.run_agent, prompt, fixer.FIX_SYSTEM, eff_model(),
+                FIX_TIMEOUT_S, FIX_MAX_TURNS, "fix", job="fix_apply",
+                schema=fixer.RESULT_SCHEMA, env=env, priority=run_queue.PRESS)
+            _record_usage(result, job_id)
+            run_meta = result.get("meta") or {}
+            if not result["ok"]:
+                status = "failed"
+                result_text = (f"The fix run did not complete: "
+                               f"{str(result['error'] or '')[:400]}")
+            else:
+                parsed = fixer.parse_result(result["text"], result.get("data"))
+                status = ("needs_you" if parsed["needs_you"] else
+                          "fixed" if parsed["ok"] else "failed")
+                result_text = fixer.result_text(parsed)
+                changed = done["done"] + list(parsed["changed"])
+                also = parsed["also_found"]
+        else:
+            changed = list(done["done"])
+            result_text = "brAIn made the change itself: " + "; ".join(changed)
+        ended = time.time()
+        try:
+            files = len(unfix.journal_entries(started, ended,
+                                              also=done["journal_ts"]))
+            calls = len(unfix.service_calls(started, ended))
+        except Exception:  # noqa: BLE001 — accounting, not the fix
+            files = calls = None
+        await asyncio.to_thread(findings_store.set_fix_window, ts, None,
+                                ended, files, calls)
+        await asyncio.to_thread(findings_store.set_status, ts, status,
+                                result_text, changed)
+        if status == "fixed":
+            # The follow-up ledger is accounting about a change that has
+            # already happened: a write that fails must not turn a fix that
+            # worked into one the card calls failed (and so stop offering
+            # its Undo). It is said, and the looks simply have nothing to
+            # come back to.
+            try:
+                await asyncio.to_thread(interventions.record, {
+                    "id": intervention, "applied_at": ended, "finding_ts": ts,
+                    "finding_text": finding.get("text") or "",
+                    "finding_key": findings_store.normalize(
+                        finding.get("text") or ""),
+                    "source": finding.get("source") or "",
+                    "steps": plan.get("steps") or [],
+                    "kinds": [op.get("op") for op in ops],
+                    "contract": plan_ops.contract_for(ops, intervention),
+                    "verify_by": plan.get("verify_by"),
+                    "expected_effect": plan.get("expected_effect") or "",
+                    "entities": plan_ops.entities_named(ops),
+                    "journal_ts": done["journal_ts"], "undo": done["undo"],
+                    "outcome": status})
+            except OSError as exc:
+                log.warning("the fix for finding %s worked, but its follow-up "
+                            "could not be recorded: %s", ts, exc)
+            _spawn_fix_verification(ts)
+            if changed:
+                subjects = _finding_subjects(finding)
+                await _submit_memory(
+                    f"brAIn fixed this on {time.strftime('%Y-%m-%d')}: "
+                    f"{finding.get('text')} — {'; '.join(changed)}",
+                    source="fix", subject=subjects[0] if subjects else "",
+                    subjects=subjects[1:],
+                    run_id=capture.run_id_from(run_meta))
+        if also:
+            findings_store.add_many(triage.gate([
+                {"text": extra, "source": "fix",
+                 "source_title": f"Noticed while fixing “{finding['text']}”"}
+                for extra in also]))
+        _set_job(job_id, state="done", error="")
+        log.info("finding %s → %s (typed fix %s)", ts, status, intervention)
+    except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
+        log.warning("typed fix for finding %s failed: %s", ts, exc)
         findings_store.set_fix_window(ts, None, time.time())
         findings_store.set_status(
             ts, "failed",
-            result=f"The fix run did not complete: {str(exc)[:400]}")
+            result=f"The fix did not complete: {str(exc)[:400]}")
         _set_job(job_id, state="error", error=str(exc)[:500])
+
+
+# -- restoring what a fix's service calls changed (a press, never a timer) --
+
+RESTORE_SETTLE_S = 2.0
+RESTORE_STATUSES = frozenset({"fixed", "failed", "needs_you", "open"})
+
+
+async def h_finding_restore(request: web.Request) -> web.Response:
+    """Put the entities a fix's service calls changed back how they were.
+
+    Read off the before-states the chokepoint recorded, put back with
+    `scene.apply` (each domain's own reproduce_state), and then read again,
+    because Home Assistant accepting a call is not a light being on. Every
+    entity gets its own line: restored, or could not restore and why."""
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    finding = _finding_or_404(request)
+    if finding.get("status") not in RESTORE_STATUSES:
+        raise web.HTTPConflict(text="this finding is being worked on — wait "
+                                    "for it to finish first")
+    started = float(finding.get("fix_started") or 0)
+    ended = float(finding.get("fix_ended") or 0)
+    if started <= 0 or ended <= 0:
+        raise web.HTTPConflict(text="brAIn did not record what this fix "
+                                    "changed, so there is nothing to put back")
+    calls = await asyncio.to_thread(unfix.service_calls, started, ended)
+    tokens = await asyncio.to_thread(security.honeytoken_ids)
+    plan = unfix.restore_plan(calls, None, tokens)
+    if not plan["apply"] and not plan["refused"]:
+        raise web.HTTPConflict(text="this fix made no service calls brAIn "
+                                    "recorded, so there is nothing to put back")
+    error, after = "", {}
+    if plan["apply"]:
+        before = {}
+        for eid in plan["apply"]:
+            try:
+                before[eid] = typed_fix.before_of(await ha_data.entity_state(eid))
+            except Exception:  # noqa: BLE001 — recorded as unknown
+                before[eid] = {"unknown": True}
+        iv = await asyncio.to_thread(interventions.for_finding,
+                                     int(finding["ts"]))
+        try:
+            await ha_data.call_core_service("scene", "apply",
+                                            {"entities": plan["apply"]})
+        except Exception as exc:  # noqa: BLE001 — reported per entity
+            error = str(exc)
+        typed_fix.append_ledger(typed_fix.ledger_row(
+            "scene", "apply", list(plan["apply"]), before=before,
+            channel="restore", intervention=(iv or {}).get("id", "")),
+            actions.LEDGER_FILE)
+        if not error:
+            await asyncio.sleep(RESTORE_SETTLE_S)
+        for eid in plan["apply"]:
+            try:
+                after[eid] = await ha_data.entity_state(eid)
+            except Exception:  # noqa: BLE001
+                after[eid] = None
+    rows = unfix.restore_report(plan, after, error)
+    text = unfix.restore_text(rows)
+
+    def note() -> dict:
+        findings_store.set_status(int(finding["ts"]), finding["status"],
+                                  result=text)
+        return _findings_payload()
+
+    payload = await asyncio.to_thread(note)
+    log.info("finding %s: restore — %d back, %d could not be",
+             finding["ts"], sum(1 for r in rows if r["restored"]),
+             sum(1 for r in rows if not r["restored"]))
+    return web.json_response({**payload, "restored": rows, "text": text})
+
+
+async def _undo_intervention(finding: dict) -> list[str]:
+    """Reverse the registry changes a typed fix made. Returns the failures.
+
+    The file half rides `unfix.journal_entries(..., also=)`; this is the
+    other deterministic half — a rename or an area move carries the value
+    it replaced, so putting it back is exact."""
+    row = await asyncio.to_thread(interventions.for_finding, int(finding["ts"]))
+    if not row:
+        return []
+    failures = []
+    hooks = _typed_hooks()
+    for item in reversed(row.get("undo") or []):
+        if item.get("kind") == "edit":
+            continue      # the journal half reverts it, once
+        why = await typed_fix.undo_one(item, hooks)
+        if why:
+            failures.append(why)
+    await asyncio.to_thread(interventions.update, row["id"], status="undone")
+    return failures
+
+
+# -- the follow-up looks ----------------------------------------------------
+
+FOLLOWUP_TICK_S = 600
+FOLLOWUP_TIMEOUT_S = 240
+FOLLOWUP_STATE: dict = {"running": False, "last_tick": 0, "looks": 0,
+                        "regressed": 0, "deferred": 0, "suggested": 0,
+                        "last_error": ""}
+
+
+async def _followup_loop() -> None:
+    while True:
+        await asyncio.sleep(FOLLOWUP_TICK_S)
+        try:
+            await _followup_tick(time.time())
+        except Exception as exc:  # noqa: BLE001 — never let this kill the loop
+            FOLLOWUP_STATE["last_error"] = str(exc)[:200]
+            log.warning("follow-up looks failed: %s", exc)
+
+
+async def _followup_tick(now: float) -> int:
+    """Recurrences first (free), then every look whose day has come."""
+    if FOLLOWUP_STATE["running"]:
+        return 0
+    FOLLOWUP_STATE["running"] = True
+    looked = 0
+    try:
+        FOLLOWUP_STATE["last_tick"] = int(now)
+        rows = (await asyncio.to_thread(interventions.read))["rows"]
+        live = await asyncio.to_thread(findings_store.list_all)
+        for row in rows:
+            if row.get("status") != "watching":
+                continue
+            back = interventions.came_back(row, live, findings_store.normalize)
+            if back:
+                detail = "the problem was reported again"
+                await asyncio.to_thread(interventions.mark_regressed,
+                                        row["id"], detail, now)
+                await _regressed(row, None, detail, now, back)
+        for row, day in await asyncio.to_thread(interventions.due, now):
+            verdict, detail, how = await _judge_look(row, day, now)
+            if verdict is None:
+                FOLLOWUP_STATE["deferred"] += 1
+                continue
+            looked += 1
+            FOLLOWUP_STATE["looks"] += 1
+            await asyncio.to_thread(interventions.set_look, row["id"], day,
+                                    verdict, detail, now, how)
+            if verdict == "regressed":
+                await _regressed(row, day, detail, now, None)
+        return looked
+    finally:
+        FOLLOWUP_STATE["running"] = False
+
+
+async def _judge_look(row: dict, day: int, now: float
+                      ) -> tuple[str | None, str, str]:
+    """`(verdict, detail, how)` — None for a look the gates are holding."""
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    verify = row.get("verify_by") or {}
+    kind = verify.get("kind")
+    applied = float(row.get("applied_at") or 0)
+    if kind in ("trace_within_h", "state_is"):
+        target = verify.get("automation") or verify.get("entity")
+        try:
+            state = await ha_data.entity_state(target)
+        except Exception:  # noqa: BLE001 — "could not look"
+            state = None
+        if kind == "trace_within_h":
+            return (*interventions.judge_trace(verify, state, applied, now),
+                    "trace")
+        return (*interventions.judge_state(verify, state), "state")
+    source = str(row.get("source") or "")
+    check_id = source[6:] if source.startswith("check:") else ""
+    if kind == "finding_clears" or (not kind and check_id):
+        if check_id and checks.get_check(check_id) is not None:
+            if CHECKS_STATE["running"]:
+                return None, "a checks pass is running", "check"
+            snapshot = await checks.snapshot.collect(now)
+            result = checks.run_all(snapshot, now, only=[check_id])
+            if check_id not in result["ran"]:
+                return ("could_not_check",
+                        str(result["skipped"].get(check_id)
+                            or result["errors"].get(check_id)
+                            or "the check could not run")[:300], "check")
+            keys = {findings_store.normalize(f["text"])
+                    for f in result["findings"]}
+            if row.get("finding_key") in keys:
+                return "regressed", f"{check_id} reports it again", "check"
+            return "held", f"{check_id} no longer reports it", "check"
+    # Nothing deterministic can say: a cheap look, gated like every
+    # scheduled run, and "could not check" if the gates hold it too long.
+    why = _resident_gate(settings_store.load())
+    if why:
+        if interventions.overdue(row, day, now):
+            return "could_not_check", f"brAIn could not look: {why}", "gated"
+        return None, why, "gated"
+    result = await _claude(
+        engine.run_analyst, interventions.followup_prompt(row, day),
+        interventions.FOLLOWUP_SYSTEM, "", FOLLOWUP_TIMEOUT_S, 12, "followup",
+        job="followup", schema=interventions.FOLLOWUP_SCHEMA,
+        priority=run_queue.SCHEDULED)
+    _record_usage(result, f"followup-{row.get('id')}")
+    if not result.get("ok"):
+        return ("could_not_check",
+                f"the look failed: {str(result.get('error') or '')[:200]}",
+                "look")
+    verdict, reason = interventions.parse_followup(result.get("text") or "",
+                                                   result.get("data"))
+    return verdict, reason, "look"
+
+
+async def _regressed(row: dict, day: int | None, detail: str, now: float,
+                     live: dict | None) -> None:
+    """Reopen the case, citing the intervention; and a repeat is a period."""
+    FOLLOWUP_STATE["regressed"] += 1
+    text = interventions.came_back_text(row, day, detail)
+    ts = int(row.get("finding_ts") or 0)
+    current = await asyncio.to_thread(findings_store.get, ts) if ts else None
+    if live is not None and int(live.get("ts") or 0) != ts:
+        await asyncio.to_thread(findings_store.annotate, int(live["ts"]), text)
+    elif current is not None:
+        if current.get("status") in ("fixed",):
+            await asyncio.to_thread(findings_store.set_status, ts, "open",
+                                    text)
+        else:
+            await asyncio.to_thread(findings_store.annotate, ts, text)
+    else:
+        created = await asyncio.to_thread(findings_store.add_many, triage.gate([{
+            "text": f"{str(row.get('finding_text') or 'A fixed problem')[:200]}"
+                    " — came back after brAIn's fix",
+            "detail": text, "source": "followup",
+            "source_title": "Follow-up looks",
+            "severity": "warning"}]))
+        if created:
+            log.info("follow-up: reopened %s as a new finding", row.get("id"))
+    rows = (await asyncio.to_thread(interventions.read))["rows"]
+    key = row.get("finding_key") or ""
+    days = interventions.interval_days(rows, key) if key else None
+    if days:
+        times = sum(1 for r in rows
+                    if r.get("finding_key") == key and r.get("regressed_at"))
+        made = await asyncio.to_thread(findings_store.add_many, triage.gate(
+            [interventions.maintenance_row(row, days, times)]))
+        if made:
+            FOLLOWUP_STATE["suggested"] += 1
+            log.info("follow-up: %s keeps coming back — suggested every %d "
+                     "days", key[:60], days)
+
+
+# -- the action gate --------------------------------------------------------
+
+GATE_TIMEOUT_S = 18
+GATE_REGISTRY_TTL_S = 60
+_GATE_REGISTRY: dict = {"at": 0.0, "maps": None}
+
+
+async def _gate_registry() -> dict | None:
+    """Entity → area, areas, device → entities; cached a minute."""
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415
+
+    now = time.time()
+    if _GATE_REGISTRY["maps"] is not None and \
+            now - _GATE_REGISTRY["at"] < GATE_REGISTRY_TTL_S:
+        return _GATE_REGISTRY["maps"]
+    try:
+        async with aiohttp.ClientSession() as session:
+            regs = await asyncio.wait_for(ha_data.get_registries(session),
+                                          REGISTRY_LOOKUP_S)
+    except Exception as exc:  # noqa: BLE001 — "I could not look"
+        log.debug("gate: registries unreadable: %s", exc)
+        return None
+    area_ids = regs.get("entity_area_id") or {}
+    names = {}
+    for eid, aid in area_ids.items():
+        names[aid] = (regs.get("entity_area") or {}).get(eid, aid)
+    area_entities: dict[str, list] = {}
+    for eid, aid in area_ids.items():
+        area_entities.setdefault(aid, []).append(eid)
+    device_entities: dict[str, list] = {}
+    for eid, did in (regs.get("entity_device") or {}).items():
+        device_entities.setdefault(did, []).append(eid)
+    maps = {"entity_area": area_ids, "area_names": names,
+            "area_entities": area_entities, "device_entities": device_entities}
+    _GATE_REGISTRY.update(at=now, maps=maps)
+    return maps
+
+
+async def _gate_view(tool: str, args: dict, exposed_only: bool
+                     ) -> consequence.View:
+    """What the gate is allowed to know: registries, closed states, members."""
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415
+
+    maps = await _gate_registry() or {}
+    view = consequence.View(
+        entity_area=maps.get("entity_area") or {},
+        area_names=maps.get("area_names") or {},
+        area_entities=maps.get("area_entities") or {},
+        device_entities=maps.get("device_entities") or {},
+        protected=automation_writer.protected_patterns(),
+        honeytokens=set(await asyncio.to_thread(security.honeytoken_ids)))
+    first = consequence.resolve(tool, args, view)
+    wanted = [e["entity_id"] for e in first["entities"]]
+    containers = [e for e in wanted
+                  if e.split(".", 1)[0] in consequence.CONTAINER_DOMAINS]
+    if containers:
+        try:
+            async with aiohttp.ClientSession() as session:
+                answers = await asyncio.wait_for(ha_data._ws_commands(session, [
+                    {"type": "search/related",
+                     "item_type": c.split(".", 1)[0], "item_id": c}
+                    for c in containers]), REGISTRY_LOOKUP_S)
+        except Exception:  # noqa: BLE001 — unread members stay unresolved
+            answers = [None] * len(containers)
+        for container, answer in zip(containers, answers):
+            if isinstance(answer, dict):
+                view.members[container] = [
+                    str(e) for e in answer.get("entity") or []
+                    if str(e) != container]
+    resolved = consequence.resolve(tool, args, view)
+    if exposed_only:
+        # The voice floor's own module (`scripts/brain_exposed.py`, beside
+        # the panel in the image as in the repo). Unread exposure fails
+        # closed: an empty set refuses every entity.
+        view.exposed = set()
+        try:
+            import sys  # noqa: PLC0415
+
+            scripts = str(Path(__file__).resolve().parent.parent / "scripts")
+            if scripts not in sys.path:
+                sys.path.append(scripts)
+            import brain_exposed  # noqa: PLC0415
+
+            snap = brain_exposed.load()
+            if snap is not None:
+                view.exposed = {e["entity_id"] for e in resolved["entities"]
+                                if brain_exposed.is_exposed(e["entity_id"],
+                                                            snap)}
+        except Exception as exc:  # noqa: BLE001
+            log.debug("gate: exposure unreadable: %s", exc)
+    for eid in [e["entity_id"] for e in resolved["entities"]][:40]:
+        try:
+            view.states[eid] = await ha_data.entity_state(eid) or {}
+        except Exception:  # noqa: BLE001 — shown as could not read
+            pass
+    return view
+
+
+async def _gate_decide(body: dict) -> dict:
+    """One decision. Every path ends in `gate`'s vocabulary; none in allow
+    by default."""
+    gate.STATE["asked"] += 1
+    tool = str(body.get("tool") or "")
+    args = body.get("input") if isinstance(body.get("input"), dict) else {}
+    channel = re.sub(r"[^a-z0-9_]", "", str(body.get("channel") or ""))[:32]
+    words = [str(w)[:1200] for w in (body.get("words") or [])
+             if isinstance(w, str)][-6:]
+    contract = body.get("contract") if isinstance(body.get("contract"),
+                                                  dict) else None
+    exposed_only = bool(body.get("exposed_only"))
+    if not consequence.is_gated(tool, contract is not None):
+        return {"verdict": "allow", "decision": "allow",
+                "reason": "not an acting tool", "path": "not_gated"}
+    # "Let brAIn act without asking" reaches the gate too, or the switch
+    # would stop the CLI's prompts and leave this one asking: in the chat
+    # and the terminal the model's judgement is not consulted while it is
+    # on. Everything above the model still holds — the floors (protected,
+    # the tripwire, voice exposure), the person's own house rules, and a
+    # fix's contract — and a Discuss session's ask rules are the CLI's,
+    # which an allow from here (the hook printing nothing) never reaches.
+    # It rides in the cache key, so flipping it is not answered from before.
+    switch = gate.interactive(channel) and eff_skip_permissions()
+    key = gate.cache_key(str(body.get("session_id") or ""), tool, args, words,
+                         str((contract or {}).get("id") or "")
+                         + ("|switch" if switch else ""))
+    hit = gate.cached(key)
+    if hit:
+        return hit
+    try:
+        view = await asyncio.wait_for(_gate_view(tool, args, exposed_only),
+                                      GATE_TIMEOUT_S)
+    except Exception as exc:  # noqa: BLE001 — undecided, never allow
+        return gate.undecided(channel, f"could not read the house: "
+                                       f"{type(exc).__name__}")
+    cons = consequence.resolve(tool, args, view)
+    floor = gate.floors(cons, channel, exposed_only)
+    if floor:
+        gate.STATE["floor"] += 1
+        out = gate._out(floor[0], floor[1], channel, "floor")
+        gate.remember(key, out)
+        return out
+    # The person's own standing rules, matched in code. They only ever
+    # TIGHTEN what any path below decides (`house_rules.tighten`).
+    rule = house_rules.check(cons, (await asyncio.to_thread(
+        house_rules.load))["rules"], _local_minute())
+
+    def ruled(verdict: str, why: str, path: str) -> dict:
+        tighter, changed = house_rules.tighten(verdict, rule)
+        if changed:
+            gate.STATE["house_rule"] = gate.STATE.get("house_rule", 0) + 1
+            return gate._out(tighter, rule[1], channel, "house_rule")
+        return gate._out(verdict, why, channel, path)
+
+    if contract is not None:
+        gate.STATE["contract"] += 1
+        verdict, why = gate.contract_verdict(tool, args, contract)
+        out = ruled(verdict, why, "contract")
+        gate.remember(key, out)
+        return out
+    if rule and rule[0] == "deny":
+        out = ruled("allow", "", "house_rule")
+        gate.remember(key, out)
+        return out
+    fast = consequence.fast_path(cons, words)
+    if fast and not rule:
+        gate.STATE["fast_path"] += 1
+        out = gate._out("allow", fast, channel, "fast_path")
+        gate.remember(key, out)
+        return out
+    if switch:
+        gate.STATE["switch"] = gate.STATE.get("switch", 0) + 1
+        out = ruled("allow", "\"Let brAIn act without asking\" is on",
+                    "switch")
+        gate.remember(key, out)
+        return out
+    if not engine.get_auth():
+        return gate.undecided(channel, "there is no Claude credential")
+    if not gate.interactive(channel):
+        # An unattended run answers to the budget like every scheduled one.
+        try:
+            if usage_store.budget_state(settings_store.load())["blocked"]:
+                return gate.undecided(channel, "the usage budget is spent")
+        except Exception:  # noqa: BLE001 — a budget that cannot be read
+            pass
+    gate.STATE["model"] += 1
+    try:
+        # The one engine run that takes NO seat on the run queue, and the
+        # reason is the queue: a gate question is asked from INSIDE a run
+        # (a fix's tool call), and that run already holds a seat — three
+        # seated fixes each waiting on a gate that needs a fourth seat is a
+        # deadlock the timeout would answer as "undecided", which refuses.
+        # It is a small, tool-less, capped turn, `doctor`'s exception.
+        result = await asyncio.wait_for(asyncio.to_thread(
+            engine.run_claude, gate.build_prompt(words, cons),
+            gate.GATE_SYSTEM, "", GATE_TIMEOUT_S, 4, "gate",
+            job="gate", schema=gate.GATE_SCHEMA), GATE_TIMEOUT_S + 5)
+    except Exception as exc:  # noqa: BLE001 — undecided, never allow
+        return gate.undecided(channel, type(exc).__name__)
+    if not result.get("ok"):
+        return gate.undecided(channel, "the gate's run failed")
+    verdict, why = gate.parse(result.get("text") or "", result.get("data"))
+    out = ruled(verdict, why, "model")
+    gate.remember(key, out)
+    return out
+
+
+def _local_minute(now: float | None = None) -> int:
+    local = _local_now(time.time() if now is None else now)
+    return local.hour * 60 + local.minute
+
+
+# -- house rules (written once, compiled once, matched in code) -------------
+
+HOUSE_RULES_TIMEOUT_S = 90
+
+
+async def h_house_rules(request: web.Request) -> web.Response:
+    data = await asyncio.to_thread(house_rules.load)
+    return web.json_response(data)
+
+
+async def h_house_rules_save(request: web.Request) -> web.Response:
+    """Save the sentences and compile any that changed. A press: it needs a
+    credential and skips the budget, as every pressed run does."""
+    body = await _json_body(request)
+    try:
+        texts = house_rules.clean_rules(body.get("rules"))
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    known = {r["text"]: r for r in (await asyncio.to_thread(
+        house_rules.load))["rules"] if r.get("compiled")}
+    if any(t not in known for t in texts) and not engine.get_auth():
+        raise web.HTTPBadRequest(text="connect your Claude account first — "
+                                      "a new rule is compiled by Claude once")
+    rows = []
+    for text in texts:
+        if text in known:
+            rows.append({"text": text, "compiled": known[text]["compiled"],
+                         "error": ""})
+            continue
+        result = await _claude(
+            engine.run_claude, house_rules.compile_prompt(text),
+            house_rules.COMPILE_SYSTEM, "", HOUSE_RULES_TIMEOUT_S, 4,
+            "gate", job="house_rules", schema=house_rules.RULE_SCHEMA,
+            priority=run_queue.PRESS)
+        raw = result.get("data") if result.get("ok") else None
+        if raw is None and result.get("ok"):
+            match = re.search(r"\{.*\}", str(result.get("text") or ""), re.S)
+            try:
+                raw = json.loads(match.group(0)) if match else None
+            except ValueError:
+                raw = None
+        matcher, why = house_rules.clean_compiled(raw)
+        if not result.get("ok"):
+            why = "the compile run failed — try saving again"
+        rows.append({"text": text, "compiled": matcher, "error": why})
+    try:
+        await asyncio.to_thread(house_rules.save, rows, texts)
+    except OSError as exc:
+        raise web.HTTPInternalServerError(text=f"could not save: {exc}")
+    gate._CACHE.clear()          # a verdict cached before the rule is stale
+    return web.json_response(await asyncio.to_thread(house_rules.load))
+
+
+async def h_gate(request: web.Request) -> web.Response:
+    """The action gate's door — the hook posts here before an acting tool."""
+    body = await _json_body(request)
+    try:
+        out = await _gate_decide(body)
+    except Exception as exc:  # noqa: BLE001 — undecided, never allow
+        log.warning("action gate failed: %s", exc)
+        out = gate.undecided(str(body.get("channel") or ""),
+                             type(exc).__name__)
+    return web.json_response(out)
+
+
+# -- the tripwire -----------------------------------------------------------
+
+async def h_security_tripwire(request: web.Request) -> web.Response:
+    """The MCP server reports a refused call on a tripwire entity. Filed
+    by code, announced like the safety lane, no gate and no model."""
+    body = await _json_body(request)
+    entity = str(body.get("entity") or "").strip().lower()[:255]
+    if entity not in set(await asyncio.to_thread(security.honeytoken_ids)):
+        # Only a real tripwire files a case: a report about anything else
+        # is not one this route is for.
+        raise web.HTTPBadRequest(text="that is not a tripwire entity")
+    now = time.time()
+    local = _local_now(now)
+    stamp = f"{local:%a} {local.day} {local:%b}, {local:%H:%M:%S}"
+    row = security.case_row(entity, str(body.get("call") or "")[:120],
+                            str(body.get("channel") or "")[:32],
+                            str(body.get("run_id") or "")[:64], now, stamp)
+    security.note_trip(entity, now)
+    filed = await asyncio.to_thread(findings_store.add_case, row, when=now)
+    if filed is None:
+        security.STATE["repeats"] += 1
+        return web.json_response({"filed": False})
+    log.warning("tripwire: %s", filed["text"])
+    service, _sev = _findings_notify_target()
+    if service:
+        await _announce_findings([filed])
+    else:
+        await _safety_fallback_notice(filed)
+    return web.json_response({"filed": True, "ts": filed["ts"]})
+
+
+async def h_security_state(request: web.Request) -> web.Response:
+    return web.json_response({"tripwire": security.diagnostics(),
+                              "entities": await asyncio.to_thread(
+                                  security.honeytoken_ids)})
+
+
+async def h_security_honeytoken(request: web.Request) -> web.Response:
+    """Make brAIn's own tripwire entity, on a press. Idempotent: a second
+    press with one already made answers with it rather than another."""
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415
+
+    existing = await asyncio.to_thread(security.read_file)
+    if existing["created"]:
+        entities = await asyncio.to_thread(security.publish, existing["created"])
+        return web.json_response({"created": False, "entities": entities})
+    try:
+        async with aiohttp.ClientSession() as session:
+            answer = await ha_data._ws_calls(session, [{
+                "type": "input_boolean/create",
+                "name": security.HONEYTOKEN_NAME, "icon": "mdi:shield-alert"}])
+    except Exception as exc:  # noqa: BLE001
+        raise web.HTTPBadGateway(text=f"Home Assistant would not create it: "
+                                      f"{exc}")
+    first = answer[0] if answer else {}
+    result = first.get("result") if isinstance(first, dict) else None
+    if not (isinstance(first, dict) and first.get("ok")
+            and isinstance(result, dict) and result.get("id")):
+        raise web.HTTPBadGateway(text="Home Assistant would not create it: "
+                                      + str((first or {}).get("error") or ""))
+    # The id Core MINTED, never the slug of the name (`IDManager`'s `_2`).
+    entity = f"input_boolean.{result['id']}"
+    created = [{"entity_id": entity, "item_id": result["id"]}]
+    entities = await asyncio.to_thread(security.publish, created)
+    log.info("tripwire entity created: %s", entity)
+    return web.json_response({"created": True, "entities": entities})
+
+
+def _acting_diagnostics() -> dict:
+    """What can silently stop in this block, in numbers. Never raises."""
+    try:
+        rules = house_rules.load()
+        return {"interventions": interventions.summary(),
+                "followup": {k: v for k, v in FOLLOWUP_STATE.items()},
+                "gate": gate.diagnostics(),
+                "tripwire": security.diagnostics(),
+                "house_rules": {
+                    "rules": len(rules["rules"]),
+                    "compiled": sum(1 for r in rules["rules"]
+                                    if r.get("compiled")),
+                    "not_compiled": [r["text"] for r in rules["rules"]
+                                     if not r.get("compiled")][:5],
+                    "error": rules["error"]}}
+    except Exception as exc:  # noqa: BLE001 — a row about the row
+        return {"error": str(exc)[:200]}
 
 
 # ---------------------------------------------------------------------------
@@ -3285,10 +5364,10 @@ async def _offer_milestones(now: float) -> int:
 async def _run_milestone(job_id: str) -> None:
     """One milestone card: the store's numbers, one analyst turn, one file.
 
-    It shares the generation queue like a fix run, because one Claude
-    invocation in flight across the add-on is what keeps a subscription's
-    rate limit intact — and it uses `run_analyst` (reading tools only)
-    for the reason every unattended run does.
+    It shares the generation queue like a fix run, and its run takes a
+    SCHEDULED seat on the Claude run queue (`run_queue`), which is the
+    bound across every run the panel makes — and it uses `run_analyst`
+    (reading tools only) for the reason every unattended run does.
     """
     job = JOBS.get(job_id, {})
     mile_id = str(job.get("milestone") or "")
@@ -3298,7 +5377,7 @@ async def _run_milestone(job_id: str) -> None:
         return
     try:
         _set_job(job_id, state="generating", error="")
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_analyst, job.get("prompt") or "", ANALYST_SYSTEM,
             eff_model(), eff_timeout_s(), ANALYST_MAX_TURNS, "card",
             job="milestone", schema=CARD_SCHEMA)
@@ -3311,6 +5390,21 @@ async def _run_milestone(job_id: str) -> None:
         card = await asyncio.to_thread(
             milestones.save_card, mile_id, obj, job.get("mark") or {},
             str(job.get("because") or ""))
+        # What the run says it learned, through the same door a card's
+        # `learned` goes: the knowledge ledger (so nothing is announced
+        # twice) and then the memory inbox. A milestone is the moment a
+        # measurement first has an answer, and the sentence the model
+        # wrote about that answer was requested by the contract and
+        # dropped on the floor. Its findings stay dropped on purpose —
+        # the milestone frame tells it never to turn this into a problem
+        # report.
+        run_id = capture.run_id_from(result.get("meta") or {})
+        for fact in _clean_strings(obj.get("learned"), 3, 500):
+            _, created = await asyncio.to_thread(
+                knowledge_store.add_fact, fact, "insights",
+                f"milestone:{mile_id}")
+            if created:
+                await _submit_memory(fact, run_id=run_id or "")
         _set_job(job_id, state="done", error="")
         log.info("milestone card written: %s (%s)", mile_id, card["title"])
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
@@ -3324,32 +5418,166 @@ async def _run_milestone(job_id: str) -> None:
         _set_job(job_id, state="error", error=str(exc)[:500])
 
 
+# ---------------------------------------------------------------------------
+# The panel's own loops, and whether each is still going
+# ---------------------------------------------------------------------------
+# Every long-lived task the panel starts is created through `_supervise`,
+# which hangs a done-callback on it: a loop that raised, or returned, is a
+# loop that has stopped for good, and the only trace it used to leave was
+# an unretrieved-exception line at some later garbage collection — while
+# `/api/status` went on saying "queued" about cards nothing would ever
+# generate and the health verdict said ok. The worker and the loops that
+# beat (`_beat`) also say when they last went round, so one that is alive
+# and stuck is told apart from one that is fine. Read by
+# `_loop_health` into `/api/diagnostics`, where `health.problems` turns a
+# dead or stalled one into a state and a sentence.
+LOOPS: dict[str, dict] = {}
+# The job the generation worker is on, and since when. An idle worker
+# blocks on its queue for hours and that is health; one on the same job for
+# hours longer than any run is allowed is a worker that is stuck.
+WORKER_STATE: dict = {"job": None, "since": 0.0}
+
+
+def _supervise(name: str, coro, stall_after_s: float | None = None):
+    """Start one long-lived loop, and find out if it ever stops."""
+    now = time.time()
+    task = asyncio.create_task(coro)
+    LOOPS[name] = {"started_at": now, "beat_at": now, "alive": True,
+                   "stall_after_s": stall_after_s, "error": "",
+                   "task": task}
+    task.add_done_callback(functools.partial(_loop_ended, name))
+    return task
+
+
+def _loop_ended(name: str, task: asyncio.Task) -> None:
+    """A supervised loop finished. Cancelled is a shutdown; anything else is
+    a loop that is never coming back, and it is said at warning with its
+    reason rather than left to an unretrieved-exception line."""
+    row = LOOPS.get(name)
+    if row is None or row.get("task") is not task:
+        # A loop from an earlier app ending after a new one took its name.
+        return
+    row["alive"] = False
+    row["ended_at"] = time.time()
+    if task.cancelled():
+        row["stopped"] = True
+        return
+    exc = task.exception()
+    if exc is not None:
+        row["error"] = f"{type(exc).__name__}: {exc}"[:300]
+        log.warning("the %s loop died: %s", name, row["error"],
+                    exc_info=(type(exc), exc, exc.__traceback__))
+    else:
+        row["error"] = "it returned, and it is meant to run for ever"
+        log.warning("the %s loop stopped: %s", name, row["error"])
+
+
+def _beat(name: str) -> None:
+    """A supervised loop went round. Cheap on purpose: one dict write."""
+    row = LOOPS.get(name)
+    if row is not None:
+        row["beat_at"] = time.time()
+
+
+def _worker_busy_limit_s() -> float:
+    """Longer than any job the worker runs may legitimately take.
+
+    A card is a search and then possibly a snapshot, each on the
+    generation timeout; a fix is its own timeout and its plan before it.
+    Twice the longest of those, plus room for the checks around them, is
+    a job that is not coming back.
+    """
+    try:
+        gen = float(eff_timeout_s())
+    except Exception:  # noqa: BLE001 — a diagnostics read, not a run
+        gen = 480.0
+    return 2 * max(2 * gen, FIX_TIMEOUT_S + PLAN_TIMEOUT_S) + 600
+
+
+def _loop_health(now: float | None = None) -> dict:
+    """Every supervised loop: alive or not, when it last went round, and
+    (for the worker) what it is on. The numbers `health.problems` reads."""
+    now = time.time() if now is None else now
+    out: dict = {}
+    for name, row in list(LOOPS.items()):
+        task = row.get("task")
+        if task is not None and task.get_loop().is_closed():
+            # A loop from an app whose event loop has gone — a test, the
+            # demo panel's first boot — says nothing about this one.
+            continue
+        entry = {
+            "alive": bool(row.get("alive")),
+            "stopped": bool(row.get("stopped")),
+            "error": journal.scrub(row.get("error") or ""),
+            "beat_age_s": int(now - float(row.get("beat_at") or now)),
+            "stall_after_s": row.get("stall_after_s"),
+        }
+        if name == "worker":
+            since = float(WORKER_STATE.get("since") or 0)
+            entry["busy_s"] = int(now - since) if since else 0
+            entry["busy_limit_s"] = int(_worker_busy_limit_s())
+            entry["queued"] = QUEUE.qsize()
+        out[name] = entry
+    return out
+
+
+async def _dispatch(job_id: str) -> None:
+    kind = JOBS.get(job_id, {}).get("kind")
+    if kind == "fix":
+        await _run_fix(job_id)
+    elif kind == "plan":
+        await _run_plan(job_id)
+    elif kind == "milestone":
+        await _run_milestone(job_id)
+    elif kind == "doctor":
+        await _run_doctor_deep(job_id)
+    elif kind == "rehearse":
+        await _run_rehearsal(job_id)
+    elif kind == "sweep":
+        await _run_sweep(job_id)
+    else:
+        await _generate(job_id)
+
+
 async def _worker() -> None:
+    """The generation queue's one consumer, which must outlive its jobs.
+
+    It had no `except`, so a handler that raised past its own error state
+    ended the loop — and `_run_fix` and `_run_plan` write the findings
+    store from inside their except blocks, where `atomic_write` re-raises
+    an OSError: a full or read-only /data during one failed fix killed the
+    worker for good, and cards, fixes and plans then queued for ever while
+    `/api/status` said "queued" and health said ok. Now a handler that
+    raises costs its own job and nothing else: the job is marked errored
+    with the reason, the log says so at warning, and the next job runs.
+    """
     while True:
         job_id = await QUEUE.get()
+        WORKER_STATE.update(job=job_id, since=time.time())
+        _beat("worker")
         try:
-            kind = JOBS.get(job_id, {}).get("kind")
-            if kind == "fix":
-                await _run_fix(job_id)
-            elif kind == "plan":
-                await _run_plan(job_id)
-            elif kind == "milestone":
-                await _run_milestone(job_id)
-            elif kind == "doctor":
-                await _run_doctor_deep(job_id)
-            elif kind == "rehearse":
-                await _run_rehearsal(job_id)
-            elif kind == "sweep":
-                await _run_sweep(job_id)
-            else:
-                await _generate(job_id)
+            await _dispatch(job_id)
+        except Exception as exc:  # noqa: BLE001 — one job, never the worker
+            log.warning("the %s job %s failed outside its own handling: %s",
+                        JOBS.get(job_id, {}).get("kind") or "insight",
+                        job_id, exc, exc_info=True)
+            try:
+                _set_job(job_id, state="error",
+                         error=f"brAIn could not finish this: {exc}"[:500])
+            except Exception:  # noqa: BLE001 — bookkeeping on the way out
+                log.debug("could not mark %s errored", job_id, exc_info=True)
         finally:
             QUEUE.task_done()
+            WORKER_STATE.update(job=None, since=0.0)
+            _beat("worker")
             # `_set_job` sweeps every ordinary ending; this covers the one
             # that is not ordinary — a handler that raised past its own
             # error state — so nothing can leave a row behind by failing in
             # a way nobody wrote down.
-            _prune_jobs()
+            try:
+                _prune_jobs()
+            except Exception:  # noqa: BLE001 — a prune is housekeeping
+                log.debug("could not prune finished jobs", exc_info=True)
 
 
 def _parse_generated_at(generated_at: str) -> float | None:
@@ -3415,6 +5643,12 @@ def _next_due(eff: dict, generated_at: str, now: float) -> float | None:
     # keep arriving and keep not happening.
     if eff_refresh_mode() == "never" or REFRESH_HOLDS.get(eff.get("id")):
         return None
+    # A failing card's next run is its backoff's end at the earliest —
+    # the same question `_refresh_due` asks first, asked "when".
+    backoff = _card_backoff_until(str(eff.get("id") or ""))
+    if backoff > now:
+        due = _next_due({**eff, "id": ""}, generated_at, backoff)
+        return None if due is None else max(due, backoff)
     schedule = eff.get("schedule")
     if isinstance(schedule, list) and schedule:
         if _schedule_due(schedule, generated_at, now):
@@ -3473,32 +5707,56 @@ def _sha1(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()[:16]
 
 
-def _memory_stamp() -> str:
-    """memory.md's mtime and size — never its contents.
+def _memory_stamp(domains=()) -> str:
+    """What this card would be TOLD about the house — as a digest.
 
-    The document is up to 32 KB and this is asked once per card per tick;
-    it is only ever compared against itself, so reading the file in to
-    answer a question about a timestamp buys a copy of somebody's home
-    for nothing. Same reasoning as `SetupTokenFlow`'s credential
-    fingerprint.
+    It used to be memory.md's mtime and size, and the consolidator rewrites
+    the document on every pass that had anything queued — including the
+    card's OWN learned facts — so the stamp moved daily whatever the
+    document now said, and the gate was a 24-hour timer with extra steps.
+    So: the facts store's retrieval for this card's domains (the set of
+    facts, by id — `facts_store.retrieval_fingerprint`), and where the
+    store has nothing to retrieve, the document's content, which is what
+    the run is handed instead. A digest either way; nothing of the house
+    leaves this function.
     """
     try:
-        stat = SHARED_MEMORY_FILE.stat()
+        facts = facts_store.retrieval_fingerprint(domains=domains)
+    except Exception:  # noqa: BLE001 — the document is the floor
+        facts = ""
+    if facts:
+        return "facts:" + facts
+    try:
+        text = SHARED_MEMORY_FILE.read_text(encoding="utf-8")
     except OSError:
         # A missing document is a state, and a stable one: "none" is not
         # the same string as any real stamp, so writing the first fact
         # counts as a change.
         return "none"
-    return f"{int(stat.st_mtime)}:{stat.st_size}"
+    return "doc:" + _sha1("\n".join(document_lines(text)))
 
 
 def _store_stamp(cat_id: str, snapshot: dict | None) -> str:
-    """The ready-state and build time of the measurements this card reads."""
+    """What this card's measurements SAY, never when they were last built.
+
+    It hashed each store's `updated_at`, which is a build stamp: baselines,
+    closures, appliances and thermal are rebuilt every night and rhythm is
+    re-stamped on every checks pass, so a card past its floor had always
+    "moved" — on a rebuild that changed nothing. Now a ready store is its
+    state and the sentence the prompt's house block reads
+    (`house_block`), and any other store is its state alone, because the
+    prompt reads nothing else of it.
+    """
     wanted = stores_for(cat_id)
     stores = (snapshot or {}).get("stores") or {}
-    rows = {name: [entry.get("state"), entry.get("updated_at")]
-            for name, entry in sorted(stores.items())
-            if isinstance(entry, dict) and (wanted is None or name in wanted)}
+    rows = {}
+    for name, entry in sorted(stores.items()):
+        if not isinstance(entry, dict) or (wanted is not None
+                                           and name not in wanted):
+            continue
+        state = entry.get("state")
+        rows[name] = ([state, " ".join(str(entry.get("summary") or "").split())]
+                      if state == "ready" else [state])
     return json.dumps(rows, sort_keys=True)
 
 
@@ -3515,7 +5773,7 @@ def _card_inputs(cat_id: str, eff: dict, findings_text: str,
         f["text"] for f in feedback_store.list_feedback(cat_id)]
     parts = {
         "findings": _sha1(findings_text or ""),
-        "memory": _memory_stamp(),
+        "memory": _memory_stamp(eff.get("domains") or ()),
         "stores": _sha1(_store_stamp(cat_id, snapshot)),
         "feedback": _sha1("\n".join(feedback)),
         "focus": _sha1(str(eff.get("focus") or "")),
@@ -3526,8 +5784,11 @@ def _card_inputs(cat_id: str, eff: dict, findings_text: str,
         # One number the sentence can be built from. Not part of the
         # hash — it is derived from the same text the `findings` part
         # already covers, and counting it twice would let a re-worded
-        # finding read as a new one.
-        "open_findings": len(findings_store.list_all()),
+        # finding read as a new one. The live rows another producer filed,
+        # for the `findings` part's own reason.
+        "open_findings": len([
+            f for f in findings_store.list_all("live")
+            if f.get("source") != cat_id]),
         "at": int(time.time() if now is None else now),
     }
 
@@ -3563,6 +5824,87 @@ def _inputs_change(stored: dict | None, current: dict) -> dict:
         reasons.append("its focus was rewritten")
     return {"moved": True, "why": "; ".join(reasons) or "inputs changed",
             "fingerprint": current}
+
+
+# A card whose last scheduled run FAILED, per category id: how many times
+# in a row, when, and how. A failing card used to be due again on the very
+# next tick — no stamp, no backoff — so a card that fails fast failed every
+# minute and one that fails slowly (an eight-minute search timeout, then
+# the snapshot fallback) held the generation queue sixteen minutes in every
+# seventeen, both spending each session window's budget until every other
+# automatic run, the Resident included, paused behind it. So a scheduled
+# run backs off exponentially from its last failure; a press is never held
+# by this (`_refresh_due` is the scheduler's question, not the button's),
+# and the first success clears it. In memory on purpose: a restart is a
+# person acting, and the thing they most often did first is fix the cause.
+CARD_FAILURES: dict[str, dict] = {}
+CARD_BACKOFF_BASE_S = 15 * 60
+CARD_BACKOFF_MAX_S = 12 * 3600
+
+
+def _card_backoff_until(card_id: str) -> float:
+    """When a failing card may next be run by the scheduler, or 0.0."""
+    row = CARD_FAILURES.get(card_id)
+    if not row:
+        return 0.0
+    count = max(1, int(row.get("count") or 1))
+    wait = min(CARD_BACKOFF_BASE_S * 2 ** (count - 1), CARD_BACKOFF_MAX_S)
+    return float(row.get("at") or 0) + wait
+
+
+def _note_card_failure(card_id: str, error: str, now: float | None = None) -> None:
+    now = time.time() if now is None else now
+    row = CARD_FAILURES.get(card_id) or {"count": 0}
+    CARD_FAILURES[card_id] = {
+        "count": int(row.get("count") or 0) + 1, "at": now,
+        "outcome": journal.classify({"ok": False, "error": error}),
+        "error": journal.scrub(error)[:200]}
+
+
+# The account said "not now". Every scheduled card run waits this out
+# rather than asking again on the next tick: a usage limit is a window that
+# resets, and a card queued into it spends nothing and answers nothing —
+# but it does write a failure, ask again a minute later, and keep the
+# window from ever looking quiet. It escalates 30 min, 1 h, 2 h, 4 h across
+# a streak, and the first Claude run of any kind that succeeds ends it,
+# because that is the account answering again. Fed by the journal (every
+# run records itself there), so the chat or voice meeting the limit holds
+# the cards too.
+RATE_LIMIT_STATE: dict = {"until": 0.0, "streak": 0, "detail": ""}
+RATE_LIMIT_PAUSE_S = 30 * 60
+RATE_LIMIT_MAX_S = 4 * 3600
+
+
+def _journal_rate_listener(row: dict) -> None:
+    # Only rows a model actually ran for: `_generate` writes a second,
+    # summary row about the same failure, and counting both would make
+    # every limit a streak of two.
+    if not isinstance(row, dict) or not journal.is_claude_run(row):
+        return
+    if row.get("outcome") == "rate_limited":
+        streak = int(RATE_LIMIT_STATE.get("streak") or 0) + 1
+        wait = min(RATE_LIMIT_PAUSE_S * 2 ** (streak - 1), RATE_LIMIT_MAX_S)
+        RATE_LIMIT_STATE.update(
+            streak=streak, until=float(row.get("ts") or time.time()) + wait,
+            detail=str(row.get("error") or "")[:160])
+    elif row.get("ok") and journal.is_claude_run(row):
+        RATE_LIMIT_STATE.update(streak=0, until=0.0, detail="")
+
+
+def _book_shell_usage(row: dict) -> None:
+    """A shell run's tokens, into the ledger the budget estimate and the
+    usage popover's breakdown read — the same `record_run` every panel run
+    passes through, under the row's own time."""
+    tokens = row.get("tokens")
+    if isinstance(tokens, int) and tokens > 0:
+        usage_store.record_run(tokens, str(row.get("source") or "shell"),
+                               now=float(row.get("ts") or time.time()))
+
+
+# What an in-process row meets on `journal.record`, less the nudge the
+# command line already sent from the process that ran the model.
+_SHELL_HANDLERS = (_book_shell_usage, _journal_report_listener,
+                   _journal_rate_listener)
 
 
 # Why the scheduler last held a card back, per category id. In memory
@@ -3602,6 +5944,12 @@ def _refresh_due(eff: dict, generated_at: str, now: float,
     mode = mode or eff_refresh_mode()
     if mode == "never":
         return False
+    # A card that failed last time waits out its backoff before the
+    # scheduler tries it again (see CARD_FAILURES). Asked first, because
+    # it is the cheapest question and the one that is about the run
+    # rather than about the card.
+    if now < _card_backoff_until(str(eff.get("id") or "")):
+        return False
     schedule = eff.get("schedule")
     if isinstance(schedule, list) and schedule:
         if not _schedule_due(schedule, generated_at, now):
@@ -3630,6 +5978,7 @@ async def _scheduler() -> None:
     budget_logged = False
     while True:
         await asyncio.sleep(60)
+        _beat("scheduler")
         # Fold in what the CLI side found. This belongs on the tick rather
         # than on the Findings tab's own request: study sessions are the
         # other producer, and the badge that tells you to go look is served
@@ -3648,14 +5997,30 @@ async def _scheduler() -> None:
         # inbox, which is what makes one sweep cover voice, the chat, the
         # terminal, study, a correction and another add-on's line alike.
         await asyncio.to_thread(_ingest_facts)
+        # The shell half's runs — study, the consolidator, the automation
+        # listener, the memory extractor — wrote their journal rows from
+        # their own processes, where none of the panel's listeners are.
+        # They are booked here, through the same listeners, before any gate:
+        # a failed consolidation is a report whatever the insights face says.
+        try:
+            await asyncio.to_thread(journal.book_shell_rows, _SHELL_HANDLERS)
+        except Exception as exc:  # noqa: BLE001 — bookkeeping, never the tick
+            log.debug("booking shell runs failed: %s", exc)
+        # Home Assistant's UI editors save automations.yaml, scripts.yaml
+        # and scenes.yaml as root, and the Supervisor makes a new add-on's
+        # /addon_configs folder root's; hand them back to the claude user
+        # about once a minute so the next edit never meets a permission
+        # error. `maybe_sweep` gates itself and never raises.
+        await asyncio.to_thread(ownership.maybe_sweep)
         # The drain that used to live here is the Resident's first look
         # now (`_resident_loop`), which reads the same `awaiting_triage()`
         # queue on its own five-second tick — so a row a study session just
         # filed reaches a judgement in seconds rather than at the top of
         # the next minute, and the one run that judges it also judges the
-        # state changes and the overrides beside it. `_triage_findings` is
-        # still here and still callable; what changed is that nothing
-        # schedules it.
+        # state changes and the overrides beside it. The triage drain itself
+        # is gone: nothing scheduled it once the Resident took its queue,
+        # and a second judge kept only for its own tests is a second
+        # vocabulary for one decision.
         # The face is off: nothing is queued, ever. Checked before the
         # auth gate on purpose — a switched-off face is the answer to "why
         # are my cards not updating" whatever the sign-in says.
@@ -3688,6 +6053,12 @@ async def _scheduler() -> None:
                 budget_logged = True
             continue
         budget_logged = False
+        if time.time() < float(RATE_LIMIT_STATE.get("until") or 0):
+            _set_gate("rate_limited",
+                      "the account's usage limit said wait; cards resume at "
+                      + time.strftime("%H:%M", time.localtime(
+                          RATE_LIMIT_STATE["until"])))
+            continue
         _set_gate(None)
         # The weekly top-up, past every gate above on purpose: proposing
         # cards for a house whose insights are switched off, whose
@@ -3712,12 +6083,15 @@ async def _scheduler() -> None:
         shared: dict = {}
 
         async def _inputs_for(cat_id: str, eff: dict) -> dict:
-            if "findings" not in shared:
-                shared["findings"] = await asyncio.to_thread(
-                    findings_store.prompt_block)
+            if "house" not in shared:
                 shared["house"] = await _house_snapshot(now)
+            # Per card rather than shared: each one leaves its OWN rows
+            # out, or a card's findings promoted by the Resident read as
+            # news to the card that filed them (`prompt_block`).
+            findings_text = await asyncio.to_thread(
+                findings_store.prompt_block, (cat_id,))
             return await asyncio.to_thread(
-                _card_inputs, cat_id, eff, shared["findings"],
+                _card_inputs, cat_id, eff, findings_text,
                 shared["house"], now)
 
         for cat in all_categories():
@@ -3787,6 +6161,16 @@ async def _options_sync() -> None:
         log.warning("could not read add-on options — using panel-local values")
         return
     overrides = settings_store.option_overrides()
+    if overrides.get(permission_mode.OPTION) is True:
+        # A local "act" is promoted nowhere: it is a ⚙ press whose write
+        # failed, and the Configuration tab may have said "ask" since. A
+        # local "ask" is promoted like any other value, because that one
+        # failing open is not a risk.
+        log.info("not promoting a panel-local %s=true into the add-on's "
+                 "options", permission_mode.OPTION)
+        del overrides[permission_mode.OPTION]
+        if not overrides:
+            settings_store.clear_option_overrides()
     if overrides:
         try:
             await addon_options.write(
@@ -3808,13 +6192,14 @@ async def _options_poller() -> None:
         await asyncio.sleep(OPTIONS_POLL_SECONDS)
         try:
             await addon_options.refresh(force=True)
+            _publish_permission_mode()
         except Exception as exc:  # never let a transient blip kill the loop
             log.debug("add-on options poll failed: %s", exc)
 
 
 async def _check_auth_bg() -> None:
     try:
-        result = await asyncio.to_thread(engine.validate_auth)
+        result = await _claude(engine.validate_auth, priority=run_queue.PRESS)
         AUTH_CHECK.update(
             state="ok" if result["ok"] else "failed",
             error=result["error"],
@@ -4068,34 +6453,83 @@ async def _today(now: float | None = None) -> dict:
     return state
 
 
-async def h_status(request: web.Request) -> web.Response:
+# `generated_at` per stored card, keyed on the file's own (mtime, size).
+# `/api/status` is polled every few seconds by every viewer while a job
+# runs, and it used to answer by JSON-parsing every stored card — up to
+# 400 KB of HTML each — to read one timestamp out of each. A save rewrites
+# the file and moves its mtime, which is the invalidation.
+_GENERATED_AT_CACHE: dict[str, tuple[tuple[int, int], str | None]] = {}
+
+
+def _generated_at(card_id: str) -> str | None:
+    path = _insight_path(card_id)
+    try:
+        st = path.stat()
+    except OSError:
+        _GENERATED_AT_CACHE.pop(card_id, None)
+        return None
+    stamp = (st.st_mtime_ns, st.st_size)
+    cached = _GENERATED_AT_CACHE.get(card_id)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    obj = _read_json(path)
+    value = obj.get("generated_at") if obj else None
+    _GENERATED_AT_CACHE[card_id] = (stamp, value)
+    return value
+
+
+def _status_payload() -> tuple[dict | None, dict]:
+    """Everything `/api/status` reads off disk, in one call off the loop.
+
+    The credential stores, the settings file, the usage files, every
+    category definition, a timestamp per card and four stores for the
+    badge — synchronous reads all, and on an SD card each one is time the
+    event loop is not serving the chat's stream or the terminal proxy.
+    """
     auth = engine.get_auth()
+    cats = all_categories()
+    insights = {c["id"]: _generated_at(c["id"]) for c in cats}
+    settings = settings_store.load()
+    return auth, {
+        "settings": settings,
+        "usage": usage_store.budget_state(settings),
+        "model": eff_model() or "default",
+        "refresh_hours": eff_refresh_hours(),
+        "history_days": eff_history_days(),
+        "categories": [_category_status(c, insights) for c in cats],
+        "findings_open": cases.open_count(),
+    }
+
+
+async def h_status(request: web.Request) -> web.Response:
+    auth, read = await asyncio.to_thread(_status_payload)
     # Re-earn a verdict that has gone stale. Lazy on purpose — see
     # AUTH_RECHECK_S: this is the one path a person looking at the panel
     # already drives, so the cost lands where somebody is asking and
     # nowhere else. `start_auth_check` is the guard against the poll
-    # spawning a second check over an unfinished one.
+    # spawning a second check over an unfinished one — and it stays on
+    # the loop, because it flips its guard synchronously.
     if auth and _auth_verdict_is_stale():
         start_auth_check(announce=False)
-    insights = {i["id"]: i.get("generated_at") for i in load_insights()}
-    settings = settings_store.load()
+    settings = read["settings"]
     return web.json_response({
         "version": ADDON_VERSION,
         "authenticated": bool(auth),
         "auth_type": auth["type"] if auth else None,
         "auth_source": auth.get("source") if auth else None,
         "auth_check": AUTH_CHECK,
-        "model": eff_model() or "default",
-        "refresh_hours": eff_refresh_hours(),
-        "history_days": eff_history_days(),
+        "model": read["model"],
+        "refresh_hours": read["refresh_hours"],
+        "history_days": read["history_days"],
         "settings": settings,
-        "usage": usage_store.budget_state(settings),
+        "usage": read["usage"],
         # Why auto-refresh is idle, when it is — the same gates the chips
         # and the pill's dot report, readable as one field.
         "auto": dict(AUTO_STATE),
-        # `enable_insights` off hides the Insights and Proposals tabs.
+        # `enable_insights` off hides the Insights tab (Proposals stays: the
+        # checks pass fills it, and it is the one surface a proposal is on).
         "insights_enabled": insights_enabled(),
-        "categories": [_category_status(c, insights) for c in all_categories()],
+        "categories": read["categories"],
         # The Findings tab's badge: everything still waiting on a decision —
         # problems to settle and guesses to confirm, which are one list now.
         # Counted here rather than off _findings_payload() because /api/status
@@ -4107,7 +6541,7 @@ async def h_status(request: web.Request) -> web.Response:
         # disagrees while somebody is looking. `cases.open_count` is that
         # derivation, and it spans the proposals and the accepted chores
         # the old sum did not.
-        "findings_open": cases.open_count(),
+        "findings_open": read["findings_open"],
         # What brAIn did last and what it will do next. On the poll every
         # viewer already makes, because "is this thing working" is asked
         # of the top bar and not of a tab.
@@ -4214,6 +6648,14 @@ async def h_generate(request: web.Request) -> web.Response:
     if question:
         if len(question) > 500:
             raise web.HTTPBadRequest(text="question too long")
+        # Read first (`interpret`, surface `ask_bar`): a question, a rule, a
+        # fact to keep, a why, a study, possibly two at once. Unread — no
+        # credential, the day's cap, a failed run — and everything below
+        # is the ask bar exactly as it was: the four patterns are the
+        # offline answer, not a second reader.
+        routes = await _interpret(question, "ask_bar")
+        if routes is not None:
+            return web.json_response(await _route_ask(question, routes))
         scene_match = SCENE_RE.match(question)
         if scene_match:
             area = scene_match.group("area").strip()
@@ -4612,7 +7054,10 @@ async def _prompt_preview(cat: dict, mode: str) -> dict:
     ]
 
     if mode == "search":
-        orientation = await ha_data.collect_orientation(question=None)
+        # The same arguments `_search_run` passes, or the preview would
+        # show a memory block the run never sees.
+        orientation = await ha_data.collect_orientation(
+            question=framing.get("question"), domains=cat.get("domains") or ())
         prompt = build_orientation_prompt(cat, orientation, **framing)
         system = ANALYST_SYSTEM
         data_note = (f"A MAP of the home — {orientation.get('entity_count', 0)} "
@@ -5071,6 +7516,622 @@ async def h_card_info(request: web.Request) -> web.Response:
     })
 
 
+# ---------------------------------------------------------------------------
+# Home Assistant's own maintainer — tidy, the upgrade advisor, the overnight
+# health check, the house book and the access review
+# ---------------------------------------------------------------------------
+# Every one of these is a run brAIn spends on Home Assistant ITSELF rather
+# than on what the house is doing, and they share one shape, so they share
+# one in-flight state. A press STARTS a run and never awaits it — each is
+# minutes of work and ingress will not hold a request that long
+# (`h_baselines_run`'s clock) — the flag is flipped synchronously
+# (`start_auth_check`'s rule: `create_task` only schedules, so two presses in
+# one tick would both pass a guard their own task had not set yet), and the
+# page reads the outcome back off its GET. A pressed run answers to the
+# credential only; a scheduled one to the three gates every scheduled run
+# answers to (`_resident_gate`), and a gate that holds says so in
+# diagnostics, because "it did not run" and "it ran and found nothing" are
+# different silences.
+
+MAINT_JOBS = ("tidy", "upgrades", "sre", "book", "access")
+MAINT_STATE: dict = {
+    name: {"running": False, "started_at": 0.0, "finished_at": 0.0,
+           "last_error": "", "last_note": "", "held": "", "subject": ""}
+    for name in MAINT_JOBS}
+# Held so the loop cannot collect a task nobody awaits.
+_MAINT_TASKS: set = set()
+MAINT_POLL_S = 600
+MAINT_FIRST_DELAY_S = 900
+# The overnight pass runs in the first poll after this local hour, once a
+# night; the weekly ones once every seven days.
+SRE_HOUR = 3
+SRE_STAMP_KEY = "sre_last"
+ACCESS_STAMP_KEY = "access_last"
+ACCESS_TEXT_KEY = "access_review"
+# When the scheduled review was last STARTED. The stamp above is written
+# only by a review that landed, so without this one a review failing for
+# a reason that does not clear (a CLI too old for the schema, an account
+# that will not answer) was re-run on every poll — a paid run every ten
+# minutes for ever. A guard that refuses has to change the next attempt.
+ACCESS_TRIED_KEY = "access_tried"
+ACCESS_RETRY_S = 6 * 3600
+MAINT_WEEK_S = 7 * 86400
+# The last checks pass's view of who can reach the house, kept so the
+# weekly review needs no snapshot of its own — `_note_registry`'s
+# arrangement, one hook over.
+ACCESS_DIGEST: dict = {"digest": None, "at": 0.0}
+
+
+def _note_access(snapshot: dict, now: float) -> None:
+    """Called by `run_checks` with the snapshot it already fetched."""
+    try:
+        ACCESS_DIGEST["digest"] = checks.security.review_digest(snapshot, now)
+        ACCESS_DIGEST["at"] = now
+    except Exception as exc:  # noqa: BLE001 — a digest must not fail a pass
+        log.debug("could not keep the access digest: %s", exc)
+
+
+def _maint_start(name: str, factory) -> bool:
+    """Start one maintainer run unless one is in flight. True if started."""
+    state = MAINT_STATE[name]
+    if state["running"]:
+        return False
+    state["running"] = True
+    state["started_at"] = time.time()
+    state["last_error"] = ""
+
+    async def run() -> None:
+        try:
+            await factory()
+        except Exception as exc:  # noqa: BLE001 — a run's failure is a sentence
+            state["last_error"] = str(exc)[:300] or type(exc).__name__
+            log.warning("%s run failed: %s", name, state["last_error"])
+        finally:
+            state["running"] = False
+            state["finished_at"] = time.time()
+
+    task = asyncio.create_task(run())
+    _MAINT_TASKS.add(task)
+    task.add_done_callback(_MAINT_TASKS.discard)
+    return True
+
+
+def _maint_pressed_refusal() -> str:
+    """Why a PRESS may not spend a run right now, or ''. The budget is not
+    asked: asking by hand always runs."""
+    return "" if engine.get_auth() else (
+        "brAIn has no Claude sign-in yet — sign in under ⚙ first.")
+
+
+def _run_id(result: dict) -> str:
+    return str((result.get("meta") or {}).get("session_id") or "")[:64]
+
+
+def _maint_status(name: str) -> dict:
+    s = MAINT_STATE[name]
+    return {"running": s["running"], "last_error": s["last_error"],
+            "last_note": s["last_note"], "held": s["held"],
+            "finished_at": int(s["finished_at"]), "subject": s["subject"]}
+
+
+# -- tidy: names, rooms and aliases -------------------------------------------
+
+async def _run_tidy() -> None:
+    snap = await checks.snapshot.collect_rooms(time.time())
+    dig = tidy.digest(snap)
+    if not dig["entities"] and not dig["devices"]:
+        await asyncio.to_thread(tidy.save_proposal, {"rows": []})
+        MAINT_STATE["tidy"]["last_note"] = ("Nothing here needs a new name, a "
+                                            "room or an alias.")
+        return
+    result = await _claude(
+        engine.run_claude, tidy.frame(dig), tidy.SYSTEM, "", tidy.TIMEOUT_S,
+        4, "maintenance", job="tidy", schema=tidy.SCHEMA)
+    if not result.get("ok"):
+        raise RuntimeError(str(result.get("error") or "no reply"))
+    answer = _answer(result)
+    if answer is None:
+        raise RuntimeError("the reply could not be read")
+    parsed = tidy.parse(answer, dig, snap, automation_writer.protected_patterns())
+    await asyncio.to_thread(tidy.save_proposal, parsed, run_id=_run_id(result))
+    MAINT_STATE["tidy"]["last_note"] = (
+        f"{len(parsed['rows'])} suggestion(s) to review"
+        + (f", {len(parsed['refused'])} refused" if parsed["refused"] else ""))
+
+
+def _tidy_payload() -> dict:
+    data = tidy.load()
+    return {**_maint_status("tidy"), "proposal": data["proposal"],
+            "batches": tidy.undoable(data["batches"], time.time()),
+            "undo_days": tidy.UNDO_DAYS, "unreadable": data["unreadable"]}
+
+
+async def h_tidy(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_tidy_payload))
+
+
+async def h_tidy_run(request: web.Request) -> web.Response:
+    excuse = _maint_pressed_refusal()
+    if excuse:
+        raise web.HTTPBadRequest(text=excuse)
+    started = _maint_start("tidy", _run_tidy)
+    return web.json_response({**await asyncio.to_thread(_tidy_payload),
+                              "started": started})
+
+
+async def h_tidy_apply(request: web.Request) -> web.Response:
+    import aiohttp  # noqa: PLC0415 — deferred, as every Core call here is
+    body = await _json_body(request)
+    ids = [str(i) for i in (body.get("ids") or []) if isinstance(i, str)][:tidy.MAX_ROWS]
+    async with aiohttp.ClientSession() as session:
+        result = await tidy.apply(session, ids)
+    if not result["applied"]:
+        raise web.HTTPConflict(text=result["error"] or (
+            "Home Assistant took none of it: "
+            + "; ".join(f"{s['subject']}: {s['why']}" for s in result["skipped"])))
+    log.info("tidy: applied %d change(s), %d skipped", len(result["applied"]),
+             len(result["skipped"]))
+    return web.json_response({**await asyncio.to_thread(_tidy_payload),
+                              "result": result})
+
+
+async def h_tidy_discard(request: web.Request) -> web.Response:
+    await asyncio.to_thread(tidy.discard)
+    return web.json_response(await asyncio.to_thread(_tidy_payload))
+
+
+async def h_tidy_undo(request: web.Request) -> web.Response:
+    import aiohttp  # noqa: PLC0415
+    batch_id = request.match_info["batch"]
+    if not re.fullmatch(r"b\d{1,20}", batch_id):
+        raise web.HTTPNotFound(text="no such batch")
+    async with aiohttp.ClientSession() as session:
+        result = await tidy.undo(session, batch_id)
+    if result["error"]:
+        raise web.HTTPConflict(text=result["error"])
+    return web.json_response({**await asyncio.to_thread(_tidy_payload),
+                              "result": result})
+
+
+# -- the upgrade advisor ------------------------------------------------------
+
+async def _pending_updates() -> list[dict] | None:
+    """What is waiting, read live — or None when Core would not answer,
+    which the page says rather than reading as "you are up to date"."""
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415
+    try:
+        async with aiohttp.ClientSession() as session:
+            raw = await ha_data._rest_get(session, "/states", timeout=30)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not read the update entities: %s", exc)
+        return None
+    return upgrades.pending(raw if isinstance(raw, list) else [])
+
+
+def _advise_run(prompt: str, system: str, schema: dict) -> dict:
+    """The upgrade advisor's one Claude call: no tools at all, so a run
+    reading release notes cannot be talked by them into reaching anything
+    — and nothing here could install the update if it were."""
+    return engine.run_claude(prompt, system, "", upgrades.TIMEOUT_S, 4,
+                             "maintenance", job="upgrade_advice",
+                             schema=schema)
+
+
+async def _run_advice(update: dict) -> None:
+    import aiohttp  # noqa: PLC0415
+
+    async def run(prompt: str, system: str, schema: dict) -> dict:
+        return await _claude(_advise_run, prompt, system, schema)
+
+    async with aiohttp.ClientSession() as session:
+        verdict = await upgrades.advise(session, update, run)
+    await asyncio.to_thread(upgrades.remember, verdict)
+    MAINT_STATE["upgrades"]["last_note"] = (
+        f"{update['title']}: {upgrades.VERDICT_WORDS[verdict['verdict']]}")
+
+
+async def h_upgrades(request: web.Request) -> web.Response:
+    updates = await _pending_updates()
+    payload = _maint_status("upgrades")
+    if updates is None:
+        return web.json_response({**payload, "updates": [], "readable": False})
+    rows = await asyncio.to_thread(upgrades.listing, updates)
+    return web.json_response({**payload, "updates": rows, "readable": True})
+
+
+async def h_upgrades_advise(request: web.Request) -> web.Response:
+    excuse = _maint_pressed_refusal()
+    if excuse:
+        raise web.HTTPBadRequest(text=excuse)
+    body = await _json_body(request)
+    entity_id = str(body.get("entity_id") or "")
+    updates = await _pending_updates()
+    if updates is None:
+        raise web.HTTPConflict(text="Home Assistant did not answer for its "
+                                    "update entities, so there is nothing to check.")
+    update = next((u for u in updates if u["entity_id"] == entity_id), None)
+    if update is None:
+        raise web.HTTPNotFound(text="that update is not waiting any more")
+    started = _maint_start("upgrades", lambda: _run_advice(update))
+    if started:
+        MAINT_STATE["upgrades"]["subject"] = entity_id
+    return web.json_response({**_maint_status("upgrades"), "started": started})
+
+
+# -- the overnight health check (SRE) -----------------------------------------
+
+async def _run_sre(reason: str = "schedule") -> None:
+    import aiohttp  # noqa: PLC0415
+    now = time.time()
+    async with aiohttp.ClientSession() as session:
+        collected = await sre.collect(session)
+    dig = sre.digest(collected, now)
+    state = await asyncio.to_thread(sre.load)
+    summary = {"at": int(now), "reason": reason,
+               "records": len(dig["records"]), "available": dig["available"],
+               "ran": False, "causes": 0, "filed": 0, "cleared": 0,
+               "refused": 0, "invented": 0, "note": ""}
+    if not dig["available"].get("log"):
+        # "I could not look" at the log is not a healthy night: nothing is
+        # judged and nothing is cleared.
+        summary["note"] = ("the system log could not be read, so nothing was "
+                           "judged and nothing was cleared")
+        state["last"] = summary
+        await asyncio.to_thread(sre.save, state)
+        MAINT_STATE["sre"]["last_note"] = summary["note"]
+        return
+    rows: list[dict] = []
+    if sre.worth_a_run(dig):
+        result = await _claude(
+            engine.run_claude, sre.frame(dig), sre.SYSTEM, "", sre.TIMEOUT_S,
+            4, "maintenance", job="sre", schema=sre.SCHEMA)
+        if not result.get("ok"):
+            raise RuntimeError(str(result.get("error") or "no reply"))
+        answer = _answer(result)
+        if answer is None:
+            raise RuntimeError("the reply could not be read")
+        parsed = sre.parse_causes(answer, dig)
+        rows = sre.rows(parsed["causes"], dig, state, now)
+        summary.update(ran=True, causes=len(parsed["causes"]),
+                       refused=parsed["refused"], invented=parsed["invented"],
+                       run_id=_run_id(result))
+    else:
+        summary["note"] = "nothing in the log or the mesh worth a run"
+
+    def apply() -> tuple[list[dict], list[dict]]:
+        # Filed as waiting to be looked at, like every producer's rows.
+        created = findings_store.add_many(triage.gate(rows))
+        findings_store.refresh_details(rows)
+        open_rows = [f for f in findings_store.list_all()
+                     if f.get("source") == sre.SOURCE]
+        keep = ({findings_store.normalize(r["text"]) for r in rows}
+                | sre.keep_keys(open_rows, state, dig["available"]))
+        cleared = findings_store.clear_resolved({sre.SOURCE}, keep)
+        return created, cleared
+
+    created, cleared = await asyncio.to_thread(apply)
+    summary.update(filed=len(created), cleared=len(cleared))
+    state["last"] = summary
+    await asyncio.to_thread(sre.save, state)
+    if created:
+        _offer_findings(created, now)
+    MAINT_STATE["sre"]["last_note"] = (
+        f"{summary['records']} record(s) read, {summary['causes']} cause(s), "
+        f"{len(created)} new, {len(cleared)} cleared")
+    journal.record("sre", "ok", extra={"records": summary["records"],
+                                       "causes": summary["causes"],
+                                       "filed": len(created)})
+
+
+def _sre_payload() -> dict:
+    return {**_maint_status("sre"), "last": sre.load().get("last")}
+
+
+async def h_sre(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_sre_payload))
+
+
+async def h_sre_run(request: web.Request) -> web.Response:
+    excuse = _maint_pressed_refusal()
+    if excuse:
+        raise web.HTTPBadRequest(text=excuse)
+    started = _maint_start("sre", lambda: _run_sre("pressed"))
+    return web.json_response({**await asyncio.to_thread(_sre_payload),
+                              "started": started})
+
+
+# -- the house book -----------------------------------------------------------
+
+async def _book_snapshot() -> dict:
+    snap = await checks.snapshot.collect_rooms(time.time())
+    cfg = checks.snapshot.load_configs()
+    snap["scripts"] = cfg.get("scripts") or {}
+    return snap
+
+
+async def _run_book(reason: str = "pressed", snap: dict | None = None) -> None:
+    now = time.time()
+    snap = snap if snap is not None else await _book_snapshot()
+    dig = house_book.digest(snap)
+    fp = house_book.fingerprint(snap)
+    result = await _claude(
+        engine.run_claude, house_book.frame(dig), house_book.SYSTEM, "",
+        house_book.TIMEOUT_S, 4, "maintenance", job="house_book",
+        schema=house_book.SCHEMA)
+    if not result.get("ok"):
+        raise RuntimeError(str(result.get("error") or "no reply"))
+    answer = _answer(result)
+    if answer is None:
+        raise RuntimeError("the reply could not be read")
+    parsed = house_book.parse(answer, dig)
+
+    def store() -> list[dict]:
+        state = house_book.load()
+        state["book"] = {"at": int(now), "reason": reason,
+                         "sections": parsed["sections"],
+                         "uncited": parsed["uncited"],
+                         "redacted": parsed["redacted"],
+                         "run_id": _run_id(result)}
+        state["fingerprint"] = fp
+        state["opted_in"] = True
+        state["held"] = ""
+        state["last_error"] = ""
+        open_count = sum(1 for f in findings_store.list_all()
+                         if f.get("source") == house_book.SOURCE)
+        rows = house_book.question_rows(parsed["questions"],
+                                        state.get("asked") or [], open_count)
+        for row in rows:
+            state.setdefault("asked", []).append(row.pop("_subject"))
+        created = findings_store.add_many(triage.gate(rows))
+        # A published book is kept current: the person already chose to
+        # put it on the URL, and a stale copy there is the one they shared.
+        if state.get("published"):
+            try:
+                state["published"] = {
+                    "at": int(now),
+                    "path": house_book.publish(state["book"], WWW_CARD_DIR)}
+            except OSError as exc:
+                log.warning("could not republish the house book: %s", exc)
+        house_book.save(state)
+        return created
+
+    created = await asyncio.to_thread(store)
+    if created:
+        _offer_findings(created, now)
+    MAINT_STATE["book"]["last_note"] = (
+        f"{sum(len(s['entries']) for s in parsed['sections'])} entries"
+        + (f", {parsed['uncited']} dropped for citing nothing"
+           if parsed["uncited"] else "")
+        + (f", {len(created)} question(s) filed" if created else ""))
+
+
+def _book_payload() -> dict:
+    state = house_book.load()
+    return {**_maint_status("book"), "book": state.get("book"),
+            "published": state.get("published"),
+            "opted_in": bool(state.get("opted_in")),
+            "held": state.get("held") or MAINT_STATE["book"]["held"],
+            "unreadable": bool(state.get("unreadable"))}
+
+
+async def h_book(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_book_payload))
+
+
+async def h_book_run(request: web.Request) -> web.Response:
+    excuse = _maint_pressed_refusal()
+    if excuse:
+        raise web.HTTPBadRequest(text=excuse)
+    started = _maint_start("book", lambda: _run_book("pressed"))
+    return web.json_response({**await asyncio.to_thread(_book_payload),
+                              "started": started})
+
+
+async def h_book_publish(request: web.Request) -> web.Response:
+    def publish() -> dict:
+        state = house_book.load()
+        if not state.get("book"):
+            raise web.HTTPConflict(text="There is no house book to publish yet.")
+        try:
+            path = house_book.publish(state["book"], WWW_CARD_DIR)
+        except OSError as exc:
+            raise web.HTTPConflict(
+                text=f"brAIn could not write to /config/www ({exc}).") from exc
+        state["published"] = {"at": int(time.time()), "path": path}
+        house_book.save(state)
+        return _book_payload()
+
+    return web.json_response(await asyncio.to_thread(publish))
+
+
+async def h_book_revoke(request: web.Request) -> web.Response:
+    def revoke() -> dict:
+        removed = house_book.revoke(WWW_CARD_DIR)
+        state = house_book.load()
+        state["published"] = None
+        house_book.save(state)
+        return {**_book_payload(), "removed": removed}
+
+    return web.json_response(await asyncio.to_thread(revoke))
+
+
+async def h_book_answer(request: web.Request) -> web.Response:
+    """A gap question answered. The answer is required — "where is the
+    stopcock" with nothing typed is not an answer — and it goes through
+    the one door every ending uses, so the memory line, the settled key
+    and the capture label are what any other Yes would have written."""
+    finding = _finding_or_404(request)
+    if finding.get("source") != house_book.SOURCE:
+        raise web.HTTPConflict(text="that is not a house book question")
+    body = await _json_body(request)
+    note = str(body.get("note") or "").strip()[:findings_store.MAX_NOTE]
+    if not note:
+        raise web.HTTPBadRequest(text="Type the answer first.")
+    payload, _fact = await _end_finding(finding, FINDING_VERBS["confirm"],
+                                        house_book.redact_text(note))
+    return web.json_response({**payload, **await asyncio.to_thread(
+        _cases_payload, time.time())})
+
+
+# -- the access review --------------------------------------------------------
+
+async def _run_access(reason: str = "pressed") -> None:
+    digest = ACCESS_DIGEST["digest"]
+    if digest is None:
+        snap = await checks.snapshot.collect(time.time())
+        _note_access(snap, time.time())
+        digest = ACCESS_DIGEST["digest"]
+    open_rows = [f["text"] for f in findings_store.list_all()
+                 if str(f.get("source") or "").startswith("check:sec.")]
+    prompt = ("DIGEST:\n" + json.dumps(digest, ensure_ascii=False, default=str)
+              + "\n\nOPEN SECURITY FINDINGS:\n"
+              + json.dumps(open_rows, ensure_ascii=False))
+    result = await _claude(
+        engine.run_claude, prompt, checks.security.REVIEW_SYSTEM, "", 180, 4,
+        "maintenance", job="access_review",
+        schema=checks.security.REVIEW_SCHEMA)
+    if not result.get("ok"):
+        raise RuntimeError(str(result.get("error") or "no reply"))
+    sentence = checks.security.review_sentence(_answer(result))
+    if not sentence:
+        raise RuntimeError("the review came back too short to show")
+    await asyncio.to_thread(schedule_store.set_text, ACCESS_TEXT_KEY, sentence)
+    await asyncio.to_thread(schedule_store.set, ACCESS_STAMP_KEY, time.time())
+    MAINT_STATE["access"]["last_note"] = reason
+
+
+def _access_payload() -> dict:
+    return {**_maint_status("access"),
+            "sentence": schedule_store.get_text(ACCESS_TEXT_KEY),
+            "at": int(schedule_store.get(ACCESS_STAMP_KEY)),
+            "open": sum(1 for f in findings_store.list_all()
+                        if str(f.get("source") or "").startswith("check:sec."))}
+
+
+async def h_access(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_access_payload))
+
+
+async def h_access_run(request: web.Request) -> web.Response:
+    excuse = _maint_pressed_refusal()
+    if excuse:
+        raise web.HTTPBadRequest(text=excuse)
+    started = _maint_start("access", lambda: _run_access("pressed"))
+    return web.json_response({**await asyncio.to_thread(_access_payload),
+                              "started": started})
+
+
+# -- the schedule: overnight, and weekly --------------------------------------
+
+async def _maint_tick(now: float) -> list[str]:
+    """One pass of the maintainer's schedule. Returns what it started."""
+    started: list[str] = []
+    settings = await asyncio.to_thread(settings_store.load)
+    local = _local_now(now)
+    excuse = _resident_gate(settings)
+
+    # The overnight health check: once a night, after SRE_HOUR.
+    last = await asyncio.to_thread(schedule_store.get, SRE_STAMP_KEY)
+    in_window = SRE_HOUR <= local.hour < SRE_HOUR + 3
+    done_tonight = bool(last) and _local_now(last).date() == local.date()
+    if in_window and not done_tonight:
+        if excuse:
+            MAINT_STATE["sre"]["held"] = excuse
+        elif _maint_start("sre", lambda: _run_sre("schedule")):
+            MAINT_STATE["sre"]["held"] = ""
+            await asyncio.to_thread(schedule_store.set, SRE_STAMP_KEY, now)
+            started.append("sre")
+
+    # The access review: weekly, off the last checks pass's digest.
+    last = await asyncio.to_thread(schedule_store.get, ACCESS_STAMP_KEY)
+    tried = await asyncio.to_thread(schedule_store.get, ACCESS_TRIED_KEY)
+    if (ACCESS_DIGEST["digest"] is not None and now - last >= MAINT_WEEK_S
+            and now - tried >= ACCESS_RETRY_S):
+        if excuse:
+            MAINT_STATE["access"]["held"] = excuse
+        elif _maint_start("access", lambda: _run_access("schedule")):
+            MAINT_STATE["access"]["held"] = ""
+            await asyncio.to_thread(schedule_store.set, ACCESS_TRIED_KEY, now)
+            started.append("access")
+
+    # The house book: weekly, only once somebody has asked for one, and
+    # only when what it reads has moved.
+    state = await asyncio.to_thread(house_book.load)
+    if state.get("opted_in") and now - float(state.get("last_weekly") or 0) >= MAINT_WEEK_S:
+        snap = await _book_snapshot()
+        fp = await asyncio.to_thread(house_book.fingerprint, snap)
+        changed, why = house_book.moved(state.get("fingerprint"), fp)
+        state["last_weekly"] = int(now)
+        if not changed:
+            state["held"] = why
+            MAINT_STATE["book"]["held"] = why
+        elif excuse:
+            state["held"] = excuse
+            MAINT_STATE["book"]["held"] = excuse
+        elif _maint_start("book", lambda: _run_book("weekly: " + why, snap)):
+            state["held"] = ""
+            started.append("book")
+        await asyncio.to_thread(house_book.save, state)
+    return started
+
+
+async def _maint_loop() -> None:
+    await asyncio.sleep(MAINT_FIRST_DELAY_S)
+    while True:
+        try:
+            started = await _maint_tick(time.time())
+            if started:
+                log.info("maintainer: started %s", ", ".join(started))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
+            log.warning("maintainer pass failed: %s", exc)
+        await asyncio.sleep(MAINT_POLL_S)
+
+
+def _maintainer_diagnostics() -> dict:
+    """Whether each of the five has run, is held, or failed — a scheduled
+    run nobody can see is one that silently stopped."""
+    out = {name: _maint_status(name) for name in MAINT_JOBS}
+    try:
+        data = tidy.load()
+        out["tidy"]["pending_rows"] = len((data["proposal"] or {}).get("rows") or [])
+        out["tidy"]["undoable_batches"] = len(tidy.undoable(data["batches"], time.time()))
+        out["upgrades"]["verdicts"] = len(upgrades.load()["verdicts"])
+        out["sre"]["last"] = sre.load().get("last")
+        book = house_book.load()
+        out["book"].update(
+            opted_in=bool(book.get("opted_in")),
+            built_at=int((book.get("book") or {}).get("at") or 0),
+            uncited=int((book.get("book") or {}).get("uncited") or 0),
+            published=bool(book.get("published")))
+        out["access"]["digest_at"] = int(ACCESS_DIGEST["at"])
+        out["access"]["reviewed_at"] = int(schedule_store.get(ACCESS_STAMP_KEY))
+    except Exception as exc:  # noqa: BLE001 — diagnostics must not fail on one reader
+        out["error"] = str(exc)[:200]
+    return out
+
+
+def _maint_routes(app: web.Application) -> None:
+    app.router.add_get("/api/tidy", h_tidy)
+    app.router.add_post("/api/tidy/run", h_tidy_run)
+    app.router.add_post("/api/tidy/apply", h_tidy_apply)
+    app.router.add_post("/api/tidy/discard", h_tidy_discard)
+    app.router.add_post("/api/tidy/undo/{batch}", h_tidy_undo)
+    app.router.add_get("/api/upgrades", h_upgrades)
+    app.router.add_post("/api/upgrades/advise", h_upgrades_advise)
+    app.router.add_get("/api/sre", h_sre)
+    app.router.add_post("/api/sre/run", h_sre_run)
+    app.router.add_get("/api/house_book", h_book)
+    app.router.add_post("/api/house_book/run", h_book_run)
+    app.router.add_post("/api/house_book/publish", h_book_publish)
+    app.router.add_post("/api/house_book/revoke", h_book_revoke)
+    app.router.add_post("/api/house_book/question/{ts}/answer", h_book_answer)
+    app.router.add_get("/api/access", h_access)
+    app.router.add_post("/api/access/run", h_access_run)
+
+
 # -- a card on a dashboard, put there by brAIn --------------------------------
 # The ▦ dialog used to end at "here is some YAML, go and paste it into the
 # card editor" — four steps in another app for something brAIn can do in
@@ -5363,171 +8424,6 @@ def _record_manual(snapshot: dict, now: float) -> int:
         return 0
 
 
-async def _triage_findings(now: float) -> list[dict]:
-    """Look at the rows nothing has looked at yet, and move them.
-
-    Returns the rows that are on the list afterwards — the ones a run
-    elevated plus the ones nothing could judge — because that is exactly
-    the set `_announce_findings` is owed and deriving it a second time
-    from the store would be a second answer to the same question.
-
-    **It reads what is WAITING, not what a caller just filed.** Five
-    producers gate now (`triage.gate`) and one of them is a tab fetch
-    that must not spend a Claude run, so a drain that could only judge
-    its own caller's rows would leave that producer's findings to the
-    stale sweep an hour later. Taking the queue from the store instead
-    makes the drain callable from anywhere: whoever runs next picks up
-    whatever is there.
-
-    **Every failure surfaces.** No credential, the automatic switch off,
-    the budget spent, the run failed, the reply unparseable, a row the
-    reply did not mention: each of those ends with the finding on the tab
-    carrying an `untriaged` verdict. A triage that could not look must
-    never be able to hide a problem, which is `clear_resolved`'s rule
-    moved one step earlier. What does NOT surface immediately is the
-    surplus past `MAX_BATCH` — it is at the front of the next drain a
-    minute later, and the stale sweep is the promise that a queue which
-    stopped draining is still shown.
-
-    The stale sweep is here rather than in a loop of its own for the same
-    reason, and `STALE_S` is best read as **the longest a finding may be
-    invisible**: a queue that is draining clears in minutes, so a row that
-    has waited an hour waited it because nothing was coming back — a panel
-    that died mid-judgement, or one that was off. It surfaces saying so
-    rather than taking its turn, because it has already been invisible for
-    the hour and another minute is not what it is owed.
-
-    Two drains at once would spend two runs on one queue and race over
-    the same rows, so the flag is set SYNCHRONOUSLY before the first
-    await — `start_auth_check`'s rule, for its reason: `create_task` and
-    `await` both only schedule, and a guard reading a state its own call
-    has not set yet is no guard. A caller that loses is not an error and
-    files nothing: its rows are in the queue the winner is draining, or
-    in the one the next minute drains.
-    """
-    if TRIAGE_STATE["running"]:
-        return []
-    TRIAGE_STATE["running"] = True
-    try:
-        return await _triage_drain(now)
-    finally:
-        TRIAGE_STATE["running"] = False
-
-
-async def _triage_drain(now: float) -> list[dict]:
-    """`_triage_findings` with the in-flight guard already held."""
-    # Anything left waiting past the hour, whether or not this drain has
-    # a batch of its own. Promoted first, so a row that has already waited
-    # that long does not queue behind rows filed since.
-    stale = await asyncio.to_thread(findings_store.stale_triaging,
-                                    now - triage.STALE_S)
-    surfaced: list[dict] = []
-    if stale:
-        log.warning("triage: %d finding(s) were left unjudged and are being "
-                    "shown as they are", len(stale))
-        surfaced += await asyncio.to_thread(
-            findings_store.record_triage,
-            {ts: ("untriaged", triage.UNJUDGED) for ts in stale},
-            "", now)
-
-    # Oldest first, and everything that is waiting rather than everything
-    # this caller filed. The stale rows above have already left the queue
-    # by the time it is read, so they cannot be judged twice.
-    pending = await asyncio.to_thread(findings_store.awaiting_triage)
-    if not pending:
-        return surfaced
-
-    # What does not fit waits for the next drain. Surfacing it unjudged
-    # would spend the cap on exactly the rows this exists to catch, and
-    # on the busiest houses first; waiting is only silence if nothing
-    # comes back, and `STALE_S` is what says something does.
-    batch = pending[:triage.MAX_BATCH]
-
-    # One clock up from `MAX_BATCH`: a day that has spent `MAX_PER_DAY`
-    # runs waits for tomorrow rather than surfacing unjudged, for the
-    # same reason, and `STALE_S` is still the promise that a queue which
-    # stopped draining is shown. Said once per day, or a busy house logs
-    # the same line every minute until midnight.
-    if _triage_runs_today(now) >= triage.MAX_PER_DAY:
-        if not TRIAGE_STATE.get("capped_said"):
-            TRIAGE_STATE["capped_said"] = True
-            log.warning("triage has spent its %d runs for today; %d rows wait "
-                        "for tomorrow's drain", triage.MAX_PER_DAY, len(pending))
-        return surfaced
-    TRIAGE_STATE["capped_said"] = False
-
-    # The three gates every scheduled Claude run answers to (`_ask_why`'s
-    # rule): a credential, the automatic switch, and the usage budget.
-    # Failing one is not a reason to hide anything — it is a reason to
-    # show everything, which is what the sentence on the card says.
-    settings = settings_store.load()
-    if not engine.get_auth():
-        excuse = triage.NO_CREDENTIAL
-    elif not settings["auto_enabled"]:
-        excuse = triage.PAUSED
-    elif usage_store.budget_state(settings)["blocked"]:
-        excuse = triage.NO_BUDGET
-    else:
-        excuse = ""
-    if excuse:
-        # Over the WHOLE queue rather than this batch: the cap is what one
-        # run may read, and a gate that answered before any run started
-        # has nothing to ration. Rationing it would leave the rest waiting
-        # on a drain that will give the identical answer next minute.
-        return surfaced + await asyncio.to_thread(
-            findings_store.record_triage,
-            {int(f["ts"]): ("untriaged", excuse) for f in pending}, "", now)
-
-    prompt = triage.frame(
-        batch,
-        house=await _house_prompt_block(now),
-        # The load-bearing half. "That contact is on a cupboard nobody
-        # opens" is exactly the kind of thing a homeowner has already
-        # said once, and a triage run that cannot read it re-litigates
-        # every correction they have ever made.
-        memory=await asyncio.to_thread(
-            _memory_block,
-            entities=[r.get("entity_id") for r in batch if r.get("entity_id")]),
-    )
-    TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
-    try:
-        result = await asyncio.to_thread(
-            engine.run_analyst, prompt, triage.SYSTEM, eff_model(),
-            triage.TIMEOUT_S, triage.MAX_TURNS, "triage",
-            job="triage", schema=triage.SCHEMA)
-    except Exception as exc:  # noqa: BLE001 — the findings are already
-        # filed; what is at stake here is only whether anything looked.
-        log.warning("a triage run failed: %s", exc)
-        result = {"ok": False, "error": str(exc)}
-    run_id = str((result.get("meta") or {}).get("session_id") or "")
-    if not result.get("ok"):
-        return surfaced + await asyncio.to_thread(
-            findings_store.record_triage,
-            {int(f["ts"]): ("untriaged", triage.RUN_FAILED)
-             for f in batch}, run_id, now)
-
-    verdicts = triage.parse(_answer(result), len(batch))
-    decided: dict[int, tuple[str, str]] = {}
-    for i, row in enumerate(batch, 1):
-        ts = int(row["ts"])
-        if i in verdicts:
-            decided[ts] = verdicts[i]
-        else:
-            # A row the reply skipped. The default is the finding, not
-            # the silence: "it was not mentioned" is not "it is not real".
-            decided[ts] = ("untriaged", triage.NOT_MENTIONED)
-    moved = await asyncio.to_thread(
-        findings_store.record_triage, decided, run_id, now)
-    held = [f for f in moved if f["status"] == "held"]
-    # No journal line of its own: `engine._run_cli` already writes one per
-    # invocation under the source it was given, and a second row for the
-    # same run is two answers to "how many triage runs happened".
-    log.info("triage: %d looked at, %d held back, %d shown, %d still waiting",
-             len(batch), len(held), len(moved) - len(held),
-             max(len(pending) - len(batch), 0))
-    return surfaced + [f for f in moved if f["status"] != "held"]
-
-
 # ---------------------------------------------------------------------------
 # The Resident — signals in, one cheap look, a case
 # ---------------------------------------------------------------------------
@@ -5741,17 +8637,41 @@ def _measurement_signals(snapshot: dict, now: float) -> int:
                                 signals.from_baseline, now, ctx)
 
 
-def _note_safety(event_type: str, data: dict) -> None:
-    """Remember that a leak, smoke, CO or gas sensor has just tripped.
+def _note_closure(entity: str, now: float | None = None) -> None:
+    """Remember a closure the bus saw, for the camera grant. Capped, aged."""
+    now = time.time() if now is None else now
+    CLOSURE_SUBJECTS[entity] = now
+    for old, at in list(CLOSURE_SUBJECTS.items()):
+        if now - at > CLOSURE_SUBJECT_TTL_S:
+            CLOSURE_SUBJECTS.pop(old, None)
+    while len(CLOSURE_SUBJECTS) > MAX_CLOSURE_SUBJECTS:
+        CLOSURE_SUBJECTS.pop(min(CLOSURE_SUBJECTS, key=CLOSURE_SUBJECTS.get), None)
 
-    The event bus's raw hook, and the one fact an `act` verdict needs that
-    a signal cannot carry: `signals.make` publishes a closed key set, so
-    there is nowhere on it for a device class, and re-reading the entity's
-    state to ask would be a fetch inside the attention loop. Recorded at the
-    moment the bus admitted the event — before the signal built from that
-    same event reaches the queue, because `eventbus._handle` calls the raw
-    hook first — and pruned, because this is an index of what is tripped
-    NOW rather than a history of what ever was.
+
+def _note_safety(event_type: str, data: dict) -> None:
+    """Remember that a leak, smoke, CO or gas sensor has tripped, and file it.
+
+    The event bus's raw hook. Two jobs, and the second is the one that
+    matters.
+
+    **It keeps the index the `act` verdict reads** — `SAFETY_SUBJECTS`, what
+    is tripped NOW, recorded at the moment the bus admitted the event and
+    pruned, because a fetch inside the attention loop is the thing this
+    design exists to avoid.
+
+    **And a TRANSITION into a tripped state starts the safety lane**
+    (`_safety_trip`), which files a critical case and notifies with no
+    model, no credential, no budget and no day cap in the way. Before this
+    a tripped leak sensor reached a phone only if a Haiku look ran, parsed
+    and answered exactly `act` — and the real floor was `watch`, because
+    the never-ignore guard matched words in the signal's kind and a bus
+    signal's kind is `state`. A model may add context to a leak afterwards;
+    it may not decide whether anybody hears about it. A transition OUT is
+    the sensor saying it is over, which `_safety_clear` writes on the card
+    and uses to stop the reminders.
+
+    Synchronous and never awaits: it runs inside the bus's socket pump, so
+    the lane is a task scheduled onto the loop that pump is already on.
     """
     if event_type != "state_changed" or not isinstance(data, dict):
         return
@@ -5760,12 +8680,17 @@ def _note_safety(event_type: str, data: dict) -> None:
     if not entity or not isinstance(new_state, dict):
         return
     attrs = new_state.get("attributes")
-    if not signals.RegistryContext.safety_class(
-            attrs if isinstance(attrs, dict) else {}):
+    attrs = attrs if isinstance(attrs, dict) else {}
+    if signals.RegistryContext.is_closure(entity, attrs):
+        _note_closure(entity)
+    klass = signals.RegistryContext.safety_class(attrs)
+    if not klass:
         return
     now = time.time()
-    if str(new_state.get("state") or "").strip().lower() \
-            in signals.HOT_SAFETY_STATES:
+    tripped = _is_tripped(new_state)
+    old_state = data.get("old_state")
+    was = _is_tripped(old_state) if isinstance(old_state, dict) else False
+    if tripped:
         SAFETY_SUBJECTS[entity] = now
     else:
         # A leak detector going dry is the sensor saying it is over, so the
@@ -5778,6 +8703,213 @@ def _note_safety(event_type: str, data: dict) -> None:
             SAFETY_SUBJECTS.pop(old, None)
     while len(SAFETY_SUBJECTS) > MAX_SAFETY_SUBJECTS:
         SAFETY_SUBJECTS.pop(min(SAFETY_SUBJECTS, key=SAFETY_SUBJECTS.get), None)
+    if tripped and not was:
+        _schedule_safety(_safety_trip(entity, klass, new_state, now))
+    elif was and not tripped:
+        _schedule_safety(_safety_clear(entity, new_state, now))
+
+
+def _is_tripped(state: dict | None) -> bool:
+    return isinstance(state, dict) and str(state.get("state") or "").strip(
+        ).lower() in signals.HOT_SAFETY_STATES
+
+
+# The lane's tasks, held so the loop cannot collect one mid-flight — a bare
+# `create_task` is only weakly referenced, and a leak whose case was
+# garbage-collected before it was filed is the failure this lane exists for.
+_SAFETY_TASKS: set = set()
+
+
+def _schedule_safety(coro) -> None:
+    try:
+        task = asyncio.get_running_loop().create_task(coro)
+    except RuntimeError:
+        # No running loop: a test driving the hook alone, or a pump being
+        # torn down. The coroutine is closed rather than leaked; the index
+        # above is still written, which is what a test of the hook reads.
+        coro.close()
+        return
+    _SAFETY_TASKS.add(task)
+    task.add_done_callback(_SAFETY_TASKS.discard)
+
+
+# One case per TRIP, not per sensor. A detector that chatters on and off
+# inside this window is one event — a leak cable that is wet and wicking
+# reports `on`/`off` for minutes — and a second card about it is noise
+# that teaches somebody to swipe the third one away. Past the window, a
+# new trip is a new case, whatever happened to the last one: a person who
+# dismissed Tuesday's leak has not dismissed Friday's.
+SAFETY_DEBOUNCE_S = 300
+# Entity → {"at": when the trip was filed, "ts": the case's id}. In memory:
+# losing it on a restart costs at most one extra card for a sensor that is
+# still chattering, and the other direction (a stamp read off disk wrongly
+# suppressing a real trip) is the one this lane may not have.
+SAFETY_TRIPS: dict[str, dict] = {}
+SAFETY_STATE: dict = {"filed": 0, "repeats": 0, "cleared": 0,
+                      "fallback": 0, "last_at": 0, "last_error": ""}
+SAFETY_LABELS = {"moisture": "Water leak", "smoke": "Smoke",
+                 "carbon_monoxide": "Carbon monoxide", "gas": "Gas"}
+SAFETY_FIX = ("Go and look. brAIn does not act on smoke, water or gas on its "
+              "own — a playbook you accepted on the Proposals tab is what "
+              "closes a valve.")
+
+
+def _safety_case_row(entity: str, klass: str, state: dict,
+                     when: float) -> dict:
+    """The case one trip files, written deterministically.
+
+    The TEXT carries the local date and time, which is what makes each trip
+    its own row: the store dedupes by normalised text against every status
+    and the settled ledger, so a fixed sentence ("Friendly → on") made the
+    second leak on the same sensor a duplicate of the first for ever, and a
+    dismissal of Tuesday's leak silently swallowed every later one.
+    """
+    attrs = state.get("attributes") if isinstance(state.get("attributes"),
+                                                  dict) else {}
+    name = str(attrs.get("friendly_name") or entity).strip()[:80]
+    local = _local_now(when)
+    # Spelled out rather than `%-d`, which glibc understands and musl —
+    # the image's libc — does not promise to.
+    stamp = f"{local:%a} {local.day} {local:%b}, {local:%H:%M}"
+    label = SAFETY_LABELS.get(klass, "Safety sensor tripped")
+    text = f"{label} detected by {name} ({stamp})"
+    return {
+        "text": text,
+        "claim": text,
+        "detail": (f"{name} reported {state.get('state')} at {stamp}. This "
+                   "was sent the moment the sensor tripped, without waiting "
+                   "for anything to look at it."),
+        "kind": "problem",
+        "severity": "critical",
+        "stakes": "high",
+        "confidence": 1.0,
+        "entity_id": entity,
+        "fixable": False,
+        "source": SAFETY_SOURCE,
+        "source_title": "Safety sensors",
+        "evidence": [{"entity": entity, "value": str(state.get("state") or ""),
+                      "when": stamp}],
+        "actions": [dict(SAFETY_ACTION)],
+        "fix": SAFETY_FIX,
+    }
+
+
+async def _safety_trip(entity: str, klass: str, state: dict,
+                       when: float) -> dict | None:
+    """File and announce one trip. Never raises; returns the case or None.
+
+    No gate is asked, deliberately: a credential, the automatic switch and
+    the usage budget all exist to stop brAIn SPENDING, and this spends
+    nothing. Escalation is `notify_router.tier_of`'s — `critical` with the
+    `safety` producer's `now` urgency — so it goes through quiet hours and
+    climbs the reminder ladder like every other escalating row. With no
+    notify service configured it still reaches Home Assistant, as a
+    persistent notification, because "nobody configured a phone" is not a
+    reason for a leak to be reported to nobody.
+    """
+    try:
+        prior = SAFETY_TRIPS.get(entity)
+        if prior and when - float(prior.get("at") or 0) < SAFETY_DEBOUNCE_S:
+            row = await asyncio.to_thread(findings_store.get,
+                                          int(prior.get("ts") or 0))
+            if row is not None:
+                SAFETY_STATE["repeats"] += 1
+                return None
+        filed = await asyncio.to_thread(
+            findings_store.add_case,
+            _safety_case_row(entity, klass, state, when), when=when)
+        if filed is None:
+            SAFETY_STATE["repeats"] += 1
+            return None
+        SAFETY_TRIPS[entity] = {"at": when, "ts": int(filed["ts"])}
+        SAFETY_STATE["filed"] += 1
+        SAFETY_STATE["last_at"] = int(when)
+        log.warning("safety lane: %s", filed["text"])
+        service, _sev = _findings_notify_target()
+        if service:
+            await _announce_findings([filed])
+        else:
+            await _safety_fallback_notice(filed)
+        return filed
+    except Exception as exc:  # noqa: BLE001 — never let a pump task raise
+        SAFETY_STATE["last_error"] = str(exc)[:200]
+        log.warning("safety lane failed for %s: %s", entity, exc)
+        return None
+
+
+async def _safety_fallback_notice(filed: dict) -> None:
+    """Home Assistant's own notification, for a house with no notify target."""
+    import ha_data
+    title = "brAIn: " + str(filed.get("text") or "")[:120]
+    message = str(filed.get("detail") or "") + "\n\n" + SAFETY_FIX
+    delivery = deliveries.new_id()
+    try:
+        await ha_data.call_core_service(
+            "persistent_notification", "create",
+            {"title": title, "message": message,
+             "notification_id": f"brain_safety_{int(filed.get('ts') or 0)}"},
+            timeout=15)
+        SAFETY_STATE["fallback"] += 1
+    except Exception as exc:  # noqa: BLE001 — the case is on the list
+        SAFETY_STATE["last_error"] = str(exc)[:200]
+        log.warning("safety lane: could not create a persistent "
+                    "notification: %s", exc)
+        _record_notice(delivery, title, message, filed, error=str(exc))
+        return
+    _record_notice(delivery, title, message, filed)
+
+
+def _record_notice(delivery: str, title: str, message: str, filed: dict,
+                   error: str = "") -> None:
+    """The safety lane's persistent notification, in the delivery ledger.
+
+    Synchronous on purpose: it is one append, and the lane runs on the
+    bus pump's loop where a thread hop buys nothing. Never raises —
+    `deliveries.record` does not."""
+    deliveries.record("notice", delivery_id=delivery,
+                      service="persistent_notification", title=title,
+                      body=message, rows=[filed], ok=not error, error=error)
+
+
+async def _safety_clear(entity: str, state: dict, when: float) -> bool:
+    """The sensor reported clear: say so on the card and stop the ladder.
+
+    The case is NOT cleared, which is the one place this lane parts from
+    `clear_resolved`: a leak that dried by itself still came from
+    somewhere, and a smoke alarm that stopped is not evidence there was no
+    smoke — somebody still owes it a look. What stops is the reminders,
+    because a phone told three more times about a sensor that says it is
+    over is being argued with.
+    """
+    try:
+        trip = SAFETY_TRIPS.get(entity) or {}
+        ts = int(trip.get("ts") or 0)
+        if not ts:
+            return False
+        stamp = f"{_local_now(when):%H:%M}"
+        row = await asyncio.to_thread(
+            findings_store.annotate, ts,
+            f"The sensor reported {state.get('state') or 'clear'} at {stamp}.")
+        await asyncio.to_thread(notify_router.stop_escalation, ts)
+        if row is not None:
+            SAFETY_STATE["cleared"] += 1
+        return row is not None
+    except Exception as exc:  # noqa: BLE001 — see `_safety_trip`
+        SAFETY_STATE["last_error"] = str(exc)[:200]
+        log.debug("safety lane clear for %s failed: %s", entity, exc)
+        return False
+
+
+def _safety_case_for(signal: dict) -> int:
+    """The id of the live case the lane filed for this signal's trip, or 0."""
+    trip = SAFETY_TRIPS.get(str((signal or {}).get("subject") or "")) or {}
+    ts = int(trip.get("ts") or 0)
+    if not ts:
+        return 0
+    try:
+        return ts if findings_store.get(ts) is not None else 0
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 def _is_safety_signal(signal: dict) -> bool:
@@ -5810,7 +8942,7 @@ def _known_entity_ids() -> frozenset[str]:
     """
     now = time.time()
     if now - float(_KNOWN_ENTITIES["at"]) < eventbus.CTX_REFRESH_S:
-        return _KNOWN_ENTITIES["ids"]
+        return _KNOWN_ENTITIES["ids"] | _world_known_ids()
     text = ""
     try:
         text = _read_shared_memory()
@@ -5822,10 +8954,13 @@ def _known_entity_ids() -> frozenset[str]:
     except Exception as exc:  # noqa: BLE001
         log.debug("could not read the facts ledger: %s", exc)
     if not text.strip():
-        return _KNOWN_ENTITIES["ids"]
+        return _KNOWN_ENTITIES["ids"] | _world_known_ids()
     _KNOWN_ENTITIES["ids"] = frozenset(_MEMORY_ENTITY_RE.findall(text.lower()))
     _KNOWN_ENTITIES["at"] = now
-    return _KNOWN_ENTITIES["ids"]
+    # And the entities a confident `world_model` reading ranked as worth
+    # watching: a water valve nobody has written a fact about yet is still
+    # the thing a leak night is about.
+    return _KNOWN_ENTITIES["ids"] | _world_known_ids()
 
 
 def _signal_context() -> signals.RegistryContext:
@@ -5848,7 +8983,8 @@ def _signal_context() -> signals.RegistryContext:
         log.debug("could not read the protected list: %s", exc)
         return _SIGNAL_CTX["ctx"]
     _SIGNAL_CTX["ctx"] = signals.RegistryContext(
-        patterns, _known_entity_ids(), built_at=now)
+        patterns, _known_entity_ids(), built_at=now,
+        added_safety=_world_safety_roles())
     _SIGNAL_CTX["at"] = now
     return _SIGNAL_CTX["ctx"]
 
@@ -5860,7 +8996,12 @@ def _signal_entities(signal: dict) -> list[str]:
     if subject:
         out.append(subject)
     for row in (signal or {}).get("evidence") or []:
-        eid = row.get("entity_id") if isinstance(row, dict) else row
+        # `entity` is what `signals.evidence_row` writes; `entity_id` is
+        # read too for a row built by hand. It read only `entity_id`, so
+        # every evidence entity was missing from the memory retrieval an
+        # investigation was handed.
+        eid = (row.get("entity") or row.get("entity_id")) if isinstance(
+            row, dict) else row
         if isinstance(eid, str) and eid and eid not in out:
             out.append(eid)
     return out
@@ -5871,7 +9012,13 @@ def _signal_entities(signal: dict) -> list[str]:
 # fetched, never fetched for the tagger's own sake — it runs on the
 # minute over every queued line, and a registry read per minute is a
 # request nobody asked for.
-_FACTS_CTX: dict = {"entities": frozenset(), "areas": {}, "at": 0.0}
+_FACTS_CTX: dict = {"entities": frozenset(), "areas": {},
+                    "entity_areas": {}, "at": 0.0}
+# How old the registry the facts store reads may be before "this entity is
+# not in the house" stops being a claim it can make. Two checks passes at
+# the default interval: a registry read once and never again is a list
+# that was true on a Tuesday.
+FACTS_REGISTRY_FRESH_S = 13 * 3600
 
 # What every entity the last checks pass saw is CALLED, and where it is:
 # `{entity_id: {"name": ..., "area": ...}}`. The feed reads it so a card
@@ -5892,8 +9039,23 @@ def _note_registry(snapshot: dict) -> None:
         states = snapshot.get("states") or {}
         areas = {a["area_id"]: a.get("name") or a["area_id"]
                  for a in (snapshot.get("areas") or []) if a.get("area_id")}
+        # Which room each entity is in, by area ID — the key a fact about a
+        # room is filed under (`area:<id>`). A run is handed entities and
+        # asks for the facts about them, and "the lounge gets cold in the
+        # afternoon" is a fact about the lounge thermometer's room that no
+        # caller could reach: none of them passed an area, ever.
+        devices = {d["id"]: d.get("area_id") for d in
+                   (snapshot.get("devices") or []) if d.get("id")}
+        entity_areas: dict[str, str] = {}
+        for row in snapshot.get("entities") or []:
+            eid = row.get("entity_id")
+            if not eid:
+                continue
+            area = row.get("area_id") or devices.get(row.get("device_id") or "")
+            if area:
+                entity_areas[eid] = area
         _FACTS_CTX.update(entities=frozenset(states), areas=areas,
-                          at=time.time())
+                          entity_areas=entity_areas, at=time.time())
     except Exception as exc:  # noqa: BLE001
         log.debug("facts registry note failed: %s", exc)
     try:
@@ -5901,10 +9063,20 @@ def _note_registry(snapshot: dict) -> None:
         names = {}
         for eid in set(house.states) | set(house.registry):
             names[eid] = {"name": house.name(eid), "area": house.area_of(eid)}
+            # What kind of thing it is, for the one reader that has to
+            # refuse a safety device before it asks anybody anything
+            # (`corrections.never_covered`). Only where it says.
+            attrs = (house.states.get(eid) or {}).get("attributes") or {}
+            reg = house.registry.get(eid) or {}
+            klass = (attrs.get("device_class") or reg.get("device_class")
+                     or reg.get("original_device_class") or "")
+            if klass:
+                names[eid]["class"] = str(klass)
         _NAMES.clear()
         _NAMES.update(names)
     except Exception as exc:  # noqa: BLE001
         log.debug("names note failed: %s", exc)
+    _note_world(snapshot)
 
 
 def _entity_names_in(*texts: str) -> dict[str, dict]:
@@ -5921,29 +9093,104 @@ def _entity_names_in(*texts: str) -> dict[str, dict]:
 
 def _ingest_facts() -> int:
     try:
-        return facts_store.ingest_inbox(
+        created = facts_store.ingest_inbox(
             MEMORY_INBOX_DIR, MEMORY_INBOX_DIR / "processed",
             known_entities=_FACTS_CTX["entities"], areas=_FACTS_CTX["areas"])
     except Exception as exc:  # noqa: BLE001
         log.debug("facts ingest failed: %s", exc)
         return 0
+    _reconcile_facts()
+    return created
 
 
-def _open_case_rows(limit: int = 12) -> list[str]:
+def _reconcile_facts(force: bool = False) -> dict:
+    """Make the facts store answer to the document and the registry.
+
+    On the minute, beside the ingest, and straight after the panel's own
+    editor saves — the store is what most runs read, and every way a
+    person corrects memory (an edit, `brain memory forget`, `clear`,
+    `undo`) changes the document. A document that would not read is
+    passed as None, which skips the curation half rather than reading
+    every fact as gone (`facts_store.reconcile`).
+    """
+    try:
+        document = SHARED_MEMORY_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        document = ""
+    except OSError:
+        document = None
+    fresh = (bool(_FACTS_CTX["entities"])
+             and time.time() - float(_FACTS_CTX["at"]) < FACTS_REGISTRY_FRESH_S)
+    try:
+        return facts_store.reconcile(
+            document, MEMORY_INBOX_DIR,
+            known_entities=_FACTS_CTX["entities"], registry_fresh=fresh,
+            force=force)
+    except Exception as exc:  # noqa: BLE001 — accounting, not a run
+        log.debug("facts reconcile failed: %s", exc)
+        return {}
+
+
+def _areas_of(entities) -> list[str]:
+    """The rooms these entities are in, by area id, from the last pass."""
+    where = _FACTS_CTX.get("entity_areas") or {}
+    out: list[str] = []
+    for eid in entities or ():
+        area = where.get(str(eid or ""))
+        if area and area not in out:
+            out.append(area)
+    return out
+
+
+def _finding_subjects(finding: dict, limit: int = 4) -> list[str]:
+    """What a finding is about, as the facts store's subjects.
+
+    The row's own entity first — a check knows exactly which one — then
+    the entities a case says it read, because a Resident row carries no
+    `entity_id` (its claim is written for a person, in friendly names)
+    and its evidence is the only machine-readable answer to "about what".
+    Only strings shaped like an entity id: an evidence row names what was
+    read, and a sentence there is not a subject.
+    """
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    out: list[str] = []
+    eid = str(finding.get("entity_id") or "").strip()
+    if ha_data.is_entity_id(eid):
+        out.append(eid)
+    for row in finding.get("evidence") or []:
+        if not isinstance(row, dict):
+            continue
+        ent = str(row.get("entity") or "").strip()
+        if ent not in out and ha_data.is_entity_id(ent):
+            out.append(ent)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _open_case_rows(limit: int = 12, exclude=None) -> list[str]:
     """What is already in front of the homeowner, as lines for a prompt.
 
     The commonest reason a signal is worth nothing is that the house is
     already saying it, so both prompts read this — and it is the CASE list
     rather than the findings list, because a proposal and a guess are just
     as much "already said" as a problem is.
+
+    ``exclude`` is the claims to leave out: an investigation sent to look
+    at a row must not be told that row is something it may not claim.
     """
+    drop = {str(e) for e in (exclude or ()) if e}
     try:
-        # Every kind, chores included: an accepted chore is off the feed and
-        # is still something the house has already said.
-        rows = cases.list_cases("open", kinds=cases.KINDS)
+        # Every kind and every store, chores and proposals included: an
+        # accepted chore and a suggestion on the Proposals tab are off the
+        # feed and are still something the house has already said.
+        rows = cases.list_cases("open", kinds=cases.KINDS,
+                                stores=cases.STORES)
     except Exception as exc:  # noqa: BLE001 — a prompt section, not the run
         log.debug("could not list the open cases: %s", exc)
         return []
+    rows = [c for c in rows if c.get("claim") not in drop]
     return [f"[{c['kind']}] {c['claim']}"[:160] for c in rows[:limit]]
 
 
@@ -5990,8 +9237,8 @@ def _resident_gate(settings: dict) -> str:
 
     The three gates every scheduled Claude run answers to (`_ask_why`'s
     rule). Failing one HOLDS the batch rather than surfacing it, which is
-    the opposite of what `_triage_findings` did with the same three — and
-    deliberately: triage was about to hide a row, where this is about to
+    the opposite of what the retired triage drain did with the same three —
+    and deliberately: triage was about to hide a row, where this is about to
     look at one and the row is on `triaging` either way. `triage.STALE_S`
     is what makes the wait bounded, and the sweep at the top of every pass
     is what makes it visible.
@@ -6085,8 +9332,9 @@ async def _resident_pass(now: float) -> dict:
     # the one thing a signal may cause by itself, and `MIN_LOOK_SPACING_S`
     # is what stops a house producing them in a burst looking once per
     # leak sensor.
-    if not RESIDENT_PENDING or not (since >= RESIDENT_LOOK_S
-                                    or (hot and since >= MIN_LOOK_SPACING_S)):
+    look_due = bool(RESIDENT_PENDING) and (
+        since >= RESIDENT_LOOK_S or (hot and since >= MIN_LOOK_SPACING_S))
+    if not look_due and not RESIDENT_PARKED:
         return out
 
     settings = await asyncio.to_thread(settings_store.load)
@@ -6098,14 +9346,31 @@ async def _resident_pass(now: float) -> dict:
             RESIDENT_STATE["last_error"] = excuse
             log.info("the Resident is holding %d signal(s): %s",
                      len(RESIDENT_PENDING), excuse)
+        # And on the trail, one line per subject per hour however many
+        # ticks it waits (`decision_trail.MERGE_S`): "why didn't you tell
+        # me" on a paused house is answered by THIS, in these words.
+        decision_trail.note_many(_signal_decisions(
+            RESIDENT_PENDING[:50], "gate_hold", excuse))
         return {**out, "held": excuse}
     RESIDENT_STATE["last_error"] = ""
+
+    thinking = str(settings.get("thinking") or model_plan.DEFAULT_THINKING)
+    if RESIDENT_PARKED:
+        drained = await _resident_investigations([], now, settings, thinking)
+        out["parked_ran"] = drained["ran"]
+    if not look_due:
+        return out
 
     # One clock up from the batch cap, and it is `triage.MAX_PER_DAY`
     # because the first look IS what triage was: a day that has spent its
     # runs waits for tomorrow, and the stale sweep above is the promise
-    # that the rows are still shown.
-    if _triage_runs_today(now) >= triage.MAX_PER_DAY:
+    # that the rows are still shown. A tripped safety sensor is not held
+    # by it — the lane has already filed and sent that one, so what a look
+    # adds is context, and a day of looks spent on something else must not
+    # be the reason a leak's context waits until midnight.
+    safety_waiting = any(sig.get("safety") and sig.get("hot")
+                         for sig in RESIDENT_PENDING)
+    if _triage_runs_today(now) >= triage.MAX_PER_DAY and not safety_waiting:
         if not TRIAGE_STATE.get("capped_said"):
             TRIAGE_STATE["capped_said"] = True
             log.warning("the Resident has spent its %d looks for today; %d "
@@ -6114,9 +9379,8 @@ async def _resident_pass(now: float) -> dict:
         return {**out, "held": "the day's looks are spent"}
     TRIAGE_STATE["capped_said"] = False
 
-    thinking = str(settings.get("thinking") or model_plan.DEFAULT_THINKING)
     allowed, why = LEDGER.allows(
-        resident.tier_for(resident.JOB_FIRST_LOOK), thinking, now=now)
+        _resident_tier(resident.JOB_FIRST_LOOK, thinking), thinking, now=now)
     if not allowed:
         return {**out, "held": why}
     return await _resident_look(now, settings, thinking, len(surfaced))
@@ -6137,9 +9401,18 @@ async def _resident_look(now: float, settings: dict, thinking: str,
     # identical answer over the identical data on somebody else's money.
     # What a watch holds back leaves the pending list: it has been judged,
     # and keeping it would re-offer it on every tick for a fortnight.
-    ready, watched_off = [], []
-    for row in filed + live:
+    #
+    # A row a rule FILED is exempt: it is already on the list in `triaging`,
+    # and withholding it only left it there until the stale sweep surfaced
+    # it an hour later under `triage.UNJUDGED` — "nothing looked at this",
+    # about a subject a look had deliberately decided to watch. What a
+    # watch holds back is COUNTED onto the watch (`note_withheld`), which is
+    # what lets three separate nights re-open it.
+    ready, watched_off = list(filed), []
+    for row in live:
         (ready if resident.rejudge_due(row, now) else watched_off).append(row)
+    if watched_off:
+        await asyncio.to_thread(resident.note_withheld, watched_off, now)
     picked = signals.batch(ready, resident.MAX_BATCH)
     batch = picked["batch"]
     taken = {id(row) for row in batch}
@@ -6161,6 +9434,13 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         return {"looked": False, "queue": len(RESIDENT_PENDING),
                 "watched": len(watched_off), "surfaced": surfaced}
 
+    notes = []
+    for sig in batch:
+        note = await asyncio.to_thread(
+            resident.watch_note, str(sig.get("subject") or ""))
+        if note:
+            notes.append(note)
+    look_inputs: dict = {}   # what the prompt was built from, for a capture
     prompt = resident.first_look_prompt(
         # `numbered=False`: `first_look_prompt` lays the rows out in its own
         # numbered list, and two numbers on one row is a reply that means
@@ -6173,9 +9453,12 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         # subjects, so a look at twelve signals reads the facts about
         # those twelve and not the head of a document about the house.
         await asyncio.to_thread(
-            _memory_block,
-            entities=[sig.get("subject") for sig in batch if sig.get("subject")]),
-        await asyncio.to_thread(_open_case_rows))
+            _memory_block, entities=outcomes.scope_subjects(batch)),
+        await asyncio.to_thread(_open_case_rows),
+        now_line=_now_line(now), watch_notes=notes,
+        examples=await asyncio.to_thread(_outcome_examples, batch, now),
+        situation_line=await asyncio.to_thread(_situation_line, now),
+        inputs=look_inputs)
     TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
     RESIDENT_STATE["last_look_at"] = now
     try:
@@ -6183,20 +9466,27 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         # whether a signal deserves another thought, which is answerable
         # from a sentence — and a cheap tier that could reach for history
         # would stop being the cheap tier.
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_claude, prompt, resident.FIRST_LOOK_SYSTEM, eff_model(),
             resident.TIMEOUT_S, resident.MAX_TURNS, "resident",
-            job=resident.JOB_FIRST_LOOK, schema=resident.FIRST_LOOK_SCHEMA)
+            job=resident.JOB_FIRST_LOOK, schema=resident.FIRST_LOOK_SCHEMA,
+            # A batch holding a hot signal — a leak, smoke, a safety device
+            # — takes the seat a press would, ahead of every card refresh.
+            priority=(run_queue.SAFETY if any(s.get("hot") for s in batch)
+                      else run_queue.SCHEDULED))
     except Exception as exc:  # noqa: BLE001 — the signals are already in
         # hand; what is at stake is only whether anything looked at them.
         log.warning("a first look failed: %s", exc)
         result = {"ok": False, "error": str(exc), "meta": {}}
     run_id = str((result.get("meta") or {}).get("session_id") or "")
     cost = await asyncio.to_thread(_record_usage, result, "resident-look")
-    LEDGER.record(resident.JOB_FIRST_LOOK, int(cost.get("total") or 0), now)
+    LEDGER.record(resident.JOB_FIRST_LOOK, int(cost.get("total") or 0), now,
+                  tier=_ran_tier(result, resident.JOB_FIRST_LOOK))
 
     if not result.get("ok"):
         return await _resident_run_failed(batch, run_id, now, surfaced)
+    await asyncio.to_thread(_capture_look, settings, run_id, batch,
+                            look_inputs, result, cost, now)
     verdicts = resident.parse_first_look(_answer(result), len(batch), batch)
     return await _resident_apply(batch, verdicts, run_id, now, settings,
                                  thinking, surfaced, len(watched_off))
@@ -6239,38 +9529,66 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
     have to act on is the safe direction and "I am watching this" is not a
     reason to hide it.
     """
+    await asyncio.to_thread(outcomes.record_look, batch, verdicts, run_id, now)
     decided: dict[int, tuple[str, str]] = {}
     counts = {word: 0 for word in resident.VERDICTS}
-    to_investigate: list[dict] = []
+    # `(signal, why, row it refines or 0)`: the look's reason travels with
+    # the signal, because the investigation was sent to answer it.
+    to_investigate: list[tuple[dict, str, int]] = []
+    requeue: list[dict] = []
     filed_cases = 0
+    let_go: list[dict] = []
     for i, signal in enumerate(batch, 1):
         answer = verdicts.get(i) or {"verdict": "watch",
-                                     "why": resident.SKIPPED}
+                                     "why": resident.SKIPPED,
+                                     "forced": True, "fallback": True}
         verdict, why = answer["verdict"], answer["why"]
         counts[verdict] += 1
         ts = int(signal.get("finding_ts") or 0)
         if verdict == "ignore":
+            let_go.extend(_signal_decisions([signal], "look_ignore", why))
             if ts:
                 decided[ts] = ("held", why)
             continue
         if ts:
             decided[ts] = ("elevated", why)
         if verdict == "watch":
+            if answer.get("fallback"):
+                # Nobody said "watch" — the reply skipped this one or could
+                # not be read. Persisting a watch from that muted the
+                # subject for a fortnight on the strength of nothing; a
+                # live signal goes back for the next look instead, and a
+                # filed row is already on the list.
+                if not ts:
+                    requeue.append(signal)
+                continue
             await asyncio.to_thread(resident.watch, signal, why, now)
+            let_go.extend(_signal_decisions([signal], "look_watch", why))
             continue
-        if verdict == "act" and signal.get("hot") and _is_safety_signal(signal):
-            # The one verdict that reaches a phone without a run behind it,
-            # and it still writes a CASE rather than calling anything: what
-            # "act" buys is that somebody is told now, and what happens to
-            # the house stays a press. A duplicate claim is the store
-            # saying the house is already saying this.
+        safety = bool(signal.get("safety")) or _is_safety_signal(signal)
+        lane_ts = _safety_case_for(signal) if safety else 0
+        if verdict == "act" and signal.get("hot") and safety:
+            if lane_ts:
+                # The lane filed and sent this trip before any look ran;
+                # the look's `act` agrees with it, and what is left worth a
+                # run is context ON that card — an investigation that
+                # refines the lane's row rather than a second card.
+                to_investigate.append((signal, why, lane_ts))
+                continue
+            # A trip the lane could not see as a trip (already `on` when
+            # the panel started): the same case, through the other door.
             if await _file_safety_case(signal, why, run_id, now):
                 filed_cases += 1
             continue
         # `investigate`, and every `act` that is not a tripped safety
         # sensor: the honest answer to "something is wrong now" on anything
-        # else is to go and find out what, which is the next tier.
-        to_investigate.append(signal)
+        # else is to go and find out what, which is the next tier. A filed
+        # row is what the investigation REFINES, never what it files beside.
+        to_investigate.append((signal, why, ts or lane_ts))
+    if requeue:
+        RESIDENT_PENDING.extend(requeue)
+    if let_go:
+        await asyncio.to_thread(decision_trail.note_many, let_go, now)
 
     moved = await asyncio.to_thread(
         findings_store.record_triage, decided, run_id, now) if decided else []
@@ -6301,19 +9619,32 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
 # shape: a leak is not a thing software may turn a valve off about without
 # being asked, which is `playbooks.py`'s own first rule.
 SAFETY_ACTION = {"label": "Tell me now", "shape": "notify", "consent": False,
-                 "detail": "brAIn has sent this straight through, whatever "
-                           "the hour."}
+                 "detail": "brAIn sent this the moment the sensor tripped, "
+                           "whatever the hour."}
 
 
 async def _file_safety_case(signal: dict, why: str, run_id: str,
                             now: float) -> bool:
-    """A tripped safety sensor, as a case, announced. Returns whether it was
-    new — a claim the store already holds is the house already saying it,
-    and filing it twice is what `add_many`'s dedupe exists to prevent.
+    """A tripped safety sensor the LOOK reached first, as a case, announced.
+
+    The lane (`_safety_trip`) normally got there before any look ran, and
+    then this files nothing: one trip is one card, and the look's verdict
+    is already what the lane did. It still exists for the trip the lane
+    could not see as a trip — a sensor that was already `on` when the
+    panel started, so the bus never saw it change — and it files the same
+    shape under the same source, so the notifier, the mute refusal and the
+    feed cannot tell which door it came through.
     """
+    if _safety_case_for(signal):
+        RESIDENT_STATE["duplicates"] += 1
+        return False
+    local = _local_now(now)
+    base = str(signal.get("text") or signal.get("subject") or "").strip()
+    text = (f"{base} ({local:%a} {local.day} {local:%b}, "
+            f"{local:%H:%M})")[:findings_store.MAX_TEXT]
     row = {
-        "text": signal.get("text") or signal.get("subject") or "",
-        "claim": signal.get("text") or signal.get("subject") or "",
+        "text": text,
+        "claim": text,
         "detail": why,
         "kind": "problem",
         # `critical` and `high` together are what `notify_router.tier_of`
@@ -6325,18 +9656,25 @@ async def _file_safety_case(signal: dict, why: str, run_id: str,
         "confidence": 1.0,
         "entity_id": signal.get("subject") or "",
         "fixable": False,
+        "source": SAFETY_SOURCE,
+        "source_title": "Safety sensors",
         "evidence": _case_evidence(signal),
         "actions": [dict(SAFETY_ACTION)],
-        "fix": "Go and look. brAIn does not act on smoke, water or gas on "
-               "its own.",
-        "fix_by": "resident",
+        "fix": SAFETY_FIX,
     }
     filed = await asyncio.to_thread(
         findings_store.add_case, row, run_id=run_id, when=now)
     if filed is None:
         RESIDENT_STATE["duplicates"] += 1
         return False
-    await _announce_findings([filed])
+    subject = str(signal.get("subject") or "")
+    if subject:
+        SAFETY_TRIPS[subject] = {"at": now, "ts": int(filed["ts"])}
+    service, _sev = _findings_notify_target()
+    if service:
+        await _announce_findings([filed])
+    else:
+        await _safety_fallback_notice(filed)
     log.warning("the Resident filed a safety case: %s", filed["text"])
     return True
 
@@ -6362,124 +9700,248 @@ def _case_evidence(signal: dict) -> list[dict]:
     return out
 
 
-async def _resident_investigations(queued: list[dict], now: float,
-                                   settings: dict, thinking: str) -> dict:
+async def _resident_investigations(queued: list[tuple[dict, str, int]],
+                                   now: float, settings: dict,
+                                   thinking: str) -> dict:
     """Spend at most `MAX_INVESTIGATIONS_PER_LOOK` Sonnet runs, or none.
 
-    The surplus goes back on the pending list rather than being dropped,
-    and so does everything the ledger would not pay for: an allowance that
-    is spent is a reason to wait, never a reason to decide a signal was
-    worth nothing. `investigations_waiting` is what says so on the
-    diagnostics screen, because a queue nobody can see is a queue that
-    silently swallows.
+    Parked work first — investigations an earlier look decided on and the
+    ledger could not pay for — then this look's. What does not run is
+    PARKED (`RESIDENT_PARKED`), never put back on the pending list: back
+    there it was re-judged by a fresh paid look every minute while hot,
+    with no memory of the verdict, and a hot one could spend the day's
+    whole look allowance asking a question whose answer was already
+    "investigate". An allowance that is spent is a reason to wait, never a
+    reason to decide a signal was worth nothing; `investigations_waiting`
+    says so on the diagnostics screen.
     """
+    work = list(RESIDENT_PARKED) + list(queued)
+    RESIDENT_PARKED.clear()
     ran, filed = 0, 0
-    held: list[dict] = []
-    for signal in queued:
+    held: list[tuple[dict, str, int]] = []
+    for item in work:
+        signal, why, refines = item
         if ran >= MAX_INVESTIGATIONS_PER_LOOK:
-            held.append(signal)
+            held.append(item)
             continue
-        allowed, why = LEDGER.allows(
-            resident.tier_for(resident.JOB_INVESTIGATE), thinking, now=now)
+        allowed, reason = LEDGER.allows(
+            _resident_tier(resident.JOB_INVESTIGATE, thinking), thinking, now=now)
         if not allowed:
-            RESIDENT_STATE["last_error"] = why
-            held.append(signal)
+            RESIDENT_STATE["last_error"] = reason
+            held.append(item)
             continue
         ran += 1
         try:
-            if await _resident_investigate(signal, now, thinking):
+            if await _resident_investigate(signal, now, thinking, why=why,
+                                           refines=refines):
                 filed += 1
         except Exception as exc:  # noqa: BLE001 — one investigation that
             # fell over must not cost the rest of the batch its verdicts.
             log.warning("an investigation failed: %s", exc)
             RESIDENT_STATE["last_error"] = str(exc)[:200]
-    RESIDENT_PENDING.extend(held)
-    RESIDENT_STATE["investigations_waiting"] = len(held)
+    if len(held) > RESIDENT_PARKED_MAX:
+        RESIDENT_STATE["dropped"] += len(held) - RESIDENT_PARKED_MAX
+        held = held[-RESIDENT_PARKED_MAX:]
+    RESIDENT_PARKED.extend(held)
+    RESIDENT_STATE["investigations_waiting"] = len(RESIDENT_PARKED)
     RESIDENT_STATE["queue_len"] = len(RESIDENT_PENDING)
     return {"ran": ran, "filed": filed}
 
 
-async def _resident_investigate(signal: dict, now: float,
-                                thinking: str) -> bool:
-    """One signal, read properly. Returns whether a case was filed.
+def _camera_grant(signal: dict, now: float) -> tuple[list[str], str]:
+    """`(cameras, trip kind)` an investigation of this signal may look at.
+
+    Nothing unless the signal is a safety trip or a closure, nothing unless
+    somebody opted a camera in, and nothing once today's looks are spent —
+    `camera_policy`'s rules, asked here so the run is never handed a tool
+    it would only be refused at the chokepoint. The chokepoint asks again
+    on every frame; this is what keeps the tool off a run that cannot use it.
+    """
+    try:
+        opted = settings_store.load().get("camera_confirm") or []
+    except Exception:  # noqa: BLE001 — unreadable settings allow no camera
+        return [], ""
+    if not opted:
+        return [], ""
+    trip = camera_policy.trip_kind(signal, safety_subjects=SAFETY_SUBJECTS,
+                                   closure_subjects=CLOSURE_SUBJECTS)
+    if not trip:
+        return [], ""
+    spent, error = camera_policy.used(_local_now(now).strftime("%Y-%m-%d"))
+    if error or spent >= camera_policy.PER_DAY:
+        return [], trip
+    grant = camera_policy.grant_for(str(signal.get("subject") or ""), opted,
+                                    _FACTS_CTX.get("entity_areas") or {})
+    return grant, trip
+
+
+async def _resident_investigate(signal: dict, now: float, thinking: str,
+                                *, why: str = "", refines: int = 0) -> bool:
+    """One signal, read properly. Returns whether a case was filed or a row
+    was rewritten.
 
     `run_analyst` and not `run_agent`: this runs unattended, so it gets
     tools that only READ — asserted from both ends in `engine`, because
     `--allowedTools` governs what runs without a prompt and a headless run
     cannot be prompted. Nothing an investigation says may change a house;
     what it produces is a claim with the endings on it.
+
+    ``refines`` is the row this signal came from — a check's finding, or
+    the safety lane's card — and the run REWRITES it (`findings_store.
+    refine`) or, saying so, holds it back (`hold_after_look`). It is kept
+    out of the open-cases list it is shown, because a run told that the
+    one thing it was sent to look at is a thing it may not claim could
+    only abstain or file a sibling card.
     """
     RESIDENT_STATE["last_investigation_at"] = now
+    refining = (await asyncio.to_thread(findings_store.get, refines)
+                if refines else None)
+    exclude = {str((refining or {}).get(k) or "") for k in ("claim", "text")}
+    rows = signals.prompt_rows([signal], now, numbered=False)
     prompt = resident.investigate_prompt(
         signal,
-        await asyncio.to_thread(_memory_block, entities=_signal_entities(signal)),
+        await asyncio.to_thread(_memory_block, entities=_signal_entities(
+            signal) + outcomes.scope_subjects([signal])),
         await _house_prompt_block(now),
-        await asyncio.to_thread(_open_case_rows))
-    result = await asyncio.to_thread(
+        await asyncio.to_thread(_open_case_rows, exclude=exclude),
+        signal_row=rows[0] if rows else "", why=why, refining=refining,
+        now_line=_now_line(now),
+        examples=await asyncio.to_thread(_outcome_examples, [signal], now,
+                                         investigating=True),
+        situation_line=await asyncio.to_thread(_situation_line, now))
+    grant, trip = await asyncio.to_thread(_camera_grant, signal, now)
+    prompt += camera_policy.prompt_line(grant, trip)
+    result = await _claude(
         engine.run_analyst, prompt, resident.INVESTIGATE_SYSTEM, eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
-        "resident", job=resident.JOB_INVESTIGATE, schema=resident.CASE_SCHEMA)
+        "resident", job=resident.JOB_INVESTIGATE, schema=resident.CASE_SCHEMA,
+        camera_grant=tuple(grant),
+        priority=(run_queue.SAFETY if signal.get("hot")
+                  else run_queue.SCHEDULED))
     run_id = str((result.get("meta") or {}).get("session_id") or "")
     cost = await asyncio.to_thread(_record_usage, result, "resident-investigate")
-    LEDGER.record(resident.JOB_INVESTIGATE, int(cost.get("total") or 0), now)
+    LEDGER.record(resident.JOB_INVESTIGATE, int(cost.get("total") or 0), now,
+                  tier=_ran_tier(result, resident.JOB_INVESTIGATE))
     if not result.get("ok"):
         log.info("an investigation of %s came back empty: %s",
                  signal.get("subject"), result.get("error") or "no answer")
+        await _outcome(signal, "failed", run_id, now, why, refines)
         return False
 
-    # What the run was allowed to have read. `parse_case` refuses a case
-    # whose evidence names anything else — WHOLE, rather than trimming the
-    # row, because the claim was reasoned from it and dropping the row
-    # leaves the conclusion wearing the evidence that survived.
-    read = {str(signal.get("subject") or "")} | {
-        str(r.get("entity") or "") for r in (signal.get("evidence") or [])
-        if isinstance(r, dict)}
-    read |= _entities_read(result)
-    case = resident.parse_case(_answer(result), read_entities=read)
+    answer = _answer(result)
+    if refining is not None:
+        dismissal = resident.parse_dismissal(answer)
+        if dismissal:
+            held = await asyncio.to_thread(findings_store.hold_after_look,
+                                           refines, dismissal, run_id, now)
+            if held:
+                await asyncio.to_thread(
+                    decision_trail.note_many, decision_trail.rows_for(
+                        [refining], "held", dismissal), now)
+            log.info("an investigation found nothing in %s%s",
+                     refining.get("text"),
+                     "" if held else " (the row had moved on; left as it is)")
+            await _outcome(signal, "held" if held else "moved_on", run_id,
+                           now, why, refines, row=held, said=dismissal)
+            return False
+
+    # What the run actually read. `parse_case` refuses a case whose
+    # evidence names anything else — WHOLE, rather than trimming the row,
+    # because the claim was reasoned from it and dropping the row leaves
+    # the conclusion wearing the evidence that survived. None when the
+    # transcript could not be read, which checks nothing: "I could not
+    # look" must not throw a real investigation away.
+    read = await asyncio.to_thread(_entities_read, result)
+    if read is not None:
+        read |= set(_signal_entities(signal))
+    case = resident.parse_case(answer, read_entities=read)
     if case is None:
-        log.info("the investigation of %s made no claim",
-                 signal.get("subject"))
+        if read is not None and resident.parse_case(answer) is not None:
+            RESIDENT_STATE["refused"] = RESIDENT_STATE.get("refused", 0) + 1
+            log.warning("an investigation of %s cited evidence it never read; "
+                        "its case was refused", signal.get("subject"))
+            await _outcome(signal, "refused", run_id, now, why, refines)
+        else:
+            log.info("the investigation of %s made no claim",
+                     signal.get("subject"))
+            await _outcome(signal, "no_claim", run_id, now, why, refines)
         return False
 
     if case.get("escalate"):
-        case = await _resident_escalate(case, signal, now, thinking, read)
+        case = await _resident_escalate(case, signal, now, thinking, read,
+                                        why=why, refining=refining)
+        if case is None:
+            log.info("a stronger look withdrew the case about %s",
+                     signal.get("subject"))
+            await _outcome(signal, "withdrawn", run_id, now, why, refines,
+                           escalated=True)
+            return False
     # The signal that started it, folded in — because "what made brAIn look"
     # is evidence about the claim and the run has no way to cite it: it was
     # handed the line rather than reading it off the house.
     case["evidence"] = (case.get("evidence") or []) + _case_evidence(signal)
-    case["run_id"] = case.get("run_id") or run_id
-    case["investigation"] = {"run_id": run_id}
+    case_run = str(case.pop("_run_id", "") or run_id)
+    case["run_id"] = case.get("run_id") or case_run
+    case["investigation"] = {"run_id": case_run}
+
+    if refining is not None:
+        row = await asyncio.to_thread(findings_store.refine, refines, case,
+                                      case_run, now)
+        if row is None:
+            log.info("the row an investigation refined had moved on")
+            await _outcome(signal, "moved_on", case_run, now, why, refines)
+            return False
+        log.info("the Resident rewrote a row after looking: %s",
+                 row.get("claim") or row.get("text"))
+        await _outcome(signal, "refined", case_run, now, why, refines,
+                       row=row, case=case, escalated=case_run != run_id)
+        return True
+
     filed = await asyncio.to_thread(
-        findings_store.add_case, case, run_id=run_id, when=now)
+        findings_store.add_case, case, run_id=case_run, when=now)
     if filed is None:
         # The store already holds this claim, in any status or in the
         # settled ledger. Counted rather than filed twice, which is what
         # makes a re-report silent and a dismissal permanent.
         RESIDENT_STATE["duplicates"] += 1
         log.info("an investigation reached a claim the house already holds")
+        await _outcome(signal, "duplicate", case_run, now, why, refines,
+                       case=case)
         return False
     await _announce_findings([filed])
     log.info("the Resident filed a %s case: %s", filed.get("kind", "problem"),
              filed["text"])
+    await _outcome(signal, "filed", case_run, now, why, refines, row=filed,
+                   case=case, escalated=case_run != run_id)
     return True
 
 
-def _entities_read(result: dict) -> set[str]:
-    """Every entity id the run's own transcript mentions.
+def _entities_read(result: dict) -> set[str] | None:
+    """Every entity id the run's TOOL TRAFFIC mentions, or None.
 
     `parse_case`'s guard is against an INVENTED reading, and the honest
-    test for that is whether the id appears in what the run did — the
-    signal's own subject is not enough, because the point of the tier is
-    that it goes and looks at the area, the history and the neighbours. A
-    transcript that cannot be read leaves the guard with the signal's
-    entities alone, which refuses more than it should rather than less.
+    test is whether the id appears in what the run sent to its tools or got
+    back from them. It read the run's final reply text instead — the one
+    place the answer under test is written — so a CLI that echoed its JSON
+    made every cited id "read" (the guard did nothing), and one answering
+    with validated `structured_output` and a sentence of prose read no
+    neighbour at all (the guard threw real cases away, logged as "made no
+    claim"). The transcript is the engine store's own JSONL, named by the
+    session id the run claimed. None when it cannot be found or read.
     """
-    text = str(result.get("text") or "")
-    return set(_MEMORY_ENTITY_RE.findall(text.lower()))
+    session_id = str((result.get("meta") or {}).get("session_id") or "")
+    if not session_id:
+        return None
+    traffic = conversations.tool_traffic(engine.CLAUDE_HOME, session_id)
+    if traffic is None:
+        return None
+    return set(_MEMORY_ENTITY_RE.findall(traffic.lower()))
 
 
 async def _resident_escalate(case: dict, signal: dict, now: float,
-                             thinking: str, read: set[str]) -> dict:
+                             thinking: str, read: set[str] | None, *,
+                             why: str = "",
+                             refining: dict | None = None) -> dict | None:
     """One stronger run at a case the first one was unsure about.
 
     `parse_case` only ever sets `escalate` where the run said so AND its
@@ -6488,31 +9950,60 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
     said `watch`. Past the allowance the case STANDS and its detail says
     it was not escalated, because a claim that was worth filing is worth
     filing at the confidence it has.
+
+    The stronger run is handed the first case and its uncertainty — it was
+    handed the same prompt with none of it, which is a re-roll rather than
+    a second opinion — and **its no-claim is honoured**: a deliberate empty
+    claim returns None and nothing is filed. It used to fall back to the
+    unsure case, so the one answer an escalation exists to be able to give
+    ("no, that is not right") was the one it could not.
     """
-    allowed, why = LEDGER.allows(resident.tier_for(ESCALATE_JOB),
-                                 thinking, now=now)
+    allowed, reason = LEDGER.allows(_resident_tier(ESCALATE_JOB, thinking),
+                                    thinking, now=now)
     if not allowed:
         case["detail"] = (case.get("detail", "") + "\n\nbrAIn was unsure "
-                          f"about this and did not look again: {why}.").strip()
+                          f"about this and did not look again: {reason}."
+                          ).strip()
         return case
-    result = await asyncio.to_thread(
+    exclude = {str((refining or {}).get(k) or "") for k in ("claim", "text")}
+    rows = signals.prompt_rows([signal], now, numbered=False)
+    result = await _claude(
         engine.run_analyst,
         resident.investigate_prompt(
             signal,
             await asyncio.to_thread(_memory_block,
                                     entities=_signal_entities(signal)),
             await _house_prompt_block(now),
-            await asyncio.to_thread(_open_case_rows)),
+            await asyncio.to_thread(_open_case_rows, exclude=exclude),
+            signal_row=rows[0] if rows else "", why=why, refining=refining,
+            prior_case=case, now_line=_now_line(now),
+            examples=await asyncio.to_thread(_outcome_examples, [signal], now,
+                                             investigating=True),
+            situation_line=await asyncio.to_thread(_situation_line, now)),
         resident.INVESTIGATE_SYSTEM, eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
-        "resident", job=ESCALATE_JOB, schema=resident.CASE_SCHEMA)
+        "resident", job=ESCALATE_JOB, schema=resident.CASE_SCHEMA,
+        priority=(run_queue.SAFETY if signal.get("hot")
+                  else run_queue.SCHEDULED))
     cost = await asyncio.to_thread(_record_usage, result, "resident-escalate")
-    LEDGER.record(ESCALATE_JOB, int(cost.get("total") or 0), now)
+    LEDGER.record(ESCALATE_JOB, int(cost.get("total") or 0), now,
+                  tier=_ran_tier(result, ESCALATE_JOB))
     if not result.get("ok"):
         return case
-    stronger = resident.parse_case(
-        _answer(result), read_entities=read | _entities_read(result))
-    return stronger or case
+    answer = _answer(result)
+    if isinstance(answer, dict) and not str(answer.get("claim") or "").strip():
+        return None
+    stronger_read = await asyncio.to_thread(_entities_read, result)
+    if read is None or stronger_read is None:
+        both = None
+    else:
+        both = read | stronger_read
+    stronger = resident.parse_case(answer, read_entities=both)
+    if stronger is None:
+        return case
+    stronger["_run_id"] = str((result.get("meta") or {}).get("session_id")
+                              or "")
+    return stronger
 
 
 async def _resident_loop() -> None:
@@ -6520,8 +10011,8 @@ async def _resident_loop() -> None:
 
     The tick is short because a hot signal must not wait out an interval,
     and a tick with an empty queue is one `qsize()` and a comparison. The
-    watch list is expired here rather than on a timer of its own for
-    `_triage_drain`'s reason: one loop, one place a queue is answered for.
+    watch list is expired here rather than on a timer of its own: one
+    loop, one place a queue is answered for.
     """
     await asyncio.sleep(RESIDENT_FIRST_DELAY_S)
     expired_at = 0.0
@@ -6534,6 +10025,11 @@ async def _resident_loop() -> None:
                 if gone:
                     log.info("stopped watching %d subject(s) nothing came "
                              "back about", gone)
+                aged = await asyncio.to_thread(findings_store.expire_cases,
+                                               now)
+                if aged:
+                    log.info("took %d Resident case(s) nobody answered off "
+                             "the list", len(aged))
             await _resident_tick(now)
         except asyncio.CancelledError:
             raise
@@ -6552,6 +10048,10 @@ def _resident_diagnostics() -> dict:
     """
     return {
         **{k: v for k, v in RESIDENT_STATE.items()},
+        # The lane in front of all of it, because "no leak was ever filed"
+        # and "the lane is broken" read the same from every other screen.
+        "safety": dict(SAFETY_STATE),
+        "parked": len(RESIDENT_PARKED),
         "look_interval_s": RESIDENT_LOOK_S,
         "queue_max": RESIDENT_QUEUE_MAX,
         "watching": len(resident.watched()),
@@ -6559,6 +10059,476 @@ def _resident_diagnostics() -> dict:
         "looks_today": _triage_runs_today(time.time()),
         "looks_per_day": triage.MAX_PER_DAY,
     }
+
+
+# ---------------------------------------------------------------------------
+# Outcomes — what the Resident decided, and what the household did next
+# ---------------------------------------------------------------------------
+#
+# `outcomes.py` holds the log, the join and the rules; what lives here is
+# the four places it touches the running panel: a line per investigation
+# result, the worked examples a prompt is handed, the nightly pass that
+# grades and reflects, and the replay a person presses for. Every one of
+# them is best-effort in the direction that keeps the loop running — a
+# verdict log that could not be written, an example block that could not
+# be built and a reflect run that failed all leave the Resident exactly as
+# it was, because the accounting must never be what stops the house being
+# watched.
+
+# The reflect run is a cheap look at a handful of numbered patterns.
+REFLECT_TIMEOUT_S = 180
+REFLECT_MAX_TURNS = 4
+# A judgement already standing is re-asked about weekly at most: the
+# counts on it go stale slowly, and re-asking nightly would spend a run to
+# write the same sentence.
+REFLECT_REFRESH_S = 7 * 86400
+# The replay's spend cap when the request names none. A first look is a
+# few thousand tokens; this is a few dozen of them, and a measurement that
+# can quietly spend an account's window is one nobody runs twice.
+EVAL_DEFAULT_TOKENS = 60_000
+EVAL_MAX_TOKENS = 500_000
+EVAL_DEFAULT_BATCHES = 20
+EVAL_MAX_BATCHES = 100
+EVAL_DEFAULT_DAYS = 14
+
+OUTCOMES_STATE: dict = {"last_error": "", "running": False}
+EVAL_STATE: dict = {"starting": False, "started_at": 0.0, "report": None,
+                    "error": ""}
+
+
+async def _outcome(signal: dict, result: str, run_id: str, now: float,
+                   why: str = "", refines: int = 0, *, row: dict | None = None,
+                   case: dict | None = None, said: str = "",
+                   escalated: bool = False) -> None:
+    """One line in the verdict log for what an investigation came to.
+
+    ``why`` is the look's reason for sending it (what to look FOR) and
+    ``said`` the investigation's own sentence where it gave one rather
+    than a case. Never raises: `record_investigation` swallows its own
+    failures, and this is awaited on the investigation's success path.
+    """
+    await asyncio.to_thread(
+        outcomes.record_investigation, signal, result, run_id=run_id,
+        now=now, why=said or str((case or {}).get("claim") or ""),
+        asked=why, refines=refines, row=row, case=case, escalated=escalated)
+
+
+def _outcome_examples(batch: list[dict], now: float, *,
+                      investigating: bool = False) -> list[str]:
+    """Past calls like these, with what the household did — for a prompt.
+
+    An investigation gets fewer, and the calibration sentence above them:
+    it is the one run that states a confidence, so it is the one run the
+    record of how that confidence has held up is about. Never raises — an
+    empty list is the prompt as it was before this existed.
+    """
+    try:
+        tz, _name = baselines.house_timezone()
+    except Exception:  # noqa: BLE001 — a clock we cannot read is UTC
+        tz = None
+    try:
+        if investigating:
+            lines = outcomes.examples_for(
+                batch, now, k=outcomes.INVESTIGATE_EXAMPLES_K,
+                limit_chars=outcomes.INVESTIGATE_EXAMPLES_CHARS, tz=tz)
+            note = outcomes.calibration_note(facts_store.with_predicate(
+                outcomes.CALIBRATION_PREDICATE, now))
+            return ([f"Your own calibration: {note}"] if note else []) + lines
+        return outcomes.examples_for(batch, now, tz=tz)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not build the worked examples: %s", exc)
+        return []
+
+
+def _capture_look(settings: dict, run_id: str, batch: list[dict],
+                  inputs: dict, result: dict, cost: dict, now: float) -> None:
+    """Keep this look for the replay, when capture is switched on.
+
+    The same switch as an analyst capture and the same file shape rules —
+    off by default, redacted on the way in, capped — because a first look
+    is as much a floor plan as a card bundle is. Never raises.
+    """
+    if not settings.get("capture"):
+        return
+    try:
+        capture.record_first_look(
+            capture.run_id_from(result.get("meta") or {}) or run_id,
+            batch=batch, inputs=inputs, reply=_answer(result) or {},
+            model=str((result.get("meta") or {}).get("model") or eff_model()),
+            tokens=cost, now=now)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not capture the first look: %s", exc)
+
+
+def _learning_on() -> bool:
+    """The `learning` option: may brAIn file what it works out? Live from
+    the Supervisor, the run.sh export otherwise — `_curiosity_enabled`'s
+    shape. A judgement is something brAIn learned, so it answers to it."""
+    snap = addon_options.snapshot() or {}
+    value = snap.get("learning")
+    if value is None:
+        raw = os.environ.get("BRAIN_ASSIST_LEARNING", "true").strip().lower()
+        return raw not in ("false", "0", "no", "")
+    return bool(value)
+
+
+def _label_first_look_captures(graded: list[dict]) -> int:
+    """Label every captured first look by what the household did next."""
+    labelled = 0
+    for entry in capture.first_looks():
+        run_id = str(entry.get("run_id") or "")
+        labels = outcomes.look_labels(graded, run_id)
+        if labels and capture.label_first_look(run_id, labels):
+            labelled += 1
+    return labelled
+
+
+def _supersede_judgements(graded: list[dict], now: float) -> int:
+    """Drop the quieter judgements a later confirmed case contradicted."""
+    standing = outcomes.judgement_rows(
+        facts_store.with_predicate(outcomes.JUDGEMENT_PREFIX, now))
+    gone = 0
+    for fact in outcomes.superseded(standing, graded):
+        if facts_store.forget(str(fact.get("id") or "")):
+            gone += 1
+            log.info("a judgement no longer holds and was dropped: %s",
+                     log_safe(fact.get("text")))
+    return gone
+
+
+def _write_calibration(line: str, now: float) -> bool:
+    """The calibration sentence, replacing the last one — or removing it
+    when no bucket has earned one any more, because a stale reliability
+    figure is a figure a prompt goes on believing."""
+    standing = facts_store.with_predicate(outcomes.CALIBRATION_PREDICATE, now)
+    if any(f.get("text") == line for f in standing) and line:
+        return False
+    for fact in standing:
+        facts_store.forget(str(fact.get("id") or ""))
+    if not line:
+        return bool(standing)
+    facts_store.add(line, subject=outcomes.CALIBRATION_SUBJECT,
+                    source="resident", confidence=outcomes.JUDGEMENT_CONFIDENCE,
+                    predicate=outcomes.CALIBRATION_PREDICATE, ts=now)
+    return True
+
+
+def _fresh_candidates(cands: list[dict], now: float) -> list[dict]:
+    """The candidates no standing judgement already answers this week."""
+    standing = outcomes.judgement_rows(
+        facts_store.with_predicate(outcomes.JUDGEMENT_PREFIX, now))
+    out = []
+    for cand in cands:
+        same = [f for f in standing
+                if f.get("subject") == cand["subject"]
+                and f.get("predicate") == outcomes.predicate_for(cand)
+                and now - float(f.get("ts") or 0) < REFLECT_REFRESH_S]
+        if not same:
+            out.append(cand)
+    return out
+
+
+async def _reflect(cands: list[dict], now: float) -> dict:
+    """One cheap run writing what the lopsided patterns teach.
+
+    The arithmetic decided WHICH scopes (`outcomes.candidates`); the model
+    only says what each means, and `parse_reflect` checks every sentence
+    before it becomes a fact. A run that failed writes nothing and says so
+    — the standing judgements are left as they were, because a failed run
+    is never a verdict.
+    """
+    result = await _claude(
+        engine.run_claude, outcomes.reflect_prompt(cands),
+        outcomes.REFLECT_SYSTEM, eff_model(), REFLECT_TIMEOUT_S,
+        REFLECT_MAX_TURNS, "resident", job="reflect",
+        schema=outcomes.REFLECT_SCHEMA)
+    cost = await asyncio.to_thread(_record_usage, result, "resident-reflect")
+    LEDGER.record("reflect", int(cost.get("total") or 0), now,
+                  tier=_ran_tier(result, "reflect"))
+    run_id = str((result.get("meta") or {}).get("session_id") or "")
+    if not result.get("ok"):
+        return {"ran": True, "ok": False, "candidates": len(cands),
+                "error": str(result.get("error") or "no answer")[:200]}
+    lessons = outcomes.parse_reflect(_answer(result), cands)
+
+    def write() -> int:
+        expires = time.strftime(
+            "%Y-%m-%d", time.localtime(
+                now + outcomes.JUDGEMENT_TTL_DAYS * 86400))
+        standing = outcomes.judgement_rows(
+            facts_store.with_predicate(outcomes.JUDGEMENT_PREFIX, now))
+        written = 0
+        for idx, lesson in sorted(lessons.items()):
+            cand = cands[idx - 1]
+            # One judgement per scope: whatever stood about this subject
+            # is replaced, in either direction, by what the record says now.
+            for fact in standing:
+                if (fact.get("subject") == cand["subject"]
+                        and fact.get("predicate") !=
+                        outcomes.CALIBRATION_PREDICATE):
+                    facts_store.forget(str(fact.get("id") or ""))
+            row, _created = facts_store.add(
+                outcomes.judgement_text(cand, lesson),
+                subject=cand["subject"], source="resident",
+                confidence=outcomes.JUDGEMENT_CONFIDENCE, run_id=run_id,
+                predicate=outcomes.predicate_for(cand), expires=expires,
+                ts=now)
+            written += 1 if row else 0
+        return written
+
+    written = await asyncio.to_thread(write)
+    log.info("reflect: %d pattern(s), %d judgement(s) written, %d refused "
+             "or left empty", len(cands), written, len(cands) - written)
+    return {"ran": True, "ok": True, "candidates": len(cands),
+            "written": written, "refused": len(cands) - len(lessons),
+            "run_id": run_id}
+
+
+async def _outcomes_nightly(now: float, *, force: bool = False) -> dict:
+    """Grade the night's verdicts, keep what holds, and reflect on it.
+
+    Deterministic first and free: the join, the superseding of any
+    judgement a confirmed case has contradicted, the calibration sentence
+    and the labels on captured looks all happen whatever the gates say,
+    because none of them spends anything. Only the reflect run answers to
+    the three gates every scheduled Claude run answers to — and to
+    `learning`, because a judgement is something brAIn learned.
+    """
+    state = await asyncio.to_thread(outcomes.load_state)
+    if not force and not outcomes.join_due(now, state):
+        return {"skipped": "the join ran less than a day ago"}
+    graded = await asyncio.to_thread(outcomes.load_graded, now)
+    rep = await asyncio.to_thread(outcomes.report, graded)
+    writable = facts_store.writable()
+    removed = (await asyncio.to_thread(_supersede_judgements, graded, now)
+               if writable else 0)
+    if writable and _learning_on():
+        await asyncio.to_thread(_write_calibration,
+                                rep.get("calibration_line") or "", now)
+    labelled = await asyncio.to_thread(_label_first_look_captures, graded)
+    cands = outcomes.candidates(outcomes.tallies(outcomes.items(graded)))
+    fresh = await asyncio.to_thread(_fresh_candidates, cands, now) \
+        if writable else []
+    settings = await asyncio.to_thread(settings_store.load)
+    reflect: dict = {"at": int(now), "ran": False,
+                     "candidates": len(cands), "fresh": len(fresh)}
+    excuse = ("" if writable else
+              "the facts store is not writable on this install")
+    if not excuse and not _learning_on():
+        excuse = "learning is switched off"
+    excuse = excuse or _resident_gate(settings)
+    if excuse:
+        reflect["held"] = excuse
+    elif fresh:
+        try:
+            reflect.update(await _reflect(fresh, now))
+        except Exception as exc:  # noqa: BLE001 — the join above stands
+            reflect.update({"ran": True, "ok": False,
+                            "error": str(exc)[:200]})
+    standing = await asyncio.to_thread(
+        facts_store.with_predicate, outcomes.JUDGEMENT_PREFIX, now)
+    state.update({
+        "joined_at": int(now),
+        "summary": {k: rep[k] for k in ("rows", "by_outcome", "by_stage")},
+        "items": rep["items"],
+        "calibration_line": rep.get("calibration_line") or "",
+        "superseded": removed,
+        "captures_labelled": labelled,
+        "judgements": len(outcomes.judgement_rows(standing)),
+        "reflect": reflect,
+    })
+    await asyncio.to_thread(outcomes.save_state, state)
+    log.info("outcomes: %d verdict(s) graded, %d judgement(s) standing, %d "
+             "superseded%s", rep["rows"], state["judgements"], removed,
+             f"; reflect held: {reflect['held']}" if reflect.get("held")
+             else "")
+    return state
+
+
+async def _outcomes_tick(now: float) -> None:
+    """`_outcomes_nightly` for a loop: never raises, never overlaps."""
+    if OUTCOMES_STATE["running"]:
+        return
+    OUTCOMES_STATE["running"] = True
+    try:
+        await _outcomes_nightly(now)
+        OUTCOMES_STATE["last_error"] = ""
+    except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
+        OUTCOMES_STATE["last_error"] = str(exc)[:200]
+        log.warning("the outcomes pass failed: %s", exc)
+    finally:
+        OUTCOMES_STATE["running"] = False
+
+
+def _outcomes_diagnostics() -> dict:
+    """The row in `/api/diagnostics`: is the log written, when did the join
+    last run, and what did reflect do. Counts only — never a verdict's
+    sentence or a homeowner's note."""
+    try:
+        out = outcomes.diagnostics()
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)[:200]}
+    out["last_error"] = OUTCOMES_STATE["last_error"]
+    out["eval"] = {"running": bool(EVAL_STATE["starting"]),
+                   "last": ((EVAL_STATE["report"] or {}).get("total")
+                            if EVAL_STATE["report"] else None)}
+    return out
+
+
+async def h_resident_outcomes(request: web.Request) -> web.Response:
+    """What the Resident decided and what came of it, graded now.
+
+    Computed fresh on every request — it is a deterministic join over three
+    small files, and a person looking at it wants this afternoon's Wrong in
+    it rather than last night's. `?nightly=1` also runs the nightly pass
+    now (the free half, plus a reflect run if the gates allow), which is
+    how somebody checks a judgement without waiting for the small hours.
+    """
+    now = time.time()
+    if request.query.get("nightly") in ("1", "true", "yes"):
+        if OUTCOMES_STATE["running"]:
+            return web.json_response(
+                {"error": "the outcomes pass is already running"}, status=409)
+        OUTCOMES_STATE["running"] = True
+        try:
+            await _outcomes_nightly(now, force=True)
+        finally:
+            OUTCOMES_STATE["running"] = False
+
+    def build() -> dict:
+        graded = outcomes.load_graded(now)
+        rep = outcomes.report(graded, full=True)
+        rep["candidates"] = [
+            {k: c[k] for k in ("scope", "subject", "direction", "counts")}
+            for c in outcomes.candidates(
+                outcomes.tallies(outcomes.items(graded)))]
+        rep["judgements"] = [
+            {k: f.get(k) for k in ("id", "subject", "predicate", "text", "ts",
+                                    "expires", "run_id")}
+            for f in facts_store.with_predicate(outcomes.JUDGEMENT_PREFIX,
+                                                now)]
+        rep["state"] = outcomes.load_state()
+        return rep
+
+    return web.json_response(await asyncio.to_thread(build))
+
+
+def _eval_ask(prompt: str) -> tuple[dict | None, int]:
+    """One replayed look through the real runner, under `replay`.
+
+    Called from `_run_eval`'s own thread and so takes no `run_queue` seat,
+    `doctor.py`'s arrangement: a pressed, spend-capped replay is not the
+    unattended traffic that bound exists for."""
+    result = engine.run_claude(
+        prompt, resident.FIRST_LOOK_SYSTEM, eff_model(), resident.TIMEOUT_S,
+        resident.MAX_TURNS, "replay", job=resident.JOB_FIRST_LOOK,
+        schema=resident.FIRST_LOOK_SCHEMA)
+    cost = _record_usage(result, "eval-first-look")
+    if not result.get("ok"):
+        return None, int(cost.get("total") or 0)
+    return _answer(result) or {}, int(cost.get("total") or 0)
+
+
+def _run_eval(entries: list[dict], max_tokens: int, max_batches: int,
+              days: int, now: float) -> dict:
+    """Replay labelled batches against today's prompt, under a spend cap.
+
+    The cap is checked BEFORE each run (`replay.py`'s rule: a cap that
+    stops once it has been passed has already spent the run that passed
+    it), and what it stopped is counted rather than dropped. The report
+    carries the captured verdicts' own agreement beside the replayed one,
+    because a number without the number it is compared against is not
+    evidence for a change — and nothing here changes anything: promotion
+    is a person reading this and editing a prompt.
+    """
+    rows: list[dict] = []
+    spent, skipped = 0, 0
+    for entry in entries:
+        if len(rows) >= max_batches or spent >= max_tokens:
+            skipped += 1
+            continue
+        row = outcomes.replay_look(entry, _eval_ask)
+        spent += int(row.get("tokens") or 0)
+        rows.append(row)
+    return {"generated_at": int(now), "kind": "first_look", "days": days,
+            "max_tokens": max_tokens, "rows": rows, "skipped": skipped,
+            "total": outcomes.summarise_replay(rows),
+            "promotion": "never automatic: a changed prompt ships when a "
+                         "person reads this number and decides it should"}
+
+
+async def h_resident_eval_get(request: web.Request) -> web.Response:
+    return web.json_response({
+        "running": bool(EVAL_STATE["starting"]),
+        "started_at": int(EVAL_STATE["started_at"] or 0) or None,
+        "error": EVAL_STATE["error"], "report": EVAL_STATE["report"]})
+
+
+async def h_resident_eval_start(request: web.Request) -> web.Response:
+    """`brain eval first_look`: replay captured looks against today's prompt.
+
+    A press, never a timer — it spends real runs — so it skips the usage
+    budget and nothing else that matters: a credential is required, the
+    spend is capped, and it STARTS rather than awaits, because twenty runs
+    are minutes and ingress will not hold a request that long
+    (`h_baselines_run`'s clock). The outcome is read back off GET.
+    """
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — an empty body is the defaults
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    kind = str(body.get("kind") or "first_look")
+    if kind != "first_look":
+        return web.json_response(
+            {"error": f"there is no replay for {kind!r}; the one there is "
+                      "is first_look"}, status=400)
+
+    def clamp(name: str, default: int, top: int) -> int:
+        try:
+            value = int(body.get(name) or default)
+        except (TypeError, ValueError):
+            value = default
+        return max(1, min(top, value))
+
+    max_tokens = clamp("max_tokens", EVAL_DEFAULT_TOKENS, EVAL_MAX_TOKENS)
+    max_batches = clamp("max_batches", EVAL_DEFAULT_BATCHES, EVAL_MAX_BATCHES)
+    days = clamp("days", EVAL_DEFAULT_DAYS, 365)
+    if EVAL_STATE["starting"]:
+        return web.json_response(
+            {"running": True, "error": "a replay is already running"},
+            status=409)
+    if not engine.get_auth():
+        return web.json_response(
+            {"error": "there is no Claude credential, so nothing can be "
+                      "replayed"}, status=409)
+    now = time.time()
+    entries = [e for e in await asyncio.to_thread(
+        capture.first_looks, now - days * 86400) if e.get("labels")]
+    if not entries:
+        return web.json_response(
+            {"error": f"no captured first look from the last {days} days "
+                      "carries a label yet — switch capture on under ⚙ → "
+                      "Diagnostics and let the household answer a few cards; "
+                      "the nightly pass labels them"}, status=409)
+    # Flipped synchronously, `start_auth_check`'s rule: two presses in one
+    # tick must not both pass a guard their own task has not set yet.
+    EVAL_STATE.update({"starting": True, "started_at": now, "error": ""})
+
+    async def run_it() -> None:
+        try:
+            EVAL_STATE["report"] = await asyncio.to_thread(
+                _run_eval, entries, max_tokens, max_batches, days, now)
+        except Exception as exc:  # noqa: BLE001
+            EVAL_STATE["error"] = str(exc)[:200]
+            log.warning("the first-look replay failed: %s", exc)
+        finally:
+            EVAL_STATE["starting"] = False
+
+    asyncio.create_task(run_it())
+    return web.json_response({"running": True, "batches": len(entries),
+                              "max_tokens": max_tokens,
+                              "max_batches": max_batches, "days": days})
 
 
 async def _ask_why(now: float, reason: str = "schedule") -> int:
@@ -6591,6 +10561,17 @@ async def _ask_why(now: float, reason: str = "schedule") -> int:
     if not engine.get_auth() or not settings["auto_enabled"]:
         return 0
     if usage_store.budget_state(settings)["blocked"]:
+        return 0
+    # A guess a full queue turned away earlier is re-proposed for nothing
+    # the moment there is room — before anything new is paid for.
+    await asyncio.to_thread(_repropose_deferred, now)
+    # And nothing is spent while the queue is full. A guess is one of the
+    # three answers a run can give, and the one that needs a slot: a run
+    # that answered "guess" into a full queue used to pay for the
+    # reasoning, throw the guess away and close the subject for good,
+    # which is the outcome worse than not asking. The other two producers
+    # of guesses already asked (`brain-learn.sh`, the analyst's budget).
+    if hypotheses.budget() <= 0:
         return 0
     try:
         tz, _name = await asyncio.to_thread(baselines.house_timezone)
@@ -6642,7 +10623,7 @@ async def _run_curiosity(candidate: dict, ledger: dict, tz,
             entities=[r.get("entity_id") for r in rows if r.get("entity_id")]),
         recent=list(reversed(rows)),
     )
-    result = await asyncio.to_thread(
+    result = await _claude(
         engine.run_analyst, prompt, curiosity.SYSTEM, eff_model(),
         curiosity.TIMEOUT_S, curiosity.MAX_TURNS, "curiosity",
         job="curiosity", schema=curiosity.SCHEMA)
@@ -6659,13 +10640,53 @@ async def _run_curiosity(candidate: dict, ledger: dict, tz,
             "the reply was not the shape the contract asked for", now)
         return "", "unparseable"
 
-    filed = await asyncio.to_thread(_file_curiosity, candidate, answer)
+    filed = await asyncio.to_thread(
+        _file_curiosity, candidate, answer,
+        capture.run_id_from(result.get("meta") or {}))
     await asyncio.to_thread(curiosity.record_answer, candidate["subject"],
                             answer, filed, "", now)
     return filed, ""
 
 
-def _file_curiosity(candidate: dict, answer: dict) -> str:
+def _repropose_deferred(now: float) -> int:
+    """Put guesses a full queue turned away onto it, while there is room.
+
+    Free: the run that wrote them has already been paid for, and the claim
+    is on the entry (`curiosity.record_answer` keeps `because` and `ask`).
+    Never raises — this sits in front of a scheduled run and an empty
+    answer here must not stop it.
+    """
+    moved = 0
+    try:
+        for entry in curiosity.deferred():
+            if hypotheses.budget() <= 0:
+                break
+            if _propose_curiosity(entry, entry):
+                curiosity.mark_reproposed(entry["subject"], now)
+                moved += 1
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not re-propose a deferred guess: %s", exc)
+    return moved
+
+
+def _propose_curiosity(candidate: dict, answer: dict) -> dict | None:
+    """One guess onto the hypothesis queue, carrying what it is about.
+
+    The claim reads as it always has — the reason and the question
+    together, because a question with no reasoning under it is one nobody
+    can answer well — and `fact` is the reason alone, which is what a yes
+    files: "the sprinklers run at seven because the lawn is in full sun
+    until six", not the same sentence with a question mark on the end.
+    """
+    name = candidate.get("name") or candidate.get("entity_id") or ""
+    claim = f"{answer['because']} — {answer['ask']}"
+    return hypotheses.propose(
+        claim[:hypotheses.MAX_TEXT_CHARS], topic=f"why: {name}",
+        subject=str(candidate.get("entity_id") or ""),
+        fact=str(answer.get("because") or ""))
+
+
+def _file_curiosity(candidate: dict, answer: dict, run_id: str = "") -> str:
     """Put one answer where it belongs, and say where that was.
 
     Three answers, three places that already exist, and no new surface:
@@ -6685,19 +10706,24 @@ def _file_curiosity(candidate: dict, answer: dict) -> str:
       would be filing a fact about brAIn into a document about a home.
     """
     if answer["confidence"] == "explained" and answer["fact"]:
+        # Filed under the entity the run was asked about, with the run that
+        # worked it out: tagged by scanning the sentence, "the sprinklers
+        # run late because the lawn is in sun until six" names no id and no
+        # room, and became a fact about the whole house.
         _queue_memory_fact(answer["fact"], source="curiosity",
-                           confidence="medium")
+                           confidence="medium",
+                           subject=str(candidate.get("entity_id") or ""),
+                           run_id=run_id)
         return "memory"
     if answer["confidence"] == "guess" and answer["ask"]:
-        name = candidate.get("name") or candidate.get("entity_id") or ""
-        claim = f"{answer['because']} — {answer['ask']}"
-        if hypotheses.propose(claim[:hypotheses.MAX_TEXT_CHARS],
-                              topic=f"why: {name}"):
+        if _propose_curiosity(candidate, answer):
             return "hypothesis"
         # The cap, the TTL or a near-duplicate refused it. Not an error:
         # three open questions is the whole design of that queue, and a
-        # fourth waiting behind them is what it exists to prevent.
-        return "hypothesis-refused"
+        # fourth waiting behind them is what it exists to prevent. Kept on
+        # the curiosity entry as `deferred` and re-proposed when a slot
+        # frees (`_repropose_deferred`), rather than settled as asked.
+        return curiosity.REFUSED
     return ""
 
 
@@ -6874,10 +10900,10 @@ async def _name_and_offer(obj: dict, area: str) -> None:
     the plain names, which are a perfectly good answer.
     """
     try:
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_claude, scenes.name_prompt(area), scenes.SYSTEM,
             eff_model(), scenes.NAME_TIMEOUT_S, scenes.NAME_MAX_TURNS,
-            "scene", job="scene_names")
+            "scene", job="scene_names", priority=run_queue.PRESS)
         names = scenes.read_names(result.get("text")
                                   or result.get("raw") or "")
     except Exception as exc:  # noqa: BLE001 — the card renders from the
@@ -6955,6 +10981,29 @@ async def _design_scenes(area: str) -> dict:
             SCENES_INFLIGHT.discard(key)
 
 
+def _scene_room_slugs(configs) -> set[str]:
+    """The rooms brAIn's mood scenes were written for, by slug.
+
+    An id is `brain_scene_<slug(room)>_<mood>`, and a room's slug may have
+    any number of underscores in it — `living_room`, `master_bedroom` — so
+    the mood is what comes off the END. Splitting on `_` and taking the
+    third piece cut every multi-word room to its first word, found none of
+    its four moods under that, and offered the commonest rooms nothing,
+    silently.
+    """
+    out: set[str] = set()
+    for cfg in configs or []:
+        if not isinstance(cfg, dict):
+            continue
+        cid = str(cfg.get("id") or "")
+        if not cid.startswith(scenes.ID_PREFIX):
+            continue
+        slug, _, mood = cid[len(scenes.ID_PREFIX):].rpartition("_")
+        if slug and mood in scenes.MOODS:
+            out.add(slug)
+    return out
+
+
 async def _offer_scene_schedule(snapshot: dict, now: float) -> int:
     """Offer the schedule for any room whose four scenes really exist.
 
@@ -6980,20 +11029,20 @@ async def _offer_scene_schedule(snapshot: dict, now: float) -> int:
     wake = rhythm.wake_minute(payload, when) if payload else None
     settle = rhythm.settle_minute(payload, when) if payload else None
 
-    areas = {str(cfg.get("id") or "").split("_")[2]
-             for cfg in (snapshot.get("scenes") or [])
-             if isinstance(cfg, dict)
-             and str(cfg.get("id") or "").startswith(scenes.ID_PREFIX)
-             and len(str(cfg.get("id") or "").split("_")) > 3}
+    areas = _scene_room_slugs(snapshot.get("scenes") or [])
+    house = scenes._house(snapshot)
+    known = set(house.areas.values()) | {
+        house.area_of(e) for e in (snapshot.get("states") or {})}
     offered = 0
     async with aiohttp.ClientSession() as session:
-        for slug in sorted(a for a in areas if a):
+        for slug in sorted(areas):
             # The area's own name, as the registries have it — the slug in
             # the id is what survives a rename and the name is what a card
-            # says.
-            house = scenes._house(snapshot)
-            name = next((a for a in {house.area_of(e)
-                                     for e in (snapshot.get("states") or {})}
+            # says. A room renamed since the scenes were written keeps its
+            # slug, and the slug alone finds the same four scenes
+            # (`existing_scenes` slugs what it is handed), so the schedule
+            # is still offered under the old name rather than not at all.
+            name = next((a for a in sorted(known)
                          if a and scenes._slug(a) == slug), slug)
             obj = await asyncio.to_thread(scenes.schedule, snapshot, name,
                                           wake, settle)
@@ -7067,12 +11116,26 @@ async def _offer_playbooks(snapshot: dict, now: float) -> int:
         log.warning("could not compose playbooks: %s", exc)
         return 0
 
+    # The paragraph is a Claude run, so it answers to the three gates
+    # every scheduled run answers to (`_offer_milestones`' rule): this is
+    # reached from the checks pass on a timer, and "automatic insights
+    # pause" is a promise a paused or over-budget house was still paying
+    # for here. The PROPOSAL is not gated — it is deterministic and costs
+    # nothing — so a gated pass offers the card with the sentence it was
+    # composed with, which is exactly what a failed run leaves.
+    settings = settings_store.load()
+    may_describe = (bool(engine.get_auth()) and settings["auto_enabled"]
+                    and not usage_store.budget_state(settings)["blocked"])
     offered = 0
     for obj in found:
         if await asyncio.to_thread(proposals.knows, obj):
             continue
+        if not may_describe:
+            if await asyncio.to_thread(proposals.add, obj):
+                offered += 1
+            continue
         try:
-            result = await asyncio.to_thread(
+            result = await _claude(
                 engine.run_claude, playbooks.describe_prompt(obj),
                 playbooks.SYSTEM, eff_model(),
                 playbooks.DESCRIBE_TIMEOUT_S, playbooks.DESCRIBE_MAX_TURNS,
@@ -7232,6 +11295,7 @@ async def run_checks(reason: str = "schedule") -> dict:
     try:
         snapshot = await checks.snapshot.collect(started)
         _note_registry(snapshot)
+        _note_access(snapshot, started)
         # Filed BEFORE the checks run, so this pass's own overrides count
         # toward the pattern the check is about to read. The ledger is
         # deduped on the event, which is what makes that safe: passes run
@@ -7267,6 +11331,7 @@ async def run_checks(reason: str = "schedule") -> dict:
                 ran_sources,
                 {findings_store.normalize(f["text"]) for f in shadow_rows})
             shadow_findings.prune(started)
+            _note_pass_decisions(result, created)
             return created, refreshed, cleared, {
                 "created": len(hidden), "found": len(shadow_rows)}
 
@@ -7279,12 +11344,16 @@ async def run_checks(reason: str = "schedule") -> dict:
         # than awaited, because a look runs on its own five-second tick and
         # a pass that waited on one would be a checks pass whose duration
         # is a Claude run's (`h_baselines_run`'s clock).
+        # Two counts, and they were one variable: the signals handed to the
+        # Resident, and the proposals the producers below file. The second
+        # overwrote the first, so the summary reported the proposal total
+        # as both `offered` and `proposed` and the hand-off was never seen.
         try:
-            offered = _offer_findings(created, started)
-            offered += _resident_offer_many(
+            handed = _offer_findings(created, started)
+            handed += _resident_offer_many(
                 (snapshot.get("actions") or {}).get("overrides") or [],
                 signals.from_override, started, _signal_context())
-            offered += _measurement_signals(snapshot, started)
+            handed += _measurement_signals(snapshot, started)
             _resident_offer(signals.from_time(
                 f"checks pass ({reason})", started,
                 text=f"a house-checks pass ran and filed {len(created)} row(s)"))
@@ -7292,7 +11361,7 @@ async def run_checks(reason: str = "schedule") -> dict:
             # either way; a hand-off that fell over must not also take out
             # the pass that found them.
             log.warning("could not hand this pass's signals over: %s", exc)
-            offered = 0
+            handed = 0
         surfaced: list[dict] = []
         triaged = await asyncio.to_thread(
             findings_store.statuses, [f["ts"] for f in created])
@@ -7301,29 +11370,29 @@ async def run_checks(reason: str = "schedule") -> dict:
         # that could fail this pass would cost a house its list of what
         # is broken to make an offer nobody asked for.
         try:
-            offered = await _offer_routines(started)
+            proposed = await _offer_routines(started)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not offer routines: %s", exc)
-            offered = 0
+            proposed = 0
         # And the other producer: the automation brAIn would write for a
         # night nobody wants. Same store, same tab, same refusal to
         # enable anything on its own.
         try:
-            offered += await _offer_playbooks(snapshot, started)
+            proposed += await _offer_playbooks(snapshot, started)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not offer playbooks: %s", exc)
         # And the third: the condition an automation somebody keeps
         # undoing does not have. The finding already reports the fight;
         # this is the change that ends it.
         try:
-            offered += await _offer_conditions(snapshot, started)
+            proposed += await _offer_conditions(snapshot, started)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not offer conditions: %s", exc)
         # And the fourth: the schedule that walks a room through the four
         # scenes it now has. Only once they really exist — a schedule
         # naming a scene that is not there errors at 07:00 every morning.
         try:
-            offered += await _offer_scene_schedule(snapshot, started)
+            proposed += await _offer_scene_schedule(snapshot, started)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not offer a scene schedule: %s", exc)
         # And the fifth producer, which is not a proposal at all: the
@@ -7380,14 +11449,14 @@ async def run_checks(reason: str = "schedule") -> dict:
             # reading the study inbox and the event stream, so a pass that
             # filed nine and shows `waiting: 9` is a pass whose rows have
             # not been looked at YET rather than one nothing came back for.
-            "offered": offered,
+            "offered": handed,
             "surfaced": len(surfaced),
             "held": len([t for t, st in triaged.items() if st == "held"]),
             "waiting": len([t for t, st in triaged.items()
                             if st == "triaging"]),
             "refreshed": refreshed,
             "cleared": cleared,
-            "proposed": offered,
+            "proposed": proposed,
             "milestones": made,
             "trials_evaluated": graded,
             "intents_fired": fired,
@@ -7448,7 +11517,10 @@ async def _checks_loop() -> None:
             elif time.time() - DIAG_STATE["published_at"] >= DIAGNOSTICS_PUBLISH_S:
                 await asyncio.to_thread(publish_diagnostics)
         except Exception as exc:  # noqa: BLE001 — never let this kill the loop
-            log.debug("checks loop: %s", exc)
+            # Warning, not debug: a pass that fails every tick is the house
+            # checks stopping, and debug is a level nobody runs at.
+            log.warning("checks loop: %s", exc)
+        _beat("checks")
         await asyncio.sleep(CHECKS_TICK_S)
 
 
@@ -7512,9 +11584,26 @@ async def build_baselines(reason: str = "schedule") -> dict:
             states = await ha_data._rest_get(session, "/states", timeout=60)
             by_id = {s["entity_id"]: s for s in (states or [])
                      if isinstance(s, dict) and s.get("entity_id")}
+            # The registries, once, before any builder: the baselines read
+            # the entity registry to keep diagnostic and config sensors off
+            # the cap, and thermal needs all three. A registry that did not
+            # answer costs the baselines that one filter and costs thermal
+            # its whole pass — see thermal's block below.
+            areas = devices = ents = None
+            registry_error = ""
             try:
-                payload = _done("baselines",
-                                await baselines.build(session, by_id, started))
+                areas, devices, ents = await ha_data._ws_commands(session, [
+                    {"type": "config/area_registry/list"},
+                    {"type": "config/device_registry/list"},
+                    {"type": "config/entity_registry/list"}])
+            except Exception as exc:  # noqa: BLE001 — a fetch, not the pass
+                registry_error = str(exc)[:200]
+                log.info("baseline pass: the registries did not answer: %s",
+                         exc)
+            try:
+                payload = _done("baselines", await baselines.build(
+                    session, by_id, started,
+                    entities=ents if isinstance(ents, list) else None))
             except Exception as exc:  # noqa: BLE001 — one builder, not the pass
                 _failed("baselines", exc)
             # The same pass, because it is the same claim about the same
@@ -7544,14 +11633,11 @@ async def build_baselines(reason: str = "schedule") -> dict:
             # every room is unnameable and the store would be written as
             # a house with no rooms in it.
             try:
-                areas, devices, ents = await ha_data._ws_commands(session, [
-                    {"type": "config/area_registry/list"},
-                    {"type": "config/device_registry/list"},
-                    {"type": "config/entity_registry/list"}])
                 if ents is None or areas is None:
                     raise RuntimeError(
                         "the registries did not answer — the thermal store "
-                        "was left as it was")
+                        "was left as it was"
+                        + (f" ({registry_error})" if registry_error else ""))
                 rooms = _done("thermal", await thermal.build(
                     session, by_id,
                     {"areas": areas, "devices": devices or [],
@@ -7601,8 +11687,567 @@ async def _baseline_loop() -> None:
             if age is None or age * 86400 >= BASELINE_INTERVAL_S:
                 await build_baselines("schedule")
         except Exception as exc:  # noqa: BLE001
-            log.debug("baseline loop: %s", exc)
+            log.warning("baseline loop: %s", exc)
+        # The Resident's nightly grading rides the same hourly wake: it
+        # decides for itself whether a day has passed, off its own state
+        # file, so a baseline build that failed does not hold it back.
+        await _outcomes_tick(time.time())
+        # The nightly readers that understand the house rather than measure
+        # it (`_understanding_tick`). Their own try: a reading that fell over
+        # must not take the baselines' clock with it.
+        try:
+            await _understanding_tick(time.time())
+        except Exception as exc:  # noqa: BLE001
+            log.debug("understanding tick: %s", exc)
+        _beat("baselines")
         await asyncio.sleep(3600)
+
+
+# ---------------------------------------------------------------------------
+# Understanding the house — what each entity IS (`world_model`), what the
+# house is doing NOW (`situation`) and what is COMING UP (`occasions`)
+# ---------------------------------------------------------------------------
+#
+# Three readers with one shape: code builds what can be checked, and a
+# cheap model fills in only what needs judgement, out of closed
+# vocabularies that each module's `parse` validates before anything keeps
+# it. Every scheduled turn answers to the three gates every scheduled
+# Claude run answers to (`_resident_gate`); a press needs only a
+# credential, `h_ideas_run`'s rule. All three claim the `resident` source:
+# they are the attention loop's understanding of the house, and a probe
+# rather than a conversation anybody had.
+
+# The readings the last checks pass matched against its own registry —
+# `_FACTS_CTX`'s rule: refreshed from the snapshot that pass fetched, never
+# a registry read for this block's own sake. The bus's known set and its
+# added safety classes read this.
+WORLD_VIEW: dict = {"world": {}, "at": 0.0}
+WORLD_STATE: dict = {"running": False, "starting": False, "last": None,
+                     "held": "", "error": ""}
+SITUATION_STATE: dict = {"running": False, "refreshed_at": 0.0,
+                         "last_error": "", "published": False}
+OCCASIONS_STATE: dict = {"running": False, "starting": False, "last": None,
+                         "error": ""}
+# The frame waits for the panel to settle, like every other loop here.
+SITUATION_FIRST_DELAY_S = 90
+
+
+def _note_world(snapshot: dict) -> None:
+    world = snapshot.get("world") if isinstance(snapshot, dict) else None
+    if isinstance(world, dict):
+        WORLD_VIEW.update(world=world, at=time.time())
+
+
+def _world_known_ids() -> frozenset:
+    try:
+        return world_model.important_ids(WORLD_VIEW["world"])
+    except Exception:  # noqa: BLE001 — a reading is optional; the bus is not
+        return frozenset()
+
+
+def _world_safety_roles() -> dict:
+    try:
+        return world_model.added_safety(WORLD_VIEW["world"])
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _understanding_gate(settings: dict, pressed: bool) -> str:
+    """Why no turn may be spent, or "". A press skips the budget and the
+    automatic switch — asking by hand always runs — and still needs a
+    credential, because there is nothing to run without one."""
+    if pressed:
+        return "" if engine.get_auth() else "there is no Claude credential"
+    return _resident_gate(settings)
+
+
+async def _registry_snapshot() -> dict:
+    """States and the three registries, in the checks snapshot's shape.
+
+    A registry that did not answer RAISES rather than reading as empty:
+    with no registry every entity would be read with no area and no
+    device, which is a reading of a different house.
+    """
+    import aiohttp
+
+    import ha_data  # deferred so the module loads without aiohttp in tests
+    async with aiohttp.ClientSession() as session:
+        states = await ha_data._rest_get(session, "/states", timeout=60)
+        areas, devices, ents = await ha_data._ws_commands(session, [
+            {"type": "config/area_registry/list"},
+            {"type": "config/device_registry/list"},
+            {"type": "config/entity_registry/list"}])
+    if not isinstance(states, list) or ents is None or areas is None:
+        raise RuntimeError("Home Assistant did not answer for its states "
+                           "and registries")
+    return {"states": {s["entity_id"]: s for s in states
+                       if isinstance(s, dict) and s.get("entity_id")},
+            "entities": ents, "devices": devices or [], "areas": areas}
+
+
+async def _world_model_pass(reason: str = "schedule", *, pressed: bool = False,
+                            snap: dict | None = None,
+                            now: float | None = None) -> dict:
+    """Read what each changed entity IS. Returns what it did, for a test.
+
+    Guarded synchronously before the first await (`start_auth_check`'s
+    rule): two passes would pay twice for the same rows.
+    """
+    if WORLD_STATE["running"]:
+        return {"skipped": "a reading is already running"}
+    WORLD_STATE["running"] = True
+    try:
+        return await _world_model_read(reason, pressed, snap, now)
+    except Exception as exc:  # noqa: BLE001 — a reading is optional; the
+        # loop that asked for one is not.
+        WORLD_STATE["error"] = str(exc)[:200]
+        log.warning("the entity reading failed: %s", exc)
+        return {"error": str(exc)[:200]}
+    finally:
+        WORLD_STATE["running"] = False
+        WORLD_STATE["starting"] = False
+
+
+async def _world_model_read(reason: str, pressed: bool, snap: dict | None,
+                            now: float | None) -> dict:
+    now = time.time() if now is None else float(now)
+    store = await asyncio.to_thread(world_model.load)
+    if snap is None:
+        snap = await _registry_snapshot()
+    cands = world_model.candidates(snap)
+    pending = world_model.needs_reading(store, cands)
+    if pressed and not pending:
+        why = "every entity has a current reading"
+        WORLD_STATE["held"] = why
+        return {"held": why, "pending": 0}
+    if not pressed:
+        ok, why = world_model.due(store, now, len(pending))
+        if not ok:
+            WORLD_STATE["held"] = why
+            return {"held": why, "pending": len(pending)}
+    settings = await asyncio.to_thread(settings_store.load)
+    excuse = _understanding_gate(settings, pressed)
+    if excuse:
+        WORLD_STATE["held"] = excuse
+        return {"held": excuse, "pending": len(pending)}
+    WORLD_STATE["held"] = ""
+
+    world_model.prune(store, cands)
+    batches, _rest = world_model.batches(store, cands)
+    areas = world_model.area_names(snap)
+    read = skipped = ran = 0
+    error = ""
+    for rows in batches:
+        ran += 1
+        try:
+            result = await _claude(
+                engine.run_claude, world_model.frame(rows, areas),
+                world_model.SYSTEM, "", world_model.TIMEOUT_S, 2, "resident",
+                job=world_model.JOB, schema=world_model.SCHEMA)
+        except Exception as exc:  # noqa: BLE001
+            result = {"ok": False, "error": str(exc), "meta": {}}
+        await asyncio.to_thread(_record_usage, result, "world-model")
+        if not result.get("ok"):
+            # A failed run is not a verdict about any row: nothing is
+            # stored and the rest of the batches wait for the next pass,
+            # because a cause that failed one call fails the next.
+            error = str(result.get("error") or "the reading failed")[:200]
+            break
+        run_id = str((result.get("meta") or {}).get("session_id") or "")
+        got = world_model.parse(_answer(result), rows, areas,
+                                run_id=run_id, now=now)
+        if not got:
+            error = "the reply could not be read"
+            break
+        for desc in rows:
+            if desc["entity_id"] not in got:
+                got[desc["entity_id"]] = world_model.unanswered(
+                    desc, run_id=run_id, now=now)
+                skipped += 1
+        store.setdefault("entities", {}).update(got)
+        read += len(got) - skipped
+        # Saved per batch, so a panel that dies mid-pass keeps what it paid
+        # for — `healing`'s write-after-every-attempt rule.
+        await asyncio.to_thread(world_model.save, store)
+    remaining = len(world_model.needs_reading(store, cands))
+    store["last_pass"] = {"at": int(now), "reason": reason, "batches": ran,
+                          "read": read, "skipped": skipped,
+                          "remaining": remaining, "error": error}
+    store["failures"] = int(store.get("failures") or 0) + 1 if error else 0
+    await asyncio.to_thread(world_model.save, store)
+    WORLD_STATE["last"] = dict(store["last_pass"])
+    WORLD_STATE["error"] = error
+    WORLD_VIEW.update(world=world_model.view(store, cands), at=time.time())
+    if error:
+        log.warning("the entity reading stopped after %d batch(es): %s",
+                    ran, error)
+    else:
+        log.info("read %d entit%s (%d said nothing about); %d still to read",
+                 read, "y" if read == 1 else "ies", skipped, remaining)
+    return dict(store["last_pass"])
+
+
+def _start_world_model() -> bool:
+    """Start a pressed reading. Flipped synchronously, `h_baselines_run`'s
+    rule: `create_task` only schedules."""
+    if WORLD_STATE["running"] or WORLD_STATE["starting"]:
+        return False
+    WORLD_STATE["starting"] = True
+    try:
+        asyncio.get_running_loop().create_task(
+            _world_model_pass("manual", pressed=True))
+    except RuntimeError:
+        WORLD_STATE["starting"] = False
+        raise
+    return True
+
+
+async def _understanding_tick(now: float) -> None:
+    """The nightly readers, from the baseline loop's hourly tick. Each
+    decides for itself whether it is due."""
+    await _world_model_pass("schedule", now=now)
+    await _occasions_pass("schedule", now=now)
+
+
+def _house_date(now: float) -> str:
+    """Today's date on the house's own clock, as `YYYY-MM-DD`."""
+    return f"{_local_now(now):%Y-%m-%d}"
+
+
+async def _occasions_pass(reason: str = "schedule", *, pressed: bool = False,
+                          now: float | None = None) -> dict:
+    """Read the next three days. Guarded like the entity reading."""
+    if OCCASIONS_STATE["running"]:
+        return {"skipped": "a read is already running"}
+    OCCASIONS_STATE["running"] = True
+    try:
+        return await _occasions_read(reason, pressed, now)
+    except Exception as exc:  # noqa: BLE001
+        OCCASIONS_STATE["error"] = str(exc)[:200]
+        log.warning("reading what is coming up failed: %s", exc)
+        return {"error": str(exc)[:200]}
+    finally:
+        OCCASIONS_STATE["running"] = False
+        OCCASIONS_STATE["starting"] = False
+
+
+async def _occasions_fetch(calendars: list[str], now: float):
+    """`(weather_id, unit, daily, hourly, calendar_response, errors)`."""
+    import aiohttp
+
+    import ha_data
+    errors: dict[str, str] = {}
+    async with aiohttp.ClientSession() as session:
+        states = await ha_data._rest_get(session, "/states", timeout=60)
+        weather = next((s for s in states or [] if isinstance(s, dict)
+                        and str(s.get("entity_id") or "").startswith("weather.")),
+                       None)
+        weather_id = str((weather or {}).get("entity_id") or "")
+        unit = str(((weather or {}).get("attributes") or {})
+                   .get("temperature_unit") or "°C")
+        if not weather_id:
+            errors["weather"] = "this house has no weather entity"
+        cmds = occasions.commands(weather_id, calendars, now)
+        answers = await ha_data._ws_calls(session, cmds) if cmds else []
+    daily = hourly = None
+    cal: dict = {}
+    for cmd, answer in zip(cmds, answers):
+        if not answer.get("ok"):
+            what = ("calendar" if cmd["domain"] == "calendar"
+                    else "weather")
+            errors[what] = (f"Home Assistant would not answer "
+                            f"{cmd['domain']}.{cmd['service']}: "
+                            f"{answer.get('error') or 'refused'}")[:200]
+            continue
+        body = occasions._response(answer.get("result"))
+        if cmd["domain"] == "weather":
+            rows = (body.get(weather_id) or {}).get("forecast")
+            if cmd["service_data"]["type"] == "daily":
+                daily = rows
+            else:
+                hourly = rows
+        else:
+            cal = body
+    if weather_id and daily is None and hourly is None \
+            and "weather" not in errors:
+        errors["weather"] = "the forecast came back empty"
+    return weather_id, unit, daily, hourly, cal, errors
+
+
+async def _occasions_read(reason: str, pressed: bool,
+                          now: float | None) -> dict:
+    now = time.time() if now is None else float(now)
+    store = await asyncio.to_thread(occasions.load)
+    if not pressed and not occasions.due(store, now):
+        return {"held": "read recently"}
+    settings = await asyncio.to_thread(settings_store.load)
+    calendars = list(settings.get("occasion_calendars") or [])
+    tz, _name = baselines.house_timezone()
+    today = _house_date(now)
+    weather_id, unit, daily, hourly, cal, errors = await _occasions_fetch(
+        calendars, now)
+    days = occasions.forecast_days(daily, hourly, now=now, tz=tz, unit=unit)
+    rows = occasions.notable_weather(days)
+
+    events = occasions.calendar_events(cal, now=now, tz=tz) if calendars else []
+    judged: list[dict] | None = None
+    run_id = ""
+    if events:
+        excuse = _understanding_gate(settings, pressed)
+        if excuse:
+            errors["calendar"] = ("the calendar was read and not judged: "
+                                  + excuse)
+        else:
+            try:
+                result = await _claude(
+                    engine.run_claude, occasions.prompt(events, today),
+                    occasions.SYSTEM, "", occasions.TIMEOUT_S, 2, "resident",
+                    job=occasions.JOB, schema=occasions.SCHEMA)
+            except Exception as exc:  # noqa: BLE001
+                result = {"ok": False, "error": str(exc), "meta": {}}
+            await asyncio.to_thread(_record_usage, result, "occasions")
+            if result.get("ok"):
+                run_id = str((result.get("meta") or {}).get("session_id") or "")
+                judged = occasions.parse(_answer(result), events, today=today)
+            else:
+                errors["calendar"] = ("the calendar could not be judged: "
+                                      + str(result.get("error") or "")[:160])
+    if judged is None:
+        # Not judged this time is not "nothing on the calendar": what an
+        # earlier read found stands until it ends.
+        judged = [o for o in occasions.current(store, today)
+                  if o.get("kind") != "weather"] if calendars else []
+    found = (rows + judged)[:occasions.MAX_OCCASIONS]
+    filed = await asyncio.to_thread(occasions.file_facts, found, run_id=run_id)
+    new_store = {"built_at": int(now), "reason": reason,
+                 "occasions": found, "weather": weather_id,
+                 "calendars": calendars, "events": len(events),
+                 "filed": filed, "errors": errors}
+    await asyncio.to_thread(occasions.save, new_store)
+    OCCASIONS_STATE["last"] = {k: new_store[k] for k in
+                               ("built_at", "reason", "weather", "events",
+                                "filed", "errors")}
+    OCCASIONS_STATE["error"] = "; ".join(errors.values())[:300]
+    return {"occasions": found, "errors": errors, "filed": filed}
+
+
+def _start_occasions() -> bool:
+    if OCCASIONS_STATE["running"] or OCCASIONS_STATE["starting"]:
+        return False
+    OCCASIONS_STATE["starting"] = True
+    try:
+        asyncio.get_running_loop().create_task(
+            _occasions_pass("manual", pressed=True))
+    except RuntimeError:
+        OCCASIONS_STATE["starting"] = False
+        raise
+    return True
+
+
+async def _fetch_states_once() -> list:
+    import aiohttp
+
+    import ha_data
+    async with aiohttp.ClientSession() as session:
+        states = await ha_data._rest_get(session, "/states", timeout=30)
+    if not isinstance(states, list):
+        raise RuntimeError("Home Assistant did not answer for its states")
+    return states
+
+
+async def _situation_refresh(now: float | None = None, *, states=None,
+                             run_model: bool = True) -> dict:
+    """Rebuild the frame, describe it if it moved, publish the reading.
+
+    One `/states` read; everything else is a store brAIn already wrote.
+    Returns the public reading.
+    """
+    if SITUATION_STATE["running"]:
+        return situation.reading(situation.load(), now)
+    SITUATION_STATE["running"] = True
+    try:
+        return await _situation_pass(now, states, run_model)
+    finally:
+        SITUATION_STATE["running"] = False
+
+
+async def _situation_pass(now: float | None, states, run_model: bool) -> dict:
+    now = time.time() if now is None else float(now)
+    store = await asyncio.to_thread(situation.load)
+    settings = await asyncio.to_thread(settings_store.load)
+    tz, tz_name = baselines.house_timezone()
+    try:
+        if states is None:
+            states = await _fetch_states_once()
+        upcoming = occasions.lines(await asyncio.to_thread(occasions.load),
+                                   _house_date(now))
+        frame = situation.build_frame(
+            states, now=now, tz=tz, tz_name=tz_name,
+            areas=dict(_NAMES), names=dict(_NAMES),
+            closures_store=await asyncio.to_thread(closures.load),
+            appliances_store=await asyncio.to_thread(appliances.load),
+            calendars=settings.get("occasion_calendars") or [],
+            occasions=upcoming, world=WORLD_VIEW["world"])
+    except Exception as exc:  # noqa: BLE001 — a frame that could not be
+        # built is a frame that says so; it reads `unknown`, never `away`.
+        frame = situation.failed_frame(now, str(exc))
+    store["frame"] = frame
+    due, why = situation.due(store, frame, now)
+    if due and run_model:
+        if situation.runs_today(store, now, tz) >= situation.MAX_RUNS_PER_DAY:
+            why = "the day's readings are spent"
+        else:
+            why = _understanding_gate(settings, False)
+        if not why:
+            local = _local_now(now)
+            day = f"{local:%Y-%m-%d}"
+            store["runs"] = situation.runs_today(store, now, tz) + 1
+            store["day"] = day
+            store["last_run_at"] = now
+            try:
+                result = await _claude(
+                    engine.run_claude,
+                    situation.prompt(frame, store.get("answer")),
+                    situation.SYSTEM, "", situation.TIMEOUT_S, 2, "resident",
+                    job=situation.JOB, schema=situation.SCHEMA)
+            except Exception as exc:  # noqa: BLE001
+                result = {"ok": False, "error": str(exc), "meta": {}}
+            await asyncio.to_thread(_record_usage, result, "situation")
+            if result.get("ok"):
+                store["answer"] = situation.parse(
+                    _answer(result), frame, store.get("answer"), now=now,
+                    run_id=str((result.get("meta") or {}).get("session_id")
+                               or ""))
+                SITUATION_STATE["last_error"] = ""
+            else:
+                why = ("the last reading failed: "
+                       + str(result.get("error") or "")[:120])
+                SITUATION_STATE["last_error"] = why
+    store["held"] = why
+    await asyncio.to_thread(situation.save, store)
+    read = situation.reading(store, now)
+    SITUATION_STATE["refreshed_at"] = now
+    SITUATION_STATE["published"] = await asyncio.to_thread(
+        situation.publish, read)
+    return read
+
+
+async def _situation_loop() -> None:
+    await asyncio.sleep(SITUATION_FIRST_DELAY_S)
+    while True:
+        try:
+            await _situation_refresh()
+        except Exception as exc:  # noqa: BLE001 — never let this kill the loop
+            SITUATION_STATE["last_error"] = str(exc)[:200]
+            log.debug("situation loop: %s", exc)
+        await asyncio.sleep(situation.REFRESH_S)
+
+
+def _situation_line(now: float) -> str:
+    """The compact line every first look carries — read off the store, so a
+    look never waits on a frame being built."""
+    try:
+        return situation.prompt_line(situation.reading(situation.load(), now))
+    except Exception:  # noqa: BLE001 — context is optional; the look is not
+        return ""
+
+
+def _understanding_diagnostics() -> dict:
+    """Counts and verdicts, never the readings or the frame themselves."""
+    out: dict = {}
+    try:
+        store = world_model.load()
+        out["world"] = {**world_model.summary(store),
+                        "running": WORLD_STATE["running"],
+                        "held": WORLD_STATE["held"],
+                        "error": WORLD_STATE["error"],
+                        "in_use": len(WORLD_VIEW["world"]),
+                        "important": len(_world_known_ids()),
+                        "added_safety": len(_world_safety_roles())}
+    except Exception as exc:  # noqa: BLE001
+        out["world"] = {"error": str(exc)[:200]}
+    try:
+        read = situation.reading(situation.load())
+        out["situation"] = {
+            "house_mode": read["house_mode"], "source": read["source"],
+            "reason": read["reason"], "frame_at": read["frame_at"],
+            "generated_at": read["generated_at"],
+            "sentence_stale": read["sentence_stale"],
+            "published": SITUATION_STATE["published"],
+            "last_error": SITUATION_STATE["last_error"]}
+    except Exception as exc:  # noqa: BLE001
+        out["situation"] = {"error": str(exc)[:200]}
+    try:
+        store = occasions.load()
+        out["occasions"] = {
+            "built_at": store.get("built_at"),
+            "count": len(store.get("occasions") or []),
+            "calendars": len(store.get("calendars") or []),
+            "weather": bool(store.get("weather")),
+            "errors": store.get("errors") or {}}
+    except Exception as exc:  # noqa: BLE001
+        out["occasions"] = {"error": str(exc)[:200]}
+    return out
+
+
+async def h_world(request: web.Request) -> web.Response:
+    """The entity readings: the summary, and one entity's on request."""
+    store = await asyncio.to_thread(world_model.load)
+    payload: dict = {**world_model.summary(store),
+                     "running": WORLD_STATE["running"] or WORLD_STATE["starting"],
+                     "held": WORLD_STATE["held"]}
+    eid = (request.query.get("entity_id") or "").strip()
+    if eid:
+        if not ha_data_is_entity_id(eid):
+            raise web.HTTPBadRequest(text="not an entity id")
+        payload["entity"] = (store.get("entities") or {}).get(eid)
+    return web.json_response(payload)
+
+
+def ha_data_is_entity_id(value: str) -> bool:
+    import ha_data  # noqa: PLC0415
+    return ha_data.is_entity_id(value)
+
+
+async def h_world_run(request: web.Request) -> web.Response:
+    """Read the entities that changed, now. Skips the budget."""
+    if not engine.get_auth():
+        raise web.HTTPBadRequest(text="connect your Claude account first")
+    if not _start_world_model():
+        raise web.HTTPConflict(text="already reading the house")
+    return web.json_response({"started": True})
+
+
+async def h_situation(request: web.Request) -> web.Response:
+    """What the house is doing now, and the frame that says so."""
+    store = await asyncio.to_thread(situation.load)
+    read = situation.reading(store)
+    return web.json_response({**read, "frame": store.get("frame") or {}})
+
+
+async def h_occasions(request: web.Request) -> web.Response:
+    """What is coming up, which calendars brAIn may read, and which exist."""
+    store = await asyncio.to_thread(occasions.load)
+    settings = await asyncio.to_thread(settings_store.load)
+    now = time.time()
+    available = sorted(eid for eid in _NAMES if eid.startswith("calendar."))
+    return web.json_response({
+        "occasions": occasions.current(store, _house_date(now)),
+        "lines": occasions.lines(store, _house_date(now)),
+        "built_at": store.get("built_at"),
+        "errors": store.get("errors") or {},
+        "calendars": list(settings.get("occasion_calendars") or []),
+        "available": [{"entity_id": eid,
+                       "name": (_NAMES.get(eid) or {}).get("name") or eid}
+                      for eid in available],
+        "running": OCCASIONS_STATE["running"] or OCCASIONS_STATE["starting"]})
+
+
+async def h_occasions_run(request: web.Request) -> web.Response:
+    """Read the next three days now. Skips the budget."""
+    if not _start_occasions():
+        raise web.HTTPConflict(text="already reading what is coming up")
+    return web.json_response({"started": True})
 
 
 async def h_baselines(request: web.Request) -> web.Response:
@@ -7614,6 +12259,9 @@ async def h_baselines(request: web.Request) -> web.Response:
         "tz": store.get("tz", ""),
         "days": store.get("days", baselines.HISTORY_DAYS),
         "measured": len(store.get("entities") or {}),
+        "asked": store.get("asked", 0),
+        "cut": store.get("cut_count", 0),
+        "cut_sample": list(store.get("cut") or []),
         "stale": baselines.is_stale(store) if store.get("built_at") else True,
         "running": _baselines_busy(),
         "last": BASELINE_STATE["last"],
@@ -7801,13 +12449,229 @@ async def h_weekly_run(request: web.Request) -> web.Response:
     # Sunday report that would have had another day's material.
     before = WEEKLY_STATE["last_sent"]
     WEEKLY_STATE["last_sent"] = now
-    body = await _send_weekly(now)
+    body = await _send_weekly(now, pressed=True)
     WEEKLY_STATE["last_sent"] = now if body else before
     schedule_store.set(WEEKLY_SENT_KEY, WEEKLY_STATE["last_sent"])
     return web.json_response({
         "sent": bool(body), "text": body,
         "error": WEEKLY_STATE["last_error"],
     })
+
+
+# ---------------------------------------------------------------------------
+# Cameras: which ones brAIn may look at when nobody is at the panel
+#
+# `camera_policy` holds the rules. The MCP server asks `/api/camera/permit`
+# before every governed frame (voice, a task, the Resident's grant), and
+# the ⚙ dialog lists what there is to allow off the last checks pass's
+# registry — never a fetch for the dialog's own sake.
+# ---------------------------------------------------------------------------
+
+def _house_day(now: float) -> str:
+    return _local_now(now).strftime("%Y-%m-%d")
+
+
+async def h_camera_permit(request: web.Request) -> web.Response:
+    """One governed look: allowed, and counted, or refused with a sentence."""
+    body = await _json_body(request)
+    entity = str(body.get("entity_id") or "")
+    channel = str(body.get("channel") or "")
+    raw_grant = body.get("grant")
+    grant = None
+    if isinstance(raw_grant, str) and raw_grant.strip():
+        grant = [c.strip().lower() for c in raw_grant.split(",") if c.strip()]
+    elif isinstance(raw_grant, list):
+        grant = [str(c).strip().lower() for c in raw_grant if str(c).strip()]
+    now = time.time()
+    try:
+        opted = settings_store.load().get("camera_confirm") or []
+    except Exception:  # noqa: BLE001 — unreadable settings allow no camera
+        opted = []
+    allowed, reason = await asyncio.to_thread(
+        camera_policy.permit, entity, channel, grant, opted,
+        _house_day(now), now)
+    if allowed:
+        log.info("camera look allowed: %s for %s", entity, channel or "a run")
+    else:
+        log.info("camera look refused: %s for %s — %s", entity,
+                 channel or "a run", reason)
+    return web.json_response({"allowed": allowed, "reason": reason})
+
+
+def _cameras_payload() -> dict:
+    now = time.time()
+    try:
+        opted = settings_store.load().get("camera_confirm") or []
+    except Exception:  # noqa: BLE001
+        opted = []
+    known = sorted({e for e in (set(_NAMES) | set(_FACTS_CTX.get("entities") or ()))
+                    if str(e).startswith("camera.")} | set(opted))
+    spent, error = camera_policy.used(_house_day(now))
+    return {
+        "cameras": [{"entity_id": c,
+                     "name": (_NAMES.get(c) or {}).get("name") or c,
+                     "allowed": c in opted} for c in known],
+        "allowed": list(opted),
+        "per_day": camera_policy.PER_DAY,
+        "used_today": spent,
+        "error": error,
+        # The list comes off the last checks pass, and a dialog that says
+        # "no cameras" before that pass has run is a dialog that is wrong.
+        "registry_read": bool(_FACTS_CTX.get("entities")),
+    }
+
+
+async def h_cameras(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_cameras_payload))
+
+
+def _camera_diagnostics() -> dict:
+    payload = _cameras_payload()
+    return {"allowed": len(payload["allowed"]), "per_day": payload["per_day"],
+            "used_today": payload["used_today"], "error": payload["error"]}
+
+
+# ---------------------------------------------------------------------------
+# The deep review: the one run a person presses for on the top tier
+#
+# `deep_review` holds the rules (what it is told, what it may say, the
+# store and the estimate); this is the plumbing. It is reachable from one
+# route and nothing else — no loop, no request drain, no card — because
+# the job is PRESS_ONLY and `engine.planned(..., pressed=True)` is the one
+# call that may name it. `test_deep_review` holds that by walking the
+# module for every caller.
+# ---------------------------------------------------------------------------
+
+DEEP_REVIEW_STATE: dict = {"running": False, "starting": False,
+                           "started_at": 0.0, "last_error": "",
+                           "last_at": 0.0}
+_DEEP_REVIEW_TASKS: set = set()
+
+
+def _deep_review_payload() -> dict:
+    """What the House tab shows: the last review, the history, the price."""
+    stored = deep_review.load()
+    try:
+        plan_tokens = usage_store.budget_state(
+            settings_store.load()).get("plan_session_tokens")
+    except Exception:  # noqa: BLE001 — a price nobody can read is still a button
+        plan_tokens = None
+    model, effort = engine.planned(deep_review.JOB, pressed=True)
+    reviews = stored["reviews"]
+    return {
+        "running": bool(DEEP_REVIEW_STATE["running"]
+                        or DEEP_REVIEW_STATE["starting"]),
+        "started_at": int(DEEP_REVIEW_STATE["started_at"]),
+        "last_error": DEEP_REVIEW_STATE["last_error"],
+        "error": stored["error"],
+        "latest": reviews[0] if reviews else None,
+        "history": [{"id": r.get("id"), "at": r.get("at"),
+                     "tokens": r.get("tokens")} for r in reviews[1:]],
+        "estimate": deep_review.estimate(reviews, plan_tokens),
+        "model": model, "effort": effort,
+        "authenticated": bool(engine.get_auth()),
+    }
+
+
+async def _run_deep_review() -> None:
+    """One review, start to finish. Never raises into the loop."""
+    now = time.time()
+    try:
+        findings_text = await asyncio.to_thread(findings_store.prompt_block)
+        prompt = deep_review.frame(
+            findings=findings_text,
+            house=await _house_prompt_block(now),
+            memory=await asyncio.to_thread(_memory_block),
+            weekly=str(WEEKLY_STATE.get("last_text") or ""))
+        model, effort = engine.planned(deep_review.JOB, pressed=True)
+        result = await _claude(
+            engine.run_analyst, prompt, deep_review.SYSTEM, model,
+            deep_review.TIMEOUT_S, deep_review.MAX_TURNS, "deep_review",
+            job=deep_review.JOB, effort=effort, schema=deep_review.SCHEMA,
+            priority=run_queue.PRESS)
+        cost = _record_usage(result, "deep-review")
+        if not result.get("ok"):
+            DEEP_REVIEW_STATE["last_error"] = str(
+                result.get("error") or "the review did not answer")[:300]
+            log.warning("deep review failed: %s", DEEP_REVIEW_STATE["last_error"])
+            return
+        review = deep_review.parse(_answer(result))
+        if review is None:
+            DEEP_REVIEW_STATE["last_error"] = (
+                "the review answered, but not with anything that could be read")
+            log.warning("deep review: %s", DEEP_REVIEW_STATE["last_error"])
+            return
+        review["tokens"] = int(cost.get("total") or 0)
+        review["model"] = str(model or "")
+        await asyncio.to_thread(deep_review.save, review)
+        DEEP_REVIEW_STATE["last_error"] = ""
+        DEEP_REVIEW_STATE["last_at"] = time.time()
+        log.info("deep review filed: %d observation(s), %s tokens",
+                 len(review["observations"]), _tok(review["tokens"]))
+    except Exception as exc:  # noqa: BLE001 — a press must not kill the loop
+        DEEP_REVIEW_STATE["last_error"] = f"the review stopped: {exc}"[:300]
+        log.warning("deep review crashed: %s", exc)
+    finally:
+        DEEP_REVIEW_STATE["running"] = False
+        DEEP_REVIEW_STATE["starting"] = False
+
+
+def _start_deep_review() -> bool:
+    """Claim the run. The flag flips SYNCHRONOUSLY (`start_auth_check`'s
+    rule), and the task is held: the loop keeps only a weak reference."""
+    if DEEP_REVIEW_STATE["running"] or DEEP_REVIEW_STATE["starting"]:
+        return False
+    DEEP_REVIEW_STATE["starting"] = True
+    DEEP_REVIEW_STATE["started_at"] = time.time()
+
+    async def go() -> None:
+        DEEP_REVIEW_STATE["running"] = True
+        DEEP_REVIEW_STATE["starting"] = False
+        await _run_deep_review()
+
+    try:
+        task = asyncio.create_task(go())
+    except RuntimeError:
+        DEEP_REVIEW_STATE["starting"] = False
+        raise
+    _DEEP_REVIEW_TASKS.add(task)
+    task.add_done_callback(_DEEP_REVIEW_TASKS.discard)
+    return True
+
+
+async def h_deep_review(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_deep_review_payload))
+
+
+async def h_deep_review_run(request: web.Request) -> web.Response:
+    """Start a review now. A press, and the only door to the job.
+
+    Skips the usage budget — "asking by hand always runs" — and needs a
+    credential, because a press that cannot reach Claude is a press that
+    should say so rather than start.
+    """
+    if not engine.get_auth():
+        return web.json_response(
+            {"error": "connect your Claude account first"}, status=400)
+    if not _start_deep_review():
+        return web.json_response({"error": "a review is already running"},
+                                 status=409)
+    return web.json_response(await asyncio.to_thread(_deep_review_payload))
+
+
+def _deep_review_diagnostics() -> dict:
+    """Whether a review is running, when one last landed, and why one did not."""
+    stored = deep_review.load()
+    latest = stored["reviews"][0] if stored["reviews"] else {}
+    return {
+        "running": bool(DEEP_REVIEW_STATE["running"]
+                        or DEEP_REVIEW_STATE["starting"]),
+        "kept": len(stored["reviews"]),
+        "last_at": int(latest.get("at") or 0),
+        "last_tokens": latest.get("tokens"),
+        "last_error": DEEP_REVIEW_STATE["last_error"],
+        "store_error": stored["error"],
+    }
 
 
 async def h_appliances(request: web.Request) -> web.Response:
@@ -7954,8 +12818,21 @@ def _thermal_payload(store: dict) -> dict:
             "coolest": entry.get("coolest"),
             "hours_to_warm": None if warm is None else round(warm, 1),
         })
+    # The reference every `k` above was measured against, why it was the
+    # one, and what else could have been — so the tab can say it and the
+    # person who knows better can change it (`thermal_outdoor`). The
+    # choice is read live: it takes effect at the next nightly pass, and
+    # the tab has to be able to say a choice is waiting for one.
+    try:
+        chosen = settings_store.load().get("thermal_outdoor")
+    except Exception:  # noqa: BLE001 — a setting nobody could read is unset
+        chosen = None
     return {"outdoor": store.get("outdoor") or "",
             "unit": store.get("unit") or "",
+            "outdoor_source": store.get("outdoor_source") or "",
+            "outdoor_why": store.get("outdoor_why") or "",
+            "outdoor_candidates": list(store.get("outdoor_candidates") or []),
+            "outdoor_choice": chosen,
             "rooms": rooms}
 
 
@@ -8101,9 +12978,11 @@ async def h_checks_run(request: web.Request) -> web.Response:
 # auth re-check follows for the same reason: a real Claude turn spent on a
 # question nobody is asking is a turn spent forever.
 #
-# It rides the generation queue like a fix run does, because a deep run is
-# several Claude invocations and one at a time across the whole add-on is
-# what keeps a subscription's rate limit intact.
+# It rides the generation queue like a fix run does, so one deep run is in
+# flight at a time. Its stages call the engine from `doctor.py` directly
+# rather than through `run_queue` — a press somebody made, a handful of
+# short runs — so they take no seat there; the queue's bound is on what
+# the server itself starts.
 DOCTOR_JOB = "doctor-deep"
 DOCTOR_STATE: dict = {"running": False, "started_at": 0,
                       "stages": [], "last": None, "kind": ""}
@@ -8129,8 +13008,10 @@ def _doctor_hooks() -> "doctor.Hooks":
         end_finding=_end_finding,
         undo_finding=lambda entry: asyncio.to_thread(_undo_finding, entry),
         queue_memory=_queue_memory_fact,
-        drop_memory=lambda source, fact: _drop_from_inbox(
-            _inbox_id(source, fact)),
+        # The queue AND the facts store: the deep check's probe is read
+        # into the store within the minute, and a cleanup that took it out
+        # of the inbox and the document left a fact behind every run read.
+        drop_memory=_unqueue_fact,
         inbox_pending=_inbox_pending,
         memory_text=_read_shared_memory,
         consolidate=_consolidate_now,
@@ -8645,10 +13526,10 @@ async def h_activity_summary(request: web.Request) -> web.Response:
         raise web.HTTPConflict(
             text="Nothing happened in this window, so there is nothing to "
                  "say about it.")
-    result = await asyncio.to_thread(
+    result = await _claude(
         engine.run_analyst, prompt, episodes.SUMMARY_SYSTEM, eff_model(),
         episodes.SUMMARY_TIMEOUT_S, episodes.SUMMARY_MAX_TURNS, "activity",
-        job="episode_summary")
+        job="episode_summary", priority=run_queue.PRESS)
     text = str(result.get("text") or "").strip()
     if not result.get("ok"):
         raise web.HTTPBadGateway(
@@ -8742,6 +13623,18 @@ def _cli_version() -> str:
 _OPTION_SECRET_WORDS = ("token", "password", "secret", "api_key", "credential")
 
 
+def _safe_summary(fn) -> dict:
+    """A module's diagnostics summary, or a row saying it could not be read.
+
+    `reports.faults`' rule: a payload that cannot be built must not take
+    the rest of the payload down with it.
+    """
+    try:
+        return dict(fn())
+    except Exception as exc:  # noqa: BLE001
+        return {"readable": False, "error": journal.scrub(str(exc))[:200]}
+
+
 def _facts_summary_safe() -> dict:
     """The facts store's own summary, or a row saying it could not be
     read — `reports.faults`' rule: a payload it cannot read is a row."""
@@ -8831,6 +13724,17 @@ def _diagnostics_payload() -> dict:
             "facts": _facts_summary_safe(),
         },
         "checks": CHECKS_STATE["last"],
+        # What brAIn decided not to say, counted by reason over the last
+        # day, and whether the trail can be read or written at all: a
+        # trail that stopped writing makes every "why didn't you tell me"
+        # read as "no record", which is a different answer.
+        "decisions": _safe_summary(decision_trail.summary),
+        # How often a typed sentence was read rather than pattern-matched,
+        # and why it fell back when it did — a reader that has silently
+        # stopped working leaves every box doing the old thing.
+        "interpreter": _safe_summary(interpret.summary),
+        "corrections": {**{k: v for k, v in CORRECTION_STATE.items()},
+                        **_safe_summary(corrections.summary)},
         # The last deep run's verdict — three facts, never the transcript.
         # A bug report needs to know whether every face was walked, when,
         # and which one broke; the stage list is a page of prose and
@@ -8847,6 +13751,16 @@ def _diagnostics_payload() -> dict:
         "baselines": {
             "built_at": _baseline_store.get("built_at", 0),
             "measured": len(_baseline_store.get("entities") or {}),
+            "asked": _baseline_store.get("asked", 0),
+            # What the nightly cap left out, and how many were never
+            # candidates (no mean to bucket, or a settings-page sensor):
+            # a sensor past the cap is one every reader is blind to.
+            "eligible": _baseline_store.get(
+                "eligible", _baseline_store.get("asked", 0)),
+            "cut": _baseline_store.get("cut_count", 0),
+            "cut_sample": list(_baseline_store.get("cut") or []),
+            "skipped": dict(_baseline_store.get("skipped") or {}),
+            "categories_read": _baseline_store.get("categories_read"),
             "tz": _baseline_store.get("tz", ""),
             "stale": (baselines.is_stale(_baseline_store)
                       if _baseline_store.get("built_at") else True),
@@ -8872,6 +13786,11 @@ def _diagnostics_payload() -> dict:
         # sent because nothing was worth reporting reads, from outside,
         # exactly like one whose loop died in March.
         "weekly": _weekly_diagnostics(),
+        # Tidy, the upgrade advisor, the overnight health check, the house
+        # book and the access review: run, held (and why), or failed.
+        "maintainer": _maintainer_diagnostics(),
+        "deep_review": _deep_review_diagnostics(),
+        "cameras": _camera_diagnostics(),
         # Answers given in the To-do app or on a notification, on
         # their way back to the one store that owns them.
         "finding_requests": _requests_diagnostics(),
@@ -8910,6 +13829,11 @@ def _diagnostics_payload() -> dict:
             "measured": len(_thermal_store.get("rooms") or {}),
             "asked": _thermal_store.get("asked", 0),
             "outdoor": _thermal_store.get("outdoor", ""),
+            # Why that sensor, and whether a person chose it: every room's
+            # model is measured against it, and a reference nobody can
+            # check is one nobody can correct.
+            "outdoor_source": _thermal_store.get("outdoor_source", ""),
+            "outdoor_why": _thermal_store.get("outdoor_why", ""),
             "coldest": _thermal_store.get("coldest"),
             "reason": _thermal_store.get("reason", ""),
         },
@@ -8934,6 +13858,10 @@ def _diagnostics_payload() -> dict:
         # everything because a gate said no — and each has its own number
         # here.
         "resident": _resident_diagnostics(),
+        # What the Resident decided, graded against what the household did
+        # next: a log nothing writes and a join that stopped running read
+        # identically from every other screen.
+        "outcomes": _outcomes_diagnostics(),
         # And the subscription under it. A socket that never connected, one
         # that is reading nothing because the house is quiet, and one that
         # is dropping everything because something is flooding it are three
@@ -8941,7 +13869,23 @@ def _diagnostics_payload() -> dict:
         "eventbus": (EVENT_BUS.stats() if EVENT_BUS else
                      {"connected": False,
                       "idle_reason": "the event bus has not been started"}),
+        # What brAIn understands about the house: the entity readings, the
+        # situation and what is coming up. Each can stop quietly — a read
+        # held by a gate, a frame nobody rebuilt, a calendar that would
+        # not answer — and each says which here.
+        "understanding": _understanding_diagnostics(),
         "daemons": _daemon_rollcall(),
+        # The panel's own loops — the generation worker, the scheduler, the
+        # checks — alive or not, and when each last went round. A dead
+        # worker is cards and fixes queued for ever with every other
+        # surface saying "queued", which `health.problems` now names.
+        "loops": _loop_health(),
+        # Every Claude run the server starts takes a seat here; who holds
+        # one and who waits is what tells "brAIn is busy" from "stuck".
+        "claude_runs": run_queue.stats(),
+        # What brAIn has changed and whether it held, the action gate's
+        # answers and the tripwire — each of which can stop silently.
+        "acting": _acting_diagnostics(),
         "usage": {
             **{k: usage.get(k) for k in ("source", "used_percent", "limits")},
             # When a finished run last told the tracker to ask. The
@@ -9156,10 +14100,7 @@ def _case_end_finding(key, word: str, note: str):
         if finding is None:
             return {"error": "no such finding"}
         payload, fact = await _end_finding(finding, spec, note)
-        payload["undo"] = undo_store.record(
-            "finding", finding=finding,
-            key=findings_store.normalize(finding["text"]),
-            fact=fact, fact_source=spec.get("source", "homeowner"))
+        payload["undo"] = _ending_undo(finding, spec, fact, payload)
         return payload
     return run
 
@@ -9347,7 +14288,10 @@ def _findings_payload() -> dict:
     on me", which is the only question a badge on a work list can be asked.
     """
     payload = findings_store.listing()
-    open_claims = hypotheses.list_all("open")
+    # Awake only: a guess somebody dismissed is still open and is not
+    # being asked. Listed here it came straight back onto the feed as a
+    # loose card beside the case list that had correctly hidden it.
+    open_claims = hypotheses.awake()
     payload["hypotheses"] = open_claims
     payload["open"] += len(open_claims)
     # How right each producer has been, from the endings people gave. It
@@ -9456,7 +14400,7 @@ FINDING_VERBS = {
              "noted": "Fixed by the homeowner on {date}: {text}. They said: "
                       "{note}",
              "source": "homeowner",
-             "label": "done"},
+             "label": "done", "hint": True},
     # "I've read what brAIn changed" — the ending for an automated fix,
     # which already wrote its own memory line when it made the change.
     "ack": {"kind": "fixed", "memory": "", "label": "got_it"},
@@ -9468,6 +14412,16 @@ FINDING_VERBS = {
     # act on must not be raised at you again while it sits on your list.
     # `h_finding_todo` is what routes here; the spec is the ending half.
     "todo": {"kind": "accepted", "memory": "", "label": "accepted"},
+    # "Yes" to a question the Resident filed as a finding. The case said
+    # what it would teach if the homeowner agreed (`memory_hint`), and that
+    # is the line filed — `hint` says to prefer it over the template, which
+    # is the fallback for a case that offered none. Settled as `accepted`:
+    # agreeing the guess was right is the report being confirmed.
+    "confirm": {"kind": "accepted",
+                "memory": "Confirmed by the homeowner: {text}",
+                "noted": "Confirmed by the homeowner: {text}. They added: "
+                         "{note}",
+                "source": "homeowner", "label": "accepted", "hint": True},
     # Not an ending: puts a legacy row (dismissed before the ledger existed,
     # and still on disk) back on the list.
     "reopen": {"status": "open"},
@@ -9515,9 +14469,7 @@ async def h_finding_verb(request: web.Request) -> web.Response:
     # reason this exists: they sit next to each other and mean opposite
     # things, so a mis-tap is not hypothetical and there is nothing to put
     # back by hand.
-    payload["undo"] = undo_store.record(
-        "finding", finding=finding, key=findings_store.normalize(finding["text"]),
-        fact=fact, fact_source=spec.get("source", "homeowner"))
+    payload["undo"] = _ending_undo(finding, spec, fact, payload)
     # "Wrong — and stop raising these." The box on the Wrong form, for the
     # row that is the fourth of its kind: the ending above is about this
     # row, and the mute is about the rule that filed it. Only Wrong offers
@@ -9526,7 +14478,8 @@ async def h_finding_verb(request: web.Request) -> web.Response:
     # undo token above puts back THIS row, and the mute is one press on
     # the Findings tab to reverse.
     if verb in ("wrong", "ignore") and (body or {}).get("mute") is True \
-            and finding.get("source"):
+            and finding.get("source") \
+            and finding["source"] not in cases.UNMUTABLE_SOURCES:
         taken = await asyncio.to_thread(_mute_source, finding["source"])
         payload.update(await asyncio.to_thread(_findings_payload))
         payload["muted"] = _muted_rows()
@@ -9536,7 +14489,8 @@ async def h_finding_verb(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
-async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]:
+async def _end_finding(finding: dict, spec: dict, note: str, *,
+                      refine: bool = True) -> tuple[dict, str]:
     """Settle a finding and record what it taught. One implementation.
 
     Both front doors reach this: the tab's own buttons, and a request
@@ -9544,6 +14498,11 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
     on a notification. A second copy would be the same press teaching
     brAIn two different things depending on where it was made.
     """
+    if finding.get("source") == notify_learn.SOURCE:
+        # A question about notifications: Yes adds a clause to the
+        # household's sentence, and neither answer is a fact about the house.
+        return await _end_notify_suggestion(finding, spec, note)
+
     def settle() -> dict:
         findings_store.settle_and_clear(finding["ts"], spec["kind"], note=note)
         return _findings_payload()
@@ -9566,10 +14525,47 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
     # `memory` is what stops a note silently costing the memory line.
     template = spec["noted"] if note and spec.get("noted") else spec["memory"]
     fact = ""
-    if template:
+    subjects = _finding_subjects(finding)
+    # An investigation's case says what it would teach if a person agreed
+    # (`memory_hint`) — asked for, paid for and stored, and until now read
+    # by nothing. On an ending that agrees, it is the line: a durable fact
+    # about the house in the run's words, rather than the template's
+    # "Fixed by the homeowner: <the card's title>".
+    hint = str(finding.get("memory_hint") or "").strip()
+    # A question that offers to WIDEN a correction (`corrections.offer_row`).
+    # Yes writes the rule it offered — and that rule is the effect the undo
+    # token has to carry; any other answer writes nothing at all, because
+    # "Not a problem in this home: Stop flagging … for the garage?" is not
+    # a fact about the house, it is a declined suggestion.
+    if corrections.is_offer(finding):
+        if spec.get("label") == "accepted":
+            got = await asyncio.to_thread(
+                corrections.accept_offer, str(finding.get("text") or ""),
+                protected=automation_writer.protected_patterns())
+            if got["ids"]:
+                payload["_exception_ids"] = got["ids"]
+            else:
+                payload["correction"] = got["why"]
+        else:
+            template, hint = "", ""
+    if spec.get("hint") and hint:
+        fact = hint + (f" (The homeowner added: {note})" if note else "")
+        await _submit_memory(
+            fact, source=spec.get("source", "homeowner"),
+            subject=subjects[0] if subjects else "", subjects=subjects[1:],
+            run_id=str(finding.get("run_id") or ""))
+    elif template:
         fact = template.format(text=finding["text"], note=note,
                                date=time.strftime("%Y-%m-%d"))
-        await _submit_memory(fact, source=spec.get("source", "homeowner"))
+        # Filed under what the finding is about, and with the run that
+        # raised it. A correction tagged by scanning its sentence lands on
+        # the whole house — the report is written in friendly names — and
+        # the next look at that very sensor is the run least likely to be
+        # shown a house-wide fact (`_finding_subjects`).
+        await _submit_memory(
+            fact, source=spec.get("source", "homeowner"),
+            subject=subjects[0] if subjects else "", subjects=subjects[1:],
+            run_id=str(finding.get("run_id") or ""))
     # And the rule it corrects. Wrong on a check's row is the homeowner
     # saying this rule has this entity wrong — the sensor is not stuck, it
     # is a contact on a cupboard nobody opens — and until 2.2 that landed
@@ -9579,27 +14575,78 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
     # note is the fact's text where there is one, because it is the
     # sentence a person will want to read back beside the rule it muted.
     if spec.get("kind") == "ignored":
-        await asyncio.to_thread(_record_exception, finding, note)
+        written = await asyncio.to_thread(_record_exception, finding, note)
+        if written:
+            # Private to the press that made it: the route turns it into
+            # the undo token and takes it off the payload (`_ending_undo`).
+            payload["_exception_ids"] = written
+            # And a reason somebody typed gets its second look: how wide,
+            # and until when (`corrections`). Started rather than awaited
+            # — the press answers now with the narrow rule it always
+            # wrote, and the scope lands within seconds — and skipped by a
+            # caller that runs it itself and has to quote its answer back.
+            if refine and note.strip():
+                _start_correction(finding, note, written)
     return payload, fact
 
 
-def _record_exception(finding: dict, note: str) -> None:
-    """Best effort, `file_incident`'s rule: an ending must not fail on it."""
+def _ending_undo(finding: dict, spec: dict, fact: str, payload: dict) -> str:
+    """The undo token for an ending, carrying every effect it had.
+
+    The rule a Wrong press wrote is one of those effects, and the toast's
+    Undo promises to put back all of them — "half of any of them is worse
+    than none". A mis-tapped Wrong followed by Undo used to restore the row
+    and leave the check muted for that entity until somebody found the
+    rule on the Knowledge tab.
+    """
+    ids = payload.pop("_exception_ids", None) or []
+    return undo_store.record(
+        "finding", finding=finding,
+        key=findings_store.normalize(finding["text"]),
+        fact=fact, fact_source=spec.get("source", "homeowner"),
+        exception=list(ids))
+
+
+# Which producers' Wrong becomes a rule, and under what name. A check names
+# itself; the Resident is one producer whose judgements are all its own,
+# so its rule is `exception:resident` on the entities the case was about —
+# what a later look at those entities is shown as "already dismissed here"
+# (the reason it is retrievable by subject at all). An analyst card's row
+# writes none: it names an entity it noticed on the way past rather than
+# one it was asked about, and a rule on the wrong entity is worse than none.
+def _exception_rule(finding: dict) -> tuple[str, list[str]]:
     source = str(finding.get("source") or "")
-    entity_id = str(finding.get("entity_id") or "")
-    if not source.startswith("check:") or not entity_id:
-        return
-    check_id = source[len("check:"):]
-    text = note.strip() if note else (
-        f'"{finding.get("text", "")}" was reported and marked wrong')
+    if source.startswith("check:"):
+        entity_id = str(finding.get("entity_id") or "")
+        return (source[len("check:"):], [entity_id] if entity_id else [])
+    if source == findings_store.RESIDENT_SOURCE:
+        return "resident", _finding_subjects(finding)
+    return "", []
+
+
+def _record_exception(finding: dict, note: str) -> list[str]:
+    """Best effort, `file_incident`'s rule: an ending must not fail on it.
+
+    Returns the ids of the facts it wrote, which the undo token carries.
+    """
+    rule, subjects = _exception_rule(finding)
+    if not rule or not subjects:
+        return []
+    report = str(finding.get("claim") or finding.get("text") or "")
+    text = note.strip() if note else f'"{report}" was reported and marked wrong'
     try:
-        facts_store.add(
-            text, subject=entity_id, source="correction",
-            predicate=facts_store.EXCEPTION_PREFIX + check_id,
-            run_id=str(finding.get("run_id") or ""), confidence=0.95)
+        row, _created = facts_store.add(
+            text, subject=subjects[0], extra_subjects=subjects[1:],
+            source="correction",
+            predicate=facts_store.EXCEPTION_PREFIX + rule,
+            run_id=str(finding.get("run_id") or ""), confidence=0.95,
+            about=report,
+            finding_key=findings_store.normalize(finding.get("text") or ""))
     except Exception as exc:  # noqa: BLE001
         log.debug("could not record the exception for %s: %s",
-                  log_safe(entity_id), exc)
+                  log_safe(subjects[0]), exc)
+        return []
+    return [row["id"]] if row else []
 
 
 # ---------------------------------------------------------------------------
@@ -9809,7 +14856,10 @@ async def _complete_todo(item: dict, note: str) -> tuple[dict | None, str]:
     template = spec["noted"] if note else spec["memory"]
     fact = template.format(text=item["text"], note=note,
                            date=time.strftime("%Y-%m-%d"))
-    await _submit_memory(fact, source=spec["source"])
+    subjects = _finding_subjects(item)
+    await _submit_memory(fact, source=spec["source"],
+                         subject=subjects[0] if subjects else "",
+                         run_id=str(item.get("run_id") or ""))
     if item.get("run_id"):
         await asyncio.to_thread(
             capture.add_label, item["run_id"],
@@ -10136,6 +15186,99 @@ async def _wait_for_entity(entity_id: str) -> bool:
         await asyncio.sleep(ACCEPT_POLL_S)
 
 
+# How long a single registry read may take before the answer is "I could
+# not look". A registry that will not answer must not hold a press open.
+REGISTRY_LOOKUP_S = 10
+
+
+async def _registry_entity_id(unique_id: str, platform: str = "automation"
+                              ) -> tuple[str, bool]:
+    """The entity id Core registered for this config id, and whether it
+    could look at all: ``(entity_id, looked)``.
+
+    An automation's registry entry is keyed on the `id` brAIn wrote into
+    its config (Core makes that the `unique_id`), and that is the one
+    question about it that is not a guess. The entity id is a CONSEQUENCE
+    — `automation.<slug of the alias>` while that slug is free, `_2` when
+    it is not, and Home Assistant transliterates where `slugify` here does
+    not — so reading it back is the doctor helper's rule
+    (`_ensure_helper`), applied to the automations brAIn writes.
+    ``("", False)`` is "the registry would not answer", and the caller
+    keeps its old behaviour rather than reading that as "not registered".
+    """
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    if not unique_id:
+        return "", False
+    try:
+        async with aiohttp.ClientSession() as session:
+            answer = await asyncio.wait_for(ha_data._ws_commands(
+                session, [{"type": "config/entity_registry/list"}]),
+                REGISTRY_LOOKUP_S)
+    except Exception as exc:  # noqa: BLE001 — "I could not look"
+        log.debug("entity registry unreadable: %s", exc)
+        return "", False
+    rows = answer[0] if answer else None
+    if not isinstance(rows, list):
+        return "", False
+    for row in rows:
+        if (isinstance(row, dict) and row.get("platform") == platform
+                and str(row.get("unique_id") or "") == str(unique_id)):
+            return str(row.get("entity_id") or ""), True
+    return "", True
+
+
+async def _wait_for_registration(unique_id: str) -> tuple[str, bool]:
+    """`_registry_entity_id`, polled until it appears or the ceiling.
+
+    A reload returns before Core has finished setting the automation up,
+    which is why `_wait_for_entity` polls; the registry entry is written by
+    the same setup. Stops asking the moment the registry will not answer,
+    because a ceiling spent polling something that cannot be read is a
+    press held open for nothing.
+    """
+    deadline = time.monotonic() + ACCEPT_VERIFY_S
+    while True:
+        eid, looked = await _registry_entity_id(unique_id)
+        if eid or not looked:
+            return eid, looked
+        if time.monotonic() >= deadline:
+            return "", True
+        await asyncio.sleep(ACCEPT_POLL_S)
+
+
+async def _drop_registry_entry(unique_id: str) -> str:
+    """Delete the entity registry entry brAIn's own automation left. "" or why.
+
+    Taking an automation out of the file leaves its registry entry, and
+    Core re-publishes that as an `unavailable`, `restored: true` orphan —
+    which kept the entity id, so the same sentence accepted again was
+    registered as `_2` while verification passed on the orphan and the
+    one-off's disarm switched the orphan off (`_registry_entity_id`).
+    `dev.restored` then filed a finding about brAIn's own leftover. Found
+    by the config id brAIn wrote, never by a guessed entity id: a guess is
+    exactly the thing that could name somebody else's automation.
+    """
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415
+
+    eid, looked = await _registry_entity_id(unique_id)
+    if not eid:
+        return "" if looked else "the entity registry could not be read"
+    try:
+        async with aiohttp.ClientSession() as session:
+            gone = await asyncio.wait_for(ha_data._ws_calls(
+                session, [{"type": "config/entity_registry/remove",
+                           "entity_id": eid}]), REGISTRY_LOOKUP_S)
+    except Exception as exc:  # noqa: BLE001
+        return f"{eid}'s registry entry could not be removed: {exc}"
+    if not gone or not gone[0].get("ok"):
+        return (f"{eid}'s registry entry could not be removed: "
+                f"{(gone[0].get('error') if gone else '') or 'refused'}")
+    return ""
+
+
 async def _apply_accepted(row: dict) -> tuple[dict | None, str]:
     """Write it, reload, and check it is really there. Or put it back.
 
@@ -10181,6 +15324,22 @@ async def _apply_accepted(row: dict) -> tuple[dict | None, str]:
     except Exception as exc:  # noqa: BLE001 — every way this fails is the
         # same answer to the person waiting: it did not take.
         failure = f"Home Assistant would not reload its {domain}s: {exc}"
+    if not failure and target == "automations" and not row.get("edits"):
+        # The entity id Core actually registered, read off the registry by
+        # the config id brAIn wrote — before anything waits on a guessed
+        # one. A guess passes on whatever already answers to that name: a
+        # restored orphan of an earlier accept, or somebody's own
+        # automation whose alias differs only in case. A registry that
+        # will not answer leaves the guess, which is what this did before.
+        real, looked = await _wait_for_registration(
+            str(written.get("automation_id") or ""))
+        if real:
+            written["entity_id"] = real
+            written["entity_ids"] = [real]
+        elif looked:
+            failure = ("it was written but Home Assistant never registered "
+                       "it, so it is not running — check the add-on log and "
+                       "Home Assistant's own")
     if not failure:
         # Every entity the write claimed, not the first: three scenes out
         # of four is a mood missing from a schedule nobody has written
@@ -10233,14 +15392,26 @@ async def _announce_accepted(row: dict, applied: dict) -> None:
         return
     title, body = notify_router.compose_accepted(
         str(row.get("title") or ""), str(applied.get("entity_id") or ""))
+    # A line in the delivery ledger like every other message, sent or not:
+    # a ledger that missed one sender is one nobody can read "what did
+    # brAIn tell me this week" off. No findings ride on it.
+    delivery = deliveries.new_id()
     try:
         await ha_data.send_notification(service, title, body)
     except Exception as exc:  # noqa: BLE001 — the automation is already
         # running; the notification is the courtesy copy.
+        await asyncio.to_thread(
+            deliveries.record, "accepted", delivery_id=delivery,
+            service=service, title=title, body=body, ok=False,
+            error=str(exc))
         log.warning("accepted-change notification via %s failed: %s",
                     service, exc)
         _report_async(reports.notify_failure, service, str(exc),
                       context="accepted-change announcement")
+        return
+    await asyncio.to_thread(
+        deliveries.record, "accepted", delivery_id=delivery,
+        service=service, title=title, body=body)
 
 
 async def h_proposal_decide(request: web.Request) -> web.Response:
@@ -10461,12 +15632,24 @@ async def h_intent_remove(request: web.Request) -> web.Response:
 
     written = None
     if row.get("status") != "refused" and row.get("automation_id"):
+        # The entity Core registered for the id brAIn wrote, when the
+        # registry will say: a row armed before that was read back carries
+        # a guessed id, and waiting for a guess to go is waiting on a name
+        # that may belong to something else.
+        real, _looked = await _registry_entity_id(row["automation_id"])
         written, failure = await _remove_automation(
-            row["automation_id"], row.get("entity_id") or "")
+            row["automation_id"], real or row.get("entity_id") or "")
         if failure:
             return web.json_response(
                 {"error": failure,
                  **await asyncio.to_thread(_proposals_payload)}, status=409)
+        # And its registry entry, which the file outlives. Not a failure of
+        # the removal when it cannot be done — the automation is gone and
+        # the row may go — but said in the log, because the orphan it
+        # leaves is one `dev.restored` will report.
+        why = await _drop_registry_entry(row["automation_id"])
+        if why:
+            log.warning("one-off %s removed, but %s", ts, why)
 
     dropped = await asyncio.to_thread(intents.drop, ts)
     payload = {"removed": bool(dropped),
@@ -10562,12 +15745,23 @@ async def h_undo(request: web.Request) -> web.Response:
             # way, and saying which half failed is the point.
             reloaded = False
             log.warning("could not reload after undoing an accept: %s", exc)
+        # An automation the accept APPENDED leaves a registry entry behind
+        # once the file is back, which Core keeps as a restored orphan
+        # under the very entity id the next accept of the same thing would
+        # want. An edit put somebody's own automation back, whose entry is
+        # theirs and stays.
+        if (reverted.get("ok") and reloaded
+                and written.get("target", "automations") == "automations"
+                and not (entry.get("proposal") or {}).get("edits")):
+            why = await _drop_registry_entry(
+                str(written.get("automation_id") or ""))
+            if why:
+                log.warning("accept undone, but %s", why)
 
         def put_back() -> tuple[bool, dict]:
             restored = proposals.reopen(entry["proposal"]) is not None
             if entry.get("fact"):
-                _drop_from_inbox(
-                    _inbox_id(entry["fact_source"], entry["fact"]))
+                _unqueue_fact(entry["fact_source"], entry["fact"])
             return restored, _proposals_payload()
 
         restored, payload = await asyncio.to_thread(put_back)
@@ -10687,7 +15881,7 @@ def _undo_todo(entry: dict) -> tuple[bool, dict]:
     # The memory line has not been consolidated — the token is younger than
     # any pass — so it comes out of the inbox the way a queued fact does.
     if restored and entry.get("fact"):
-        _drop_from_inbox(_inbox_id(entry["fact_source"], entry["fact"]))
+        _unqueue_fact(entry["fact_source"], entry["fact"])
     payload = _todo_payload()
     payload["findings"] = findings_store.listing()["findings"]
     return restored, payload
@@ -10708,6 +15902,23 @@ def _undo_finding(entry: dict) -> tuple[bool, dict]:
         restored = findings_store.restore(entry["finding"]) is not None
         if entry.get("key"):
             findings_store.unsettle(entry["key"])
+        # And the rule, which is the effect that reaches code: a Wrong on
+        # a check's row muted that check for that entity, and an Undo that
+        # left it would put the card back under a rule that will never let
+        # the same report through again. A token minted before the ids
+        # rode on it finds the rule by the report it was written about.
+        if "exception" in entry:
+            facts_store.forget_ids(entry.get("exception") or [])
+        # Every rule carrying the report's key, too: the correction pass
+        # (`corrections.apply_plan`) may have added a lifetime or a
+        # whole-entity rule after this token was minted, and an Undo that
+        # took back the press's rule and left the pass's would be the
+        # "half of any of them is worse than none" the toast promises not
+        # to do. And a question offering to widen it asks about nothing.
+        if entry.get("key"):
+            facts_store.forget_exceptions(entry["key"])
+            for text_key in corrections.withdraw(entry["key"]):
+                _drop_offer_case(text_key)
     else:
         restored = hypotheses.reopen(entry["ts"]) is not None
         # A rejected guess also went into the ask-history as a dead end.
@@ -10720,9 +15931,12 @@ def _undo_finding(entry: dict) -> tuple[bool, dict]:
                 knowledge_store.remove_question(q["ts"])
     # The memory line has not been consolidated (the token is younger
     # than any pass), so it is still a line in the inbox and comes out
-    # the same way a queued fact does from the Memory tab.
+    # the same way a queued fact does from the Memory tab — and out of
+    # the facts store, which read it within the minute.
     if entry.get("fact"):
-        _drop_from_inbox(_inbox_id(entry["fact_source"], entry["fact"]))
+        _unqueue_fact(entry["fact_source"], entry["fact"])
+    # A Yes to a notification suggestion took a clause with it.
+    _notify_learn_undo(entry)
     return restored, _findings_payload()
 
 
@@ -10741,7 +15955,15 @@ async def h_finding_unsettle(request: web.Request) -> web.Response:
 
     def undo() -> tuple[bool, dict]:
         ok = findings_store.unsettle(key)
-        return ok, _findings_payload()
+        # The rule goes with the wording. "Let brAIn raise it again" on a
+        # report somebody once marked Wrong released the key and left the
+        # `exception:` fact standing the check down for that entity, so
+        # the one press whose whole meaning is "tell me about this again"
+        # could never bring the report back for the four checks that read
+        # exceptions. Counted as an answer either way: a rule with no
+        # ledger entry (the key aged out) is still a rule to release.
+        forgot = facts_store.forget_exceptions(key)
+        return ok or forgot > 0, _findings_payload()
 
     ok, payload = await asyncio.to_thread(undo)
     if not ok:
@@ -10789,6 +16011,18 @@ def _source_of(body: dict) -> str:
     return source
 
 
+def _refuse_unmutable(source: str) -> None:
+    """`cases.UNMUTABLE_SOURCES` is refused at the route as well as left off
+    the ⋯, because a panel served before this release still offers the
+    press — and pressing it deleted every open Resident case, a safety
+    case included, while muting nothing that was ever read."""
+    if source in cases.UNMUTABLE_SOURCES:
+        raise web.HTTPConflict(
+            text="That is not a rule brAIn can stop raising. Use Not a "
+                 "problem on the card, and say why — that is what it "
+                 "learns from.")
+
+
 async def h_findings_mute(request: web.Request) -> web.Response:
     """"Stop raising these": a producer the homeowner has had enough of.
 
@@ -10800,6 +16034,7 @@ async def h_findings_mute(request: web.Request) -> web.Response:
     because a press that removed six cards has to say so.
     """
     source = _source_of(await _json_body(request))
+    _refuse_unmutable(source)
 
     def apply() -> dict:
         taken = _mute_source(source)
@@ -10878,10 +16113,25 @@ async def h_finding_snooze(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(settle))
 
 
-# What the chat is handed when you press Discuss. It says "look, don't
-# touch": the discussion is for understanding the thing, and Fix it is still
-# the only button that authorises a change — which stays on screen while you
-# talk, so agreeing to it is one press away rather than a trip back.
+# What the chat is handed when you press Discuss.
+#
+# It used to say "look, don't touch" and that sentence was the whole of the
+# guarantee, while the conversation it opened held every acting tool the
+# project pre-approves. The guarantee is the session's now (a discussion's
+# acting tools ASK — `chat_session.DISCUSS_ASK`), and the prompt says what
+# the honest way to change something is: a `plan` option, which is the
+# plan → Apply → Undo path every other change on the card already takes.
+#
+# It also used to send the finding's sentence and nothing else, so a
+# Resident case — whose investigation had already read the entities, put
+# numbers and times on them and weighed how sure it was — was discussed by
+# a chat told to "check the current state and the history" from scratch,
+# paying again for what the investigation had already paid for, and on a
+# case that names no single entity it was not even told which ones. The
+# evidence, the confidence, what the case said could be done and where the
+# investigation's own transcript is now ride in the prompt
+# (`_discuss_context`), and the chat is told to start from them.
+#
 # The first line is load-bearing twice over: it is what the chat bubble
 # leads with, and — because a conversation's title is its first genuine
 # user message — it is what the Chats rail calls the conversation. The old
@@ -10890,12 +16140,21 @@ async def h_finding_snooze(request: web.Request) -> web.Response:
 # of the same sentence with the finding buried mid-message.
 DISCUSS_PROMPT = """Discussing: {text}
 {detail}{fix}{entity}
-Severity: {severity}
+Severity: {severity}{context}
+You flagged this in my home. Tell me what is actually going on, and say
+plainly whether you think it is really a problem here. {look}"""
 
-You flagged this as broken in my home. Look into it and tell me what is
-actually going on — check the current state and the history before you
-answer, and say plainly whether you think it is really a problem here.
-Do not change anything yet; I will decide.
+# What only the conversation in the chat is told — a reply from a phone
+# runs read-only and offers nothing, so it is handed the context above
+# without this.
+DISCUSS_OFFER = """
+
+Anything that would change my house from this conversation asks me first —
+that is how this conversation is set up — so do not try to make a change
+here. If we agree something should change, offer it as a `plan` option
+below whose label says exactly what to change: pressing it has brAIn work
+out those steps for me to read and Apply, with an undo, and nothing changes
+before I press Apply.
 
 Then end your answer by calling offer_resolutions with the ways this could
 actually be settled, so they are buttons I can press here. Offer only what
@@ -10905,6 +16164,107 @@ worked out what I should actually DO about it — which hub to power-cycle,
 which automation to open, which setting to change — offer that as an
 `advice` option too: pressing it puts your sentence on the card as what to
 do, and leaves the finding open."""
+
+# How much of the investigation's own words ride along. Enough for its
+# conclusion, never its whole working: the evidence rows are the facts,
+# and this is only the reasoning that joined them.
+DISCUSS_RUN_CHARS = 700
+DISCUSS_EVIDENCE_ROWS = 8
+
+_CONFIDENCE_WORDS = ((0.8, "confident"), (0.5, "fairly sure"), (0.0, "not sure"))
+
+
+def _investigation_said(run_id: str) -> str:
+    """The last things the investigation said in prose, bounded.
+
+    Read out of the engine's own project directory, where the run lives
+    (`run_sources`' `store: "engine"`). Its closing reply is the case JSON
+    — already on the row — so what is worth carrying is the prose it wrote
+    on the way there. Never raises: a transcript that could not be read is
+    a prompt without this paragraph, not a refused Discuss.
+    """
+    if not run_id:
+        return ""
+    try:
+        events = conversations.transcript(engine.CLAUDE_HOME, run_id)
+    except Exception:  # noqa: BLE001
+        return ""
+    said = [str(e.get("text") or "").strip() for e in events
+            if e.get("type") == "text"]
+    said = [t for t in said if t and not t.lstrip().startswith(("{", "```"))]
+    text = " ".join(" ".join(said[-2:]).split())
+    if len(text) > DISCUSS_RUN_CHARS:
+        text = "…" + text[-DISCUSS_RUN_CHARS:]
+    return text
+
+
+def _discuss_context(finding: dict) -> tuple[str, bool]:
+    """What the row already knows, as prompt lines — and whether there is
+    evidence enough that the chat should start from it rather than look
+    again from nothing."""
+    lines: list[str] = []
+    confidence = finding.get("confidence")
+    if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+        word = next(w for floor, w in _CONFIDENCE_WORDS if confidence >= floor)
+        lines.append(f"How sure brAIn was: {word}")
+    stakes = {"high": "a lot", "medium": "somewhat",
+              "low": "a little"}.get(finding.get("stakes") or "")
+    if stakes:
+        lines.append(f"How much it matters if right: {stakes}")
+    evidence = [e for e in finding.get("evidence") or [] if isinstance(e, dict)]
+    if evidence:
+        lines.append("What the investigation read:")
+        for row in evidence[:DISCUSS_EVIDENCE_ROWS]:
+            when = f" ({row['when']})" if row.get("when") else ""
+            lines.append(f"- {row.get('entity') or '?'}: "
+                         f"{row.get('value') or '?'}{when}")
+    acts = [a for a in finding.get("actions") or [] if isinstance(a, dict)]
+    if acts:
+        lines.append("What it said could be done:")
+        for act in acts[:4]:
+            ask = "would ask me first" if act.get("consent") else "brAIn could do it"
+            detail = f" — {act['detail']}" if act.get("detail") else ""
+            lines.append(f"- {act.get('label') or '?'} ({ask}){detail}")
+    looked = (finding.get("triage") or {}).get("reason") or ""
+    if looked:
+        lines.append(f"What brAIn's first look said: {looked}")
+    # The row's own `run_id` is the investigation that wrote the case
+    # (`add_case`); a check's row carries none, and its triage
+    # conversation is the run that looked at it instead.
+    run_id = (finding.get("run_id")
+              or (finding.get("investigation") or {}).get("run_id")
+              or (finding.get("triage") or {}).get("run_id") or "")
+    if run_id:
+        said = _investigation_said(run_id)
+        lines.append(f"The run that raised this is {run_id}"
+                     + (f"; in its own words: {said}" if said else "."))
+    return ("\n" + "\n".join(lines) + "\n") if lines else "\n", bool(evidence)
+
+
+def _discuss_prompt(finding: dict, offer: bool = True) -> str:
+    """The Discuss opener for one finding. ``offer`` is the chat's; a reply
+    typed into a notification runs read-only and offers nothing."""
+    context, has_evidence = _discuss_context(finding)
+    entity = finding.get("entity_id") or ""
+    if not entity:
+        named = [str(e.get("entity")) for e in finding.get("evidence") or []
+                 if isinstance(e, dict) and e.get("entity")]
+        entity_line = (f"\nEntities it read: {', '.join(named[:6])}\n"
+                       if named else "")
+    else:
+        entity_line = f"\nEntity: {entity}\n"
+    look = ("Start from what was already read above — look again only at "
+            "what has changed since, or at what it does not settle."
+            if has_evidence else
+            "Check the current state and the history before you answer.")
+    prompt = DISCUSS_PROMPT.format(
+        text=finding.get("claim") or finding.get("text") or "",
+        detail=f"\n{finding['detail']}\n" if finding.get("detail") else "\n",
+        fix=f"\nWhat you suggested: {finding['fix']}\n" if finding.get("fix") else "",
+        entity=entity_line,
+        severity=finding.get("severity") or "warning",
+        context=context, look=look)
+    return prompt + (DISCUSS_OFFER if offer else "")
 
 
 REPLY_SYSTEM = """You are brAIn, answering a message somebody typed into a
@@ -10920,7 +16280,75 @@ REPLY_MAX_TURNS = 24
 REPLY_MAX_CHARS = 600
 
 
+# Replies typed into a notification, being answered off the request drain.
+# Held so the loop cannot collect a task mid-run (`_SAFETY_TASKS`' reason).
+_REPLY_TASKS: set = set()
+
+
+def _start_reply(finding: dict, text: str) -> tuple[bool, str]:
+    """Start answering a reply and hand back at once.
+
+    The drain runs every fifteen seconds and applies a burst in order, so
+    awaiting the reply's run there held every Done, Wrong and To-do given
+    after it — in the same burst and in the next — for as long as the run
+    took. An empty reply is refused here, synchronously, because it is not
+    a turn and spends nothing; everything after that is the task's, and a
+    reply that could not be answered or delivered is logged by
+    `_reply_settled` rather than reported to a drain that has moved on.
+    """
+    said = str(text or "").strip()
+    if not said:
+        return False, "the reply was empty"
+    task = asyncio.get_running_loop().create_task(_reply_to_finding(finding, said))
+    _REPLY_TASKS.add(task)
+    task.add_done_callback(_reply_settled)
+    return True, ""
+
+
+def _reply_settled(task) -> None:
+    _REPLY_TASKS.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.warning("a reply from a notification could not be answered: %s", exc)
+        return
+    ok, why = task.result()
+    if not ok:
+        log.warning("a reply from a notification was not answered: %s", why)
+
+
+async def _settle_replies(timeout: float | None = None) -> None:
+    """Wait for the replies in flight — what a test of the drain awaits
+    before it reads what was sent."""
+    if _REPLY_TASKS:
+        await asyncio.wait(set(_REPLY_TASKS), timeout=timeout)
+
+
 async def _reply_to_finding(finding: dict, text: str) -> tuple[bool, str]:
+    """A reply typed into a notification: read it first, then do it.
+
+    Until 2.12 every reply was a question for the Resident, so *"it's
+    always like that in winter"* typed under a frozen-sensor notification
+    got an essay back and ended nothing. The interpreter reads the words
+    against the case they were typed under (`interpret`, surface `reply`)
+    and a reply that ENDS or CORRECTS the case does exactly that, through
+    the tab's own endings, and is answered with one sentence and an Undo
+    (`_reply_routes`). Anything the interpreter cannot read — no
+    credential, a failed run, an unreadable reply — and anything it reads
+    as conversation is the Resident's answer exactly as before
+    (`_reply_conversation`).
+    """
+    said = str(text or "").strip()
+    if not said:
+        return False, "the reply was empty"
+    routes = await _interpret(said, "reply", case=finding)
+    if routes is None or all(r["kind"] == "chat" for r in routes):
+        return await _reply_conversation(finding, said)
+    return await _reply_routes(finding, said, routes)
+
+
+async def _reply_conversation(finding: dict, text: str) -> tuple[bool, str]:
     """Answer a reply typed into a notification, as the next notification.
 
     The Reply button is the case's conversation reached from a lock
@@ -10938,19 +16366,15 @@ async def _reply_to_finding(finding: dict, text: str) -> tuple[bool, str]:
     said = str(text or "").strip()
     if not said:
         return False, "the reply was empty"
-    prompt = (DISCUSS_PROMPT.split("\nThen end your answer", 1)[0].format(
-        text=finding["text"],
-        detail=f"\n{finding['detail']}\n" if finding.get("detail") else "\n",
-        fix=f"\nWhat you suggested: {finding['fix']}\n" if finding.get("fix") else "",
-        entity=f"\nEntity: {finding['entity_id']}\n" if finding.get("entity_id") else "",
-        severity=finding.get("severity") or "warning")
-        + f"\n\nThey replied from their phone: \u201c{said[:500]}\u201d\n"
-        "Answer that.")
+    prompt = (await asyncio.to_thread(_discuss_prompt, finding, False)
+              + f"\n\nThey replied from their phone: \u201c{said[:500]}\u201d\n"
+              "Answer that.")
     started = time.time()
     try:
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_analyst, prompt, REPLY_SYSTEM, eff_model(),
-            REPLY_TIMEOUT_S, REPLY_MAX_TURNS, "resident", job="investigate")
+            REPLY_TIMEOUT_S, REPLY_MAX_TURNS, "resident", job="investigate",
+            priority=run_queue.PRESS)
     except Exception as exc:  # noqa: BLE001
         result = {"ok": False, "error": str(exc), "text": ""}
     journal.record("reply", "ok" if result.get("ok") else "error",
@@ -10963,35 +16387,612 @@ async def _reply_to_finding(finding: dict, text: str) -> tuple[bool, str]:
         answer = ("brAIn could not look into that just now — open the panel "
                   "to carry on the conversation there.")
     title = f"brAIn: {str(finding.get('text') or 'your reply')[:60]}"
-    sent = await _send_notification([finding], message=(title, answer))
+    sent = await _send_notification([finding], message=(title, answer),
+                                    kind="reply")
     return sent, "" if sent else "the answer could not be delivered"
 
 
-async def h_finding_discuss(request: web.Request) -> web.Response:
-    """Open this finding as a conversation in the chat terminal."""
-    finding = _finding_or_404(request)
-    prompt = DISCUSS_PROMPT.format(
-        text=finding["text"],
-        detail=f"\n{finding['detail']}\n" if finding["detail"] else "\n",
-        fix=f"\nWhat you suggested: {finding['fix']}\n" if finding["fix"] else "",
-        entity=f"\nEntity: {finding['entity_id']}\n" if finding["entity_id"] else "",
-        severity=finding["severity"],
-    )
-    session = _chat()
-    # A finding is its own conversation. Landing it in whichever chat
-    # happens to be open put "the garage lights" under a half-finished
-    # question about the heating, and the reply answered both at once.
+# ---------------------------------------------------------------------------
+# What a person typed: read once, routed through code that already exists
+# ---------------------------------------------------------------------------
+#
+# `interpret` is the reader and decides nothing that is not already a press
+# somewhere: a card question goes to the card queue, a sentence about a rule
+# to the intent drop, an ending to `_end_finding`. `corrections` is the
+# second look a "Not a problem, because…" gets — how wide and until when —
+# and `decision_trail` is what a "why didn't you tell me" is answered from.
+
+# How long the explain path's answers are kept for the panel to fetch, and
+# how many. In memory: an answer is read within seconds of being asked for.
+EXPLAINS: dict[str, dict] = {}
+EXPLAINS_MAX = 20
+EXPLAIN_TIMEOUT_S = 240
+EXPLAIN_MAX_TURNS = 30
+_EXPLAIN_TASKS: set = set()
+
+CORRECTION_TIMEOUT_S = 60
+# A runaway guard on the second look, per local day and in memory.
+CORRECTION_MAX_PER_DAY = 100
+CORRECTION_STATE: dict = {"day": "", "runs": 0, "applied": 0, "offered": 0,
+                          "failed": 0, "last_error": "", "last": 0.0}
+_CORRECTION_TASKS: set = set()
+
+# A confirmation on a phone carries an Undo button; this is how its press
+# finds the token. `undo_store`'s own lifetime, and the same ring size.
+PHONE_UNDO: dict[int, tuple[str, float]] = {}
+
+# What "change an automation" is asked as. There is no path from a
+# sentence to an EDIT of somebody's automation yet — the one producer that
+# edits (`conditions`) works from a measured pattern — so the honest route
+# is a card that reads the automation and says what to change, whose
+# suggestion rides the card's own opportunity drop to Proposals.
+AUTOMATION_EDIT_FRAME = (
+    "Find the automation this is about and say exactly what to change so "
+    "that it does what I asked — and offer the change as an opportunity: {}")
+
+
+def _signal_decisions(signals_list, kind: str, reason: str) -> list[dict]:
+    """Trail rows for signals the Resident did not show anybody."""
+    out = []
+    for sig in signals_list or ():
+        if not isinstance(sig, dict):
+            continue
+        subject = str(sig.get("subject") or "")
+        out.append({"kind": kind,
+                    "subject": subject if "." in subject else "",
+                    "check": str(sig.get("producer") or sig.get("kind") or ""),
+                    "reason": str(reason or ""),
+                    "text": str(sig.get("text") or "")})
+    return out
+
+
+def _note_pass_decisions(result: dict, created: list[dict]) -> int:
+    """What a checks pass withheld, onto the trail. Never raises."""
     try:
-        await session.reset()
-        # After the reset, which clears it: this is what every resolution
-        # card in this conversation will be stamped with, and the model is
-        # never asked for it — so it cannot offer to settle a finding other
-        # than the one on screen.
-        session.finding_ts = int(finding["ts"])
+        live = findings_store.suppressing_keys()
+        settled = {e.get("key"): e.get("kind")
+                   for e in findings_store.settled_listing()
+                   if e.get("key") in live}
+        try:
+            muted = settings_store.muted()
+        except Exception:  # noqa: BLE001 — unreadable mutes nothing
+            muted = set()
+        rows = decision_trail.pass_rows(
+            result,
+            created_keys={findings_store.normalize(f.get("text") or "")
+                          for f in created},
+            settled=settled, muted=muted, normalize=findings_store.normalize)
+        return decision_trail.note_many(rows)
+    except Exception as exc:  # noqa: BLE001 — accounting never fails a pass
+        log.debug("could not note this pass's decisions: %s", exc)
+        return 0
+
+
+async def _interpret(words: str, surface: str,
+                     case: dict | None = None) -> list[dict] | None:
+    """The routes a person's words take on this surface, or None.
+
+    None is the caller's old code, every time: no credential, the day's
+    runaway cap, a failed run or a reply that names nothing this surface
+    can carry. An unattended surface (the service) also answers to
+    `auto_enabled` and the budget; a pressed one does not.
+    """
+    settings: dict = {}
+    budget_ok = True
+    if surface not in interpret.PRESSED:
+        settings = await asyncio.to_thread(settings_store.load)
+        try:
+            budget_ok = not usage_store.budget_state(settings)["blocked"]
+        except Exception:  # noqa: BLE001 — an unreadable budget is the
+            # estimate's problem, not a reason to stop reading words
+            budget_ok = True
+    why = interpret.gate(surface, has_auth=bool(engine.get_auth()),
+                         auto_enabled=bool(settings.get("auto_enabled", True)),
+                         budget_ok=budget_ok)
+    if why:
+        interpret.note_fallback(why)
+        return None
+    interpret.note_run()
+    try:
+        result = await _claude(
+            engine.run_claude, interpret.prompt(words, surface, case),
+            interpret.SYSTEM, eff_model(), interpret.TIMEOUT_S, 2,
+            "interpret", job="interpret", schema=interpret.SCHEMA,
+            priority=(run_queue.PRESS if surface in interpret.PRESSED
+                      else run_queue.SCHEDULED))
+    except Exception as exc:  # noqa: BLE001
+        result = {"ok": False, "error": str(exc)}
+    if not result.get("ok"):
+        interpret.note_fallback(str(result.get("error") or "the run failed"))
+        return None
+    routes = interpret.parse(_answer(result), surface, words)
+    if routes is None:
+        interpret.note_fallback("the reply named nothing this box can do")
+        return None
+    log.info("read %s words as %s", surface,
+             ", ".join(r["kind"] for r in routes))
+    return routes
+
+
+def _new_card_id() -> str:
+    stamp = int(time.time())
+    while _job_active(f"custom-{stamp}"):
+        stamp += 1
+    return f"custom-{stamp}"
+
+
+def _resolve_subject(said: str) -> str:
+    """An entity id for what somebody called a device, or ''.
+
+    An id is taken as it is; a name is matched against what the last
+    checks pass saw things CALLED — exactly first, then a single partial
+    match. Two candidates is no answer, because explaining the wrong
+    sensor is worse than explaining none.
+    """
+    said = " ".join(str(said or "").split())
+    if not said:
+        return ""
+    if _ENTITY_IN_TEXT_RE.fullmatch(said):
+        return said
+    low = said.casefold()
+    exact = [eid for eid, row in _NAMES.items()
+             if str(row.get("name") or "").casefold() == low]
+    if len(exact) == 1:
+        return exact[0]
+    partial = [eid for eid, row in _NAMES.items()
+               if low in str(row.get("name") or "").casefold()]
+    return partial[0] if len(partial) == 1 else ""
+
+
+def _recent_trail(limit: int = 12) -> dict:
+    """The newest decisions, about anything — when no subject was named."""
+    rows, readable = decision_trail.read()
+    rows = sorted(rows, key=lambda r: int(r.get("ts") or 0), reverse=True)
+    out = []
+    for row in rows[:limit]:
+        row = dict(row)
+        row["meaning"] = decision_trail.KINDS.get(row.get("kind"), "")
+        out.append(row)
+    return {"subject": "", "readable": readable, "rows": out,
+            "kinds": sorted({r["kind"] for r in out})}
+
+
+async def _explain_now(question: str, subject: str = "",
+                       case: dict | None = None) -> dict:
+    """Answer one why-question with the decision trail and reading tools.
+
+    ``{"ok", "answer", "kind", "cited", "offer", "no_record", "subject"}``.
+    A press, so it needs a credential and not the budget. The trail is
+    handed to the run whole for the subject — read off the store, not
+    remembered — and the run's own tools reach the traces, the logbook
+    and `explain_decision` for anything else.
+    """
+    eid = _resolve_subject(subject) or str((case or {}).get("entity_id") or "")
+    name = (_NAMES.get(eid) or {}).get("name") or subject or eid
+    if not engine.get_auth():
+        return {"ok": False, "subject": eid,
+                "answer": "Connect your Claude account first."}
+    trail = await asyncio.to_thread(decision_trail.for_subject, eid) \
+        if eid else await asyncio.to_thread(_recent_trail)
+    prompt = interpret.explain_prompt(question, subject=name, trail=trail,
+                                      case=case)
+    started = time.time()
+    try:
+        result = await _claude(
+            engine.run_analyst, prompt, interpret.EXPLAIN_SYSTEM, eff_model(),
+            EXPLAIN_TIMEOUT_S, EXPLAIN_MAX_TURNS, "explain", job="explain",
+            schema=interpret.EXPLAIN_SCHEMA, priority=run_queue.PRESS)
+    except Exception as exc:  # noqa: BLE001
+        result = {"ok": False, "error": str(exc)}
+    parsed = interpret.parse_explain(_answer(result)) if result.get("ok") \
+        else None
+    log.info("explained %r in %.0fs%s", question[:60], time.time() - started,
+             "" if parsed else " — no readable answer")
+    if parsed is None:
+        return {"ok": False, "subject": eid,
+                "answer": "brAIn could not work that out just now.",
+                "error": str(result.get("error") or "")[:200]}
+    return {"ok": True, "subject": eid, "subject_name": name,
+            "trail_rows": len(trail.get("rows") or ()),
+            "trail_readable": bool(trail.get("readable", True)), **parsed}
+
+
+def _start_explain(question: str, subject: str = "") -> str:
+    """Start an explanation the panel will fetch. Returns its id."""
+    explain_id = f"why-{int(time.time() * 1000)}"
+    while explain_id in EXPLAINS:
+        explain_id += "x"
+    EXPLAINS[explain_id] = {"state": "running", "question": question[:500],
+                            "at": int(time.time())}
+    for old in sorted(EXPLAINS, key=lambda k: EXPLAINS[k]["at"])[
+            :max(0, len(EXPLAINS) - EXPLAINS_MAX)]:
+        EXPLAINS.pop(old, None)
+
+    async def run_it() -> None:
+        try:
+            answer = await _explain_now(question, subject)
+            EXPLAINS.setdefault(explain_id, {}).update(
+                state="done" if answer.get("ok") else "error", **answer)
+        except Exception as exc:  # noqa: BLE001
+            EXPLAINS.setdefault(explain_id, {}).update(
+                state="error", answer="brAIn could not work that out just now.",
+                error=str(exc)[:200])
+
+    task = asyncio.get_running_loop().create_task(run_it())
+    _EXPLAIN_TASKS.add(task)
+    task.add_done_callback(_EXPLAIN_TASKS.discard)
+    return explain_id
+
+
+async def _route_ask(question: str, routes: list[dict]) -> dict:
+    """The ask bar's response for what the interpreter read.
+
+    Every route lands where the matching regex used to send it, so the
+    panel's existing toasts still describe it; `routes` says which.
+    """
+    out: dict = {"queued": [], "routes": [r["kind"] for r in routes]}
+    for route in routes:
+        kind, text = route["kind"], route["text"]
+        if kind in ("card_question", "chat", "automation_edit"):
+            card_id = _new_card_id()
+            asked = (AUTOMATION_EDIT_FRAME.format(text)
+                     if kind == "automation_edit" else text)
+            if _enqueue(card_id, question=asked[:500]):
+                out["queued"].append(card_id)
+        elif kind in ("one_off", "standing_rule"):
+            out["intent"] = await asyncio.to_thread(
+                intents.request, text, "panel")
+        elif kind == "study":
+            match = LEARN_RE.match(text)
+            topic = (text[match.end():] if match else text).strip().rstrip("?.!")
+            out["learning"] = await asyncio.to_thread(
+                onboarding.request_study, topic)
+        elif kind == "remember":
+            await _submit_memory(text, source="person")
+            out.setdefault("remembered", []).append(text)
+        elif kind == "explain":
+            out["explain"] = _start_explain(text, route.get("subject", ""))
+        elif kind == "scenes":
+            out.update(await _design_scenes(route["subject"]))
+    return out
+
+
+async def _snooze_case(finding: dict, hours: float | None) -> int:
+    until = await asyncio.to_thread(_request_snooze_until, finding["ts"], hours)
+    await asyncio.to_thread(findings_store.snooze, finding["ts"], until)
+    return until
+
+
+def _when_words(until: int) -> str:
+    local = _local_now(until)
+    today = _local_now(time.time())
+    if local.date() == today.date():
+        return f"at {local:%H:%M}"
+    if (local.date() - today.date()).days == 1:
+        return f"tomorrow at {local:%H:%M}"
+    return f"on {local:%a} {local.day} {local:%b}"
+
+
+async def _reply_routes(finding: dict, said: str,
+                        routes: list[dict]) -> tuple[bool, str]:
+    """Do what a reply said, then say so in one message with an Undo.
+
+    An ending goes through `_end_finding` — the tab's door — and a Wrong
+    gets its scope and lifetime synchronously here (`_scope_correction`),
+    because the sentence a person is told has to be the one that was
+    applied. The Undo button is the toast's token, found by the finding's
+    id when it comes back (`PHONE_UNDO`); it carries every rule this wrote.
+    """
+    sentences: list[str] = []
+    token = ""
+    chat_after = False
+    for route in routes:
+        kind = route["kind"]
+        if kind == "case_ending":
+            ending = route["ending"]
+            note = route.get("note") or (said if ending == "wrong" else "")
+            if ending == "todo":
+                try:
+                    await _move_finding_to_todo(finding, note)
+                    sentences.append("Added to your to-do list.")
+                except web.HTTPException as exc:
+                    sentences.append(exc.text or "The to-do list is full.")
+                continue
+            if ending == "not_now":
+                until = await _snooze_case(finding, None)
+                sentences.append(f"Dismissed — it comes back "
+                                 f"{_when_words(until)}.")
+                continue
+            spec = FINDING_VERBS["wrong" if ending == "wrong" else "done"]
+            payload, fact = await _end_finding(finding, spec, note,
+                                               refine=False)
+            ids = list(payload.get("_exception_ids") or [])
+            if ending == "wrong":
+                scoped = await _scope_correction(finding, note, ids) \
+                    if ids and note.strip() else None
+                if scoped:
+                    ids += [i for i in scoped["ids"] if i not in ids]
+                    sentences.append(scoped["sentence"])
+                else:
+                    sentences.append("Got it — I won't flag that again.")
+            else:
+                sentences.append("Got it — marked as fixed.")
+            payload["_exception_ids"] = ids
+            token = _ending_undo(finding, spec, fact, payload)
+        elif kind == "defer":
+            until = await _snooze_case(finding, route.get("hours"))
+            sentences.append(f"I'll remind you {_when_words(until)}.")
+        elif kind == "remember":
+            subjects = _finding_subjects(finding)
+            await _submit_memory(route["text"], source="person",
+                                 subject=subjects[0] if subjects else "",
+                                 subjects=subjects[1:])
+            sentences.append("I'll remember that.")
+        elif kind in ("one_off", "standing_rule"):
+            await asyncio.to_thread(intents.request, route["text"], "reply")
+            sentences.append("I'm working that out as an automation — "
+                             "it'll be on Proposals for you to accept.")
+        elif kind == "explain":
+            answer = await _explain_now(route["text"],
+                                        route.get("subject", ""), finding)
+            sentences.append(answer["answer"])
+            if answer.get("offer"):
+                sentences.append(f"If you want: {answer['offer']}.")
+        elif kind == "chat":
+            chat_after = True
+    if chat_after and not sentences:
+        return await _reply_conversation(finding, said)
+    buttons = None
+    if token:
+        PHONE_UNDO[int(finding["ts"])] = (token, time.time() + undo_store.TTL_S)
+        for stale in [k for k, (_t, exp) in PHONE_UNDO.items()
+                      if exp < time.time()]:
+            PHONE_UNDO.pop(stale, None)
+        buttons = [{"action": f"{notify_router.ACTION_PREFIX}.undo."
+                              f"{int(finding['ts'])}", "title": "Undo"}]
+    body = " ".join(sentences)[:REPLY_MAX_CHARS] or "Done."
+    title = f"brAIn: {str(finding.get('text') or 'your reply')[:60]}"
+    sent = await _send_notification([finding], message=(title, body),
+                                    buttons=buttons if buttons is not None
+                                    else [])
+    journal.record("reply", "ok", ok=True,
+                   extra={"ts": finding.get("ts"),
+                          "routes": [r["kind"] for r in routes]})
+    return sent, "" if sent else "the answer could not be delivered"
+
+
+async def _undo_from_phone(ts: int) -> tuple[bool, str]:
+    """The Undo button on a confirmation: the toast's own token, taken."""
+    held = PHONE_UNDO.pop(int(ts), None)
+    if not held or held[1] < time.time():
+        return False, "that undo has expired"
+    entry = undo_store.take(held[0])
+    if entry is None:
+        return False, "that undo has expired"
+    restored, _payload = await asyncio.to_thread(_undo_finding, entry)
+    return True, "" if restored else "the report had already come back"
+
+
+async def _repairs_routes(finding: dict, note: str,
+                          routes: list[dict]) -> bool:
+    """A Repairs reason box, read. Returns whether an ending was given.
+
+    The box sits under "Not a problem", so a press there is a Wrong unless
+    the words plainly say otherwise — "remind me tomorrow" is a defer, "I
+    already replaced it" is done. What it may not do is end nothing: a
+    reply read as only a fact still ends the case the way the press meant.
+    """
+    ended = False
+    for route in routes:
+        kind = route["kind"]
+        if kind == "case_ending" and not ended:
+            ending = route["ending"]
+            if ending == "todo":
+                try:
+                    await _move_finding_to_todo(finding, route.get("note", ""))
+                    ended = True
+                except web.HTTPException:
+                    # A full list leaves `ended` False on purpose: the box
+                    # sat under "Not a problem", so the Wrong below is what
+                    # the press falls back to rather than ending nothing.
+                    pass
+            elif ending == "not_now":
+                await _snooze_case(finding, None)
+                ended = True
+            else:
+                spec = FINDING_VERBS["done" if ending == "done" else "wrong"]
+                await _end_finding(finding, spec,
+                                   route.get("note") or note)
+                ended = True
+        elif kind == "defer" and not ended:
+            await _snooze_case(finding, route.get("hours"))
+            ended = True
+        elif kind == "remember":
+            subjects = _finding_subjects(finding)
+            await _submit_memory(route["text"], source="person",
+                                 subject=subjects[0] if subjects else "",
+                                 subjects=subjects[1:])
+    if not ended:
+        await _end_finding(finding, FINDING_VERBS["wrong"], note)
+    return True
+
+
+def _drop_offer_case(text_key: str) -> int:
+    """Take a correction offer's question off the list. Returns how many."""
+    gone = 0
+    for row in findings_store.list_all():
+        if str(row.get("source") or "") != corrections.SOURCE:
+            continue
+        if corrections.offer_key_for(str(row.get("text") or "")) == text_key:
+            gone += int(findings_store.remove(int(row["ts"])))
+    return gone
+
+
+def _correction_day_ok(now: float) -> bool:
+    day = time.strftime("%Y-%m-%d", time.localtime(now))
+    if CORRECTION_STATE["day"] != day:
+        CORRECTION_STATE.update(day=day, runs=0)
+    return CORRECTION_STATE["runs"] < CORRECTION_MAX_PER_DAY
+
+
+async def _scope_correction(finding: dict, note: str,
+                            base_ids: list[str]) -> dict | None:
+    """The second look at "Not a problem, because…". None: nothing changed.
+
+    The press has already written its narrow, permanent rule; this asks
+    how wide the sentence meant and until when, and writes only what one
+    entity's reach allows — a wider scope becomes a question on the list
+    (`corrections.offer_row`). A credential is needed and the budget is
+    not: the person pressed. A pass that lands after the toast's Undo
+    writes nothing, because the press's rule it would scope is gone.
+    """
+    now = time.time()
+    if not base_ids or not note.strip() or not engine.get_auth():
+        return None
+    if not _correction_day_ok(now):
+        CORRECTION_STATE["last_error"] = "the day's cap is spent"
+        return None
+    CORRECTION_STATE["runs"] += 1
+    CORRECTION_STATE["last"] = now
+    eid = str(finding.get("entity_id") or "")
+    named = _NAMES.get(eid) or {}
+    entity_name = str(named.get("name") or eid)
+    area_id = str((_FACTS_CTX.get("entity_areas") or {}).get(eid) or "")
+    area_name = str((_FACTS_CTX.get("areas") or {}).get(area_id)
+                    or named.get("area") or "")
+    check_id = corrections.check_of(finding)
+    check_title = str((checks.get_check(check_id) or {}).get("title")
+                      or finding.get("source_title") or "") if check_id else ""
+    try:
+        result = await _claude(
+            engine.run_claude,
+            corrections.prompt(finding, note, entity_name=entity_name,
+                               area_name=area_name, check_title=check_title),
+            corrections.SYSTEM, eff_model(), CORRECTION_TIMEOUT_S, 2,
+            "correct", job="correct", schema=corrections.SCHEMA,
+            priority=run_queue.PRESS)
+    except Exception as exc:  # noqa: BLE001
+        result = {"ok": False, "error": str(exc)}
+    reply = _answer(result) if result.get("ok") else None
+    if not isinstance(reply, dict):
+        CORRECTION_STATE["failed"] += 1
+        CORRECTION_STATE["last_error"] = str(
+            result.get("error") or "an unreadable reply")[:200]
+        return None
+    the_plan = corrections.plan(
+        reply, finding, area_id=area_id,
+        device_class=str(named.get("class") or ""),
+        protected=automation_writer.protected_patterns(),
+        southern=await asyncio.to_thread(corrections.house_southern))
+    key = findings_store.normalize(finding.get("text") or "")
+    report = str(finding.get("claim") or finding.get("text") or "")
+    applied = await asyncio.to_thread(
+        corrections.apply_plan, the_plan, finding, base_ids, note,
+        finding_key=key, about=report)
+    if not applied["written"] and applied["why"]:
+        log.info("a correction was taken back before it was scoped")
+        return None
+    offer = None
+    if the_plan["offer"]:
+        row = await asyncio.to_thread(
+            corrections.offer_row, the_plan, note, entity_name=entity_name,
+            area_name=area_name, check_title=check_title, finding_key=key,
+            about=report)
+        if row:
+            offer = await asyncio.to_thread(findings_store.add_case, row)
+            CORRECTION_STATE["offered"] += int(offer is not None)
+    CORRECTION_STATE["applied"] += 1
+    sentence = corrections.confirmation(
+        the_plan, entity_name=entity_name, area_name=area_name,
+        check_title=check_title)
+    log.info("correction on %s: %s%s%s", log_safe(eid or report[:40]),
+             the_plan["scope"],
+             f" {the_plan['until']}" if the_plan["until"] else "",
+             " (offered wider)" if offer else "")
+    return {"plan": the_plan, "ids": applied["ids"], "sentence": sentence,
+            "offer": offer}
+
+
+def _start_correction(finding: dict, note: str, ids: list[str]) -> None:
+    """Start the second look without making the press wait for it."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = loop.create_task(_scope_correction(dict(finding), note, list(ids)))
+    _CORRECTION_TASKS.add(task)
+    task.add_done_callback(_CORRECTION_TASKS.discard)
+
+
+async def h_why(request: web.Request) -> web.Response:
+    """What brAIn decided not to say about one entity (or one check).
+
+    The decision trail, read; no model. ``{"subject", "readable", "rows",
+    "kinds", "name"}`` — no rows on a readable trail means no record of a
+    decision, which is not the same claim as "brAIn chose silence", and
+    the payload carries the sentence that says which.
+    """
+    subject = str(request.query.get("entity") or request.query.get("check")
+                  or "").strip()[:255]
+    try:
+        limit = max(1, min(50, int(request.query.get("limit") or 20)))
+    except ValueError:
+        limit = 20
+    if subject:
+        got = await asyncio.to_thread(decision_trail.for_subject, subject,
+                                      limit=limit)
+    else:
+        got = await asyncio.to_thread(_recent_trail, limit)
+    got["name"] = (_NAMES.get(subject) or {}).get("name", "")
+    if not got["readable"]:
+        got["says"] = ("brAIn's decision trail could not be read, so it "
+                       "cannot say whether it decided not to report this.")
+    elif not got["rows"]:
+        got["says"] = ("brAIn has no record of deciding not to report this "
+                       "— which is not the same as having seen it and "
+                       "chosen to stay quiet.")
+    else:
+        got["says"] = ""
+    return web.json_response(got)
+
+
+async def h_explain_get(request: web.Request) -> web.Response:
+    """One explanation the ask bar started, as far as it has got."""
+    found = EXPLAINS.get(request.match_info["id"])
+    if found is None:
+        raise web.HTTPNotFound(text="no such explanation")
+    return web.json_response(found)
+
+
+async def h_finding_discuss(request: web.Request) -> web.Response:
+    """Open this finding as a conversation in the chat terminal.
+
+    A finding is its own conversation — landing it in whichever chat was
+    open put "the garage lights" under a half-finished question about the
+    heating — and it is opened through the REGISTRY, never by resetting
+    the attached session. The reset killed that session's process whatever
+    it was doing, so pressing Discuss while a chat was mid-answer threw the
+    answer and its approval card away with no warning, which is the one
+    thing holding several conversations exists to prevent. `new` leaves a
+    busy conversation answering in the background (and reuses an empty
+    one rather than spending a slot), and the only refusal left is the
+    cap's own sentence when every live chat is busy.
+
+    The subject is handed to `new` rather than set afterwards, because it
+    decides the process's argv (`chat_session.DISCUSS_ASK`): a discussion
+    is spawned asking before it acts, not respawned into it.
+    """
+    finding = _finding_or_404(request)
+    prompt = await asyncio.to_thread(_discuss_prompt, finding)
+    registry = _chat_registry()
+    try:
+        await registry.new(finding_ts=int(finding["ts"]))
+        session = _chat()
         await session.send(prompt)
     except RuntimeError as exc:
-        raise web.HTTPConflict(reason=str(exc))
-    return web.json_response({"ok": True, "finding": finding})
+        raise web.HTTPConflict(reason=_refusal(exc))
+    return web.json_response({"ok": True, "finding": finding,
+                              "session_id": session.session_id})
 
 
 async def h_finding_fix(request: web.Request) -> web.Response:
@@ -11007,12 +17008,20 @@ async def h_finding_fix(request: web.Request) -> web.Response:
     finding = _finding_or_404(request)
     if not engine.get_auth():
         raise web.HTTPBadRequest(text="connect your Claude account first")
+    # What a conversation about this finding agreed to change, when the
+    # press came from a `plan` resolution in the chat. It is the plan
+    # run's brief and nothing more: the run is still read-only, what it
+    # writes is still a plan on the card, and the change still waits for
+    # Apply — which is the whole reason the chat offers this rather than
+    # acting itself.
+    body = await _json_body(request)
+    change = " ".join(str(body.get("change") or "").split())[:PLAN_CHANGE_MAX]
     job_id = f"{PLAN_JOB_PREFIX}{finding['ts']}"
     # The in-memory job is the authority on "a run is going" — it is what
     # actually knows. The stored status is the copy the browser renders, and
     # any left behind by a dead process is reconciled at startup.
     if finding["status"] in ("planning", "fixing") or not _enqueue(
-            job_id, kind="plan", finding_ts=finding["ts"]):
+            job_id, kind="plan", finding_ts=finding["ts"], change=change):
         raise web.HTTPConflict(text="already being looked at")
 
     def claim() -> dict:
@@ -11110,9 +17119,16 @@ async def h_finding_unfix(request: web.Request) -> web.Response:
                  "before the panel kept that window. `brain undo` in the "
                  "terminal lists every file Claude has edited.")
 
-    entries = await asyncio.to_thread(unfix.journal_entries, started, ended)
+    # A typed fix's own edits are the panel's journal lines, named by the
+    # intervention it recorded — the one Undo reverses both halves.
+    applied = await asyncio.to_thread(interventions.for_finding,
+                                      int(finding["ts"]))
+    entries = await asyncio.to_thread(
+        unfix.journal_entries, started, ended,
+        (applied or {}).get("journal_ts") or ())
     calls = await asyncio.to_thread(unfix.service_calls, started, ended)
     outcome = await asyncio.to_thread(unfix.revert_edits, entries)
+    registry_failures = await _undo_intervention(finding) if applied else []
 
     reload_failures = []
     for domain, service in outcome["reloads"]:
@@ -11124,7 +17140,9 @@ async def h_finding_unfix(request: web.Request) -> web.Response:
                 f"running what the fix wrote until it does: {exc}")
             log.warning("could not reload %s after an undo: %s", domain, exc)
 
-    text = "\n\n".join([unfix.summary(outcome, calls)] + reload_failures)
+    text = "\n\n".join([unfix.summary(outcome, calls)] + reload_failures
+                       + [f"Could not put a registry change back: {why}"
+                          for why in registry_failures])
 
     def restore() -> dict:
         findings_store.set_status(finding["ts"], "open", result=text,
@@ -11132,6 +17150,8 @@ async def h_finding_unfix(request: web.Request) -> web.Response:
         return _findings_payload()
 
     payload = await asyncio.to_thread(restore)
+    await asyncio.to_thread(outcomes.note_undone, finding["ts"],
+                            finding.get("text") or "")
     # The fix queued "brAIn fixed this on …" when it finished, and that is
     # no longer true. A correction is the one thing that is right whether
     # or not the consolidator has got to it yet: still in the queue, the
@@ -11196,21 +17216,43 @@ def _write_shared_memory(text: str) -> None:
 
 
 def _queue_memory_fact(fact: str, source: str = "panel",
-                      confidence: str = "medium") -> None:
+                      confidence: str = "medium", *, subject: str = "",
+                      subjects=(), run_id: str = "",
+                      expires: str = "") -> None:
     """Append a candidate fact to the memory inbox.
 
     The panel does NOT write memory.md. One writer owns that document —
     the consolidator — which is what lets the terminal, voice, insights,
     and study sessions all feed the same memory without a lock between
     them. Everything here is a queue.
+
+    ``subject``/``subjects`` are what the writer KNOWS the fact is about —
+    the finding's entity, a case's evidence, the device a curiosity run
+    asked about. Without them the facts store could only tag a line by
+    finding a literal entity id or a room's name in it, and a sentence
+    written for a person carries neither: a correction about "the porch
+    sensor" landed as a fact about the whole house, which the next look
+    at that sensor may never be shown. ``run_id`` is the conversation
+    that taught it, which is what the Knowledge tab's "See the run" opens.
+    Absent keys are not written, so a line from a writer that knows none
+    of this is the line it always was.
     """
     try:
         MEMORY_INBOX_DIR.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(
-            {"ts": int(time.time()), "source": source, "fact": fact,
-             "confidence": confidence},
-            ensure_ascii=False,
-        )
+        record = {"ts": int(time.time()), "source": source, "fact": fact,
+                  "confidence": confidence}
+        named = [str(s).strip() for s in ([subject] + list(subjects or ()))
+                 if str(s or "").strip()]
+        named = list(dict.fromkeys(named))
+        if named:
+            record["subject"] = named[0]
+            if len(named) > 1:
+                record["subjects"] = named[1:facts_store.MAX_SUBJECTS]
+        if run_id:
+            record["run_id"] = str(run_id)[:64]
+        if expires:
+            record["expires"] = str(expires)[:10]
+        line = json.dumps(record, ensure_ascii=False)
         path = MEMORY_INBOX_DIR / f"{int(time.time())}-{source}.jsonl"
         with open(path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
@@ -11424,11 +17466,12 @@ async def h_onboarding_recommend(request: web.Request) -> web.Response:
             # fallback, not an error.
             log.warning("onboarding: could not collect the map (%s)", exc)
             return None
-        result = await asyncio.to_thread(
+        result = await _claude(
             engine.run_analyst,
             onboarding.build_orientation_prompt(memory, orientation),
             onboarding.RECOMMEND_SYSTEM, eff_model(),
-            TIMEOUT_S, ANALYST_MAX_TURNS, "card", job="onboarding")
+            TIMEOUT_S, ANALYST_MAX_TURNS, "card", job="onboarding",
+            priority=run_queue.PRESS)
         return result
 
     async def snapshot() -> dict:
@@ -11446,10 +17489,10 @@ async def h_onboarding_recommend(request: web.Request) -> web.Response:
             # do.
             log.warning("onboarding bundle failed: %s", exc, exc_info=True)
             raise web.HTTPBadGateway(text="could not read Home Assistant")
-        return await asyncio.to_thread(
+        return await _claude(
             engine.run_claude, onboarding.build_prompt(memory, bundle),
             onboarding.RECOMMEND_SYSTEM, eff_model(), TIMEOUT_S, 8, "card",
-            job="onboarding")
+            job="onboarding", priority=run_queue.PRESS)
 
     def read(result: dict | None) -> dict | None:
         """The reply as recommendations, or None for "that did not work"."""
@@ -11494,7 +17537,23 @@ async def h_onboarding_accept(request: web.Request) -> web.Response:
     if shipped is not None and not isinstance(shipped, list):
         raise web.HTTPBadRequest(text="shipped must be a list of category ids")
     created = await asyncio.to_thread(onboarding.accept, picked, shipped)
+    # The one automation the recommend pass offered to try, when it was
+    # ticked: into the ask bar's own drop, so it is drafted, refused or
+    # simulated over this house's history and graded against what the
+    # household did, exactly as a typed sentence is — and its week starts
+    # when it lands. Nothing is written to the house by this press.
+    tried = ""
+    if body.get("try_rule"):
+        rule = (await asyncio.to_thread(onboarding.stored_recommendations)
+                ).get("try_rule")
+        sentence = _opportunity_sentence((rule or {}).get("sentence") or "")
+        if sentence:
+            tried = await asyncio.to_thread(
+                intents.request, sentence, "onboarding", None, trial=True)
+            if tried:
+                await asyncio.to_thread(onboarding.mark_tried, tried)
     return web.json_response({"created": created, "onboarded": True,
+                              "tried": tried,
                               "shipped": prompt_store.load_overrides()["accepted"]})
 
 
@@ -11563,9 +17622,11 @@ async def _run_ideas() -> None:
             log.warning("ideas: could not read the measurements (%s)", exc)
             measured = ""
 
-        result = await asyncio.to_thread(
+        answered, open_ideas = await asyncio.to_thread(ideas.prompt_context)
+        result = await _claude(
             engine.run_analyst,
-            ideas.build_prompt(memory, orientation, have, measured),
+            ideas.build_prompt(memory, orientation, have, measured,
+                               answered=answered, open_ideas=open_ideas),
             ideas.system_prompt(), eff_model(),
             TIMEOUT_S, ANALYST_MAX_TURNS, "card", job="ideas")
         _record_usage(result, "ideas")
@@ -11654,9 +17715,17 @@ async def h_idea_accept(request: web.Request) -> web.Response:
 
 
 async def h_idea_dismiss(request: web.Request) -> web.Response:
-    """Not for this house. It is not offered again."""
+    """Not for this house. It is not offered again.
+
+    An optional ``{"reason": "..."}`` is kept and read back to the next
+    pass (`ideas.prompt_context`) — never required, because "not for us"
+    needs no essay.
+    """
     idea_id = request.match_info.get("idea_id")
-    if not await asyncio.to_thread(ideas.dismiss, idea_id):
+    body = await _json_body(request)
+    reason = str(body.get("reason") or "")
+    if not await asyncio.to_thread(
+            lambda: ideas.dismiss(idea_id, reason=reason)):
         raise web.HTTPConflict(text="that idea is not open")
     return web.json_response(await asyncio.to_thread(_ideas_payload))
 
@@ -11852,14 +17921,24 @@ def _drop_from_inbox(item_id: str) -> bool:
     with _consolidator_held_shared():
         kept: dict[Path, list[dict]] = {}
         dropped: set[Path] = set()
+        lines: set[tuple[str, str]] = set()
         for path, obj in _inbox_lines():
-            if _inbox_id(str(obj.get("source") or ""),
-                         str(obj["fact"]).strip()) == item_id:
+            source, fact = str(obj.get("source") or ""), str(obj["fact"]).strip()
+            if _inbox_id(source, fact) == item_id:
                 dropped.add(path)
+                lines.add((source, fact))
             else:
                 kept.setdefault(path, []).append(obj)
         if not dropped:
             return False
+        # The facts store read this line within a minute of it being
+        # queued, so "never filed" stopped being true of an inbox line the
+        # day that store existed: the ✕ and every Undo that comes through
+        # here took the line out of the queue and left the fact asserting
+        # it to every run. Forgotten from the store first, because that
+        # half cannot race the consolidator.
+        for source, fact in lines:
+            _forget_queued_fact(source, fact)
         before = {path: _inbox_fingerprint(path) for path in dropped}
         # Only the files that actually held it are rewritten. Rewriting the
         # rest would drop any torn line they carry, which _inbox_lines skips
@@ -11887,6 +17966,29 @@ def _drop_from_inbox(item_id: str) -> bool:
         # on: it is not in the queue any more, whether this rewrote the file
         # or a pass took the whole thing while we were reading it.
         return True
+
+
+def _forget_queued_fact(source: str, fact: str) -> None:
+    """Take the facts store's copy of one queued line out. Never raises."""
+    try:
+        facts_store.forget_text(fact, source=source)
+    except Exception as exc:  # noqa: BLE001 — the queue half is the press
+        log.debug("could not forget the filed copy of a queued line: %s", exc)
+
+
+def _unqueue_fact(source: str, fact: str) -> bool:
+    """An undo's memory half: out of the queue AND out of the store.
+
+    The queue half finds nothing when a pass has already filed the line
+    (the token outlives a pass now and then), and the store's copy has to
+    go either way — a store still asserting the ending an Undo reversed is
+    the same press counted as half undone. Returns whether the line was
+    still in the queue, which is `_drop_from_inbox`'s own answer.
+    """
+    if _drop_from_inbox(_inbox_id(source, fact)):
+        return True
+    _forget_queued_fact(source, fact)
+    return False
 
 
 def _memory_state() -> dict:
@@ -12294,10 +18396,14 @@ async def _answer_hypothesis(ts: int, verb: str,
         settled = await asyncio.to_thread(hypotheses.confirm, ts)
         if not settled:
             return None
-        await _submit_memory(settled["text"], source="confirmed")
+        # The statement a guess was built on when it carries one (a
+        # curiosity guess's reason), and the claim itself otherwise.
+        fact = settled.get("fact") or settled["text"]
+        await _submit_memory(fact, source="confirmed",
+                             subject=settled.get("subject") or "")
         payload = await asyncio.to_thread(_findings_payload)
         payload["undo"] = undo_store.record("hypothesis", ts=ts,
-                                            fact=settled["text"],
+                                            fact=fact,
                                             fact_source="confirmed")
         return payload
 
@@ -12316,7 +18422,8 @@ async def _answer_hypothesis(ts: int, verb: str,
     if note:
         fact = (f'brAIn guessed: "{settled["text"]}". The homeowner says that '
                 f"is wrong, because: {note}")
-        await _submit_memory(fact, source="correction")
+        await _submit_memory(fact, source="correction",
+                             subject=settled.get("subject") or "")
     payload = await asyncio.to_thread(_findings_payload)
     # `question` is the ledger entry reject() also wrote, so undo can retire
     # the dead-end record too rather than leaving the claim un-askable.
@@ -12386,15 +18493,21 @@ async def h_memory_put(request: web.Request) -> web.Response:
         # can act on. The log is the right place for both.
         log.warning("memory write failed: %s", exc)
         raise web.HTTPInternalServerError(text="could not write memory file")
+    # A line deleted here is a fact somebody wants gone, and the facts
+    # store — what most runs read — would otherwise go on asserting it
+    # until the minute tick noticed. Now, while the person is looking.
+    await asyncio.to_thread(_reconcile_facts, True)
     return web.json_response({"saved": True})
 
 
 # What an export IS: the durable knowledge, portable. The memory document,
-# the findings work list, the settled ledger and the facts ledger are the
-# four things a rebuilt or second install cannot rediscover cheaply — the
-# rest (inbox, hypotheses, questions) is in-flight dialogue state that will
-# regenerate, and exporting state that import ignores just invites people
-# to expect it back.
+# the findings work list, the settled ledger, the facts ledger and the
+# facts store are the five things a rebuilt or second install cannot
+# rediscover cheaply — the rest (inbox, hypotheses, questions) is in-flight
+# dialogue state that will regenerate, and exporting state that import
+# ignores just invites people to expect it back. The facts store came
+# last and was missed: it is where a Wrong press's RULE lives, so an export
+# without it moved every correction's wording and none of its effect.
 EXPORT_VERSION = 1
 
 
@@ -12406,6 +18519,9 @@ def _export_payload() -> dict:
         "findings": findings_store.list_all(),
         "settled": findings_store.settled_listing(),
         "knowledge_facts": knowledge_store.list_facts(),
+        # A key an older import does not read is a key it ignores, which
+        # is why this is additive rather than a new EXPORT_VERSION.
+        "facts": facts_store.export_rows(),
     }
 
 
@@ -12469,12 +18585,16 @@ async def h_memory_import(request: web.Request) -> web.Response:
                 category=str(fact.get("category") or ""))
             added += int(created)
         result["knowledge_facts"] = added
+        stored = body.get("facts")
+        result["facts"] = facts_store.merge_rows(
+            stored if isinstance(stored, list) else [])
         return result
 
     result = await asyncio.to_thread(fold)
-    log.info("import: memory %s, %d finding(s), %d settled, %d fact(s)",
+    log.info("import: memory %s, %d finding(s), %d settled, %d fact(s), "
+             "%d stored fact(s) and rule(s)",
              result["memory"], result["findings"], result["settled"],
-             result["knowledge_facts"])
+             result["knowledge_facts"], result["facts"])
     return web.json_response(result)
 
 
@@ -12520,6 +18640,11 @@ def _settings_payload(settings: dict) -> dict:
         "addon_defaults": addon_defaults(),
         "options_synced": addon_options.snapshot() is not None,
         "models": engine.MODEL_CHOICES,
+        # The terminal sessions still running, and how each began: a flip
+        # of "act without asking" reaches a terminal session only when it
+        # STARTS, so ⚙ says which open ones did not get it. None is "could
+        # not look", never "none open".
+        "permission_sessions": permission_mode.terminal_sessions(),
     }
 
 
@@ -12574,6 +18699,15 @@ async def h_settings_put(request: web.Request) -> web.Response:
             except addon_options.OptionsError as exc:
                 log.warning("could not write add-on options (%s) — "
                             "storing locally instead", exc)
+        # "Act without asking" is the one option a failed write may not
+        # turn on locally. The local copy would outrank nothing the
+        # Supervisor says (`eff_skip_permissions`) and be promoted nowhere
+        # (`_options_sync`), so saving it would be a toast saying "on"
+        # over a switch that stays off — refused instead, in words.
+        refused_switch = (not wrote_addon and addon_options.available()
+                          and clean_options.get(permission_mode.OPTION) is True)
+        if refused_switch:
+            clean_options.pop(permission_mode.OPTION)
         try:
             # Local store: authoritative only without a Supervisor. After a
             # successful add-on write we clear these so one value can't be
@@ -12582,6 +18716,18 @@ async def h_settings_put(request: web.Request) -> web.Response:
                 dict.fromkeys(clean_options) if wrote_addon else clean_options)
         except ValueError as exc:
             raise web.HTTPBadRequest(text=str(exc))
+        if permission_mode.OPTION in clean_options:
+            _publish_permission_mode()
+        if refused_switch:
+            raise web.HTTPConflict(
+                text="brAIn could not save that to the add-on's options, so "
+                     "it is still asking. Try again, or turn it on from the "
+                     "add-on's Configuration tab.")
+        if not wrote_addon and clean_options:
+            payload = _settings_payload(settings)
+            # Said, so a toast can say the Configuration tab did not move.
+            payload["saved_locally"] = sorted(clean_options)
+            return web.json_response(payload)
     return web.json_response(_settings_payload(settings))
 
 
@@ -12797,6 +18943,233 @@ async def h_health(request: web.Request) -> web.Response:
 # character grid. See chat_session.py.
 # ---------------------------------------------------------------------------
 
+# What the chat is told before anybody types: who it is here, which of
+# brAIn's own tools answer which question, how an automation is proposed
+# rather than written, and — as of the moment the conversation starts —
+# what brAIn is already worried about. Short on purpose: it is appended to
+# Claude Code's own prompt on every spawn, and a current CLI records it
+# once and replays it on every resume, which is why the house half is
+# stamped "when this conversation started" and the model is pointed at
+# `get_findings`/`get_health` for now. The per-message half is the
+# `UserPromptSubmit` hook (`h_chat_context`).
+CHAT_IDENTITY = """You are brAIn — the resident intelligence of this home, running inside its Home Assistant. The person you are talking with lives here.
+
+Ask brAIn's own measurements before you guess: what_is_normal (is a reading unusual for this house at this hour), room_physics (how a room gains and loses heat), appliance_status, house_rhythm, door_habits and habits; recall for what brAIn remembers about something; get_findings for what it has already raised and get_health for whether brAIn itself is working.
+
+To make a standing automation, describe it in one sentence and call the brain.intent service with it (call_service, domain "brain", service "intent", data {"sentence": "..."}): brAIn drafts it, replays it over the last month, grades it against what this household actually did and offers it as a card to accept or trial. Do not edit automations.yaml by hand and reload it — that skips the replay, the grade and the protected-entities check. Use simulate_automation on any config before you suggest it."""
+
+
+def _chat_house_lines() -> list[str]:
+    """The house as of now, in a few lines. Never raises; a store that
+    cannot be read is a line that is not there."""
+    lines: list[str] = []
+    try:
+        waiting = cases.open_count()
+        lines.append(f"{waiting} thing{'s' if waiting != 1 else ''} waiting "
+                     "on the household in brAIn's feed")
+    except Exception:  # noqa: BLE001 — a feed that could not be read is a
+        # line left out, not a count of nothing ("I could not look").
+        pass
+    try:
+        diag = json.loads(DIAGNOSTICS_FILE.read_text(encoding="utf-8"))
+        verdict = (diag or {}).get("health") or {}
+        if verdict.get("state"):
+            lines.append(f"brAIn's own health: {verdict['state']} — "
+                         f"{verdict.get('reason') or ''}".rstrip(" —"))
+    except (OSError, ValueError, AttributeError):
+        # No mirror yet (a fresh install, or a dev checkout): the prompt
+        # says nothing about health rather than claiming it is fine.
+        pass
+    try:
+        prof = rhythm.profile()
+        for half, word in ((rhythm.WEEKDAY, "weekdays"),
+                           (rhythm.WEEKEND, "weekends")):
+            part = prof.get(half) or {}
+            wake = (part.get("wakes") or {}).get("at")
+            settle = (part.get("settles") or {}).get("at")
+            if wake or settle:
+                bits = [f"up around {wake}" if wake else "",
+                        f"settles around {settle}" if settle else ""]
+                lines.append(f"on {word} the house is "
+                             + " and ".join(b for b in bits if b))
+    except Exception:  # noqa: BLE001 — an unmeasured rhythm is no line,
+        # never a typed-in hour presented as the house's own.
+        pass
+    return lines
+
+
+def _chat_system_prompt(session) -> str:
+    """The appended system prompt for one chat spawn (see CHAT_IDENTITY)."""
+    lines = _chat_house_lines()
+    if not lines:
+        return CHAT_IDENTITY
+    return (CHAT_IDENTITY + "\n\nWhen this conversation started: "
+            + "; ".join(lines) + ". That is a snapshot — ask get_findings "
+            "and get_health for how things stand now.")
+
+
+chat_session.PROMPT_PROVIDER = _chat_system_prompt
+
+# What the context hook may hand one message, and how hard it looks.
+CHAT_CONTEXT_CHARS = 1500
+CHAT_CONTEXT_ENTITIES = 12
+CHAT_CONTEXT_PROMPT_CHARS = 4000
+# A friendly name shorter than this is a word that turns up in sentences
+# about anything ("tv", "fan") and is not evidence the message is about it.
+CHAT_CONTEXT_MIN_NAME = 4
+
+
+def _subjects_in(text: str) -> tuple[list[str], list[str]]:
+    """The entities and areas a message names, off the last checks pass.
+
+    People type "the kitchen light", not `light.kitchen`, so an id written
+    out counts and so does a friendly name appearing as whole words. Both
+    come off `_NAMES`/`_FACTS_CTX` — the snapshot the pass already read —
+    and an entity nothing has seen is not guessed at. Deterministic and
+    bounded: this runs synchronously ahead of every chat message.
+    """
+    low = " ".join(str(text or "").lower().split())
+    entities: list[str] = []
+
+    def take(eid: str) -> None:
+        if eid not in entities and len(entities) < CHAT_CONTEXT_ENTITIES:
+            entities.append(eid)
+
+    for m in _ENTITY_IN_TEXT_RE.finditer(low):
+        if m.group(0) in _NAMES:
+            take(m.group(0))
+    for eid, row in list(_NAMES.items()):
+        if len(entities) >= CHAT_CONTEXT_ENTITIES:
+            break
+        name = str((row or {}).get("name") or "").strip().lower()
+        if len(name) < CHAT_CONTEXT_MIN_NAME or name not in low:
+            continue
+        if re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", low):
+            take(eid)
+    areas = []
+    for area_id, name in (_FACTS_CTX.get("areas") or {}).items():
+        label = str(name or "").strip().lower()
+        if len(label) >= 3 and label in low and re.search(
+                r"(?<!\w)" + re.escape(label) + r"(?!\w)", low):
+            areas.append(area_id)
+    return entities, areas
+
+
+# Which fact lines each conversation has already been handed, so a fact
+# rides into it once. The hook's context is added to the turn and stays in
+# the conversation, and `retrieval_block` leads with the house's core facts
+# every time — without this, a forty-message chat carries the same standing
+# preferences forty times, paid for on every turn after. In memory and
+# bounded: a restart hands each conversation its facts once more, which is
+# one repeat rather than one per message.
+CHAT_CONTEXT_SESSIONS = 32
+CHAT_CONTEXT_LINES_KEPT = 400
+_CHAT_CONTEXT_GIVEN: "collections.OrderedDict[str, set]" = collections.OrderedDict()
+
+
+def _not_yet_given(session_id: str, block: str) -> str:
+    """``block`` less the fact lines this conversation already has.
+
+    Keyed on the CLI's own session id, which the hook is handed on stdin;
+    a message with none (an older CLI) is told everything, which is what
+    the hook did before it could tell."""
+    sid = str(session_id or "")[:128]
+    if not sid or not block:
+        return block
+    given = _CHAT_CONTEXT_GIVEN.pop(sid, set())
+    _CHAT_CONTEXT_GIVEN[sid] = given
+    while len(_CHAT_CONTEXT_GIVEN) > CHAT_CONTEXT_SESSIONS:
+        _CHAT_CONTEXT_GIVEN.popitem(last=False)
+    fresh = [line for line in block.splitlines()
+             if line.startswith("- ") and line not in given]
+    if len(given) < CHAT_CONTEXT_LINES_KEPT:
+        given.update(fresh[:CHAT_CONTEXT_LINES_KEPT - len(given)])
+    return (facts_store.MEMORY_HEAD + "\n" + "\n".join(fresh)) if fresh else ""
+
+
+def _chat_context(prompt: str, session_id: str = "") -> str:
+    """What brAIn remembers that bears on one message, or "".
+
+    The facts store's own retrieval (`facts_store.retrieval_block`) over
+    the subjects the message names, plus a lexical recall when it names
+    none — the same reader every scheduled run is handed, so the chat is
+    told what the brief and the cards are told rather than a third copy of
+    "what is relevant". Empty is an answer: the hook then adds nothing.
+    A line this conversation was already handed is not handed again.
+    """
+    text = str(prompt or "")[:CHAT_CONTEXT_PROMPT_CHARS]
+    if not text.strip():
+        return ""
+    entities, areas = _subjects_in(text)
+    try:
+        block = facts_store.retrieval_block(
+            entities=entities, areas=areas, query=text,
+            limit_chars=CHAT_CONTEXT_CHARS)
+    except Exception as exc:  # noqa: BLE001 — a store that will not read
+        log.debug("chat context retrieval failed: %s", exc)
+        block = ""
+    if not entities and not areas:
+        try:
+            extra = [r for r in facts_store.recall(query=text, limit=6)
+                     if r.get("text") and r["text"] not in block]
+        except Exception:  # noqa: BLE001
+            extra = []
+        if extra:
+            more = "\n".join(f"- {r['text']}" for r in extra)
+            block = (block + "\n" + more) if block else (
+                facts_store.MEMORY_HEAD + "\n" + more)
+    if not block.strip():
+        return ""
+    if len(block) > CHAT_CONTEXT_CHARS:
+        block = block[:CHAT_CONTEXT_CHARS].rsplit("\n", 1)[0]
+    block = _not_yet_given(session_id, block)
+    if not block.strip():
+        return ""
+    return ("What brAIn remembers that bears on this message — from its own "
+            "facts store, so check anything that matters against the house "
+            "before you rely on it:\n" + block)
+
+
+async def h_chat_context(request: web.Request) -> web.Response:
+    """The chat's `UserPromptSubmit` hook asks here, once per message.
+
+    One implementation of retrieval, on the side that has the registry the
+    last checks pass saw (`scripts/brain-chat-context.py` is a few lines of
+    plumbing). Answers ``{"context": ""}`` rather than an error for
+    anything it cannot use, because the hook turns any failure into
+    nothing and a message must never wait on this.
+    """
+    body = await _json_body(request)
+    text = await asyncio.to_thread(_chat_context, str(body.get("prompt") or ""),
+                                   str(body.get("session_id") or ""))
+    return web.json_response({"context": text})
+
+
+async def h_own(request: web.Request) -> web.Response:
+    """Hand files under /config to the claude user — `brain own` and the
+    edit hook ask here, so nobody is ever asked to run sudo chown.
+
+    Loopback only, read off the socket (`ownership.from_loopback`): the
+    panel is root, and an ingress page has no business asking it to chown
+    anything. What may be handed over, and how it is checked, is
+    `ownership.own`'s; every path gets its own answer.
+    """
+    if not ownership.from_loopback(request):
+        return web.json_response({"error": ownership.LOOPBACK_ONLY},
+                                 status=403)
+    body = await _json_body(request)
+    try:
+        answer = await asyncio.to_thread(ownership.own, body.get("paths"),
+                                         bool(body.get("recursive")))
+    except ownership.Refused as exc:
+        return web.json_response({"error": str(exc)}, status=exc.status)
+    return web.json_response(answer)
+
+
+# A file the chat cannot write is never the person's problem to fix.
+CHAT_IDENTITY += "\n\n" + ownership.AGENT_RULE
+
+
 def _chat_registry() -> "chat_session.SessionRegistry":
     """The registry, told which model a session spawned now should run.
 
@@ -12806,6 +19179,7 @@ def _chat_registry() -> "chat_session.SessionRegistry":
     """
     registry = chat_session.registry()
     registry.model = eff_chat_model()
+    registry.skip_permissions = eff_skip_permissions()
     return registry
 
 
@@ -12817,12 +19191,15 @@ def _chat() -> "chat_session.ChatSession":
     model picker, the handoff, the stream. Switching is what changes which
     session that is, and it stops nothing.
     """
-    session = _chat_registry().attached()
+    registry = _chat_registry()
+    session = registry.attached()
     # Resolved per call rather than at startup: the model is editable from
     # ⚙ Settings, from the Configuration tab and from the chat's own model
     # picker, and a chat session started before an edit should not keep the
-    # old one for as long as it lives.
+    # old one for as long as it lives. The permission switch is the same:
+    # it applies on the next send, through the respawn `send` already does.
     session.model = eff_chat_model()
+    session.skip_permissions = registry.skip_permissions
     return session
 
 
@@ -13044,45 +19421,73 @@ async def h_chat_adopt(request: web.Request) -> web.Response:
     resume. Coming back, there is nothing to ask: the tmux Claude is not
     ours, it has no API, and it will not tell us what it is in the middle of.
 
-    What it does leave behind is its transcript, which Claude Code writes as
-    it goes. The most recently written conversation in this project
-    directory IS what the terminal was last doing, so that is what we pick
-    up — by resuming it, which starts our own process from that history.
-    The terminal's Claude is left completely alone: it is somebody's shell
+    What it does leave behind is the handoff record and its transcript,
+    which Claude Code writes as it goes, and `chat_session.pick_adopted`
+    reads both: the conversation the chat handed over, or the one the
+    terminal has written to since — never a conversation a chat session
+    in the registry is already holding. "The most recently written" was the
+    whole rule once, and a background chat that was still answering IS the
+    most recently written, so switching back resumed that chat a second
+    time beside the session holding it. The consolidator, voice and the
+    automation listener write here too, which is why only a person's own
+    conversations are candidates at all.
+
+    It goes through the REGISTRY (`open`), so the cap is applied and a
+    conversation already held is attached rather than spawned twice, and
+    nothing is stopped to make the switch: a chat mid-answer goes on
+    answering in the background, which is why this no longer refuses one.
+    The terminal's Claude is left completely alone — it is somebody's shell
     and killing it is not ours to do.
-
-    Refused mid-turn, because adopting stops the chat's process and losing
-    an answer being written is worse than making you wait for it.
-
-    "Most recently written" has to mean most recent conversation *of
-    yours*. The consolidator, voice and the automation listener all write
-    transcripts into this same directory on their own schedule, so on a
-    busy house the newest file was routinely a machine's — and switching
-    back from the terminal adopted the memory consolidator's prompt instead
-    of what you had been doing.
     """
-    session = _chat()
-    if session.state == "busy":
-        raise web.HTTPConflict(reason="finish or stop the current answer first")
+    registry = _chat_registry()
+    attached = _chat()
+    held_elsewhere = {s.session_id for s in registry.sessions()
+                      if s.session_id and s is not attached}
     recent = await asyncio.to_thread(
-        conversations.listing, chat_session.WORK_DIR, 1, ("you",))
-    newest = recent[0] if recent else None
-    if newest is None or newest["id"] == session.session_id:
+        conversations.listing, chat_session.WORK_DIR, 10, ("you",))
+    handoff = await asyncio.to_thread(chat_session.read_handoff)
+    chosen = chat_session.pick_adopted(recent, handoff, held_elsewhere)
+    if (chosen is not None and chosen["id"] == attached.session_id
+            and handoff.get("session_id") == chosen["id"]
+            and float(chosen.get("modified") or 0) > float(handoff.get("ts") or 0)
+            and not attached.alive() and attached.state != "busy"):
+        # The ordinary round trip: the chat handed this conversation to the
+        # terminal (stopping its own process, so it is still the one on
+        # screen) and the terminal carried it on. The id matches, which
+        # read as "nothing to take up" — and the pane went on showing the
+        # scrollback from before the handoff, with the terminal's turns
+        # missing. Nothing is running here to lose, so re-read it.
+        replay = await asyncio.to_thread(
+            conversations.transcript, chat_session.WORK_DIR, chosen["id"])
+        try:
+            out = await attached.resume(chosen["id"], replay)
+        except ValueError as exc:
+            raise web.HTTPBadRequest(reason=_refusal(exc))
+        except RuntimeError as exc:
+            raise web.HTTPConflict(reason=_refusal(exc))
+        return web.json_response({"ok": True, "adopted": True,
+                                  "session_id": out.get("session_id") or chosen["id"],
+                                  "title": chosen["title"]})
+    if chosen is None or chosen["id"] == attached.session_id:
         # Already the same conversation (or there is nothing to take up):
         # switching is then just a change of renderer, which is the point.
         return web.json_response({"ok": True, "adopted": False,
-                                  "session_id": session.session_id})
-    replay = await asyncio.to_thread(
-        conversations.transcript, chat_session.WORK_DIR, newest["id"])
+                                  "session_id": attached.session_id})
+    replay = []
+    if registry.get(chosen["id"]) is None:
+        replay = await asyncio.to_thread(
+            conversations.transcript, chat_session.WORK_DIR, chosen["id"])
     try:
-        await session.resume(newest["id"], replay)
-    except RuntimeError:
-        # A turn started between the busy check above and here — the same
-        # refusal, in the same words.
-        raise web.HTTPConflict(reason="finish or stop the current answer first")
+        out = await registry.open(chosen["id"], replay)
+    except ValueError as exc:
+        raise web.HTTPBadRequest(reason=_refusal(exc))
+    except RuntimeError as exc:
+        # The cap, and only the cap: every live chat is busy and there is
+        # no idle one to pause. Its own sentence says so.
+        raise web.HTTPConflict(reason=_refusal(exc))
     return web.json_response({"ok": True, "adopted": True,
-                              "session_id": newest["id"],
-                              "title": newest["title"]})
+                              "session_id": out.get("session_id") or chosen["id"],
+                              "title": chosen["title"]})
 
 
 async def h_chat_model(request: web.Request) -> web.Response:
@@ -13149,13 +19554,20 @@ async def h_chat_permission(request: web.Request) -> web.Response:
     try:
         return web.json_response(await session.respond_permission(
             str(body.get("id") or ""), bool(body.get("allow")),
-            answers=answers))
+            answers=answers,
+            # "Always allow this": the card's own suggestion, handed back as
+            # the CLI's updatedPermissions. Only ever what the CLI offered —
+            # the request carries a yes, never a rule.
+            always=body.get("always") is True))
     except ValueError as exc:
         # Fixed words, not the exception's text — CodeQL reads echoed
-        # exception text as information exposure, and both messages are
+        # exception text as information exposure, and these messages are
         # knowable anyway.
         if "answer the questions" in str(exc):
             raise web.HTTPBadRequest(text="answer the questions first")
+        if "always allow" in str(exc):
+            raise web.HTTPBadRequest(
+                text="there is nothing to always allow on this request")
         raise web.HTTPNotFound(text="that request is no longer waiting")
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=_refusal(exc))
@@ -13353,6 +19765,8 @@ def make_app() -> web.Application:
     app.router.add_put("/api/settings", h_settings_put)
     app.router.add_get("/api/insights", h_insights)
     app.router.add_post("/api/generate", h_generate)
+    app.router.add_get("/api/why", h_why)
+    app.router.add_get("/api/explain/{id}", h_explain_get)
     app.router.add_delete("/api/insight/{id}", h_delete_insight)
     app.router.add_put("/api/insight/{id}", h_rename_insight)
     app.router.add_post("/api/insight/{id}/refine", h_insight_refine)
@@ -13381,7 +19795,15 @@ def make_app() -> web.Application:
     app.router.add_get("/api/capture/{run_id}", h_capture_get)
     app.router.add_post("/api/capture/{run_id}/export", h_capture_export)
     app.router.add_delete("/api/capture/{run_id}", h_capture_delete)
+    app.router.add_get("/api/resident/outcomes", h_resident_outcomes)
+    app.router.add_get("/api/resident/eval", h_resident_eval_get)
+    app.router.add_post("/api/resident/eval", h_resident_eval_start)
     app.router.add_get("/api/baselines", h_baselines)
+    app.router.add_get("/api/world", h_world)
+    app.router.add_post("/api/world/run", h_world_run)
+    app.router.add_get("/api/situation", h_situation)
+    app.router.add_get("/api/occasions", h_occasions)
+    app.router.add_post("/api/occasions/run", h_occasions_run)
     app.router.add_post("/api/baselines/run", h_baselines_run)
     app.router.add_get("/api/curiosity", h_curiosity)
     app.router.add_post("/api/curiosity/ask", h_curiosity_ask)
@@ -13398,6 +19820,10 @@ def make_app() -> web.Application:
                         h_knowledge_card_refresh)
     app.router.add_get("/api/weekly", h_weekly)
     app.router.add_post("/api/weekly/run", h_weekly_run)
+    app.router.add_get("/api/deep-review", h_deep_review)
+    app.router.add_post("/api/deep-review/run", h_deep_review_run)
+    app.router.add_post("/api/camera/permit", h_camera_permit)
+    app.router.add_get("/api/cameras", h_cameras)
     app.router.add_get("/api/activity", h_activity)
     app.router.add_get("/api/activity/entity/{entity_id}", h_activity_entity)
     app.router.add_post("/api/activity/summary", h_activity_summary)
@@ -13408,6 +19834,16 @@ def make_app() -> web.Application:
     app.router.add_post("/api/finding/{ts}/apply", h_finding_apply)
     app.router.add_post("/api/finding/{ts}/cancel", h_finding_cancel)
     app.router.add_post("/api/finding/{ts}/unfix", h_finding_unfix)
+    # Every change is a contract: the restore a fix's calls can be undone
+    # with, the action gate's door, and the tripwire. Before the {verb}
+    # catch-all for snooze's reason.
+    app.router.add_post("/api/finding/{ts}/restore", h_finding_restore)
+    app.router.add_post("/api/gate", h_gate)
+    app.router.add_post("/api/security/tripwire", h_security_tripwire)
+    app.router.add_get("/api/security", h_security_state)
+    app.router.add_post("/api/security/honeytoken", h_security_honeytoken)
+    app.router.add_get("/api/house-rules", h_house_rules)
+    app.router.add_post("/api/house-rules", h_house_rules_save)
     app.router.add_post("/api/finding/{ts}/snooze", h_finding_snooze)
     app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)
     # Not an ending either: the chat's sentence onto the card. Before the
@@ -13506,6 +19942,8 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/handoff", h_chat_handoff)
     app.router.add_get("/api/chat/conversations", h_chat_conversations)
     app.router.add_post("/api/chat/adopt", h_chat_adopt)
+    app.router.add_post("/api/chat/context", h_chat_context)
+    app.router.add_post("/api/own", h_own)
     app.router.add_post("/api/chat/resume", h_chat_resume)
     app.router.add_post("/api/chat/model", h_chat_model)
     app.router.add_post("/api/chat/permission", h_chat_permission)
@@ -13524,6 +19962,8 @@ def make_app() -> web.Application:
     esphome.setup(app)
     # Music Assistant: players, providers, queues and settings, over its API.
     music_assistant.setup(app)
+    # Home Assistant's own maintainer: tidy, upgrades, health, the book.
+    _maint_routes(app)
 
     async def on_startup(app: web.Application) -> None:
         # Startup is the one moment we know nothing is in flight, so it is
@@ -13557,12 +19997,15 @@ def make_app() -> web.Application:
             log.info("labelled %d machine conversation(s) from before their "
                      "callers claimed session ids", relabelled)
         await _options_sync()
+        _publish_permission_mode()
         # Every failed run of any kind becomes one readable file: hooked on
         # the journal so a new run path is covered by having recorded itself.
         journal.on_record(_journal_report_listener)
         # And every run that spent something tells the usage tracker, which
         # is asking on a 30-minute heartbeat rather than every 5 minutes.
         journal.on_record(_journal_usage_listener)
+        # And a usage limit met by any run holds the scheduled cards.
+        journal.on_record(_journal_rate_listener)
         # The work queue belongs to the loop the worker runs on, and it
         # is a module global — so the first loop to touch it owns it for
         # the life of the process. In the add-on that is one loop and one
@@ -13578,16 +20021,30 @@ def make_app() -> web.Application:
         # request rather than on it — off the loop, where every read of them
         # now happens.
         await asyncio.to_thread(_warm_static)
-        app["worker"] = asyncio.create_task(_worker())
-        app["scheduler"] = asyncio.create_task(_scheduler())
-        app["checks"] = asyncio.create_task(_checks_loop())
-        app["baselines"] = asyncio.create_task(_baseline_loop())
-        app["notify_flush"] = asyncio.create_task(_notify_flush_loop())
-        app["brief"] = asyncio.create_task(_brief_loop())
-        app["evening"] = asyncio.create_task(_evening_loop())
-        app["healing"] = asyncio.create_task(_heal_loop())
-        app["weekly"] = asyncio.create_task(_weekly_loop())
-        app["requests"] = asyncio.create_task(_requests_loop())
+        # Waiters from a loop that has gone (a test, a second app) can
+        # never be woken; the run queue drops them, `_rebind_queue`'s rule.
+        run_queue.QUEUE.reset()
+        # Every long-lived loop is supervised: a done-callback says at
+        # warning when one stops, and `/api/diagnostics` carries whether
+        # each is alive and when the ones that beat last went round —
+        # which `health.problems` reads. The stall windows are several of
+        # each loop's own ticks, plus a pass's own length.
+        app["worker"] = _supervise("worker", _worker())
+        app["scheduler"] = _supervise("scheduler", _scheduler(),
+                                      stall_after_s=600)
+        app["checks"] = _supervise("checks", _checks_loop(),
+                                   stall_after_s=CHECKS_FIRST_DELAY_S + 3600)
+        app["baselines"] = _supervise("baselines", _baseline_loop(),
+                                      stall_after_s=BASELINE_FIRST_DELAY_S
+                                      + 3 * 3600)
+        app["notify_flush"] = _supervise("notify_flush", _notify_flush_loop())
+        app["brief"] = _supervise("brief", _brief_loop())
+        app["evening"] = _supervise("evening", _evening_loop())
+        app["healing"] = _supervise("healing", _heal_loop())
+        app["weekly"] = _supervise("weekly", _weekly_loop())
+        app["maintainer"] = _supervise("maintainer", _maint_loop())
+        app["requests"] = _supervise("requests", _requests_loop())
+        app["notify_learn"] = _supervise("notify_learn", _notify_learn_loop())
         # The first thing in brAIn that is watched rather than polled, and
         # the loop that reads it. The bus files nothing and asks nothing —
         # its only output is a signal on the queue — and `_resident_loop`
@@ -13597,17 +20054,37 @@ def make_app() -> web.Application:
         # dev checkout at all.
         global EVENT_BUS
         EVENT_BUS = eventbus.EventBus(
-            _resident_offer, on_event=_note_safety,
+            _resident_offer, on_event=_on_bus_event,
             known_ids=_known_entity_ids,
             # A callable, not a snapshot: a fresh install has no
             # measured night for a fortnight, and a bus that froze the
             # boot answer would use the fallback 23-6 for ever on
             # exactly the house that has since measured its own.
-            rhythm_payload=rhythm.profile)
+            rhythm_payload=rhythm.profile,
+            # The HOUSE's clock. Left unset, `is_odd_hour` read the UTC
+            # hour against the house's local night window, so on a house
+            # in New York a person moving at 20:00 was "the small hours"
+            # and one at 03:00 was not.
+            tz=baselines.house_timezone()[0],
+            # Binary sensors a confident entity reading made safety
+            # sensors. It can only add: a device class wins whatever this
+            # says (`signals.RegistryContext.safety_class_of`).
+            safety_roles=_world_safety_roles)
         await EVENT_BUS.start()
-        app["resident"] = asyncio.create_task(_resident_loop())
+        app["resident"] = _supervise("resident", _resident_loop())
+        # What the house is doing now: a frame every few minutes, a cheap
+        # sentence only when it moved.
+        app["situation"] = _supervise("situation", _situation_loop())
+        # The follow-up looks at every applied fix, and the tripwire file
+        # rewritten so a tripwire named in settings guards from boot.
+        app["followups"] = _supervise("followups", _followup_loop())
+        try:
+            await asyncio.to_thread(security.publish)
+        except Exception as exc:  # noqa: BLE001 — a guard that could not
+            # be republished is a fault row, not a panel that will not start
+            log.warning("could not publish the tripwire file: %s", exc)
         if addon_options.available():
-            app["options"] = asyncio.create_task(_options_poller())
+            app["options"] = _supervise("options", _options_poller())
         if engine.get_auth():
             start_auth_check()
 

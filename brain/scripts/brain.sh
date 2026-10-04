@@ -12,6 +12,7 @@
 #   brain learn [topic]            Run a study session on the home
 #   brain ask "<question>"         One-shot question, same engine as the Ask card
 #   brain undo [n]                 Review and revert Claude's file edits
+#   brain own [-r] <path...>       Make a /config file writable by Claude (no sudo)
 #   brain login                    Sign in to Claude (same as `ha login`)
 #   brain check                    Run the house checks now (no Claude run)
 #   brain why [ask]                Why somebody did something by hand
@@ -20,6 +21,7 @@
 #   brain doctor --rehearse        Plant defects, score the checks, clean up
 #   brain doctor --sweep           Take out what a rehearsal left behind
 #   brain report                   One redacted text file for a bug report
+#   brain eval <what>              How brAIn's own judgement has held up
 #   brain help                     This help
 
 set -uo pipefail
@@ -62,6 +64,11 @@ Usage:
   brain learn [topic]            Study the home and write down what it finds
   brain ask "<question>"         Ask about the home (same engine as the Ask card)
   brain undo [n]                 Review and revert Claude's edits to /config
+  brain own [-r] <path...>       Make a file under /config writable by Claude
+                                 when Home Assistant saved it as root (also
+                                 /addon_configs, /share, /media). The edit
+                                 hooks do this by themselves; nobody needs
+                                 to run sudo or chown
   brain check [list]             Run the house checks now — no Claude run,
                                  findings land on the Findings tab
   brain why [ask]                Why somebody here does something by hand —
@@ -86,6 +93,13 @@ Usage:
   brain doctor --sweep           Take out anything named brain_test_* a
                                  rehearsal left behind. Creates nothing and
                                  spends nothing
+  brain eval <what>              How brAIn's own judgement has held up
+      outcomes                   What the Resident decided and what you did
+                                 next, per producer and entity — free
+      first_look                 Replay captured first looks against today's
+                                 prompt and report agreement with what you
+                                 did. Spends Claude runs, capped; changes
+                                 nothing
   brain report [--no-names]      Write one redacted text file to
                                  /share/brain/reports (also under ⚙ → Problems)
   brain login [--status|--share] Sign in to Claude, and share that login with
@@ -129,6 +143,7 @@ case "$action" in
     learn)      delegate brain-learn.sh "$@" ;;
     ask)        delegate brain-ask.sh "$@" ;;
     undo)       delegate brain-undo.sh "$@" ;;
+    own)        delegate brain_own.py "$@" ;;
     check)      delegate brain-check.sh "$@" ;;
     why)        delegate brain-why.sh "$@" ;;
     weekly)     delegate brain-weekly.sh "$@" ;;
@@ -142,6 +157,7 @@ case "$action" in
         esac
         ;;
     report)     delegate brain-report.sh "$@" ;;
+    eval)       delegate brain-eval.sh "$@" ;;
     login)      delegate ha-share-login.sh "$@" ;;
     help|--help|-h) usage ;;
     *)

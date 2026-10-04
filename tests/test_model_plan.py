@@ -33,7 +33,7 @@ class TestTheTable(TestCase):
             self.assertIn(effort, model_plan.EFFORTS, job)
 
     def test_the_tiers_are_what_the_page_says(self):
-        self.assertEqual(model_plan.resolve("triage"), ("haiku", "low"))
+        self.assertEqual(model_plan.resolve("first_look"), ("haiku", "low"))
         self.assertEqual(model_plan.resolve("card")[0], "sonnet")
         self.assertEqual(model_plan.resolve("fix_apply"), ("opus", "xhigh"))
         self.assertEqual(model_plan.resolve("consolidate")[0], "haiku")
@@ -66,6 +66,15 @@ class TestTheTable(TestCase):
         self.assertEqual(model_plan.resolve("card", "generous")[0], "opus")
         # A naming call is never promoted to Opus.
         self.assertEqual(model_plan.resolve("scene_names", "generous")[0], "haiku")
+
+    def test_the_gate_and_the_follow_up_look_are_the_cheap_tier(self):
+        """Both run often and answer a closed vocabulary. The gate runs
+        before an acting tool while somebody waits, so `generous` may not
+        promote it, and neither may `light` make it anything else."""
+        for job in ("gate", "followup", "house_rules"):
+            self.assertEqual(model_plan.resolve(job), ("haiku", "low"), job)
+            self.assertEqual(model_plan.resolve(job, "generous")[0], "haiku")
+            self.assertEqual(model_plan.resolve(job, "light")[0], "haiku")
 
     def test_an_unknown_job_lands_in_the_middle(self):
         self.assertEqual(model_plan.resolve("never-heard-of-it"), ("sonnet", "medium"))
@@ -130,6 +139,10 @@ class TestTheShellHalfReadsTheSameTable(TestCase):
             "scripts/brain-learn.sh": "BRAIN_MODEL_STUDY",
             "integrations/automation-listener.sh": "BRAIN_MODEL_TASK",
             "integrations/assist-listener.sh": "BRAIN_MODEL_VOICE",
+            # The fast pool is the DEFAULT voice implementation, and it is
+            # the reader this list missed: it passed no --model for an
+            # agent set to Default, so voice ran on the CLI's own default.
+            "integrations/assist-worker-pool.py": "BRAIN_MODEL_VOICE",
         }
         for rel, var in readers.items():
             self.assertIn(var, (self.ADDON / rel).read_text(), rel)
@@ -239,7 +252,7 @@ class TestTheEngineCarriesTheJob(TestCase):
 
     def test_a_job_becomes_model_and_effort_on_the_argv(self):
         self._use("plain")
-        result = engine.run_claude("hi", "sys", job="triage")
+        result = engine.run_claude("hi", "sys", job="first_look")
         self.assertTrue(result["ok"], result)
         argv = self._argvs()[0]
         self.assertIn("--model", argv)
@@ -248,7 +261,7 @@ class TestTheEngineCarriesTheJob(TestCase):
 
     def test_an_explicit_model_still_wins_over_the_job(self):
         self._use("plain")
-        engine.run_claude("hi", "sys", model="claude-opus-5", job="triage")
+        engine.run_claude("hi", "sys", model="claude-opus-5", job="first_look")
         argv = self._argvs()[0]
         self.assertEqual(argv[argv.index("--model") + 1], "claude-opus-5")
 
@@ -290,7 +303,10 @@ class TestTheCardStylesheet(TestCase):
         for hexcode in ("#e87ba4", "#cde2fb", "#0d366b", "#ec835a"):
             self.assertIn(hexcode, categories.CARD_STYLES)
             self.assertNotIn(hexcode, categories._CARD_CONTRACT, hexcode)
-        self.assertLess(len(categories._CARD_CONTRACT), 8000)
+        # The ceiling is about the palette not creeping back (it was ~1.5 KB
+        # of hex), not a word budget: it moved from 8000 to 8400 for the
+        # `opportunities` field's two lines, which is a field, not a palette.
+        self.assertLess(len(categories._CARD_CONTRACT), 8400)
 
     def test_inject_styles_is_placed_in_head_and_is_idempotent(self):
         html = "<!DOCTYPE html><html><head><title>t</title></head><body></body></html>"
