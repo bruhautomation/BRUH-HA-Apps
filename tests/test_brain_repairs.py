@@ -191,10 +191,14 @@ class TestTheThreeEndings(FlowCase):
         self.assertEqual(got["menu_options"], list(repairs.DEFAULT_ACTIONS))
         # Every action a request can carry except Reply, which is a turn
         # in the conversation rather than an ending and needs a text box
-        # a Repairs menu has no room for: a reply is a phone's button.
+        # a Repairs menu has no room for: a reply is a phone's button. And
+        # except Undo, which is the button on the confirmation a reply is
+        # answered with — it takes an ending back and is offered nowhere a
+        # case is still open.
         self.assertEqual(set(repairs.FLOW_ACTIONS),
-                         set(finding_requests.ACTIONS) - {"reply"})
+                         set(finding_requests.ACTIONS) - {"reply", "undo"})
         self.assertNotIn("reply", repairs.FLOW_ACTIONS)
+        self.assertNotIn("undo", repairs.FLOW_ACTIONS)
 
     def test_the_menu_is_the_cards_own_row_when_the_row_says_which(self):
         """The add-on decides the buttons once (`answers.py`); the dialog

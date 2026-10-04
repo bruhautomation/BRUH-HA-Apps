@@ -533,7 +533,7 @@ class TestMCPProtocol(unittest.TestCase):
             "minecraft_status", "minecraft_teleport", "minecraft_player",
             "minecraft_world", "minecraft_command", "minecraft_server",
             "minecraft_addons", "label_printer_status", "print_label",
-            "bright_status", "bright_show",
+            "bright_status", "bright_show", "explain_decision",
         }
         self.assertEqual(tool_names, expected_tools)
 

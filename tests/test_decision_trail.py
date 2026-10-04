@@ -5,6 +5,7 @@ Driven against the real module over a temp file, and against the real
 correction — because "the check withheld a row" and "the trail heard about
 it" are different claims and only the second answers a person.
 """
+import asyncio
 import json
 import os
 import sys
@@ -181,3 +182,83 @@ class TestChecksHandItBack(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPassRows(unittest.TestCase):
+    """What a checks pass withheld, read off what it already holds."""
+
+    def test_withheld_muted_answered_and_on_trial(self):
+        result = {
+            "withheld": [{"kind": "cap", "subject": "sensor.a",
+                          "check": "dev.frozen", "reason": "a dozen"}],
+            "findings": [
+                {"text": "Muted one", "source": "check:forecast.decline",
+                 "entity_id": "sensor.b"},
+                {"text": "Answered one", "source": "check:dev.frozen",
+                 "entity_id": "sensor.c"},
+                {"text": "New one", "source": "check:dev.frozen",
+                 "entity_id": "sensor.d"},
+                {"text": "Already open", "source": "check:dev.frozen",
+                 "entity_id": "sensor.e"},
+            ],
+            "shadow": [{"text": "Trial", "source": "check:sys.update_pending",
+                        "entity_id": ""}],
+        }
+        rows = trail.pass_rows(
+            result, created_keys={"new one"},
+            settled={"answered one": "ignored"},
+            muted={"check:forecast.decline"},
+            normalize=lambda t: t.lower())
+        kinds = {(r["kind"], r["subject"] or r["check"]) for r in rows}
+        self.assertEqual(kinds, {("cap", "sensor.a"), ("mute", "sensor.b"),
+                                 ("dedupe", "sensor.c"),
+                                 ("shadow", "sys.update_pending")})
+        dedupe = next(r for r in rows if r["kind"] == "dedupe")
+        self.assertEqual(dedupe["reason"], "you marked it Not a problem")
+
+
+class TestTheServerWritesIt(TrailCase):
+    """The notifier and the Resident put their silences on the trail."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib
+        cls.server = importlib.import_module("server")
+
+    def setUp(self):
+        super().setUp()
+        self.server.decision_trail.TRAIL_FILE = trail.TRAIL_FILE
+        self._target = self.server._findings_notify_target
+
+    def tearDown(self):
+        self.server._findings_notify_target = self._target
+        super().tearDown()
+
+    def test_no_notification_service_is_a_reason(self):
+        self.server._findings_notify_target = lambda: ("", "warning")
+        row = {"ts": 1, "text": "Garage door left open", "severity": "serious",
+               "source": "check:evening.left_open",
+               "entity_id": "cover.garage"}
+        asyncio.run(self.server._announce_findings([row]))
+        got = trail.for_subject("cover.garage")
+        self.assertEqual(got["rows"][0]["kind"], "no_target")
+        self.assertEqual(got["rows"][0]["check"], "evening.left_open")
+
+    def test_below_the_floor_is_a_reason(self):
+        self.server._findings_notify_target = lambda: (
+            "notify.mobile_app_phone", "critical")
+        row = {"ts": 2, "text": "Battery low", "severity": "warning",
+               "source": "check:dev.battery_low", "entity_id": "sensor.bat"}
+        asyncio.run(self.server._announce_findings([row]))
+        self.assertEqual(trail.for_subject("sensor.bat")["kinds"],
+                         ["notify_quiet"])
+
+    def test_a_signal_the_look_let_go(self):
+        rows = self.server._signal_decisions(
+            [{"subject": "binary_sensor.hall", "kind": "state",
+              "text": "hall motion at 03:00"},
+             {"subject": "checks pass", "kind": "time", "text": "x"}],
+            "look_ignore", "a cat")
+        self.assertEqual(rows[0]["subject"], "binary_sensor.hall")
+        self.assertEqual(rows[1]["subject"], "")
+        self.assertEqual(trail.note_many(rows, now=NOW), 2)

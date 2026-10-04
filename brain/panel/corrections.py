@@ -341,9 +341,9 @@ def plan(reply: dict | None, finding: dict, *, today: dt.date | None = None,
     if scope != "entity_check" and never_covered(
             entity_id, check_id, device_class=device_class,
             protected=protected):
-        scope, clamped = ("entity_check",
-                          "a safety device or a protected one is never "
-                          "covered by a wider correction")
+        scope = "entity_check"
+        clamped = ("a safety device or a protected one is never covered by "
+                   "a wider correction")
     if scope == "check_area" and not area_id:
         scope, clamped = "entity_check", "brAIn does not know which room it is in"
     resume = resume_date(reply, today, southern=southern)

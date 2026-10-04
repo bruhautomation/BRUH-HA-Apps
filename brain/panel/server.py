@@ -12966,6 +12966,9 @@ async def _repairs_routes(finding: dict, note: str,
                     await _move_finding_to_todo(finding, route.get("note", ""))
                     ended = True
                 except web.HTTPException:
+                    # A full list leaves `ended` False on purpose: the box
+                    # sat under "Not a problem", so the Wrong below is what
+                    # the press falls back to rather than ending nothing.
                     pass
             elif ending == "not_now":
                 await _snooze_case(finding, None)
