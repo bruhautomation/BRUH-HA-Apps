@@ -852,6 +852,43 @@ Resident can correct its own first look.**
   and never through a protected speaker. It only announces; answering is still
   on your phone.
 
+### Asking, answering and correcting
+
+- **One reader for what you type.** The ask bar, a Reply on a notification, the
+  reason box on a Repairs dialog and the `brain.intent` service now share one
+  cheap interpreter that reads the words against where they were typed and
+  routes them — a question becomes a card, a rule goes to Proposals, a fact is
+  kept, "learn about…" studies, "why…" is explained, and two things in one
+  sentence go two ways. Anything the reader cannot answer (no sign-in, a failed
+  run) is the box's old behaviour exactly.
+- **Reply can end a card.** Typing "it's always like that in winter" under a
+  notification now marks it Not a problem and stops it until spring, answered
+  with one sentence — "Got it — I'll stop flagging it until March." — and an
+  **Undo** button. "Remind me tomorrow" is a snooze, "I already replaced it" is
+  done, and a real question still gets brAIn's answer.
+- **Corrections have a scope and a lifetime.** A Not-a-problem reason gets a
+  second look: just this rule on this device (the default), anything about this
+  device, this rule for the whole room, or this rule everywhere — and until a
+  date, a month, the end of a season, or for good. Anything wider than one
+  device is asked as a question on the Findings list first; nothing ever covers
+  a smoke, gas, CO or leak sensor, a lock, an alarm panel, a protected entity or
+  the freeze check.
+- **Ask why.** "Why didn't you tell me the garage was open?" is answered from
+  brAIn's own record of what it decided not to say — a check that gave up
+  because too much looked wrong at once, a report you had answered, a
+  correction, a muted rule, quiet hours, a paused budget, a first look that let
+  it go — with the traces and logbook behind it. "No record of seeing it" and
+  "decided not to" are different answers and are said differently. New `GET
+  /api/why`, new `explain_decision` tool.
+- **The sentence you asked with is in the automation.** An automation made from
+  a typed or spoken sentence carries it in its description ("Asked for in brAIn:
+  “…” — accepted on …"); one suggested by an insight card says so.
+- **Every check reads a correction the same way.** A house check that reports
+  about a device asks one question first (`House.should_report`), so a
+  correction is honoured by every rule rather than by the one it was given on.
+- **A notification can carry Undo.** The notification buttons (the add-on and
+  the integration both) gained `undo`, the button on a reply's confirmation.
+
 ## 2.10.1
 
 **The classic terminal on a phone: Paste works, the keyboard stops fighting you.**

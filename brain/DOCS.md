@@ -681,6 +681,20 @@ dropped from the queue rather than announced: being told at seven about a
 problem that went away at four is how these messages stop meaning anything.
 Set both to the same value (or leave both empty) to notify at any hour.
 
+### Replying from your phone
+
+The **Reply** button on a notification does more than ask a question now. "It's always like that in winter" marks the report Not a problem and stops it until spring; "remind me tomorrow" snoozes it; "I already replaced it" marks it fixed; anything else is a question, and brAIn answers it. When a reply ends a report you get one line back — for example *"Got it — I'll stop flagging it until March."* — with an **Undo** button that puts everything back for five minutes.
+
+### Corrections that know how far they reach
+
+When you say a report is not a problem and give a reason, brAIn works out how far you meant it and for how long:
+
+- just this rule on this device (the usual case), or anything about this device;
+- this rule for every device in the same room, or everywhere — **these are asked as a question on your Findings list first**, and nothing changes until you say Yes;
+- until a date, until a month, until a season is over, or for good.
+
+A correction never covers a smoke, gas, carbon-monoxide or leak sensor, a lock, an alarm panel, anything on your protected list, or the freeze check — even if one is added to that room later. Undo on the report, or "Let brAIn raise it again", takes back everything the correction wrote.
+
 ### Findings in Home Assistant's Repairs
 
 Every finding that is a decision waiting on you also appears under
@@ -727,6 +741,14 @@ with a one-line reason.
 - **Feedback that sticks.** Tell a card what to do differently — "ignore the guest
   room", "show costs in dollars" — and the next run obeys.
 - **Schedules you control.** Per-card, either an interval or fixed times of day.
+
+### Asking brAIn things
+
+Type anything into the question bar. brAIn reads what you meant before it does anything: a question becomes a card, "turn the hall light on when the door opens after dark" becomes an automation waiting on the Proposals tab, "the garage freezer is off in winter" is kept in memory, "learn about the boiler" sends brAIn studying, and "why did the porch light come on at 3 a.m.?" or "why didn't you tell me the garage was open?" is answered right under the bar, in words, with what brAIn read to work it out. One sentence can do two of these at once. If brAIn can't reach Claude at that moment, the bar works the way it always did.
+
+### Why didn't brAIn tell me?
+
+brAIn keeps a short record of every time it decided not to say something, and the reason: a check that went quiet because too many things looked wrong at once, a report you had already answered, a correction you gave, a rule you muted, a message held for quiet hours, a run the usage budget would not pay for, or a first look that judged it not worth your attention. Ask "why didn't you tell me…" in the bar and brAIn answers from that record. If there is no record, it says so — that means brAIn may never have seen it, which is a different answer from choosing to stay quiet.
 
 ### It remembers
 
