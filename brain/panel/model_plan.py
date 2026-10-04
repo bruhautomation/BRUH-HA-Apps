@@ -59,6 +59,14 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     "consolidate":     ("haiku",  "low",    False, False),
     "reflect":         ("haiku",  "low",    False, False),
     "auth_check":      ("haiku",  "low",    False, False),
+    # The action gate: allow / ask / deny over a call it is shown in
+    # code-resolved terms, seen only beside the person's own words. Never
+    # steps up — it runs before an acting tool, in the time somebody is
+    # waiting on a light.
+    "gate":            ("haiku",  "low",    False, False),
+    # A follow-up look at an applied fix whose check could not be made
+    # deterministically — held / regressed / could not check.
+    "followup":        ("haiku",  "low",    False, False),
     # Thinks — reasoning with tools where a wrong answer costs a card.
     "card":            ("sonnet", "medium", True,  True),
     "ask":             ("sonnet", "medium", True,  True),

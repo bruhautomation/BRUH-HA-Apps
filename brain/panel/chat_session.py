@@ -1296,7 +1296,9 @@ class ChatSession:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=engine._claude_env(),
+            # `chat` is a channel somebody is watching: the action gate
+            # may ask here, where an unattended run is refused instead.
+            env={**engine._claude_env(), "BRAIN_CHANNEL": "chat"},
             limit=1024 * 1024,
         )
         # What this process actually runs, as distinct from what the panel

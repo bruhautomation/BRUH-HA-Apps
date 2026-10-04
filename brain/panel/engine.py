@@ -603,9 +603,19 @@ def _claude_argv() -> list[str]:
     return [claude_bin]
 
 
+# Extra environment for the run on THIS thread — how a fix run carries its
+# change contract (`BRAIN_CHANGE_CONTRACT`), its channel and its
+# intervention id to the MCP server and the action gate, which both read
+# them from the environment the CLI hands every child. Thread-local rather
+# than a parameter threaded through every runner, because a run is one
+# thread start to finish and every runner shares `_run_cli`.
+_RUN_ENV = threading.local()
+
+
 def _claude_env() -> dict[str, str]:
     env = dict(os.environ)
     env["HOME"] = CLAUDE_HOME
+    env.update(getattr(_RUN_ENV, "extra", None) or {})
     # Never let a stale interactive login interfere; inject our credential.
     auth = get_auth()
     if auth:
@@ -855,6 +865,7 @@ def run_agent(
     job: str = "",
     effort: str = "",
     schema: dict | None = None,
+    env: dict | None = None,
 ) -> dict:
     """Run `claude -p` WITH its tools. Same envelope as ``run_claude``.
 
@@ -870,12 +881,20 @@ def run_agent(
       the CLI's own system prompt strips everything it knows about using its
       tools, which is precisely what this run needs.
     """
-    return _run_cli(
-        prompt, ["--append-system-prompt", system_prompt]
-        + project_flags(settings=True, files=True),
-        model, timeout, max_turns,
-        f"the fix run passed its {timeout}s limit and was stopped", source,
-        job=job, effort=effort, schema=schema)
+    # `env` is the change contract and its channel (`plan_ops.contract_for`):
+    # the MCP chokepoint and the action gate read it, and refuse anything
+    # off it. Cleared in `finally` so it cannot leak into the next run this
+    # worker thread carries.
+    _RUN_ENV.extra = {str(k): str(v) for k, v in (env or {}).items()}
+    try:
+        return _run_cli(
+            prompt, ["--append-system-prompt", system_prompt]
+            + project_flags(settings=True, files=True),
+            model, timeout, max_turns,
+            f"the fix run passed its {timeout}s limit and was stopped",
+            source, job=job, effort=effort, schema=schema)
+    finally:
+        _RUN_ENV.extra = {}
 
 
 # There is NO turn cap on a panel run. `_run_cli` sends no `--max-turns`

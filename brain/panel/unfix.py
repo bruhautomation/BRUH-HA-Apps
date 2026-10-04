@@ -110,8 +110,15 @@ def _index_path() -> Path:
     return automation_writer.INDEX
 
 
-def journal_entries(started: float, ended: float) -> list[dict]:
+def journal_entries(started: float, ended: float,
+                    also: tuple | list | set = ()) -> list[dict]:
     """The fix run's own edits inside the window, NEWEST FIRST.
+
+    ``also`` names the journal stamps of edits the PANEL made for this same
+    fix — a typed `edit_automation` op goes through `automation_writer`,
+    whose lines carry `TOOL` rather than a hook's tool name — so the one
+    Undo reverses both halves of one approved plan and nothing else the
+    panel wrote in the same minute.
 
     A malformed line is skipped rather than taking the read down: the
     index is appended to by a hook running inside a process that can be
@@ -120,6 +127,8 @@ def journal_entries(started: float, ended: float) -> list[dict]:
     """
     if ended <= 0 or started <= 0 or ended < started:
         return []
+    wanted = {round(float(t), 3) for t in also or ()
+              if isinstance(t, (int, float))}
     out: list[dict] = []
     try:
         with open(_index_path(), "r", encoding="utf-8") as fh:
@@ -139,7 +148,10 @@ def journal_entries(started: float, ended: float) -> list[dict]:
                     continue
                 if not started <= ts <= ended:
                     continue
-                if str(row.get("tool") or "") not in CLAUDE_TOOLS:
+                tool = str(row.get("tool") or "")
+                if tool not in CLAUDE_TOOLS and not (
+                        tool == automation_writer.TOOL
+                        and round(ts, 3) in wanted):
                     continue
                 row["ts"] = ts
                 out.append(row)
@@ -253,6 +265,12 @@ def summary(result: dict, calls: list[dict]) -> str:
             "entity was doing before it, so putting one back would be a guess: "
             + "; ".join(lines) + (f"; and {more} more." if more > 0 else "."))
 
+    if calls and restorable(calls):
+        parts.append("brAIn recorded what those entities were doing before "
+                     "it changed them, so “Put them back” on the card can "
+                     "restore them — you press it; brAIn never does that on "
+                     "its own.")
+
     if not parts:
         return ("There was nothing to put back: this fix changed no files "
                 "under /config and made no service calls, so undoing it "
@@ -260,5 +278,149 @@ def summary(result: dict, calls: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
-__all__ = ["CLAUDE_TOOLS", "MAX_LISTED", "RELOADS", "call_line",
-           "journal_entries", "revert_edits", "service_calls", "summary"]
+# ---------------------------------------------------------------------------
+# Restoring what a service call changed — a press, never a timer
+# ---------------------------------------------------------------------------
+#
+# The asymmetry above was right for a ledger that recorded what was ASKED
+# for: putting a call back meant guessing the prior state. The ledger now
+# records the before-state at the chokepoint (one state read per named
+# entity, `ha_mcp_server._read_before` and `typed_fix.before_of`), so a
+# restore is no longer a guess about the past — it is the past, read back.
+# It is still never automatic: the house has moved on since, and only a
+# person can say the recorded state is the one they want. Hence a button,
+# per-entity answers, and four refusals.
+
+# Domains Home Assistant can put back from a recorded state (each has a
+# `reproduce_state`, which is what `scene.apply` drives). A sensor is a
+# reading, not a setting, and is said rather than attempted.
+RESTORABLE_DOMAINS = frozenset({
+    "light", "switch", "fan", "cover", "climate", "media_player",
+    "input_boolean", "input_number", "input_select", "input_text",
+    "humidifier", "water_heater", "siren", "valve", "number", "select",
+    "lock", "alarm_control_panel", "automation", "vacuum",
+})
+# Attributes a state carries that are not settings and must not be sent.
+NOT_SETTINGS = frozenset({"friendly_name", "device_class", "color_mode"})
+# Restoring INTO these states would make a house less secure, so a restore
+# never does it; it says so, and the person does it by hand if they mean it.
+LESS_SECURE = {
+    "lock": frozenset({"unlocked", "open", "opening", "unlocking"}),
+    "alarm_control_panel": frozenset({"disarmed"}),
+}
+OPENING_COVER_CLASSES = frozenset({"garage", "door", "gate"})
+COVER_OPEN = frozenset({"open", "opening"})
+
+
+def _before_rows(calls: list[dict]) -> dict[str, dict]:
+    """Per entity, the state before brAIn's FIRST call on it in the window.
+
+    Oldest call first: a fix that turned a light off and then on again has
+    two before-states, and only the first is how the house was."""
+    out: dict[str, dict] = {}
+    for row in sorted(calls or [], key=lambda r: float(r.get("ts") or 0)):
+        before = row.get("before") if isinstance(row.get("before"), dict) else {}
+        for eid in row.get("entities") or []:
+            eid = str(eid)
+            if eid in out:
+                continue
+            out[eid] = before.get(eid) if isinstance(before.get(eid), dict) \
+                else {"missing": True}
+    return out
+
+
+def restorable(calls: list[dict]) -> bool:
+    return any("state" in b for b in _before_rows(calls).values())
+
+
+def restore_plan(calls: list[dict], protected=None,
+                 honeytokens=()) -> dict:
+    """What a restore would set, and why each refused entity is refused.
+
+    `{"apply": {entity: {"state", **attributes}}, "refused": [(entity,
+    reason)]}` — pure over the ledger rows and the two lists, so the route
+    and the card ask one function.
+    """
+    patterns = automation_writer.protected_patterns(protected)
+    tokens = {str(t).lower() for t in honeytokens or ()}
+    apply: dict[str, dict] = {}
+    refused: list[tuple[str, str]] = []
+    for eid, before in _before_rows(calls).items():
+        domain = eid.split(".", 1)[0]
+        if eid.lower() in tokens or automation_writer.is_protected(eid, patterns):
+            refused.append((eid, "it is protected, so brAIn will not change it"))
+            continue
+        if before.get("missing"):
+            refused.append((eid, "brAIn did not record how it was before"))
+            continue
+        if before.get("unknown") or "state" not in before:
+            refused.append((eid, "brAIn could not read how it was before"))
+            continue
+        state = str(before["state"])
+        if state in ("unavailable", "unknown"):
+            refused.append((eid, f"it was {state} before, which is not a "
+                                 "state anything can be put back to"))
+            continue
+        if domain not in RESTORABLE_DOMAINS:
+            refused.append((eid, "it is a reading, not something brAIn sets"))
+            continue
+        attrs = dict(before.get("attributes") or {})
+        if state in LESS_SECURE.get(domain, ()) or (
+                domain == "cover" and state in COVER_OPEN
+                and attrs.get("device_class") in OPENING_COVER_CLASSES):
+            refused.append((eid, f"putting it back means it would be "
+                                 f"{state}, which makes the house less secure "
+                                 "— do that yourself if you mean it"))
+            continue
+        apply[eid] = {"state": state,
+                      **{k: v for k, v in attrs.items()
+                         if k not in NOT_SETTINGS}}
+    return {"apply": apply, "refused": refused}
+
+
+def restore_report(plan: dict, after: dict[str, dict | None],
+                   error: str = "") -> list[dict]:
+    """One line per entity: restored, or could not restore and why.
+
+    Read off a state taken AFTER the call: Home Assistant accepting
+    `scene.apply` is the request being taken, not the light being on.
+    """
+    rows = [{"entity_id": eid, "restored": False, "why": why}
+            for eid, why in plan.get("refused") or []]
+    for eid, target in (plan.get("apply") or {}).items():
+        if error:
+            rows.append({"entity_id": eid, "restored": False,
+                         "why": f"Home Assistant refused it: {error}"[:300]})
+            continue
+        now = after.get(eid)
+        if not isinstance(now, dict):
+            rows.append({"entity_id": eid, "restored": False,
+                         "why": "brAIn could not read it afterwards"})
+        elif str(now.get("state")) == str(target.get("state")):
+            rows.append({"entity_id": eid, "restored": True,
+                         "why": f"back to {target['state']}"})
+        else:
+            rows.append({"entity_id": eid, "restored": False,
+                         "why": f"it now reads {now.get('state')}, not "
+                                f"{target['state']}"})
+    return rows
+
+
+def restore_text(rows: list[dict]) -> str:
+    ok = [r for r in rows if r["restored"]]
+    bad = [r for r in rows if not r["restored"]]
+    parts = []
+    if ok:
+        parts.append(f"Put back {len(ok)} "
+                     f"entit{'y' if len(ok) == 1 else 'ies'}: "
+                     + ", ".join(f"{r['entity_id']} ({r['why']})"
+                                 for r in ok[:MAX_LISTED]) + ".")
+    for r in bad[:MAX_LISTED]:
+        parts.append(f"Could not restore {r['entity_id']}: {r['why']}.")
+    return "\n".join(parts) or ("There was nothing recorded to put back.")
+
+
+__all__ = ["CLAUDE_TOOLS", "MAX_LISTED", "RELOADS", "RESTORABLE_DOMAINS",
+           "call_line", "journal_entries", "restorable", "restore_plan",
+           "restore_report", "restore_text", "revert_edits", "service_calls",
+           "summary"]

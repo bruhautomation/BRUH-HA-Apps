@@ -88,6 +88,9 @@ PRODUCER_URGENCY = {
     # lets it through quiet hours, which is the only hour a leak in a
     # bedroom ceiling is ever reported in.
     "safety": "now",
+    # The tripwire (`security.py`): something tried to act on an entity
+    # nothing should touch. That is now, whatever the hour.
+    "security": "now",
     # Something is happening in the house right now and waiting costs
     # something real.
     "check:dev.unavailable": "now",

@@ -617,6 +617,11 @@ fi
 if [ -r /opt/scripts/brain-auth-env.sh ]; then
     . /opt/scripts/brain-auth-env.sh
 fi
+# A run on a terminal has somebody in front of it: the action gate may
+# ASK there, where an unmarked run (nobody watching) is refused instead.
+if [ -z "${BRAIN_CHANNEL:-}" ] && [ -t 0 ]; then
+    export BRAIN_CHANNEL=terminal
+fi
 if [ "$(id -u)" = "0" ]; then
     exec su-exec claude \
         env ${ANTHROPIC_API_KEY:+ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"} \
@@ -1332,6 +1337,16 @@ setup_claude_settings() {
           {
             "type": "command",
             "command": "python3 /opt/scripts/brain-edit-snapshot.py"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__home-assistant__.*|Bash|Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/scripts/brain-action-gate.py",
+            "timeout": 30
           }
         ]
       }

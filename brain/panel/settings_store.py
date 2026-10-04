@@ -189,6 +189,10 @@ DEFAULTS = {
     # See the module docstring. A panel setting because it is chosen while
     # looking at the reference brAIn picked and the reasons it gave.
     "thermal_outdoor": None,
+    # Entities a person has named as tripwires (`security.py`): any acting
+    # call on one is refused by the MCP chokepoint and files a security
+    # case. Beside the one brAIn creates on a press, not instead of it.
+    "honeytoken_entities": [],
 }
 
 # An entity id, and nothing else: this one is read by the nightly pass
@@ -296,6 +300,32 @@ def load() -> dict:
     if isinstance(outdoor, str) and _ENTITY_RE.match(outdoor) \
             and len(outdoor) <= MAX_ENTITY_CHARS:
         out["thermal_outdoor"] = outdoor
+    try:
+        out["honeytoken_entities"] = clean_entity_list(
+            data.get("honeytoken_entities"))
+    except ValueError:
+        pass
+    return out
+
+
+MAX_HONEYTOKENS = 10
+
+
+def clean_entity_list(value) -> list[str]:
+    """A short list of entity ids, or a ValueError naming the bad one."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("honeytoken_entities must be a list of entity ids")
+    out: list[str] = []
+    for item in value:
+        eid = str(item or "").strip().lower()
+        if not _ENTITY_RE.match(eid) or len(eid) > MAX_ENTITY_CHARS:
+            raise ValueError(f"{str(item)[:60]!r} is not an entity id")
+        if eid not in out:
+            out.append(eid)
+    if len(out) > MAX_HONEYTOKENS:
+        raise ValueError(f"at most {MAX_HONEYTOKENS} tripwire entities")
     return out
 
 
@@ -367,6 +397,8 @@ def save(fields: dict) -> dict:
             clean[key] = value
         elif key == "muted_sources":
             clean[key] = clean_sources(value)
+        elif key == "honeytoken_entities":
+            clean[key] = clean_entity_list(value)
         elif key == "plan":
             if value not in PLANS:
                 raise ValueError(f"plan must be one of {', '.join(PLANS)}")
