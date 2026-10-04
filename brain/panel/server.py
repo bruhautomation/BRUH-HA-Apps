@@ -4010,7 +4010,7 @@ async def _judge_look(row: dict, day: int, now: float
         return None, why, "gated"
     result = await asyncio.to_thread(
         engine.run_analyst, interventions.followup_prompt(row, day),
-        interventions.FOLLOWUP_SYSTEM, "", FOLLOWUP_TIMEOUT_S, 0, "followup",
+        interventions.FOLLOWUP_SYSTEM, "", FOLLOWUP_TIMEOUT_S, 12, "followup",
         job="followup", schema=interventions.FOLLOWUP_SCHEMA)
     _record_usage(result, f"followup-{row.get('id')}")
     if not result.get("ok"):
@@ -4218,7 +4218,7 @@ async def _gate_decide(body: dict) -> dict:
     try:
         result = await asyncio.wait_for(asyncio.to_thread(
             engine.run_claude, gate.build_prompt(words, cons),
-            gate.GATE_SYSTEM, "", GATE_TIMEOUT_S, 0, "gate",
+            gate.GATE_SYSTEM, "", GATE_TIMEOUT_S, 4, "gate",
             job="gate", schema=gate.GATE_SCHEMA), GATE_TIMEOUT_S + 5)
     except Exception as exc:  # noqa: BLE001 — undecided, never allow
         return gate.undecided(channel, type(exc).__name__)
