@@ -1069,6 +1069,38 @@ response_variable: answer
 # answer.data.unusual is a boolean; answer.response is the sentence.
 ```
 
+#### Home Assistant's AI Task
+
+On Home Assistant 2025.7 and later brAIn is also an **AI Task** entity
+(`ai_task.brain_system_ai_task` on a fresh install), so the **Suggest with AI**
+buttons in Home Assistant's own editors and the `ai_task.generate_data`
+action can be answered by brAIn rather than a model that has never seen your
+house. It runs the same way `brain.ask` does: reading tools only, with what
+brAIn knows about the house in front of the instruction. A requested
+`structure` is handed to the CLI as a schema and the answer is checked
+against Home Assistant's own schema before it is returned, so a reply of the
+wrong shape is an error with the reason rather than data that nearly fits.
+It needs the automation listener (`enable_automation_integration`), which is
+what answers it. Attachments are not read. On an older Home Assistant the
+entity simply does not appear.
+
+#### brAIn's measurements, for other assistants
+
+Another conversation agent — OpenAI's, Google's, a local model, or the
+Model Context Protocol server integration handing tools to an outside client —
+can be given **brAIn measurements** under that agent's own **Control Home
+Assistant** setting (Home Assistant 2024.6 and later). It offers three
+questions, all of which only read: `brain_what_is_normal` (what an entity
+normally reads at this hour of the week and how far it is from that now),
+`brain_recall` (what brAIn remembers about something, with who taught it and
+when) and `brain_explain_change` (what changed an entity recently — an
+automation, a person, a voice command or brAIn). Each is answered by the
+same code brAIn's own runs use. The entity being asked about has to be
+exposed to that assistant (Settings → Voice assistants → **Expose**), facts
+about entities it cannot see are left out of what `brain_recall` returns,
+and an exposure that cannot be checked is refused rather than answered. It
+is served by the voice worker pool, so it needs `assist_fast_mode` left on.
+
 #### The events, in one place
 
 Every event brAIn fires carries the thing it is about, so an automation can

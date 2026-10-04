@@ -1721,6 +1721,55 @@ def write_pool_status(pool) -> None:
         pass
 
 
+# brAIn's measurements, for OTHER conversation agents (`custom_components/
+# brain/llm_api.py` registers them as a Home Assistant LLM API). Three
+# read-only tools, answered by the MCP server's own functions — the same
+# implementation a brAIn run gets, so a measurement cannot have two answers
+# — and never anything that acts. Exposure is the integration's to check,
+# because it is Home Assistant that knows which assistant is asking.
+LLM_TOOL_PATH = "/llm/tool"
+LLM_TOOLS = ("what_is_normal", "recall", "explain_change")
+_ENTITY_ARG_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+
+
+def _mcp_module():
+    """The MCP server, a sibling directory in the image and the repo."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, "..", "ha-mcp-server")
+    if path not in sys.path:
+        sys.path.insert(0, path)
+    import ha_mcp_server  # noqa: PLC0415
+    return ha_mcp_server
+
+
+def _bounded_int(value, default: int, low: int, high: int) -> int:
+    """Another process's number, clamped — never a type error in a tool."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    return max(low, min(high, int(value)))
+
+
+def llm_tool(name: str, args: dict) -> dict:
+    """One read-only measurement, or an error sentence. Never raises."""
+    if name not in LLM_TOOLS or not isinstance(args, dict):
+        return {"error": f"{name!r} is not one of brAIn's tools here"}
+    try:
+        mcp = _mcp_module()
+        if name == "recall":
+            return mcp.recall(query=str(args.get("query") or "")[:200],
+                              subject=str(args.get("subject") or "")[:255],
+                              limit=_bounded_int(args.get("limit"), 10, 1, 20))
+        entity = str(args.get("entity_id") or "")
+        if not _ENTITY_ARG_RE.match(entity):
+            return {"error": f"{entity[:64]!r} is not an entity id"}
+        if name == "what_is_normal":
+            return mcp.what_is_normal(entity)
+        return mcp.explain_change(
+            entity, hours=_bounded_int(args.get("hours"), 24, 1, 168))
+    except Exception as exc:  # noqa: BLE001 — a tool answers, it does not crash
+        return {"error": f"brAIn could not answer that: {exc}"}
+
+
 class ApiHandler(BaseHTTPRequestHandler):
     """Stdlib HTTP handler — one thread per connection via ThreadingHTTPServer."""
 
@@ -1745,6 +1794,22 @@ class ApiHandler(BaseHTTPRequestHandler):
         supplied = self.headers.get("X-BRUH-Token", "")
         return bool(self.token) and secrets.compare_digest(supplied, self.token)
 
+    def _llm_tool(self) -> None:
+        if not self._token_ok():
+            self._json(401, {"error": "bad token"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            req = json.loads(self.rfile.read(min(length, 65536)))
+        except Exception:  # noqa: BLE001
+            self._json(400, {"error": "invalid request body"})
+            return
+        if not isinstance(req, dict):
+            self._json(400, {"error": "invalid request body"})
+            return
+        self._json(200, {"result": llm_tool(str(req.get("name") or ""),
+                                            req.get("args") or {})})
+
     def do_GET(self):  # noqa: N802
         if self.path != "/health":
             self._json(404, {"error": "not found"})
@@ -1766,6 +1831,9 @@ class ApiHandler(BaseHTTPRequestHandler):
         })
 
     def do_POST(self):  # noqa: N802
+        if self.path == LLM_TOOL_PATH:
+            self._llm_tool()
+            return
         if self.path != "/conversation":
             self._json(404, {"error": "not found"})
             return

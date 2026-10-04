@@ -167,7 +167,119 @@ class FloorRegistry:
 # ---------------------------------------------------------------------------
 
 
-def _stubs(*, chat_log: bool, continues: bool, floors: bool) -> dict:
+# ---------------------------------------------------------------------------
+# The LLM helper and the AI Task component, for the cores that have them
+# ---------------------------------------------------------------------------
+
+
+class LLMAPI:
+    """`homeassistant.helpers.llm.API`'s constructor shape (kw-only)."""
+
+    def __init__(self, *, hass, id, name):  # noqa: A002 — Core's own names
+        self.hass = hass
+        self.id = id
+        self.name = name
+
+
+class LLMAPIInstance:
+    def __init__(self, api, api_prompt, llm_context, tools,
+                 custom_serializer=None):
+        self.api = api
+        self.api_prompt = api_prompt
+        self.llm_context = llm_context
+        self.tools = tools
+        self.custom_serializer = custom_serializer
+
+
+class LLMTool:
+    name = ""
+    description = None
+    parameters = None
+
+    async def async_call(self, hass, tool_input, llm_context):
+        raise NotImplementedError
+
+
+@dataclasses.dataclass
+class LLMToolInput:
+    tool_name: str
+    tool_args: dict
+
+
+@dataclasses.dataclass
+class LLMContext:
+    platform: str = "conversation"
+    context: object = None
+    language: str | None = None
+    assistant: str | None = "conversation"
+    device_id: str | None = None
+
+
+def _llm_module():
+    mod = types.ModuleType("homeassistant.helpers.llm")
+    mod.API = LLMAPI
+    mod.APIInstance = LLMAPIInstance
+    mod.Tool = LLMTool
+    mod.ToolInput = LLMToolInput
+    mod.LLMContext = LLMContext
+
+    def async_register_api(hass, api):
+        registered = hass.__dict__.setdefault("llm_apis", {})
+        registered[api.id] = api
+        return lambda: registered.pop(api.id, None)
+
+    mod.async_register_api = async_register_api
+    return mod
+
+
+class AITaskEntity:
+    hass = None
+    entity_id = None
+
+
+class AITaskEntityFeature:
+    GENERATE_DATA = 1
+
+
+@dataclasses.dataclass
+class GenDataTask:
+    name: str
+    instructions: str
+    structure: object = None
+    attachments: list | None = None
+
+
+@dataclasses.dataclass
+class GenDataTaskResult:
+    conversation_id: str | None
+    data: object
+
+
+def _ai_task_module():
+    mod = types.ModuleType("homeassistant.components.ai_task")
+    mod.AITaskEntity = AITaskEntity
+    mod.AITaskEntityFeature = AITaskEntityFeature
+    mod.GenDataTask = GenDataTask
+    mod.GenDataTaskResult = GenDataTaskResult
+    return mod
+
+
+def exposure_modules(should_expose) -> dict:
+    """`exposed_entities` for a test to install around a call (patch.dict
+    sys.modules): `should_expose(assistant, entity_id)`."""
+    pkg = types.ModuleType("homeassistant.components.homeassistant")
+    mod = types.ModuleType("homeassistant.components.homeassistant.exposed_entities")
+    mod.async_should_expose = lambda hass, assistant, entity_id: \
+        should_expose(assistant, entity_id)
+    root = sys.modules.get("homeassistant") or types.ModuleType("homeassistant")
+    comps = sys.modules.get("homeassistant.components") \
+        or types.ModuleType("homeassistant.components")
+    return {"homeassistant": root, "homeassistant.components": comps,
+            pkg.__name__: pkg, mod.__name__: mod}
+
+
+def _stubs(*, chat_log: bool, continues: bool, floors: bool,
+           llm: bool = False, ai_task: bool = False) -> dict:
     mods: dict = {}
 
     def auto(name):
@@ -247,14 +359,24 @@ def _stubs(*, chat_log: bool, continues: bool, floors: bool) -> dict:
     else:
         helpers.missing = helpers.missing | {"chat_session"}
         mods["homeassistant.helpers.chat_session"] = None
+    if llm:
+        mods["homeassistant.helpers.llm"] = _llm_module()
+        helpers.llm = mods["homeassistant.helpers.llm"]
+    else:
+        helpers.missing = helpers.missing | {"llm"}
+        mods["homeassistant.helpers.llm"] = None
+    if ai_task:
+        mods["homeassistant.components.ai_task"] = _ai_task_module()
     return mods
 
 
 def load_integration(*, chat_log: bool = False, continues: bool = True,
-                     floors: bool = True):
+                     floors: bool = True, llm: bool = False,
+                     ai_task: bool = False):
     """The brain package, loaded under a unique name, plus its submodules
     as attributes: ``pkg``, ``pkg.conversation``, ``pkg.bridge``…"""
-    stubs = _stubs(chat_log=chat_log, continues=continues, floors=floors)
+    stubs = _stubs(chat_log=chat_log, continues=continues, floors=floors,
+                   llm=llm, ai_task=ai_task)
     saved = dict(sys.modules)
     pkg_name = f"brain_ha_{uuid.uuid4().hex[:10]}"
     try:
@@ -268,8 +390,12 @@ def load_integration(*, chat_log: bool = False, continues: bool = True,
         sys.modules[pkg_name] = pkg
         spec.loader.exec_module(pkg)
         for sub in ("conversation", "bridge", "requests", "learning",
-                    "power_tools", "findings", "const"):
+                    "power_tools", "findings", "const", "llm_api"):
             setattr(pkg, sub, importlib.import_module(f"{pkg_name}.{sub}"))
+        if ai_task:
+            # A platform module: imported only where the core has the
+            # component, exactly as Home Assistant only imports it then.
+            pkg.ai_task = importlib.import_module(f"{pkg_name}.ai_task")
         return pkg
     finally:
         # The package's own modules stay importable under their unique name,
