@@ -64,10 +64,9 @@ The ingress panel is the heart of it:
 - **Console** — live JVM log with colour-coded levels and a command input.
 - **Players** — op/deop/kick/ban/whitelist by click.
 - **Server Properties** — every editable per-world key; difficulty, gamemode, and whitelist apply live via RCON.
-- **Plugins** — one-click curated installers (EssentialsX, LuckPerms, WorldEdit, CoreProtect, …) + URL installer + duplicate quarantine.
+- **Add-ons** — everything in the world on one screen (plugins, data packs, mods, resource packs), what is working and what needs a restart, server software and Geyser versions with one-press updates, and a Modrinth browser with batch add.
 - **Backups** — browse git snapshots and tar archives; restore by SHA.
 - **Worlds** — switch / create / **import** worlds.
-- **Resource Packs** — drop a `.zip`, get a URL + SHA-1, *Apply* writes them into the active world for you.
 
 ### 🔌 Home Assistant integration
 An auto-discovered `bruh_minecraft` integration ships sensors and services:

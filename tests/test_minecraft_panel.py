@@ -13,6 +13,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -1270,6 +1271,83 @@ class TestAddonBatchInstall(PanelTestBase):
         resp = await self.client.request("POST", "/api/addons/install", json={"items": []})
         self.assertEqual(resp.status, 409)
         self.assertIn("Nothing", (await resp.json())["error"])
+
+
+class TestAddonsOneScreen(PanelTestBase):
+    """Everything in the world on one list, and whether a restart is owed."""
+
+    def _running(self):
+        (self.state_dir / "launcher.pid").write_text(str(os.getpid()))
+        past = time.time() - 600
+        os.utime(self.state_dir / "launcher.pid", (past, past))
+        os.utime(self.server_dir / "plugins" / "Example.jar", (past - 60, past - 60))
+
+    async def test_a_jar_added_by_hand_is_listed_and_removing_it_owes_a_restart(self):
+        self._running()
+        resp = await self.client.request("GET", "/api/addons")
+        world = (await resp.json())["world"]
+        row = next(it for it in world["items"] if it["file"] == "Example.jar")
+        self.assertEqual((row["source"], row["status"]), ("manual", "active"))
+        self.assertFalse(world["restart_needed"])
+
+        resp = await self.client.request("POST", "/api/addons/remove-file",
+                                         json={"kind": "plugin", "file": "Example.jar"})
+        data = await resp.json()
+        self.assertEqual(resp.status, 200, data)
+        self.assertFalse((self.server_dir / "plugins" / "Example.jar").exists())
+        # The jar is gone but the running server still has it loaded.
+        self.assertTrue(data["world"]["restart_needed"])
+        self.assertEqual([(c["action"], c["title"]) for c in data["world"]["changes"]],
+                         [("removed", "Example")])
+
+    async def test_a_new_launch_settles_the_change_log(self):
+        self._running()
+        await self.client.request("POST", "/api/addons/remove-file",
+                                  json={"kind": "plugin", "file": "Example.jar"})
+        later = time.time() + 5
+        os.utime(self.state_dir / "launcher.pid", (later, later))
+        world = (await (await self.client.request("GET", "/api/addons")).json())["world"]
+        self.assertFalse(world["restart_needed"])
+
+    async def test_removing_the_active_pack_stops_offering_it(self):
+        packs = self.state_dir / "resource-packs"
+        packs.mkdir(exist_ok=True)
+        self.panel.MC_RESOURCE_PACKS = packs
+        (packs / "Faithful.zip").write_bytes(b"PK")
+        geyser = self.server_dir / "plugins" / "Geyser-Spigot" / "packs"
+        geyser.mkdir(parents=True)
+        (geyser / "Faithful.mcpack").write_bytes(b"x")
+        props = self.server_dir / "server.properties"
+        props.write_text(props.read_text().replace(
+            "resource-pack=https://my.cdn/pack.zip", "resource-pack=http://h:8099/pack/Faithful.zip"))
+        resp = await self.client.request("POST", "/api/addons/remove-file",
+                                         json={"kind": "resourcepack", "file": "Faithful.zip"})
+        self.assertEqual(resp.status, 200, await resp.text())
+        self.assertFalse((packs / "Faithful.zip").exists())
+        self.assertFalse((geyser / "Faithful.mcpack").exists())
+        self.assertIn("resource-pack=\n", props.read_text())
+
+    async def test_crossplay_plugins_are_not_removed_from_here(self):
+        (self.server_dir / "plugins" / "Geyser-Spigot.jar").write_bytes(b"x")
+        resp = await self.client.request("POST", "/api/addons/remove-file",
+                                         json={"kind": "plugin", "file": "Geyser-Spigot.jar"})
+        self.assertEqual(resp.status, 409)
+        self.assertTrue((self.server_dir / "plugins" / "Geyser-Spigot.jar").exists())
+
+    async def test_an_upgrade_that_is_not_on_offer_is_refused(self):
+        async def newest(_session, _type, _current):
+            return {"checked": True, "newest_version": "26.2", "newest_build": "201"}
+        self.panel.addons.newest_server = newest
+        self.panel._SOFTWARE_CHECK.update(at=0.0, key="", result=None)
+        resp = await self.client.request("GET", "/api/server/software")
+        sw = await resp.json()
+        self.assertEqual(sw["version"], "1.21.3")
+        self.assertTrue(sw["upgrade_available"])
+        self.assertEqual(sw["newest_version"], "26.2")
+        resp = await self.client.request("POST", "/api/server/software/update",
+                                         json={"upgrade_to": "99.1"})
+        self.assertEqual(resp.status, 409)
+        self.assertFalse((self.server_dir / ".upgrade-to").exists())
 
 if __name__ == "__main__":
     unittest.main()

@@ -45,12 +45,20 @@ class TestPaperPickVersion(unittest.TestCase):
         proc = _call("paper_pick_version", payload)
         self.assertEqual(proc.stdout.strip(), "1.21.4")
 
-    def test_filters_non_mc_rebuild_markers(self):
-        # Purpur/Paper have shipped out-of-order non-MC entries like 26.1.2;
-        # they must not win LATEST resolution.
-        payload = json.dumps({"versions": ["1.21.4", "26.1.2", "1.20.1"]})
+    def test_year_numbered_releases_are_releases(self):
+        # Minecraft numbers its releases 26.1, 26.2 … since 2026. A filter
+        # that only accepted 1.x — written when 26.1.2 looked like a stray
+        # rebuild marker — left LATEST on 1.21.11 for good.
+        payload = json.dumps({"versions": ["1.21.4", "26.1.2", "1.20.1", "26.2-rc-2"]})
         proc = _call("paper_pick_version", payload)
-        self.assertEqual(proc.stdout.strip(), "1.21.4")
+        self.assertEqual(proc.stdout.strip(), "26.1.2")
+
+    def test_has_stable_reads_the_channel(self):
+        stable = json.dumps({"builds": [{"id": 1, "channel": "BETA"},
+                                        {"id": 2, "channel": "STABLE"}]})
+        beta = json.dumps([{"id": 1, "channel": "ALPHA"}, {"id": 2, "channel": "BETA"}])
+        self.assertEqual(_call("paper_has_stable_v3", stable).returncode, 0)
+        self.assertNotEqual(_call("paper_has_stable_v3", beta).returncode, 0)
 
 
 class TestPaperPickBuildV3(unittest.TestCase):

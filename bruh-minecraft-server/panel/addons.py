@@ -257,6 +257,7 @@ def normalise_hit(hit: dict, kind: str, installed: dict) -> dict:
         "icon": hit.get("icon_url") or "",
         "downloads": int(hit.get("downloads") or 0),
         "kind": kind,
+        "kind_label": KIND_SINGULAR[kind].split(" ", 1)[1].capitalize(),
         "reach": REACH[kind],
         "installed": pid in installed,
         "url": f"https://modrinth.com/{kind}/{hit.get('slug') or pid}",
@@ -399,6 +400,42 @@ async def search(client: Modrinth, ctx: Context, kind: str, query: str,
     return {"kind": kind, "hits": hits, "total": int((data or {}).get("total_hits") or 0),
             "offset": int(params["offset"]), "game_version": ctx.version,
             "server_type": ctx.server_type}
+
+
+async def search_all(client: Modrinth, ctx: Context, query: str, offset: int = 0) -> dict:
+    """One list across every kind this server can run.
+
+    Modrinth's facets cannot ask for "plugins for Paper OR data packs OR
+    resource packs" in one query (the loader filter would apply to all of
+    them), so each kind is its own search, run together and merged
+    round-robin: one result from each kind in turn, so the first screen
+    holds the best of each rather than twenty plugins and a scroll to
+    reach the first data pack. A kind that fails is skipped and said; it
+    is not a reason the rest show nothing.
+    """
+    import asyncio
+
+    kinds = kinds_for(ctx.server_type)
+    answers = await asyncio.gather(
+        *(search(client, ctx, k, query, offset) for k in kinds), return_exceptions=True)
+    lists, total, failed = [], 0, []
+    for kind, ans in zip(kinds, answers):
+        if isinstance(ans, BaseException):
+            failed.append(KIND_LABELS[kind])
+            continue
+        lists.append(ans["hits"])
+        total += ans["total"]
+    hits: list[dict] = []
+    for i in range(max((len(x) for x in lists), default=0)):
+        for x in lists:
+            if i < len(x):
+                hits.append(x[i])
+    has_more = any(len(x) >= PAGE_SIZE for x in lists)
+    if failed and not hits:
+        raise AddonError(f"Modrinth did not answer for {', '.join(failed)}.")
+    return {"kind": "all", "hits": hits, "total": total, "offset": offset,
+            "next_offset": offset + PAGE_SIZE, "has_more": has_more,
+            "failed": failed, "game_version": ctx.version, "server_type": ctx.server_type}
 
 
 async def install(client: Modrinth, ctx: Context, project_id: str, kind: str,
@@ -556,4 +593,269 @@ def installed(ctx: Context) -> list[dict]:
         out.append({"id": pid, **row, "reach": REACH.get(kind, ""),
                     "present": (dest / os.path.basename(str(row.get("file") or ""))).is_file(),
                     "needed_by": needed_by(items, pid)})
+    return out
+
+
+# ---------------------------------------------------------------------------
+# One list of everything in this world
+# ---------------------------------------------------------------------------
+# What the add-on itself installs so Bedrock, iPad and console players can
+# join. Shown, so the list is the whole truth about the world, but never
+# offered for removal: taking one out is how every iPad stops connecting.
+BUNDLED_PREFIXES = ("geyser", "floodgate", "viaversion", "viabackwards")
+# Folders the server writes into datapacks/ itself; left off the list.
+BUNDLED_DATAPACKS = {"bukkit", "paper", "vanilla", "file"}
+
+STATUS_TEXT = {
+    "active": "Working",
+    "restart": "Restart the server to turn it on",
+    "next_start": "Turns on when the server starts",
+    "unused": "Not in use",
+}
+
+
+def _bundled(kind: str, name: str) -> bool:
+    low = name.lower()
+    if kind == "plugin":
+        return low.startswith(BUNDLED_PREFIXES)
+    if kind == "datapack":
+        return low in BUNDLED_DATAPACKS
+    return False
+
+
+def _title_from_file(name: str) -> str:
+    stem = re.sub(r"\.(jar|zip)$", "", name, flags=re.I)
+    return re.sub(r"[-_]+", " ", stem).strip() or name
+
+
+def world_contents(ctx: Context, *, running: bool, started_at: float | None,
+                   active_pack: str, changes: list[dict] | None = None) -> dict:
+    """Every plugin, mod, data pack and resource pack this world has.
+
+    Read off the folders rather than the browser's record, because a jar
+    put there by hand, by the add-on's `plugins:` option or by an older
+    panel is still in the world — a list showing only what the browser
+    added is the screen that says "nothing here" about a world full of
+    things. The record supplies the title, version and update/remove
+    rules for what it knows about.
+
+    Status is the answer to "do I need to restart": a plugin or mod whose
+    file is newer than the server's launch is not loaded yet, a data pack
+    is live (the panel reloads them), and a resource pack is offered to
+    players only once the server has restarted onto it. `changes` is the
+    panel's own log of what it did since the launch, which is the only way
+    a removal — a file that is no longer there — can be listed at all.
+    """
+    manifest = read_manifest(ctx.server_dir)
+    by_file = {(row.get("kind"), row.get("file")): (pid, row) for pid, row in manifest.items()}
+    pending = list(changes or [])
+    pack_changed = any(c.get("kind") == "resourcepack" for c in pending)
+    items: list[dict] = []
+
+    def status_for(kind: str, path: Path) -> str:
+        if kind == "resourcepack":
+            if path.name != active_pack:
+                return "unused"
+            if not running:
+                return "next_start"
+            return "restart" if pack_changed else "active"
+        if not running:
+            return "next_start"
+        if kind == "datapack":
+            return "active"
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return "active"
+        return "restart" if started_at and mtime > started_at else "active"
+
+    sources: list[tuple[str, Path, str]] = []
+    if "plugin" in kinds_for(ctx.server_type) or (ctx.server_dir / "plugins").is_dir():
+        sources.append(("plugin", ctx.server_dir / "plugins", "*.jar"))
+    if "mod" in kinds_for(ctx.server_type) or (ctx.server_dir / "mods").is_dir():
+        sources.append(("mod", ctx.server_dir / "mods", "*.jar"))
+    sources.append(("datapack",
+                    destination("datapack", ctx.server_dir, ctx.level_name, ctx.packs_dir), "*"))
+    sources.append(("resourcepack", ctx.packs_dir, "*.zip"))
+
+    for kind, folder, pattern in sources:
+        if not folder.is_dir():
+            continue
+        for path in sorted(folder.glob(pattern), key=lambda p: p.name.lower()):
+            if path.name.startswith("."):
+                continue
+            if kind == "datapack" and (path.name.lower() in BUNDLED_DATAPACKS
+                                       or not (path.is_dir() or path.suffix.lower() == ".zip")):
+                continue  # the server's own folders are not add-ons anybody chose
+            if kind != "datapack" and not path.is_file():
+                continue
+            pid, row = by_file.get((kind, path.name), ("", {}))
+            if not row and _bundled(kind, path.name):
+                continue  # listed under Server software, with its version
+            declared = ({} if row or kind not in ("plugin", "mod")
+                        else plugin_meta(path))
+            status = status_for(kind, path)
+            items.append({
+                "key": f"{kind}:{path.name}",
+                "kind": kind,
+                "kind_label": KIND_SINGULAR[kind].split(" ", 1)[1].capitalize(),
+                "file": path.name,
+                "id": pid,
+                "title": row.get("title") or declared.get("name") or _title_from_file(path.name),
+                "version": row.get("version") or declared.get("version") or "",
+                "icon": row.get("icon") or "",
+                "source": "browser" if row else "manual",
+                "required_by": row.get("required_by") or "",
+                "needed_by": needed_by(manifest, pid) if pid else [],
+                "status": status,
+                "status_text": STATUS_TEXT[status],
+                "removable": True,
+                "updatable": bool(pid),
+                "reach": REACH[kind],
+            })
+
+    order = {"restart": 0, "next_start": 1, "active": 2, "unused": 3}
+    kind_order = {k: i for i, k in enumerate(KINDS)}
+    items.sort(key=lambda it: (kind_order[it["kind"]], order[it["status"]],
+                               it["title"].lower()))
+    restart = running and (any(it["status"] == "restart" for it in items) or bool(pending))
+    return {"items": items, "running": running, "restart_needed": restart,
+            "changes": pending}
+
+
+# ---------------------------------------------------------------------------
+# Server software: the server itself and the crossplay plugins under it
+# ---------------------------------------------------------------------------
+RELEASE_RE = re.compile(r"^\d+\.\d+(?:\.\d+)?$")
+PAPER_FILL = os.environ.get("PAPER_FILL_API", "https://fill.papermc.io/v3/projects")
+PURPUR_API = os.environ.get("PURPUR_API", "https://api.purpurmc.org/v2/purpur")
+COMPONENT_NAMES = {
+    "geyser": "Geyser", "floodgate": "Floodgate",
+    "viaversion": "ViaVersion", "viabackwards": "ViaBackwards",
+}
+COMPONENT_NOTES = {
+    "geyser": "Lets Bedrock players (iPad, phone, console) join.",
+    "floodgate": "Lets Bedrock players join without a Java account.",
+    "viaversion": "Lets players on newer Minecraft versions join.",
+    "viabackwards": "Lets players on older Minecraft versions join.",
+}
+
+
+def version_key(v: str) -> tuple:
+    return tuple(int(x) for x in v.split("."))
+
+
+def release_versions(raw) -> list[str]:
+    """Release-shaped versions, newest first, from a v3 object or a flat list.
+
+    `26.2` is a release and `26.3-rc-3` is not: Minecraft numbers its
+    releases by year from 26.1 on, so `1.x` is no longer the shape of one.
+    """
+    if isinstance(raw, dict):
+        raw = [v for vs in raw.values() if isinstance(vs, list) for v in vs]
+    vs = {str(v) for v in raw or [] if RELEASE_RE.match(str(v))}
+    return sorted(vs, key=version_key, reverse=True)
+
+
+def plugin_meta(jar: Path) -> dict:
+    """The name and version a jar declares about itself, as far as it says.
+
+    Bukkit/Paper plugins carry `plugin.yml` / `paper-plugin.yml`; Fabric
+    mods carry `fabric.mod.json`. A jar that says nothing gets {} and the
+    list falls back to its file name.
+    """
+    import zipfile
+    out: dict[str, str] = {}
+    try:
+        with zipfile.ZipFile(jar) as zf:
+            names = set(zf.namelist())
+            for name in ("paper-plugin.yml", "plugin.yml"):
+                if name not in names:
+                    continue
+                text = zf.read(name).decode("utf-8", "replace")[:65536]
+                for field in ("name", "version"):
+                    m = re.search(rf"^{field}:\s*['\"]?([^'\"\n#]+)", text, re.M)
+                    if m and field not in out:
+                        out[field] = m.group(1).strip()[:80]
+                break
+            if not out and "fabric.mod.json" in names:
+                data = json.loads(zf.read("fabric.mod.json").decode("utf-8", "replace"))
+                if isinstance(data, dict):
+                    out = {k: str(data[k])[:80] for k in ("name", "version") if data.get(k)}
+    except (OSError, ValueError, zipfile.BadZipFile):
+        # A jar that cannot be read says nothing about itself; the list
+        # falls back to its file name rather than failing the whole screen.
+        return {}
+    return out
+
+
+def plugin_version(jar: Path) -> str:
+    """The version a plugin jar declares, or ""."""
+    return plugin_meta(jar).get("version", "")
+
+
+def components(server_dir: Path) -> list[dict]:
+    """The crossplay plugins the add-on installs, with their versions."""
+    out = []
+    folder = Path(server_dir) / "plugins"
+    if not folder.is_dir():
+        return out
+    for jar in sorted(folder.glob("*.jar"), key=lambda p: p.name.lower()):
+        low = jar.name.lower()
+        key = next((k for k in BUNDLED_PREFIXES if low.startswith(k)), None)
+        if not key:
+            continue
+        try:
+            updated = int(jar.stat().st_mtime)
+        except OSError:
+            updated = 0
+        out.append({"key": key, "title": COMPONENT_NAMES[key],
+                    "file": jar.name, "version": plugin_version(jar),
+                    "updated_at": updated, "note": COMPONENT_NOTES.get(key, "")})
+    return out
+
+
+async def newest_server(session, server_type: str, current: str) -> dict:
+    """The newest stable Minecraft version and the newest build of `current`.
+
+    Paper and Folia publish a new Minecraft version with only alpha and beta
+    builds for a while; "newest" here is the newest that has a STABLE one,
+    which is what LATEST installs. Purpur has no channels, so its newest
+    release-shaped version is its answer. Anything else is not checked.
+    """
+    st = (server_type or "").lower()
+    headers = {"User-Agent": USER_AGENT}
+    out: dict[str, Any] = {"checked": False, "newest_version": "", "newest_build": ""}
+
+    async def get(url):
+        async with session.get(url, headers=headers) as resp:
+            if resp.status != 200:
+                raise AddonError(f"HTTP {resp.status} from {url}")
+            return await resp.json(content_type=None)
+
+    def builds_of(data) -> list[dict]:
+        rows = data.get("builds", []) if isinstance(data, dict) else data
+        return [b for b in rows or [] if isinstance(b, dict)]
+
+    if st in ("paper", "folia"):
+        project = await get(f"{PAPER_FILL}/{st}")
+        for cand in release_versions((project or {}).get("versions"))[:4]:
+            builds = builds_of(await get(f"{PAPER_FILL}/{st}/versions/{cand}/builds"))
+            if any(b.get("channel") == "STABLE" for b in builds):
+                out["newest_version"] = cand
+                break
+        if current and RELEASE_RE.match(current):
+            builds = builds_of(await get(f"{PAPER_FILL}/{st}/versions/{current}/builds"))
+            stable = [b for b in builds if b.get("channel") == "STABLE"] or builds
+            if stable:
+                out["newest_build"] = str(max(int(b.get("id") or 0) for b in stable))
+        out["checked"] = True
+    elif st == "purpur":
+        data = await get(PURPUR_API)
+        newest = release_versions((data or {}).get("versions"))
+        out["newest_version"] = newest[0] if newest else ""
+        if current and RELEASE_RE.match(current):
+            out["newest_build"] = str(((await get(f"{PURPUR_API}/{current}")).get("builds")
+                                       or {}).get("latest") or "")
+        out["checked"] = True
     return out

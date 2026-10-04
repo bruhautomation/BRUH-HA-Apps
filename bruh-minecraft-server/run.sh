@@ -835,7 +835,10 @@ main() {
     fi
     bashio::log.info "Minecraft EULA accepted"
 
-    if [ "${AUTO_UPDATE_SERVER}" = "true" ] || [ ! -s "${MC_SERVER_DIR}/server.jar" ]; then
+    # .upgrade-to is the panel's "Upgrade this world" press: honoured even
+    # with auto_update_server off, because somebody just asked for it.
+    if [ "${AUTO_UPDATE_SERVER}" = "true" ] || [ ! -s "${MC_SERVER_DIR}/server.jar" ] \
+            || [ -s "${MC_SERVER_DIR}/.upgrade-to" ]; then
         download_server_jar
     else
         bashio::log.info "Auto-update disabled; reusing existing server.jar"

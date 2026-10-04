@@ -34,11 +34,9 @@
       tab.classList.add('active');
       $(`#tab-${tab.dataset.tab}`).classList.add('active');
       if (tab.dataset.tab === 'properties') loadProperties();
-      if (tab.dataset.tab === 'plugins')    loadPlugins();
       if (tab.dataset.tab === 'addons')     loadAddons();
       if (tab.dataset.tab === 'backups')    loadBackups();
       if (tab.dataset.tab === 'worlds')     { loadWorlds(); loadCuratedWorlds(); }
-      if (tab.dataset.tab === 'resource-packs') loadPacks();
       // Reset main's scroll position when switching tabs so the user
       // lands at the top of the new content. main is the page's single
       // scroll container (see style.css for why); a plain
@@ -478,44 +476,6 @@
       });
     });
   }
-
-  // ------------------------------------------------------------------
-  // Plugins tab
-  // ------------------------------------------------------------------
-  async function loadPlugins() {
-    const data = await api('api/plugins');
-    const tbody = $('#plugins-table tbody');
-    tbody.innerHTML = '';
-    (data.plugins || []).forEach((p) => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td><code>${esc(p.name)}</code></td>
-        <td>${fmtSize(p.size)}</td>
-        <td>${new Date(p.mtime * 1000).toLocaleString()}</td>
-        <td><button class="btn btn-danger" data-plugin-del="${esc(p.name)}">Delete</button></td>
-      `;
-      tbody.appendChild(tr);
-    });
-    tbody.querySelectorAll('button[data-plugin-del]').forEach((b) => {
-      b.addEventListener('click', async () => {
-        const name = b.dataset.pluginDel;
-        if (!confirm(`Delete plugin ${name}? Requires restart to unload.`)) return;
-        await api(`api/plugins/${encodeURIComponent(name)}`, { method: 'DELETE' });
-        loadPlugins();
-      });
-    });
-  }
-
-  $('#f-plugin-install').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const url = $('#plugin-url').value.trim();
-    const name = $('#plugin-name').value.trim();
-    const data = await api('api/plugins', {
-      method: 'POST', body: JSON.stringify({ url, name }),
-    });
-    $('#plugin-reply').textContent = data.output || data.error || '';
-    if (data.ok) loadPlugins();
-  });
 
   // ------------------------------------------------------------------
   // Backups tab
@@ -1217,94 +1177,212 @@
   });
 
   // ------------------------------------------------------------------
-  // Resource Packs tab
+  // Add-ons: one screen for everything in this world. The list at the top
+  // is read off the world's folders (plugins, mods, data packs, resource
+  // packs) so it holds what was added by hand too; every row says whether
+  // it is working or waiting on a restart, and the banner above it says
+  // what a restart would finish. The browser below adds more.
   // ------------------------------------------------------------------
-  async function loadPacks() {
-    const data = await api('api/resource-packs');
-    const tbody = $('#packs-table tbody');
-    tbody.innerHTML = '';
-    (data.packs || []).forEach((p) => {
-      const url = `${location.protocol}//${location.hostname}:8099/pack/${encodeURIComponent(p.name)}`;
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td><code>${esc(p.name)}</code><br /><span class="muted" style="font-size: 0.8em;">${esc(url)}</span></td>
-        <td>${fmtSize(p.size)}</td>
-        <td><code style="font-size: 0.75em;">${esc(p.sha1)}</code></td>
-        <td>${new Date(p.mtime * 1000).toLocaleString()}</td>
-        <td>
-          <button class="btn btn-primary" data-pack-apply="${esc(p.name)}">Apply to active world</button>
-          <button class="btn btn-danger" data-pack-del="${esc(p.name)}">Delete</button>
-        </td>
-      `;
-      tbody.appendChild(tr);
-    });
-    tbody.querySelectorAll('button[data-pack-apply]').forEach((b) => {
-      b.addEventListener('click', async () => {
-        const name = b.dataset.packApply;
-        if (!confirm(`Apply ${name} to the active world's server.properties? The server needs a restart for clients to pick up the new pack.`)) return;
-        const resp = await api(`api/resource-packs/${encodeURIComponent(name)}/apply`, { method: 'POST' });
-        alert(resp.ok ? `Done.\nURL: ${resp.url}\nSHA-1: ${resp.sha1}` : `Failed: ${resp.error}`);
-      });
-    });
-    tbody.querySelectorAll('button[data-pack-del]').forEach((b) => {
-      b.addEventListener('click', async () => {
-        const name = b.dataset.packDel;
-        if (!confirm(`Delete resource pack ${name}? Worlds using it will fall back to no pack.`)) return;
-        await api(`api/resource-packs/${encodeURIComponent(name)}`, { method: 'DELETE' });
-        loadPacks();
-      });
-    });
-  }
-
-  $('#f-pack-upload')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const file = $('#pack-file').files[0];
-    const name = $('#pack-name').value.trim();
-    if (!file) return;
-    const reply = $('#pack-upload-reply');
-    reply.textContent = `Uploading ${file.name} (${fmtSize(file.size)})…`;
-    const fd = new FormData();
-    if (name) fd.append('name', name);
-    fd.append('file', file);
-    const resp = await fetch('api/resource-packs', { method: 'POST', body: fd, credentials: 'same-origin' });
-    let out; try { out = await resp.json(); } catch { out = { error: await resp.text() }; }
-    if (out.ok) {
-      reply.textContent = `Uploaded ${out.name} — SHA-1: ${out.sha1}`;
-      $('#pack-file').value = '';
-      $('#pack-name').value = '';
-      loadPacks();
-    } else {
-      reply.textContent = `Upload failed: ${out.error || resp.status}`;
-    }
-  });
-
-  // ------------------------------------------------------------------
-  // Add-on browser (Modrinth, server-side only). The server decides which
-  // kinds are offered; every card says whether a Bedrock/iPad player gets it.
-  // ------------------------------------------------------------------
-  const addonState = { kind: null, q: '', offset: 0, info: null };
+  const addonState = { kind: 'all', q: '', offset: 0, info: null, world: null, restarting: false };
   // What has been picked for "Add all to world", across searches and kinds:
   // key `${kind}:${id}` -> { id, kind, title }.
   const addonPicked = new Map();
   const pickKey = (item) => `${item.kind}:${item.id}`;
+  const KIND_HEADINGS = { plugin: 'Plugins', mod: 'Server mods', datapack: 'Data packs', resourcepack: 'Resource packs' };
+  const SOURCE_TEXT = {
+    browser: 'Added from the browser',
+    manual: 'Added by hand',
+  };
 
   const fmtCount = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 
-  function addonCard(item, installedView) {
-    const card = document.createElement('article');
-    card.className = 'addon-card';
-    const icon = item.icon
+  function iconHtml(item) {
+    return item.icon
       ? `<img class="addon-icon" src="${esc(item.icon)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
       : '<div class="addon-icon addon-icon-blank" aria-hidden="true"></div>';
-    const meta = installedView
-      ? `${esc(item.version || '')}${item.required_by ? ` · needed by ${esc(item.required_by)}` : ''}${item.present === false ? ' · <strong>file missing</strong>' : ''}`
-      : `${esc(item.author || '')}${item.downloads ? ` · ${fmtCount(item.downloads)} downloads` : ''}`;
+  }
+
+  // --- the world list ---------------------------------------------------
+  function worldRow(item) {
+    const row = document.createElement('div');
+    row.className = 'addon-row';
+    const meta = [item.version, SOURCE_TEXT[item.source]];
+    if (item.required_by) meta.push(`needed by ${item.required_by}`);
+    const actions = [];
+    if (item.status === 'unused') {
+      actions.push(`<button class="btn btn-primary" data-world-use="${esc(item.file)}">Use in this world</button>`);
+    }
+    if (item.updatable) {
+      actions.push(`<button class="btn" data-world-update="${esc(item.id)}" data-kind="${esc(item.kind)}">Update</button>`);
+    }
+    {
+      actions.push(`<button class="btn btn-danger" data-world-remove="${esc(item.file)}" data-kind="${esc(item.kind)}" data-title="${esc(item.title)}">Remove</button>`);
+    }
+    row.innerHTML = `
+      ${iconHtml(item)}
+      <div class="addon-row-main">
+        <strong>${esc(item.title)}</strong>
+        <span class="muted">${meta.filter(Boolean).map(esc).join(' · ')}</span>
+      </div>
+      <span class="addon-status addon-status-${esc(item.status)}">${esc(item.status_text)}</span>
+      <div class="addon-row-actions">${actions.join('')}</div>
+      <div class="addon-note" aria-live="polite"></div>`;
+    return row;
+  }
+
+  function describeChanges(world) {
+    const parts = (world.changes || []).map((c) => (c.action === 'switched to'
+      ? `switched the resource pack to ${c.title}`
+      : `${c.action} ${c.title}`));
+    // Something newer than the launch that the panel did not do (a jar
+    // dropped in by hand) still needs the restart; name it too.
+    const named = new Set((world.changes || []).map((c) => c.title));
+    (world.items || []).forEach((it) => {
+      if (it.status === 'restart' && !named.has(it.title)) parts.push(`added ${it.title}`);
+    });
+    if (!parts.length) return '';
+    const text = parts.join(', ');
+    return text.charAt(0).toUpperCase() + text.slice(1) + '.';
+  }
+
+  function renderRestartBanner(world) {
+    const box = $('#addon-restart');
+    const btn = $('#addon-restart-btn');
+    if (addonState.restarting) {
+      box.hidden = false;
+      box.className = 'addon-restart is-busy';
+      $('#addon-restart-title').textContent = 'Restarting…';
+      $('#addon-restart-detail').textContent = 'Players are disconnected for about 30 seconds. This list updates when the server is back.';
+      btn.hidden = true;
+      return;
+    }
+    if (world.restart_needed) {
+      box.hidden = false;
+      box.className = 'addon-restart';
+      $('#addon-restart-title').textContent = 'Restart the server to finish';
+      $('#addon-restart-detail').textContent = describeChanges(world);
+      btn.hidden = false;
+      btn.disabled = false;
+      return;
+    }
+    if (!world.running && (world.items || []).length) {
+      box.hidden = false;
+      box.className = 'addon-restart is-info';
+      $('#addon-restart-title').textContent = 'The server is stopped';
+      $('#addon-restart-detail').textContent = 'Everything below turns on when it starts.';
+      btn.hidden = true;
+      return;
+    }
+    box.hidden = true;
+  }
+
+  function renderWorld(world) {
+    addonState.world = world;
+    if (addonState.restarting && world.running && !world.restart_needed) addonState.restarting = false;
+    renderRestartBanner(world);
+    const box = $('#addon-world');
+    box.innerHTML = '';
+    const items = world.items || [];
+    const groups = {};
+    items.forEach((it) => { (groups[it.kind] = groups[it.kind] || []).push(it); });
+    Object.keys(KIND_HEADINGS).forEach((kind) => {
+      const rows = groups[kind];
+      if (!rows) return;
+      const group = document.createElement('div');
+      group.className = 'addon-group';
+      group.innerHTML = `<h3>${KIND_HEADINGS[kind]} <span class="muted">${rows.length}</span></h3>`;
+      rows.forEach((it) => group.appendChild(worldRow(it)));
+      box.appendChild(group);
+    });
+    $('#addon-world-empty').hidden = items.length > 0;
+    bindWorldButtons(box);
+  }
+
+  function rowNote(btn, text, bad) {
+    const note = btn.closest('.addon-row').querySelector('.addon-note');
+    note.textContent = text;
+    note.classList.toggle('bad', !!bad);
+  }
+
+  function bindWorldButtons(root) {
+    root.querySelectorAll('button[data-world-remove]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const title = b.dataset.title;
+        if (!confirm(`Remove ${title} from this world?`)) return;
+        b.disabled = true;
+        let resp = await api('api/addons/remove-file', {
+          method: 'POST', body: JSON.stringify({ kind: b.dataset.kind, file: b.dataset.worldRemove }),
+        });
+        if (resp.error && /needed by/.test(resp.error) && confirm(`${resp.error}\n\nRemove it anyway?`)) {
+          resp = await api('api/addons/remove-file', {
+            method: 'POST', body: JSON.stringify({ kind: b.dataset.kind, file: b.dataset.worldRemove, force: true }),
+          });
+        }
+        if (resp.ok) {
+          renderWorld(resp.world);
+          searchAddons(false);
+        } else {
+          rowNote(b, resp.error || 'That did not remove.', true);
+          b.disabled = false;
+        }
+      });
+    });
+    root.querySelectorAll('button[data-world-use]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        const resp = await api('api/addons/use-pack', {
+          method: 'POST', body: JSON.stringify({ file: b.dataset.worldUse }),
+        });
+        if (resp.ok) renderWorld(resp.world);
+        else { rowNote(b, resp.error || 'That did not apply.', true); b.disabled = false; }
+      });
+    });
+    root.querySelectorAll('button[data-world-update]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        b.textContent = 'Updating…';
+        const resp = await api('api/addons/install', {
+          method: 'POST', body: JSON.stringify({ id: b.dataset.worldUpdate, kind: b.dataset.kind }),
+        });
+        if (resp.ok) renderWorld(resp.world);
+        else { rowNote(b, resp.error || 'That did not update.', true); b.disabled = false; b.textContent = 'Update'; }
+      });
+    });
+  }
+
+  $('#addon-restart-btn')?.addEventListener('click', async () => {
+    const online = (addonState.info && addonState.info.players_online) || 0;
+    if (!confirm(online
+      ? `Restart now? ${online} player(s) online will be disconnected for about 30 seconds.`
+      : 'Restart the server now? It takes about 30 seconds.')) return;
+    $('#addon-restart-btn').disabled = true;
+    const resp = await api('api/restart', { method: 'POST' });
+    if (resp.error) {
+      $('#addon-restart-detail').textContent = `The restart did not start: ${resp.error}`;
+      $('#addon-restart-btn').disabled = false;
+      return;
+    }
+    addonState.restarting = true;
+    renderRestartBanner(addonState.world || {});
+  });
+
+  // --- the browser ------------------------------------------------------
+  function resultStatus(item) {
+    // What happened to a result, read off the world list rather than
+    // guessed: "added" alone does not say whether it is working yet.
+    const w = addonState.world;
+    if (!w) return null;
+    return (w.items || []).find((it) => it.id === item.id && it.kind === item.kind) || null;
+  }
+
+  function addonCard(item) {
+    const card = document.createElement('article');
+    card.className = 'addon-card';
+    const meta = `${esc(item.author || '')}${item.downloads ? ` · ${fmtCount(item.downloads)} downloads` : ''}`;
     let action;
-    if (installedView) {
-      action = `<button class="btn" data-addon-update="${esc(item.id)}" data-kind="${esc(item.kind)}">Update</button>
-        <button class="btn btn-danger" data-addon-remove="${esc(item.id)}">Remove</button>`;
-    } else if (item.installed) {
-      action = '<span class="addon-added">Added ✓</span>';
+    const there = resultStatus(item);
+    if (item.installed || there) {
+      action = `<span class="addon-added">In this world ✓</span>${there ? `<span class="addon-status addon-status-${esc(there.status)}">${esc(there.status_text)}</span>` : ''}`;
     } else {
       const picked = addonPicked.has(pickKey(item));
       action = `<button class="btn btn-primary" data-addon-add="${esc(item.id)}" data-kind="${esc(item.kind)}">Add to world</button>
@@ -1312,13 +1390,21 @@
       if (picked) card.classList.add('selected');
     }
     card.innerHTML = `
-      <div class="addon-head">${icon}
+      <div class="addon-head">${iconHtml(item)}
         <div class="addon-title"><strong>${esc(item.title)}</strong>
-          <span class="muted">${meta}</span></div></div>
+          <span class="muted"><span class="addon-kind">${esc(item.kind_label || '')}</span> ${meta}</span></div></div>
       ${item.description ? `<p class="addon-desc">${esc(item.description)}</p>` : ''}
       <div class="addon-actions">${action}</div>
       <div class="addon-note" aria-live="polite"></div>`;
     return card;
+  }
+
+  function outcomeSentence(titles, world) {
+    const items = (world && world.items) || [];
+    const pending = titles.filter((t) => items.some((it) => it.title === t && it.status === 'restart'));
+    if (pending.length) return 'Restart the server to turn it on — the button is at the top of this tab.';
+    if (world && !world.running) return 'It turns on when the server starts.';
+    return 'It is working now.';
   }
 
   async function addonInstall(btn) {
@@ -1329,17 +1415,18 @@
     btn.textContent = 'Adding…';
     note.textContent = '';
     const resp = await api('api/addons/install', {
-      method: 'POST', body: JSON.stringify({ id: btn.dataset.addonAdd || btn.dataset.addonUpdate, kind: btn.dataset.kind }),
+      method: 'POST', body: JSON.stringify({ id: btn.dataset.addonAdd, kind: btn.dataset.kind }),
     });
     if (resp.ok) {
+      const titles = (resp.installed || []).map((r) => r.title);
       const names = (resp.installed || []).map((r) => `${r.title} ${r.version || ''}`.trim()).join(', ');
-      note.textContent = `Added ${names}. ${(resp.notes || []).join(' ')}`;
-      btn.textContent = 'Added ✓';
+      if (resp.world) renderWorld(resp.world);
+      note.textContent = `Added ${names}. ${outcomeSentence(titles, resp.world)}`;
       const pick = card.querySelector('button[data-addon-pick]');
       if (pick) pick.remove();
+      btn.replaceWith(Object.assign(document.createElement('span'), { className: 'addon-added', textContent: 'In this world ✓' }));
       card.classList.remove('selected');
-      if (addonPicked.delete(`${btn.dataset.kind}:${btn.dataset.addonAdd || btn.dataset.addonUpdate}`)) renderAddonTray();
-      loadAddonsInstalled();
+      if (addonPicked.delete(`${btn.dataset.kind}:${btn.dataset.addonAdd}`)) renderAddonTray();
     } else {
       note.textContent = resp.error || 'That did not install.';
       note.classList.add('bad');
@@ -1409,14 +1496,13 @@
         failed.push(`${title}: ${r.error}`);
       }
     });
+    if (resp.world) renderWorld(resp.world);
     const parts = [];
-    if (added.length) parts.push(`Added ${added.join(', ')}.`);
+    if (added.length) parts.push(`Added ${added.join(', ')}. ${outcomeSentence(added, resp.world)}`);
     if (failed.length) parts.push(`Not added — ${failed.join(' ')}`);
-    parts.push(...(resp.notes || []));
     note.textContent = parts.join(' ');
     note.classList.toggle('bad', failed.length > 0 && !added.length);
     renderAddonTray();
-    await loadAddonsInstalled();
     searchAddons(false);
   }
 
@@ -1424,40 +1510,25 @@
     root.querySelectorAll('button[data-addon-pick]').forEach((b) => {
       b.addEventListener('click', () => addonPick(b));
     });
-    root.querySelectorAll('button[data-addon-add], button[data-addon-update]').forEach((b) => {
+    root.querySelectorAll('button[data-addon-add]').forEach((b) => {
       b.addEventListener('click', () => addonInstall(b));
-    });
-    root.querySelectorAll('button[data-addon-remove]').forEach((b) => {
-      b.addEventListener('click', async () => {
-        const card = b.closest('.addon-card');
-        const title = card.querySelector('.addon-title strong').textContent;
-        if (!confirm(`Remove ${title} from this world?`)) return;
-        const resp = await api(`api/addons/${encodeURIComponent(b.dataset.addonRemove)}`, { method: 'DELETE' });
-        if (resp.ok) {
-          loadAddonsInstalled();
-        } else {
-          const note = card.querySelector('.addon-note');
-          note.textContent = resp.error || 'That did not remove.';
-          note.classList.add('bad');
-        }
-      });
     });
   }
 
   function renderAddonKinds() {
     const bar = $('#addon-kinds');
     bar.innerHTML = '';
-    (addonState.info.kinds || []).forEach((k) => {
+    const kinds = [{ kind: 'all', label: 'Everything', reach: '' }, ...((addonState.info && addonState.info.kinds) || [])];
+    kinds.forEach((k) => {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = `chip${k.kind === addonState.kind ? ' active' : ''}`;
       b.textContent = k.label;
-      b.setAttribute('role', 'tab');
-      b.setAttribute('aria-selected', k.kind === addonState.kind ? 'true' : 'false');
+      b.setAttribute('aria-pressed', k.kind === addonState.kind ? 'true' : 'false');
       b.addEventListener('click', () => { addonState.kind = k.kind; addonState.offset = 0; renderAddonKinds(); searchAddons(false); });
       bar.appendChild(b);
     });
-    const k = (addonState.info.kinds || []).find((x) => x.kind === addonState.kind);
+    const k = kinds.find((x) => x.kind === addonState.kind);
     $('#addon-reach').textContent = k ? k.reach : '';
   }
 
@@ -1465,16 +1536,12 @@
     const info = await api('api/addons');
     if (info.error) return;
     addonState.info = info;
-    const box = $('#addon-installed');
-    box.innerHTML = '';
-    (info.installed || []).forEach((item) => box.appendChild(addonCard(item, true)));
-    $('#addon-installed-empty').hidden = (info.installed || []).length > 0;
-    bindAddonButtons(box);
+    if (info.world) renderWorld(info.world);
   }
 
   async function searchAddons(append) {
     const box = $('#addon-results');
-    if (!append) box.innerHTML = '<p class="muted">Searching…</p>';
+    if (!append) { addonState.offset = 0; box.innerHTML = '<p class="muted">Searching…</p>'; }
     const q = encodeURIComponent(addonState.q);
     const data = await api(`api/addons/search?kind=${encodeURIComponent(addonState.kind)}&q=${q}&offset=${addonState.offset}`);
     if (!append) box.innerHTML = '';
@@ -1483,29 +1550,40 @@
       $('#addon-more').hidden = true;
       return;
     }
-    (data.hits || []).forEach((h) => box.appendChild(addonCard(h, false)));
+    (data.hits || []).forEach((h) => box.appendChild(addonCard(h)));
     if (!box.children.length) box.innerHTML = '<p class="muted">Nothing matches for this server’s version.</p>';
     bindAddonButtons(box);
-    addonState.offset = (data.offset || 0) + (data.hits || []).length;
-    $('#addon-more').hidden = addonState.offset >= (data.total || 0);
+    if (data.kind === 'all') {
+      addonState.offset = data.next_offset;
+      $('#addon-more').hidden = !data.has_more;
+    } else {
+      addonState.offset = (data.offset || 0) + (data.hits || []).length;
+      $('#addon-more').hidden = addonState.offset >= (data.total || 0);
+    }
   }
 
   async function loadAddons() {
     await loadAddonsInstalled();
     if (!addonState.info) return;
     const kinds = addonState.info.kinds || [];
-    if (!kinds.find((k) => k.kind === addonState.kind)) addonState.kind = kinds.length ? kinds[0].kind : null;
+    if (addonState.kind !== 'all' && !kinds.find((k) => k.kind === addonState.kind)) addonState.kind = 'all';
     const v = addonState.info.game_version;
-    $('#addons-lede').textContent = `Everything here runs on the server, so every player gets it — iPads, phones and consoles through Geyser included — with nothing to install on a device. Showing what works on ${addonState.info.server_type}${v ? ` ${v}` : ''}, added to the active world only.`;
+    $('#addons-lede').textContent = `Everything here runs on the server, so every player gets it — iPads, phones and consoles through Geyser included. This is the active world on ${addonState.info.server_type}${v ? ` ${v}` : ''}.`;
     renderAddonKinds();
-    addonState.offset = 0;
     searchAddons(false);
+    loadSoftware(false);
   }
+
+  // Keep the list honest while the tab is open: a restart finishing, or a
+  // jar dropped in by hand, changes what it should say.
+  setInterval(() => {
+    const panel = $('#tab-addons');
+    if (panel && panel.classList.contains('active') && !document.hidden) loadAddonsInstalled();
+  }, 5000);
 
   $('#f-addon-search')?.addEventListener('submit', (e) => {
     e.preventDefault();
     addonState.q = $('#addon-q').value.trim();
-    addonState.offset = 0;
     searchAddons(false);
   });
   $('#addon-more')?.addEventListener('click', () => searchAddons(true));
@@ -1520,5 +1598,113 @@
       b.closest('.addon-card').classList.remove('selected');
     });
     renderAddonTray();
+  });
+
+  // --- server software --------------------------------------------------
+  // The server itself and the crossplay plugins under it. They update by
+  // restarting the add-on (that is when they are downloaded); moving a
+  // world to a newer Minecraft is a separate, one-way press with a backup.
+  const fmtDate = (t) => (t ? new Date(t * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
+  const typeName = (t) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Server');
+
+  function renderSoftware(sw) {
+    const rows = [];
+    const server = [`Minecraft ${sw.version || '?'}`];
+    if (sw.build) server.push(`build ${sw.build}`);
+    let status = '<span class="addon-status addon-status-active">Up to date</span>';
+    let action = '';
+    if (sw.upgrade_pending) {
+      status = `<span class="addon-status addon-status-restart">Upgrading to ${esc(sw.upgrade_pending)} on the next add-on start</span>`;
+    } else if (sw.upgrade_available) {
+      status = `<span class="addon-status addon-status-restart">Minecraft ${esc(sw.newest_version)} is out</span>`;
+      action = `<button class="btn btn-primary" id="software-upgrade" data-version="${esc(sw.newest_version)}">Upgrade this world to ${esc(sw.newest_version)}</button>`;
+    } else if (sw.build_update_available) {
+      status = `<span class="addon-status addon-status-restart">Build ${esc(sw.newest_build)} available</span>`;
+    } else if (!sw.checked) {
+      status = `<span class="addon-status addon-status-next_start">${esc(sw.check_error || 'Not checked for this server type')}</span>`;
+    }
+    rows.push(`<div class="software-row">
+      <div class="addon-row-main"><strong>${esc(typeName(sw.server_type))}</strong>
+        <span class="muted">${esc(server.join(' · '))}${sw.version_option && sw.version_option.toUpperCase() !== 'LATEST' ? ` · pinned to ${esc(sw.version_option)} in Configuration` : ''}</span></div>
+      ${status}
+      ${action ? `<div class="addon-row-actions">${action}</div>` : ''}
+    </div>`);
+    (sw.components || []).forEach((c) => {
+      rows.push(`<div class="software-row">
+        <div class="addon-row-main"><strong>${esc(c.title)}</strong>
+          <span class="muted">${esc([c.version, c.note].filter(Boolean).join(' · '))}</span></div>
+        <span class="muted software-when">Fetched ${esc(fmtDate(c.updated_at))}</span>
+      </div>`);
+    });
+    $('#software-rows').innerHTML = rows.join('');
+    $('#software-foot').textContent = sw.bedrock_support
+      ? 'Geyser, Floodgate and ViaVersion download their newest build every time the add-on starts. "Update everything now" restarts the add-on to do that now — players are disconnected for about a minute.'
+      : 'Bedrock support is off in Configuration. "Update everything now" restarts the add-on to fetch the newest server build.';
+    $('#software-upgrade')?.addEventListener('click', (e) => softwareUpdate(e.currentTarget.dataset.version));
+  }
+
+  async function loadSoftware(force) {
+    const sw = await api(`api/server/software${force ? '?refresh=1' : ''}`);
+    if (sw.error) { $('#software-rows').innerHTML = `<p class="muted bad">${esc(sw.error)}</p>`; return; }
+    renderSoftware(sw);
+  }
+
+  async function softwareUpdate(version) {
+    const note = $('#software-note');
+    const ask = version
+      ? `Upgrade this world to Minecraft ${version}?\n\nA backup is taken first. Worlds cannot be moved back to an older version, and a plugin made only for the old version may stop loading. Players are disconnected for a minute or two.`
+      : 'Restart the add-on now to download the newest server build, Geyser, Floodgate and ViaVersion? Players are disconnected for about a minute.';
+    if (!confirm(ask)) return;
+    note.classList.remove('bad');
+    note.textContent = version ? 'Taking a backup…' : 'Restarting the add-on…';
+    $$('#software button').forEach((b) => { b.disabled = true; });
+    const resp = await api('api/server/software/update', {
+      method: 'POST', body: JSON.stringify(version ? { upgrade_to: version } : {}),
+    });
+    if (resp.ok) {
+      note.textContent = `${(resp.notes || []).join(' ')} The add-on is restarting — this panel comes back in a minute or two.`.trim();
+    } else {
+      note.textContent = resp.error || 'That did not start.';
+      note.classList.add('bad');
+      $$('#software button').forEach((b) => { b.disabled = false; });
+    }
+  }
+
+  $('#software-check')?.addEventListener('click', () => { $('#software-rows').innerHTML = '<p class="muted">Checking…</p>'; loadSoftware(true); });
+  $('#software-update')?.addEventListener('click', () => softwareUpdate(''));
+
+  // --- your own file or link -------------------------------------------
+  $('#f-plugin-install')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const url = $('#plugin-url').value.trim();
+    const name = $('#plugin-name').value.trim();
+    $('#plugin-reply').textContent = 'Downloading…';
+    const data = await api('api/plugins', { method: 'POST', body: JSON.stringify({ url, name }) });
+    $('#plugin-reply').textContent = data.ok
+      ? 'Added. It is in the list above — restart the server to turn it on.'
+      : (data.output || data.error || 'That did not install.');
+    if (data.ok) { $('#plugin-url').value = ''; $('#plugin-name').value = ''; loadAddonsInstalled(); }
+  });
+
+  $('#f-pack-upload')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const file = $('#pack-file').files[0];
+    const name = $('#pack-name').value.trim();
+    if (!file) return;
+    const reply = $('#pack-upload-reply');
+    reply.textContent = `Uploading ${file.name} (${fmtSize(file.size)})…`;
+    const fd = new FormData();
+    if (name) fd.append('name', name);
+    fd.append('file', file);
+    const resp = await fetch('api/resource-packs', { method: 'POST', body: fd, credentials: 'same-origin' });
+    let out; try { out = await resp.json(); } catch { out = { error: await resp.text() }; }
+    if (out.ok) {
+      reply.textContent = `Uploaded ${out.name}. It is in the list above — press Use in this world to offer it to players.`;
+      $('#pack-file').value = '';
+      $('#pack-name').value = '';
+      loadAddonsInstalled();
+    } else {
+      reply.textContent = `Upload failed: ${out.error || resp.status}`;
+    }
   });
 })();

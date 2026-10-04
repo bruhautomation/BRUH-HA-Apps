@@ -16,10 +16,9 @@ A bird's-eye view so you can skim to the sections that matter to you:
   - Streaming console over SSE with INFO / WARN / ERROR colouring and a command input.
   - Players tab with one-click op / deop / kick / ban / pardon / whitelist.
   - Per-world **Server Properties** editor (everything that's a `server.properties` key, validated server-side).
-  - Plugins tab with curated one-click installers, install-by-URL, and duplicate-jar quarantine.
+  - **Add-ons** tab — one screen for everything in the world: plugins, data packs, server mods and resource packs (browser-added or not), whether each is working or waiting on a restart, a **Restart now** banner when one is owed, the server software and crossplay plugins with their versions and updates, and a Modrinth browser to add more.
   - Backups tab browsing git snapshots and tar.gz archives with per-entry restore.
   - Worlds tab — switch / create / **import-from-zip** / delete, plus **Featured worlds** one-click server-side installs (e.g. **Drehmal: APOTHEOSIS**) playable on iPad/iPhone via Geyser with zero installs.
-  - Resource Packs tab — upload a pack, get a URL + SHA-1, *Apply* writes them into the active world.
 - **Bedrock cross-play** via Geyser (+ Floodgate when applicable). Auto-installed, auto-configured for your auth-type choice, and MTU / auth-type / validate-bedrock-login patched on every boot so iOS, Android, Switch, Xbox, PS and Windows 10/11 can connect.
 - **Offline mode done right.** Set a world's `online-mode: false` (panel → Server Properties) and the add-on silently forces `enforce-secure-profile: false`, switches Geyser to `auth-type: offline`, uninstalls Floodgate, and sets `validate-bedrock-login: false` — the full chain of changes Microsoft / Mojang's and GeyserMC's defaults gate behind one flag.
 - **Per-world settings.** Each world has its own `server.properties` — one world can be creative, another survival; switching loads each world's own gamemode, difficulty, world-gen, whitelist, etc.
@@ -205,7 +204,7 @@ The add-on's **Configuration** tab holds only **install/container-level** option
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `server_type` | `paper \| purpur \| folia \| vanilla \| fabric \| forge` | `paper` | Which distribution to run. |
-| `minecraft_version` | `LATEST \| SNAPSHOT \| x.y[.z]` | `LATEST` | Game version. `LATEST` resolves to the newest stable release of the selected type. |
+| `minecraft_version` | `LATEST \| SNAPSHOT \| x.y[.z]` | `LATEST` | Game version. `LATEST` resolves to the newest stable release of the selected type for a **new** world; a world that already runs a version stays on it (and keeps getting newer builds of it) until you press **Upgrade this world** on the Add-ons tab, because an upgrade cannot be undone. |
 | `auto_update_server` | bool | `true` | If `true`, re-resolve the jar on every add-on start. Disable to pin to the currently installed jar. |
 
 Forge uses an installer and may need a few extra minutes on the first boot while it downloads its library tree.
@@ -358,7 +357,7 @@ Two clean, separate sources of truth (since 1.8.0):
 
 1. **Gameplay/world settings → the active world's `server.properties`.** Edit them in the panel's **Server Properties** tab. On boot the add-on only enforces infra keys (RCON/query/ports) and **seeds defaults the first time**; after that it never overwrites your values, so panel edits persist and stay per-world. Difficulty/gamemode/whitelist apply live over RCON; the rest take effect on the next restart. (`enforce-whitelist` is derived from `white-list`, and `enforce-secure-profile` is forced off in offline mode — both managed for you.)
 2. **Install/container settings → the add-on Configuration tab.** EULA, RAM, server type/version, backups, Bedrock, plugins, etc. These are global (one JVM, one jar).
-3. **Plugin list (`plugins:`) vs the panel Plugins tab.** The add-on downloads every URL in `plugins:` on boot (with `If-Modified-Since`, so it's cheap). Deleting a plugin from the panel removes the jar from disk, but if the URL is still in `plugins:`, it comes back on next restart. Want it gone? Remove the entry from `plugins:` AND delete the jar.
+3. **Plugin list (`plugins:`) vs the panel's Add-ons tab.** The add-on downloads every URL in `plugins:` on boot (with `If-Modified-Since`, so it's cheap). Deleting a plugin from the panel removes the jar from disk, but if the URL is still in `plugins:`, it comes back on next restart. Want it gone? Remove the entry from `plugins:` AND delete the jar.
 4. **Ops/whitelist/bans** are per-world JSON files; the Players tab edits them and they persist.
 
 **Rule of thumb:** anything about *how this world plays* → Server Properties tab. Anything about *how the add-on runs* → Configuration tab.
@@ -391,7 +390,7 @@ Bedrock clients connect to `your-home-assistant-host` on port `19132` (UDP) — 
 - Manual fallback: **Servers** tab → **Add Server** → enter `<HA host IPv4>` and port `19132`.
 - `homeassistant.local` sometimes fails on iOS — always prefer the raw IPv4 address.
 
-Geyser + Floodgate files land in `/config/minecraft/plugins/` (or `mods/` for Fabric) and can be deleted from the panel's **Plugins** tab just like any other plugin. If you delete them while the toggle is still on, they'll be re-downloaded the next time the add-on restarts.
+Geyser + Floodgate files land in `/config/minecraft/plugins/` (or `mods/` for Fabric) and are shown under **Server software** on the Add-ons tab with their versions. They are not removable from the panel — turn `enable_bedrock_support` off instead — and they download their newest build every time the add-on starts (**Update everything now** does that on demand).
 
 ### Diagnostics
 
@@ -433,15 +432,48 @@ The panel is reachable from the **Minecraft** entry in HA's sidebar (or directly
 
 ### Add-ons
 
-The closest a Java server gets to Realms add-ons, and for a house full of iPads
-arguably better. A Realms "add-on" is a Bedrock *behavior pack*, which a Java
-server cannot run; what it can run is anything that lives on the **server**,
-and that reaches every player whatever they play on, because Geyser translates
-the result and nothing is installed on the device.
+One screen for everything added to the active world. The closest a Java
+server gets to Realms add-ons, and for a house full of iPads arguably better:
+a Realms "add-on" is a Bedrock *behavior pack*, which a Java server cannot
+run; what it can run is anything that lives on the **server**, and that
+reaches every player whatever they play on, because Geyser translates the
+result and nothing is installed on the device.
+
+**In this world.** Every plugin, data pack, server mod and resource pack the
+world has — added from the browser, by hand, by link or by the `plugins:`
+option — grouped by kind, each saying where it stands:
+
+- **Working** — loaded now.
+- **Restart the server to turn it on** — added since the server started.
+  Plugins, mods and a resource-pack change need a restart; data packs do not
+  (the panel reloads them live).
+- **Turns on when the server starts** — the server is stopped.
+- **Not in use** — a resource pack in the library that this world does not
+  offer; **Use in this world** switches to it.
+
+When anything is waiting, a banner at the top says exactly what (*Added
+VeinMiner, removed Chairs*) with a **Restart now** button. Removing something
+another add-on needs asks first.
+
+**Server software.** The server (Paper, Purpur, …) with its Minecraft version
+and build, and the crossplay plugins under it — Geyser, Floodgate,
+ViaVersion, ViaBackwards — with their versions. Those download their newest
+build every time the add-on starts; **Update everything now** restarts the
+add-on to do it on demand. When a newer Minecraft version is out, **Upgrade
+this world** takes a backup and moves the world to it. A world is never
+moved to a new Minecraft version on its own: the upgrade rewrites the world
+for the new version and cannot be undone, and a plugin built only for the
+old version may stop loading.
+
+**Add more.** One search across plugins, data packs, server mods and
+resource packs (or narrow it to one), filtered to what this server can
+run. **Select** several and press **Add all to world** to add them in one
+go. Under it, **Add your own file or link** takes a plugin URL or a
+resource-pack `.zip` (≤ 250 MB, served to players at
+`http://<your-HA-host>:8099/pack/<filename>` on the LAN).
 
 - **Plugins** (Paper / Purpur / Folia) and **data packs** — every Java and
-  Bedrock player gets them. Data packs reload live; plugins load on the next
-  restart.
+  Bedrock player gets them.
 - **Server mods** (Fabric / Forge) — only the ones Modrinth marks as needing
   nothing on the client, because a mod every client must also have is a mod an
   iPad can never join with.
@@ -450,18 +482,10 @@ the result and nothing is installed on the device.
   best-effort: flat block and item textures convert, custom 3D models and
   sounds do not.
 
-What is offered is decided by the running server — its type and Minecraft
-version — so a result on the tab is one this server can load. Anything an
-add-on requires is installed with it and removing a library something still
-needs is refused. Downloads come only from Modrinth's CDN and must match the
-SHA-512 Modrinth published. Add-ons are per world (`.bruh-addons.json` in the
-world folder), like everything else in `plugins/`.
-
-### Plugins
-
-- Lists every `.jar` under `/config/minecraft/plugins/` with size and last-modified time.
-- Delete button per plugin.
-- Install-by-URL form that uses the same engine as the `plugins:` config option.
+Anything an add-on requires is installed with it. Downloads come only from
+Modrinth's CDN and must match the SHA-512 Modrinth published. Add-ons are per
+world (`.bruh-addons.json` in the world folder), like everything else in
+`plugins/`.
 
 ### Backups
 
@@ -477,13 +501,6 @@ world folder), like everything else in `plugins/`.
 - **Create** stages an empty profile (optional fixed seed); name must be 1–32 characters, `[A-Za-z0-9_-]`.
 - **Import** (1.10.0+) accepts a Minecraft world `.zip` (up to 2 GB). The add-on finds the directory containing `level.dat` automatically (works whether it's at the root of the zip, one level deep, or in a re-zipped backup) and stages it as a new switchable world. Then *Switch* into it.
 - **Delete** removes both the world directory and its backup history; refuses to delete the active profile (switch away first).
-
-### Resource Packs
-
-- Upload a Minecraft resource pack `.zip` (≤ 250 MB). The add-on stores it under `/config/resource-packs/` and serves it at `http://<your-HA-host>:8099/pack/<filename>` on the LAN.
-- The table lists each pack's size, SHA-1, mtime, and serve URL.
-- **Apply to active world** writes the URL + SHA-1 into the active world's `server.properties` `resource-pack` and `resource-pack-sha1` keys. Restart the server for clients to pick up the new pack.
-- **Delete** removes the pack from disk; worlds referencing it fall back to no pack.
 
 ---
 

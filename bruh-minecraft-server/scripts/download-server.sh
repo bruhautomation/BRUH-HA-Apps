@@ -43,8 +43,39 @@ read_installed_version() {
     fi
 }
 
+# A world is never moved to a new Minecraft version behind its owner's back.
+# An upgrade rewrites the world's chunks for the new version and cannot be
+# undone, and plugins built for the old one may not load — so under LATEST a
+# world that already runs a version keeps it (and keeps getting newer server
+# builds of it), and the move happens when somebody asks for it: the panel's
+# "Upgrade this world" writes the version to UPGRADE_MARKER after taking a
+# backup, and the add-on restart that follows lands here. A new world, with
+# nothing installed yet, starts on the newest stable version.
+UPGRADE_MARKER="${MC_SERVER_DIR}/.upgrade-to"
+
+hold_world_version() {  # $1 = newest resolved version; prints the one to install
+    local newest="$1" requested current
+    requested=$(tr -d '[:space:]' < "${UPGRADE_MARKER}" 2>/dev/null || true)
+    if [ -n "${requested}" ] \
+            && printf '%s' "${requested}" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+        log "Upgrading this world to Minecraft ${requested}, as asked from the panel"
+        printf '%s' "${requested}"
+        return 0
+    fi
+    current=$(jq -r '.version // empty' "${META_PATH}" 2>/dev/null || true)
+    if [ -n "${current}" ] && [ -s "${JAR_PATH}" ] && [ "${current}" != "${newest}" ] \
+            && printf '%s' "${current}" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+        log "Keeping this world on Minecraft ${current}; ${newest} is available — upgrade it from the panel's Add-ons tab"
+        printf '%s' "${current}"
+        return 0
+    fi
+    printf '%s' "${newest}"
+}
+
 write_meta() {
     local version="$1" build="$2" src_url="$3"
+    # The upgrade that was asked for has happened.
+    rm -f "${UPGRADE_MARKER}" 2>/dev/null || true
     cat > "${META_PATH}" <<JSON
 {
   "server_type": "${SERVER_TYPE}",
@@ -67,21 +98,40 @@ PAPER_V3="https://fill.papermc.io/v3/projects"
 PAPER_V2="https://api.papermc.io/v2/projects"
 PAPER_UA="BRUH-Minecraft-Server/${ADDON_VERSION:-dev} (+https://github.com/bruhautomation/BRUH-HA-Apps)"
 
-# Pick the version string to install for a paper-like project, given the v3
-# project JSON on stdin. LATEST/SNAPSHOT resolve to the highest MC-shaped
-# (1.x[.y]) version; an explicit version passes through unchanged.
-# Exposed as a function so tests can feed it captured API JSON.
-paper_pick_version() {
-    # Reads project JSON on stdin. v3 shape: {"versions":{"1.21":["1.21.4",...]}}
-    # (object of arrays). v2 shape: {"versions":["1.21","1.21.1",...]} (flat
-    # array). Flatten both, keep MC-shaped releases, pick the highest semver.
+# Every release-shaped version a paper-like project publishes, newest first,
+# one per line, from the v3 or v2 project JSON on stdin. Release-shaped is
+# `X.Y` or `X.Y.Z` with nothing after it: Minecraft moved from 1.21.11 to
+# year-based numbers (26.1, 26.2 …), and a filter that only accepted `1.x`
+# — written when `26.1.2` looked like a stray rebuild marker — kept LATEST
+# on 1.21.11 for good, four releases behind, which Paper itself then
+# warned about on every boot. Pre-releases (`-rc-3`, `-pre5`) carry a
+# suffix and are never release-shaped.
+paper_versions_desc() {
+    # v3 shape: {"versions":{"1.21":["1.21.4",...]}} (object of arrays).
+    # v2 shape: {"versions":["1.21","1.21.1",...]} (flat array).
     jq -r '
         (.versions
             | if type == "object" then [.[][]] else . end)
-        | map(select(type == "string" and test("^1\\.[0-9]+(\\.[0-9]+)?$")))
+        | map(select(type == "string" and test("^[0-9]+\\.[0-9]+(\\.[0-9]+)?$")))
+        | unique
         | sort_by(split(".") | map(tonumber))
-        | last // empty
+        | reverse
+        | .[]
     '
+}
+
+# The newest release-shaped version (see above). Exposed as a function so
+# tests can feed it captured API JSON.
+paper_pick_version() {
+    paper_versions_desc | head -n 1
+}
+
+# Whether a v3 builds JSON on stdin has at least one STABLE build.
+paper_has_stable_v3() {
+    jq -e '
+        (if type == "object" then (.builds // []) else . end)
+        | any(.[]; .channel == "STABLE")
+    ' >/dev/null
 }
 
 # Given builds JSON on stdin (v3), emit "<build_id>\t<url>\t<sha256>" for the
@@ -160,9 +210,29 @@ download_paper_like() {
     if [ "${VERSION_REQ}" = "LATEST" ] || [ "${VERSION_REQ}" = "SNAPSHOT" ]; then
         proj_json=$(curl -fsSL -A "${PAPER_UA}" "${PAPER_V3}/${project}" 2>/dev/null)
         version=$(printf '%s' "${proj_json}" | paper_pick_version 2>/dev/null)
+        if [ -n "${version}" ] && [ "${VERSION_REQ}" = "LATEST" ]; then
+            # LATEST is the newest STABLE release: a brand-new Minecraft
+            # version is published with only alpha/beta builds for a while,
+            # and those are what SNAPSHOT is for. Walk the newest few
+            # versions and take the first that has a stable build.
+            local candidate stable=""
+            while read -r candidate; do
+                [ -n "${candidate}" ] || continue
+                if curl -fsSL -A "${PAPER_UA}" \
+                        "${PAPER_V3}/${project}/versions/${candidate}/builds" 2>/dev/null \
+                        | paper_has_stable_v3; then
+                    stable="${candidate}"
+                    break
+                fi
+            done < <(printf '%s' "${proj_json}" | paper_versions_desc 2>/dev/null | head -n 4)
+            [ -n "${stable}" ] && version="${stable}"
+        fi
         if [ -z "${version}" ]; then
             # v3 unreachable / shape changed — resolve the version off v2.
             version=$(curl -fsSL "${PAPER_V2}/${project}" | paper_pick_version)
+        fi
+        if [ -n "${version}" ] && [ "${VERSION_REQ}" = "LATEST" ]; then
+            version=$(hold_world_version "${version}")
         fi
     else
         version="${VERSION_REQ}"
@@ -178,16 +248,13 @@ download_paper_like() {
 
 download_purpur() {
     local version build url
-    # Purpur's `versions` array is not strictly chronological and can include
-    # non-MC-shaped entries (e.g. an internal `26.1.2` rebuild marker that
-    # currently sits AFTER `1.21.11`). The 1.5.0 filter `^[0-9]+\.[0-9]+(\.[0-9]+)?$`
-    # was too loose — it matched `26.1.2` and `[-1]` returned the bogus
-    # marker, breaking LATEST resolution. Restrict to MC-shaped 1.x entries
-    # and pick the highest by numeric semver instead of array position.
+    # Purpur's `versions` array is not strictly chronological, so pick the
+    # highest release-shaped entry by numeric version rather than by
+    # position. Release-shaped includes the year-based numbers Minecraft
+    # uses from 26.1 on; see paper_versions_desc.
     if [ "${VERSION_REQ}" = "LATEST" ]; then
-        version=$(curl -fsSL "https://api.purpurmc.org/v2/purpur" \
-            | jq -r '[.versions[] | select(test("^1\\.[0-9]+(\\.[0-9]+)?$"))]
-                     | sort_by(split(".") | map(tonumber)) | .[-1]')
+        version=$(curl -fsSL "https://api.purpurmc.org/v2/purpur" | paper_pick_version)
+        [ -n "${version}" ] && version=$(hold_world_version "${version}")
     elif [ "${VERSION_REQ}" = "SNAPSHOT" ]; then
         version=$(curl -fsSL "https://api.purpurmc.org/v2/purpur" | jq -r '.versions[-1]')
     else

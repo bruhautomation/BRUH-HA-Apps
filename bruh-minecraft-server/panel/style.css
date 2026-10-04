@@ -836,6 +836,55 @@ footer {
 .addon-note:empty { display: none; }
 .addon-note.bad, .bad { color: var(--danger); }
 .addon-more { text-align: center; margin-bottom: 16px; }
+/* The world list: everything in this world, one row each. */
+.addon-world { display: flex; flex-direction: column; gap: 16px; margin-bottom: 20px; }
+.addon-group h3 { margin: 0 0 8px; font-size: 15px; }
+.addon-group h3 .muted { font-weight: 400; }
+.addon-row {
+  display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 4px 12px;
+  align-items: center; padding: 10px 12px; margin-bottom: 8px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+}
+.addon-row .addon-icon { grid-row: span 2; }
+.addon-row-main { display: flex; flex-direction: column; min-width: 0; }
+.addon-row-main strong { overflow-wrap: anywhere; }
+.addon-row-main .muted { font-size: 12px; overflow-wrap: anywhere; }
+.addon-row-actions { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+.addon-row-actions:empty { display: none; }
+.addon-row-actions .btn { min-height: 40px; }
+.addon-row .addon-note { grid-column: 2 / -1; }
+/* Status is said in words; the colour only reinforces it. */
+.addon-status {
+  justify-self: end; white-space: nowrap; font-size: 12px; font-weight: 600;
+  padding: 3px 10px; border-radius: 999px; border: 1px solid currentColor;
+}
+.addon-status-active { color: var(--accent); }
+.addon-status-restart { color: var(--warn); }
+.addon-status-next_start { color: var(--muted); }
+.addon-status-unused { color: var(--muted); border-style: dashed; }
+.addon-actions .addon-status { align-self: center; white-space: normal; }
+@media (max-width: 520px) {
+  .addon-row { grid-template-columns: 40px minmax(0, 1fr); }
+  .addon-row .addon-status { grid-column: 2; justify-self: start; }
+}
+.addon-restart {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+  margin: 0 0 16px; padding: 12px 14px; border-radius: 10px;
+  border: 1px solid var(--warn); background: var(--bg-raise);
+}
+.addon-restart[hidden] { display: none; }
+.addon-restart.is-info, .addon-restart.is-busy { border-color: var(--border); }
+.addon-restart-text { flex: 1 1 240px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.addon-restart-text span { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.addon-restart .btn { min-height: 40px; }
+.addon-kind {
+  display: inline-block; font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.03em; color: var(--fg); background: var(--bg-raise);
+  padding: 1px 6px; border-radius: 4px; margin-right: 4px;
+}
+.addon-own { margin: 8px 0 24px; }
+.addon-own summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 600; }
+.addon-own h3 { font-size: 15px; margin: 12px 0 6px; }
 .addon-card.selected { border-color: var(--accent); }
 .addon-actions .btn.is-selected { border-color: var(--accent); color: var(--accent); }
 /* The batch tray: sticky so "Add all" stays in reach while you keep
@@ -853,5 +902,32 @@ footer {
 .addon-tray-actions .btn { min-height: 40px; }
 .addon-tray .addon-note { flex: 1 1 100%; margin: 0; }
 @media (pointer: coarse) {
-  .addon-kinds .chip, .addon-actions .btn, .addon-tray-actions .btn { min-height: 44px; }
+  .addon-kinds .chip, .addon-actions .btn, .addon-tray-actions .btn,
+  .addon-row-actions .btn, .addon-restart .btn { min-height: 44px; }
+}
+
+/* Server software: the server and the crossplay plugins under it. */
+.software {
+  margin: 0 0 20px; padding: 12px 14px; border-radius: 10px;
+  background: var(--bg-card); border: 1px solid var(--border);
+}
+.software-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.software-head h3 { margin: 0; font-size: 15px; }
+.software-rows { display: flex; flex-direction: column; }
+.software-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px;
+  align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.software-row:last-child { border-bottom: 0; }
+.software-row .addon-row-actions { grid-column: 1 / -1; }
+.software-when { font-size: 12px; white-space: nowrap; }
+.software-foot { font-size: 12px; margin: 8px 0; }
+.software-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.software-actions .btn, .software-head .btn { min-height: 40px; }
+@media (max-width: 520px) {
+  .software-row { grid-template-columns: minmax(0, 1fr); }
+  .software-row .addon-status, .software-when { justify-self: start; }
+}
+@media (pointer: coarse) {
+  .software-actions .btn, .software-head .btn, .software-row .btn { min-height: 44px; }
 }
