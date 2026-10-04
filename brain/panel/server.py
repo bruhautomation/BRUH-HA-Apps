@@ -6875,12 +6875,13 @@ async def _safety_trip(entity: str, klass: str, state: dict,
 async def _safety_fallback_notice(filed: dict) -> None:
     """Home Assistant's own notification, for a house with no notify target."""
     import ha_data
+    title = "brAIn: " + str(filed.get("text") or "")[:120]
+    message = str(filed.get("detail") or "") + "\n\n" + SAFETY_FIX
+    delivery = deliveries.new_id()
     try:
         await ha_data.call_core_service(
             "persistent_notification", "create",
-            {"title": "brAIn: " + str(filed.get("text") or "")[:120],
-             "message": (str(filed.get("detail") or "") + "\n\n"
-                         + SAFETY_FIX),
+            {"title": title, "message": message,
              "notification_id": f"brain_safety_{int(filed.get('ts') or 0)}"},
             timeout=15)
         SAFETY_STATE["fallback"] += 1
@@ -6888,6 +6889,21 @@ async def _safety_fallback_notice(filed: dict) -> None:
         SAFETY_STATE["last_error"] = str(exc)[:200]
         log.warning("safety lane: could not create a persistent "
                     "notification: %s", exc)
+        _record_notice(delivery, title, message, filed, error=str(exc))
+        return
+    _record_notice(delivery, title, message, filed)
+
+
+def _record_notice(delivery: str, title: str, message: str, filed: dict,
+                   error: str = "") -> None:
+    """The safety lane's persistent notification, in the delivery ledger.
+
+    Synchronous on purpose: it is one append, and the lane runs on the
+    bus pump's loop where a thread hop buys nothing. Never raises —
+    `deliveries.record` does not."""
+    deliveries.record("notice", delivery_id=delivery,
+                      service="persistent_notification", title=title,
+                      body=message, rows=[filed], ok=not error, error=error)
 
 
 async def _safety_clear(entity: str, state: dict, when: float) -> bool:
@@ -11989,14 +12005,26 @@ async def _announce_accepted(row: dict, applied: dict) -> None:
         return
     title, body = notify_router.compose_accepted(
         str(row.get("title") or ""), str(applied.get("entity_id") or ""))
+    # A line in the delivery ledger like every other message, sent or not:
+    # a ledger that missed one sender is one nobody can read "what did
+    # brAIn tell me this week" off. No findings ride on it.
+    delivery = deliveries.new_id()
     try:
         await ha_data.send_notification(service, title, body)
     except Exception as exc:  # noqa: BLE001 — the automation is already
         # running; the notification is the courtesy copy.
+        await asyncio.to_thread(
+            deliveries.record, "accepted", delivery_id=delivery,
+            service=service, title=title, body=body, ok=False,
+            error=str(exc))
         log.warning("accepted-change notification via %s failed: %s",
                     service, exc)
         _report_async(reports.notify_failure, service, str(exc),
                       context="accepted-change announcement")
+        return
+    await asyncio.to_thread(
+        deliveries.record, "accepted", delivery_id=delivery,
+        service=service, title=title, body=body)
 
 
 async def h_proposal_decide(request: web.Request) -> web.Response:

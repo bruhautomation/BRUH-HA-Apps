@@ -65,6 +65,11 @@ class SafetyCase(LoopCase):
             mod.ESCALATION_FILE = os.path.join(self.tmp.name, "esc.json")
             self._restore.append((mod, "QUEUE_FILE", mod.QUEUE_FILE))
             mod.QUEUE_FILE = os.path.join(self.tmp.name, "queue.json")
+        # With no phone configured the lane's persistent notification is a
+        # line in the delivery ledger, whose default is the real /data.
+        for mod in self.copies("deliveries"):
+            self._restore.append((mod, "DELIVERIES_FILE", mod.DELIVERIES_FILE))
+            mod.DELIVERIES_FILE = Path(self.tmp.name) / "deliveries.jsonl"
 
     def tearDown(self):
         srv = self.server

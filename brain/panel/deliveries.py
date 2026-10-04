@@ -57,8 +57,13 @@ DELIVERIES_FILE = Path(os.environ.get("BRAIN_DELIVERIES",
 # `held` is a queue release, `reminder` a rung of the ladder, `brief` and
 # `weekly` the two messages that are not about a problem, and `reply` the
 # answer to somebody's Reply — a message they asked for, which no learned
-# suggestion may count as one they did not want.
-KINDS = ("notify", "escalate", "held", "reminder", "brief", "weekly", "reply")
+# suggestion may count as one they did not want. `accepted` says a change
+# somebody accepted is now running, and `notice` is Home Assistant's own
+# persistent notification, which the safety lane raises when no phone is
+# configured: neither is about a problem anybody could be asked to hear
+# less of, so neither is counted by a learned suggestion either.
+KINDS = ("notify", "escalate", "held", "reminder", "brief", "weekly", "reply",
+         "accepted", "notice")
 # What happened to it, as `fold` reports it.
 OUTCOMES = ("answered", "cleared", "ignored", "pending", "failed")
 

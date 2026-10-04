@@ -220,6 +220,94 @@ class TestTheServerWritesAndReadsIt(DispatchCase):
         # The notification's own button, not the To-do tick behind it.
         self.assertEqual(line["action"], "snooze")
 
+    def test_every_answer_a_notification_can_carry_is_recorded(self):
+        """Each button the router puts on a message (and the integration
+        still accepts `ack`) comes back through the request drop as a
+        finding request, and each one is that message's answer. A guess's
+        answer and a To-do tick ride the same queue as their own kinds and
+        are answers to no message, so they match nothing and raise nothing.
+        """
+        import finding_requests
+        import notify_router
+        old = finding_requests.REQUEST_DIR
+        finding_requests.REQUEST_DIR = Path(self.tmp.name) / "requests"
+        finding_requests.REQUEST_DIR.mkdir()
+        self.addCleanup(setattr, finding_requests, "REQUEST_DIR", old)
+        verbs = [v for v, _label in notify_router.ACTION_LABELS] + ["ack"]
+        self.assertTrue(set(verbs) <= set(finding_requests.ACTIONS))
+        now = time.time()
+        for i, verb in enumerate(verbs):
+            self.deliveries.record(
+                "notify", delivery_id=f"d{i}", service="mobile_app_phone",
+                title="t", body="b", rows=[{"ts": 1000 + i}], when=now - 60)
+        drops = [{"ts": 1000 + i, "action": verb, "via": "notification"}
+                 for i, verb in enumerate(verbs)]
+        # A Dismiss with no hours (the feed's own snooze length) is still
+        # a snooze as far as the message is concerned.
+        drops[verbs.index("snooze")]["hours"] = None
+        drops += [{"kind": "hypothesis", "ts": 1000, "action": "reject",
+                   "via": "notification"},
+                  {"kind": "todo", "action": "done", "id": 7,
+                   "via": "notification"}]
+        for i, body in enumerate(drops):
+            (finding_requests.REQUEST_DIR / f"{int(now * 1000)}-{i:02d}.json"
+             ).write_text(json.dumps(body))
+        requests = finding_requests.collect()
+        self.assertEqual(len(requests), len(drops))
+        noted = self.server._deliveries_note_requests(requests)
+        self.assertEqual(noted, len(verbs))
+        folded = {line["id"]: line for line in self.deliveries.fold()}
+        for i, verb in enumerate(verbs):
+            self.assertEqual(folded[f"d{i}"]["outcome"], "answered", verb)
+            self.assertEqual(folded[f"d{i}"]["action"], verb)
+
+    def test_an_accepted_change_is_a_line(self):
+        asyncio.run(self.server._announce_accepted(
+            {"title": "Porch light at sunset"},
+            {"entity_id": "automation.porch_light"}))
+        [msg] = self.sent
+        [line] = self.deliveries.fold()
+        self.assertEqual(line["kind"], "accepted")
+        self.assertEqual(line["title"], msg["title"])
+        self.assertTrue(line["ok"])
+
+    def test_a_failed_accepted_change_is_a_failed_line(self):
+        import ha_data
+
+        async def boom(*a, **k):
+            raise RuntimeError("no such service")
+
+        ha_data.send_notification = boom
+        asyncio.run(self.server._announce_accepted(
+            {"title": "Porch light at sunset"}, {}))
+        [line] = self.deliveries.fold()
+        self.assertEqual((line["kind"], line["outcome"]),
+                         ("accepted", "failed"))
+
+    def test_the_safety_lanes_notice_is_a_line(self):
+        import ha_data
+        calls = []
+
+        async def core(domain, service, data=None, timeout=10):
+            calls.append((domain, service))
+
+        old = ha_data.call_core_service
+        ha_data.call_core_service = core
+        self.addCleanup(setattr, ha_data, "call_core_service", old)
+        filed = {"ts": 4242, "text": "Kitchen leak sensor is wet",
+                 "severity": "critical", "source": "safety",
+                 "entity_id": "binary_sensor.kitchen_leak"}
+        asyncio.run(self.server._safety_fallback_notice(filed))
+        self.assertEqual(calls, [("persistent_notification", "create")])
+        [line] = self.deliveries.fold()
+        self.assertEqual(line["kind"], "notice")
+        self.assertEqual(line["service"], "persistent_notification")
+        self.assertEqual(line["ts"], [4242])
+        # Never a learned suggestion's evidence: a safety source, a kind
+        # nothing counts.
+        import notify_learn
+        self.assertEqual(notify_learn.tally([line], time.time()), [])
+
     def test_it_is_in_the_diagnostics(self):
         [row] = self.file(NOTIFY_ROW)
         self.announce([row])
