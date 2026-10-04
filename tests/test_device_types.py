@@ -46,6 +46,7 @@ class BinarySensorDeviceClass(enum.StrEnum):
     MOISTURE = "moisture"
     MOTION = "motion"
     OPENING = "opening"
+    SMOKE = "smoke"
     WINDOW = "window"
 
 
@@ -465,7 +466,7 @@ class TestShowingAnEntityAsAnotherKind(Case):
         why = self.refused("set_device_class", {
             "entity_id": ["binary_sensor.back_door"], "device_class": "garage"})
         self.assertIn('"garage" is not a binary_sensor device class', why)
-        self.assertIn("door, garage_door, moisture, motion, opening, window", why)
+        self.assertIn("door, garage_door, moisture, motion, opening, smoke, window", why)
         self.assertEqual(self.er.writes, [])
 
     def test_every_entity_is_checked_before_any_is_changed(self):
@@ -531,6 +532,126 @@ class TestShowingAnEntityAsAnotherKind(Case):
 # ---------------------------------------------------------------------------
 # switch_as_x: a switch shown as a light, a fan…, and back
 # ---------------------------------------------------------------------------
+
+
+class TestAnOverrideTheHouseCannotSee(Case):
+    """Two refusals about the ENTITY rather than the class. A binary sensor
+    the UI's template helper made takes its type from the helper's options
+    (Home Assistant's own dialog hides the override for exactly that case),
+    and a sensor in a safety class is one brAIn's safety lane pages on —
+    the lane reads the class off the state, which is what this rewrites."""
+
+    def setUp(self):
+        super().setUp()
+        self.er.add("binary_sensor.window_template", platform="template",
+                    config_entry_id="tpl-entry", original_device_class="window")
+        self.er.add("binary_sensor.yaml_template", platform="template",
+                    original_device_class="opening")
+        self.er.add("binary_sensor.kitchen_smoke", original_device_class="smoke")
+        self.er.add("binary_sensor.hall_motion", original_device_class="motion")
+        self.er.add("binary_sensor.sink_leak", original_device_class="moisture")
+        self.er.writes.clear()
+
+    def test_a_ui_template_binary_sensor_is_set_in_its_helper(self):
+        why = self.refused("set_device_class", {
+            "entity_id": ["binary_sensor.window_template"], "device_class": "door"})
+        self.assertIn("template helper's own options", why)
+        self.assertIn("Template options", why)
+        self.assertEqual(self.er.writes, [])
+
+    def test_but_an_override_already_on_one_can_still_be_cleared(self):
+        """An override written before this guard (or by hand) is exactly
+        the one the UI cannot clear, so clearing it is allowed."""
+        self.er.async_get("binary_sensor.window_template").device_class = "door"
+        for clear in ({"device_class": ""}, {"device_class": "window"}):
+            self.er.writes.clear()
+            got = self.run_tool("set_device_class", {
+                "entity_id": ["binary_sensor.window_template"], **clear})
+            self.assertEqual(self.er.writes, [(
+                "update", "binary_sensor.window_template", {"device_class": None})], clear)
+            self.assertEqual(got["entities"][0]["device_class"], "window")
+
+    def test_a_yaml_template_binary_sensor_takes_the_override(self):
+        """No config entry: the UI offers the override, and so does this."""
+        self.run_tool("set_device_class", {
+            "entity_id": ["binary_sensor.yaml_template"], "device_class": "door"})
+        self.assertEqual(self.er.async_get("binary_sensor.yaml_template").device_class,
+                         "door")
+
+    def test_taking_a_smoke_detector_out_of_its_class_needs_a_yes(self):
+        why = self.refused("set_device_class", {
+            "entity_id": ["binary_sensor.kitchen_smoke"], "device_class": "door"})
+        self.assertIn("binary_sensor.kitchen_smoke is a smoke sensor now", why)
+        self.assertIn("safety lane", why)
+        self.assertIn("confirm_safety: true", why)
+        self.assertEqual(self.er.writes, [])
+
+    def test_with_the_yes_it_is_written_and_the_answer_says_what_stopped(self):
+        got = self.run_tool("set_device_class", {
+            "entity_id": ["binary_sensor.kitchen_smoke"], "device_class": "door",
+            "confirm_safety": True})
+        self.assertEqual(self.er.writes, [(
+            "update", "binary_sensor.kitchen_smoke", {"device_class": "door"})])
+        self.assertIn("no longer in brAIn's safety lane", got["entities"][0]["note"])
+
+    def test_a_yes_that_is_not_true_is_not_a_yes(self):
+        """The real schema coerces with cv.boolean; anything that reaches
+        the handler other than True is read as no."""
+        for maybe in ("true", 1, "yes", None):
+            self.refused("set_device_class", {
+                "entity_id": ["binary_sensor.kitchen_smoke"], "device_class": "door",
+                "confirm_safety": maybe})
+        self.assertEqual(self.er.writes, [])
+
+    def test_a_reset_that_takes_it_out_needs_the_yes_too(self):
+        """An override of smoke on a door sensor, given back: the effective
+        class leaves the safety set whichever way the request was spelled."""
+        self.er.async_get("binary_sensor.back_door").device_class = "smoke"
+        why = self.refused("set_device_class", {"entity_id": ["binary_sensor.back_door"]})
+        self.assertIn("is a smoke sensor now", why)
+        self.assertEqual(self.er.writes, [])
+
+    def test_a_leak_sensor_is_named_as_one(self):
+        why = self.refused("set_device_class", {
+            "entity_id": ["binary_sensor.sink_leak"], "device_class": "opening"})
+        self.assertIn("is a leak sensor now", why)
+
+    def test_putting_a_sensor_into_a_safety_class_says_so(self):
+        got = self.run_tool("set_device_class", {
+            "entity_id": ["binary_sensor.hall_motion"], "device_class": "smoke"})
+        self.assertEqual(self.er.async_get("binary_sensor.hall_motion").device_class,
+                         "smoke")
+        note = got["entities"][0]["note"]
+        self.assertIn("now treats binary_sensor.hall_motion as a smoke sensor", note)
+        self.assertIn("through quiet hours", note)
+
+    def test_moving_between_safety_classes_is_neither(self):
+        got = self.run_tool("set_device_class", {
+            "entity_id": ["binary_sensor.sink_leak"], "device_class": "smoke"})
+        self.assertNotIn("note", got["entities"][0])
+
+    def test_an_ordinary_change_carries_no_note(self):
+        got = self.run_tool("set_device_class", {
+            "entity_id": ["binary_sensor.back_door"], "device_class": "door"})
+        self.assertNotIn("note", got["entities"][0])
+
+    def test_one_detector_in_a_batch_refuses_the_batch_before_any_write(self):
+        self.refused("set_device_class", {
+            "entity_id": ["binary_sensor.back_door", "binary_sensor.kitchen_smoke"],
+            "device_class": "window"})
+        self.assertEqual(self.er.writes, [])
+
+    def test_the_set_is_the_safety_lanes_own(self):
+        """The integration cannot import the panel, so the classes are
+        spelled twice; this is what keeps the two spellings one set."""
+        panel = str(Path(__file__).resolve().parent.parent / "brain" / "panel")
+        sys.path.insert(0, panel)
+        try:
+            import signals  # noqa: PLC0415 — the panel's own module
+        finally:
+            sys.path.remove(panel)
+        self.assertEqual(set(self.pt.SAFETY_DEVICE_CLASSES),
+                         set(signals.HOT_SAFETY_CLASSES))
 
 
 class TestShowingASwitchAsSomethingElse(Case):
