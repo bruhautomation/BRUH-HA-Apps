@@ -95,7 +95,23 @@ def is_failure(row: dict) -> bool:
         return False
     if row.get("ok"):
         return False
-    return str(row.get("outcome") or "error") in FAILURE_OUTCOMES
+    return outcome_of(row) in FAILURE_OUTCOMES
+
+
+def outcome_of(row: dict) -> str:
+    """The outcome word a row should be COUNTED under.
+
+    The stored word, except an ``error`` whose own text is the account's
+    usage limit: that is ``rate_limited`` written before `classify` knew the
+    wording, or by a caller that wrote ``error`` itself. The row carries
+    the answer either way — the `ok` rule — and a session limit counted as
+    a failure is how one evening's limit read as "most Claude runs are
+    failing" for the next 24 hours.
+    """
+    outcome = str(row.get("outcome") or "error")
+    if outcome == "error" and _RATE_LIMITED_RE.search(str(row.get("error") or "")):
+        return "rate_limited"
+    return outcome
 
 
 # The four fields only a Claude invocation can carry. A checks pass, a
@@ -332,9 +348,10 @@ def summary(hours: float = 24.0, now: float | None = None) -> dict:
     by_outcome: dict[str, int] = {}
     tokens = 0
     failures: list[dict] = []
+    failed_by_outcome: dict[str, int] = {}
     for r in rows:
         src = str(r.get("source") or "?")
-        outcome = str(r.get("outcome") or "error")
+        outcome = outcome_of(r)
         by_source.setdefault(src, {})
         by_source[src][outcome] = by_source[src].get(outcome, 0) + 1
         by_outcome[outcome] = by_outcome.get(outcome, 0) + 1
@@ -342,11 +359,17 @@ def summary(hours: float = 24.0, now: float | None = None) -> dict:
             tokens += r["tokens"]
         if is_failure(r):
             failures.append(r)
+            failed_by_outcome[outcome] = failed_by_outcome.get(outcome, 0) + 1
     return {
         "hours": hours,
         "runs": len(rows),
         "by_source": by_source,
         "by_outcome": by_outcome,
+        # `is_failure`'s count over the whole window, which `failures` (the
+        # last ten) cannot give: health's rate is read off this, never off
+        # "everything that is not ok".
+        "failed": len(failures),
+        "failed_by_outcome": failed_by_outcome,
         "tokens": tokens,
         "failures": failures[-10:],
     }

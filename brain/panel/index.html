@@ -1403,26 +1403,26 @@
           </div>
 
           <h4 class="sethead">Capture runs for the corpus</h4>
+          <p class="hint tight"><b>You don't need this to use brAIn.</b> It is for helping
+            improve brAIn's own prompts; leave it off unless you mean to.</p>
           <div class="setrow top">
             <label class="check bigcheck"><input id="setCapture" type="checkbox">
-              <span><b>Record what the analyst was sent and what it answered</b><br>
-              <span class="subtext">Off by default. With it on, every card run writes one file
-              under <code>/data/capture</code>: the data brAIn gave Claude, the card that came
-              back, and later the ending you gave each finding it raised.</span></span></label>
+              <span><b>Save a copy of each insight card run</b><br>
+              <span class="subtext">Off by default. Each run writes one file under
+              <code>/data/capture</code>: what Claude was given, the card it made, and how you
+              answered each finding it raised.</span></span></label>
             <button type="button" class="btn icon tiny"
               aria-label="More about capturing runs"
-              data-tip="The ending you give a finding is what turns a run into a graded example. Anything credential-shaped is stripped as the file is written, and nothing leaves this add-on until you press Export on a run below, which copies that one file to /share/brain/corpus/ where the file editor and Samba can reach it. Your entity and area names ARE in these files, so read one before you share it. Backups skip the whole folder.">?</button>
+              data-tip="Your answer to a finding (fixed, wrong, to-do) is what grades the run: it says whether the card was right about your house. Anything credential-shaped is stripped as the file is written. Nothing leaves this add-on until you press Export on a run below, which copies that one file to /share/brain/corpus/. Your entity and area names ARE in these files, so read one before you share it. Backups skip the whole folder.">?</button>
           </div>
-          <p class="hint tight"><b>Nothing leaves this add-on until you press Export</b> on a run
-            below; the newest <span id="capMax">50</span> are kept, and your entity and area
-            names are in them.</p>
+          <p class="hint tight">Nothing leaves this add-on until you press Export; the newest
+            <span id="capMax">50</span> are kept.</p>
           <div id="capBody" class="diag">Loading…</div>
-          <p class="hint tight">Why this exists: the prompts behind every card are the one
-            part of brAIn no test can check, because nothing in the repository runs them
-            against a real house.
+          <p class="hint tight">Why it exists: no test can check the card prompts against a real
+            house, so graded runs from real houses are how a prompt change gets measured.
             <button type="button" class="btn icon tiny"
               aria-label="More about why runs are captured"
-              data-tip="A run with your ending on it is what makes a prompt change measurable. Contributing one is a pull request adding it to tests/corpus/entries/ — entirely optional, and reviewed by you first.">?</button></p>
+              data-tip="Sharing one is entirely optional: it is a pull request adding the exported file to tests/corpus/entries/, which you read first.">?</button></p>
 
           <h4 class="sethead">Deep check</h4>
           <p class="hint">Everything above is what brAIn <em>recorded</em>; this walks every face
