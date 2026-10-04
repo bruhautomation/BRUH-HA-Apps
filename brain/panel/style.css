@@ -786,7 +786,10 @@ body.modal-open {
    ancestor. Placement is measured in JS because CSS cannot see the edge. */
 .tipbox {
   position: fixed;
-  z-index: 60;
+  /* Above .modal (100): every `?` in ⚙ lives inside one, and at 60 the
+     bubble opened behind the dialog's backdrop where nothing could read it.
+     Below the toast (200), which is never under a pointer anyway. */
+  z-index: 150;
   max-width: min(280px, calc(100vw - 16px));
   padding: 5px 9px;
   border-radius: 7px;

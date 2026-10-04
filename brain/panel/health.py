@@ -331,11 +331,20 @@ def problems(diag: dict, options: dict | None = None,
 
     journal = diag.get("journal") or {}
     runs = _num(journal.get("runs")) or 0
-    by_outcome = journal.get("by_outcome") or {}
-    failures = sum(n for outcome, n in by_outcome.items() if outcome != "ok")
+    # `failed` is `journal.is_failure`'s count: a `fallback` still produced
+    # a card and a `rate_limited` run is the account saying wait, and
+    # counting either as a failure is how one evening's session limit read
+    # as "most Claude runs are failing" for a whole day. A payload from
+    # before the count existed keeps the old arithmetic.
+    if isinstance(journal.get("failed"), (int, float)):
+        failures = journal["failed"]
+        failed_by = journal.get("failed_by_outcome") or {}
+    else:
+        failed_by = {o: n for o, n in (journal.get("by_outcome") or {}).items()
+                     if o != "ok"}
+        failures = sum(failed_by.values())
     if runs >= MIN_RUNS_FOR_RATE and failures / runs >= FAILURE_RATE_DEGRADED:
-        worst = max((o for o in by_outcome if o != "ok"),
-                    key=lambda o: by_outcome[o], default="error")
+        worst = max(failed_by, key=lambda o: failed_by[o], default="error")
         found.append(_problem(
             "degraded", "most Claude runs are failing",
             f"{failures} of {int(runs)} runs in the last day did not "

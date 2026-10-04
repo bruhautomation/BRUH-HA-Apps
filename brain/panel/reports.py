@@ -348,17 +348,27 @@ def _faults(diag) -> list[dict]:
 
     # Runs that failed. The journal is the one place every Claude run, checks
     # pass, baseline build and overnight heal already passes through.
-    journal = diag.get("journal") or {}
-    failures = [f for f in (journal.get("failures") or []) if isinstance(f, dict)]
-    for row in failures[:FAULTS_PER_KIND]:
+    runs = diag.get("journal") or {}
+    failures = [f for f in (runs.get("failures") or [])
+                if isinstance(f, dict) and journal.is_failure(f)]
+    # One row per distinct failure, counted: the same refusal ten times in
+    # ten minutes is one fact, and six identical lines is how the list
+    # stops being read. Newest first, so the row says what is true now.
+    grouped: dict[tuple, list] = {}
+    for row in reversed(failures):
         stage = (row.get("extra") or {}).get("stage") if isinstance(
             row.get("extra"), dict) else ""
-        where = str(row.get("source") or "a run")
+        key = (str(row.get("source") or "a run"), stage or "",
+               str(row.get("outcome") or "badly"), str(row.get("error") or ""))
+        grouped.setdefault(key, [key, 0])[1] += 1
+    distinct = list(grouped.values())
+    for (where, stage, outcome, error), n in distinct[:FAULTS_PER_KIND]:
         _row(out, f"Run ({where}{f' · {stage}' if stage else ''})",
-             f"ended {row.get('outcome') or 'badly'}", row.get("error"))
-    if len(failures) > FAULTS_PER_KIND:
-        _row(out, "Runs", f"{len(failures) - FAULTS_PER_KIND} more failed runs "
-                          "in the last day", "see the journal below")
+             f"ended {outcome}" + (f" ({n} times)" if n > 1 else ""), error)
+    if len(distinct) > FAULTS_PER_KIND:
+        rest = sum(n for _, n in distinct[FAULTS_PER_KIND:])
+        _row(out, "Runs", f"{rest} more failed runs in the last day",
+             "see the journal below")
 
     # Authentication, and the usage tracker's own verdict — different
     # questions, and a 403 on the second says nothing about the first.
@@ -509,7 +519,16 @@ def _faults(diag) -> list[dict]:
              + (f" ({notify['last_service']})" if notify.get("last_service")
                 else ""),
              failed)
-    if (notify.get("held") or 0) and not notify.get("quiet_now"):
+    # A row the dispatcher held to a time ("tell me at 7") is waiting by
+    # design; only something that should already have left is a fault — an
+    # untimed hold outside quiet hours, or a timed one whose time has passed.
+    held = int(notify.get("held") or 0)
+    dispatch = notify.get("dispatch") if isinstance(notify.get("dispatch"), dict) else {}
+    timed = int(dispatch.get("timed_holds") or 0)
+    next_at = float(dispatch.get("next_hold_at") or 0)
+    stamp = float(diag.get("generated_at") or 0)
+    overdue = held > timed or (timed and next_at and stamp and next_at <= stamp)
+    if held and overdue and not notify.get("quiet_now"):
         _row(out, "Notifications",
              f"{notify['held']} held and not sent",
              "quiet hours are over, so the flush should have emptied this")
