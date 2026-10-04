@@ -11,6 +11,8 @@ import math
 import re
 from typing import Any, Iterable, Iterator
 
+log = logging.getLogger("brain.checks")
+
 DAY = 86400.0
 
 # Domains that hold *software* objects: their being "unavailable" is not a
@@ -284,5 +286,5 @@ def load_yaml_file(path: str) -> Any:
     try:
         return yaml.load(text, Loader=_Loader)  # noqa: S506 — SafeLoader subclass
     except yaml.YAMLError as exc:
-        logging.getLogger("brain.checks").warning("could not parse %s: %s", path, str(exc)[:200])
+        log.warning("could not parse %s: %s", path, str(exc)[:200])
         return None

@@ -91,14 +91,11 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-import logging
 import os
 import time
 from typing import Any
 
 from ._util import load_yaml_file
-
-log = logging.getLogger("brain.checks")
 
 CONFIG_DIR = os.environ.get("BRAIN_HA_CONFIG_DIR", "/config")
 # The two domains Core keeps traces for (`trace.websocket_api.TRACE_DOMAINS`).
