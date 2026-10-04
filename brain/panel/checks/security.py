@@ -69,13 +69,20 @@ BAN_WINDOW_DAYS = 14
 # The options whose being ON is a posture worth a row. One today; a table
 # so the next one is a line rather than a function.
 POSTURE_FLAGS = {
+    # The text is the finding's stable key, so it keeps its old words even
+    # though the switch now reaches the chat too: a reworded sentence would
+    # re-file the row for everybody who had already answered it. The detail
+    # and the fix are free to say what is true now.
     "dangerously_skip_permissions": (
         "brAIn's terminal runs Claude with its permission prompts switched off",
-        "Anything Claude decides to do in the Terminal tab runs without "
-        + "asking first — edits to /config, shell commands, calls into Home "
-        + "Assistant. It is meant for a session where you are watching it.",
-        "Turn dangerously_skip_permissions off on the add-on's "
-        + "Configuration tab when you are not using it."),
+        "\"Let brAIn act without asking\" is on: anything Claude decides to "
+        + "do in the terminal or the chat runs without asking first — edits "
+        + "to /config, shell commands, calls into Home Assistant. Protected "
+        + "entities stay refused. It is meant for a stretch where you are "
+        + "watching it.",
+        "Turn \"Let brAIn act without asking\" off in ⚙ → Terminal & chat, "
+        + "or dangerously_skip_permissions on the add-on's Configuration "
+        + "tab, when you are not using it."),
 }
 
 

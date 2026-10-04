@@ -67,6 +67,9 @@ const IDS = [
   'setTerminalUi', 'setTimeout', 'usageFill', 'usageMark', 'usageText',
   // The household's notification sentence and the lines learned beside it.
   'setNotifyPolicy', 'setNotifyLearned', 'setSpeakFirst',
+  // The permission switch, and the row "Stop asking…" on a chat approval
+  // card opens the dialog at.
+  'setSkipPerms', 'setSkipPermsRow',
 ];
 
 // The sections, and whether the shipped markup opens them. Account and
@@ -103,6 +106,7 @@ window.fetch = async (url, opts) => {
         plan: 'pro', budget_percent: 25, refresh_hours: 12, history_days: 7,
         timeout_minutes: 8, history_keep_runs: 20, history_keep_days: 30,
         model: 'claude-sonnet-4-5', onboarded: true,
+        dangerously_skip_permissions: false,
         notify_policy: 'wake me for water or smoke; batteries can wait',
         speak_first: true,
         notify_policy_learned: [{ id: 'a1b2c3d4', subject: 'Garden lights',

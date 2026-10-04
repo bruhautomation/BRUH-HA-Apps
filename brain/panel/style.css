@@ -1285,6 +1285,16 @@ body.modal-open {
    checkbox it explains. */
 .setrow { display: flex; align-items: center; gap: 4px; margin: 12px 0 5px; }
 .setrow.top { align-items: flex-start; }
+/* The row ⚙ was opened at (`openSettingsAt`): marked for a moment, so
+   somebody who pressed "Stop asking…" on a chat card lands on the switch
+   rather than hunting a long dialog for it. An outline, not a colour on
+   its own — the label beside it says what it is. */
+.setrow.setflash {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 6px;
+  transition: outline-color 0.6s ease;
+}
 .setrow > label { margin: 0; flex: 1; min-width: 0; }
 .setrow .btn.icon.tiny {
   flex: none;
@@ -2408,9 +2418,26 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 }
 .permcard .permrow {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
 }
+/* What "Always allow" would add, and for how long — under the row, in
+   words, because a phone has no hover to read a tooltip with. */
+.permcard .permscope {
+  margin-top: 6px;
+  color: var(--ink-3);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+/* "Stop asking…" opens ⚙ at the switch; it is a way out of asking
+   altogether, so it sits apart from the card's own answer. */
+.permcard .permfoot {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-end;
+}
+.permcard .permstop { color: var(--ink-3); border-color: transparent; }
 .permcard .permnote {
   margin-top: 10px;
   color: var(--ink-3);
@@ -4867,4 +4894,13 @@ body.term-classic #termMode .ico-out { display: block; }
 .setlearnedrow .btn { flex: none; }
 @media (pointer: coarse) {
   .setlearnedrow .btn { min-height: 44px; }
+}
+
+/* The chat's approval card on a phone: it is where the asking happens, so
+   its answers — Allow once, Don't allow, Always allow — and the way out of
+   asking altogether are thumb targets. Scoped to this card (the panel's
+   touch floor is per control on purpose) and appended last, because the
+   first `pointer: coarse` block is the 16px text floor. */
+@media (pointer: coarse) {
+  .permcard .permrow .btn, .permcard .permstop { min-height: 44px; padding-inline: 14px; }
 }

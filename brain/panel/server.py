@@ -188,6 +188,7 @@ import notify_router
 import override_ledger
 import onboarding
 import outcomes
+import permission_mode
 import playbooks
 import prompt_store
 import proposals
@@ -437,6 +438,27 @@ def eff_model() -> str:
     return str(_opt("model", MODEL))
 
 
+def eff_skip_permissions() -> bool:
+    """"Let brAIn act without asking", as the terminal and the chat read it.
+
+    The same precedence as every mirrored option — a local override, the
+    add-on's live options, the value run.sh exported at startup — and only
+    an explicit True means act: a value that is anything else asks.
+    """
+    return _opt("dangerously_skip_permissions",
+                permission_mode.startup()) is True
+
+
+def _publish_permission_mode() -> None:
+    """Write the switch where a terminal session reads it when it starts.
+
+    Called at startup, after a ⚙ save and after each poll of the add-on's
+    options, so a Configuration-tab edit reaches the next terminal session
+    without a restart. `publish` skips the write when nothing moved.
+    """
+    permission_mode.publish(eff_skip_permissions())
+
+
 def _answer(result: dict) -> dict | None:
     """The object a run answered with: the CLI's validated one first.
 
@@ -485,6 +507,7 @@ def startup_options() -> dict:
         "history_keep_days": HISTORY_KEEP_DAYS,
         "model": MODEL,
         "timeout_minutes": TIMEOUT_S // 60,
+        "dangerously_skip_permissions": permission_mode.startup(),
     }
 
 
@@ -518,6 +541,7 @@ def effective_options() -> dict:
         "history_keep_days": eff_keep_days(),
         "model": eff_model(),
         "timeout_minutes": eff_timeout_s() // 60,
+        "dangerously_skip_permissions": eff_skip_permissions(),
     }
 
 
@@ -5111,6 +5135,7 @@ async def _options_poller() -> None:
         await asyncio.sleep(OPTIONS_POLL_SECONDS)
         try:
             await addon_options.refresh(force=True)
+            _publish_permission_mode()
         except Exception as exc:  # never let a transient blip kill the loop
             log.debug("add-on options poll failed: %s", exc)
 
@@ -16811,6 +16836,8 @@ async def h_settings_put(request: web.Request) -> web.Response:
                 dict.fromkeys(clean_options) if wrote_addon else clean_options)
         except ValueError as exc:
             raise web.HTTPBadRequest(text=str(exc))
+        if permission_mode.OPTION in clean_options:
+            _publish_permission_mode()
     return web.json_response(_settings_payload(settings))
 
 
@@ -17237,6 +17264,7 @@ def _chat_registry() -> "chat_session.SessionRegistry":
     """
     registry = chat_session.registry()
     registry.model = eff_chat_model()
+    registry.skip_permissions = eff_skip_permissions()
     return registry
 
 
@@ -17248,12 +17276,15 @@ def _chat() -> "chat_session.ChatSession":
     model picker, the handoff, the stream. Switching is what changes which
     session that is, and it stops nothing.
     """
-    session = _chat_registry().attached()
+    registry = _chat_registry()
+    session = registry.attached()
     # Resolved per call rather than at startup: the model is editable from
     # ⚙ Settings, from the Configuration tab and from the chat's own model
     # picker, and a chat session started before an edit should not keep the
-    # old one for as long as it lives.
+    # old one for as long as it lives. The permission switch is the same:
+    # it applies on the next send, through the respawn `send` already does.
     session.model = eff_chat_model()
+    session.skip_permissions = registry.skip_permissions
     return session
 
 
@@ -17608,13 +17639,20 @@ async def h_chat_permission(request: web.Request) -> web.Response:
     try:
         return web.json_response(await session.respond_permission(
             str(body.get("id") or ""), bool(body.get("allow")),
-            answers=answers))
+            answers=answers,
+            # "Always allow this": the card's own suggestion, handed back as
+            # the CLI's updatedPermissions. Only ever what the CLI offered —
+            # the request carries a yes, never a rule.
+            always=body.get("always") is True))
     except ValueError as exc:
         # Fixed words, not the exception's text — CodeQL reads echoed
-        # exception text as information exposure, and both messages are
+        # exception text as information exposure, and these messages are
         # knowable anyway.
         if "answer the questions" in str(exc):
             raise web.HTTPBadRequest(text="answer the questions first")
+        if "always allow" in str(exc):
+            raise web.HTTPBadRequest(
+                text="there is nothing to always allow on this request")
         raise web.HTTPNotFound(text="that request is no longer waiting")
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=_refusal(exc))
@@ -18027,6 +18065,7 @@ def make_app() -> web.Application:
             log.info("labelled %d machine conversation(s) from before their "
                      "callers claimed session ids", relabelled)
         await _options_sync()
+        _publish_permission_mode()
         # Every failed run of any kind becomes one readable file: hooked on
         # the journal so a new run path is covered by having recorded itself.
         journal.on_record(_journal_report_listener)

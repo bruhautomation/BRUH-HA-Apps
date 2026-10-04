@@ -1151,10 +1151,27 @@
       <details class="setsec" id="setsecTerminal" data-sec="terminal">
         <summary>
           <span class="setsecname">Terminal &amp; chat</span>
-          <span class="setsecsub">Which face the Terminal tab shows, and how many conversations
-            stay live at once</span>
+          <span class="setsecsub">Whether brAIn asks before it acts, which face the Terminal tab
+            shows, and how many conversations stay live</span>
         </summary>
         <div class="setsecbody">
+          <!-- One switch, two doors: this is the add-on's
+               `dangerously_skip_permissions` option, written back through the
+               Supervisor like the generation defaults, so the Configuration
+               tab shows the same value. "Stop asking" on a chat approval card
+               opens the dialog here. -->
+          <div class="setrow top" id="setSkipPermsRow">
+            <label class="check bigcheck"><input id="setSkipPerms" type="checkbox">
+              <span><b>Let brAIn act without asking</b><br>
+              <span class="subtext">The terminal and the chat stop asking before each command,
+              edit or change.</span></span></label>
+            <button type="button" class="btn icon tiny"
+              aria-label="More about acting without asking"
+              data-tip="Off, the terminal and the chat ask before Claude runs a command, edits a file or changes something in Home Assistant, and only reading is pre-approved. On, they stop asking. What stays guarded either way: protected entities are still refused, brAIn's own deny-list still holds, a conversation about a finding still asks (an agreed change still goes through the plan, with Undo), file edits can still be put back with brain undo, and voice and background runs keep their own rules. It applies to the next terminal session and the chat's next message; a session already running keeps asking until then. This is the add-on's dangerously_skip_permissions option, so the Configuration tab shows the same switch.">?</button>
+          </div>
+          <p class="hint" id="setSkipPermsNote">Protected entities, brAIn's deny-list and conversations
+            about a finding stay guarded. Applies to the next terminal session and chat message.</p>
+
           <div class="setrow">
             <label for="setTerminalUi">Terminal tab</label>
             <button type="button" class="btn icon tiny"

@@ -123,6 +123,9 @@ options:
   enable_assist_integration: true
   enable_automation_integration: true
   enable_mobile_ui: true
+  # "Let brAIn act without asking": the terminal and the chat stop asking.
+  # Mirrored both ways with ⚙ → Terminal & chat (permission_mode.py); the
+  # key keeps its old name so every existing configuration still means it.
   dangerously_skip_permissions: false
   assist_fast_mode: true
   study_timeout_minutes: 30
