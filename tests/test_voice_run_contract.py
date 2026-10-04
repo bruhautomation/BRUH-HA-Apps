@@ -289,15 +289,23 @@ def test_a_resumed_conversation_answers_under_this_turns_prompt(tmp_path, monkey
     try:
         drop_spare(pool)
         pool.process_full(request("lights off", conv="convR"))
-        first = [a for a in spawns(tmp_path) if "--input-format" in a][-1]
-        assert "--system-prompt-snapshot" not in first
         # The worker goes; the session id stays, so the next turn resumes.
         pool._drop_worker("convR", pool.workers["convR"])
         drop_spare(pool)
         pool.process_full(request("and the hall", conv="convR"))
-        second = [a for a in spawns(tmp_path) if "--input-format" in a][-1]
-        assert "--resume" in second
+        # Found by what they ARE, never by position: the pool re-warms a
+        # spare on a background thread after every turn, so a fresh spawn
+        # can land in the log after the resumed one, and "the last stream
+        # spawn" was sometimes the spare.
+        stream = [a for a in spawns(tmp_path) if "--input-format" in a]
+        resumed = [a for a in stream if "--resume" in a]
+        assert len(resumed) == 1, resumed
+        second = resumed[0]
         assert second[second.index("--system-prompt-snapshot") + 1] == "off"
+        # A fresh session has no recorded prompt to keep, so no fresh
+        # spawn (the first turn's worker or any spare) carries the flag.
+        assert all("--system-prompt-snapshot" not in a
+                   for a in stream if "--resume" not in a)
     finally:
         shutdown(pool)
 
