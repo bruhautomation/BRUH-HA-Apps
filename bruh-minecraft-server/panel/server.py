@@ -2170,7 +2170,7 @@ async def _software_payload(force: bool = False) -> dict:
     try:
         pending = (MC_SERVER_DIR / ".upgrade-to").read_text().strip()
     except OSError:
-        pass
+        pending = ""  # no upgrade has been asked for
     return {
         "server_type": server_type,
         "version": current,
@@ -2263,6 +2263,9 @@ async def api_addons_remove_file(request: web.Request) -> web.Response:
                 if it["kind"] == kind and it["file"] == name), None)
     if row is None:
         return web.json_response({"error": "That is not in this world any more."}, status=404)
+    # From here on the name is the one the world's own listing holds, never
+    # the request's: the request only chose which row.
+    name = row["file"]
     if row["id"]:
         try:
             addons.remove(ctx, row["id"], force=bool(body.get("force")))
@@ -2280,7 +2283,7 @@ async def api_addons_remove_file(request: web.Request) -> web.Response:
         props["resource-pack"] = ""
         props["resource-pack-sha1"] = ""
         _write_properties(props, "Resource pack removed via add-ons")
-        (MC_SERVER_DIR / GEYSER_PACKS / (Path(name).stem + ".mcpack")).unlink(missing_ok=True)
+        _under(MC_SERVER_DIR, GEYSER_PACKS, Path(name).stem + ".mcpack").unlink(missing_ok=True)
     if kind == "datapack":
         try:
             await _rcon_command("minecraft:reload")

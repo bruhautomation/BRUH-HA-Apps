@@ -783,7 +783,9 @@ def plugin_meta(jar: Path) -> dict:
                 if isinstance(data, dict):
                     out = {k: str(data[k])[:80] for k in ("name", "version") if data.get(k)}
     except (OSError, ValueError, zipfile.BadZipFile):
-        pass
+        # A jar that cannot be read says nothing about itself; the list
+        # falls back to its file name rather than failing the whole screen.
+        return {}
     return out
 
 

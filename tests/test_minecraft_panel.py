@@ -1309,6 +1309,24 @@ class TestAddonsOneScreen(PanelTestBase):
         world = (await (await self.client.request("GET", "/api/addons")).json())["world"]
         self.assertFalse(world["restart_needed"])
 
+    async def test_removing_the_active_pack_stops_offering_it(self):
+        packs = self.state_dir / "resource-packs"
+        packs.mkdir(exist_ok=True)
+        self.panel.MC_RESOURCE_PACKS = packs
+        (packs / "Faithful.zip").write_bytes(b"PK")
+        geyser = self.server_dir / "plugins" / "Geyser-Spigot" / "packs"
+        geyser.mkdir(parents=True)
+        (geyser / "Faithful.mcpack").write_bytes(b"x")
+        props = self.server_dir / "server.properties"
+        props.write_text(props.read_text().replace(
+            "resource-pack=https://my.cdn/pack.zip", "resource-pack=http://h:8099/pack/Faithful.zip"))
+        resp = await self.client.request("POST", "/api/addons/remove-file",
+                                         json={"kind": "resourcepack", "file": "Faithful.zip"})
+        self.assertEqual(resp.status, 200, await resp.text())
+        self.assertFalse((packs / "Faithful.zip").exists())
+        self.assertFalse((geyser / "Faithful.mcpack").exists())
+        self.assertIn("resource-pack=\n", props.read_text())
+
     async def test_crossplay_plugins_are_not_removed_from_here(self):
         (self.server_dir / "plugins" / "Geyser-Spigot.jar").write_bytes(b"x")
         resp = await self.client.request("POST", "/api/addons/remove-file",
