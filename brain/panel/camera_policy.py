@@ -145,6 +145,13 @@ def permit(entity_id: str, channel: str, grant: list[str] | None,
     return True, ""
 
 
+# The checks a trip of which is a safety trip. `signals.SAFETY_CHECKS` is
+# the authority and a test holds the two equal: importing it here closed an
+# import ring (signals -> notify_router -> settings_store -> camera_policy),
+# and a ring is a module whose answer depends on which neighbour loaded first.
+SAFETY_CHECKS = frozenset({"climate.freeze"})
+
+
 def trip_kind(signal: dict, *, safety_subjects=(), closure_subjects=()) -> str:
     """"safety", "closure" or "" — whether an investigation may use a camera.
 
@@ -158,10 +165,9 @@ def trip_kind(signal: dict, *, safety_subjects=(), closure_subjects=()) -> str:
         return ""
     subject = str(signal.get("subject") or "")
     source = str(signal.get("source") or "")
-    import signals as _signals  # noqa: PLC0415 — panel-local
     check = source[len("check:"):] if source.startswith("check:") else ""
     if (signal.get("safety") or source == "safety"
-            or check in _signals.SAFETY_CHECKS or subject in safety_subjects):
+            or check in SAFETY_CHECKS or subject in safety_subjects):
         return "safety"
     if (subject.split(".", 1)[0] in CLOSURE_DOMAINS
             or source in CLOSURE_SOURCES or subject in closure_subjects):
@@ -198,6 +204,6 @@ def prompt_line(grant: list[str], kind: str) -> str:
             "what the frame shows about the house; never describe a person.")
 
 
-__all__ = ["CLOSURE_DOMAINS", "LEDGER", "MAX_CAMERAS", "PER_DAY",
+__all__ = ["CLOSURE_DOMAINS", "LEDGER", "MAX_CAMERAS", "PER_DAY", "SAFETY_CHECKS",
            "clean_cameras", "grant_for", "permit", "prompt_line", "trip_kind",
            "used"]

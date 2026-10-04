@@ -130,6 +130,10 @@ class TestOneLook(LedgerCase):
 
 
 class TestWhenTheResidentMayLook(unittest.TestCase):
+    def test_the_safety_checks_are_the_signal_modules_own(self):
+        import signals
+        self.assertEqual(camera_policy.SAFETY_CHECKS, signals.SAFETY_CHECKS)
+
     def test_safety_and_closures_and_nothing_else(self):
         kind = camera_policy.trip_kind
         self.assertEqual(kind({"subject": "binary_sensor.leak", "safety": True}), "safety")

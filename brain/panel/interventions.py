@@ -408,9 +408,8 @@ def maintenance_row(row: dict, days: int, times: int) -> dict:
     }
 
 
-def summary(now: float | None = None) -> dict:
+def summary() -> dict:
     """What the diagnostics row says. Never raises."""
-    now = time.time() if now is None else now
     data = read()
     counts = {s: 0 for s in STATUSES}
     next_at = None
