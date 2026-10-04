@@ -1260,6 +1260,10 @@
         "device_class": {
           "name": "Device class",
           "description": "What to show it as, e.g. door, window, moisture, garage, outlet. Leave empty to give back the integration's own."
+        },
+        "confirm_safety": {
+          "name": "Confirm safety change",
+          "description": "Needed to take a smoke, gas, carbon monoxide or leak sensor out of that class, because brAIn's safety lane stops treating it as one. Turn it on only once the homeowner has said yes."
         }
       }
     },

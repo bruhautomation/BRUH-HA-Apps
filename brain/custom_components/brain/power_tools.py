@@ -691,6 +691,21 @@ DEVICE_CLASS_REFUSED = {
         "Assistant's own settings do not offer it."
     ),
 }
+# The classes brAIn's safety lane pages on through quiet hours. The lane reads
+# the class off the STATE's own `device_class` attribute
+# (`panel/signals.HOT_SAFETY_CLASSES`), which is exactly what a registry
+# override rewrites — so showing a smoke detector as a door takes it out of
+# the lane silently, and showing a motion sensor as smoke puts every motion
+# into it. Spelled here because the integration cannot import the panel, and
+# held equal to the panel's set by a test.
+SAFETY_DEVICE_CLASSES = frozenset({"smoke", "gas", "carbon_monoxide", "moisture"})
+# A binary sensor made in the UI's template helper takes its type from the
+# helper's own options. Home Assistant's entity dialog hides the override
+# for exactly that case (`_hideDeviceClassOverride` in the frontend's
+# entity-registry-settings-editor), because a registry override beats the
+# integration's class and would mask every later change made in the helper's
+# options — an override the UI neither shows nor lets anybody clear.
+_TEMPLATE_PLATFORM = "template"
 # What switch_as_x has offered as targets, for the sentences that tell
 # somebody what to do instead. Never used to validate a request: the live
 # flow's own form says what this core offers.
@@ -961,11 +976,19 @@ async def _set_device_class(hass: HomeAssistant, call: ServiceCall) -> dict | No
     """Show an entity as a different kind of device: a binary sensor as a
     door, a window or a leak; a cover as a garage door or a blind; a switch
     as an outlet. An omitted or empty device_class gives back the
-    integration's own. Every entity is checked before any is changed."""
+    integration's own. Every entity is checked before any is changed.
+
+    Two refusals are about the entity rather than the class. A binary sensor
+    made in the UI's template helper takes its type from the helper's options,
+    so only clearing an override is allowed on one. And a change that takes
+    an entity OUT of a safety class (smoke, gas, carbon monoxide, leak) needs
+    `confirm_safety`, because brAIn's safety lane reads the class this
+    rewrites; a change INTO one says so in the entity's `note`."""
     registry = er.async_get(hass)
     raw = call.data.get("device_class")
     wanted = str(raw).strip().lower() if raw is not None else ""
     wanted = wanted or None
+    confirm_safety = call.data.get("confirm_safety") is True
     choices_by_domain: dict[str, list[str] | None] = {}
     plans = []
     for entity_id in call.data["entity_id"]:
@@ -987,6 +1010,18 @@ async def _set_device_class(hass: HomeAssistant, call: ServiceCall) -> dict | No
                 "set its device class where it is defined (its YAML, or "
                 "homeassistant: customize:).",
             ))
+        original = getattr(reg_entry, "original_device_class", None)
+        if (wanted is not None and wanted != original
+                and _ui_template_binary_sensor(reg_entry, domain)):
+            raise ServiceValidationError(
+                f"{entity_id} is a template binary sensor made in Home "
+                "Assistant's UI, and its type is set in the template helper's "
+                "own options rather than with an override (Home Assistant's "
+                "entity settings hide that control for it too). Change it "
+                "under Settings → Devices & services → Helpers → the helper → "
+                "Template options. An empty device_class still clears an "
+                "override already there."
+            )
         if wanted is not None:
             if domain not in choices_by_domain:
                 choices_by_domain[domain] = await _device_classes(hass, domain)
@@ -1003,23 +1038,62 @@ async def _set_device_class(hass: HomeAssistant, call: ServiceCall) -> dict | No
                     f"of: {', '.join(choices)} — or leave device_class empty "
                     "to give back the integration's own."
                 )
-        plans.append((entity_id, reg_entry))
-    changed = []
-    for entity_id, reg_entry in plans:
-        original = getattr(reg_entry, "original_device_class", None)
         previous = getattr(reg_entry, "device_class", None) or original
         # Choosing what the integration already reports is following it:
         # stored as no override, so a later change upstream still lands.
         stored = None if wanted is None or wanted == original else wanted
+        effective = stored or original
+        if (previous in SAFETY_DEVICE_CLASSES
+                and effective not in SAFETY_DEVICE_CLASSES
+                and not confirm_safety):
+            raise ServiceValidationError(
+                f"{entity_id} is a {_safety_word(previous)} sensor now, and "
+                f"showing it as {effective or 'no class'} takes it out of the "
+                "classes brAIn's safety lane pages on: when it trips, it "
+                "would no longer be filed as critical and sent straight "
+                "away, through quiet hours. Ask the homeowner first; call "
+                "again with confirm_safety: true only once they have said yes."
+            )
+        plans.append((entity_id, original, previous, stored, effective))
+    changed = []
+    for entity_id, original, previous, stored, effective in plans:
         registry.async_update_entity(entity_id, device_class=stored)
-        changed.append({
+        row = {
             "entity_id": entity_id,
-            "device_class": stored or original,
+            "device_class": effective,
             "override": stored,
             "original_device_class": original,
             "previous": previous,
-        })
+        }
+        if (effective in SAFETY_DEVICE_CLASSES
+                and previous not in SAFETY_DEVICE_CLASSES):
+            row["note"] = (
+                f"brAIn's safety lane now treats {entity_id} as a "
+                f"{_safety_word(effective)} sensor: when it trips, it is filed "
+                "as critical and sent straight away, through quiet hours."
+            )
+        elif (previous in SAFETY_DEVICE_CLASSES
+                and effective not in SAFETY_DEVICE_CLASSES):
+            row["note"] = (
+                f"{entity_id} is no longer in brAIn's safety lane: when it "
+                "trips, it is not filed as critical or sent through quiet hours."
+            )
+        changed.append(row)
     return {"entities": changed}
+
+
+def _ui_template_binary_sensor(reg_entry, domain: str) -> bool:
+    """A binary sensor the UI's template helper made: its type lives in the
+    helper's options, the frontend's `_hideDeviceClassOverride` rule."""
+    return (domain == "binary_sensor"
+            and getattr(reg_entry, "platform", None) == _TEMPLATE_PLATFORM
+            and bool(getattr(reg_entry, "config_entry_id", None)))
+
+
+def _safety_word(device_class) -> str:
+    """A safety class as a person says it: "carbon monoxide", "leak"."""
+    return {"carbon_monoxide": "carbon monoxide",
+            "moisture": "leak"}.get(device_class, str(device_class))
 
 
 async def _show_switch_as(hass: HomeAssistant, call: ServiceCall) -> dict | None:
@@ -2899,6 +2973,9 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
         # is checked against the domain's device classes in the handler,
         # because which those are is a question for the running core.
         vol.Optional("device_class"): vol.Any(None, cv.string),
+        # Taking an entity OUT of a safety class needs this, and only a yes
+        # from the homeowner is a reason to send it.
+        vol.Optional("confirm_safety", default=False): cv.boolean,
     }, has_response=True),
     PowerTool("show_switch_as", _show_switch_as, {
         vol.Required("entity_id"): cv.entity_id,

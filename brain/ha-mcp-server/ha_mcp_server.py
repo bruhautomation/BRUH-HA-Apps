@@ -905,6 +905,114 @@ def _protected_target(payload, empty_is_all=False, extra=()):
     return None
 
 
+# The two switch_as_x Power Tools act on a PAIR, and the payload names one
+# half. show_switch_as named by a switch replaces (or re-inverts) the helper
+# entity that already shows it as something else, and named by that entity
+# re-wraps the switch; stop_showing_switch_as removes the helper entity and
+# unhides the switch whichever was named. So asking only about the id in
+# the payload let a protected lock made from a relay's switch be deleted by
+# naming the switch, and a protected switch be unhidden — and its Assist
+# exposure handed back by Core's `async_remove_entry` — by naming its light.
+# The pair is read off the entity registry FRESH, never off the 60-second
+# cache, because these two services are what change the pair: a lock made a
+# minute ago is exactly the one a cached read would not know about.
+SWITCH_PAIR_SERVICES = frozenset({"show_switch_as", "stop_showing_switch_as"})
+SWITCH_AS_X = "switch_as_x"
+
+
+def _switch_as_source(row, by_uuid):
+    """The switch a switch_as_x registry row stands in for, or None.
+
+    The helper entity writes it into its own registry options
+    (`switch_as_x/entity.py`'s `async_generate_entity_options`) as an
+    entity id; a registry uuid is resolved anyway, because the config
+    entry stores either and a helper that never re-ran has old options.
+    """
+    options = row.get("options")
+    own = options.get(SWITCH_AS_X) if isinstance(options, dict) else None
+    source = own.get("entity_id") if isinstance(own, dict) else None
+    if not isinstance(source, str) or not source.strip():
+        return None
+    source = source.strip().lower()
+    return source if "." in source else by_uuid.get(source)
+
+
+def _switch_pair(named, rows):
+    """(partners, unreadable) for the entities a switch_as_x service names.
+
+    `partners` is [(entity id, why it is in the pair)] — the switch a named
+    helper entity stands in for, and every helper entity wrapping a named
+    (or so resolved) switch — minus what was named. `unreadable` is the
+    named helper entities whose switch the registry does not say, and the
+    helper entities whose own switch it does not say (one of which might be
+    a named switch's).
+    """
+    rows = [r for r in rows if isinstance(r, dict) and r.get("entity_id")]
+    by_uuid = {str(r["id"]): str(r["entity_id"]).lower()
+               for r in rows if r.get("id")}
+    by_eid = {str(r["entity_id"]).lower(): r for r in rows}
+    wraps, orphans = {}, []
+    for r in rows:
+        if r.get("platform") != SWITCH_AS_X:
+            continue
+        source = _switch_as_source(r, by_uuid)
+        if source:
+            wraps.setdefault(source, []).append(str(r["entity_id"]).lower())
+        else:
+            orphans.append(str(r["entity_id"]).lower())
+    asked = {str(e).strip().lower() for e in named if str(e).strip()}
+    partners, unreadable = {}, []
+    for eid in sorted(asked):
+        row = by_eid.get(eid)
+        if row is not None and row.get("platform") == SWITCH_AS_X:
+            switch = _switch_as_source(row, by_uuid)
+            if not switch:
+                unreadable.append(eid)
+                continue
+            partners.setdefault(switch, f"the switch {eid} stands in for")
+        else:
+            switch = eid
+            unreadable.extend(o for o in orphans if o not in unreadable)
+        for wrapper in wraps.get(switch, ()):
+            partners.setdefault(wrapper, f"how {switch} is shown")
+    return ([(e, why) for e, why in sorted(partners.items()) if e not in asked],
+            unreadable)
+
+
+def _switch_pair_refusal(domain, service, data):
+    """Why a switch_as_x Power Tool would act on a protected entity it does
+    not name, or None. Only asked while a protected list exists; a registry
+    that cannot be read then refuses, `_protected_scopes`' rule."""
+    if not PROTECTED_ENTITIES or str(domain).lower() != "brain" \
+            or str(service).lower() not in SWITCH_PAIR_SERVICES:
+        return None
+    named, _loose = _payload_entities(data if isinstance(data, dict) else {})
+    if not named:
+        return None
+    try:
+        rows = _ws_command({"type": "config/entity_registry/list"})
+    except Exception:  # noqa: BLE001 — unreadable fails closed, below
+        rows = None
+    if not isinstance(rows, list):
+        return ("it acts on the other half of a switch shown as another kind "
+                "of device, and the entity registry could not be read to check "
+                "whether that half is protected")
+    partners, unreadable = _switch_pair(named, rows)
+    for eid, why in partners:
+        if _entity_protected(eid):
+            return f"it would act on {eid}, a protected entity ({why})"
+    for eid in unreadable:
+        if eid in {str(n).strip().lower() for n in named}:
+            return (f"it acts on the switch {eid} stands in for, and the entity "
+                    "registry does not say which switch that is, so it cannot "
+                    "be checked against the protected list")
+        if _entity_protected(eid):
+            return (f"{eid} is a protected entity standing in for a switch the "
+                    "entity registry does not name, so it may be the one this "
+                    "would replace or remove")
+    return None
+
+
 # What Home Assistant exposes to Assist, applied to the voice channel.
 # `BRAIN_EXPOSED_ONLY=1` is set by the worker pool and the classic listener
 # on every voice process whose agent's level is `voice` (the default),
@@ -1493,6 +1601,10 @@ def call_service(domain, service, data=None, return_response=False):
     if protected:
         return {"error": PROTECTED_REFUSAL.format(
             what=f"{domain}.{service}", why=protected)}
+    pair = _switch_pair_refusal(domain, service, data)
+    if pair:
+        return {"error": PROTECTED_REFUSAL.format(
+            what=f"{domain}.{service}", why=pair)}
     if EXPOSED_ONLY and (domain.lower(), service.lower()) in VOICE_ADMIN_SERVICES:
         return {"error": ADDON_VOICE_REFUSAL.format(what=f"{domain}.{service}")}
     # Exposure first: "that lock is not exposed" is the sentence a person can
@@ -4285,9 +4397,11 @@ def _entity_list_or_error(entity_id, example):
     return ids
 
 
-def set_device_class(entity_id, device_class):
+def set_device_class(entity_id, device_class, confirm_safety=False):
     """Change what an entity is shown as (its device class), or give back
-    the integration's own with an empty device_class."""
+    the integration's own with an empty device_class. `confirm_safety` is
+    sent only when it is a yes: taking a safety sensor out of its class is
+    the Power Tool's refusal to make, and an absent flag is no."""
     ids = _entity_list_or_error(entity_id, "binary_sensor.back_door")
     if isinstance(ids, dict):
         return ids
@@ -4295,6 +4409,10 @@ def set_device_class(entity_id, device_class):
     value = str(device_class or "").strip().lower()
     if value:
         data["device_class"] = value
+    confirmed = confirm_safety if isinstance(confirm_safety, bool) else \
+        str(confirm_safety).strip().lower() in _TRUE_WORDS
+    if confirmed:
+        data["confirm_safety"] = True
     return _brain_call("set_device_class", data)
 
 
@@ -5377,7 +5495,11 @@ TOOLS = [
             "device_class gives back the integration's own. A switch is shown "
             "as a light or a fan with show_switch_as instead; a sensor's unit "
             "and decimals with set_sensor_display. Returns the class now in "
-            "effect and the integration's original, so it can be put back."
+            "effect and the integration's original, so it can be put back. "
+            "Taking a smoke, gas, carbon monoxide or leak sensor out of that "
+            "class is refused unless confirm_safety is true — ask the "
+            "homeowner first, because brAIn stops treating it as a safety "
+            "sensor."
         ),
         "inputSchema": {
             "type": "object",
@@ -5389,6 +5511,10 @@ TOOLS = [
                 "device_class": {
                     "type": "string",
                     "description": "What to show it as, e.g. door, window, moisture, garage, outlet. Empty string gives back the integration's own."
+                },
+                "confirm_safety": {
+                    "type": "boolean",
+                    "description": "Only once the homeowner has said yes: allow taking a smoke, gas, carbon monoxide or leak sensor out of that class."
                 }
             },
             "required": ["entity_id", "device_class"]

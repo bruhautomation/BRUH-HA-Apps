@@ -116,6 +116,17 @@ class TestWhatReachesCore(Base):
         self.assertIn("is not an entity id", got["error"])
         self.assertEqual(self.core.calls, [])
 
+    def test_a_safety_yes_rides_only_when_it_is_a_yes(self):
+        """Absent is no: the Power Tool's refusal is the one that asks."""
+        self.tool("set_device_class", entity_id="binary_sensor.kitchen_smoke",
+                  device_class="door")
+        self.tool("set_device_class", entity_id="binary_sensor.kitchen_smoke",
+                  device_class="door", confirm_safety=False)
+        self.tool("set_device_class", entity_id="binary_sensor.kitchen_smoke",
+                  device_class="door", confirm_safety=True)
+        self.assertEqual([c[1].get("confirm_safety") for c in self.core.services()],
+                         [None, None, True])
+
     def test_show_switch_as_and_its_undo(self):
         self.core.answers[("brain", "show_switch_as")] = {"response": {
             "entity_id": "fan.fan_plug", "switch_entity_id": "switch.fan_plug"}}
@@ -215,6 +226,127 @@ class TestTheChokepointStandsInFront(Base):
         offered = {t["name"] for t in m.tools_for_channel()}
         for name in TOOLS:
             self.assertIn(name, offered)
+
+
+class TestTheOtherHalfOfASwitchIsAskedAboutToo(Base):
+    """show_switch_as and stop_showing_switch_as act on a PAIR and the
+    payload names one half: named by the switch they replace, re-invert or
+    remove the entity it is shown as; named by that entity they unhide or
+    re-wrap the switch. So the protected list is asked about the other half
+    too, read off the entity registry the moment the call is made — the
+    wrapper's registry options carry the switch it stands in for
+    (switch_as_x/entity.py's `async_generate_entity_options`)."""
+
+    def setUp(self):
+        super().setUp()
+        self.core.registry_rows = [
+            _partial("switch.front_door_relay", id="u-relay", hidden_by="integration"),
+            _partial("lock.front_door", id="u-lock", platform="switch_as_x",
+                     options={"switch_as_x": {"entity_id": "switch.front_door_relay",
+                                              "invert": False}}),
+            _partial("switch.boiler", id="u-boiler", hidden_by="integration"),
+            _partial("light.boiler", id="u-boiler-light", platform="switch_as_x",
+                     options={"switch_as_x": {"entity_id": "switch.boiler"}}),
+            _partial("switch.fan_plug", id="u-fan-plug"),
+        ]
+
+    def refused(self, name, needle, **args):
+        got = self.tool(name, **args)
+        self.assertIn("protected", got.get("error", "").lower(), (name, args, got))
+        self.assertIn(needle, got["error"], (name, args))
+        return got
+
+    def test_a_protected_lock_is_not_removed_or_replaced_by_naming_its_relay(self):
+        m.PROTECTED_ENTITIES = ["lock.*"]
+        self.refused("stop_showing_switch_as", "lock.front_door",
+                     entity_id="switch.front_door_relay")
+        self.refused("show_switch_as", "lock.front_door",
+                     entity_id="switch.front_door_relay", target_domain="light")
+        self.assertEqual(self.core.services(), [])
+
+    def test_nor_does_its_meaning_flip_by_naming_the_relay(self):
+        """invert on a lock swaps what locked means."""
+        m.PROTECTED_ENTITIES = ["lock.front_door"]
+        self.refused("show_switch_as", "lock.front_door",
+                     entity_id="switch.front_door_relay", target_domain="lock",
+                     invert=True)
+        self.assertEqual(self.core.services(), [])
+
+    def test_a_protected_switch_is_not_unhidden_or_rewrapped_through_its_light(self):
+        m.PROTECTED_ENTITIES = ["switch.boiler"]
+        self.refused("stop_showing_switch_as", "switch.boiler", entity_id="light.boiler")
+        self.refused("show_switch_as", "switch.boiler",
+                     entity_id="light.boiler", target_domain="fan")
+        self.assertEqual(self.core.services(), [])
+
+    def test_the_generic_tool_meets_the_same_question(self):
+        """The rule is at the chokepoint, not in the dedicated tool, or
+        call_service on brain.* would walk round it."""
+        m.PROTECTED_ENTITIES = ["lock.*"]
+        got = m.handle_tool_call("call_service", {
+            "domain": "brain", "service": "stop_showing_switch_as",
+            "data": {"entity_id": "switch.front_door_relay"},
+            "return_response": True})
+        self.assertIn("lock.front_door", got["error"])
+        self.assertEqual(self.core.services(), [])
+
+    def test_a_pair_with_nothing_protected_in_it_goes_through(self):
+        m.PROTECTED_ENTITIES = ["lock.back_door"]
+        self.tool("stop_showing_switch_as", entity_id="switch.front_door_relay")
+        self.tool("show_switch_as", entity_id="light.boiler", target_domain="fan")
+        self.tool("show_switch_as", entity_id="switch.fan_plug", target_domain="fan")
+        self.assertEqual(len(self.core.services()), 3)
+
+    def test_with_no_protected_list_the_registry_is_not_read(self):
+        self.tool("stop_showing_switch_as", entity_id="switch.front_door_relay")
+        self.assertNotIn(("list", None), self.core.calls)
+        self.assertEqual(len(self.core.services()), 1)
+
+    def test_a_registry_that_cannot_be_read_refuses_while_something_is_protected(self):
+        m.PROTECTED_ENTITIES = ["lock.back_door"]
+        self.core.registry_rows = None
+        real = self.core.__call__
+
+        def no_list(payload, timeout=15):
+            if payload["type"] == "config/entity_registry/list":
+                return {"error": "{'code': 'unknown_error', 'message': 'nope'}"}
+            return real(payload, timeout)
+        with patch.object(m, "_ws_command", no_list):
+            got = self.tool("stop_showing_switch_as", entity_id="switch.fan_plug")
+        self.assertIn("registry could not be read", got["error"])
+        self.assertEqual(self.core.services(), [])
+
+    def test_a_helper_whose_switch_the_registry_does_not_say_is_refused(self):
+        """"I could not tell" is not "nothing is protected"."""
+        m.PROTECTED_ENTITIES = ["switch.boiler"]
+        self.core.registry_rows.append(
+            _partial("fan.attic", id="u-attic", platform="switch_as_x", options={}))
+        got = self.tool("stop_showing_switch_as", entity_id="fan.attic")
+        self.assertIn("does not say which switch", got["error"])
+        self.assertEqual(self.core.services(), [])
+
+    def test_a_protected_helper_whose_switch_is_unknown_may_be_any_switchs(self):
+        m.PROTECTED_ENTITIES = ["fan.attic"]
+        self.core.registry_rows.append(
+            _partial("fan.attic", id="u-attic", platform="switch_as_x", options={}))
+        got = self.tool("show_switch_as", entity_id="switch.fan_plug",
+                        target_domain="light")
+        self.assertIn("fan.attic", got["error"])
+        self.assertEqual(self.core.services(), [])
+
+    def test_a_source_stored_as_a_registry_id_is_still_the_switch(self):
+        m.PROTECTED_ENTITIES = ["switch.boiler"]
+        self.core.registry_rows[3]["options"] = {
+            "switch_as_x": {"entity_id": "u-boiler"}}
+        self.refused("stop_showing_switch_as", "switch.boiler", entity_id="light.boiler")
+
+    def test_the_other_services_are_not_asked_about_pairs(self):
+        """set_device_class names its entity and acts on that entity."""
+        m.PROTECTED_ENTITIES = ["lock.*"]
+        self.tool("set_device_class", entity_id="switch.front_door_relay",
+                  device_class="outlet")
+        self.assertNotIn(("list", None), self.core.calls)
+        self.assertEqual(len(self.core.services()), 1)
 
 
 class TestARefusalIsTheSentence(Base):

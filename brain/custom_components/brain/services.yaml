@@ -1653,6 +1653,13 @@ set_device_class:
       selector:
         text: {}
       example: door
+    confirm_safety:
+      name: Confirm safety change
+      description: Needed to take a smoke, gas, carbon monoxide or leak sensor out of that class, because
+        brAIn's safety lane stops treating it as one. Turn it on only once the homeowner has said yes.
+      selector:
+        boolean: {}
+      default: false
 show_switch_as:
   name: Show switch as
   description: Show a switch — a smart plug running a fan or a lamp — as a light, fan, lock, cover,
@@ -1666,7 +1673,14 @@ show_switch_as:
       description: The switch to show as something else (or the entity it is already shown as).
       selector:
         entity:
-          domain: switch
+          domain:
+          - switch
+          - cover
+          - fan
+          - light
+          - lock
+          - siren
+          - valve
       required: true
     target_domain:
       name: Show as
