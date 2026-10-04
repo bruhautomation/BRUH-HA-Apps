@@ -1237,6 +1237,40 @@ class TestCuratedWorlds(PanelTestBase):
         self.assertEqual(resp.status, 404)
 
 
+
+class TestAddonBatchInstall(PanelTestBase):
+    """Several add-ons in one press: one answer per pick, one restart line."""
+
+    async def test_a_batch_answers_each_and_says_restart_once(self):
+        calls = []
+
+        async def install_many(_client, _ctx, items):
+            calls.append(items)
+            return [
+                {"id": "aaa1", "kind": "plugin", "ok": True,
+                 "installed": [{"id": "aaa1", "title": "Chairs", "file": "c.jar"}]},
+                {"id": "bbb2", "kind": "plugin", "ok": True,
+                 "installed": [{"id": "bbb2", "title": "Trees", "file": "t.jar"}]},
+                {"id": "ccc3", "kind": "datapack", "ok": False, "error": "no build"},
+            ]
+
+        self.panel.addons.install_many = install_many
+        resp = await self.client.request("POST", "/api/addons/install", json={
+            "items": [{"id": "aaa1", "kind": "plugin"}, {"id": "bbb2", "kind": "plugin"},
+                      {"id": "ccc3", "kind": "datapack"}]})
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(data["ok"])
+        self.assertTrue(data["restart_needed"])
+        self.assertEqual([r["ok"] for r in data["results"]], [True, True, False])
+        self.assertEqual(data["notes"].count(self.panel.RESTART_NOTE), 1)
+
+    async def test_an_empty_batch_is_a_refusal(self):
+        resp = await self.client.request("POST", "/api/addons/install", json={"items": []})
+        self.assertEqual(resp.status, 409)
+        self.assertIn("Nothing", (await resp.json())["error"])
+
 if __name__ == "__main__":
     unittest.main()
 

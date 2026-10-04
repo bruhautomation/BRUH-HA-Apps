@@ -55,15 +55,24 @@ class FakeModrinth:
             "project_id": "chairs01", "slug": "chairs", "title": "Chairs",
             "description": "Sit on stairs", "downloads": 5}]})
 
+    # The shapes Modrinth's /project really answers (read off the live API):
+    # a plugin is `project_type: "mod"` with paper/spigot loaders, and a
+    # project shipping as a mod AND a data pack (VeinMiner) is also "mod",
+    # with `datapack` among its loaders. Only `loaders` says what it is.
     PROJECTS = {
         "chairs01": {"id": "chairs01", "slug": "chairs", "title": "Chairs",
-                     "project_type": "plugin"},
+                     "project_type": "mod", "loaders": ["paper", "spigot"]},
         "libby001": {"id": "libby001", "slug": "libby", "title": "Libby",
-                     "project_type": "plugin"},
+                     "project_type": "mod", "loaders": ["spigot"]},
         "terra001": {"id": "terra001", "slug": "terralith", "title": "Terralith",
-                     "project_type": "datapack"},
+                     "project_type": "datapack", "loaders": ["datapack"]},
+        "OhduvhIc": {"id": "OhduvhIc", "slug": "veinminer", "title": "VeinMiner",
+                     "project_type": "mod", "client_side": "optional",
+                     "loaders": ["bukkit", "datapack", "fabric", "folia", "forge",
+                                 "neoforge", "paper", "purpur", "quilt", "spigot"]},
         "clientmod": {"id": "clientmod", "slug": "sodium", "title": "Sodium",
-                      "project_type": "mod", "client_side": "required"},
+                      "project_type": "mod", "client_side": "required",
+                      "loaders": ["fabric"]},
     }
 
     async def project(self, request):
@@ -104,12 +113,23 @@ class FakeModrinth:
                 {"id": "t1", "version_number": "2.5", "version_type": "release",
                  "date_published": "2026-01-01", "loaders": ["datapack"],
                  "game_versions": ["1.21.4"], "files": [self.f("Terralith.zip", PACK)]}])
+        if pid == "OhduvhIc":
+            return web.json_response([
+                {"id": "vm-dp", "version_number": "1.3.3", "version_type": "release",
+                 "date_published": "2026-01-01", "loaders": ["datapack"],
+                 "game_versions": ["1.21.4"], "files": [self.f("veinminer-1.3.3.zip", PACK)]},
+                {"id": "vm-paper", "version_number": "2.1", "version_type": "release",
+                 "date_published": "2026-02-01", "loaders": ["paper"],
+                 "game_versions": ["1.21.4"], "files": [self.f("veinminer-2.1.jar", JAR)]},
+            ])
         return web.json_response([])
 
     async def file(self, request):
         name = request.match_info["name"]
         return web.Response(body={"chairs-1.9.jar": JAR, "libby.jar": LIB,
-                                  "Terralith.zip": PACK}.get(name, b""))
+                                  "Terralith.zip": PACK,
+                                  "veinminer-1.3.3.zip": PACK,
+                                  "veinminer-2.1.jar": JAR}.get(name, b""))
 
 
 class Base(unittest.IsolatedAsyncioTestCase):
@@ -235,6 +255,52 @@ class TestInstall(Base):
     async def test_a_kind_that_does_not_match_the_project_is_refused(self):
         with self.assertRaises(addons.AddonError):
             await addons.install(self.client, self.ctx, "terra001", "plugin")
+
+    async def test_a_project_that_is_also_a_mod_installs_as_a_datapack(self):
+        # VeinMiner: Modrinth answers project_type "mod"; it is a data pack
+        # too, and the browser offered it under Data packs.
+        rows = await addons.install(self.client, self.ctx, "OhduvhIc", "datapack")
+        self.assertEqual(rows[-1]["file"], "veinminer-1.3.3.zip")
+        self.assertEqual(
+            (self.ctx.server_dir / "world" / "datapacks" / "veinminer-1.3.3.zip").read_bytes(),
+            PACK)
+
+    async def test_the_same_project_installs_as_a_plugin(self):
+        rows = await addons.install(self.client, self.ctx, "OhduvhIc", "plugin")
+        self.assertEqual(rows[-1]["file"], "veinminer-2.1.jar")
+
+    def test_published_as_reads_loaders_not_the_type_field(self):
+        p = FakeModrinth.PROJECTS
+        self.assertTrue(addons.published_as(p["OhduvhIc"], "datapack"))
+        self.assertTrue(addons.published_as(p["chairs01"], "plugin"))
+        self.assertFalse(addons.published_as(p["terra001"], "plugin"))
+        self.assertFalse(addons.published_as(p["chairs01"], "datapack"))
+        self.assertTrue(addons.published_as(
+            {"project_type": "resourcepack", "loaders": ["minecraft"]}, "resourcepack"))
+
+    async def test_a_batch_installs_each_and_reports_each(self):
+        results = await addons.install_many(self.client, self.ctx, [
+            {"id": "terra001", "kind": "datapack"},
+            {"id": "OhduvhIc", "kind": "datapack"},
+            {"id": "terra001", "kind": "plugin"},       # refused, the rest still land
+            {"id": "terra001", "kind": "datapack"},     # a duplicate is asked once
+        ])
+        self.assertEqual([(r["id"], r["ok"]) for r in results],
+                         [("terra001", True), ("OhduvhIc", True), ("terra001", False)])
+        self.assertIn("plugin", results[2]["error"])
+        dp = self.ctx.server_dir / "world" / "datapacks"
+        self.assertEqual(sorted(p.name for p in dp.iterdir()),
+                         ["Terralith.zip", "veinminer-1.3.3.zip"])
+        self.assertEqual(sorted(r["title"] for r in addons.installed(self.ctx)),
+                         ["Terralith", "VeinMiner"])
+
+    async def test_an_empty_or_huge_batch_is_refused(self):
+        with self.assertRaises(addons.AddonError):
+            await addons.install_many(self.client, self.ctx, [])
+        with self.assertRaises(addons.AddonError):
+            await addons.install_many(self.client, self.ctx,
+                                      [{"id": f"p{i:04d}", "kind": "datapack"}
+                                       for i in range(addons.MAX_BATCH + 1)])
 
     async def test_a_mod_every_client_must_have_is_refused(self):
         ctx = addons.Context("fabric", "1.21.4", self.ctx.server_dir, "world", self.ctx.packs_dir)

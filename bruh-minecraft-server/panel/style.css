@@ -836,6 +836,22 @@ footer {
 .addon-note:empty { display: none; }
 .addon-note.bad, .bad { color: var(--danger); }
 .addon-more { text-align: center; margin-bottom: 16px; }
+.addon-card.selected { border-color: var(--accent); }
+.addon-actions .btn.is-selected { border-color: var(--accent); color: var(--accent); }
+/* The batch tray: sticky so "Add all" stays in reach while you keep
+   searching and selecting further down the list. */
+.addon-tray {
+  position: sticky; bottom: 12px; z-index: 5;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  margin: 0 0 16px; padding: 10px 12px;
+  background: var(--bg-raise); border: 1px solid var(--accent); border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+.addon-tray[hidden] { display: none; }
+.addon-tray-text { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.addon-tray-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.addon-tray-actions .btn { min-height: 40px; }
+.addon-tray .addon-note { flex: 1 1 100%; margin: 0; }
 @media (pointer: coarse) {
-  .addon-kinds .chip, .addon-actions .btn { min-height: 44px; }
+  .addon-kinds .chip, .addon-actions .btn, .addon-tray-actions .btn { min-height: 44px; }
 }
