@@ -589,9 +589,11 @@ Resident can correct its own first look.**
   So with "dangerously skip permissions" off, the terminal still ran shell
   commands, edited files and called Home Assistant services without asking, and
   the chat's approval card never appeared. That file now pre-approves only
-  reading Home Assistant. Background runs that cannot ask keep their full list
-  in a file only they are given. The option's description now says what off and
-  on each mean.
+  reading Home Assistant, plus two things that change nothing in the house:
+  offering buttons on the chat's own screen, and `brain own`, which hands a file
+  back to Claude. Background runs that cannot ask keep their full list in a file
+  only they are given. The option's description now says what off and on each
+  mean.
 - **Protected entities are protected in the terminal and the chat too.** With
   `protected_entities` set, brAIn refuses any Home Assistant service call typed
   as a shell command (`ha service call`, a curl to the services API, a WebSocket
@@ -910,8 +912,10 @@ Resident can correct its own first look.**
   it carries a contract: the service calls and the files the plan listed, and
   nothing else. brAIn's Home Assistant chokepoint refuses any other call during
   that run, and the action gate refuses a file edit outside the contract and any
-  shell command that does more than read. A step that cannot name what it will
-  touch is not offered as a fix.
+  shell command that does more than read. The one exception is `brain own` on
+  files the approved change edits, so a fix can make one of those files
+  writable for itself; it may not name any other file or a whole folder. A step
+  that cannot name what it will touch is not offered as a fix.
 - **Every action records what it changed from.** Each service call brAIn makes —
   from the chat, the terminal, voice, an automation task or a fix — now records
   the state of each entity just before the call, beside which of those asked and
@@ -1113,17 +1117,28 @@ Resident can correct its own first look.**
   - at startup, your YAML and the usual config folders (packages, blueprints,
     esphome, themes, custom_templates, python_scripts and any
     `!include_dir_*` folder);
-  - before Claude edits a file it cannot write;
-  - every ten minutes, for the top-level YAML the editors rewrite.
+  - before Claude edits a file it cannot write, or runs a shell command that
+    names one;
+  - about once a minute, for the top-level YAML the editors rewrite and for
+    each add-on's own folder under `/addon_configs`, so an add-on installed
+    after startup is covered.
 
-  Claude is told, in the chat, the terminal and a Fix it run, to do this
-  itself and never to ask you for sudo or chown.
+  It covers `/addon_configs`, `/share`, `/media` and `/addons` as well as
+  `/config`, while the add-on's option for each is on. A file somebody made
+  read-only is made writable for Claude too, not just handed over. The startup
+  log says how many files actually changed hands, and warns when some could
+  not. Claude is told, in the chat, the terminal and a Fix it run, to do this
+  itself and never to ask you for sudo or chown, and a Fix it run that meets a
+  file it cannot write hands it back and carries on.
 - **New: `brain own <path…>`** (and `brain own -r <folder…>`). The same
-  hand-over on demand, for a shell command the edit hook does not see. It never
-  touches `.storage`, `.cloud`, brAIn's own credentials, `secrets.yaml`, the
-  recorder database, a symbolic link, or anything outside `/config`.
-- **Files brAIn's panel creates under `/config` belong to the folder's
-  owner**, so Claude can edit them in place. Files under `/data` stay root's.
+  hand-over on demand, for anything the hooks do not see, and it raises no
+  approval card. It never touches `.storage`, `.cloud`, brAIn's own
+  credentials, `secrets.yaml`, the recorder database, a file with other hard
+  links, or anything outside those folders. A symbolic link is answered for the
+  file it points at, which has to pass the same checks.
+- **Files brAIn's panel creates under `/config`** (or the other folders above)
+  **belong to the folder's owner**, so Claude can edit them in place. Files
+  under `/data` stay root's.
 - **brAIn can change what kind of device something shows as.** It is the same
   *Show as* setting as in an entity's own settings. A contact sensor can show
   as a door, a window, a garage door, a motion sensor or a leak sensor; a cover
@@ -1151,13 +1166,28 @@ Resident can correct its own first look.**
   can. A sensor's or a number's *device class* is never changed, because it
   decides the unit and the long-term statistics; Home Assistant's own settings
   do not offer it either.
+- **A smoke, gas, carbon monoxide or leak sensor keeps its type unless you say
+  yes.** brAIn's safety alerts go by that type, so showing a smoke detector as
+  a door would quietly stop its alerts. brAIn is told to ask you first, and the
+  service refuses that change without `confirm_safety: true`. Making a sensor
+  one of these types goes through, and brAIn says that its alerts now go
+  through quiet hours.
+- **A template binary sensor made in Home Assistant's UI keeps the type set in
+  its helper.** Its type is set in the helper's own options, so brAIn says to
+  change it there rather than adding an override Home Assistant would hide. An
+  override already on one can still be cleared.
 - **What stays guarded.** These are admin-only services
   (`brain.set_device_class`, `brain.show_switch_as`,
   `brain.stop_showing_switch_as`, `brain.set_sensor_display`). From the chat
   and the terminal they pass the same checks as any other change: protected
-  entities are refused, and the action gate stands in front of them. A voice
-  agent at the *Voice assistant* level cannot use them, and neither can
-  scheduled cards or any other unattended run.
+  entities are refused, and the action gate stands in front of them. A switch
+  shown as something else counts as protected if either the switch or the
+  entity standing in for it is on your protected list; while you have one,
+  brAIn refuses when it cannot read which is which. A voice agent at the
+  *Voice assistant* level cannot use them, and neither can scheduled cards or
+  any other unattended run.
+  The entity picker in *Show switch as* now also offers lights, fans, covers,
+  locks, sirens and valves, for a switch that is already shown as one.
 - **The registry listing says what a device shows as.** When brAIn lists
   entities (narrowed to 100 or fewer), each row carries the type somebody chose
   and the type the integration reports, and an entity that stands in for a

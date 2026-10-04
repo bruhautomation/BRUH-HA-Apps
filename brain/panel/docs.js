@@ -85,6 +85,16 @@ as a door").
   switch as an outlet. The type is checked against the list your Home Assistant
   offers, and a wrong one is refused with that list. Leave the type empty to go back
   to what the integration reports.
+- A smoke, gas, carbon monoxide or leak sensor keeps its type unless you say yes.
+  brAIn's safety alerts (filed as critical and sent through quiet hours) go by that
+  type, so brAIn asks before showing one as anything else, and
+  \`brain.set_device_class\` refuses the change without \`confirm_safety: true\`.
+  Making a sensor one of those types goes through, and the answer says its alerts
+  will now go through quiet hours.
+- A template binary sensor you made in Home Assistant's UI keeps the type set in
+  its helper (Settings → Devices & services → Helpers → the helper → Template
+  options). brAIn will not add an override there, because Home Assistant hides that
+  setting for those sensors; it can still clear one that is already there.
 - A smart plug running a fan or a lamp can show as a **fan** or a **light** (or a
   lock, cover, siren or valve). brAIn uses Home Assistant's own *Change device type
   of a switch* helper: the new entity takes the plug's place, and the plug's switch
@@ -103,7 +113,10 @@ The same four are admin-only services you can call from an automation:
 \`brain.set_sensor_display\`. From the chat and the terminal they go through the same
 checks as any other change — protected entities and
 the action gate — and a voice agent at the **Voice assistant**
-level cannot use them.
+level cannot use them. A switch shown as something else is protected if either half
+is: showing it as another type, or going back, is refused when the switch or the
+entity standing in for it is on your protected list, and, while you have a list,
+when brAIn cannot read which entity stands in for which.
 
 **Integrations.** Reload one without restarting Home Assistant. Enable, disable, or
 remove one entirely.
@@ -3547,10 +3560,11 @@ rather than over the sections that "could" hold a token.
 ## If Claude says a file is read-only
 
 This is meant to be fixed before you see it: brAIn hands the file back to Claude
-before an edit, and re-owns the YAML Home Assistant's editors save every ten minutes.
-If it ever happens — usually a shell command writing to a file Home Assistant has
-just saved — run \`brain own /config/<file>\` in the terminal, or ask Claude to. It
-never needs \`sudo\` or \`chown\`, and Claude is told never to ask you for either. If
+before an edit or a shell command that names it, and re-owns the YAML Home
+Assistant's editors save about once a minute. If it ever happens — usually a
+command writing to a path held in a variable, which brAIn cannot see — run
+\`brain own /config/<file>\` in the terminal, or ask Claude to. It never needs
+\`sudo\` or \`chown\`, and Claude is told never to ask you for either. If
 \`brain own\` says the panel is not answering, the add-on is not running; \`brain
 doctor\` checks that. See Files Claude cannot write.
 `,
@@ -3727,24 +3741,38 @@ Run \`brain help\` or \`ha help\` for the full list.
 
 Claude Code runs as its own non-root user, and Home Assistant saves
 \`automations.yaml\`, \`scripts.yaml\` and \`scenes.yaml\` as root, which can leave them
-read-only for Claude. brAIn hands them back by itself:
+read-only for Claude. Other add-ons do the same with their own config. brAIn hands
+those files back by itself:
 
 - when the add-on starts, for your YAML and the usual config folders (\`packages\`,
   \`blueprints\`, \`esphome\`, \`themes\`, \`custom_templates\`, \`python_scripts\` and any
-  folder \`configuration.yaml\` includes with \`!include_dir_*\`);
-- right before Claude edits a file it cannot write;
-- and every ten minutes, for the top-level YAML files the editors save.
+  folder \`configuration.yaml\` includes with \`!include_dir_*\`); the startup log
+  says how many changed hands, and warns if some could not;
+- right before Claude edits a file it cannot write, or runs a shell command that
+  names one;
+- and about once a minute, for the top-level YAML files the editors save and for
+  each add-on's own folder under \`/addon_configs\`, so an add-on you install later
+  is covered.
 
-\`brain own <path…>\` does the same on demand, for a file a shell command wants to
-write (the edit hook only sees Claude's own edits); \`brain own -r <folder…>\` does a
-whole folder. You should never need to run \`sudo\` or \`chown\`, and Claude is told never
-to ask you to.
+This covers \`/config\`, and also \`/addon_configs\`, \`/share\`, \`/media\` and \`/addons\`
+while their \`access_*\` options are on. Handing a file back also makes it writable
+for Claude, so a file somebody made read-only (a copy from Samba, a restored
+backup) works too.
+
+\`brain own <path…>\` does the same on demand, for a file the hooks cannot see, such
+as a path held in a variable; \`brain own -r <folder…>\` does a whole folder. It
+never shows an approval card. You should never need to run \`sudo\` or \`chown\`, and
+Claude is told never to ask you to. A **Fix it** run that meets a file it cannot
+write hands it back and carries on; that is the one command beyond reading it may
+run, and only for the files its plan lists.
 
 What stays guarded, whatever you ask: brAIn never hands over anything outside
-\`/config\`, a symbolic link, \`.storage\`, \`.cloud\`, its own saved credentials,
-\`secrets.yaml\` or the recorder database. Files brAIn's panel creates under \`/config\`
-take the owner of the folder they land in, so Claude can edit them too; anything
-the panel writes outside \`/config\` is left as it was.
+those folders, a file with other hard links, \`.storage\`, \`.cloud\`, its own saved
+credentials, \`secrets.yaml\` or the recorder database. A symbolic link is answered
+for the file it points at, which has to pass the same checks. Files brAIn's panel
+creates in those folders take the owner of the folder they land in, so Claude can
+edit them too; anything the panel writes anywhere else, such as \`/data\`, is left
+as it was.
 `,
   },
   {
@@ -4107,7 +4135,7 @@ That is the point of it, and it is worth knowing where the edges are.
   (\`dangerously_skip_permissions\`) off, which is the default and makes the
   terminal and the chat ask first. A **Fix it** run is held tighter than either:
   it may edit only the files its plan listed and run only shell commands that
-  read (see The action gate).
+  read, plus \`brain own\` on those files (see The action gate).
 - **\`dangerously_skip_permissions\` ("Let brAIn act without asking") does what
   it says.** Off by default, and off means the terminal and the chat **ask**
   before they run a shell command, edit a file or call a Home Assistant
@@ -4120,7 +4148,8 @@ That is the point of it, and it is worth knowing where the edges are.
   no-op: the project's own settings file pre-approved Bash, edits and every
   Home Assistant tool, and the terminal and the chat read that file too. Now
   \`/config/.claude/settings.local.json\` pre-approves only **reading** Home
-  Assistant, and the runs that have nobody to ask — the automation listener,
+  Assistant, plus two things that change nothing in the house (offering buttons
+  on the chat's own screen, and \`brain own\`), and the runs that have nobody to ask — the automation listener,
   study, the consolidator, a full-access voice agent, \`brain ask\` — get their
   own list from \`/config/.brain/headless_settings.json\`. If you added your
   own allows to the project file, they now apply to the terminal and the

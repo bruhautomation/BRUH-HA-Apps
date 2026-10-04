@@ -43,12 +43,18 @@ answered, redacted as it is written, and keeps it in `/data`; nothing reaches
 `/share` until a person presses Export, and nothing leaves the machine at all.
 Claude Code runs as the unprivileged `claude` user while brAIn's panel runs as
 root, and the panel has one route that changes file ownership: `POST /api/own`
-hands a file under `/config` to the `claude` user, so Claude can edit what Home
-Assistant saved as root. It answers only loopback, read off the socket rather
-than any header, so only processes inside the add-on's own container (the edit
-hook and `brain own`) can reach it; and it checks the file it actually opened, refusing symbolic links,
-special files, hard-linked files, anything outside `/config`, `.storage`,
-`.cloud`, brAIn's credentials, `secrets.yaml` and the recorder database.
+hands a file under `/config` (or `/addon_configs`, `/share`, `/media` and
+`/addons`, while the options that give brAIn those folders are on) to the
+`claude` user and gives that owner write permission, so Claude can edit what Home Assistant or another add-on saved
+as root. It answers only loopback, read off the socket rather than any header,
+so only processes inside the add-on's own container (the edit and shell hooks
+and `brain own`) can reach it. It checks the file it actually opened, refusing
+special files, hard-linked files, anything outside those folders, `.storage`,
+`.cloud`, brAIn's credentials, `secrets.yaml` and the recorder database; a
+symbolic link is resolved once and its target has to pass the same checks. The
+panel also re-owns, about once a minute and without the route, the top-level
+YAML in `/config` (never a link, `secrets.yaml` or a hard-linked file) and each
+add-on's own folder under `/addon_configs`.
 
 **BRUH Minecraft** runs a JVM that loads third-party plugin jars, and it
 uses `host_network: true` so Bedrock clients can find the server on the
