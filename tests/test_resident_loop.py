@@ -331,8 +331,8 @@ class TestWhenTheLookHappens(LoopCase):
 class TestAGateHoldsAndLosesNothing(LoopCase):
     """Three gates, one rule: no run is spawned and no signal is lost.
 
-    This is the opposite of what `_triage_findings` does with the same three
-    — that one surfaced the whole queue — and deliberately: triage was about
+    This is the opposite of what the retired triage drain did with the same
+    three — that one surfaced the whole queue — and deliberately: triage was about
     to hide a row, this is about to look at one, and `triage.STALE_S` is
     what makes the wait bounded.
     """
@@ -807,9 +807,13 @@ class TestTheCasesRoute(RouteCase):
         kinds = sorted({c["kind"] for c in payload["cases"]})
         # Never the chore: accepted work is the To-do tab's, with its own
         # count, and on this feed it read as a finding with no way onto
-        # the list.
-        self.assertEqual(kinds, ["opportunity", "problem", "question"])
-        self.assertEqual(payload["open"], 3)
+        # the list. Never the proposal either, for the same reason one
+        # store over: the Proposals tab is the one surface it is offered
+        # on, and its badge is the one that counts it.
+        self.assertEqual(kinds, ["problem", "question"])
+        self.assertEqual(payload["open"], 2)
+        self.assertFalse(any(c["id"].startswith("p:")
+                             for c in payload["cases"]))
         # …and the three things the feed's foot line is built from.
         for key in ("ledger", "resident", "eventbus", "watching"):
             self.assertIn(key, payload)

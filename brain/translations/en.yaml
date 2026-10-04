@@ -14,9 +14,9 @@ configuration:
   enable_insights:
     name: Insights tab
     description: >-
-      Show the Insights and Proposals tabs, and let cards regenerate on
-      their schedule. Turning this off stops every scheduled Claude run.
-      Findings stays either way: the house checks cost nothing to run and
+      Show the Insights tab, and let cards regenerate on their schedule.
+      Turning this off stops every scheduled Claude run. Findings and
+      Proposals stay either way: the house checks cost nothing to run and
       still file there.
   auto_launch_claude:
     name: Start Claude in the terminal

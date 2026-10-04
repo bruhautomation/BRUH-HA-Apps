@@ -269,6 +269,22 @@ def _energy_lines(power: dict) -> list[str]:
     return lines
 
 
+def week_lines(state: dict) -> list[str]:
+    """The week in a few lines, for a run that is choosing rather than writing.
+
+    `synthesis` reads the same numbers the message is written from, in the
+    same words, so the two runs cannot disagree about what the week was.
+    """
+    out = list(_energy_lines(state.get("energy") or {}))
+    found = state.get("findings") or {}
+    out.append(f"{found.get('settled', 0)} problem(s) answered this week, "
+               f"{found.get('open_now', 0)} open in total")
+    lore = state.get("learned") or {}
+    if lore.get("available") and lore.get("total"):
+        out.append(f"{lore['total']} new thing(s) filed into memory")
+    return out
+
+
 def frame(state: dict) -> str:
     """The prompt. The week's numbers, and the one thing already chosen."""
     lines = ["Write this week's message for the home.", "",
@@ -313,6 +329,12 @@ def frame(state: dict) -> str:
                   + "and no other:",
                   f"- [{pick.get('severity', 'warning')}] "
                   + f"{pick.get('text', '')}"]
+        # Why it is this one, when the pick was made across the week rather
+        # than by rank (`synthesis`): the reason is what lets the message say
+        # something the severity alone could not.
+        if str(state.get("one_thing_why") or "").strip():
+            lines.append("  Chosen because: "
+                         + str(state["one_thing_why"]).strip()[:240])
         if pick.get("detail"):
             lines.append(f"  {str(pick['detail'])[:300]}")
         if pick.get("fix"):
@@ -377,5 +399,5 @@ __all__ = [
     "DAYS", "DEFAULT_DAY", "MAX_LEARNED", "MAX_TURNS", "MAX_WORDS",
     "MEMORY_LOG", "MIN_CHARS", "MIN_GAP_S", "SYSTEM", "TIMEOUT_S", "WEEK_S",
     "day_index", "due", "frame", "gather", "learned", "one_thing", "tidy",
-    "week_findings", "worth_reporting",
+    "week_findings", "week_lines", "worth_reporting",
 ]

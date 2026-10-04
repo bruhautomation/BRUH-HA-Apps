@@ -33,6 +33,11 @@ the panel's ⚙ dialog edits at runtime — no add-on restart needed:
                     one on the Knowledge tab. None means "let brAIn rank
                     them" (`thermal.choose_outdoor`), which is the
                     default; a choice is only ever an entity id.
+  camera_confirm  — the cameras brAIn may look at on its own (voice, a
+                    task, the Resident confirming a trip): empty by
+                    default, a list of camera entity ids, validated by
+                    `camera_policy.clean_cameras`. A person in the chat or
+                    the terminal is not asked; they are the one looking.
   chat_model      — the chat terminal's own model, chosen from the chat
                     itself. None means "follow the global model option":
                     the chat is where a different model is most often
@@ -199,6 +204,9 @@ DEFAULTS = {
     # call on one is refused by the MCP chokepoint and files a security
     # case. Beside the one brAIn creates on a press, not instead of it.
     "honeytoken_entities": [],
+    # See the module docstring and `camera_policy`. Empty: no camera is
+    # looked at unattended until somebody ticks it.
+    "camera_confirm": [],
 }
 
 # An entity id, and nothing else: this one is read by the nightly pass
@@ -345,6 +353,14 @@ def load() -> dict:
         # A list that cannot be read is no tripwire rather than a crash on
         # every settings read; the MCP chokepoint's other floors still hold.
         pass
+    try:
+        import camera_policy  # noqa: PLC0415 — the one validator
+        out["camera_confirm"] = camera_policy.clean_cameras(
+            data.get("camera_confirm"))
+    except (ValueError, ImportError):
+        # A list that cannot be read allows no camera: the wrong direction
+        # here takes a picture.
+        out["camera_confirm"] = []
     return out
 
 
@@ -502,6 +518,9 @@ def save(fields: dict) -> dict:
                           or len(value) > MAX_ENTITY_CHARS):
                 raise ValueError("thermal_outdoor must be an entity id")
             clean[key] = value or None
+        elif key == "camera_confirm":
+            import camera_policy  # noqa: PLC0415 — the one validator
+            clean[key] = camera_policy.clean_cameras(value)
         elif key == "chat_model":
             # A panel setting, not a Configuration-tab option: it never
             # reaches the add-on's options, so an empty chat picker cannot

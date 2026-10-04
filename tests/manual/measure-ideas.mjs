@@ -23,6 +23,9 @@
 //   * a pass in flight says so ON THE PAGE and not only by grey-ing the
 //     button, because a run is minutes long and a disabled button is what
 //     a failed one looks like too.
+//   * "Not for this house" opens a box to say why, in place of the buttons,
+//     at 16px on touch, and what is typed is what the dismissal carries —
+//     the reason is what rules out a kind of card rather than one title.
 //   * nothing scrolls sideways, and the ids the handlers bind to are all
 //     still there.
 //
@@ -80,8 +83,11 @@ window.__ideas = ${JSON.stringify(body)};
 window.EventSource = function () {
   return { close() {}, addEventListener() {}, onmessage: null, onerror: null };
 };
-window.fetch = async (url) => {
+window.__calls = [];
+window.fetch = async (url, opts) => {
   const p = String(url);
+  window.__calls.push({ url: p, method: (opts || {}).method || 'GET',
+                        body: (opts || {}).body || '' });
   const answer = (b) => new Response(JSON.stringify(b), {
     status: 200, headers: { 'Content-Type': 'application/json' } });
   if (p.includes('api/ideas')) return answer(window.__ideas);
@@ -301,6 +307,46 @@ for (const [a] of SILENCES) {
     note('running', `an empty-state sentence shows mid-pass: "${view.empty}"`);
   }
   console.log(`  ${'running'.padEnd(16)} "${view.note.slice(0, 56)}…"`);
+  await context.close();
+}
+
+// The reason a no. "Not for this house" opens a box in place of the
+// buttons, the box is a 16px control on touch (or iOS zooms the ingress
+// frame in and never back out), it is optional, and what is typed is what
+// the route receives — the half that rules out a FAMILY of cards rather
+// than one title.
+for (const { width, touch } of CASES) {
+  const { context, page } = await open(width, touch, payload());
+  await page.waitForSelector('#ideasList .finding');
+  const card = page.locator('#ideasList .finding').first();
+  await card.locator('.findactions button', { hasText: 'Not for this house' }).click();
+  const area = card.locator('.ideanote textarea');
+  if (!(await area.count())) {
+    note(`${width}px`, 'refusing an idea opens no box to say why');
+    await context.close();
+    continue;
+  }
+  const size = await area.evaluate((n) => parseFloat(getComputedStyle(n).fontSize));
+  if (touch && size < 16) {
+    note(`${width}px`, `the reason box is ${size}px on touch (iOS zooms under 16)`);
+  }
+  if (await card.locator('.findactions').isVisible()) {
+    note(`${width}px`, 'the buttons stay on screen beside the reason box');
+  }
+  await area.fill('we do not care about standby power');
+  await card.locator('.ideanote button', { hasText: 'Not for this house' }).click();
+  await page.waitForFunction(() => window.__calls.some(
+    (c) => c.method === 'POST' && /dismiss/.test(c.url)), null,
+    { timeout: 5000 }).catch(() => {});
+  const posted = await page.evaluate(() => window.__calls.find(
+    (c) => c.method === 'POST' && /dismiss/.test(c.url)));
+  if (!posted) {
+    note(`${width}px`, 'the reason box sent nothing');
+  } else if (!/standby power/.test(posted.body)) {
+    note(`${width}px`, `the dismissal carried "${posted.body}", not the reason`);
+  }
+  console.log(`  ${String(width).padStart(4)}px reason box ${size}px, `
+    + `sent ${posted ? posted.body : 'nothing'}`);
   await context.close();
 }
 

@@ -154,9 +154,11 @@ import checks
 import cli_commands
 import conditions
 import conversations
+import camera_policy
 import corrections
 import curiosity
 import decision_trail
+import deep_review
 import deliveries
 import dispatch
 import doctor
@@ -207,6 +209,7 @@ import settings_store
 import shadow
 import shadow_findings
 import signals
+import synthesis
 import terminal_proxy
 import thermal
 import todo_store
@@ -683,16 +686,14 @@ def _rebind_resident_queue() -> None:
 # summary of the last one — which is what /api/checks, `brain check list`
 # and the diagnostics bundle read.
 CHECKS_STATE: dict = {"running": False, "last": None}
-# Whether a triage drain is in flight. A dict for `CHECKS_STATE`'s reason
-# rather than a module-level flag rebound through `global`: the two are
-# the same guard three lines apart in `run_checks`, and one of them
-# spelled differently is the drift a second idiom always produces.
-# `day`/`runs` are the per-day runaway guard (`triage.MAX_PER_DAY`):
+# The first look's per-day runaway guard. A dict for `CHECKS_STATE`'s
+# reason rather than module-level counters rebound through `global`.
+# `day`/`runs` count looks against `triage.MAX_PER_DAY`:
 # counted per local day and reset with it. In memory on purpose — it is a
 # guard against a loop and not a budget, and a restart that forgets it
 # costs at most one more day's worth of runs, where a guard that survived
 # a restart would need a store nothing else reads.
-TRIAGE_STATE: dict = {"running": False, "day": "", "runs": 0}
+TRIAGE_STATE: dict = {"day": "", "runs": 0}
 
 
 def _triage_runs_today(now: float) -> int:
@@ -847,6 +848,13 @@ SAFETY_SUBJECT_TTL_S = 6 * 3600
 # that reports leaks is not a thing this panel offers.
 SAFETY_SOURCE = "safety"
 MAX_SAFETY_SUBJECTS = 200
+# Doors, windows and locks the bus has seen change, and when — the index
+# `camera_policy.trip_kind` reads to decide whether an investigation may
+# use a camera. Filled by the same raw hook, for the same reason: the
+# device class lives on the event's attributes and a signal carries none.
+CLOSURE_SUBJECTS: dict[str, float] = {}
+CLOSURE_SUBJECT_TTL_S = 86400
+MAX_CLOSURE_SUBJECTS = 200
 
 
 CHECKS_FIRST_DELAY_S = 120
@@ -1914,7 +1922,7 @@ WEEKLY_SENT_KEY = "weekly_last_sent"
 WEEKLY_TEXT_KEY = "weekly_last_text"
 WEEKLY_STATE: dict = {"last_sent": schedule_store.get(WEEKLY_SENT_KEY),
                       "last_text": schedule_store.get_text(WEEKLY_TEXT_KEY),
-                      "last_error": "", "last_state": {}}
+                      "last_error": "", "last_state": {}, "last_pick": {}}
 
 
 def _weekly_enabled() -> tuple[bool, int]:
@@ -1968,7 +1976,58 @@ async def _weekly_state(now: float) -> dict:
     return weekly.gather(rows, settled, power, since, now=now)
 
 
-async def _send_weekly(now: float) -> str:
+async def _weekly_pick(state: dict, now: float, *,
+                       pressed: bool = False) -> dict:
+    """The one thing the report ends on: the synthesis job's, else the rank's.
+
+    `synthesis` holds the rules; this is the plumbing. Whatever happens the
+    severity pick is computed first and journaled beside the choice as the
+    baseline, so "does the synthesis earn its run" is a number in the
+    journal rather than an impression. A scheduled report answers to the
+    three gates every scheduled run answers to (`_resident_gate`); a send
+    pressed by hand needs only a credential, the ideas press's rule —
+    "automatic runs pause; asking by hand always runs". Every
+    way of not running — one candidate, a gate, a failed run, a reply that
+    named nothing it was shown — is the old pick with the reason recorded.
+    """
+    rows = await asyncio.to_thread(findings_store.list_all, "live")
+    cands = synthesis.candidates(rows, now)
+    baseline = cands[0] if cands else state.get("one_thing")
+    chosen = None
+    reason = ""
+    if not synthesis.worth_asking(cands):
+        reason = "fewer than two open problems to choose between"
+    else:
+        if pressed:
+            reason = "" if engine.get_auth() else "there is no Claude credential"
+        else:
+            reason = _resident_gate(settings_store.load())
+        if not reason:
+            result = await _claude(
+                engine.run_claude,
+                synthesis.frame(cands, weekly.week_lines(state), now,
+                                str(state.get("memory") or "")),
+                synthesis.SYSTEM, eff_model(), synthesis.TIMEOUT_S,
+                synthesis.MAX_TURNS, "weekly", job="synthesis",
+                schema=synthesis.SCHEMA,
+                priority=(run_queue.PRESS if pressed
+                          else run_queue.SCHEDULED))
+            if not result.get("ok"):
+                reason = "the synthesis run failed: " + str(
+                    result.get("error") or "no reply")[:80]
+            else:
+                chosen = synthesis.parse(_answer(result), cands)
+                if chosen is None:
+                    reason = "the reply named no problem it was shown"
+    picked = synthesis.decision(baseline, chosen, reason)
+    journal.record(synthesis.JOURNAL_SOURCE,
+                   "ok" if chosen is not None else "fallback", ok=True,
+                   extra=picked["extra"])
+    WEEKLY_STATE["last_pick"] = dict(picked["extra"])
+    return picked
+
+
+async def _send_weekly(now: float, *, pressed: bool = False) -> str:
     """Gather, decide, and only then ask. Returns what was sent, or ''."""
     state = await _weekly_state(now)
     # Numbers, not the content: `last_state` rides into /api/diagnostics
@@ -1998,10 +2057,17 @@ async def _send_weekly(now: float) -> str:
         log.info("weekly report: nothing to report, not sent")
         return ""
 
+    # Chosen only once the week is worth a message: a quiet week spends
+    # nothing on choosing what it will not say.
+    picked = await _weekly_pick(state, now, pressed=pressed)
+    state["one_thing"] = picked["pick"]
+    state["one_thing_why"] = picked["why"]
+
     result = await _claude(
         engine.run_analyst, weekly.frame(state), weekly.SYSTEM,
         eff_model(), weekly.TIMEOUT_S, weekly.MAX_TURNS, "weekly",
-        job="weekly")
+        job="weekly",
+        priority=run_queue.PRESS if pressed else run_queue.SCHEDULED)
     if not result.get("ok"):
         WEEKLY_STATE["last_error"] = str(result.get("error") or "no reply")
         log.warning("weekly report failed: %s", WEEKLY_STATE["last_error"])
@@ -2062,6 +2128,10 @@ def _weekly_diagnostics() -> dict:
         "last_error": WEEKLY_STATE["last_error"],
         "last_chars": len(WEEKLY_STATE["last_text"]),
         "last_state": WEEKLY_STATE["last_state"],
+        # Which rule chose the one thing, and how often the synthesis has
+        # agreed with the rank: the number that says whether it earns its run.
+        "last_pick": WEEKLY_STATE.get("last_pick") or {},
+        "pick": synthesis.agreement(journal.tail(0)),
     }
 
 
@@ -2431,6 +2501,15 @@ async def _one_intent(req: dict, now: float) -> dict | None:
     log.info("%s proposed from %s: %s",
              "standing automation" if standing else "one-off intent",
              log_safe(req.get("via") or "the panel"), log_safe(obj["title"]))
+    if standing and req.get("trial") and row.get("status") == "proposed":
+        # Asked for before the card existed ("try it for a week" on the
+        # onboarding screen). A trial writes nothing — it replays the week
+        # and grades it — so the press that asked is all the consent it
+        # needs; the accept at the end of the week is still a press.
+        tried = await asyncio.to_thread(proposals.start_trial, row["ts"])
+        if tried is not None:
+            log.info("its trial week started, as the request asked")
+            row = tried
     return row
 
 
@@ -5869,9 +5948,10 @@ async def _scheduler() -> None:
         # queue on its own five-second tick — so a row a study session just
         # filed reaches a judgement in seconds rather than at the top of
         # the next minute, and the one run that judges it also judges the
-        # state changes and the overrides beside it. `_triage_findings` is
-        # still here and still callable; what changed is that nothing
-        # schedules it.
+        # state changes and the overrides beside it. The triage drain itself
+        # is gone: nothing scheduled it once the Resident took its queue,
+        # and a second judge kept only for its own tests is a second
+        # vocabulary for one decision.
         # The face is off: nothing is queued, ever. Checked before the
         # auth gate on purpose — a switched-off face is the answer to "why
         # are my cards not updating" whatever the sign-in says.
@@ -8263,171 +8343,6 @@ def _record_manual(snapshot: dict, now: float) -> int:
         return 0
 
 
-async def _triage_findings(now: float) -> list[dict]:
-    """Look at the rows nothing has looked at yet, and move them.
-
-    Returns the rows that are on the list afterwards — the ones a run
-    elevated plus the ones nothing could judge — because that is exactly
-    the set `_announce_findings` is owed and deriving it a second time
-    from the store would be a second answer to the same question.
-
-    **It reads what is WAITING, not what a caller just filed.** Five
-    producers gate now (`triage.gate`) and one of them is a tab fetch
-    that must not spend a Claude run, so a drain that could only judge
-    its own caller's rows would leave that producer's findings to the
-    stale sweep an hour later. Taking the queue from the store instead
-    makes the drain callable from anywhere: whoever runs next picks up
-    whatever is there.
-
-    **Every failure surfaces.** No credential, the automatic switch off,
-    the budget spent, the run failed, the reply unparseable, a row the
-    reply did not mention: each of those ends with the finding on the tab
-    carrying an `untriaged` verdict. A triage that could not look must
-    never be able to hide a problem, which is `clear_resolved`'s rule
-    moved one step earlier. What does NOT surface immediately is the
-    surplus past `MAX_BATCH` — it is at the front of the next drain a
-    minute later, and the stale sweep is the promise that a queue which
-    stopped draining is still shown.
-
-    The stale sweep is here rather than in a loop of its own for the same
-    reason, and `STALE_S` is best read as **the longest a finding may be
-    invisible**: a queue that is draining clears in minutes, so a row that
-    has waited an hour waited it because nothing was coming back — a panel
-    that died mid-judgement, or one that was off. It surfaces saying so
-    rather than taking its turn, because it has already been invisible for
-    the hour and another minute is not what it is owed.
-
-    Two drains at once would spend two runs on one queue and race over
-    the same rows, so the flag is set SYNCHRONOUSLY before the first
-    await — `start_auth_check`'s rule, for its reason: `create_task` and
-    `await` both only schedule, and a guard reading a state its own call
-    has not set yet is no guard. A caller that loses is not an error and
-    files nothing: its rows are in the queue the winner is draining, or
-    in the one the next minute drains.
-    """
-    if TRIAGE_STATE["running"]:
-        return []
-    TRIAGE_STATE["running"] = True
-    try:
-        return await _triage_drain(now)
-    finally:
-        TRIAGE_STATE["running"] = False
-
-
-async def _triage_drain(now: float) -> list[dict]:
-    """`_triage_findings` with the in-flight guard already held."""
-    # Anything left waiting past the hour, whether or not this drain has
-    # a batch of its own. Promoted first, so a row that has already waited
-    # that long does not queue behind rows filed since.
-    stale = await asyncio.to_thread(findings_store.stale_triaging,
-                                    now - triage.STALE_S)
-    surfaced: list[dict] = []
-    if stale:
-        log.warning("triage: %d finding(s) were left unjudged and are being "
-                    "shown as they are", len(stale))
-        surfaced += await asyncio.to_thread(
-            findings_store.record_triage,
-            {ts: ("untriaged", triage.UNJUDGED) for ts in stale},
-            "", now)
-
-    # Oldest first, and everything that is waiting rather than everything
-    # this caller filed. The stale rows above have already left the queue
-    # by the time it is read, so they cannot be judged twice.
-    pending = await asyncio.to_thread(findings_store.awaiting_triage)
-    if not pending:
-        return surfaced
-
-    # What does not fit waits for the next drain. Surfacing it unjudged
-    # would spend the cap on exactly the rows this exists to catch, and
-    # on the busiest houses first; waiting is only silence if nothing
-    # comes back, and `STALE_S` is what says something does.
-    batch = pending[:triage.MAX_BATCH]
-
-    # One clock up from `MAX_BATCH`: a day that has spent `MAX_PER_DAY`
-    # runs waits for tomorrow rather than surfacing unjudged, for the
-    # same reason, and `STALE_S` is still the promise that a queue which
-    # stopped draining is shown. Said once per day, or a busy house logs
-    # the same line every minute until midnight.
-    if _triage_runs_today(now) >= triage.MAX_PER_DAY:
-        if not TRIAGE_STATE.get("capped_said"):
-            TRIAGE_STATE["capped_said"] = True
-            log.warning("triage has spent its %d runs for today; %d rows wait "
-                        "for tomorrow's drain", triage.MAX_PER_DAY, len(pending))
-        return surfaced
-    TRIAGE_STATE["capped_said"] = False
-
-    # The three gates every scheduled Claude run answers to (`_ask_why`'s
-    # rule): a credential, the automatic switch, and the usage budget.
-    # Failing one is not a reason to hide anything — it is a reason to
-    # show everything, which is what the sentence on the card says.
-    settings = settings_store.load()
-    if not engine.get_auth():
-        excuse = triage.NO_CREDENTIAL
-    elif not settings["auto_enabled"]:
-        excuse = triage.PAUSED
-    elif usage_store.budget_state(settings)["blocked"]:
-        excuse = triage.NO_BUDGET
-    else:
-        excuse = ""
-    if excuse:
-        # Over the WHOLE queue rather than this batch: the cap is what one
-        # run may read, and a gate that answered before any run started
-        # has nothing to ration. Rationing it would leave the rest waiting
-        # on a drain that will give the identical answer next minute.
-        return surfaced + await asyncio.to_thread(
-            findings_store.record_triage,
-            {int(f["ts"]): ("untriaged", excuse) for f in pending}, "", now)
-
-    prompt = triage.frame(
-        batch,
-        house=await _house_prompt_block(now),
-        # The load-bearing half. "That contact is on a cupboard nobody
-        # opens" is exactly the kind of thing a homeowner has already
-        # said once, and a triage run that cannot read it re-litigates
-        # every correction they have ever made.
-        memory=await asyncio.to_thread(
-            _memory_block,
-            entities=[r.get("entity_id") for r in batch if r.get("entity_id")]),
-    )
-    TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
-    try:
-        result = await _claude(
-            engine.run_analyst, prompt, triage.SYSTEM, eff_model(),
-            triage.TIMEOUT_S, triage.MAX_TURNS, "triage",
-            job="triage", schema=triage.SCHEMA)
-    except Exception as exc:  # noqa: BLE001 — the findings are already
-        # filed; what is at stake here is only whether anything looked.
-        log.warning("a triage run failed: %s", exc)
-        result = {"ok": False, "error": str(exc)}
-    run_id = str((result.get("meta") or {}).get("session_id") or "")
-    if not result.get("ok"):
-        return surfaced + await asyncio.to_thread(
-            findings_store.record_triage,
-            {int(f["ts"]): ("untriaged", triage.RUN_FAILED)
-             for f in batch}, run_id, now)
-
-    verdicts = triage.parse(_answer(result), len(batch))
-    decided: dict[int, tuple[str, str]] = {}
-    for i, row in enumerate(batch, 1):
-        ts = int(row["ts"])
-        if i in verdicts:
-            decided[ts] = verdicts[i]
-        else:
-            # A row the reply skipped. The default is the finding, not
-            # the silence: "it was not mentioned" is not "it is not real".
-            decided[ts] = ("untriaged", triage.NOT_MENTIONED)
-    moved = await asyncio.to_thread(
-        findings_store.record_triage, decided, run_id, now)
-    held = [f for f in moved if f["status"] == "held"]
-    # No journal line of its own: `engine._run_cli` already writes one per
-    # invocation under the source it was given, and a second row for the
-    # same run is two answers to "how many triage runs happened".
-    log.info("triage: %d looked at, %d held back, %d shown, %d still waiting",
-             len(batch), len(held), len(moved) - len(held),
-             max(len(pending) - len(batch), 0))
-    return surfaced + [f for f in moved if f["status"] != "held"]
-
-
 # ---------------------------------------------------------------------------
 # The Resident — signals in, one cheap look, a case
 # ---------------------------------------------------------------------------
@@ -8641,6 +8556,17 @@ def _measurement_signals(snapshot: dict, now: float) -> int:
                                 signals.from_baseline, now, ctx)
 
 
+def _note_closure(entity: str, now: float | None = None) -> None:
+    """Remember a closure the bus saw, for the camera grant. Capped, aged."""
+    now = time.time() if now is None else now
+    CLOSURE_SUBJECTS[entity] = now
+    for old, at in list(CLOSURE_SUBJECTS.items()):
+        if now - at > CLOSURE_SUBJECT_TTL_S:
+            CLOSURE_SUBJECTS.pop(old, None)
+    while len(CLOSURE_SUBJECTS) > MAX_CLOSURE_SUBJECTS:
+        CLOSURE_SUBJECTS.pop(min(CLOSURE_SUBJECTS, key=CLOSURE_SUBJECTS.get), None)
+
+
 def _note_safety(event_type: str, data: dict) -> None:
     """Remember that a leak, smoke, CO or gas sensor has tripped, and file it.
 
@@ -8674,6 +8600,8 @@ def _note_safety(event_type: str, data: dict) -> None:
         return
     attrs = new_state.get("attributes")
     attrs = attrs if isinstance(attrs, dict) else {}
+    if signals.RegistryContext.is_closure(entity, attrs):
+        _note_closure(entity)
     klass = signals.RegistryContext.safety_class(attrs)
     if not klass:
         return
@@ -9173,9 +9101,11 @@ def _open_case_rows(limit: int = 12, exclude=None) -> list[str]:
     """
     drop = {str(e) for e in (exclude or ()) if e}
     try:
-        # Every kind, chores included: an accepted chore is off the feed and
-        # is still something the house has already said.
-        rows = cases.list_cases("open", kinds=cases.KINDS)
+        # Every kind and every store, chores and proposals included: an
+        # accepted chore and a suggestion on the Proposals tab are off the
+        # feed and are still something the house has already said.
+        rows = cases.list_cases("open", kinds=cases.KINDS,
+                                stores=cases.STORES)
     except Exception as exc:  # noqa: BLE001 — a prompt section, not the run
         log.debug("could not list the open cases: %s", exc)
         return []
@@ -9226,8 +9156,8 @@ def _resident_gate(settings: dict) -> str:
 
     The three gates every scheduled Claude run answers to (`_ask_why`'s
     rule). Failing one HOLDS the batch rather than surfacing it, which is
-    the opposite of what `_triage_findings` did with the same three — and
-    deliberately: triage was about to hide a row, where this is about to
+    the opposite of what the retired triage drain did with the same three —
+    and deliberately: triage was about to hide a row, where this is about to
     look at one and the row is on `triaging` either way. `triage.STALE_S`
     is what makes the wait bounded, and the sweep at the top of every pass
     is what makes it visible.
@@ -9737,6 +9667,33 @@ async def _resident_investigations(queued: list[tuple[dict, str, int]],
     return {"ran": ran, "filed": filed}
 
 
+def _camera_grant(signal: dict, now: float) -> tuple[list[str], str]:
+    """`(cameras, trip kind)` an investigation of this signal may look at.
+
+    Nothing unless the signal is a safety trip or a closure, nothing unless
+    somebody opted a camera in, and nothing once today's looks are spent —
+    `camera_policy`'s rules, asked here so the run is never handed a tool
+    it would only be refused at the chokepoint. The chokepoint asks again
+    on every frame; this is what keeps the tool off a run that cannot use it.
+    """
+    try:
+        opted = settings_store.load().get("camera_confirm") or []
+    except Exception:  # noqa: BLE001 — unreadable settings allow no camera
+        return [], ""
+    if not opted:
+        return [], ""
+    trip = camera_policy.trip_kind(signal, safety_subjects=SAFETY_SUBJECTS,
+                                   closure_subjects=CLOSURE_SUBJECTS)
+    if not trip:
+        return [], ""
+    spent, error = camera_policy.used(_local_now(now).strftime("%Y-%m-%d"))
+    if error or spent >= camera_policy.PER_DAY:
+        return [], trip
+    grant = camera_policy.grant_for(str(signal.get("subject") or ""), opted,
+                                    _FACTS_CTX.get("entity_areas") or {})
+    return grant, trip
+
+
 async def _resident_investigate(signal: dict, now: float, thinking: str,
                                 *, why: str = "", refines: int = 0) -> bool:
     """One signal, read properly. Returns whether a case was filed or a row
@@ -9771,10 +9728,13 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
         examples=await asyncio.to_thread(_outcome_examples, [signal], now,
                                          investigating=True),
         situation_line=await asyncio.to_thread(_situation_line, now))
+    grant, trip = await asyncio.to_thread(_camera_grant, signal, now)
+    prompt += camera_policy.prompt_line(grant, trip)
     result = await _claude(
         engine.run_analyst, prompt, resident.INVESTIGATE_SYSTEM, eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
         "resident", job=resident.JOB_INVESTIGATE, schema=resident.CASE_SCHEMA,
+        camera_grant=tuple(grant),
         priority=(run_queue.SAFETY if signal.get("hot")
                   else run_queue.SCHEDULED))
     run_id = str((result.get("meta") or {}).get("session_id") or "")
@@ -9970,8 +9930,8 @@ async def _resident_loop() -> None:
 
     The tick is short because a hot signal must not wait out an interval,
     and a tick with an empty queue is one `qsize()` and a comparison. The
-    watch list is expired here rather than on a timer of its own for
-    `_triage_drain`'s reason: one loop, one place a queue is answered for.
+    watch list is expired here rather than on a timer of its own: one
+    loop, one place a queue is answered for.
     """
     await asyncio.sleep(RESIDENT_FIRST_DELAY_S)
     expired_at = 0.0
@@ -12408,13 +12368,229 @@ async def h_weekly_run(request: web.Request) -> web.Response:
     # Sunday report that would have had another day's material.
     before = WEEKLY_STATE["last_sent"]
     WEEKLY_STATE["last_sent"] = now
-    body = await _send_weekly(now)
+    body = await _send_weekly(now, pressed=True)
     WEEKLY_STATE["last_sent"] = now if body else before
     schedule_store.set(WEEKLY_SENT_KEY, WEEKLY_STATE["last_sent"])
     return web.json_response({
         "sent": bool(body), "text": body,
         "error": WEEKLY_STATE["last_error"],
     })
+
+
+# ---------------------------------------------------------------------------
+# Cameras: which ones brAIn may look at when nobody is at the panel
+#
+# `camera_policy` holds the rules. The MCP server asks `/api/camera/permit`
+# before every governed frame (voice, a task, the Resident's grant), and
+# the ⚙ dialog lists what there is to allow off the last checks pass's
+# registry — never a fetch for the dialog's own sake.
+# ---------------------------------------------------------------------------
+
+def _house_day(now: float) -> str:
+    return _local_now(now).strftime("%Y-%m-%d")
+
+
+async def h_camera_permit(request: web.Request) -> web.Response:
+    """One governed look: allowed, and counted, or refused with a sentence."""
+    body = await _json_body(request)
+    entity = str(body.get("entity_id") or "")
+    channel = str(body.get("channel") or "")
+    raw_grant = body.get("grant")
+    grant = None
+    if isinstance(raw_grant, str) and raw_grant.strip():
+        grant = [c.strip().lower() for c in raw_grant.split(",") if c.strip()]
+    elif isinstance(raw_grant, list):
+        grant = [str(c).strip().lower() for c in raw_grant if str(c).strip()]
+    now = time.time()
+    try:
+        opted = settings_store.load().get("camera_confirm") or []
+    except Exception:  # noqa: BLE001 — unreadable settings allow no camera
+        opted = []
+    allowed, reason = await asyncio.to_thread(
+        camera_policy.permit, entity, channel, grant, opted,
+        _house_day(now), now)
+    if allowed:
+        log.info("camera look allowed: %s for %s", entity, channel or "a run")
+    else:
+        log.info("camera look refused: %s for %s — %s", entity,
+                 channel or "a run", reason)
+    return web.json_response({"allowed": allowed, "reason": reason})
+
+
+def _cameras_payload() -> dict:
+    now = time.time()
+    try:
+        opted = settings_store.load().get("camera_confirm") or []
+    except Exception:  # noqa: BLE001
+        opted = []
+    known = sorted({e for e in (set(_NAMES) | set(_FACTS_CTX.get("entities") or ()))
+                    if str(e).startswith("camera.")} | set(opted))
+    spent, error = camera_policy.used(_house_day(now))
+    return {
+        "cameras": [{"entity_id": c,
+                     "name": (_NAMES.get(c) or {}).get("name") or c,
+                     "allowed": c in opted} for c in known],
+        "allowed": list(opted),
+        "per_day": camera_policy.PER_DAY,
+        "used_today": spent,
+        "error": error,
+        # The list comes off the last checks pass, and a dialog that says
+        # "no cameras" before that pass has run is a dialog that is wrong.
+        "registry_read": bool(_FACTS_CTX.get("entities")),
+    }
+
+
+async def h_cameras(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_cameras_payload))
+
+
+def _camera_diagnostics() -> dict:
+    payload = _cameras_payload()
+    return {"allowed": len(payload["allowed"]), "per_day": payload["per_day"],
+            "used_today": payload["used_today"], "error": payload["error"]}
+
+
+# ---------------------------------------------------------------------------
+# The deep review: the one run a person presses for on the top tier
+#
+# `deep_review` holds the rules (what it is told, what it may say, the
+# store and the estimate); this is the plumbing. It is reachable from one
+# route and nothing else — no loop, no request drain, no card — because
+# the job is PRESS_ONLY and `engine.planned(..., pressed=True)` is the one
+# call that may name it. `test_deep_review` holds that by walking the
+# module for every caller.
+# ---------------------------------------------------------------------------
+
+DEEP_REVIEW_STATE: dict = {"running": False, "starting": False,
+                           "started_at": 0.0, "last_error": "",
+                           "last_at": 0.0}
+_DEEP_REVIEW_TASKS: set = set()
+
+
+def _deep_review_payload() -> dict:
+    """What the House tab shows: the last review, the history, the price."""
+    stored = deep_review.load()
+    try:
+        plan_tokens = usage_store.budget_state(
+            settings_store.load()).get("plan_session_tokens")
+    except Exception:  # noqa: BLE001 — a price nobody can read is still a button
+        plan_tokens = None
+    model, effort = engine.planned(deep_review.JOB, pressed=True)
+    reviews = stored["reviews"]
+    return {
+        "running": bool(DEEP_REVIEW_STATE["running"]
+                        or DEEP_REVIEW_STATE["starting"]),
+        "started_at": int(DEEP_REVIEW_STATE["started_at"]),
+        "last_error": DEEP_REVIEW_STATE["last_error"],
+        "error": stored["error"],
+        "latest": reviews[0] if reviews else None,
+        "history": [{"id": r.get("id"), "at": r.get("at"),
+                     "tokens": r.get("tokens")} for r in reviews[1:]],
+        "estimate": deep_review.estimate(reviews, plan_tokens),
+        "model": model, "effort": effort,
+        "authenticated": bool(engine.get_auth()),
+    }
+
+
+async def _run_deep_review() -> None:
+    """One review, start to finish. Never raises into the loop."""
+    now = time.time()
+    try:
+        findings_text = await asyncio.to_thread(findings_store.prompt_block)
+        prompt = deep_review.frame(
+            findings=findings_text,
+            house=await _house_prompt_block(now),
+            memory=await asyncio.to_thread(_memory_block),
+            weekly=str(WEEKLY_STATE.get("last_text") or ""))
+        model, effort = engine.planned(deep_review.JOB, pressed=True)
+        result = await _claude(
+            engine.run_analyst, prompt, deep_review.SYSTEM, model,
+            deep_review.TIMEOUT_S, deep_review.MAX_TURNS, "deep_review",
+            job=deep_review.JOB, effort=effort, schema=deep_review.SCHEMA,
+            priority=run_queue.PRESS)
+        cost = _record_usage(result, "deep-review")
+        if not result.get("ok"):
+            DEEP_REVIEW_STATE["last_error"] = str(
+                result.get("error") or "the review did not answer")[:300]
+            log.warning("deep review failed: %s", DEEP_REVIEW_STATE["last_error"])
+            return
+        review = deep_review.parse(_answer(result))
+        if review is None:
+            DEEP_REVIEW_STATE["last_error"] = (
+                "the review answered, but not with anything that could be read")
+            log.warning("deep review: %s", DEEP_REVIEW_STATE["last_error"])
+            return
+        review["tokens"] = int(cost.get("total") or 0)
+        review["model"] = str(model or "")
+        await asyncio.to_thread(deep_review.save, review)
+        DEEP_REVIEW_STATE["last_error"] = ""
+        DEEP_REVIEW_STATE["last_at"] = time.time()
+        log.info("deep review filed: %d observation(s), %s tokens",
+                 len(review["observations"]), _tok(review["tokens"]))
+    except Exception as exc:  # noqa: BLE001 — a press must not kill the loop
+        DEEP_REVIEW_STATE["last_error"] = f"the review stopped: {exc}"[:300]
+        log.warning("deep review crashed: %s", exc)
+    finally:
+        DEEP_REVIEW_STATE["running"] = False
+        DEEP_REVIEW_STATE["starting"] = False
+
+
+def _start_deep_review() -> bool:
+    """Claim the run. The flag flips SYNCHRONOUSLY (`start_auth_check`'s
+    rule), and the task is held: the loop keeps only a weak reference."""
+    if DEEP_REVIEW_STATE["running"] or DEEP_REVIEW_STATE["starting"]:
+        return False
+    DEEP_REVIEW_STATE["starting"] = True
+    DEEP_REVIEW_STATE["started_at"] = time.time()
+
+    async def go() -> None:
+        DEEP_REVIEW_STATE["running"] = True
+        DEEP_REVIEW_STATE["starting"] = False
+        await _run_deep_review()
+
+    try:
+        task = asyncio.create_task(go())
+    except RuntimeError:
+        DEEP_REVIEW_STATE["starting"] = False
+        raise
+    _DEEP_REVIEW_TASKS.add(task)
+    task.add_done_callback(_DEEP_REVIEW_TASKS.discard)
+    return True
+
+
+async def h_deep_review(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_deep_review_payload))
+
+
+async def h_deep_review_run(request: web.Request) -> web.Response:
+    """Start a review now. A press, and the only door to the job.
+
+    Skips the usage budget — "asking by hand always runs" — and needs a
+    credential, because a press that cannot reach Claude is a press that
+    should say so rather than start.
+    """
+    if not engine.get_auth():
+        return web.json_response(
+            {"error": "connect your Claude account first"}, status=400)
+    if not _start_deep_review():
+        return web.json_response({"error": "a review is already running"},
+                                 status=409)
+    return web.json_response(await asyncio.to_thread(_deep_review_payload))
+
+
+def _deep_review_diagnostics() -> dict:
+    """Whether a review is running, when one last landed, and why one did not."""
+    stored = deep_review.load()
+    latest = stored["reviews"][0] if stored["reviews"] else {}
+    return {
+        "running": bool(DEEP_REVIEW_STATE["running"]
+                        or DEEP_REVIEW_STATE["starting"]),
+        "kept": len(stored["reviews"]),
+        "last_at": int(latest.get("at") or 0),
+        "last_tokens": latest.get("tokens"),
+        "last_error": DEEP_REVIEW_STATE["last_error"],
+        "store_error": stored["error"],
+    }
 
 
 async def h_appliances(request: web.Request) -> web.Response:
@@ -13532,6 +13708,8 @@ def _diagnostics_payload() -> dict:
         # Tidy, the upgrade advisor, the overnight health check, the house
         # book and the access review: run, held (and why), or failed.
         "maintainer": _maintainer_diagnostics(),
+        "deep_review": _deep_review_diagnostics(),
+        "cameras": _camera_diagnostics(),
         # Answers given in the To-do app or on a notification, on
         # their way back to the one store that owns them.
         "finding_requests": _requests_diagnostics(),
@@ -17278,7 +17456,23 @@ async def h_onboarding_accept(request: web.Request) -> web.Response:
     if shipped is not None and not isinstance(shipped, list):
         raise web.HTTPBadRequest(text="shipped must be a list of category ids")
     created = await asyncio.to_thread(onboarding.accept, picked, shipped)
+    # The one automation the recommend pass offered to try, when it was
+    # ticked: into the ask bar's own drop, so it is drafted, refused or
+    # simulated over this house's history and graded against what the
+    # household did, exactly as a typed sentence is — and its week starts
+    # when it lands. Nothing is written to the house by this press.
+    tried = ""
+    if body.get("try_rule"):
+        rule = (await asyncio.to_thread(onboarding.stored_recommendations)
+                ).get("try_rule")
+        sentence = _opportunity_sentence((rule or {}).get("sentence") or "")
+        if sentence:
+            tried = await asyncio.to_thread(
+                intents.request, sentence, "onboarding", None, trial=True)
+            if tried:
+                await asyncio.to_thread(onboarding.mark_tried, tried)
     return web.json_response({"created": created, "onboarded": True,
+                              "tried": tried,
                               "shipped": prompt_store.load_overrides()["accepted"]})
 
 
@@ -19483,6 +19677,10 @@ def make_app() -> web.Application:
                         h_knowledge_card_refresh)
     app.router.add_get("/api/weekly", h_weekly)
     app.router.add_post("/api/weekly/run", h_weekly_run)
+    app.router.add_get("/api/deep-review", h_deep_review)
+    app.router.add_post("/api/deep-review/run", h_deep_review_run)
+    app.router.add_post("/api/camera/permit", h_camera_permit)
+    app.router.add_get("/api/cameras", h_cameras)
     app.router.add_get("/api/activity", h_activity)
     app.router.add_get("/api/activity/entity/{entity_id}", h_activity_entity)
     app.router.add_post("/api/activity/summary", h_activity_summary)

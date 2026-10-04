@@ -9,7 +9,7 @@ Nothing on a timer may reach the top tier.
 
 Three inputs decide a run's model:
 
-* the JOB — a short name every call site passes (`"triage"`, `"card"`,
+* the JOB — a short name every call site passes (`"first_look"`, `"card"`,
   `"fix_apply"`, …), looked up in JOBS for its default tier and effort;
 * the `thinking` setting — `light` steps a job's tier down where being
   wrong is cheap, `generous` steps investigations up, `normal` is the
@@ -51,7 +51,6 @@ DEFAULT_THINKING = "normal"
 # promotes a naming call to Opus.
 JOBS: dict[str, tuple[str, str, bool, bool]] = {
     # Looks — volume work with a closed vocabulary.
-    "triage":          ("haiku",  "low",    False, True),
     "first_look":      ("haiku",  "low",    False, True),
     "scene_names":     ("haiku",  "low",    False, False),
     "playbook_text":   ("haiku",  "low",    False, False),
@@ -240,7 +239,7 @@ def env_exports(override: str = "", thinking: str = DEFAULT_THINKING) -> dict[st
         return resolve(job, thinking, allowed)[0]
 
     out = {
-        "BRAIN_MODEL_HAIKU": model("triage"),
+        "BRAIN_MODEL_HAIKU": model("first_look"),
         "BRAIN_MODEL_SONNET": model("card"),
         "BRAIN_MODEL_OPUS": model("fix_apply", pressed=True),
         "BRAIN_MODEL_STUDY": model("study"),

@@ -1061,8 +1061,8 @@ def prompt_rows(signals: list[dict], now: float | None = None, *,
 
     **`numbered=False` is for a caller that numbers them itself.** A
     signal is named back to a model by its POSITION and never by its
-    subject — `triage.frame`'s rule, because a model retyping an entity id
-    can name the wrong entity and a number cannot be nearly right — so a
+    subject, because a model retyping an entity id can name the wrong
+    entity and a number cannot be nearly right — so a
     prompt builder that lays the rows out in its own list is doing the
     right thing, and two numbers on one row (`1. 1. [check] …`) is the
     shape where a reply that says "3" means two different signals

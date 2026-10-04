@@ -138,7 +138,7 @@ class StoresCase(unittest.TestCase):
 class TestOneListOverFourStores(StoresCase):
     def test_four_stores_become_one_list_of_four_kinds(self):
         self.one_of_each()
-        listed = cases.list_cases(kinds=cases.KINDS)
+        listed = cases.list_cases(kinds=cases.KINDS, stores=cases.STORES)
         self.assertEqual(len(listed), 4)
         self.assertEqual({c["kind"] for c in listed},
                          {"problem", "question", "opportunity", "chore"})
@@ -458,15 +458,18 @@ class TestNotNowEndsNothing(StoresCase):
         made = self.one_of_each()
         now = 1_760_000_000.0
         self.press(f"p:{made['opportunity']['ts']}", now)
-        listed = cases.list_cases(now=now + 60)
+        every = cases.STORES   # a proposal is off the feed; this is the snooze
+        listed = cases.list_cases(now=now + 60, stores=every)
         self.assertNotIn("opportunity", {c["kind"] for c in listed})
         self.assertEqual([c["kind"] for c in
-                          cases.list_cases("snoozed", now=now + 60)],
+                          cases.list_cases("snoozed", now=now + 60,
+                                           stores=every)],
                          ["opportunity"])
         # ...and the row underneath was never touched.
         self.assertEqual(proposals.get(made["opportunity"]["ts"])["status"],
                          "proposed")
-        back = cases.list_cases(now=now + cases.SNOOZE_BY_STAKES["low"] + 60)
+        back = cases.list_cases(now=now + cases.SNOOZE_BY_STAKES["low"] + 60,
+                                stores=every)
         self.assertIn("opportunity", {c["kind"] for c in back})
 
     def test_a_snoozed_case_still_answers_when_its_id_is_pressed(self):
@@ -488,7 +491,8 @@ class TestNotNowEndsNothing(StoresCase):
         self.press(f"p:{made['opportunity']['ts']}", 1_760_000_000.0)
         cases.SNOOZE_FILE.write_text("{ torn", encoding="utf-8")
         self.assertIn("opportunity",
-                      {c["kind"] for c in cases.list_cases(now=1_760_000_060)})
+                      {c["kind"] for c in cases.list_cases(
+                          now=1_760_000_060, stores=cases.STORES)})
 
 
 # ---------------------------------------------------------------------------

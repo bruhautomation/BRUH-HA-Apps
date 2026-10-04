@@ -526,13 +526,15 @@ function renderAuth() {
   $("#onboard").classList.toggle("hidden", signIn || obState.onboarded);
   $("#dash").classList.toggle("hidden", !ready);
   $("#settingsBtn").classList.toggle("hidden", !s.authenticated);
-  // `enable_insights: false` takes the two tabs that are only ever filled
-  // by a Claude run the scheduler would have queued; Findings stays, since
-  // the house checks cost nothing and still file there.
+  // `enable_insights: false` takes the one tab only ever filled by a
+  // Claude run the scheduler would have queued; Findings stays, since the
+  // house checks cost nothing and still file there — and so does
+  // Proposals, which the checks pass fills too and which is now the one
+  // surface a proposal is offered on.
   const insightsOn = s.insights_enabled !== false;
-  document.querySelectorAll('.subtab[data-view="insights"], .subtab[data-view="proposals"]')
+  document.querySelectorAll('.subtab[data-view="insights"]')
     .forEach((b) => b.classList.toggle("gone", !insightsOn));
-  if (!insightsOn && (currentView === "insights" || currentView === "proposals")) {
+  if (!insightsOn && currentView === "insights") {
     switchView("findings");
   } else {
     syncTabs(currentView);
@@ -2591,6 +2593,7 @@ function restoreSettingsSections() {
     box.addEventListener("toggle", () => {
       prefSet(setSectionKey(name), box.open ? "1" : "0");
       if (name === "advanced" && box.open) loadAdvanced();
+      if (name === "defaults" && box.open) loadCameras();
     });
   });
 }
@@ -2623,6 +2626,8 @@ async function openSettings() {
   openBox("#setModal");
   loadAuth();
   advancedLoaded = false;
+  camerasLoaded = false;
+  if ($("#setsecDefaults") && $("#setsecDefaults").open) loadCameras();
   // Its open state survived the close (it is remembered), so a visit that
   // lands on an already-expanded Advanced still has to fetch: the section
   // being open is not the same claim as its rows being current.
@@ -5236,14 +5241,6 @@ function makeCase(row) {
     card.appendChild(box);
   }
 
-  // A proposal's evidence, beside the button that accepts it: the replay,
-  // and a trial's grade once the week has started. The Proposals sub-tab
-  // always had both; the feed — which is where *Make the change* is
-  // pressed — had neither, so the whole argument for a trial never reached
-  // the screen the yes is given on.
-  const proof = caseProofNode(row);
-  if (proof) card.appendChild(proof);
-
   // The plan a read-only run wrote, above the Apply that would let it —
   // the one block on the card somebody is about to consent to, so it is
   // never folded away.
@@ -5322,34 +5319,6 @@ function caseResultNode(row) {
     box.appendChild(list);
   }
   return box;
-}
-
-// An opportunity's evidence, in the Proposals tab's own sentences — the
-// same two helpers, handed the case in the shape they read, so the card
-// and the tab cannot word one trial two ways. A playbook and a scene have
-// no replay (no week had a smoke alarm in it; a mood is a picture), so the
-// card says where their evidence is rather than going quiet.
-function caseProofNode(row) {
-  if (row.kind !== "opportunity") return null;
-  const box = el("div", "caseproof");
-  const shaped = {
-    replay: row.replay, replay_before: row.replay_before,
-    trial_result: row.trial_result, trial_started_at: row.trial_started_at,
-    trial_ends_at: row.trial_ends_at,
-  };
-  let line = "";
-  if (row.case_line) line = row.case_line;
-  else if (row.replay) line = propReplayLine(shaped);
-  else if (row.playbook || row.scene) {
-    line = row.playbook
-      ? "What it would act on is listed on the Proposals tab, by name."
-      : "The four moods are drawn on the Proposals tab.";
-  }
-  if (line) box.appendChild(el("p", "propreplay", line));
-  if (row.proposal_status === "trialling") {
-    box.appendChild(el("p", "proptrial", propTrialLine(shaped)));
-  }
-  return box.childNodes.length ? box : null;
 }
 
 // Everything that makes the claim checkable, behind one disclosure: what
@@ -5700,9 +5669,9 @@ function makeIdea(idea) {
     idea, "accept", "Added — it's on Insights now", btns));
 
   const no = add(el("button", "btn small ghost", "✕  Not for this house"));
-  tip(no, "Take it off the list. brAIn won't suggest it again.");
-  no.addEventListener("click", () => ideaAction(
-    idea, "dismiss", "Won't suggest that again", btns));
+  tip(no, "Take it off the list, and say why if you like — brAIn won't "
+    + "suggest it again, and the reason reaches every later look.");
+  no.addEventListener("click", () => ideaReasonBox(idea, card, actions));
 
   card.appendChild(actions);
   return card;
@@ -6446,6 +6415,7 @@ async function refreshHouse() {
       }
     })(),
     refreshMilestones(),
+    refreshDeepReview(),
   ]);
   renderHouse();
 }
@@ -7964,6 +7934,29 @@ function renderOnboarding() {
       "Studied everything — waiting for what it found to be filed into memory.";
   }
 
+  // What the sessions have found, as it lands — newest first, a handful.
+  // Shown while learning and while the suggestions are one press away,
+  // never over the step-0 question or the list of cards to tick.
+  const found = Array.isArray(learning.reveals) ? learning.reveals : [];
+  const foundList = $("#obFoundList");
+  foundList.textContent = "";
+  found.forEach((r) => {
+    const li = el("li", "obfoundrow");
+    if (r.topic) li.appendChild(el("span", "obfoundtopic", r.topic));
+    li.appendChild(el("span", "obfoundfact", r.fact));
+    foundList.appendChild(li);
+  });
+  $("#obFound").classList.toggle("hidden",
+    step0 || manual || chose || !found.length);
+
+  // The one automation to try, when the recommend pass found a reason.
+  const tryRule = obState.try_rule;
+  $("#obTryBlock").classList.toggle("hidden", !tryRule || !tryRule.sentence);
+  if (tryRule && tryRule.sentence) {
+    $("#obTryText").textContent = tryRule.sentence;
+    $("#obTryWhy").textContent = tryRule.why || "";
+  }
+
   if (obState.sparse) {
     $("#obSparseText").textContent = obState.missing
       || "There isn't enough here yet for brAIn to suggest anything useful.";
@@ -8021,7 +8014,8 @@ function renderOnboarding() {
 function obChooseNote() {
   const note = $("#obChooseNote");
   if (!note) return;
-  const picked = $("#obChoose").querySelectorAll("input:checked").length;
+  const picked = $("#obChoose").querySelectorAll(
+    "input[data-index]:checked, input[data-shipped]:checked").length;
   note.textContent = picked
     ? `${picked} card${picked === 1 ? "" : "s"} will be on your Insights tab. `
       + "You can add, edit or remove cards any time."
@@ -8148,14 +8142,19 @@ $("#obAccept").addEventListener("click", async (ev) => {
     .map((cb) => Number(cb.dataset.index));
   const shipped = Array.from($("#obShipped").querySelectorAll("input:checked"))
     .map((cb) => cb.dataset.shipped);
+  const tryIt = !$("#obTryBlock").classList.contains("hidden")
+    && $("#obTry").checked;
   const res = await obCall("api/onboarding/accept",
-    { accept: picked, shipped }, ev.target);
+    { accept: picked, shipped, try_rule: tryIt }, ev.target);
   if (!res) return;
   obState.onboarded = true;
   const total = picked.length + shipped.length;
-  toast(total
-    ? `${total} card${total === 1 ? "" : "s"} on your Insights tab`
-    : "Done — your Insights tab starts empty");
+  const tried = res.tried
+    ? " One automation is being simulated — its week starts under Home → Proposals."
+    : "";
+  toast((total
+    ? `${total} card${total === 1 ? "" : "s"} on your Insights tab.`
+    : "Done — your Insights tab starts empty.") + tried);
   await Promise.all([refreshStatus(), refreshInsights()]);
   render();
 });
@@ -13119,3 +13118,258 @@ document.addEventListener("click", async (e) => {
     btn.disabled = false;
   }
 });
+
+
+// ---------------------------------------------- ideas: the reason a no
+//
+// "Not for this house" took nothing but the title, so the next pass was
+// told only that ONE wording had been turned down and could offer the
+// same kind of card under another — "we don't care about standby power"
+// is a sentence that rules out a family of ideas, and nothing on the page
+// could carry it. The route always took a reason (`ideas.dismiss`); this
+// is the box. It opens IN PLACE of the buttons, inside the card, for the
+// reason every other reason box in the panel does — you are explaining
+// this card and it has to stay on screen while you write — and it is never
+// required: an empty box is a plain dismissal, because a mandatory field
+// fills with "no".
+function ideaReasonBox(idea, card, actions) {
+  if (card.querySelector(".propnote")) return;
+  actions.classList.add("hidden");
+  const box = el("div", "propnote ideanote");
+  const area = el("textarea");
+  area.placeholder = "Why not? (optional — it rules out cards like this one, "
+    + "not just this title)";
+  area.rows = 2;
+  area.maxLength = 200;
+  box.appendChild(area);
+  const row = el("div", "propbtns");
+  const send = el("button", "btn small", "Not for this house");
+  const back = el("button", "btn small ghost", "Cancel");
+  send.addEventListener("click", async () => {
+    send.disabled = true;
+    back.disabled = true;
+    const reason = area.value.trim();
+    try {
+      takeIdeas(await api(`api/idea/${idea.id}/dismiss`, {
+        method: "POST", body: JSON.stringify({ reason }) }));
+      renderIdeas();
+      toast(reason ? "Won't suggest that, or anything like it"
+        : "Won't suggest that again");
+    } catch (err) {
+      send.disabled = false;
+      back.disabled = false;
+      toast(err.message || "that didn't work");
+    }
+  });
+  back.addEventListener("click", () => {
+    box.remove();
+    actions.classList.remove("hidden");
+  });
+  row.append(send, back);
+  box.appendChild(row);
+  card.appendChild(box);
+  area.focus();
+}
+
+
+// ---------------------------------------------------------------------------
+// The deep review (House → Knowledge). The one run on the top tier, and only
+// by a press: the button says what it will roughly cost before it is
+// pressed (an estimate read off the reviews this house has already paid
+// for, and a first guess before there are any), and what the review said
+// stays here to be read. It files nothing on any other tab.
+// ---------------------------------------------------------------------------
+const reviewState = { data: null, error: "", timer: null, pressing: false };
+
+async function refreshDeepReview() {
+  try {
+    reviewState.data = await api("api/deep-review");
+    reviewState.error = "";
+  } catch (e) {
+    reviewState.error = "Could not read the deep review: " + e.message;
+  }
+  renderDeepReview();
+  // While one is running the tab watches for it landing — and only while
+  // the tab is the one on screen: a poll behind a pane nobody is looking at
+  // is a request per minute for an answer nobody will read.
+  clearTimeout(reviewState.timer);
+  if (reviewState.data && reviewState.data.running && currentView === "memory") {
+    reviewState.timer = setTimeout(refreshDeepReview, 8000);
+  }
+}
+
+function reviewCostText(est) {
+  if (!est || !Number(est.tokens)) return "";
+  const k = Math.max(1, Math.round(Number(est.tokens) / 1000));
+  let text = `About ${k}k tokens`;
+  if (est.percent !== null && est.percent !== undefined) {
+    text += ` — roughly ${est.percent}% of a five-hour session on your plan`;
+  }
+  return `${text}. An estimate: ${est.basis}.`;
+}
+
+const REVIEW_KIND_WORD = {
+  problem: "Problem", opportunity: "Could be better",
+  question: "Worth asking", working: "Working well",
+};
+
+function renderDeepReview() {
+  const box = $("#kReview");
+  if (!box) return;
+  box.textContent = "";
+  if (reviewState.error) {
+    box.appendChild(el("p", "kbrieftext off", reviewState.error));
+    return;
+  }
+  const d = reviewState.data;
+  if (!d) return;
+
+  const run = el("div", "kreviewrun");
+  const btn = el("button", "btn primary",
+    d.running ? "Reviewing…" : "Run a deep review");
+  btn.type = "button";
+  btn.disabled = Boolean(d.running) || reviewState.pressing || !d.authenticated;
+  tip(btn, "Claude's top model reads the whole house with read-only tools and "
+    + "says what it adds up to. It changes nothing and files nothing.");
+  btn.addEventListener("click", () => runDeepReview(btn));
+  run.appendChild(btn);
+  run.appendChild(el("p", "kreviewcost", d.running
+    ? `Started ${agoAt(d.started_at)} — a review takes several minutes, and lands here.`
+    : reviewCostText(d.estimate)));
+  box.appendChild(run);
+
+  if (!d.authenticated) {
+    box.appendChild(el("p", "kbrieftext off",
+      "Connect your Claude account first — ⚙ → Claude account."));
+  }
+  if (d.last_error) {
+    box.appendChild(el("p", "kbrieftext off",
+      `The last review did not finish: ${d.last_error}`));
+  }
+  if (d.error) box.appendChild(el("p", "kbrieftext off", d.error));
+
+  const r = d.latest;
+  if (!r) {
+    if (!d.error) {
+      box.appendChild(el("p", "kbrieftext off",
+        "No review yet. It reads the whole house, not one card's worth, and "
+        + "says what nothing else in brAIn has said."));
+    }
+    return;
+  }
+  const bits = [dateAt(r.at)];
+  if (r.model) bits.push(String(r.model));
+  if (Number(r.tokens)) bits.push(`${Math.round(Number(r.tokens) / 1000)}k tokens`);
+  box.appendChild(el("div", "kbriefwhen", bits.filter(Boolean).join(" · ")));
+  if (r.summary) box.appendChild(el("p", "kbrieftext", r.summary));
+  if (r.one_thing) {
+    const one = el("div", "kreviewone");
+    one.appendChild(el("div", "kreviewlabel", "The one thing this month"));
+    one.appendChild(el("p", "kbrieftext", r.one_thing));
+    box.appendChild(one);
+  }
+  const obs = Array.isArray(r.observations) ? r.observations : [];
+  if (obs.length) {
+    const list = el("ul", "kreviewobs");
+    obs.forEach((o) => {
+      const li = el("li", "kreviewob");
+      li.appendChild(el("div", "kreviewlabel",
+        REVIEW_KIND_WORD[o.kind] || "Problem"));
+      li.appendChild(el("div", "kreviewtitle", prettyText(String(o.title || ""))));
+      if (o.detail) li.appendChild(el("p", "kreviewdetail", prettyText(String(o.detail))));
+      list.appendChild(li);
+    });
+    box.appendChild(list);
+  }
+  const older = Array.isArray(d.history) ? d.history : [];
+  if (older.length) {
+    box.appendChild(el("p", "kreviewcost",
+      "Earlier reviews: " + older.map((h) => dateAt(h.at)).filter(Boolean).join(", ")));
+  }
+}
+
+async function runDeepReview(btn) {
+  reviewState.pressing = true;
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch("api/deep-review/run", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    });
+    let body = {};
+    try { body = await resp.json(); } catch (e) { body = {}; }
+    if (!resp.ok) {
+      toast(body.error || `Could not start a review (HTTP ${resp.status})`);
+    } else {
+      reviewState.data = body;
+      toast("Reviewing the house — it lands here in a few minutes");
+    }
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    reviewState.pressing = false;
+    refreshDeepReview();
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// ⚙ → Generation defaults → Cameras. One tick per camera brAIn may look at
+// on its own; empty until somebody ticks one. Read when the section opens,
+// never on the way into the dialog, and saved through the ordinary
+// settings PUT, so there is one route that changes a setting.
+// ---------------------------------------------------------------------------
+let camerasLoaded = false;
+
+async function loadCameras() {
+  if (camerasLoaded) return;
+  camerasLoaded = true;
+  const box = $("#setCameras");
+  if (!box) return;
+  try {
+    renderCameras(await api("api/cameras"));
+  } catch (e) {
+    camerasLoaded = false;
+    box.textContent = "Could not read your cameras: " + e.message;
+  }
+}
+
+function renderCameras(data) {
+  const box = $("#setCameras");
+  if (!box) return;
+  box.textContent = "";
+  const cams = Array.isArray(data.cameras) ? data.cameras : [];
+  if (!cams.length) {
+    box.appendChild(el("p", "hint tight", data.registry_read
+      ? "This house has no cameras brAIn can see."
+      : "brAIn has not read your devices yet — this list fills in after the first house check."));
+    return;
+  }
+  cams.forEach((cam) => {
+    const label = el("label", "check setcam");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = Boolean(cam.allowed);
+    input.dataset.entity = cam.entity_id;
+    input.addEventListener("change", saveCameras);
+    label.appendChild(input);
+    const words = el("span", null, cam.name || cam.entity_id);
+    if (cam.name && cam.name !== cam.entity_id) {
+      words.appendChild(el("span", "subtext", ` ${cam.entity_id}`));
+    }
+    label.appendChild(words);
+    box.appendChild(label);
+  });
+  const used = Number(data.used_today) || 0;
+  const cap = Number(data.per_day) || 0;
+  box.appendChild(el("p", "hint tight", data.error
+    ? `brAIn will not look at any camera until it can count again: ${data.error}`
+    : `Looked ${used} of ${cap} times today.`));
+}
+
+async function saveCameras() {
+  const picked = [...document.querySelectorAll("#setCameras input[data-entity]")]
+    .filter((i) => i.checked).map((i) => i.dataset.entity);
+  await saveSettings({ camera_confirm: picked },
+    picked.length ? `brAIn may look at ${picked.length} camera${picked.length > 1 ? "s" : ""}`
+      : "brAIn will not look at any camera on its own");
+}

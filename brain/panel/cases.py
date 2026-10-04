@@ -105,6 +105,20 @@ LIVE_STATUSES = ("open", "watching", "acting")
 # endings ride `CASE_HOOKS`), so asking for `kinds=KINDS` still lists it.
 FEED_KINDS = tuple(k for k in KINDS if k != "chore")
 
+# Which STORES the feed lists. A proposal is out of it for the chore's
+# reason one store over: it has a tab of its own with a badge of its own,
+# and it was answerable in both places — counted by the Findings badge
+# and the Proposals badge at once, two badges about one decision. The
+# Proposals tab is the surface that can carry a proposal whole: the
+# replay and the before-and-after, a playbook's targets by name, a set of
+# scenes drawn as swatches, a trial's week and its grade, Undo on an
+# accepted automation and the end of a trial — and the feed's card could
+# carry only the first two, sending a playbook or a scene to the tab for
+# its evidence anyway. A proposal is still a case (`get` answers for it,
+# its endings ride `CASE_HOOKS` for a page served before the change), and
+# the Resident's "already said" prompt asks for every store by name.
+FEED_STORES = tuple(s for s in STORES if s != "proposals")
+
 VERBS = ("do", "not_now", "wrong")
 # And the statuses a verb may be given on. A run is changing the house in
 # `acting`, so an ending there would delete the row the fixer is still
@@ -524,7 +538,9 @@ def _from_proposal(row: dict, snoozes: dict[str, int]) -> dict:
     *Do it* performs it, so composing an action row here would be this
     module asserting a shape — "edit a file", "write an automation" — that
     nothing in the store wrote down, about somebody's house. The kind and
-    the origin are what tell the feed what yes means.
+    the origin are what tell a reader what yes means. The feed is not one
+    of those readers any more (`FEED_STORES`); this is what `get` and the
+    Resident's "already said" list are handed.
     """
     case = _base(
         "proposals", row.get("ts") or 0,
@@ -544,32 +560,11 @@ def _from_proposal(row: dict, snoozes: dict[str, int]) -> dict:
     # notifier already treats as "a card will do".
     case["severity"] = "info"
     case["stakes"] = "low"
-    # The evidence the yes is supposed to rest on, beside the button that
-    # gives it. The feed is where a proposal is accepted, and it used to
-    # carry the title and the why and nothing else — so a trial's whole
-    # argument ("you did the same on 4 of 6") reached the Proposals tab and
-    # never the card whose *Make the change* is the yes it rests on.
-    # Only what the card renders: the replay (and the before-and-after a
-    # condition carries), the trial's grade and its week, and the sentence
-    # `authoring.case_line` already composed for a rule asked for in
-    # words. The config and the playbook's target list stay on the
-    # Proposals tab, where there is room to read a list of entities.
-    spoken = row.get("spoken") if isinstance(row.get("spoken"), dict) else {}
-    case.update({
-        "proposal_status": row.get("status") or "proposed",
-        "replay": row.get("replay") if isinstance(row.get("replay"), dict) else None,
-        "replay_before": (row.get("replay_before")
-                          if isinstance(row.get("replay_before"), dict) else None),
-        "trial_result": (row.get("trial_result")
-                         if isinstance(row.get("trial_result"), dict) else None),
-        "trial_started_at": int(row.get("trial_started_at") or 0),
-        "trial_ends_at": int(row.get("trial_ends_at") or 0),
-        "case_line": str(spoken.get("case") or ""),
-        # The two kinds whose evidence is not a replay, named so the card
-        # can say where the evidence is rather than showing nothing.
-        "playbook": bool(row.get("playbook")),
-        "scene": bool(row.get("scene")),
-    })
+    # No evidence rides here any more. It did while the feed rendered
+    # proposals (the replay, the trial's grade, the composed case); the
+    # Proposals tab is the one surface for them now and carries all of it
+    # off the store row, so a copy on a case nothing renders would be a
+    # second shape to keep true.
     return case
 
 
@@ -628,16 +623,27 @@ def _from_todo(item: dict, snoozes: dict[str, int]) -> dict:
     return case
 
 
-def _all_cases(snoozes: dict[str, int]) -> list[dict]:
-    """Every case the four stores currently hold, unfiltered and unsorted."""
-    out = [_from_finding(row, snoozes) for row in findings_store.list_all()
-           if row.get("text") and row.get("status") in _FINDING_STATUS]
-    out += [_from_proposal(row, snoozes) for row in proposals.listing()
-            if row.get("status") in proposals.OPEN_STATUSES]
-    out += [_from_hypothesis(row, snoozes) for row in hypotheses.list_all("open")]
-    listed = todo_store.listing()
-    out += [_from_todo(item, snoozes) for item in listed["items"]]
-    out += [_from_todo(item, snoozes) for item in listed["done"]]
+def _all_cases(snoozes: dict[str, int], stores=STORES) -> list[dict]:
+    """Every case the named stores currently hold, unfiltered and unsorted.
+
+    A store nobody asked for is not read at all: the feed is asked for on
+    every visit and a proposals load it would then throw away is a read
+    nobody wanted."""
+    stores = set(stores)
+    out: list[dict] = []
+    if "findings" in stores:
+        out += [_from_finding(row, snoozes) for row in findings_store.list_all()
+                if row.get("text") and row.get("status") in _FINDING_STATUS]
+    if "proposals" in stores:
+        out += [_from_proposal(row, snoozes) for row in proposals.listing()
+                if row.get("status") in proposals.OPEN_STATUSES]
+    if "hypotheses" in stores:
+        out += [_from_hypothesis(row, snoozes)
+                for row in hypotheses.list_all("open")]
+    if "todo" in stores:
+        listed = todo_store.listing()
+        out += [_from_todo(item, snoozes) for item in listed["items"]]
+        out += [_from_todo(item, snoozes) for item in listed["done"]]
     return out
 
 
@@ -662,7 +668,7 @@ def _sort(cases: list[dict]) -> list[dict]:
 
 
 def list_cases(status: str | None = None, kinds=None,
-               now: float | None = None) -> list[dict]:
+               now: float | None = None, stores=None) -> list[dict]:
     """The feed.
 
     ``status`` is one of `STATUSES`, the sentinel ``"snoozed"``, or None
@@ -684,10 +690,14 @@ def list_cases(status: str | None = None, kinds=None,
     chore is work already accepted and lives on the To-do tab, so a caller
     that wants one (a diagnostics count, a prompt saying what the house
     already knows about) asks for it by name — `kinds=KINDS`.
+
+    ``stores`` defaults to `FEED_STORES`, every store but the proposals,
+    which live on their own tab; a caller that wants them names them —
+    `stores=STORES`.
     """
     now = time.time() if now is None else now
     snoozes = _read_snoozes()
-    cases = _all_cases(snoozes)
+    cases = _all_cases(snoozes, stores if stores else FEED_STORES)
     wanted = set(kinds) if kinds else set(FEED_KINDS)
     out = []
     for case in cases:
@@ -732,7 +742,8 @@ def open_count(now: float | None = None) -> int:
     — a run in flight and a guess brAIn is still watching are not
     decisions anybody can make yet — and so is every chore, finished or
     not: accepting a finding is the press that takes it OFF this count,
-    and the To-do tab carries its own (`FEED_KINDS`).
+    and the To-do tab carries its own (`FEED_KINDS`). So is every proposal,
+    which the Proposals tab's own badge counts (`FEED_STORES`).
     """
     return len(list_cases("open", now=now))
 
@@ -930,7 +941,7 @@ def overflow(case: dict) -> list[dict]:
 
 
 __all__ = [
-    "CHORE_SNOOZE_S", "Hooks", "KINDS", "FEED_KINDS", "LIVE_STATUSES",
+    "CHORE_SNOOZE_S", "Hooks", "KINDS", "FEED_KINDS", "FEED_STORES", "LIVE_STATUSES",
     "MAX_SNOOZED", "UNMUTABLE_SOURCES",
     "MIN_SNOOZE_S", "PREFIXES", "SNOOZE_BY_STAKES", "SNOOZE_FILE", "STAKES",
     "STATUSES", "STORES", "VERBS", "answers", "case_id", "end", "get",

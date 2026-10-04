@@ -619,10 +619,17 @@ def _claude_argv() -> list[str]:
 # than a parameter threaded through every runner, because a run is one
 # thread start to finish and every runner shares `_run_cli`.
 _RUN_ENV = threading.local()
+# A run may also carry a camera grant (`BRAIN_CAMERA_GRANT`, set by
+# `run_analyst`): the MCP server reads it as the cameras THIS run may look
+# at, and it is always removed from what the panel inherited first, so a
+# grant only ever exists because a runner wrote it.
+CAMERA_GRANT_ENV = "BRAIN_CAMERA_GRANT"
+CAMERA_TOOL = "mcp__home-assistant__get_camera_snapshot"
 
 
 def _claude_env() -> dict[str, str]:
     env = dict(os.environ)
+    env.pop(CAMERA_GRANT_ENV, None)
     env["HOME"] = CLAUDE_HOME
     # Claude Code keeps a memory of its own beside brAIn's, and it was on in
     # every session: "remember that" in the chat was written to the CLI's
@@ -933,6 +940,7 @@ def run_analyst(
     effort: str = "",
     schema: dict | None = None,
     pressed: bool = False,
+    camera_grant: tuple[str, ...] = (),
 ) -> dict:
     """Run `claude -p` with READ-ONLY Home Assistant tools. Same envelope.
 
@@ -960,18 +968,33 @@ def run_analyst(
     is what keeps it to that one server: a user-scope server or a plugin
     the terminal installed would otherwise load into every unattended run,
     with its tools in context and its own reach.
+
+    ``camera_grant`` is the one widening, and it is narrow: the cameras
+    `camera_policy` let this run look at. The snapshot tool moves from the
+    deny list to the allow list for this run only, and the grant rides in
+    the CLI's environment to the MCP server, which refuses any camera not
+    in it and asks the panel's daily count before every frame.
     """
-    return _run_cli(
-        prompt,
-        ["--append-system-prompt", system_prompt,
-         "--tools", "",
-         "--allowedTools", ",".join(ANALYST_TOOLS),
-         "--disallowedTools", ",".join(ANALYST_DENIED)]
-        + project_flags(files=False) + ["--strict-mcp-config"]
-        + isolation_flags(),
-        model, timeout, max_turns,
-        f"the analysis passed its {timeout}s limit and was stopped", source,
-        job=job, effort=effort, schema=schema, pressed=pressed)
+    allow, deny = list(ANALYST_TOOLS), list(ANALYST_DENIED)
+    grant = tuple(c for c in camera_grant or () if str(c).startswith("camera."))
+    if grant:
+        allow.append(CAMERA_TOOL)
+        deny = [t for t in deny if t != CAMERA_TOOL]
+    _RUN_ENV.extra = {CAMERA_GRANT_ENV: ",".join(grant)} if grant else {}
+    try:
+        return _run_cli(
+            prompt,
+            ["--append-system-prompt", system_prompt,
+             "--tools", "",
+             "--allowedTools", ",".join(allow),
+             "--disallowedTools", ",".join(deny)]
+            + project_flags(files=False) + ["--strict-mcp-config"]
+            + isolation_flags(),
+            model, timeout, max_turns,
+            f"the analysis passed its {timeout}s limit and was stopped", source,
+            job=job, effort=effort, schema=schema, pressed=pressed)
+    finally:
+        _RUN_ENV.extra = {}
 
 
 def run_agent(

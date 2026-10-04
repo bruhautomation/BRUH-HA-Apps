@@ -156,13 +156,19 @@ def _now() -> float:
 # ---------------------------------------------------------------------------
 
 def request(sentence: str, via: str = "panel",
-            now: float | None = None) -> str:
+            now: float | None = None, *, trial: bool = False) -> str:
     """Queue one sentence. Returns what was queued, or "" for nothing.
 
     The panel's own writer. The integration writes the identical shape
     from Home Assistant's side (`custom_components/brain/requests.py`), and
     `tests/test_intents.py` drives both into `parse_request` rather than
     writing the format down twice.
+
+    ``trial`` asks for the proposal's shadow week to start the moment it
+    lands — what somebody who ticked "try it for a week" before the card
+    existed asked for. It is a field of the REQUEST, not a rule about who
+    sent it: a trial writes nothing to the house (it replays the week and
+    grades it), and a one-off ignores it.
     """
     text = str(sentence or "").strip()[:MAX_SENTENCE]
     if not text:
@@ -177,9 +183,10 @@ def request(sentence: str, via: str = "panel",
     # scratch is a dotted random name that ends in `.tmp`, so the drain's
     # `*.json` glob cannot see half a request, and this file does not get
     # to invent a second answer to "how is a file replaced safely".
-    atomic_write.write_json(REQUEST_DIR / f"{stamp}.json",
-                            {"ts": int(now), "sentence": text,
-                             "via": str(via or "")[:32]})
+    body = {"ts": int(now), "sentence": text, "via": str(via or "")[:32]}
+    if trial:
+        body["trial"] = True
+    atomic_write.write_json(REQUEST_DIR / f"{stamp}.json", body)
     return text
 
 
@@ -210,8 +217,12 @@ def parse_request(obj) -> dict | None:
     sentence = str(obj.get("sentence") or "").strip()[:MAX_SENTENCE]
     if not sentence:
         return None
-    return {"ts": int(ts), "sentence": sentence,
-            "via": str(obj.get("via") or "")[:32]}
+    out = {"ts": int(ts), "sentence": sentence,
+           "via": str(obj.get("via") or "")[:32]}
+    # The literal `true` and nothing else, so an older request is unchanged.
+    if obj.get("trial") is True:
+        out["trial"] = True
+    return out
 
 
 def _files() -> list[Path]:

@@ -171,18 +171,19 @@ const FEED = [
       A('wrong', 'Not a problem', '/api/case/f:1008/wrong', { note: true }),
     ],
   }),
+  // An opportunity the Resident filed: a finding's row, never a
+  // proposal's — proposals live on their own tab and are not on this feed.
   kase({
-    id: 'p:1002', kind: 'opportunity', severity: 'info', stakes: 'low',
-    situation: 'opportunity',
-    claim: 'Turn the porch light off at 23:10 on weekdays',
+    id: 'f:1011', kind: 'opportunity', severity: 'info', stakes: 'low',
+    situation: 'hands',
+    claim: 'The porch light could go off at 23:10 on weekdays',
     detail: 'You have done it by hand on nine of the last twelve weekdays.',
-    source: 'routines', source_title: 'routine',
-    origin: { store: 'proposals', key: 1002 },
+    source: 'resident', source_title: 'The Resident',
+    origin: { store: 'findings', key: 1011 },
     answers: [
-      A('accept', 'Make the change', '/api/case/p:1002/do', { primary: true }),
-      A('trial', 'Try it for a week', '/api/proposal/1002/trial'),
-      A('not_now', 'Dismiss', '/api/case/p:1002/not_now', { request: 'snooze' }),
-      A('decline', 'No thanks', '/api/case/p:1002/wrong', { note: true }),
+      A('todo', 'Add to list', '/api/case/f:1011/do', { primary: true }),
+      A('not_now', 'Dismiss', '/api/case/f:1011/not_now', { request: 'snooze' }),
+      A('wrong', 'Not a problem', '/api/case/f:1011/wrong', { note: true }),
     ],
     more: [],
   }),
@@ -234,25 +235,6 @@ const FEED = [
       A('todo', 'Add to list', '/api/case/f:1009/do', { primary: true, request: 'todo' }),
       A('not_now', 'Dismiss', '/api/case/f:1009/not_now', { request: 'snooze' }),
       A('wrong', 'Not a problem', '/api/case/f:1009/wrong', { note: true, request: 'wrong' }),
-    ],
-  }),
-  // A proposal on trial: its replay and the week's grade sit beside the
-  // press that accepts it, which is the whole argument for a trial.
-  kase({
-    id: 'p:1010', kind: 'opportunity', severity: 'info', stakes: 'low',
-    status: 'watching', situation: 'opportunity',
-    claim: 'Turn the landing light off at 23:30',
-    source: 'routines', source_title: 'routine',
-    origin: { store: 'proposals', key: 1010 },
-    proposal_status: 'trialling',
-    replay: { would_run: 9, days: 30, blocked_by_conditions: 0 },
-    trial_result: { would_fire: 6, agreed: 4, disagreed: 1, contradicted: 1,
-                    days: 3 },
-    trial_started_at: NOW - 3 * 86400, trial_ends_at: NOW + 4 * 86400,
-    answers: [
-      A('accept', 'Make the change', '/api/case/p:1010/do', { primary: true }),
-      A('not_now', 'Dismiss', '/api/case/p:1010/not_now', { request: 'snooze' }),
-      A('decline', 'No thanks', '/api/case/p:1010/wrong', { note: true }),
     ],
   }),
 ];
@@ -369,15 +351,6 @@ const read = (page) => page.evaluate((ids) => {
         resultHead: c.querySelector('.findresult .findfixlabel')?.textContent || '',
         resultText: c.querySelector('.findresult p')?.textContent || '',
         changedRows: [...c.querySelectorAll('.findresult .findchanged li')].length,
-        proof: c.querySelector('.caseproof .propreplay')?.textContent || '',
-        trial: c.querySelector('.caseproof .proptrial')?.textContent || '',
-        proofAboveActions: (() => {
-          const proof = c.querySelector('.caseproof');
-          const acts = c.querySelector('.findactions');
-          if (!proof || !acts) return true;
-          return Math.round(proof.getBoundingClientRect().bottom)
-            <= Math.round(acts.getBoundingClientRect().top);
-        })(),
         verbs: [...c.querySelectorAll('.findactions button')].map((b) => ({
           label: b.textContent.trim(),
           verb: b.dataset.verb || '',
@@ -520,7 +493,7 @@ for (const { width, touch } of CASES) {
     'f:1007': ['todo', 'not_now', 'wrong'],
     'f:1008': ['apply', 'cancel', 'wrong'],
     'f:1006': ['fix', 'todo', 'not_now', 'wrong'],
-    'p:1002': ['accept', 'trial', 'not_now', 'decline'],
+    'f:1011': ['todo', 'not_now', 'wrong'],
   };
   for (const [id, verbs] of Object.entries(expect)) {
     const card = feed.cards.find((c) => c.id === id);
@@ -564,20 +537,6 @@ for (const { width, touch } of CASES) {
   const handedBack = feed.cards.find((c) => c.id === 'f:1009');
   if (handedBack && handedBack.verbs.some((v) => v.verb === 'fix')) {
     note(`${width}px`, 'a fix the fixer handed back leads with another plan run');
-  }
-
-  // A proposal's evidence beside the press that accepts it.
-  const trialled = feed.cards.find((c) => c.id === 'p:1010');
-  if (trialled) {
-    if (!/would have run 9/.test(trialled.proof)) {
-      note(`${width}px`, `the trialled proposal's replay reads "${trialled.proof}"`);
-    }
-    if (!/you did the same on 4/.test(trialled.trial)) {
-      note(`${width}px`, `the trialled proposal's grade reads "${trialled.trial}"`);
-    }
-    if (!trialled.proofAboveActions) {
-      note(`${width}px`, 'the trial grade sits under the buttons, not beside them');
-    }
   }
 
   // Pretty names. The chip carries the name and the room; the id is the

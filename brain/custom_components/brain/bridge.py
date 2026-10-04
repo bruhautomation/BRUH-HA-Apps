@@ -251,6 +251,41 @@ class ClaudeBridge:
         except Exception:  # noqa: BLE001 — any failure means "not healthy via HTTP"
             return None
 
+    async def async_llm_tool(self, name: str, args: dict,
+                             timeout: int = 45) -> dict:
+        """One of brAIn's read-only measurements, from the add-on's API.
+
+        For the LLM API other agents use (`llm_api.py`). Answers with the
+        tool's own result, or ``{"error": ...}`` — a measurement that could
+        not be fetched is a sentence the asking model can repeat, never an
+        exception in somebody else's conversation.
+        """
+        api = await self.async_api_config()
+        if not api:
+            return {"error": ("brAIn's add-on API is not up (it runs with "
+                              "the add-on's fast voice mode), so its "
+                              "measurements cannot be read right now.")}
+        base_url, token = api
+        try:
+            import aiohttp
+            from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+            session = async_get_clientsession(self._hass)
+            async with session.post(
+                f"{base_url}/llm/tool",
+                json={"name": name, "args": args},
+                headers={"X-BRUH-Token": token},
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                if resp.status != 200:
+                    return {"error": f"brAIn's add-on answered HTTP {resp.status}"}
+                payload = await resp.json()
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"brAIn's add-on did not answer: {exc}"}
+        result = payload.get("result") if isinstance(payload, dict) else None
+        return result if isinstance(result, dict) else {
+            "error": "brAIn's add-on answered with nothing readable"}
+
     async def async_send_conversation_streaming(
         self,
         text: str,
@@ -447,12 +482,13 @@ class ClaudeBridge:
         schema: dict | None = None,
         memory: bool = False,
         scheduled: bool = False,
+        cameras: bool = False,
     ) -> str:
         """Send an automation task and wait for the result's text."""
         answer = await self.async_send_task_full(
             prompt, notify=notify, notify_entity=notify_entity,
             timeout=timeout, model=model, tools=tools, schema=schema,
-            memory=memory, scheduled=scheduled)
+            memory=memory, scheduled=scheduled, cameras=cameras)
         return answer["text"]
 
     async def async_send_task_full(
@@ -466,6 +502,7 @@ class ClaudeBridge:
         schema: dict | None = None,
         memory: bool = False,
         scheduled: bool = False,
+        cameras: bool = False,
     ) -> dict:
         """Send a task and wait for the whole result: ``{"text", "data"}``.
 
@@ -518,6 +555,11 @@ class ClaudeBridge:
             task["memory"] = True
         if scheduled:
             task["scheduled"] = True
+        # The snapshot tool on a narrow scope, which the listener otherwise
+        # denies. Every frame is still asked of the panel's opt-in list and
+        # daily count at the MCP server; this only lets the run ask.
+        if cameras:
+            task["cameras"] = True
 
         task_file = os.path.join(self.tasks_dir, f"{task_id}.json")
         result_file = os.path.join(self.task_results_dir, f"{task_id}.json")

@@ -116,8 +116,8 @@ TIMEOUT_S = 120
 MAX_TURNS = 4
 
 # What a signal that never got a verdict is left as, in the words the
-# diagnostics show. `triage.NOT_MENTIONED`'s rule: one table, because six
-# copies is six chances for one of them to stop saying that nothing looked.
+# diagnostics show. One table, `triage.UNJUDGED`'s rule, because a copy
+# per call site is a chance for one of them to stop saying nothing looked.
 SKIPPED = ("Nothing came back about this one, so it is being watched "
            "rather than dropped.")
 UNREADABLE = ("The look's answer could not be read, so everything in the "
@@ -358,9 +358,8 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
 
     ``batch_rows`` is what `signals.prompt_rows` returned — or the raw
     signals, which are rendered here so this module can be driven alone.
-    Signals are NUMBERED and never named back, `triage.frame`'s rule: a
-    model retyping a subject can name the wrong one and a number cannot be
-    nearly right.
+    Signals are NUMBERED and never named back: a model retyping a subject
+    can name the wrong one and a number cannot be nearly right.
 
     The open cases go in because the commonest reason a signal is worth
     nothing is that the home is already saying it, and the memory goes in
@@ -429,12 +428,11 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
 def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
     """`{1-based index: {verdict, why, forced}}` out of a reply.
 
-    Every index from 1 to ``count`` is in the answer, always. That is the
-    difference between this and `triage.parse`, and it is the same rule
-    read the other way round: triage lets an unmentioned row fall through
-    to the tab because surfacing is safe there, and here nothing is
-    surfaced by a look — so a signal nobody judged has to be **kept**, and
-    `watch` is the verdict that keeps it. Dropping it would be the one
+    Every index from 1 to ``count`` is in the answer, always. The retired
+    triage drain let an unmentioned row fall through to the tab because
+    surfacing was safe there; here nothing is surfaced by a look — so a
+    signal nobody judged has to be **kept**, and `watch` is the verdict
+    that keeps it. Dropping it would be the one
     thing this loop must not do quietly.
 
     ``rows`` is the batch itself, and it is what `never_ignore` reads. It

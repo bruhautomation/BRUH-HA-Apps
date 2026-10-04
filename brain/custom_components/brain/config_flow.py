@@ -74,7 +74,7 @@ try:
         "daily_briefing": "Daily briefing — what's notable right now (anomalies, batteries, weather that matters)",
         "anomaly_watch": "Anomaly watch — only problems; says 'All quiet.' otherwise",
         "battery_maintenance": "Battery & maintenance — what to replace now / soon",
-        "camera_check": "Camera check — looks at every camera, reports anything notable",
+        "camera_check": "Camera check — looks at the cameras you allowed in the brAIn panel, reports anything notable",
         "custom": "Custom — use my prompt below",
     }
 

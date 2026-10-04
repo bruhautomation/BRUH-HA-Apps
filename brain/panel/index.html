@@ -299,6 +299,14 @@
         you can close this tab and come back.</p>
     </div>
 
+    <!-- What the study sessions have found, as it lands. The bar above says
+         how far along the syllabus is; this says what it has learned about
+         THIS house, which is what makes the half hour worth waiting for. -->
+    <div id="obFound" class="obfound hidden">
+      <h3 class="obh3">What brAIn has found so far</h3>
+      <ul id="obFoundList" class="obfoundlist"></ul>
+    </div>
+
     <div id="obRecommend" class="hidden">
       <div class="row">
         <button id="obGo" class="btn primary">See what it suggests</button>
@@ -319,6 +327,24 @@
       <div id="obShippedBlock" class="hidden">
         <h3 class="obh3">Cards that ship with brAIn, and fit this house</h3>
         <div id="obShipped" class="oblist"></div>
+      </div>
+      <!-- One automation the recommend pass found a reason for. Ticking it
+           sends the sentence through the ask bar's own path: drafted,
+           simulated over this house's history, graded against what the
+           household did, then watched for a week. Nothing is written to the
+           house until it is accepted on Home → Proposals. -->
+      <div id="obTryBlock" class="hidden">
+        <h3 class="obh3">One automation to try for a week</h3>
+        <label class="obcard">
+          <input type="checkbox" id="obTry" checked>
+          <div class="obcardbody">
+            <div class="obcardtitle" id="obTryText"></div>
+            <div class="obcardwhy" id="obTryWhy"></div>
+            <div class="obcardfocus">brAIn simulates it over your recorded history first,
+              then watches it for a week beside what you actually do. Nothing is written to
+              your house until you accept it under Home → Proposals.</div>
+          </div>
+        </label>
       </div>
       <p class="hint" id="obChooseNote"></p>
       <div class="row">
@@ -772,6 +798,15 @@
   <section class="ksec kbriefsec">
     <h2>This morning</h2>
     <div id="kBrief" class="kbrief"></div>
+  </section>
+
+  <!-- (a2) A deep review: the one run on the top tier, and only by a press.
+       Its price is on the button before it is pressed (an estimate read
+       off the reviews this house has already paid for), and what it said
+       stays here to be read — it files nothing anywhere else. -->
+  <section class="ksec kreviewsec">
+    <h2>Deep review</h2>
+    <div id="kReview" class="kreview"></div>
   </section>
 
   <!-- (b) The measurements. Always seven rows, always in this order, whatever
@@ -1271,6 +1306,20 @@
           </div>
           <p class="hint">Only <code>log_level</code> stays Configuration-tab-only (it takes
             effect at startup, so there is nothing to sync).</p>
+
+          <!-- Which cameras brAIn may look at on its own. Empty until somebody
+               ticks one: a camera frame is the most private thing a house
+               holds, and voice, an automation's task and the Resident all
+               answer to this one list and one daily count. Fetched when this
+               section opens, never on the way into the dialog. -->
+          <h4 class="sethead">Cameras</h4>
+          <p class="hint">Cameras brAIn may look at on its own — when you ask a voice assistant,
+            when an automation runs a camera check, and to confirm a safety alarm or an open door.
+            None until you tick one.
+            <button type="button" class="btn icon tiny"
+              aria-label="More about which cameras brAIn may look at"
+              data-tip="Unticked cameras are never looked at on brAIn's own initiative. Ticked ones are looked at a limited number of times a day across every path, and a frame is described for what it shows about the house, never about a person. You asking in the chat or the terminal is you looking, and is not limited by this list.">?</button></p>
+          <div id="setCameras" class="setcams">Open this section to load your cameras.</div>
         </div>
       </details>
 

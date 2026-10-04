@@ -94,7 +94,8 @@ automation" from a party trick into something that works on the second try.
 
 **The house's own record.** History and long-term statistics, the logbook, the error
 log, the Supervisor's view of your add-ons, weather forecasts, camera snapshots
-(it **sees** the image), rendered templates, and every service any integration exposes.
+(it **sees** the image — see Cameras for when it may look on its own),
+rendered templates, and every service any integration exposes.
 
 **Add-ons.** List, start, stop, restart and read the logs of your other add-ons.
 
@@ -222,16 +223,15 @@ buttons can be read without reading the words:
 
 The other kinds of card take the same shape with their own words: a **guess**
 brAIn wants confirmed offers **Yes**, **No** and **Dismiss**; a **suggestion**
-offers **Make the change**, **Try it for a week**, **Dismiss** and **No thanks**;
-a **plan waiting for consent** offers **Apply**, **Don't change it** and **Not a
+of a change to your automations is not on this feed at all — it is on the
+**Proposals** tab, with **Enable it**, **Try it for a week** and **No thanks** beside
+its evidence; a **plan waiting for consent** offers **Apply**, **Don't change it** and **Not a
 problem**; a **change brAIn made** offers **Got it**, and **Undo the fix** while it
 can be put back — and once a fix has run, its card shows what the run concluded
 and changed, a fix that came back needing you leads with your own presses, and
 one that failed says so with **Try again** behind the ⋯; a chore on your **To-do** tab offers **Done** and **Remove**. A
 chore a house check raised — empty the dishwasher, shut the back door — leads
 with **Done**, because the work is minutes and a list is sillier than doing it.
-A suggestion's card carries the same evidence the Proposals tab does — the replay,
-the before and after, a trial's grade — next to the button that accepts it.
 Questions sit just under the high-stakes problems, and **Dismiss** on a question
 puts it to sleep: brAIn asks something else meanwhile and asks again later (a
 week for most), and nothing is recorded either way.
@@ -591,17 +591,18 @@ A held finding is **held, not deleted**. The row stays, which is what stops
 the next pass filing the same thing again every six hours, and it clears
 itself exactly as an open one does when the check stops reporting it.
 
-The rule under all of it: **triage can only hold something back by saying
-so.** If brAIn is not signed in, if automatic runs are paused, if the usage
-budget is spent, if the run fails or answers something unreadable, if it
-skips a row — the finding is on the list, saying **Not checked first** and
-why. "I could not look" and "it is not real" are different claims, and only
-the second may keep a problem off your screen.
+The rule under all of it: **the look can only hold something back by saying
+so.** If the look fails, answers something unreadable or skips a row, the
+finding is on the list, saying **Not checked first** and why. If brAIn cannot
+look at all — it is not signed in, automatic runs are paused, the usage
+budget is spent — the findings wait for the next look rather than being
+shown unchecked. "I could not look" and "it is not real" are different
+claims, and only the second may keep a problem off your screen.
 
-One look covers ten findings, and when more than that are waiting the rest
-go to the front of the next one rather than being shown unchecked — showing
-them would spend the whole idea on exactly the houses with the most to
-look at. Anything that has waited an hour with nothing coming back for it
+One look covers up to thirty things, and when more than that are waiting the
+rest go to the front of the next one rather than being shown unchecked —
+showing them would spend the whole idea on exactly the houses with the most
+to look at. Anything that has waited an hour with nothing coming back for it
 is shown anyway, saying so. ⚙ → Diagnostics reports how long the oldest
 waiting one has waited.
 
@@ -1237,6 +1238,38 @@ response_variable: answer
 # answer.data.unusual is a boolean; answer.response is the sentence.
 \`\`\`
 
+## Home Assistant's AI Task
+
+On Home Assistant 2025.7 and later brAIn is also an **AI Task** entity
+(\`ai_task.brain_system_ai_task\` on a fresh install), so the **Suggest with AI**
+buttons in Home Assistant's own editors and the \`ai_task.generate_data\`
+action can be answered by brAIn rather than a model that has never seen your
+house. It runs the same way \`brain.ask\` does: reading tools only, with what
+brAIn knows about the house in front of the instruction. A requested
+\`structure\` is handed to the CLI as a schema and the answer is checked
+against Home Assistant's own schema before it is returned, so a reply of the
+wrong shape is an error with the reason rather than data that nearly fits.
+It needs the automation listener (\`enable_automation_integration\`), which is
+what answers it. Attachments are not read. On an older Home Assistant the
+entity simply does not appear.
+
+## brAIn's measurements, for other assistants
+
+Another conversation agent — OpenAI's, Google's, a local model, or the
+Model Context Protocol server integration handing tools to an outside client —
+can be given **brAIn measurements** under that agent's own **Control Home
+Assistant** setting (Home Assistant 2024.6 and later). It offers three
+questions, all of which only read: \`brain_what_is_normal\` (what an entity
+normally reads at this hour of the week and how far it is from that now),
+\`brain_recall\` (what brAIn remembers about something, with who taught it and
+when) and \`brain_explain_change\` (what changed an entity recently — an
+automation, a person, a voice command or brAIn). Each is answered by the
+same code brAIn's own runs use. The entity being asked about has to be
+exposed to that assistant (Settings → Voice assistants → **Expose**), facts
+about entities it cannot see are left out of what \`brain_recall\` returns,
+and an exposure that cannot be checked is refused rather than answered. It
+is served by the voice worker pool, so it needs \`assist_fast_mode\` left on.
+
 ## The events, in one place
 
 Every event brAIn fires carries the thing it is about, so an automation can
@@ -1530,10 +1563,22 @@ usually \`notify.notify\`.
 It carries four things: what you used against the week before, what was found
 and what was answered, what brAIn learned, and **one thing to do this week**.
 
-That last one is chosen **before** Claude sees anything — the worst open
-severity, then the one open longest. Asked to pick, a model picks the finding
-it can write the best sentence about, which is the one carrying the most
-detail rather than the most consequence.
+That last one is chosen in its own step, before the report is written, and
+from a list brAIn hands over rather than freely. The simple rule is the worst
+open severity, then the one open longest — and that rule cannot see the week
+as a whole: three warnings about one flaky hub are plainly the thing worth an
+afternoon, while a \`serious\` row that has been open a month because it is
+how your house is will top a severity list every single week. So when there
+are at least two open problems to choose between, Claude's planner tier is
+shown them with the week's numbers and asked which one matters most, and why;
+the report then ends on that one and says why. Three things keep it honest:
+it may only name a problem it was shown, a **critical** problem is never
+passed over for something less severe (if one is open, only critical ones are
+offered), and anything that stops it — automatic runs paused, the usage
+budget spent, a failed run, an answer naming nothing it was shown — leaves
+the simple rule's pick. Both picks are written to the run journal side by
+side, so ⚙ → Diagnostics can say how often the two agreed; a choice that
+always agrees with the rule is a run you could switch off.
 
 It is not the morning brief with a longer timer. The brief asks *is there
 anything**; the report asks **what happened*, and its failure is the opposite
@@ -1550,6 +1595,35 @@ wrong trade.
 \`brain weekly\` prints what this week holds without sending; \`brain weekly
 send\` sends one now — which **moves the week**, so the next scheduled report
 is a week from now rather than a week from Sunday.
+`,
+  },
+  {
+    id: "a-deep-review-when-you-ask-for-one",
+    icon: "📄",
+    title: "A deep review, when you ask for one",
+    body: `
+# A deep review, when you ask for one
+
+Everything else brAIn writes is about one thing — a card about a category, a
+case about a signal, a report about a week — and runs on a model chosen so it
+can run often. **House → Knowledge → Deep review** is the other kind: Claude's
+top model, at high effort, with read-only tools and a long budget, sits with
+the whole house and says what it adds up to — a pattern across rooms, a cause
+behind several symptoms, something set up in a way that will bite later,
+something working well that you should keep.
+
+- **Only by a press.** Nothing schedules it; the scheduler cannot even name
+  the job.
+- **The price is on the button.** Before you press it says roughly how many
+  tokens it will spend and what share of a five-hour session that is on your
+  plan — read off what earlier reviews on your house actually cost, and a
+  first guess (about 150k) until one has run. It is an estimate and says so.
+- **It reads, and files nothing.** No findings, no proposals, no memory
+  lines. It is told what brAIn already knows so it does not repeat it, and
+  what it says is kept on that page (the last six reviews). If something in
+  it is worth acting on, ask about it in the chat.
+- Pressing it skips the usage budget, like every press: automatic runs pause
+  at the budget, asking by hand always runs.
 `,
   },
   {
@@ -1805,13 +1879,15 @@ The **Proposals** tab is the only list in the panel that is not about something
 being wrong: a list of things you might want, with the evidence for each one and a
 week's replay of your own history behind it.
 
-It still has a tab of its own **and** its suggestions now ride in the Findings feed as
-\`Could be better\` cases. That is deliberate rather than an oversight: this tab
-carries the swatches, the replay numbers and the trial lifecycle, which a one-line
-card in a feed cannot, and the feed carries the decision, which is what a badge can
-honestly count. Answering one in either place answers it in both — there is one
-store underneath and one ledger, so a card you decline here does not come back
-there. The tab goes when the four-tab panel lands; the decision has already moved.
+This tab is the one place a proposal is offered. For a release they also rode in
+the Findings feed, and a suggestion was then counted by both badges and could be
+answered in either place — while the feed's card could carry only the replay
+and a trial's grade, and sent a playbook or a set of scenes back here for its
+evidence anyway. Everything you would want before saying yes is on this tab: the
+replay and the before-and-after, a playbook's targets by name, the four moods
+drawn as swatches, a trial's week and its grade, and **Undo** on anything you
+accepted. The Findings feed is for problems and questions; its badge counts
+those, and this tab's badge counts suggestions.
 
 \`\`\`
 proposed  ──"Try it for a week"──▶  trialling  ──▶  accepted
@@ -2682,11 +2758,21 @@ duplicate them (see What it will not do).
    Insights tab for the twenty minutes the syllabus takes is indistinguishable
    from a broken one; and the five opening study sessions run a **lighter**
    syllabus than \`brain learn\` does, because somebody is watching a progress bar.
+   While it studies, **what it finds is shown as it lands** under the progress —
+   the facts each session filed about your house, newest first — rather than a
+   bar alone.
 6. **Pick your cards.** A fresh install now creates **only** what you ticked. The
    nine shipped categories are offered as suggestions like everything else, and
    the ones you did not accept are not created — including when you accept none,
    which is an answer and gives you the empty dashboard you asked for. (An install
    that onboarded before 1.48.0 is untouched: it keeps every card it has.)
+7. **One automation to try for a week.** When the study turned up something an
+   automation would fix — a light you switch on by hand every evening, a door
+   nobody remembers — the last step offers it as one sentence, ticked. Leaving it
+   ticked sends that sentence through the same path a typed one takes: drafted,
+   simulated over your recorded history and graded against what your household
+   actually did, then **trialled for a week** on **Home → Proposals**. Nothing is
+   written to your house until you accept it there.
 
 A **Claude Pro or Max subscription** is the cheapest way to run brAIn — it uses the
 plan you already pay for rather than API credits. An API key works too.
@@ -2849,7 +2935,7 @@ again opens the group's first pane.
 
 \`enable_terminal\` switches the Ask tab off. \`enable_insights\` switches off
 everything that only a scheduled Claude run ever fills: the scheduler stops, and
-the **Insights** and **Proposals** panes go from Home's strip. **Home stays**,
+the **Insights** pane goes from Home's strip. **Findings and Proposals stay**,
 because the house checks cost nothing to run and still file there. The panel
 itself always runs, because it is the ingress target.
 
@@ -2886,10 +2972,10 @@ brAIn 2.0 plans every Claude run by **job** rather than by one global model:
 
 | Tier | Jobs | Why |
 |---|---|---|
-| **Haiku** | triage, scene naming, playbook text, milestones, the memory consolidator, the morning brief, auth check | A yes/no, a name or a sentence over material something else already gathered |
+| **Haiku** | the first look at every finding and signal, scene naming, playbook text, milestones, the memory consolidator, the morning brief, auth check | A yes/no, a name or a sentence over material something else already gathered |
 | **Sonnet** | insight cards, fix plans, the weekly report, study, intents, curiosity, episode summaries, onboarding | Reading a house with tools and writing about it |
-| **Opus** | applying a fix | The one run that changes the house, at the highest effort |
-| **Fable** | nothing yet — reserved for a review you press for | Never from a timer — a scheduler cannot name it |
+| **Opus** | applying a fix, turning a sentence into an automation, the weekly report's one thing | The runs that change the house or decide what you act on |
+| **Fable** | the **deep review** you press for on House → Knowledge | Never from a timer — a scheduler cannot name it |
 
 The **thinking** dial (⚙ → Insights, or \`thinking\` in \`/api/settings\`) is
 \`light\` / \`normal\` / \`generous\`. **Light** steps down only the jobs where a
@@ -3533,7 +3619,7 @@ the rest of your options.
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | \`enable_terminal\` | bool | \`true\` | Run the ttyd terminal and show the classic terminal under **Ask**. Turn off for a dashboard-only install with no shell. |
-| \`enable_insights\` | bool | \`true\` | Run the card scheduler and show the **Insights** and **Proposals** tabs. Off stops every scheduled Claude run; **Home stays**, because the house checks cost nothing and still file there. |
+| \`enable_insights\` | bool | \`true\` | Run the card scheduler and show the **Insights** tab. Off stops every scheduled Claude run; **Findings and Proposals stay**, because the house checks cost nothing and still file there. |
 
 ## Terminal
 
@@ -3702,6 +3788,32 @@ To keep it from eating the plan you also use for your own work:
 `,
   },
   {
+    id: "cameras",
+    icon: "📄",
+    title: "Cameras",
+    body: `
+# Cameras
+
+A camera frame is the most private thing your house holds, so brAIn looks
+through one **on its own** — when you ask a voice assistant, when an
+automation runs the **Camera check** insight, or to confirm a safety alarm or
+an open door — only through the cameras you tick under **⚙ → Generation
+defaults → Cameras**. None are ticked to begin with.
+
+- **A daily limit.** Ticked cameras are looked at a dozen times a day at most,
+  across every one of those paths together; the list says how many have been
+  used today. If brAIn cannot count, it does not look.
+- **The Resident looks only to confirm.** When a leak, smoke, CO or gas sensor
+  trips, or a door, window or lock is involved, the investigation may use the
+  ticked cameras in the same room (or all of them, if none shares the room) —
+  never the first look, never anything else.
+- **The house, not the people.** Every prompt that may see a frame is told to
+  describe what it shows about the house and never to describe a person.
+- **You asking is you looking.** A camera you ask about in the chat or the
+  terminal is not counted against the limit or held to the list.
+`,
+  },
+  {
     id: "what-it-will-not-do",
     icon: "🚫",
     title: "What it will not do",
@@ -3735,6 +3847,8 @@ edges.
 - **No emergency playbook unlocks a door or disarms an alarm**, whatever the
   emergency. And brAIn never runs a playbook itself — it writes one, you accept
   it, and Home Assistant runs it.
+- **It looks through no camera on its own unless you ticked it.** See
+  Cameras.
 - **Voice is limited to Home Assistant by default.** Widening one agent to Bash and
   file editing (**Full admin**) is a choice you make deliberately, per agent.
 - **The registry services are admin-gated**, and destructive sweeps (orphan cleanup)

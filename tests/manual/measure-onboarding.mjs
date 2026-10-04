@@ -61,6 +61,21 @@ const RECOMMENDATIONS = [
     why: 'Three thermostats and a measured wake time.' },
 ];
 
+// What the study sessions found, in `onboarding.reveals`' shape, newest
+// first — shown under the progress as it lands.
+const REVEALS = [
+  { fact: 'The chest freezer in the garage is the only appliance on a smart plug.',
+    topic: 'devices', ts: 1790000300 },
+  { fact: 'The house is usually up by 06:40 on weekdays and 08:10 at weekends — a long sentence that has to wrap on a phone without pushing the page sideways.',
+    topic: 'presence', ts: 1790000200 },
+];
+
+// The one automation the recommend pass found a reason for.
+const TRY_RULE = {
+  sentence: 'When the back door opens after sunset, turn on the patio light.',
+  why: 'The patio light is switched on by hand most evenings within a minute of the back door opening.',
+};
+
 const SHIPPED = [
   { id: 'energy', title: 'Energy', icon: '⚡',
     description: 'What the house used, and what moved.',
@@ -141,7 +156,8 @@ window.fetch = async (url, opts) => {
     // half hour the Insights tab used to say nothing at all.
     window.__ob.learning = { ...window.__ob.learning,
                              done: window.__ob.learning.topics.slice(),
-                             complete: true, memory_ready: true };
+                             complete: true, memory_ready: true,
+                             reveals: ${JSON.stringify(REVEALS)} };
     return answer({ queued: window.__ob.learning.topics.slice(),
                     first_card: 'overview' });
   }
@@ -149,6 +165,7 @@ window.fetch = async (url, opts) => {
     window.__posted.push(['recommend', body]);
     const out = { recommendations: ${JSON.stringify(RECOMMENDATIONS)},
                   shipped: ${JSON.stringify(SHIPPED)},
+                  try_rule: ${JSON.stringify(TRY_RULE)},
                   sparse: false, missing: '' };
     Object.assign(window.__ob, out, { phase: 'choosing' });
     return answer(out);
@@ -156,7 +173,8 @@ window.fetch = async (url, opts) => {
   if (p.includes('api/onboarding/accept')) {
     window.__posted.push(['accept', body]);
     window.__ob.onboarded = true;
-    return answer({ created: [], onboarded: true, shipped: body.shipped || [] });
+    return answer({ created: [], onboarded: true, shipped: body.shipped || [],
+                    tried: body.try_rule ? ${JSON.stringify(TRY_RULE.sentence)} : '' });
   }
   if (p.includes('api/onboarding/skip')) {
     window.__posted.push(['skip', body]);
@@ -415,6 +433,28 @@ for (const width of WIDTHS) {
   if (step.shown.join(',') !== 'obRecommend') {
     note(at, `after starting the syllabus the flow shows [${step.shown.join(', ')}]`);
   }
+  // What the sessions found is on screen while the suggestions are one
+  // press away — the half hour shows its work.
+  const found = await page.evaluate(() => {
+    const box = document.getElementById('obFound');
+    return {
+      shown: !!box && !box.classList.contains('hidden')
+        && box.getBoundingClientRect().height > 0,
+      rows: [...document.querySelectorAll('#obFoundList .obfoundrow')]
+        .map((r) => r.textContent),
+      docWidth: document.documentElement.scrollWidth,
+    };
+  });
+  if (!found.shown) note(at, 'what the study sessions found is not on screen');
+  if (found.rows.length !== REVEALS.length) {
+    note(at, `${found.rows.length} findings shown for ${REVEALS.length}`);
+  }
+  if (!found.rows[0] || !/chest freezer/.test(found.rows[0])) {
+    note(at, 'the newest finding is not shown first');
+  }
+  if (found.docWidth > width + 0.5) {
+    note(at, `the findings list scrolls sideways (${found.docWidth}px)`);
+  }
   await page.click('#obGo');
   await page.waitForSelector('#obChoose:not(.hidden)', { timeout: 5000 })
     .catch(() => note(at, 'the recommend step never reached the choices'));
@@ -434,6 +474,10 @@ for (const width of WIDTHS) {
         .classList.contains('hidden'),
       shippedIds: shipped.map((r) => (r.querySelector('input') || {}).dataset.shipped),
       allTicked: [...document.querySelectorAll('#obChoose input:checked')].length,
+      tryShown: !document.getElementById('obTryBlock').classList.contains('hidden'),
+      tryText: document.getElementById('obTryBlock').textContent.replace(/\s+/g, ' '),
+      tryTicked: !!(document.getElementById('obTry') || {}).checked,
+      foundShown: !document.getElementById('obFound').classList.contains('hidden'),
       note: (document.getElementById('obChooseNote') || {}).textContent || '',
       shippedText: shipped.map((r) => r.textContent.replace(/\s+/g, ' ').trim()),
       docWidth: document.documentElement.scrollWidth,
@@ -447,18 +491,31 @@ for (const width of WIDTHS) {
   }
   // Two groups, each named. One list holding both is one list somebody
   // ticks without noticing half of it means something different.
-  if (choose.heads.length !== 2) {
+  if (choose.heads.length !== 3) {
     note(at, `the choose step has ${choose.heads.length} group headings`);
   }
+  // The one automation to try: offered, ticked, and honest about what the
+  // tick does — nothing is written to the house until it is accepted.
+  if (!choose.tryShown) note(at, 'the automation to try is not offered');
+  if (!/patio light/.test(choose.tryText)) note(at, 'the automation to try does not say what it is');
+  if (!/Nothing is written to your house/.test(choose.tryText)) {
+    note(at, 'the automation to try does not say it writes nothing yet');
+  }
+  if (!choose.tryTicked) note(at, 'the automation to try is not ticked by default');
+  if (choose.foundShown) note(at, 'the findings list is still on screen over the choices');
   if (!choose.heads.some((h) => /ship with brAIn/i.test(h))) {
     note(at, `the shipped group is labelled [${choose.heads.join(' | ')}]`);
   }
   if (!choose.shippedText.some((t) => /grid meter/.test(t))) {
     note(at, 'a shipped card does not say why it fits this house');
   }
-  if (choose.allTicked !== RECOMMENDATIONS.length + SHIPPED.length) {
+  if (choose.allTicked !== RECOMMENDATIONS.length + SHIPPED.length + 1) {
     note(at, `${choose.allTicked} boxes ticked out of `
-      + `${RECOMMENDATIONS.length + SHIPPED.length}`);
+      + `${RECOMMENDATIONS.length + SHIPPED.length + 1}`);
+  }
+  // The note counts cards, never the automation tick.
+  if (!/4 cards/.test(choose.note)) {
+    note(at, `with every card ticked the note says "${choose.note}"`);
   }
   if (choose.docWidth > width + 0.5) {
     note(at, `the choose step scrolls sideways (${choose.docWidth}px)`);
@@ -500,6 +557,10 @@ for (const width of WIDTHS) {
     if (!Array.isArray(accepted.shipped)
         || accepted.shipped.join(',') !== SHIPPED[0].id) {
       note(at, `Finish sent shipped ${JSON.stringify(accepted.shipped)}`);
+    }
+    // Everything was unticked, the automation included.
+    if (accepted.try_rule !== false) {
+      note(at, `Finish sent try_rule ${JSON.stringify(accepted.try_rule)}`);
     }
   }
 

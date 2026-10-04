@@ -265,8 +265,8 @@ class TestAFableOverrideNeverReachesATimer(RunCase):
 
     def test_the_setting_override_meets_the_same_guard(self):
         settings_store.save({"model": "fable"})
-        self.assertEqual(engine.planned("triage")[0], "haiku")
-        self.assertEqual(engine.planned("triage", pressed=True)[0], "fable")
+        self.assertEqual(engine.planned("first_look")[0], "haiku")
+        self.assertEqual(engine.planned("first_look", pressed=True)[0], "fable")
 
 
 class TestEveryRunIsIsolated(RunCase):

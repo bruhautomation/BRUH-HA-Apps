@@ -88,6 +88,7 @@ from .const import (
     STUDY_REQUESTS_DIR,
 )
 from .insight_format import (
+    CAMERA_TEMPLATES,
     INSIGHT_TEMPLATES,
     build_card_yaml,
     make_preview,
@@ -279,6 +280,13 @@ def _get_platforms(entry: ConfigEntry) -> list[Platform]:
         todo = getattr(Platform, "TODO", None)
         if todo is not None:
             platforms.append(todo)
+        # brAIn as Home Assistant's AI Task provider ("Suggest with AI",
+        # `ai_task.generate_data`). Core 2025.7+; looked up for `todo`'s
+        # reason — an older core has no such platform and must not be
+        # asked for one.
+        ai_task = getattr(Platform, "AI_TASK", None)
+        if ai_task is not None:
+            platforms.append(ai_task)
     return platforms
 
 
@@ -374,12 +382,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # `parse_action` rejects far more than it accepts.
         unsub_actions = hass.bus.async_listen(
             EVENT_MOBILE_ACTION, _make_action_handler(hass))
+        # brAIn's measurements, for other conversation agents and the MCP
+        # Server integration: three read-only tools, exposure-respecting.
+        # Account-wide, like the watchers — one house, one API.
+        from .llm_api import async_register as _register_llm_api
+
+        unsub_llm = _register_llm_api(hass)
         hass.data[DOMAIN]["_learning_watcher"] = entry.entry_id
 
         def _stop_learning() -> None:
             unsub_learning()
             unsub_findings()
             unsub_actions()
+            if unsub_llm is not None:
+                unsub_llm()
             # The Repairs entries are this watcher's, so they leave with
             # it: a reload puts them back on the first poll, and removing
             # the integration should not leave brAIn's rows on somebody's
@@ -451,6 +467,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if hass.data[DOMAIN].get("_todo_entry") == entry.entry_id:
             hass.data[DOMAIN].pop("_todo_entry", None)
             hass.data[DOMAIN].pop("_todo_added", None)
+        if hass.data[DOMAIN].get("_ai_task_entry") == entry.entry_id:
+            hass.data[DOMAIN].pop("_ai_task_entry", None)
+            hass.data[DOMAIN].pop("_ai_task_added", None)
         if hass.data[DOMAIN].get("_sensors_entry") == entry.entry_id:
             hass.data[DOMAIN].pop("_sensors_entry", None)
             hass.data[DOMAIN].pop("_sensors_added", None)
@@ -796,8 +815,11 @@ async def _async_run_insight(hass: HomeAssistant, entry: ConfigEntry,
     try:
         opts = {**entry.data, **entry.options}
         prompt_text = (opts.get(CONF_INSIGHT_PROMPT) or "").strip()
+        template_key = opts.get(CONF_INSIGHT_TEMPLATE, "daily_briefing")
+        # Only the preset's own words get the snapshot tool: a custom prompt
+        # asked for nothing about cameras.
+        wants_cameras = not prompt_text and template_key in CAMERA_TEMPLATES
         if not prompt_text:
-            template_key = opts.get(CONF_INSIGHT_TEMPLATE, "daily_briefing")
             prompt_text = INSIGHT_TEMPLATES.get(
                 template_key, INSIGHT_TEMPLATES["daily_briefing"]
             )
@@ -839,6 +861,7 @@ async def _async_run_insight(hass: HomeAssistant, entry: ConfigEntry,
             result = await bridge.async_send_task(
                 prompt=prompt, timeout=timeout, model=model,
                 tools="read_only", memory=True, scheduled=scheduled,
+                cameras=wants_cameras,
             )
             payload = {
                 "markdown": truncate_markdown(result),
