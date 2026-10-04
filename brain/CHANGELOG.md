@@ -797,9 +797,11 @@ Resident can correct its own first look.**
   engines to keep away. *Stop sharing* deletes it and changes the address, so
   an old link is dead even if somebody kept it. While published, every rewrite
   updates the shared copy.
-- **Access steward: three security checks and a weekly sentence.** New house
+- **Access steward: four security checks and a weekly sentence.** New house
   checks for a lock or alarm panel exposed to Alexa or Google, an add-on whose
-  protection mode is off, and recent failed logins that got an address banned.
+  protection mode is off, recent failed logins that got an address banned, and
+  a terminal session still acting without asking after *Let brAIn act without
+  asking* was turned off (turning it on files nothing).
   Each says nothing when it could not look, and *Wrong, because…* stops it for
   that lock. Once a week brAIn also writes one sentence about who and what can
   reach the house, from the last checks pass; it answers to the same switches
@@ -1061,23 +1063,40 @@ Resident can correct its own first look.**
   reached only the terminal, and the chat always showed approval cards. With it
   on, the chat stops asking as well, and in the chat and the terminal the action
   gate stops asking its own model about what you meant. What still decides with
-  the switch on: protected entities, the tripwire, brAIn's own deny-list, your
-  house rules, and conversations about a finding, which always ask before a
-  change. Edits made with Claude's file tools can still be undone with
-  `brain undo`. Fix it runs, voice and background runs keep their own rules;
-  the switch never reaches them. With it on, shell commands run without asking
-  too, so leave it off if that matters to you.
+  the switch on: the tripwire, brAIn's own deny-list, your house rules, and
+  conversations about a finding, which always ask before a change. Fix it runs,
+  voice and background runs keep their own rules; the switch never reaches them.
+- **It says where the guards stop.** The option's description and the ⚙
+  explanation beside the switch say it: brAIn's Home Assistant tools refuse your
+  protected entities, and so do plain shell service calls and YAML edits made
+  with Claude's file tools that name one, but a shell command that reaches one
+  some other way is not checked. Edits made with Claude's file tools can still
+  be undone with `brain undo`; a change a shell command made cannot. If that
+  matters to you, leave the switch off.
 - **No restart needed.** A new terminal session and the chat's next message
   both pick up the change. A conversation that is mid-answer finishes under the
-  old setting, then changes. A terminal session that is already open keeps the
-  setting it started with (reopening the Terminal tab goes back to it), so end
-  it with `/exit` to pick up a change.
-- **A setting it cannot read means "ask".** If brAIn cannot read the switch,
-  the terminal asks. A garbled or unreadable setting counts as "ask", never as
-  "go ahead".
-- **No warning card for a switch you turned on.** The access check no longer
-  files a finding while the switch is on: it is a choice with its own label.
-  The weekly access sentence can still mention it.
+  old setting, then changes. A stopped conversation the chat is still holding
+  starts again with the switch as it is now.
+- **An open terminal session keeps the setting it started with, and ⚙ says
+  so.** Reopening the Terminal tab goes back to the same session, so a change
+  reaches the terminal only when that session ends. The line under the switch,
+  and the message after you flip it, say when an open terminal session still
+  acts without asking (or still asks), and to end it with `/exit`.
+- **A setting it cannot write or read means "ask".** If brAIn cannot read the
+  switch, the terminal asks; a garbled or unreadable setting counts as "ask",
+  never as "go ahead". If it cannot save a change for the terminal, it leaves
+  that setting empty, which also means "ask", rather than deleting it, which
+  could have sent the next terminal session back to the setting the add-on
+  started with.
+- **A save that does not reach the add-on's options is said, not hidden.** If
+  Home Assistant refuses to save "on", ⚙ says brAIn is still asking and the
+  switch goes back off. If it refuses "off", brAIn stops acting without asking
+  anyway, and the message says the Configuration tab could not be updated.
+- **No warning card for a switch you turned on.** Turning it on is a choice
+  with its own label, so the access check files nothing for it, and the weekly
+  access sentence can still mention it. The one card it does file is for a
+  switch turned off while a terminal session started with it on is still
+  running and still acting without asking.
 - **"Always allow" on an approval card.** When Claude Code suggests a rule for
   the command it is asking about, the card offers it. The line under the button
   says what is added and how long it lasts: for the rest of the conversation,

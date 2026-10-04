@@ -543,8 +543,10 @@ ordinary findings under a "check" label, with no Claude run at all.
 - **Forecasts**: a battery running down, from the slope of its last sixty
   days, three weeks before it is flat.
 - **Access**: a lock or alarm panel exposed to Alexa or Google through Home
-  Assistant Cloud; an add-on whose protection mode has been switched off; and
-  recent failed logins that got an address banned. Once a week brAIn also
+  Assistant Cloud; an add-on whose protection mode has been switched off; recent
+  failed logins that got an address banned; and a terminal session still acting
+  without asking after **Let brAIn act without asking** was turned off (turning it
+  on is your choice and files nothing). Once a week brAIn also
   writes one sentence about who and what can reach the house, shown on
   **Upkeep**.
 
@@ -1145,6 +1147,16 @@ applies to the next terminal session and the chat's next message, with no restar
 chat that is in the middle of an answer finishes it first. A terminal session that is
 already open keeps the setting it started with, and reopening the Terminal tab goes
 back to that same session, so end it (`/exit`) to start one under the new setting.
+The line under the switch in ⚙, and the message after you change it, say when an
+open terminal session is still acting without asking (or still asking). If one is
+still acting after you turned the switch off, the next house checks report it as a
+finding as well.
+
+If Home Assistant will not save the change to the add-on's options, ⚙ tells you: a
+switch you tried to turn on stays off and brAIn keeps asking, and a switch you
+turned off takes effect anyway, with a note that the Configuration tab could not be
+updated. If brAIn cannot save the setting the terminal reads, it leaves it blank,
+which also means asking.
 
 With the switch on, these still hold:
 
@@ -3478,7 +3490,7 @@ the Ask tab itself), because it changes nothing about how the add-on runs.
 | `auto_generate_context` | bool | `true` | Regenerate `/config/CLAUDE.md` with your HA system context at startup. |
 | `enable_ha_mcp_server` | bool | `true` | Give Claude native HA access (states, services, history, statistics, registries, dashboards, logs, templates). |
 | `enable_mobile_ui` | bool | `true` | Splice the mobile toolbar and iOS dictation fix into ttyd's UI. |
-| `dangerously_skip_permissions` | bool | `false` | **Let brAIn act without asking.** Off: the terminal and the chat ask before running a command, editing a file or changing something in Home Assistant. On: they stop asking, and the action gate stops asking its own model in those two. The same switch is in ⚙ → Terminal & chat, and it applies on the next terminal session or chat message without a restart. Protected entities, brAIn's deny-list, your house rules and conversations about a finding stay guarded either way. Voice, cards, automation tasks and Fix it keep their own rules. See [Asking before acting](#asking-before-acting). |
+| `dangerously_skip_permissions` | bool | `false` | **Let brAIn act without asking.** Off: the terminal and the chat ask before running a command, editing a file or changing something in Home Assistant. On: they stop asking, and the action gate stops asking its own model in those two. The same switch is in ⚙ → Terminal & chat, and it applies on the next terminal session or chat message without a restart; a terminal session already open keeps the setting it started with until you end it with `/exit`. Still guarded: brAIn's Home Assistant tools refuse protected entities, and so do plain shell service calls and YAML edits made with Claude's file tools that name one, but a shell command that reaches one some other way is not checked. brAIn's deny-list, your house rules and conversations about a finding hold either way, and voice, cards, automation tasks and Fix it keep their own rules. See [Asking before acting](#asking-before-acting). |
 
 ### Voice and automation
 
@@ -3768,12 +3780,13 @@ That is the point of it, and it is worth knowing where the edges are.
   it says.** Off by default, and off means the terminal and the chat **ask**
   before they run a shell command, edit a file or call a Home Assistant
   service. On, both stop asking, and in those two the action gate stops asking
-  its own model as well; protected entities, the deny-list, your house rules and
-  Discuss still hold (see [Asking before acting](#asking-before-acting)). It has
-  never reached the cards, voice, automation tasks or Fix it. Until 2.11 "off"
-  was close to a no-op: the project's own settings file pre-approved Bash, edits
-  and every Home Assistant tool, and the terminal and the chat read that file
-  too. Now
+  its own model as well; the protected list (as far as the previous point
+  says), the deny-list, your house rules and Discuss still hold, and a terminal
+  session already open keeps the setting it started with until it ends (see
+  [Asking before acting](#asking-before-acting)). It has never reached the
+  cards, voice, automation tasks or Fix it. Until 2.11 "off" was close to a
+  no-op: the project's own settings file pre-approved Bash, edits and every
+  Home Assistant tool, and the terminal and the chat read that file too. Now
   `/config/.claude/settings.local.json` pre-approves only *reading* Home
   Assistant, and the runs that have nobody to ask — the automation listener,
   study, the consolidator, a full-access voice agent, `brain ask` — get their

@@ -41,6 +41,14 @@ reachable without it.
 Capture (off by default) records what the analyst was sent and what it
 answered, redacted as it is written, and keeps it in `/data`; nothing reaches
 `/share` until a person presses Export, and nothing leaves the machine at all.
+Claude Code runs as the unprivileged `claude` user while brAIn's panel runs as
+root, and the panel has one route that changes file ownership: `POST /api/own`
+hands a file under `/config` to the `claude` user, so Claude can edit what Home
+Assistant saved as root. It answers only loopback, read off the socket rather
+than any header, so only processes inside the add-on's own container (the edit
+hook and `brain own`) can reach it; and it checks the file it actually opened, refusing symbolic links,
+special files, hard-linked files, anything outside `/config`, `.storage`,
+`.cloud`, brAIn's credentials, `secrets.yaml` and the recorder database.
 
 **BRUH Minecraft** runs a JVM that loads third-party plugin jars, and it
 uses `host_network: true` so Bedrock clients can find the server on the
@@ -93,8 +101,10 @@ Things that are working as intended, and are documented rather than fixed:
   the entire access model. There is no per-admin separation to bypass,
   so two admins seeing each other's chats is by design; if that matters
   in your household, HA's own user roles are the boundary to use.
-- `dangerously_skip_permissions: true` removes Claude's confirmation
-  prompts. The option says so, and defaults to off.
+- `dangerously_skip_permissions: true` ("Let brAIn act without asking", also
+  in the panel's ⚙ → Terminal & chat) removes Claude's confirmation prompts in
+  the terminal and the chat. The option says so, says where the guard on
+  protected entities stops for a shell command, and defaults to off.
 - Minecraft plugins you install run with the server's full authority. The
   AppArmor profile limits what that means for the *host*, not for the
   world.
