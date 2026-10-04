@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -308,6 +309,76 @@ class TestInstall(Base):
             await addons.install(self.client, ctx, "clientmod", "mod")
         self.assertIn("iPad", str(err.exception))
 
+
+
+class TestTheWholeWorldOnOneList(Base):
+    """Everything in the world, browser-added or not, with whether it is on."""
+
+    async def test_every_folder_is_listed_with_its_status(self):
+        await addons.install(self.client, self.ctx, "terra001", "datapack")
+        plugins = self.ctx.server_dir / "plugins"
+        plugins.mkdir(parents=True, exist_ok=True)
+        old = plugins / "Essentials.jar"
+        import zipfile
+        with zipfile.ZipFile(old, "w") as zf:
+            zf.writestr("plugin.yml", "name: EssentialsX\nversion: '2.21.0'\nmain: x\n")
+        (plugins / "Geyser-Spigot.jar").write_bytes(JAR)
+        os.utime(old, (1000, 1000))
+        os.utime(plugins / "Geyser-Spigot.jar", (1000, 1000))
+        await addons.install(self.client, self.ctx, "chairs01", "plugin")
+        (self.ctx.server_dir / "world" / "datapacks" / "bukkit").mkdir()
+        self.ctx.packs_dir.mkdir(parents=True, exist_ok=True)
+        (self.ctx.packs_dir / "Faithful.zip").write_bytes(PACK)
+
+        got = addons.world_contents(self.ctx, running=True, started_at=5000,
+                                    active_pack="", changes=[])
+        by = {it["file"]: it for it in got["items"]}
+        # By hand, and loaded before the launch: working.
+        self.assertEqual(by["Essentials.jar"]["source"], "manual")
+        # A jar added by hand is named by what it declares about itself.
+        self.assertEqual((by["Essentials.jar"]["title"], by["Essentials.jar"]["version"]),
+                         ("EssentialsX", "2.21.0"))
+        self.assertEqual(by["Essentials.jar"]["status"], "active")
+        # Added since the launch: waiting on a restart, and the list says so.
+        self.assertEqual(by["chairs-1.9.jar"]["status"], "restart")
+        self.assertEqual(by["chairs-1.9.jar"]["title"], "Chairs")
+        self.assertTrue(got["restart_needed"])
+        # Crossplay plugins are listed under Server software, not here.
+        self.assertNotIn("Geyser-Spigot.jar", by)
+        self.assertEqual([c["title"] for c in addons.components(self.ctx.server_dir)], ["Geyser"])
+        # Data packs reload live; the server's own folder is not one of ours.
+        self.assertEqual(by["Terralith.zip"]["status"], "active")
+        self.assertNotIn("bukkit", by)
+        # A pack in the library that this world does not offer.
+        self.assertEqual(by["Faithful.zip"]["status"], "unused")
+
+    async def test_a_stopped_server_needs_no_restart(self):
+        await addons.install(self.client, self.ctx, "chairs01", "plugin")
+        got = addons.world_contents(self.ctx, running=False, started_at=None,
+                                    active_pack="", changes=[])
+        self.assertFalse(got["restart_needed"])
+        self.assertEqual({it["status"] for it in got["items"]}, {"next_start"})
+
+    async def test_the_active_pack_waits_on_a_restart_after_a_switch(self):
+        self.ctx.packs_dir.mkdir(parents=True, exist_ok=True)
+        (self.ctx.packs_dir / "Faithful.zip").write_bytes(PACK)
+        change = [{"action": "switched to", "kind": "resourcepack", "title": "Faithful", "at": 9}]
+        got = addons.world_contents(self.ctx, running=True, started_at=5,
+                                    active_pack="Faithful.zip", changes=change)
+        self.assertEqual(got["items"][0]["status"], "restart")
+        quiet = addons.world_contents(self.ctx, running=True, started_at=5,
+                                      active_pack="Faithful.zip", changes=[])
+        self.assertEqual(quiet["items"][0]["status"], "active")
+
+    async def test_one_search_covers_every_kind(self):
+        got = await addons.search_all(self.client, self.ctx, "chairs")
+        self.assertEqual(len(self.fake.searches), len(addons.kinds_for("paper")))
+        kinds = {json.loads(q["facets"])[0][0] for q in self.fake.searches}
+        self.assertEqual(kinds, {"project_type:plugin", "project_type:datapack",
+                                 "project_type:resourcepack"})
+        # Round-robin: one from each kind before the second of any.
+        self.assertEqual([h["kind"] for h in got["hits"]],
+                         ["plugin", "datapack", "resourcepack"])
 
 if __name__ == "__main__":
     unittest.main()

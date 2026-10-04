@@ -5,6 +5,53 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.17.0
+
+### Changed
+
+- **One screen for everything in the world.** The Plugins and Resource Packs
+  tabs are gone; the **Add-ons** tab lists every plugin, data pack, server mod
+  and resource pack the active world has — whether it came from the browser,
+  by hand, by link or from the `plugins:` option. A plugin added outside the
+  browser shows the name and version its own `plugin.yml` declares. Resource
+  packs that used to sit in a separate tab are listed here, with **Use in this
+  world** for one the world does not offer yet.
+- **It says whether you need to restart.** Every row reads *Working*, *Restart
+  the server to turn it on*, *Turns on when the server starts* or *Not in use*,
+  and when anything is waiting a banner names it (*Added VeinMiner, removed
+  Chairs*) with a **Restart now** button. A newly added card says the same
+  thing instead of a bare "Added". The list refreshes itself while the tab is
+  open, so it changes back to *Working* once the restart is done.
+- **One search.** The browser searches plugins, data packs, server mods and
+  resource packs together (one result from each kind in turn), with chips to
+  narrow it to one kind. A plugin link and a resource-pack upload are under
+  **Add your own file or link** on the same tab.
+
+### Added
+
+- **Server software**, on the Add-ons tab: the server (Paper, Purpur, …) with
+  its Minecraft version and build, whether a newer build or Minecraft version is
+  out, and Geyser, Floodgate, ViaVersion and ViaBackwards with their versions.
+  **Update everything now** restarts the add-on, which is when those download
+  their newest builds. **Upgrade this world to 26.2** takes a backup first,
+  then moves the world to the newer Minecraft.
+
+### Fixed
+
+- **`LATEST` was stuck on Minecraft 1.21.11.** Minecraft numbers its releases
+  26.1, 26.2 … since 2026, and the version picker only accepted `1.x`, so a
+  server on `LATEST` stayed four releases behind and Paper warned about it on
+  every boot. Year-based versions count now, and for Paper and Folia `LATEST`
+  means the newest version that has a *stable* build (26.3 has only betas).
+  **An existing world is not moved on its own**: it keeps its version (and keeps
+  getting newer builds of it) until you press **Upgrade this world**, because
+  the upgrade rewrites the world and cannot be undone. A new world starts on
+  the newest stable version.
+- Applying a resource pack from the panel used the address the panel was
+  opened through, which through Home Assistant's ingress is an internal
+  address no player's game can reach. It uses the server's LAN address now,
+  as the browser's own installs already did.
+
 ## 1.16.1
 
 ### Fixed

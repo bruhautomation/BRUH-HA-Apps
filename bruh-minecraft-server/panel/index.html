@@ -39,10 +39,8 @@
       <button class="tab" data-tab="players" role="tab">Players</button>
       <button class="tab" data-tab="properties" role="tab">Server Properties</button>
       <button class="tab" data-tab="addons" role="tab">Add-ons</button>
-      <button class="tab" data-tab="plugins" role="tab">Plugins</button>
       <button class="tab" data-tab="backups" role="tab">Backups</button>
       <button class="tab" data-tab="worlds" role="tab">Worlds</button>
-      <button class="tab" data-tab="resource-packs" role="tab">Resource Packs</button>
     </nav>
   </div>
 
@@ -610,19 +608,43 @@
       </table>
     </section>
 
-    <!-- Add-on browser: server-side content from Modrinth -->
+    <!-- Add-ons: everything in this world, and the browser to add more -->
     <section id="tab-addons" class="tab-panel">
-      <h2>Add-ons</h2>
+      <h2>Add-ons in this world</h2>
       <p class="muted" id="addons-lede">
+        Plugins, data packs and resource packs in the <strong>active world</strong>.
         Everything here runs on the server, so every player gets it — iPads,
-        phones and consoles through Geyser included — with nothing to install
-        on a device. Added to the <strong>active world</strong> only.
+        phones and consoles through Geyser included.
       </p>
-      <div class="addon-kinds" id="addon-kinds" role="tablist"></div>
+      <div class="addon-restart" id="addon-restart" hidden role="status">
+        <div class="addon-restart-text">
+          <strong id="addon-restart-title">Restart to finish</strong>
+          <span id="addon-restart-detail"></span>
+        </div>
+        <button class="btn btn-primary" id="addon-restart-btn" type="button">Restart now</button>
+      </div>
+      <div id="addon-world" class="addon-world"></div>
+      <p class="muted" id="addon-world-empty" hidden>Nothing added to this world yet — search below.</p>
+
+      <div class="software" id="software">
+        <div class="software-head">
+          <h3>Server software</h3>
+          <button class="btn btn-ghost" id="software-check" type="button">Check for updates</button>
+        </div>
+        <div id="software-rows" class="software-rows"><p class="muted">Checking…</p></div>
+        <p class="muted software-foot" id="software-foot"></p>
+        <div class="software-actions">
+          <button class="btn" id="software-update" type="button">Update everything now</button>
+        </div>
+        <p class="addon-note" id="software-note" aria-live="polite"></p>
+      </div>
+
+      <h2 id="addon-add-heading">Add more</h2>
       <form id="f-addon-search" class="inline-form addon-search">
-        <input id="addon-q" type="search" placeholder="Search Modrinth — e.g. chairs, trees, backpacks" autocomplete="off" />
+        <input id="addon-q" type="search" placeholder="Search Modrinth — e.g. vein miner, chairs, trees, textures" autocomplete="off" />
         <button class="btn btn-primary">Search</button>
       </form>
+      <div class="addon-kinds" id="addon-kinds" role="group" aria-label="Show"></div>
       <p class="muted addon-reach" id="addon-reach"></p>
       <div class="addon-grid" id="addon-results"></div>
       <div class="addon-more"><button class="btn" id="addon-more" hidden>More results</button></div>
@@ -634,31 +656,33 @@
         </div>
         <p class="addon-note" id="addon-tray-note"></p>
       </div>
-      <h2>In this world</h2>
-      <div class="addon-grid" id="addon-installed"></div>
-      <p class="muted" id="addon-installed-empty" hidden>Nothing added from the browser yet.</p>
-    </section>
 
-    <!-- Plugins -->
-    <section id="tab-plugins" class="tab-panel">
-      <h2>Installed plugins (active world)</h2>
-      <p class="muted">
-        Plugins listed here are the <code>.jar</code> files on disk under <code>/config/minecraft/plugins/</code> — i.e. the <strong>active world's</strong> plugins folder. Switching worlds shows a different list. To add a plugin permanently across restarts, put its URL in the add-on's <strong>Configuration</strong> tab under <code>plugins:</code> (not here); the panel's install form below is for one-off additions to the current world.
-      </p>
-      <table class="table" id="plugins-table">
-        <thead><tr><th>Jar</th><th>Size</th><th>Modified</th><th></th></tr></thead>
-        <tbody></tbody>
-      </table>
-      <h2>Install from URL (one-off)</h2>
-      <form id="f-plugin-install" class="inline-form">
-        <input id="plugin-url" type="url" placeholder="https://…/some-plugin.jar" required />
-        <input id="plugin-name" type="text" placeholder="optional rename (e.g. Essentials.jar)" />
-        <button class="btn btn-primary">Install</button>
-      </form>
-      <pre id="plugin-reply" class="reply"></pre>
-      <p class="muted">
-        Jars land in <code>/config/minecraft/plugins/</code> and require a server restart to load. Heads-up: if the same plugin URL isn't also in the add-on's <code>plugins:</code> list, deleting this jar will persist across restarts; if it <em>is</em> in the list, the add-on re-downloads it on the next boot. GitHub <code>releases/latest/download/X.jar</code> URLs only work when the asset is literally named <code>X.jar</code> — pin a version tag if the upstream uses versioned filenames.
-      </p>
+      <details class="addon-own">
+        <summary>Add your own file or link</summary>
+        <h3>A plugin from a link</h3>
+        <form id="f-plugin-install" class="inline-form">
+          <input id="plugin-url" type="url" placeholder="https://…/some-plugin.jar" required />
+          <input id="plugin-name" type="text" placeholder="optional file name (e.g. Essentials.jar)" />
+          <button class="btn btn-primary">Add</button>
+        </form>
+        <pre id="plugin-reply" class="reply"></pre>
+        <p class="muted">
+          GitHub <code>releases/latest/download/X.jar</code> links only work when the file is
+          literally named <code>X.jar</code>. To keep a plugin in every world, put its link in
+          the add-on's <strong>Configuration</strong> tab under <code>plugins:</code> instead.
+        </p>
+        <h3>A resource pack file</h3>
+        <form id="f-pack-upload" class="inline-form">
+          <input id="pack-file" type="file" accept=".zip" required />
+          <input id="pack-name" type="text" placeholder="optional file name (e.g. MyPack.zip)" />
+          <button class="btn btn-primary">Upload</button>
+        </form>
+        <pre id="pack-upload-reply" class="reply"></pre>
+        <p class="muted">
+          An uploaded pack shows up in the list above as <em>Not in use</em> — press
+          <strong>Use in this world</strong> to offer it to players.
+        </p>
+      </details>
     </section>
 
     <!-- Backups -->
@@ -713,27 +737,6 @@
     </section>
 
     <!-- Resource Packs -->
-    <section id="tab-resource-packs" class="tab-panel">
-      <h2>Resource Packs</h2>
-      <p class="muted">
-        Drop a Minecraft resource pack <code>.zip</code> here and the add-on hosts it for you. Use <strong>Apply to active world</strong> to plug the URL + SHA-1 directly into the active world's <code>server.properties</code> — no copy-pasting hashes. Packs are global; one pack can serve every world.
-      </p>
-      <p class="muted">
-        <strong>How clients fetch the pack:</strong> the add-on serves it at
-        <code>http://&lt;your-HA-host&gt;:8099/pack/&lt;filename&gt;</code> on your LAN. The
-        <em>Apply</em> button fills that URL in for you using the host you're loading this panel from.
-      </p>
-      <form id="f-pack-upload" class="inline-form">
-        <input id="pack-file" type="file" accept=".zip" required />
-        <input id="pack-name" type="text" placeholder="optional rename (e.g. MyPack.zip)" />
-        <button class="btn btn-primary">Upload</button>
-      </form>
-      <pre id="pack-upload-reply" class="reply"></pre>
-      <table class="table" id="packs-table">
-        <thead><tr><th>File</th><th>Size</th><th>SHA-1</th><th>Modified</th><th>Actions</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </section>
   </main>
 
   <footer>

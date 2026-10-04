@@ -289,42 +289,26 @@ class TestDownloadServer(unittest.TestCase):
     def test_failure_exits_nonzero(self):
         self.assertIn("exit 1", self.text)
 
-    def test_latest_filters_out_prereleases_and_rcs(self):
-        """Regression for 1.2.7 / 1.5.1: PaperMC's `versions[]` array mixes
-        stable releases with pre-releases (`1.21.11-pre5`) and release
-        candidates (`1.21.11-rc3`). A naive `.versions[-1]` picks a
-        pre-release during Paper's rolling release window, whose network
-        protocol differs from the stable client on the same MC version —
-        vanilla clients reject the server with "Outdated server! I'm still
-        on X.Y.Z". LATEST must filter to MC-shaped 1.x stable strings and
-        sort by numeric semver before picking the highest; SNAPSHOT
-        preserves opt-in to pre-releases.
-        """
-        # jq filter that selects only plain 1.X / 1.X.Y entries
-        filter_re = r'select\(test\("\^1\\\\\.\[0-9\]\+\(\\\\\.\[0-9\]\+\)\?\$"\)\)'
-        self.assertRegex(self.text, filter_re,
-                         "resolve_paper_version must filter versions to "
-                         "MC-shaped 1.x stable entries")
-        # And must semver-sort (not rely on chronological array position)
-        self.assertIn('sort_by(split(".") | map(tonumber))', self.text,
-                      "LATEST must pick the highest semver, not the last "
-                      "array entry — Purpur ships out-of-order rebuild "
-                      "markers like 26.1.2 that would otherwise win")
-        # Both paper and purpur must use the filter when VERSION_REQ == LATEST
-        # — the two separate branches prove LATEST and SNAPSHOT diverge.
-        self.assertIn('[ "${VERSION_REQ}" = "LATEST" ]', self.text)
-        self.assertIn('elif [ "${VERSION_REQ}" = "SNAPSHOT" ]', self.text)
+    def _pick(self, versions):
+        """Run the script's own LATEST picker over an upstream versions list.
 
-    def test_filter_regex_semantics(self):
-        """Sanity-check the jq filter against realistic upstream arrays.
-        Catches accidentally stripping valid versions or failing to strip
-        pre-releases / non-MC rebuild markers.
+        Driven rather than grepped: the previous test asserted the source
+        contained a `^1\\.` filter, and that filter is the bug — Minecraft
+        numbers its releases 26.1, 26.2 … since 2026, so LATEST stayed on
+        1.21.11 and Paper warned "4 releases behind" on every boot.
         """
         import json
         import subprocess
-        jq_filter = ('[.versions[] | select(test("^1\\\\.[0-9]+'
-                     '(\\\\.[0-9]+)?$"))] | sort_by(split(".") '
-                     '| map(tonumber)) | .[-1]')
+        proc = subprocess.run(
+            ["bash", "-c", f'source "{os.path.join(SCRIPTS_DIR, "download-server.sh")}"; '
+                           "paper_pick_version"],
+            input=json.dumps({"versions": versions}), capture_output=True, text=True,
+            timeout=30, env={**os.environ, "MC_SERVER_DIR": "/tmp/nope",
+                             "SERVER_CACHE": "/tmp/nope"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout.strip()
+
+    def test_latest_takes_the_newest_release_and_never_a_prerelease(self):
         scenarios = [
             # stable 1.21.11 out, pre-releases also present -> pick stable
             (["1.21.10", "1.21.11-pre5", "1.21.11-rc3", "1.21.11"], "1.21.11"),
@@ -334,24 +318,62 @@ class TestDownloadServer(unittest.TestCase):
             (["1.19.4", "1.20", "1.20.1"], "1.20.1"),
             # Snapshot-style weekly entries ("24w05a") must be filtered out
             (["1.21.9", "1.21.10", "24w05a", "24w05b"], "1.21.10"),
-            # 1.5.1 regression: Purpur appends a non-MC `26.1.2` rebuild
-            # marker AFTER the latest stable. The old `[-1]` selection
-            # happily handed back "26.1.2" as LATEST and the download URL
-            # 404'd. Numeric semver-sort with a `^1\.` filter rejects it.
-            (["1.21.9", "1.21.10", "1.21.11", "26.1.2"], "1.21.11"),
-            # Patch numbers with multi-digit components must compare
-            # numerically (not lexicographically — "1.21.9" > "1.21.10"
-            # as strings, which would have been wrong).
+            # Year-based numbering: 26.2 is newer than 1.21.11 (Purpur's
+            # real list, out of order), and an rc is still not a release.
+            (["1.21.10", "1.21.11", "26.1.2", "26.2", "26.3-rc-3"], "26.2"),
+            # Patch numbers compare numerically, not as strings.
             (["1.21.8", "1.21.9", "1.21.10", "1.21.11"], "1.21.11"),
         ]
         for versions, expected in scenarios:
             with self.subTest(versions=versions):
-                payload = json.dumps({"versions": versions})
-                proc = subprocess.run(
-                    ["jq", "-r", jq_filter],
-                    input=payload, capture_output=True, text=True, check=True,
-                )
-                self.assertEqual(proc.stdout.strip(), expected)
+                self.assertEqual(self._pick(versions), expected)
+        # Paper's v3 shape: an object of version families.
+        self.assertEqual(self._pick({"26.3": ["26.3", "26.3-rc-3"], "26.2": ["26.2"],
+                                     "1.21": ["1.21.11", "1.21.11-rc3"]}), "26.3")
+        # SNAPSHOT stays a separate branch from LATEST.
+        self.assertIn('elif [ "${VERSION_REQ}" = "SNAPSHOT" ]', self.text)
+
+
+class TestAWorldKeepsItsVersion(unittest.TestCase):
+    """LATEST does not move an existing world to a new Minecraft on its own."""
+
+    def _hold(self, newest, meta=None, jar=True, marker=None):
+        import json
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            if meta is not None:
+                with open(os.path.join(d, ".server-meta.json"), "w") as f:
+                    json.dump(meta, f)
+            if jar:
+                with open(os.path.join(d, "server.jar"), "wb") as f:
+                    f.write(b"jar")
+            if marker is not None:
+                with open(os.path.join(d, ".upgrade-to"), "w") as f:
+                    f.write(marker)
+            proc = subprocess.run(
+                ["bash", "-c", f'source "{os.path.join(SCRIPTS_DIR, "download-server.sh")}"; '
+                               f'hold_world_version "{newest}"'],
+                capture_output=True, text=True, timeout=30,
+                env={**os.environ, "MC_SERVER_DIR": d, "SERVER_CACHE": d})
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            return proc.stdout.strip(), proc.stderr
+
+    def test_an_existing_world_stays_and_says_why(self):
+        got, log = self._hold("26.2", meta={"version": "1.21.11"})
+        self.assertEqual(got, "1.21.11")
+        self.assertIn("26.2 is available", log)
+
+    def test_a_new_world_starts_on_the_newest(self):
+        self.assertEqual(self._hold("26.2", meta=None, jar=False)[0], "26.2")
+
+    def test_the_panels_upgrade_press_is_honoured(self):
+        self.assertEqual(self._hold("26.2", meta={"version": "1.21.11"}, marker="26.2\n")[0],
+                         "26.2")
+
+    def test_a_marker_that_is_not_a_version_is_ignored(self):
+        self.assertEqual(self._hold("26.2", meta={"version": "1.21.11"},
+                                    marker="26.2; rm -rf /")[0], "1.21.11")
 
 
 class TestBackup(unittest.TestCase):

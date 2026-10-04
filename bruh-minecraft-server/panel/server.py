@@ -1405,6 +1405,9 @@ async def api_plugin_install(request: web.Request) -> web.Response:
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
     )
     out_b, _ = await proc.communicate()
+    if proc.returncode == 0:
+        _note_change("added", "plugin",
+                     addons._title_from_file(name or url.rsplit("/", 1)[-1].split("?", 1)[0]))
     return web.json_response({
         "ok": proc.returncode == 0,
         "output": out_b.decode("utf-8", "replace"),
@@ -1430,6 +1433,7 @@ async def api_plugin_delete(request: web.Request) -> web.Response:
     if not target.is_file():
         return web.json_response({"error": "not found"}, status=404)
     target.unlink()
+    _note_change("removed", "plugin", addons._title_from_file(name))
     return web.json_response({"ok": True})
 
 
@@ -1984,6 +1988,7 @@ async def api_resource_pack_apply(request: web.Request) -> web.Response:
     body = await request.json() if request.body_exists else {}
     host = (body.get("host") or request.host).split(":", 1)[0]
     url, sha1 = _apply_resource_pack(pack, host, body.get("port") or 8099)
+    _note_change("switched to", "resourcepack", addons._title_from_file(name))
     return web.json_response({"ok": True, "url": url, "sha1": sha1})
 
 
@@ -2038,6 +2043,75 @@ def _modrinth_session():
     return aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120))
 
 
+def _server_launch() -> tuple[bool, float | None]:
+    """Whether the server is running, and when it was launched.
+
+    server-launcher.sh writes launcher.pid immediately before it starts the
+    JVM and removes it when the JVM exits, so the file's mtime is the launch:
+    a jar newer than it is one the running server has not loaded. The
+    stats collector's `uptime_seconds` is the COLLECTOR's uptime and says
+    nothing about this.
+    """
+    pid_file = MC_PANEL_STATE / "launcher.pid"
+    try:
+        pid = int(pid_file.read_text().strip())
+        os.kill(pid, 0)
+        return True, pid_file.stat().st_mtime
+    except (OSError, ValueError):
+        return False, None
+
+
+ADDON_CHANGES = "addon-changes.json"
+# Kinds a running server only picks up on a restart. A data pack is not one:
+# the panel reloads data packs live.
+RESTART_KINDS = ("plugin", "mod", "resourcepack")
+
+
+def _addon_changes() -> list[dict]:
+    """What the panel changed since the server launched and still needs a restart.
+
+    Anything older than the launch has been picked up and is dropped; with
+    the server stopped there is nothing to restart, so nothing is pending.
+    """
+    running, started = _server_launch()
+    rows = _read_json(MC_PANEL_STATE / ADDON_CHANGES, [])
+    if not isinstance(rows, list) or not running:
+        return []
+    return [r for r in rows if isinstance(r, dict) and float(r.get("at") or 0) > (started or 0)]
+
+
+def _note_change(action: str, kind: str, title: str) -> None:
+    """Record a change the running server will only see after a restart."""
+    if kind not in RESTART_KINDS:
+        return
+    running, _ = _server_launch()
+    if not running:
+        return
+    rows = _addon_changes()
+    rows = [r for r in rows if not (r.get("title") == title and r.get("kind") == kind)]
+    rows.append({"action": action, "kind": kind, "title": title, "at": time.time()})
+    path = MC_PANEL_STATE / ADDON_CHANGES
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".addon-changes.", suffix=".tmp")
+        with os.fdopen(fd, "w") as fh:
+            json.dump(rows[-100:], fh)
+        os.replace(tmp, path)
+    except OSError:
+        pass  # a missing note costs a line in a banner, never the install
+
+
+def _active_pack() -> str:
+    url = _read_properties().get("resource-pack", "")
+    return url.rsplit("/pack/", 1)[1] if "/pack/" in url else ""
+
+
+def _world_contents(ctx: addons.Context) -> dict:
+    running, started = _server_launch()
+    return addons.world_contents(ctx, running=running, started_at=started,
+                                 active_pack=_active_pack(), changes=_addon_changes())
+
+
 async def api_addons(_: web.Request) -> web.Response:
     ctx = _addon_context()
     kinds = addons.kinds_for(ctx.server_type)
@@ -2047,21 +2121,210 @@ async def api_addons(_: web.Request) -> web.Response:
         "kinds": [{"kind": k, "label": addons.KIND_LABELS[k], "reach": addons.REACH[k]}
                   for k in kinds],
         "installed": addons.installed(ctx),
+        "world": _world_contents(ctx),
+        "players_online": int(_read_json(MC_PANEL_STATE / "stats.json", {}).get("online") or 0),
         "geyser": (MC_SERVER_DIR / "plugins" / "Geyser-Spigot").is_dir(),
     })
 
 
+def _options() -> dict:
+    try:
+        with open(os.environ.get("MC_OPTIONS_FILE", "/data/options.json")) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+# One check an hour is plenty: a new Paper build is a daily event at most,
+# and the tab polls the world list every few seconds.
+SOFTWARE_CHECK_S = 3600
+_SOFTWARE_CHECK: dict = {"at": 0.0, "key": "", "result": None}
+
+
+async def _software_payload(force: bool = False) -> dict:
+    meta = _read_json(MC_SERVER_DIR / ".server-meta.json", {})
+    opts = _options()
+    server_type = str(meta.get("server_type") or opts.get("server_type") or "paper").lower()
+    current = str(meta.get("version") or "")
+    key = f"{server_type}:{current}"
+    check = _SOFTWARE_CHECK
+    if force or check["key"] != key or time.time() - check["at"] > SOFTWARE_CHECK_S:
+        try:
+            async with _modrinth_session() as session:
+                result = await addons.newest_server(session, server_type, current)
+            result["error"] = ""
+        except Exception as exc:  # noqa: BLE001 — offline, a shape change
+            result = {"checked": False, "newest_version": "", "newest_build": "",
+                      "error": f"Could not check for updates ({type(exc).__name__})."}
+        check.update(at=time.time(), key=key, result=result)
+    result = dict(check["result"] or {})
+    newest = result.get("newest_version") or ""
+    upgrade = bool(newest and addons.RELEASE_RE.match(current or "")
+                   and addons.version_key(newest) > addons.version_key(current))
+    build = str(meta.get("build") or "")
+    newer_build = bool(result.get("newest_build") and build.isdigit()
+                       and result["newest_build"].isdigit()
+                       and int(result["newest_build"]) > int(build))
+    pending = ""
+    try:
+        pending = (MC_SERVER_DIR / ".upgrade-to").read_text().strip()
+    except OSError:
+        pass
+    return {
+        "server_type": server_type,
+        "version": current,
+        "build": build,
+        "version_option": str(opts.get("minecraft_version") or "LATEST"),
+        "auto_update": opts.get("auto_update_server", True) is not False,
+        "bedrock_support": opts.get("enable_bedrock_support", True) is not False,
+        "newest_version": newest,
+        "newest_build": result.get("newest_build") or "",
+        "upgrade_available": upgrade,
+        "build_update_available": newer_build,
+        "upgrade_pending": pending,
+        "checked": bool(result.get("checked")),
+        "check_error": result.get("error") or "",
+        "checked_at": int(check["at"]),
+        "components": addons.components(MC_SERVER_DIR),
+    }
+
+
+async def api_server_software(request: web.Request) -> web.Response:
+    return web.json_response(await _software_payload(force=request.query.get("refresh") == "1"))
+
+
+async def api_server_software_update(request: web.Request) -> web.Response:
+    """Fetch the newest of everything, or move this world to a newer Minecraft.
+
+    Both are an add-on restart: that is when the server jar, Geyser,
+    Floodgate and ViaVersion are downloaded (a server restart only
+    relaunches Java). An upgrade is also a one-way change to the world, so
+    it takes a backup first and refuses if the backup fails.
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    target = str(body.get("upgrade_to") or "").strip()
+    soft = await _software_payload()
+    notes = []
+    if target:
+        if not soft["upgrade_available"] or target != soft["newest_version"]:
+            return web.json_response(
+                {"error": f"Minecraft {target} is not the upgrade on offer for this world."},
+                status=409)
+        proc = await asyncio.create_subprocess_exec(
+            str(SCRIPTS_DIR / "backup.sh"),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        out_b, _ = await proc.communicate()
+        if proc.returncode != 0:
+            tail = out_b.decode("utf-8", "replace").strip().splitlines()[-1:] or [""]
+            return web.json_response(
+                {"error": f"The backup did not finish, so nothing was upgraded. {tail[0]}"},
+                status=409)
+        notes.append("A backup was taken first — the Backups tab has it.")
+        if soft["version_option"].upper() == "LATEST":
+            (MC_SERVER_DIR / ".upgrade-to").write_text(target + "\n")
+        else:
+            err = await _persist_option("minecraft_version", target)
+            if err:
+                return web.json_response(
+                    {"error": f"Could not change the version setting: {err}"}, status=502)
+    elif not soft["auto_update"]:
+        notes.append("auto_update_server is off in Configuration, so the server itself "
+                     "keeps its build; Geyser, Floodgate and ViaVersion still update.")
+    err = await _supervisor_restart_self()
+    if err:
+        return web.json_response({"error": f"The add-on did not restart: {err}"}, status=502)
+    return web.json_response({"ok": True, "notes": notes})
+
+
+async def api_addons_remove_file(request: web.Request) -> web.Response:
+    """Take anything out of this world — browser-added or not.
+
+    What the browser added goes through `addons.remove`, so a library that
+    something still needs is refused and the record is kept true. Anything
+    else is a file in one of four folders, named by the list this screen
+    showed; bundled crossplay plugins are never removable from here.
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    kind = str(body.get("kind") or "")
+    name = os.path.basename(str(body.get("file") or ""))
+    ctx = _addon_context()
+    if addons._bundled(kind, name):
+        return web.json_response(
+            {"error": "That plugin is what lets Bedrock, iPad and console players join, "
+                      "so it is not removed from here."}, status=409)
+    row = next((it for it in _world_contents(ctx)["items"]
+                if it["kind"] == kind and it["file"] == name), None)
+    if row is None:
+        return web.json_response({"error": "That is not in this world any more."}, status=404)
+    if row["id"]:
+        try:
+            addons.remove(ctx, row["id"], force=bool(body.get("force")))
+        except addons.AddonError as exc:
+            return web.json_response({"error": str(exc)}, status=409)
+    else:
+        folder = addons.destination(kind, ctx.server_dir, ctx.level_name, ctx.packs_dir)
+        target = _under(folder, name)
+        if target.is_dir() and kind == "datapack":
+            shutil.rmtree(target)
+        elif target.is_file():
+            target.unlink()
+    if kind == "resourcepack" and name == _active_pack():
+        props = _read_properties()
+        props["resource-pack"] = ""
+        props["resource-pack-sha1"] = ""
+        _write_properties(props, "Resource pack removed via add-ons")
+        (MC_SERVER_DIR / GEYSER_PACKS / (Path(name).stem + ".mcpack")).unlink(missing_ok=True)
+    if kind == "datapack":
+        try:
+            await _rcon_command("minecraft:reload")
+        except Exception:  # noqa: BLE001
+            pass
+    elif row["status"] != "unused":
+        _note_change("removed", kind, row["title"])
+    return web.json_response({"ok": True, "removed": row["title"],
+                              "world": _world_contents(_addon_context())})
+
+
+async def api_addons_use_pack(request: web.Request) -> web.Response:
+    """Make a resource pack in the library the one this world offers."""
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    name = os.path.basename(str(body.get("file") or ""))
+    if not VALID_PACK_NAME.match(name):
+        return web.json_response({"error": "invalid name"}, status=400)
+    pack = _under(MC_RESOURCE_PACKS, name)
+    if not pack.is_file():
+        return web.json_response({"error": "That pack is not in the library."}, status=404)
+    # The LAN address, never the request's Host: through ingress that is the
+    # Supervisor's internal address, which no player's game can reach.
+    _apply_resource_pack(pack, _lan_address(), 8099)
+    _note_change("switched to", "resourcepack", addons._title_from_file(name))
+    return web.json_response({"ok": True, "world": _world_contents(_addon_context())})
+
+
 async def api_addons_search(request: web.Request) -> web.Response:
     ctx = _addon_context()
-    kind = request.query.get("kind") or (addons.kinds_for(ctx.server_type) or ["datapack"])[0]
+    kind = request.query.get("kind") or "all"
     try:
         offset = int(request.query.get("offset") or 0)
     except ValueError:
         offset = 0
     try:
         async with _modrinth_session() as session:
-            result = await addons.search(addons.Modrinth(session), ctx, kind,
-                                         request.query.get("q", ""), offset)
+            client = addons.Modrinth(session)
+            if kind == "all":
+                result = await addons.search_all(client, ctx, request.query.get("q", ""), offset)
+            else:
+                result = await addons.search(client, ctx, kind, request.query.get("q", ""), offset)
     except addons.AddonError as exc:
         return web.json_response({"error": str(exc)}, status=409)
     except Exception as exc:  # noqa: BLE001 — offline, DNS, a timeout
@@ -2126,7 +2389,10 @@ async def api_addons_install(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": f"The install did not finish ({type(exc).__name__}: {exc})."}, status=502)
     after = await _after_install(kind, rows, ctx)
-    return web.json_response({"ok": True, "installed": rows, **after})
+    for row in rows:
+        _note_change("added", kind, row["title"])
+    return web.json_response({"ok": True, "installed": rows, **after,
+                              "world": _world_contents(_addon_context())})
 
 
 async def _install_batch(items, ctx: addons.Context) -> web.Response:
@@ -2147,12 +2413,15 @@ async def _install_batch(items, ctx: addons.Context) -> web.Response:
     restart = False
     for kind, rows in by_kind.items():
         after = await _after_install(kind, rows, ctx)
+        for row in rows:
+            _note_change("added", kind, row["title"])
         restart = restart or after["restart_needed"]
         notes += [n for n in after["notes"] if n != RESTART_NOTE]
     if restart:
         notes.append(RESTART_NOTE)
     return web.json_response({"ok": any(r.get("ok") for r in results), "results": results,
-                              "restart_needed": restart, "notes": notes})
+                              "restart_needed": restart, "notes": notes,
+                              "world": _world_contents(_addon_context())})
 
 
 async def api_addons_remove(request: web.Request) -> web.Response:
@@ -2179,6 +2448,7 @@ async def api_addons_remove(request: web.Request) -> web.Response:
             pass
     else:
         notes.append("Restart the server for it to unload.")
+        _note_change("removed", row["kind"], row["title"])
     return web.json_response({"ok": True, "removed": row, "notes": notes})
 
 
@@ -2579,6 +2849,10 @@ def build_app() -> web.Application:
     app.router.add_get("/api/addons", api_addons)
     app.router.add_get("/api/addons/search", api_addons_search)
     app.router.add_post("/api/addons/install", api_addons_install)
+    app.router.add_get("/api/server/software", api_server_software)
+    app.router.add_post("/api/server/software/update", api_server_software_update)
+    app.router.add_post("/api/addons/remove-file", api_addons_remove_file)
+    app.router.add_post("/api/addons/use-pack", api_addons_use_pack)
     app.router.add_delete("/api/addons/{id}", api_addons_remove)
     return app
 
