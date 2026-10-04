@@ -1561,13 +1561,22 @@ class TestProjectSettingsAllowList(unittest.TestCase):
             sys.path.insert(0, str(PANEL))
 
     def test_the_project_file_pre_approves_only_reading(self):
+        """Reading, plus the two that change nothing anybody would approve:
+        offering buttons, and `brain own` handing a file the claude user
+        already owns the folder of back to it (a card asking the person to
+        approve fixing a permission is the complaint it exists to end)."""
         import engine
         self.assertEqual(self.settings["permissions"]["allow"],
                          list(engine.ANALYST_TOOLS)
-                         + ["mcp__home-assistant__offer_resolutions"])
-        for acting in ("Bash(*)", "Write", "Edit", "mcp__home-assistant__*",
+                         + ["mcp__home-assistant__offer_resolutions",
+                            "Bash(brain own:*)"])
+        for acting in ("Bash(*)", "Bash", "Write", "Edit",
+                       "mcp__home-assistant__*",
                        "mcp__home-assistant__call_service"):
             self.assertNotIn(acting, self.settings["permissions"]["allow"])
+        bash = [e for e in self.settings["permissions"]["allow"]
+                if e.startswith("Bash")]
+        self.assertEqual(bash, ["Bash(brain own:*)"])
 
     def test_the_headless_file_keeps_the_old_list(self):
         self.assertEqual(self.headless["permissions"]["allow"], self.HEADLESS_ALLOW)

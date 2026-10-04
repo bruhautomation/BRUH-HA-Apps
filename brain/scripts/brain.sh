@@ -65,8 +65,9 @@ Usage:
   brain ask "<question>"         Ask about the home (same engine as the Ask card)
   brain undo [n]                 Review and revert Claude's edits to /config
   brain own [-r] <path...>       Make a file under /config writable by Claude
-                                 when Home Assistant saved it as root. The
-                                 edit hook does this by itself; nobody needs
+                                 when Home Assistant saved it as root (also
+                                 /addon_configs, /share, /media). The edit
+                                 hooks do this by themselves; nobody needs
                                  to run sudo or chown
   brain check [list]             Run the house checks now — no Claude run,
                                  findings land on the Findings tab

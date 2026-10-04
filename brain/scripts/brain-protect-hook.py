@@ -38,6 +38,17 @@ A hook that refuses prints Claude Code's PreToolUse decision on stdout and
 exits 0; one that allows prints nothing. Anything it cannot read allows:
 a hook that crashed on a malformed payload would cost the edit, and an
 empty list is the answer "nothing is protected" honestly.
+
+It does one more thing, and only for a command it allows, because it is
+the one hook that already reads every Bash command before it runs: the
+files that command names under /config (and the other trees brAIn hands
+over) are handed to the claude user first when it cannot write them
+(`brain_own.ensure_writable_command`). The Edit tool writes a new file and
+renames it, which the claude user's own /config lets it do; a shell
+redirect, a `tee` or Python's `open(path, "w")` writes in place, into a
+file Home Assistant's editor last saved as root. That step fails open: a
+panel that is down or slow costs at most a few seconds and never the
+command, and a refused command asks nothing.
 """
 from __future__ import annotations
 
@@ -45,6 +56,7 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 
 YAML_SUFFIXES = (".yaml", ".yml")
 
@@ -129,6 +141,25 @@ def decide(payload: dict, pats: list[str]) -> str | None:
     return None
 
 
+def make_writable(payload) -> None:
+    """Hand the files an allowed Bash command names to the claude user when
+    it cannot write them. Never raises; a missing `brain_own.py` is a step
+    skipped."""
+    try:
+        if str(payload.get("tool_name") or "") != "Bash":
+            return
+        tool_input = payload.get("tool_input")
+        if not isinstance(tool_input, dict):
+            return
+        here = str(Path(__file__).resolve().parent)
+        if here not in sys.path:
+            sys.path.append(here)
+        import brain_own
+        brain_own.ensure_writable_command(str(tool_input.get("command") or ""))
+    except Exception:  # noqa: BLE001 — a hook may not cost the call over a bug
+        pass
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -137,13 +168,16 @@ def main() -> int:
     try:
         reason = decide(payload, patterns())
     except Exception:  # noqa: BLE001 — a hook may not cost the call over a bug
-        return 0
+        reason = None
     if reason:
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
             "permissionDecisionReason": reason,
         }}))
+        return 0
+    if isinstance(payload, dict):
+        make_writable(payload)
     return 0
 
 

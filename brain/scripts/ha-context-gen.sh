@@ -487,7 +487,7 @@ for the full list.
 - \`brain learn [topic]\` - Study a topic and record what it finds
 - \`brain ask "<question>"\` - One-shot question about the home
 - \`brain undo [n]\` - Review and revert your edits to /config
-- \`brain own [-r] <path...>\` - Make a file under /config writable for you when Home Assistant saved it as root
+- \`brain own [-r] <path...>\` - Make a file under /config (or /addon_configs, /share, /media) writable for you when Home Assistant or another add-on saved it as root
 - \`brain doctor\` - End-to-end diagnostic (MCP, auth, listeners, CLI smoke tests)
 - \`brain login\` - Same as \`ha login\` (sign in, --status, --share)
 
@@ -624,7 +624,7 @@ ${protected_section}
 - **If you do edit automations.yaml or scripts.yaml by hand**, run \`ha check\` and then \`ha reload automations\` / \`ha reload scripts\`
 - **Never modify secrets.yaml directly**
 - **Edits are snapshotted before Claude makes them** — \`brain undo\` reviews and reverts them
-- **If a file under /config is not writable, run \`brain own <path>\`** — Home Assistant saves automations.yaml, scripts.yaml and scenes.yaml as root, and the edit hook usually hands them back before you notice. Never ask the person to run sudo or chown
+- **If a file under /config (or /addon_configs, /share, /media) is not writable, run \`brain own <path>\`** — Home Assistant saves automations.yaml, scripts.yaml and scenes.yaml as root, and the edit and shell hooks usually hand them back before you notice. Never ask the person to run sudo or chown
 - **Test templates** using the \`render_template\` MCP tool before using them in automations
 CLAUDEMD
 

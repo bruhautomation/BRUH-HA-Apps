@@ -522,9 +522,13 @@ ENVEOF
 # python_scripts — plus any folder configuration.yaml names with
 # !include_dir_*. Never `secrets.yaml`, never anything under a hidden folder
 # (.storage is Core's own state, rewritten continuously; .esphome is build
-# output), and never through a symbolic link: find does not follow links,
+# output), never a file with other hard links (one of its names may be
+# somewhere this must not reach — the panel's route and sweep refuse the
+# same), and never through a symbolic link: find does not follow links,
 # a linked folder is skipped, and chown -h acts on a link rather than on
-# what it points at. Bounded by BRAIN_OWN_MAX and quiet: one log line.
+# what it points at. Bounded by BRAIN_OWN_MAX and quiet: one log line, and
+# the count in it is what changed hands, read back afterwards — not what
+# was asked for, which a filesystem that refuses chown would make a lie.
 #
 # Takes the root and the owner as arguments so the test can run this exact
 # function over a temporary tree.
@@ -536,7 +540,6 @@ own_ha_config() {
     real_root=$(readlink -f "$root" 2>/dev/null) || return 0
     local -a dirs=(packages blueprints esphome themes custom_templates python_scripts)
     local -a found=()
-    local -A seen=()
 
     # Folders configuration.yaml includes, read as text: a relative path
     # with no hidden or `..` component, or it is not ours to walk.
@@ -552,26 +555,31 @@ own_ha_config() {
                     "$root/configuration.yaml" 2>/dev/null | tr -d "\"'")
     fi
 
+    # Everything that is not the user's yet, NUL-separated. Run once to
+    # hand it over and once more to count what is still left.
+    _own_ha_config_list() {
+        local d top real
+        local -A seen=()
+        find "$root" -maxdepth 1 -type f -links 1 \( -name '*.yaml' -o -name '*.yml' \) \
+            ! -name secrets.yaml ! -user "$user" -print0 2>/dev/null
+        for d in "${dirs[@]}"; do
+            [ -n "${seen[$d]:-}" ] && continue
+            seen[$d]=1
+            top="$root/$d"
+            { [ -d "$top" ] && [ ! -L "$top" ]; } || continue
+            real=$(readlink -f "$top" 2>/dev/null) || continue
+            case "$real" in "$real_root"/*) ;; *) continue ;; esac
+            find "$top" \( -type d -name '.*' ! -path "$top" -prune \) -o \
+                \( \( -type f -links 1 -o -type d \) ! -name secrets.yaml \
+                   ! -user "$user" -print0 \) 2>/dev/null
+        done
+    }
+
     while IFS= read -r -d '' f; do
         found+=("$f")
-    done < <(find "$root" -maxdepth 1 -type f \( -name '*.yaml' -o -name '*.yml' \) \
-                 ! -name secrets.yaml ! -user "$user" -print0 2>/dev/null)
+    done < <(_own_ha_config_list)
 
-    for d in "${dirs[@]}"; do
-        [ -n "${seen[$d]:-}" ] && continue
-        seen[$d]=1
-        local top="$root/$d" real
-        { [ -d "$top" ] && [ ! -L "$top" ]; } || continue
-        real=$(readlink -f "$top" 2>/dev/null) || continue
-        case "$real" in "$real_root"/*) ;; *) continue ;; esac
-        while IFS= read -r -d '' f; do
-            found+=("$f")
-        done < <(find "$top" \( -type d -name '.*' ! -path "$top" -prune \) -o \
-                     \( \( -type f -o -type d \) ! -name secrets.yaml \
-                        ! -user "$user" -print0 \) 2>/dev/null)
-    done
-
-    local n=${#found[@]}
+    local total=${#found[@]} n=${#found[@]} left=0
     if [ "$n" -gt "$cap" ]; then
         bashio::log.warning "Config ownership: ${n} entries need handing to ${user}; doing the first ${cap}, the edit hook and brain own take care of the rest"
         found=("${found[@]:0:$cap}")
@@ -579,8 +587,19 @@ own_ha_config() {
     fi
     if [ "$n" -gt 0 ]; then
         printf '%s\0' "${found[@]}" | xargs -0 chown -h "$owner" 2>/dev/null || true
+        while IFS= read -r -d '' f; do
+            left=$((left + 1))
+        done < <(_own_ha_config_list)
     fi
-    bashio::log.info "Config ownership: ${n} file(s) and folder(s) under ${root} handed to ${user}"
+    local handed=$((total - left))
+    if [ "$handed" -lt 0 ]; then
+        handed=0
+    fi
+    if [ "$handed" -lt "$n" ]; then
+        bashio::log.warning "Config ownership: handed ${handed} of ${n} file(s) and folder(s) under ${root} to ${user}; $((n - handed)) could not be changed (the edit hook and brain own try again when Claude needs one)"
+    else
+        bashio::log.info "Config ownership: ${handed} file(s) and folder(s) under ${root} handed to ${user}"
+    fi
 }
 
 # ============================================================================
@@ -1617,9 +1636,13 @@ PYREAD
         # offer_resolutions is the one tool beside them that changes
         # nothing: it puts buttons on the chat's own screen, and an
         # approval card in front of an offer of buttons is a press for
-        # nothing.
+        # nothing. `brain own` is the other card that would be a press for
+        # nothing: it hands a file the claude user already owns the folder
+        # of back to that user (panel/ownership.py), and a card asking the
+        # person to approve fixing a permission is the complaint it exists
+        # to end, one click shorter.
         if filled=$(jq --argjson read "$reading" \
-                '.permissions.allow = ($read + ["mcp__home-assistant__offer_resolutions"])' \
+                '.permissions.allow = ($read + ["mcp__home-assistant__offer_resolutions", "Bash(brain own:*)"])' \
                 "$claude_settings_dir/settings.local.json" 2>/dev/null); then
             printf '%s\n' "$filled" > "$claude_settings_dir/settings.local.json"
         fi
