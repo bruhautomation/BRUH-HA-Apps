@@ -613,6 +613,47 @@ check says it cannot wait.
 Everything below the floor is **quiet**: no message, and nothing lost — it is
 on the Findings feed, in the `todo.brain` list and in Home Assistant's Repairs.
 
+**Your own sentence.** ⚙ → Insights → *What deserves a notification* takes one
+sentence in your own words, for example "wake me for water, smoke, the freezer or
+the front door at night; batteries can wait for Saturday". Before brAIn sends
+anything in the middle tier (above your floor, not an emergency), it reads that
+sentence, the time, your quiet hours and what it sent you in the last day. Then it
+decides one of four things:
+
+- send it now;
+- hold it until a later time, at most a day and a half ahead;
+- put it in the next morning's list, at the end of your quiet hours or when the
+  house usually gets up;
+- leave it on the Findings feed.
+
+It also writes the message: a short title and a line you can act on from the lock
+screen. What it cannot do:
+
+- anything escalating (a leak, smoke, a freeze, a hub that stopped answering)
+  never goes through it at all, and is sent exactly as above;
+- a critical finding is never left off your phone;
+- a message may only name the device it is about;
+- if brAIn cannot ask Claude (no sign-in, automatic runs paused, the usage budget
+  spent, or an answer it cannot read), the finding is sent exactly as it was
+  before this existed. ⚙ → Diagnostics shows how often it stood down, and why.
+
+**What brAIn learns from your swipes.** Every notification is recorded with what
+happened to it: a button pressed, swiped away (Android reports this; iPhone does
+not), or left alone. Once a week, if nearly every notification about one device or
+one check was dismissed or swiped away unanswered (at least 8 of 10, over at least
+eight), brAIn asks on the Findings feed whether those should wait for the morning
+list. Yes adds a line to your sentence, listed under the box in ⚙ with a Remove.
+No is remembered. Critical and safety alerts are never counted, and nothing
+changes until you answer.
+
+**Saying it out loud.** ⚙ → Advanced → *Say urgent problems aloud* is off by
+default. When it is on, a serious, urgent problem from one of brAIn's own house
+checks is announced on the voice satellite in the room where motion was just seen,
+as well as sent to your phone. It never speaks to an empty house, during quiet
+hours, for something already escalating on your phone, in words that name a
+person, or through a speaker on your protected list. It needs a Home Assistant
+version with `assist_satellite.announce`. Answer it on your phone.
+
 **Only "Not a problem" is for ever.** "I've fixed it", "Got it" after brAIn fixed
 something, and finishing a to-do made from a finding stop it being raised for as
 long as it stays fixed: a house check's problem is raised again if the check finds
@@ -1307,7 +1348,8 @@ under `understanding`.
 ### A morning brief, when there is something to say
 
 Turn on **Send a morning brief** and brAIn sends one short message a day to
-your notify service, at the hour your home actually starts moving.
+your notify service, at the hour your home actually starts moving. It arrives titled
+*brAIn this morning*.
 
 The part that matters is when it *doesn't*. The decision to send is made
 before Claude is asked anything, and every reason names a specific thing:
@@ -1340,7 +1382,8 @@ rather than delivering breakfast at lunchtime.
 ### One report a week
 
 Turn on **Send a weekly report** and brAIn sends one message a week — by
-default on a Sunday, at the same hour the brief would go. It is the report
+default on a Sunday, at the same hour the brief would go. It arrives titled *brAIn: your
+week*. It is the report
 meant for everybody in the house, so the notify service to point it at is
 usually `notify.notify`.
 

@@ -806,6 +806,52 @@ Resident can correct its own first look.**
   as every scheduled run, and a review that failed waits six hours before
   trying again.
 
+### Notifications: your own sentence, better timing, and a record of what you did
+
+- **Tell brAIn, in one sentence, what deserves a notification.** ⚙ → Insights
+  has a new box, *What deserves a notification*. Write it the way you would to a
+  person — "wake me for water, smoke, the freezer or the front door at night;
+  batteries can wait for Saturday" — and brAIn reads it before each notification
+  it would send. Critical alerts that cannot wait (a leak, smoke, a freeze, a
+  hub that stopped answering) still come straight through, whatever the sentence
+  says.
+- **Notifications are timed and worded for your lock screen.** A problem that is
+  above your notification floor but not an emergency is now looked at once more
+  before your phone is touched: brAIn decides whether to send it now, hold it
+  until a time that suits (up to a day and a half), add it to the next morning's
+  list, or leave it on the Findings list — following your sentence and the hour
+  — and writes a short title and line you can act on without opening anything
+  ("Garage freezer is 6° warmer than a month ago — check the seal") instead of
+  "brAIn found a problem / [warning] …". If brAIn cannot ask Claude (no sign-in,
+  automatic runs paused, the usage budget spent, a failed run, an answer it
+  cannot read), it sends exactly what it always did. It never mutes a critical
+  alert, never touches a leak or smoke alarm, and a message may only name the
+  device it is about.
+- **brAIn keeps a record of what it sent you, and what you did with it.** Every
+  notification is now written down with what happened to it: answered with a
+  button, swiped away (Android tells Home Assistant this; iPhone does not), or
+  left alone. ⚙ → Diagnostics shows the week's count and how each ended.
+- **"You keep dismissing these — move them to the morning list?"** Once a week
+  brAIn looks at that record. When nearly every notification about one device or
+  one kind of check (8 of 10 or more, over at least eight) has been dismissed or
+  swiped away unanswered, it asks you on the Findings feed. Yes adds one line to
+  your notification sentence — shown on its own under the box in ⚙, with a
+  Remove beside it, and the toast's Undo takes it back. No is remembered and it
+  will not ask again. Nothing changes until you answer, and critical or safety
+  alerts are never counted or held this way.
+- **The morning brief and the weekly report no longer arrive as "brAIn found a
+  problem".** They have their own titles — *brAIn this morning* and *brAIn: your
+  week* — and arrive as the paragraph they are, without "[info]" in front.
+- **Optional: brAIn can say an urgent problem out loud, in the room you are
+  in.** With *Say urgent problems aloud* switched on (⚙ → Advanced, off by
+  default), a serious, urgent problem from one of brAIn's house checks — a
+  window open on a freezing evening — is announced on the voice satellite in the
+  room where motion or presence was just seen, as well as sent to your phone. It
+  never speaks to an empty house, never inside your quiet hours, never for
+  something already escalating on your phone, never words that name a person,
+  and never through a protected speaker. It only announces; answering is still
+  on your phone.
+
 ## 2.10.1
 
 **The classic terminal on a phone: Paste works, the keyboard stops fighting you.**
