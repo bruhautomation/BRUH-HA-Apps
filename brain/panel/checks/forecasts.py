@@ -92,6 +92,8 @@ def battery_runway(snap: dict, now: float) -> list[dict]:
         days_left = level / -slope
         if days_left > BATTERY_RUNWAY_DAYS:
             continue
+        if not house.should_report(eid, "forecast.battery"):
+            continue
         dev = house.device_of(eid)
         who = house.device_name(dev) if dev else house.name(eid)
         span = -points[0][0]
@@ -160,9 +162,23 @@ def decline(snap: dict, now: float) -> list[dict]:
     by_class: dict[str, int] = {}
     for _rank, _eid, _moved, klass, _b in hits:
         by_class[klass] = by_class.get(klass, 0) + 1
-    hits = [h for h in hits if by_class.get(h[3], 0) <= SAME_CLASS_MAX]
+    together = [h for h in hits if by_class.get(h[3], 0) > SAME_CLASS_MAX]
+    if together:
+        house.gave_up("forecast.decline",
+                      [{"entity_id": h[1]} for h in together],
+                      "several sensors of the same kind were drifting the "
+                      "same way at once — that is the weather or the season "
+                      "moving, not one device")
+    hits = [h for h in hits if by_class.get(h[3], 0) <= SAME_CLASS_MAX
+            and house.should_report(h[1], "forecast.decline")]
 
-    if not hits or len(hits) > DECLINE_MAX_ROWS:
+    if len(hits) > DECLINE_MAX_ROWS:
+        house.gave_up("forecast.decline", [{"entity_id": h[1]} for h in hits],
+                      f"{len(hits)} readings were drifting at once — past "
+                      f"{DECLINE_MAX_ROWS} that is the measurement rather "
+                      "than the house")
+        return []
+    if not hits:
         return []
     hits.sort(reverse=True)
 

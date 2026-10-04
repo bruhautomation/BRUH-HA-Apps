@@ -95,7 +95,7 @@ def waiting(snap: dict, now: float) -> list[dict]:
         kind = kind_of(shape.get("name") or house.name(eid) or eid)
         if not kind:
             continue
-        if house.excepted(eid, "chore.waiting"):
+        if not house.should_report(eid, "chore.waiting"):
             continue
         reading = appliances.state_at(shape, recent.get(eid) or [], now)
         if reading.get("state") != appliances.FINISHED:
@@ -108,7 +108,13 @@ def waiting(snap: dict, now: float) -> list[dict]:
             continue
         hits.append((finished, kind, eid, shape))
 
-    if not hits or len(hits) > MAX_ROWS:
+    if len(hits) > MAX_ROWS:
+        house.gave_up("chore.waiting", [{"entity_id": h[2]} for h in hits],
+                      f"{len(hits)} machines looked finished at once — past "
+                      f"{MAX_ROWS} that is a measurement gone wrong, not a "
+                      "house full of washing")
+        return []
+    if not hits:
         return []
     # Oldest first: the one that has been sitting longest is the one to
     # deal with.

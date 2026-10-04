@@ -240,6 +240,8 @@ def unavailable(snap: dict, now: float) -> list[dict]:
         dev = house.devices[dev_id]
         rows.sort(key=lambda r: r[1], reverse=True)
         first, longest = rows[0]
+        if not house.should_report(first, "dev.unavailable"):
+            continue
         name = house.device_name(dev)
         out.append({
             "text": f"{name} has been unavailable for more than a day",
@@ -255,6 +257,8 @@ def unavailable(snap: dict, now: float) -> list[dict]:
             "entity_id": first,
         })
     for eid, age in loose:
+        if not house.should_report(eid, "dev.unavailable"):
+            continue
         out.append({
             "text": f"{house.name(eid)} has been unavailable for more than "
                     "a day",
@@ -351,7 +355,7 @@ def battery_low(snap: dict, now: float) -> list[dict]:
             continue
         # Wrong on one of these rows writes an exception fact, and the
         # check has to read it, or it files the same row in new words.
-        if house.excepted(eid, "dev.battery_low"):
+        if not house.should_report(eid, "dev.battery_low"):
             continue
         level = num(st.get("state"))
         dev = house.device_of(eid)
@@ -437,7 +441,7 @@ def implausible(snap: dict, now: float) -> list[dict]:
         lo, hi = bounds
         if not out_of_range(st, eid):
             continue
-        if house.excepted(eid, "dev.implausible"):
+        if not house.should_report(eid, "dev.implausible"):
             continue
         out.append({
             "text": f"{house.name(eid)} is reporting an impossible value",
@@ -488,7 +492,7 @@ def frozen(snap: dict, now: float) -> list[dict]:
         if abs(lo) < 1e-9:
             # A power sensor on an idle plug reads 0 for a week and is fine.
             continue
-        if house.excepted(eid, "dev.frozen"):
+        if not house.should_report(eid, "dev.frozen"):
             # "It is a contact on a cupboard nobody opens" — said once,
             # on the Wrong button, and read here ever after.
             continue
@@ -506,8 +510,13 @@ def frozen(snap: dict, now: float) -> list[dict]:
         })
     # Past the cap this says nothing at all, rather than saying it more
     # quietly: a dozen at once is a fact about the statistics rather than
-    # about the sensors.
-    return [] if len(out) > FROZEN_MAX_ROWS else out
+    # about the sensors. And it says on the decision trail that it did.
+    if len(out) > FROZEN_MAX_ROWS:
+        house.gave_up("dev.frozen", out, f"{len(out)} sensors read one value "
+                      f"for a week at once — past {FROZEN_MAX_ROWS} that is a "
+                      "recorder purge or a reload rather than broken sensors")
+        return []
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -524,7 +533,9 @@ def restored(snap: dict, now: float) -> list[dict]:
         by_platform.setdefault(str(reg.get("platform") or "unknown"), []).append(eid)
     out = []
     for platform, eids in sorted(by_platform.items()):
-        eids.sort()
+        eids = sorted(e for e in eids if house.should_report(e, "dev.restored"))
+        if not eids:
+            continue
         out.append({
             "text": f"Entities from the '{platform}' integration are left "
                     "over with nothing providing them",
