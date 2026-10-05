@@ -7,10 +7,10 @@
 # same wording as those comments, phrased for someone looking at the form.
 configuration:
   enable_terminal:
-    name: Terminal tab
+    name: Terminal
     description: >-
-      Show the Terminal tab, where you talk to Claude Code directly. Turn
-      this off to run brAIn as insights and voice only.
+      Run the classic terminal on the Ask tab, where you talk to Claude Code
+      directly in a real shell. Turn this off to run brAIn as insights and voice only.
   enable_insights:
     name: Insights tab
     description: >-
@@ -21,7 +21,8 @@ configuration:
   auto_launch_claude:
     name: Start Claude in the terminal
     description: >-
-      Open Claude Code automatically when you open the Terminal tab. Off
+      Open Claude Code automatically when you open the classic terminal on
+      the Ask tab. Off
       gives you a plain shell, with `claude` available to run yourself.
   auto_generate_context:
     name: Write CLAUDE.md for your config

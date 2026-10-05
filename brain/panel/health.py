@@ -115,7 +115,7 @@ DAEMONS = {
     "ttyd": {
         "option": "enable_terminal",
         "what": "the terminal",
-        "fix": "The Terminal tab's classic face has nothing behind it. "
+        "fix": "The classic terminal on the Ask tab has nothing behind it. "
                "Restart the add-on.",
         "severity": "degraded",
     },

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import datetime, timezone
 
 from homeassistant.core import HomeAssistant
@@ -88,10 +89,44 @@ def read_changes(hass: HomeAssistant) -> list[dict]:
     return out
 
 
-def read_open_hypotheses(hass: HomeAssistant) -> list[dict]:
+# The add-on's own rule for when an unanswered guess retires
+# (`panel/hypotheses.TTL_DAYS`, `BRAIN_HYPOTHESIS_TTL_DAYS`). The panel
+# writes the retirement only when something reads the queue, so a line can
+# still say "open" on disk after it has aged out.
+HYPOTHESIS_TTL_DAYS = 14
+
+
+def _stamp(value) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def read_open_hypotheses(hass: HomeAssistant, now: float | None = None,
+                         awake_only: bool = True) -> list[dict]:
+    """The guesses somebody is being asked right now — `hypotheses.awake()`.
+
+    "open" on disk is not the same claim. A guess somebody dismissed stays
+    open with a `snoozed_until`, off every screen until then; and one past
+    its TTL is retired the next time the panel reads the queue. Counting
+    either is how `binary_sensor.brain_memory_waiting_on_you` sat `on`
+    about a question the Findings tab — rightly — was not showing anybody.
+
+    `awake_only=False` is every line still open on disk, for
+    `brain.answer_question`: answering a dismissed guess by its id is still
+    an answer, and the panel applies it.
+    """
+    now = time.time() if now is None else now
+    cutoff = now - HYPOTHESIS_TTL_DAYS * 86400
     out = []
     for entry in _read_jsonl(hypotheses_path(hass)):
-        if entry.get("status") != "open" or not entry.get("text"):
+        if entry.get("status", "open") != "open" or not entry.get("text"):
+            continue
+        snoozed = _stamp(entry.get("snoozed_until"))
+        if awake_only and snoozed > now:
+            continue
+        if awake_only and max(_stamp(entry.get("ts")), snoozed) < cutoff:
             continue
         out.append({
             "ts": int(entry.get("ts") or 0),
