@@ -46,6 +46,7 @@ import json
 import re
 
 import automation_writer
+import textclip
 
 OP_KINDS = ("edit_automation", "reload", "call_service", "rename_entity",
             "set_area", "agentic")
@@ -500,15 +501,15 @@ def clean_stored(value) -> dict:
         # A refusal recorded on an earlier read stays recorded: the reason
         # a plan cannot be applied is the sentence the card shows.
         why = value.get("ops_refused")
-        return {"ops_refused": why[:300]} if isinstance(why, str) and why \
+        return {"ops_refused": textclip.clip(why, 300)} if isinstance(why, str) and why \
             else {}
     try:
         ops = clean_ops(value.get("ops"))
     except Refused as exc:
-        return {"ops": [], "ops_refused": str(exc)[:300]}
+        return {"ops": [], "ops_refused": textclip.clip(str(exc), 300)}
     out = {"ops": ops,
-           "expected_effect": str(value.get("expected_effect") or "")
-           .strip()[:MAX_EFFECT],
+           "expected_effect": textclip.clip(
+               str(value.get("expected_effect") or "").strip(), MAX_EFFECT),
            "verify_by": clean_verify(value.get("verify_by"))}
     # Derived on every read, never stored as prose: the card says how the
     # follow-up looks will check, in the words this module owns.
@@ -533,7 +534,7 @@ def _clean_preview(value) -> dict:
         out["diff"] = value["diff"][:MAX_DIFF]
     for key in ("error", "replay_note"):
         if isinstance(value.get(key), str):
-            out[key] = value[key][:400]
+            out[key] = textclip.clip(value[key], 400)
     for key in ("replay", "replay_before"):
         rep = value.get(key)
         if isinstance(rep, dict):

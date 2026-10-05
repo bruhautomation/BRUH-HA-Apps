@@ -75,6 +75,7 @@ from pathlib import Path
 
 import answers
 import atomic_write
+import textclip
 import triage
 
 log = logging.getLogger("brain.findings")
@@ -330,8 +331,8 @@ def _publish_state(items: list[dict]) -> None:
                 # byte-for-byte the file the integration has always read.
                 {**{k: s[k] for k in ("ts", "text", "severity", "status",
                                       "entity_id", "fixable", "source_title")},
-                 "detail": s["detail"][:STATE_MAX_PROSE],
-                 "fix": s["fix"][:STATE_MAX_PROSE],
+                 "detail": textclip.clip(s["detail"], STATE_MAX_PROSE),
+                 "fix": textclip.clip(s["fix"], STATE_MAX_PROSE),
                  # The presses this row can be given from outside the
                  # panel, `[{action, label}]`, decided by the same table
                  # the feed renders from. Repairs shows this subset and
@@ -417,7 +418,7 @@ def _clean_plan(value) -> dict:
     steps = []
     for item in value.get("steps") or []:
         if isinstance(item, str) and item.strip():
-            steps.append(item.strip()[:MAX_PLAN_STEP])
+            steps.append(textclip.clip(item.strip(), MAX_PLAN_STEP))
         if len(steps) >= MAX_PLAN_STEPS:
             break
     needs_you = bool(value.get("needs_you"))
@@ -427,8 +428,8 @@ def _clean_plan(value) -> dict:
         "can_fix": bool(value.get("can_fix")) and not needs_you,
         "needs_you": needs_you,
         "steps": steps,
-        "risk": str(value.get("risk") or "").strip()[:MAX_PLAN_RISK],
-        "summary": str(value.get("summary") or "").strip()[:MAX_PLAN_SUMMARY],
+        "risk": textclip.clip(str(value.get("risk") or "").strip(), MAX_PLAN_RISK),
+        "summary": textclip.clip(str(value.get("summary") or "").strip(), MAX_PLAN_SUMMARY),
         "at": int(value.get("at") or 0),
     }
     # The typed half — the ops Apply carries out, re-validated on every
@@ -463,7 +464,7 @@ def _clean_triage(value) -> dict:
         return {}
     return {
         "verdict": verdict,
-        "reason": str(value.get("reason") or "").strip()[:triage.MAX_REASON],
+        "reason": textclip.clip(str(value.get("reason") or "").strip(), triage.MAX_REASON),
         "run_id": str(value.get("run_id") or "").strip()[:64],
         "at": int(value.get("at") or 0),
         # Set when a person pressed "Bring it to the front" on a held row.
@@ -471,6 +472,10 @@ def _clean_triage(value) -> dict:
         # the run said, and overwriting it would lose the one piece of
         # evidence that triage got this one wrong.
         "elevated_by_person": bool(value.get("elevated_by_person")),
+        # When the person did, so the card can say "You brought this back
+        # on 3 Oct" rather than leaving the verdict's own date to stand in
+        # for it. Zero on a row put back before the stamp existed.
+        "elevated_at": int(value.get("elevated_at") or 0),
         # Whether the row's `fix` is the run's own sentence rather than
         # the generic one the rule filed. The text itself lives in `fix`,
         # where every reader of a finding already looks; this is the
@@ -499,7 +504,7 @@ def _clean_evidence(value) -> list[dict]:
             continue
         out.append({
             "entity": entity,
-            "value": str(item.get("value") or "").strip()[:MAX_EVIDENCE_VALUE],
+            "value": textclip.clip(str(item.get("value") or "").strip(), MAX_EVIDENCE_VALUE),
             "when": str(item.get("when") or "").strip()[:MAX_EVIDENCE_WHEN],
         })
         if len(out) >= MAX_EVIDENCE:
@@ -524,14 +529,14 @@ def _clean_actions(value) -> list[dict]:
         if not isinstance(item, dict):
             continue
         shape = str(item.get("shape") or "").strip().lower()
-        label = str(item.get("label") or "").strip()[:MAX_ACTION_LABEL]
+        label = textclip.clip(str(item.get("label") or "").strip(), MAX_ACTION_LABEL)
         if shape not in ACTION_SHAPES or not label:
             continue
         out.append({
             "label": label,
             "shape": shape,
             "consent": item.get("consent", True) is not False,
-            "detail": str(item.get("detail") or "").strip()[:MAX_ACTION_DETAIL],
+            "detail": textclip.clip(str(item.get("detail") or "").strip(), MAX_ACTION_DETAIL),
         })
         if len(out) >= MAX_ACTIONS:
             break
@@ -569,7 +574,7 @@ def _case_fields(entry: dict) -> dict:
     actions = _clean_actions(entry.get("actions"))
     if actions:
         out["actions"] = actions
-    hint = str(entry.get("memory_hint") or "").strip()[:MAX_MEMORY_HINT]
+    hint = textclip.clip(str(entry.get("memory_hint") or "").strip(), MAX_MEMORY_HINT)
     if hint:
         out["memory_hint"] = hint
     investigation = entry.get("investigation")
@@ -591,8 +596,8 @@ def _shape(entry: dict) -> dict:
     out = {
         "ts": int(entry.get("ts") or 0),
         "text": str(entry.get("text") or "")[:MAX_TEXT],
-        "detail": str(entry.get("detail") or "")[:MAX_DETAIL],
-        "fix": str(entry.get("fix") or "")[:MAX_FIX],
+        "detail": textclip.clip(str(entry.get("detail") or ""), MAX_DETAIL),
+        "fix": textclip.clip(str(entry.get("fix") or ""), MAX_FIX),
         # Whose sentence `fix` is: "" for the rule's own, "triage" for the
         # run that looked at the row before it was shown, "chat" for a
         # conversation the homeowner had about it. The card says which.
@@ -611,7 +616,7 @@ def _shape(entry: dict) -> dict:
         # for a session id.
         "run_id": str(entry.get("run_id") or "")[:64],
         "status": status,
-        "result": str(entry.get("result") or "")[:MAX_RESULT],
+        "result": textclip.clip(str(entry.get("result") or ""), MAX_RESULT),
         "changed": _clean_changed(entry.get("changed")),
         "settled_at": int(entry.get("settled_at") or 0),
         # "Not now" is not a decision, so it is not a status. Dismissing is
@@ -865,8 +870,8 @@ def coerce(obj: dict) -> dict | None:
     severity = str(obj.get("severity") or "").strip().lower()
     entry = {
         "text": text,
-        "detail": detail[:MAX_DETAIL],
-        "fix": str(obj.get("fix") or "").strip()[:MAX_FIX],
+        "detail": textclip.clip(detail, MAX_DETAIL),
+        "fix": textclip.clip(str(obj.get("fix") or "").strip(), MAX_FIX),
         "severity": severity if severity in SEVERITIES else "warning",
         # absent means fixable; only an explicit false means hands required
         "fixable": obj.get("fixable", True) is not False,
@@ -1078,10 +1083,10 @@ def refine(ts: int, case: dict, run_id: str = "",
         entry.update(_case_fields(merged))
         detail = str(case.get("detail") or "").strip()
         if detail:
-            entry["detail"] = detail[:MAX_DETAIL]
+            entry["detail"] = textclip.clip(detail, MAX_DETAIL)
         fix = str(case.get("fix") or "").strip()
         if fix:
-            entry["fix"] = fix[:MAX_FIX]
+            entry["fix"] = textclip.clip(fix, MAX_FIX)
             entry["fix_by"] = "resident"
         if _severity_rank(case.get("severity")) > _severity_rank(
                 entry.get("severity")):
@@ -1095,6 +1100,8 @@ def refine(ts: int, case: dict, run_id: str = "",
             "at": int(when if when is not None else time.time()),
             "elevated_by_person": bool(
                 (entry.get("triage") or {}).get("elevated_by_person")),
+            "elevated_at": int(
+                (entry.get("triage") or {}).get("elevated_at") or 0),
             "wrote_fix": bool(fix)})
         _write(items)
         return _shape(entry)
@@ -1124,7 +1131,8 @@ def hold_after_look(ts: int, reason: str, run_id: str = "",
             return None
         entry["status"] = "held"
         entry["triage"] = _clean_triage({
-            "verdict": "held", "reason": str(reason or "")[:MAX_CLAIM],
+            "verdict": "held",
+            "reason": textclip.clip(str(reason or "").strip(), triage.MAX_REASON),
             "run_id": run_id,
             "at": int(when if when is not None else time.time()),
             "wrote_fix": False})
@@ -1145,7 +1153,7 @@ def set_status(ts: int, status: str, result: str = "",
             continue
         entry["status"] = status
         if result:
-            entry["result"] = str(result)[:MAX_RESULT]
+            entry["result"] = textclip.clip(str(result), MAX_RESULT)
         if changed is not None:
             entry["changed"] = _clean_changed(changed)
         entry["settled_at"] = (
@@ -1347,6 +1355,7 @@ def elevate(ts: int) -> dict | None:
         entry["settled_at"] = 0
         record = _clean_triage(entry.get("triage"))
         record["elevated_by_person"] = True
+        record["elevated_at"] = int(time.time())
         entry["triage"] = record
         _write(items)
         return _shape(entry)
@@ -1649,7 +1658,7 @@ def merge_rows(rows: list[dict]) -> int:
             continue
         status = row.get("status")
         entry["status"] = status if status in STATUSES else "open"
-        entry["result"] = str(row.get("result") or "")[:MAX_RESULT]
+        entry["result"] = textclip.clip(str(row.get("result") or ""), MAX_RESULT)
         entry["changed"] = _clean_changed(row.get("changed"))
         entry["settled_at"] = int(row.get("settled_at") or 0)
         entry["snoozed_until"] = int(row.get("snoozed_until") or 0)
@@ -1811,7 +1820,7 @@ def set_fix(ts: int, fix: str, by: str) -> dict | None:
     hands back no undo token. Refuses an empty sentence and an author the
     row cannot name (`FIX_AUTHORS`); answers None for a row that is gone.
     """
-    fix = str(fix or "").strip()[:MAX_FIX]
+    fix = textclip.clip(str(fix or "").strip(), MAX_FIX)
     if not fix or by not in FIX_AUTHORS:
         return None
     items = _load()
@@ -1928,7 +1937,7 @@ def annotate(ts: int, line: str) -> dict | None:
             continue
         detail = str(entry.get("detail") or "").strip()
         merged = f"{detail} {line}".strip() if detail else line
-        entry["detail"] = merged[:MAX_DETAIL]
+        entry["detail"] = textclip.clip(merged, MAX_DETAIL)
         _write(items)
         return _shape(entry)
     return None

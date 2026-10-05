@@ -62,6 +62,7 @@ from pathlib import Path
 
 import atomic_write
 import model_plan
+import textclip
 
 # ---------------------------------------------------------------------------
 # The jobs, by name
@@ -270,7 +271,9 @@ Rules:
   interesting is a person rather than the house, ignore it.
 - "why" is one plain sentence naming what made you decide. It is read by
   the person who maintains this and it is the only record of your
-  reasoning, so "looks fine" is not an answer.
+  reasoning, so "looks fine" is not an answer. Name the device or the
+  room, never the number: "signal 7" means nothing to the person reading
+  it, because the numbers are only how this list is laid out.
 - Judge each signal on what you were given. You have no tools here and
   nothing to look up: if you need to look something up, that is what
   "investigate" means.
@@ -425,6 +428,40 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
     return "\n".join(parts)
 
 
+# "signal 7", "signals 2 and 3", "(signal #4)": the batch's own numbering,
+# which a reply sometimes cites although the prompt says not to. A number
+# that only means something inside the prompt is noise on a card, so a
+# bracketed one is taken out and a bare one becomes "another signal".
+_NUM_LIST = r"#?\s*\d+(?:\s*(?:,|and|&|or|-|–)\s*#?\s*\d+)*"
+_SIGNAL_PAREN = re.compile(
+    r"\s*\(\s*(?:signals?|rows?|items?)\s*" + _NUM_LIST + r"\s*\)",
+    re.IGNORECASE)
+_SIGNAL_REF = re.compile(
+    r"\b(signals?|rows?|items?)\s*" + _NUM_LIST + r"\b", re.IGNORECASE)
+
+
+def strip_signal_refs(text: str) -> str:
+    """`text` without the batch's numbering ("same as signal 7").
+
+    Only a reference with a number is touched, so "a signal that repeats"
+    is left alone.
+    """
+    s = str(text or "")
+    if not re.search(r"\d", s):
+        return s
+
+    def _word(m: re.Match) -> str:
+        noun = m.group(1).lower()
+        plural = noun.endswith("s")
+        base = noun.rstrip("s") if plural else noun
+        out = f"other {base}s" if plural else f"another {base}"
+        return out.capitalize() if m.group(1)[:1].isupper() else out
+
+    out = _SIGNAL_PAREN.sub("", s)
+    out = _SIGNAL_REF.sub(_word, out)
+    return re.sub(r"\s{2,}", " ", out).strip() or s
+
+
 def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
     """`{1-based index: {verdict, why, forced}}` out of a reply.
 
@@ -468,7 +505,8 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
                 # then a skipped one, which is watched and says so.
                 continue
             said[idx] = {"verdict": verdict,
-                         "why": str(row.get("why") or "").strip()[:MAX_WHY],
+                         "why": textclip.clip(strip_signal_refs(
+                             str(row.get("why") or "").strip()), MAX_WHY),
                          "forced": False}
 
     unreadable = not isinstance(listed, list)
@@ -489,8 +527,9 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
         floor, why = never_ignore(signal) if signal is not None else ("", "")
         if floor and _RANK[answer["verdict"]] < _RANK[floor]:
             answer = {"verdict": floor,
-                      "why": (FORCED.format(why=why) + " " + answer["why"]
-                              ).strip()[:MAX_WHY],
+                      "why": textclip.clip(
+                          (FORCED.format(why=why) + " " + answer["why"]).strip(),
+                          MAX_WHY),
                       "forced": True,
                       "fallback": bool(answer.get("fallback"))}
         out[idx] = answer
@@ -841,7 +880,7 @@ def parse_dismissal(obj) -> str | None:
         return None
     if str(obj.get("claim") or "").strip():
         return None
-    why = str(obj.get("detail") or "").strip()[:MAX_WHY]
+    why = textclip.clip(str(obj.get("detail") or "").strip(), MAX_WHY)
     return why or "An investigation looked and found nothing worth showing."
 
 
@@ -907,7 +946,7 @@ def watch(signal: dict, why: str = "", now: float | None = None) -> dict:
     rows[subject] = {
         "subject": subject,
         "kind": str((signal or {}).get("kind") or ""),
-        "why": str(why or "").strip()[:MAX_WATCH_WHY],
+        "why": textclip.clip(str(why or "").strip(), MAX_WATCH_WHY),
         "at": int(now),
         "seen": 0,
     }

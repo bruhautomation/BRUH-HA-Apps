@@ -41,6 +41,7 @@ const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
 
 const CASES = [
   { width: 390, touch: true },
+  { width: 393, touch: true },
   { width: 1200, touch: false },
 ];
 // A thumb. Scoped in the stylesheet to this tab's own controls, the way
@@ -237,6 +238,55 @@ const FEED = [
       A('wrong', 'Not a problem', '/api/case/f:1009/wrong', { note: true, request: 'wrong' }),
     ],
   }),
+  // An entity nothing has named, so the chip carries the id itself — one
+  // unbreakable token longer than a phone is wide.
+  kase({
+    id: 'f:1012', kind: 'problem', severity: 'info', stakes: 'low',
+    situation: 'generic',
+    claim: 'An energy meter stopped reporting',
+    entity_id: 'sensor.shellyemg3_dcb4d9c5bd18_energy_meter_0_energy_total_returned',
+    fix: 'Reload sensor.shellyemg3_dcb4d9c5bd18_energy_meter_0_energy_total_returned.',
+    source: 'check:dev.unavailable', source_title: 'Noticed while fixing '
+      + '“Device 072B6F03 (‘Lab Hub’) stopped answering the hub '
+      + 'and every entity on it went unavailable”',
+    origin: { store: 'findings', key: 1012 },
+    answers: [
+      A('todo', 'Add to list', '/api/case/f:1012/do', { primary: true, request: 'todo' }),
+      A('not_now', 'Dismiss', '/api/case/f:1012/not_now', { request: 'snooze' }),
+      A('wrong', 'Not a problem', '/api/case/f:1012/wrong', { note: true, request: 'wrong' }),
+    ],
+  }),
+];
+
+// Findings rows no case covers, which the old renderer drew with a row of
+// its own (Discuss · Add to list · I fixed it · Remind me later · Dismiss ·
+// Wrong) — and the Dismissed filter, which drew a dismissed row as
+// "NEEDS A DECISION" offering Dismiss and Remind me later again.
+const LOOSE = [
+  // Open, fixable, and a plan run already said brAIn will not make the
+  // change: Fix it must not lead the row. Its triage never ran, so there is
+  // no "See what it checked".
+  { ts: 2001, text: 'An automation condition never passes', severity: 'warning',
+    status: 'open', fixable: true, source: 'check:auto.condition_never_passes',
+    source_title: 'Automation check',
+    detail: 'automation.lab_bathroom_vanity_after_midnight has run 0 times.',
+    fix: 'Check the condition against the entities it tests.',
+    entity_id: 'automation.lab_bathroom_vanity_after_midnight_turn_off_everything',
+    plan: { can_fix: false, needs_you: false, steps: [], ops: [], at: NOW - 600,
+            summary: 'brAIn would not make this change itself — the condition '
+              + 'is doing what it was written to do.' },
+    triage: { verdict: 'untriaged', reason: 'The first look did not run.',
+              run_id: 'look-1', at: NOW - 900 },
+    snoozed_until: 0 },
+  // Dismissed, brought back once by the person, and carrying brAIn's own
+  // earlier reason — with the batch number a first look sometimes cites.
+  { ts: 2002, text: 'Heating ran 14 hours yesterday', severity: 'info',
+    status: 'open', fixable: true, source: 'check:base.unusual',
+    source_title: 'Unusual reading',
+    triage: { verdict: 'held', elevated_by_person: true, elevated_at: NOW - 86400,
+              reason: 'Same as signal 7: a routine HVAC runtime summary, not a fault.',
+              run_id: 'look-2', at: NOW - 2 * 86400 },
+    snoozed_until: NOW + 3 * 86400 },
 ];
 
 // The name map the server sends beside the feed, off the last checks pass.
@@ -272,8 +322,8 @@ window.fetch = async (url) => {
     status: 200, headers: { 'Content-Type': 'application/json' } });
   if (p.includes('api/cases')) return answer(window.__cases);
   if (p.includes('api/findings')) {
-    return answer({ findings: [], hypotheses: [], open: 0, settled: [],
-                    scorecard: [], muted: [] });
+    return answer({ findings: ${JSON.stringify(LOOSE)}, hypotheses: [], open: 0,
+                    settled: [], scorecard: [], muted: [] });
   }
   // The shape the panel actually READS, not a plausible-looking one — a
   // stub that omits a key throws a page error seconds later, which this
@@ -311,6 +361,28 @@ const read = (page) => page.evaluate((ids) => {
     cards: cards.map((c) => {
       const box = c.getBoundingClientRect();
       return {
+        loose: !c.dataset.caseId,
+        state: c.querySelector('.findstate')?.textContent || '',
+        triageLabel: c.querySelector('.findtriagelabel')?.textContent || '',
+        triageText: c.querySelector('.findtriage')?.textContent || '',
+        triageLink: [...c.querySelectorAll('.findtriage button')]
+          .some((b) => /what it checked/i.test(b.textContent)),
+        srcShape: (() => {
+          const src = c.querySelector('.findsrc');
+          if (!src) return null;
+          const r = src.getBoundingClientRect();
+          return { h: Math.round(r.height), upper: getComputedStyle(src).textTransform,
+                   right: Math.round(r.right) };
+        })(),
+        entityRight: Math.round(c.querySelector('.findentity')
+          ?.getBoundingClientRect().right || 0),
+        // The furthest any of the card's own text reaches. A long id that
+        // cannot wrap paints past the card's edge even where the card
+        // itself kept its width.
+        inkRight: Math.round(Math.max(0, ...[...c.querySelectorAll(
+          '.findtitle, .finddetail, .findentity, .findfix span, .findsteps li, '
+          + '.findplan p, .findsrc, .findtriage span')]
+          .map((e) => e.getBoundingClientRect().right))),
         id: c.dataset.caseId || '',
         kind: (c.className.match(/\bk-([a-z]+)\b/) || [])[1] || '',
         situation: c.dataset.situation || '',
@@ -395,13 +467,14 @@ for (const { width, touch } of CASES) {
   if (!/^Home$/i.test(feed.tabLabel.trim())) {
     note(`${width}px`, `the tab is called "${feed.tabLabel.trim()}", not Home`);
   }
-  if (feed.cards.length !== FEED.length) {
-    note(`${width}px`, `${feed.cards.length} cards for ${FEED.length} cases`);
+  const caseCards = feed.cards.filter((c) => !c.loose);
+  if (caseCards.length !== FEED.length) {
+    note(`${width}px`, `${caseCards.length} cards for ${FEED.length} cases`);
   }
 
   const NO = new Set(['wrong', 'no', 'decline', 'drop', 'cancel']);
   const kinds = new Set();
-  for (const card of feed.cards) {
+  for (const card of caseCards) {
     kinds.add(card.kind);
     if (!card.title.trim()) note(`${width}px`, `${card.id} renders no claim`);
     // A pill, in words. The left edge is severity, so without it nothing on
@@ -481,8 +554,50 @@ for (const { width, touch } of CASES) {
         note(`${width}px`, `the disclosure on ${card.id} is ${card.details.h}px tall on touch`);
       }
     }
-    if (card.right > feed.viewport + 1) {
+    if (card.right > width + 1) {
       note(`${width}px`, `${card.id} hangs off the side`);
+    }
+  }
+
+  // Nothing on a card may be wider than the card: an entity id with no
+  // name, and a source title that is a whole sentence.
+  for (const card of feed.cards) {
+    if (card.inkRight > card.right + 1) {
+      note(`${width}px`, `${card.id || 'a loose row'}'s text runs ${card.inkRight - card.right}px past its card`);
+    }
+    if (card.entityRight > card.right + 1) {
+      note(`${width}px`, `${card.id || 'a loose row'}'s entity chip hangs past its card`);
+    }
+    if (card.srcShape && card.srcShape.upper === 'uppercase') {
+      note(`${width}px`, `${card.id || 'a loose row'}'s source title is set in capitals`);
+    }
+    if (card.srcShape && card.srcShape.h > 24) {
+      note(`${width}px`, `${card.id || 'a loose row'}'s source title runs to `
+        + `${card.srcShape.h}px — more than one line`);
+    }
+  }
+
+  // A row no case covers takes the same row as one that does — and no
+  // Fix it under a plan that already said brAIn will not make the change.
+  const loose = feed.cards.find((c) => c.loose);
+  if (!loose) {
+    note(`${width}px`, 'the finding no case covers is not on the feed');
+  } else {
+    const got = loose.verbs.filter((v) => !v.icon).map((v) => v.verb);
+    if (got.join(',') !== 'todo,not_now,wrong') {
+      note(`${width}px`, `a loose row offers ${loose.verbs.map((v) => v.label).join(' | ')}`);
+    }
+    if (!loose.verbs.some((v) => v.icon)) {
+      note(`${width}px`, 'a loose row has no ⋯ for the rarer presses');
+    }
+    if (!loose.planShown) {
+      note(`${width}px`, 'a refused plan is not shown on the card it refused');
+    }
+    if (/Wrong|Remind me later|Discuss|I fixed it/.test(loose.words)) {
+      note(`${width}px`, 'a loose row still carries the old vocabulary');
+    }
+    if (loose.triageLink) {
+      note(`${width}px`, '"Not checked first" offers "See what it checked"');
     }
   }
 
@@ -657,8 +772,12 @@ for (const { width, touch } of CASES) {
       note(`${width}px`, 'the foot line does not say what is being watched');
     }
   }
-  if (feed.docWidth > feed.viewport + 1) {
-    note(`${width}px`, `page scrolls sideways (${feed.docWidth} > ${feed.viewport})`);
+  // Against the width the page was opened at, never `innerWidth`: a mobile
+  // viewport zooms out to fit content that overflows it, so innerWidth
+  // grows with the overflow and a 402px card in a 393px phone measured as
+  // fitting.
+  if (feed.docWidth > width + 1) {
+    note(`${width}px`, `page scrolls sideways (${feed.docWidth} > ${width})`);
   }
 
   // The ⋯ opens. The rare verbs are still real; a menu that does not open
@@ -684,6 +803,43 @@ for (const { width, touch } of CASES) {
   }
   if (menu && menu.some((row) => /^(Later|Dismiss)\b/i.test(row))) {
     note(`${width}px`, 'the ⋯ offers the snooze a second time');
+  }
+
+  // The Dismissed filter. A dismissed row is not "Needs a decision", does
+  // not offer Dismiss again, and says who said what about it.
+  let away = null;
+  try {
+    await page.click('#findFilters .fchip:has-text("Dismissed")');
+    away = (await read(page)).cards;
+  } catch (e) {
+    note(`${width}px`, `the Dismissed filter could not be opened: ${e.message}`);
+  }
+  if (away) {
+    const row = away[0];
+    if (!row) {
+      note(`${width}px`, 'the Dismissed filter is empty');
+    } else {
+      if (/decision/i.test(row.state)) {
+        note(`${width}px`, `a dismissed row says "${row.state}"`);
+      }
+      const got = row.verbs.filter((v) => !v.icon).map((v) => v.verb);
+      if (got.join(',') !== 'bring_back,wrong') {
+        note(`${width}px`, `a dismissed row offers ${row.verbs.map((v) => v.label).join(' | ')}`);
+      }
+      if (!/^You brought this back on /.test(row.triageLabel)) {
+        note(`${width}px`, `the person's press reads "${row.triageLabel}"`);
+      }
+      if (!/brAIn had said: /.test(row.triageText)) {
+        note(`${width}px`, `brAIn's reason is not said as brAIn's: "${row.triageText}"`);
+      }
+      if (/signal \d/i.test(row.triageText)) {
+        note(`${width}px`, `a reason still cites the batch: "${row.triageText}"`);
+      }
+    }
+    const wide = await page.evaluate(() => document.documentElement.scrollWidth);
+    if (wide > width + 1) {
+      note(`${width}px`, `the Dismissed list scrolls sideways (${wide} > ${width})`);
+    }
   }
 
   console.log(`${String(width).padStart(5)}  ${feed.cards.length} cases  `

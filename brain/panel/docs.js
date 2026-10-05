@@ -152,7 +152,7 @@ deliberate exceptions listed below — change it.
   },
   {
     id: "the-resident",
-    icon: "📄",
+    icon: "👁️",
     title: "The Resident",
     body: `
 # The Resident
@@ -476,7 +476,7 @@ it a third time. "Could not check" is shown as exactly that, never as success.
   },
   {
     id: "the-to-do-list",
-    icon: "📄",
+    icon: "📝",
     title: "The to-do list",
     body: `
 # The to-do list
@@ -668,7 +668,7 @@ not one rule but a judgement about each thing it looked at, and what you mean on
 one of its cards is **Not a problem**, with the reason.
 The line under the filters says how right each producer has been; one that has
 been wrong three times and right never offers the button, and the box on the
-**Wrong** form offers the same thing for the row in front of you. Muting a
+**Not a problem** form offers the same thing for the row in front of you. Muting a
 producer takes its open cards off the list and files nothing from it again —
 nothing is settled and nothing goes into memory, because this is about the rule
 and not the house — and a **Not raising** line above the list carries the one
@@ -698,7 +698,7 @@ A check's finding clears itself when the check stops finding it — the device
 came back, the battery was changed — and it is simply removed, so it can be
 raised again if the problem returns. What a person ends stays ended, exactly
 as before. And every ending teaches the **scorecard** under the filters: "I
-did it" and "Got it" say the report was right, "Wrong" says it was not, and
+did it" and "Got it" say the report was right, "Not a problem" says it was not, and
 once a producer has a few endings the tab says how right it has been.
 
 Findings reach you outside the panel too. The integration exposes an
@@ -795,7 +795,7 @@ Set both to the same value (or leave both empty) to notify at any hour.
   },
   {
     id: "replying-from-your-phone",
-    icon: "📄",
+    icon: "💬",
     title: "Replying from your phone",
     body: `
 # Replying from your phone
@@ -805,7 +805,7 @@ The **Reply** button on a notification does more than ask a question now. "It's 
   },
   {
     id: "corrections-that-know-how-far-they-reach",
-    icon: "📄",
+    icon: "🎚️",
     title: "Corrections that know how far they reach",
     body: `
 # Corrections that know how far they reach
@@ -821,7 +821,7 @@ A correction never covers a smoke, gas, carbon-monoxide or leak sensor, a lock, 
   },
   {
     id: "findings-in-home-assistants-repairs",
-    icon: "📄",
+    icon: "🩹",
     title: "Findings in Home Assistant's Repairs",
     body: `
 # Findings in Home Assistant's Repairs
@@ -880,7 +880,7 @@ with a one-line reason.
   },
   {
     id: "asking-brain-things",
-    icon: "📄",
+    icon: "❓",
     title: "Asking brAIn things",
     body: `
 # Asking brAIn things
@@ -890,7 +890,7 @@ Type anything into the question bar. brAIn reads what you meant before it does a
   },
   {
     id: "why-didnt-brain-tell-me",
-    icon: "📄",
+    icon: "🤫",
     title: "Why didn't brAIn tell me?",
     body: `
 # Why didn't brAIn tell me?
@@ -950,7 +950,7 @@ about an entity the house no longer has are dropped thirty days after it goes. A
 memory export carries the ledger too, so the rules your Wrong presses made travel
 to a new install.
 
-**A correction reaches the rule, not just the wording.** Pressing ✕ Wrong on a
+**A correction reaches the rule, not just the wording.** Pressing **Not a problem** on a
 finding from a house check writes an **exception** into the facts store — this
 sensor, this check — and the check reads it on its next pass and says nothing about
 that sensor again. Before 2.2 a Wrong settled one sentence, and the same rule made
@@ -1567,7 +1567,7 @@ usual time, so it says so rather than reporting the middle of that as one.
   },
   {
     id: "it-knows-what-the-house-is-doing-right-now",
-    icon: "📄",
+    icon: "📍",
     title: "It knows what the house is doing right now",
     body: `
 # It knows what the house is doing right now
@@ -1732,7 +1732,7 @@ is a week from now rather than a week from Sunday.
   },
   {
     id: "a-deep-review-when-you-ask-for-one",
-    icon: "📄",
+    icon: "🔎",
     title: "A deep review, when you ask for one",
     body: `
 # A deep review, when you ask for one
@@ -2102,7 +2102,7 @@ what it would have done. Answered in seconds, before anything is enabled.
 "no"), but a sentence like *"the hall light stays on because my partner works
 nights"* is a fact brAIn did not have, and it stops the same suggestion coming
 back in different words next month. It goes into memory exactly as a finding's
-**Wrong** does.
+**Not a problem** does.
 
 A declined proposal is remembered by the **change** it described, not by the
 sentence describing it — so a miner that rewords its own explanation is still
@@ -2302,7 +2302,7 @@ to answer — so ⚙ → Diagnostics names which automations were skipped and wh
   },
   {
     id: "a-rule-in-a-sentence",
-    icon: "📄",
+    icon: "✍️",
     title: "A rule, in a sentence",
     body: `
 # A rule, in a sentence
@@ -2440,7 +2440,7 @@ showing both of brAIn's lists as one: the findings it is still asking about, and
 the chores you have already accepted. From the app's side they are the same
 thing — work — so they are one list, and each row does on completion what it
 would have done on its own screen. Completing a finding is the Findings feed's
-**I fixed it** and deleting it is its **Wrong**; completing a chore is the To-do
+**I fixed it** and deleting it is its **Not a problem**; completing a chore is the To-do
 tab's **Done**, which is the moment the memory line is written, and deleting one
 is taking it off the list undone, which lets brAIn report the problem again. No
 new vocabulary: each row's own list already had these.
@@ -2487,7 +2487,7 @@ answer waits for it rather than being lost.
   },
   {
     id: "it-manages-your-esphome-devices",
-    icon: "📄",
+    icon: "📟",
     title: "It manages your ESPHome devices",
     body: `
 # It manages your ESPHome devices
@@ -2553,7 +2553,7 @@ every entity it carries, so a device holding anything on your
   },
   {
     id: "it-runs-music-assistant",
-    icon: "📄",
+    icon: "🎵",
     title: "It runs Music Assistant",
     body: `
 # It runs Music Assistant
@@ -2597,7 +2597,7 @@ the refusal names it.
   },
   {
     id: "it-runs-your-other-bruh-add-ons",
-    icon: "📄",
+    icon: "🧰",
     title: "It runs your other BRUH add-ons",
     body: `
 # It runs your other BRUH add-ons
@@ -2633,7 +2633,7 @@ away from the kitchen speaker if you want to.
   },
   {
     id: "upkeep-keeping-the-house-itself-in-order",
-    icon: "📄",
+    icon: "🧹",
     title: "Upkeep: keeping the house itself in order",
     body: `
 # Upkeep: keeping the house itself in order
@@ -2668,7 +2668,7 @@ held back.
   },
   {
     id: "it-knows-what-happened-and-what-caused-it",
-    icon: "📄",
+    icon: "🗂️",
     title: "It knows what happened, and what caused it",
     body: `
 # It knows what happened, and what caused it
@@ -2743,7 +2743,7 @@ a state.
   },
   {
     id: "it-asks-why-you-did-something",
-    icon: "📄",
+    icon: "🤔",
     title: "It asks why you did something",
     body: `
 # It asks why you did something
@@ -3187,7 +3187,7 @@ would produce the same card at full price, and a dashboard that changes nothing 
 timer teaches people it is a timer.
 
 Every card records **why it was made** — "on its refresh interval", "a finding it
-reads changed", "first run since inputs were tracked" — and a card that skipped a run
+reads changed", "first refresh" — and a card that skipped a run
 records the hold instead, so a quiet dashboard can say which of the two it is.
 
 **When to refresh a card** in ⚙ Settings (\`refresh_mode\`) picks the rule. It is
@@ -3273,7 +3273,7 @@ brAIn can currently see that is not working, gathered from every surface it has:
 health verdict, runs that failed in the last day, house checks that could not run,
 snapshot keys that could not be fetched, a measurement store that measured nothing,
 the rehearsal and the deep check, notifications that would not deliver, the usage
-tracker's own verdict, the producers you keep marking **Wrong**, and any daemon that
+tracker's own verdict, the producers you keep marking **Not a problem**, and any daemon that
 is down. On a healthy install it is one sentence saying so. A refusal doing its job —
 an overnight repair that stood down on a protected entity, a producer that could not
 read a file — is deliberately not in it, because a list that includes those is one
@@ -3602,7 +3602,7 @@ memory excerpt, the open cases), and the nightly pass labels each one with what
 you did next, so \`brain eval first_look\` can replay them against today's prompt.
 
 That last part is the whole point. An ending on the Findings feed is already a
-label: **I fixed it** and **Got it** say the report was right, **Wrong** says
+label: **I fixed it** and **Got it** say the report was right, **Not a problem** says
 it was not. Pairing that with the prompt that produced it turns a house into a
 graded example, and a directory of graded examples is something a prompt change
 can be scored against before it ships.
@@ -3977,7 +3977,7 @@ To keep it from eating the plan you also use for your own work:
   },
   {
     id: "cameras",
-    icon: "📄",
+    icon: "📷",
     title: "Cameras",
     body: `
 # Cameras

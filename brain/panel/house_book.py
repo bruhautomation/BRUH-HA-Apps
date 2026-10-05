@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Any
 
 import atomic_write
+import textclip
 
 STORE = os.environ.get("BRAIN_HOUSE_BOOK_FILE", "/data/house_book.json")
 TOKEN_FILE = Path(os.environ.get("BRAIN_SECRETS", "/data/secrets")) / "house_book_token"
@@ -79,6 +80,8 @@ MAX_SOURCES = 5
 MAX_QUESTIONS_PER_RUN = 3
 MAX_OPEN_QUESTIONS = 5
 MAX_QUESTION = 160
+# What a citation chip shows: the source's own label, ended on a word.
+MAX_LABEL = 120
 MAX_ASKED = 200
 TIMEOUT_S = 600
 
@@ -161,7 +164,7 @@ def _fact_rows() -> list[dict]:
         if str(row.get("predicate") or "").startswith("exception:"):
             continue
         out.append({"id": str(row["id"]), "subject": str(row.get("subject") or ""),
-                    "text": redact_text(str(row.get("text") or ""))[:240]})
+                    "text": textclip.clip(redact_text(str(row.get("text") or "")), 240)})
     return out[-MAX_FACTS:]
 
 
@@ -184,7 +187,8 @@ def digest(snap: dict) -> dict:
         alias = str(auto.get("alias") or aid)
         index[f"automation:{aid}"] = alias
         autos.append({"id": aid, "alias": alias,
-                      "description": redact_text(str(auto.get("description") or ""))[:300],
+                      "description": textclip.clip(
+                          redact_text(str(auto.get("description") or "")), 300),
                       "config": _compact({k: auto.get(k) for k in
                                           ("trigger", "triggers", "condition",
                                            "conditions", "action", "actions")
@@ -209,7 +213,7 @@ def digest(snap: dict) -> dict:
                        if isinstance(scene.get("entities"), dict) else []})
     facts = _fact_rows()
     for f in facts:
-        index[f"fact:{f['id']}"] = f["text"][:120]
+        index[f"fact:{f['id']}"] = textclip.clip(f["text"], MAX_LABEL)
     areas = [{"id": a, "name": n} for a, n in sorted(house.areas.items())]
     for a in areas:
         index[f"area:{a['id']}"] = a["name"]
@@ -337,9 +341,10 @@ def parse(answer: dict | None, dig: dict) -> dict:
             raw = re.sub(r"\s+", " ", str(entry.get("text") or "")).strip()
             if not raw:
                 continue
-            text = redact_text(raw)[:MAX_ENTRY]
-            if text != raw[:MAX_ENTRY]:
+            clean = redact_text(raw)
+            if clean != raw:
                 redacted += 1
+            text = textclip.clip(clean, MAX_ENTRY)
             keys = []
             for src in entry.get("sources") or []:
                 key = _source_key(src)
@@ -351,7 +356,7 @@ def parse(answer: dict | None, dig: dict) -> dict:
             bucket = out_sections.setdefault(section["key"], [])
             if len(bucket) < MAX_ENTRIES:
                 bucket.append({"text": text, "sources": [
-                    {"key": k, "label": redact_text(index[k])[:120]}
+                    {"key": k, "label": textclip.clip(redact_text(index[k]), MAX_LABEL)}
                     for k in keys[:MAX_SOURCES]]})
     sections = [{"key": k, "title": SECTIONS[k], "entries": out_sections[k]}
                 for k in SECTIONS if out_sections.get(k)]
@@ -364,9 +369,10 @@ def parse(answer: dict | None, dig: dict) -> dict:
         text = redact_text(re.sub(r"\s+", " ", str(q.get("question") or "")).strip())
         if not key or key not in index or not text:
             continue
-        questions.append({"question": text[:MAX_QUESTION],
-                          "why": redact_text(str(q.get("why") or ""))[:300],
-                          "subject": key, "label": index[key][:120]})
+        questions.append({"question": textclip.clip(text, MAX_QUESTION),
+                          "why": textclip.clip(redact_text(str(q.get("why") or "")), 300),
+                          "subject": key,
+                          "label": textclip.clip(index[key], MAX_LABEL)})
     return {"sections": sections, "questions": questions,
             "uncited": uncited, "redacted": redacted}
 

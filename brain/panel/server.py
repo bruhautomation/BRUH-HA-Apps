@@ -213,6 +213,7 @@ import shadow_findings
 import signals
 import synthesis
 import terminal_proxy
+import textclip
 import thermal
 import todo_store
 import triage
@@ -3494,6 +3495,25 @@ def _deliveries_note_requests(requests: list[dict]) -> int:
     return noted
 
 
+def _scorecard() -> list[dict]:
+    """`findings_store.scorecard`, with a check named by its own title.
+
+    The ledger records the title a row was filed under, and for a check
+    that is often nothing, so the row fell back to its id — and
+    `check:auto.conflict` is what the Findings tab and the bug report
+    then printed — or it was the GROUP's title, and three rows reading
+    "Device check" are three things nobody can tell apart. The catalog's
+    own title is the one a person recognises (`_muted_rows`' rule)."""
+    rows = findings_store.scorecard()
+    for row in rows:
+        src = str(row.get("source") or "")
+        if src.startswith("check:"):
+            spec = checks.get_check(src[len("check:"):]) or {}
+            if spec.get("title"):
+                row["title"] = str(spec["title"])
+    return rows
+
+
 def _producer_titles(folded: list[dict]) -> dict[str, str]:
     """What each producer in the ledger is called, for a question's words:
     a check's own title, never the group's, `_muted_rows`' rule."""
@@ -4366,7 +4386,7 @@ async def _run_fix(job_id: str) -> None:
         # there" is the most side-channel of all the side channels.
         also = findings_store.add_many(triage.gate([
             {"text": extra, "source": "fix",
-             "source_title": f"Noticed while fixing “{finding['text']}”"}
+             "source_title": f"Noticed while fixing “{textclip.clip(finding['text'], 60)}”"}
             for extra in parsed["also_found"]]))
         if also:
             log.info("the fix run also filed %d finding(s) for triage",
@@ -4676,7 +4696,7 @@ async def _run_typed_fix(job_id: str, finding: dict) -> None:
         if also:
             findings_store.add_many(triage.gate([
                 {"text": extra, "source": "fix",
-                 "source_title": f"Noticed while fixing “{finding['text']}”"}
+                 "source_title": f"Noticed while fixing “{textclip.clip(finding['text'], 60)}”"}
                 for extra in also]))
         _set_job(job_id, state="done", error="")
         log.info("finding %s → %s (typed fix %s)", ts, status, intervention)
@@ -5801,29 +5821,35 @@ def _inputs_change(stored: dict | None, current: dict) -> dict:
     the next run is the first that can be compared against anything.
     """
     if not isinstance(stored, dict) or not stored.get("parts"):
-        return {"moved": True, "why": "first run since inputs were tracked",
+        return {"moved": True, "why": "first refresh",
                 "fingerprint": current}
     was, now_parts = stored["parts"], current["parts"]
     if was == now_parts:
         return {"moved": False, "why": "nothing it reads has changed",
                 "fingerprint": current}
     changed = [p for p in CARD_INPUT_PARTS if was.get(p) != now_parts.get(p)]
-    reasons = []
+    # One short phrase for a card's foot. It used to be a clause per part
+    # joined with semicolons ("the findings list changed; memory was
+    # updated; a measurement was rebuilt"), which is the pipeline talking.
+    nouns = []
+    lead = ""
     if "findings" in changed:
         delta = int(current.get("open_findings") or 0) - \
             int(stored.get("open_findings") or 0)
-        reasons.append(f"{delta} more finding(s) on the list" if delta > 0
-                       else "the findings list changed")
-    if "memory" in changed:
-        reasons.append("memory was updated")
-    if "stores" in changed:
-        reasons.append("a measurement was rebuilt")
-    if "feedback" in changed:
-        reasons.append("your feedback changed")
-    if "focus" in changed:
-        reasons.append("its focus was rewritten")
-    return {"moved": True, "why": "; ".join(reasons) or "inputs changed",
-            "fingerprint": current}
+        if delta > 0:
+            lead = f"{delta} new finding{'' if delta == 1 else 's'}"
+        else:
+            nouns.append("findings")
+    nouns += [word for part, word in (
+        ("memory", "memory"), ("stores", "measurements"),
+        ("feedback", "your feedback"), ("focus", "its focus"))
+        if part in changed]
+    said = ""
+    if nouns:
+        said = (nouns[0] if len(nouns) == 1
+                else ", ".join(nouns[:-1]) + " and " + nouns[-1]) + " changed"
+    why = "; ".join(p for p in (lead, said) if p) or "something it reads changed"
+    return {"moved": True, "why": why, "fingerprint": current}
 
 
 # A card whose last scheduled run FAILED, per category id: how many times
@@ -13712,7 +13738,7 @@ def _diagnostics_payload() -> dict:
                  if f["status"] == "triaging"] or [0]),
             "triage_runs_today": _triage_runs_today(time.time()),
             "triage_runs_per_day": triage.MAX_PER_DAY,
-            "scorecard": findings_store.scorecard(),
+            "scorecard": _scorecard(),
             # Which producers the homeowner has switched off. A quiet check
             # and a muted one look identical from the list, and only one
             # of them is a fault worth reading the log about.
@@ -14298,7 +14324,7 @@ def _findings_payload() -> dict:
     # rides this payload rather than its own route because it is read in
     # exactly one place — a line under the filter chips — and a number
     # about the list belongs with the list.
-    payload["scorecard"] = findings_store.scorecard()
+    payload["scorecard"] = _scorecard()
     # The producers the homeowner has muted, named. It rides here for the
     # scorecard's reason: the one place it is read is a line under the
     # filters, beside the scorecard rows that argue for each mute.

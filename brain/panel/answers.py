@@ -220,6 +220,33 @@ def situation(case: dict) -> str:
 # The answers
 # ---------------------------------------------------------------------------
 
+# The start of `plan_ops.LEGACY_PLAN`, the one refusal whose own remedy is
+# to press Fix it again. Spelled here because this module is a leaf and may
+# not import `plan_ops`; a test holds the two together.
+LEGACY_PLAN_MARK = "this plan was written before brAIn checked"
+
+
+def plan_refused(plan) -> bool:
+    """Whether a plan run already concluded brAIn will not make this change.
+
+    A plan on an open row is what a Cancel left behind, or a run that said
+    "this needs you" or could not turn the fix into operations. Offering
+    *Fix it* over it buys another plan run to reach the same sentence that
+    is printed on the card — so the press goes, and the ⋯'s *Work out what
+    to change* stays for somebody who thinks the house has moved since.
+    A plan written before plans were operations is the exception: its own
+    sentence says to press Fix it again.
+    """
+    if not isinstance(plan, dict) or not plan:
+        return False
+    if plan.get("can_fix") and plan.get("ops"):
+        return False
+    if not (plan.get("summary") or plan.get("steps") or plan.get("at")
+            or plan.get("ops_refused") or plan.get("needs_you")):
+        return False
+    return not str(plan.get("ops_refused") or "").startswith(LEGACY_PLAN_MARK)
+
+
 def _finding_key(case: dict):
     return (case.get("origin") or {}).get("key")
 
@@ -420,7 +447,8 @@ def answers(case: dict) -> list[dict]:
     if sit == "chore_check":
         return [_done(key, primary=True), _dismiss(cid), _wrong(cid)]
     out: list[dict] = []
-    if sit not in HANDS and sit != "fix_failed" and case.get("fixable"):
+    if (sit not in HANDS and sit != "fix_failed" and case.get("fixable")
+            and not plan_refused(plan)):
         out.append(_fix(key))
     out.append(_todo(cid, primary=not out))
     out.append(_dismiss(cid))
@@ -489,6 +517,7 @@ def request_answers(row: dict) -> list[dict]:
     return out
 
 
-__all__ = ["AUTOMATION_PREFIX", "CHECK_SITUATIONS", "HANDS", "MAX_VISIBLE",
-           "PREFILL", "REQUEST_ACTIONS", "SITUATIONS", "answers", "more",
+__all__ = ["AUTOMATION_PREFIX", "CHECK_SITUATIONS", "HANDS",
+           "LEGACY_PLAN_MARK", "MAX_VISIBLE", "PREFILL", "REQUEST_ACTIONS",
+           "SITUATIONS", "answers", "more", "plan_refused",
            "request_answers", "situation"]

@@ -177,7 +177,7 @@ window.fetch = async (url) => {
       { id: 'held', category: 'held', title: 'What the house used this week',
         summary: 'Down 8% on last week.', highlights: [], html: '<p>e</p>',
         generated_at: '${NOW_ISO}', tags: [],
-        made_because: '3 more finding(s) on the list',
+        made_because: '3 new findings',
         inputs_fingerprint: { parts: { findings: 'abc' } },
         // A suggestion the server could not send (paused): the ⋯ offers to
         // put it in the ask bar, and says why it was not offered.
@@ -263,7 +263,7 @@ for (const width of [390, 768, 1200]) {
     problems.push('one of the two cards did not render');
   } else {
     if (!held.becauseSeen) problems.push('made_because is not on the foot');
-    if (!/3 more finding/.test(held.because)) {
+    if (!/3 new findings/.test(held.because)) {
       problems.push(`made_because reads "${held.because}"`);
     }
     if (held.becauseClipped) problems.push('made_because is clipped');
