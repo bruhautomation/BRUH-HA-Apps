@@ -2,6 +2,85 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.12.0
+
+**Fixes from a walkthrough of brAIn on a real house: what was broken, what
+was wrong with the data, and what was confusing.**
+
+### Broken
+
+- **The chat no longer shows background-task notices as messages you typed.**
+  They are a collapsed "Background task finished" row, with the summary as
+  formatted text. Old saved chats are re-read the same way.
+- **Opening an old chat only shows it.** Claude starts when you send a
+  message, and the chat stream no longer errors before a conversation exists.
+- **Text is cut at a word or sentence, with "…".** Triage reasons, plan steps,
+  the deep review and the house book no longer stop mid-word.
+- **A finding still waiting for its first look is visible after 15 minutes**,
+  and it counts as waiting on you, so "Nothing waiting on you" is never shown
+  over a serious one.
+- **A usage limit refusing most runs is said.** Diagnostics names how many runs
+  your account's limit refused and when it resets. Scheduled cards now really
+  wait while the limit is on, instead of being retried; a card you press is
+  never held.
+- **A restart pending after an update shows in Diagnostics**, and Repairs is
+  the one place it is raised (the duplicate notification is gone).
+- **Finding cards fit a phone.** Long entity ids wrap.
+- **Activity agrees with the house now.** A row stops claiming a state the
+  device has since left, Home Assistant restarts are shown, and changes around
+  a restart say so.
+
+### What brAIn got wrong about the data
+
+- **History that stops early is not trusted.** When Home Assistant's history
+  ends well before an entity's last change, brAIn files one "history is
+  incomplete" finding instead of a row of "silent since…" and "frozen" ones.
+- **An outage right after a Home Assistant restart says so.**
+- **One problem, one finding.** A finding reworded by the model about the same
+  entity is folded into the one already there, including one you marked Not a
+  problem.
+- **A battery reported in volts is not read as a percentage.**
+- **A chore you marked done comes back if the problem is still there**, with
+  "Came back" on it.
+- **Cards treat days with no data as missing, not zero**, and can mention a
+  question brAIn is still waiting on you for.
+- **The first look knows what a device is used by.** It is told which
+  automations and scripts use each device, so a plug that runs a fan is not
+  called "no known load".
+- **The morning brief respects labels** like "Always On" and uses your time
+  format.
+- **The house book files your answers as plain facts** and cites each fact once.
+- **A card added to a dashboard says how old it is** once it is two days old,
+  and is given a taller frame.
+- **No more "signal 7"** in anything brAIn writes.
+
+### Clearer
+
+- **Every finding card has the same row:** Fix it · Add to list · Dismiss · Not
+  a problem. Dismissed cards offer Bring it back and Not a problem. Fix it is
+  not offered where the plan says brAIn would not make the change.
+- **"You brought this back" says when**, with brAIn's earlier reason labelled
+  as brAIn's.
+- **Plainer words on screen**: no category ids as tags, check names instead of
+  ids, shorter card footers, real icons in Help.
+- **Times read "1:45 PM"**, with "yesterday" or the date when it is not today.
+- **Counts agree.** A report you asked for is not counted as a problem, and the
+  run count says it counts Claude runs.
+- **An unused voice listener reads "not used (fast mode)"**, not as down. A
+  notification is no longer held overnight during the day.
+- **"Terminal tab" is now "Ask"** everywhere, and switching to the classic
+  terminal says it is saved for next time.
+- **Settings:** "How hard brAIn thinks" is greyed out when a fixed model is
+  chosen; Cameras has its own section and leaves vacuum maps out; selects no
+  longer cut their text off; no seconds on times; one scrollbar on a phone.
+- **Home Assistant names:** the to-do list is "brAIn System To-do", Health is on
+  the System device, and the devices are named apart. Existing installs keep
+  their entity ids. "Waiting on you" counts only questions the panel shows.
+- **Wide screens use the width:** Findings, Ideas and Proposals lay cards two
+  abreast, and Proposals matches the other tabs.
+- **Phones:** the sub-tabs wrap instead of scrolling, the status line folds to
+  one line, and Help's contents are folded away above the guide.
+
 ## 2.11.1
 
 **A session limit no longer reads as brAIn breaking, and the help in ⚙ can be read.**
