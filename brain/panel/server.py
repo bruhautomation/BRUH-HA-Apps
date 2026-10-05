@@ -13368,35 +13368,93 @@ async def _activity(start: float, end: float, entity_id: str = "") -> dict:
         return await actions.collect(session, start, end, users, entity_id)
 
 
-async def _device_classes() -> dict[str, str]:
-    """`{entity_id: device_class}` for the whole house, in one call.
+async def _house_now() -> dict:
+    """What the activity tab needs to know about the house NOW, from one
+    `/states` read and one registry list.
 
-    A `binary_sensor` with no class is a door, a motion sensor, a leak
-    detector or a plug's own power flag, and `episodes.subject_for` will not
-    guess between them — so without this every one of them lands in
-    *Everything else*, which is the section people scroll past. One REST
-    read of `/states` is what the checks pass and every insight run already
-    spend, and a fetch that fails is an empty map rather than an error: a
-    tab that could not tell a door from a motion sensor is still a tab, and
-    that is what the refusal-to-guess is for.
+    * ``classes`` — `{entity_id: device_class}`. A `binary_sensor` with no
+      class is a door, a motion sensor, a leak detector or a plug's own
+      power flag, and `episodes.subject_for` will not guess between them —
+      so without this every one of them lands in *Everything else*.
+    * ``live`` — `{entity_id: {state, last_changed}}`, so a row reading
+      "since 20:36" cannot outlive the state it is about (the logbook
+      drops some transitions, and that is how a thermostat unavailable
+      since the morning was reported as heating for seventeen hours).
+    * ``people_trackers`` — the `device_tracker` ids that may stand for a
+      person: none when the house has `person.*` entities, and otherwise
+      only the GPS ones, because a router's tracker for a bulb is not
+      anybody.
+    * ``platforms`` — `{entity_id: integration}`, which is what lets a
+      collapsed burst say "from UniFi".
+
+    Every half that fails is empty rather than an error: a tab that could
+    not tell a door from a motion sensor is still a tab, and that is what
+    the refusal-to-guess is for.
     """
     import aiohttp
     import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+    out: dict = {"classes": {}, "live": {}, "people_trackers": None,
+                 "platforms": {}}
+    raw = None
+    regs = None
     try:
         async with aiohttp.ClientSession() as session:
             raw = await ha_data._rest_get(session, "/states", timeout=30)
+            try:
+                regs = await asyncio.wait_for(ha_data._ws_commands(
+                    session, [{"type": "config/entity_registry/list"}]),
+                    REGISTRY_LOOKUP_S)
+            except Exception as exc:  # noqa: BLE001 — names are a nicety
+                log.debug("entity registry unreadable for activity: %s", exc)
     except Exception as exc:  # noqa: BLE001
-        log.warning("could not read device classes for the activity tab: %s", exc)
-        return {}
-    out: dict[str, str] = {}
-    for st in raw or []:
+        log.warning("could not read the house for the activity tab: %s", exc)
+        return out
+    rows = (regs or [None])[0]
+    for row in rows if isinstance(rows, list) else []:
+        if isinstance(row, dict) and row.get("entity_id") and row.get("platform"):
+            out["platforms"][str(row["entity_id"])] = str(row["platform"])
+    has_person = False
+    gps: set[str] = set()
+    for st in raw if isinstance(raw, list) else []:
         if not isinstance(st, dict):
             continue
         eid = str(st.get("entity_id") or "")
-        klass = str(((st.get("attributes") or {}).get("device_class")) or "")
-        if eid and klass:
-            out[eid] = klass
+        if not eid:
+            continue
+        attrs = st.get("attributes") or {}
+        klass = str(attrs.get("device_class") or "")
+        if klass:
+            out["classes"][eid] = klass
+        out["live"][eid] = {
+            "state": str(st.get("state") or ""),
+            "last_changed": actions.parse_when(st.get("last_changed")) or 0.0,
+        }
+        if eid.startswith("person."):
+            has_person = True
+        elif eid.startswith("device_tracker.") and (
+                str(attrs.get("source_type") or "") == "gps"
+                or out["platforms"].get(eid) == "mobile_app"):
+            gps.add(eid)
+    if isinstance(raw, list):
+        out["people_trackers"] = set() if has_person else gps
     return out
+
+
+def _group_activity(mined: dict, rows: list[dict], house: dict,
+                    now: float) -> dict:
+    """`episodes.group` with everything the house can tell it — one call
+    shared by the tab and its paragraph, so the two cannot group the same
+    window two ways."""
+    # The live state only speaks for a window that ends now: a day paged
+    # back to last Tuesday is not contradicted by what the thermostat is
+    # doing this afternoon.
+    live = (house.get("live")
+            if float(mined.get("end") or 0) >= now - 120 else None)
+    return episodes.group(
+        rows, house.get("classes") or {}, now,
+        live=live, people_trackers=house.get("people_trackers"),
+        platforms=house.get("platforms") or {},
+        lifecycle=mined.get("lifecycle") or [])
 
 
 async def h_activity(request: web.Request) -> web.Response:
@@ -13421,7 +13479,7 @@ async def h_activity(request: web.Request) -> web.Response:
                                   "sections": [], "away": [], "counts": {},
                                   "dropped": 0, "changes": 0, "episodes": 0,
                                   "start": start, "end": end})
-    classes = await _device_classes() if mined.get("available") else {}
+    house = await _house_now() if mined.get("available") else {}
     now = time.time()
 
     def shape() -> dict:
@@ -13429,7 +13487,7 @@ async def h_activity(request: web.Request) -> web.Response:
         cause = (request.query.get("cause") or "").strip()
         if cause and cause in actions.CAUSES:
             rows = [a for a in rows if a["cause"] == cause]
-        grouped = episodes.group(rows, classes, now)
+        grouped = _group_activity(mined, rows, house, now)
         # On the row it happened in, never in a block above the list: a
         # count of "somebody put things back 4×" is not something anybody
         # can act on, where *this* row being the one they undid is.
@@ -13503,11 +13561,13 @@ async def h_activity_summary(request: web.Request) -> web.Response:
         raise web.HTTPBadGateway(text=unreadable) from exc
     if not mined.get("available"):
         raise web.HTTPBadGateway(text=unreadable)
-    classes = await _device_classes()
+    house = await _house_now()
     now = time.time()
 
     def build() -> tuple[dict, str]:
-        grouped = episodes.group(mined["actions"], classes, now)
+        # What is summarised is what the person is looking at, so it is
+        # grouped the way the tab groups it.
+        grouped = _group_activity(mined, mined["actions"], house, now)
         episodes.mark_overrides(grouped, mined.get("overrides") or [])
         payload = {
             "start": mined["start"], "end": mined["end"],
