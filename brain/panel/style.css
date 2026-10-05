@@ -54,6 +54,12 @@
   --btn-pad-x: 16px;
   --btn-primary-bg: var(--accent);
   --btn-primary-ink: #ffffff;
+  /* Ink on an accent fill (a badge, a send button, a tick), and the
+     terminal's own colours — which follow ttyd's theme, not the scheme. */
+  --on-accent: #ffffff;
+  --toggle-thumb: #ffffff;
+  --terminal-bg: #1a1613;
+  --terminal-ink: #e8ddd4;
   /* The status chip: an 8px dot and one word. Four kinds and no fifth. */
   --chip-dot: 8px;
   --status-urgent: var(--critical);
@@ -680,8 +686,7 @@ input, select, textarea, button { font-family: inherit; font-size: inherit; }
 .setup .notice {
   margin-top: 16px;
   padding: 12px 14px;
-  border: 1px solid var(--hairline);
-  border-left: 3px solid var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--hairline));
   border-radius: 10px;
   background: var(--plane);
   font-size: var(--fs-body);
@@ -1090,8 +1095,8 @@ body.modal-open {
   margin: 6px 0;
   padding: 9px 11px;
   border-radius: 8px;
-  border-left: 3px solid var(--warning, #b98300);
-  background: color-mix(in srgb, var(--warning, #b98300) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--hairline));
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
   font-size: var(--fs-meta);
   line-height: 1.45;
   color: var(--ink-2);
@@ -1100,7 +1105,7 @@ body.modal-open {
 .kdirty {
   font-size: var(--fs-meta);
   font-weight: 700;
-  color: var(--warning, #b98300);
+  color: var(--warning);
   border: 1px solid currentColor;
   border-radius: 999px;
   padding: 2px 9px;
@@ -1419,7 +1424,7 @@ body.modal-open {
    in the ink colour rather than in a yellow nobody can read on white. */
 .edit-body .hint.warn {
   color: var(--ink-2);
-  border-left: 3px solid var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--hairline));
   padding-left: 8px;
 }
 @media (max-width: 520px) {
@@ -1856,7 +1861,7 @@ body.modal-open {
   padding: 0 5px;
   border-radius: 9px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-meta);
   font-weight: 700;
   line-height: 18px;
@@ -1918,7 +1923,7 @@ body.modal-open {
   padding: 0 5px;
   border-radius: 9px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-meta);
   font-weight: 700;
   line-height: 18px;
@@ -2199,7 +2204,7 @@ body.modal-open {
   height: 100%;
   border: 0;
   display: block;
-  background: #1a1613;
+  background: var(--terminal-bg);
 }
 
 /* Immersive terminal — the bar folds away and the terminal takes the room.
@@ -2397,7 +2402,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .toolcall .tnote {
   margin-top: 8px;
   padding: 8px 10px;
-  border-left: 3px solid var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--hairline));
   border-radius: 6px;
   background: var(--surface-2);
   font-size: var(--fs-meta);
@@ -2420,14 +2425,13 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   width: 100%;
   align-self: center;
   padding: 9px 12px;
-  border: 1px solid var(--hairline);
-  border-left: 3px solid var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--hairline));
   border-radius: 8px;
   background: var(--surface);
   font-size: var(--fs-body);
   color: var(--ink-2);
 }
-.chatnotice.error { border-left-color: var(--critical); }
+.chatnotice.error { border-color: color-mix(in srgb, var(--critical) 45%, var(--hairline)); }
 
 /* The run's own footnote — how long it took and what it cost. Small, muted,
    and never in the way of the answer above it. */
@@ -2483,8 +2487,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   width: 100%;
   align-self: center;
   padding: 10px 12px;
-  border: 1px solid var(--hairline);
-  border-left: 3px solid var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--hairline));
   border-radius: 8px;
   background: var(--surface);
   font-size: var(--fs-body);
@@ -2611,8 +2614,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   width: 100%;
   align-self: center;
   padding: 10px 12px;
-  border: 1px solid var(--hairline);
-  border-left: 3px solid var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--hairline));
   border-radius: 8px;
   background: var(--surface);
   font-size: var(--fs-body);
@@ -2814,7 +2816,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   inset: 0;
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-meta);
   line-height: 1;
 }
@@ -2862,8 +2864,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .chatfinding {
   margin: 0 16px 8px;
   padding: 10px 12px;
-  border: 1px solid var(--hairline);
-  border-left: 3px solid var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--hairline));
   border-radius: 10px;
   background: var(--surface);
 }
@@ -2941,7 +2942,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   border: 0;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
@@ -3028,7 +3029,7 @@ body:not(.term-classic) .termfabs { top: 6px; right: 8px; }
   border: 1px solid rgba(232, 221, 212, 0.18);
   border-radius: 11px;
   background: rgba(26, 22, 19, 0.72);
-  color: #e8ddd4;
+  color: var(--terminal-ink);
   cursor: pointer;
   opacity: 0.42;
   -webkit-tap-highlight-color: transparent;
@@ -3233,10 +3234,9 @@ body.term-classic #termMode .ico-out { display: block; }
 }
 
 /* ------------------------------------------------------------- findings
-   The work list. Severity is carried by a left edge rather than by a
-   coloured card: the status colours are reserved, and four of them tiled
-   down a page stops meaning anything. The edge is a bar you can scan;
-   every one is also labelled in words, never colour alone. */
+   The work list. Severity is a word in the card's meta line, never a
+   coloured card or a coloured left bar: the status colours are reserved,
+   and four of them tiled down a page stops meaning anything. */
 
 .findwrap { max-width: 900px; }
 
@@ -3446,7 +3446,7 @@ body.term-classic #termMode .ico-out { display: block; }
   padding: 10px 12px;
   border-radius: 10px;
   background: var(--surface-2);
-  border-left: 3px solid var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--hairline));
   font-size: var(--fs-body);
   color: var(--ink-2);
 }
@@ -3475,20 +3475,19 @@ body.term-classic #termMode .ico-out { display: block; }
 }
 .findactions .phase { margin: 0; padding: 0; border: 0; background: none; }
 
-/* A guess brAIn wants confirmed. Same card, same list, no severity stripe:
-   nothing here is broken, so the left edge takes the accent rather than a
-   warning colour, and the eyebrow asks instead of grading. */
+/* A guess brAIn wants confirmed. Same card, same list: nothing here is
+   broken, so the plate takes a trace of the accent rather than a warning
+   colour, and the eyebrow asks instead of grading. One edge all the way
+   round, like every card. */
 .finding.hypo {
-  border-left-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 5%, var(--surface));
 }
 .finding.hypo .findsev { color: var(--accent); }
 
 /* ------------------------------------------------------------------ cases
-   One card per case over the four stores. The left edge is still SEVERITY,
-   because that is what sorts the feed and what the notifier keys on; what
-   the pill carries is the KIND, which is the different thing a person does
-   about it. Both are words as well as colours — the pill is read at 11px,
+   One card per case over the four stores. Severity sorts the feed and is
+   said in the meta line; what the pill carries is the KIND, which is the
+   different thing a person does about it. Both are words as well as colours — the pill is read at 11px,
    and status by colour alone is what the design system forbids. */
 .casekind {
   flex: none;
@@ -3590,7 +3589,7 @@ body.term-classic #termMode .ico-out { display: block; }
   margin: 14px 0 4px;
   padding: 10px 12px;
   border-radius: 10px;
-  border-left: 3px solid var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--hairline));
   background: var(--surface-2);
   font-size: var(--fs-body);
   color: var(--ink-2);
@@ -3819,8 +3818,7 @@ body.term-classic #termMode .ico-out { display: block; }
   flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
-  border: 1px solid var(--hairline);
-  border-left: 3px solid var(--ink-3);
+  border: 1px solid color-mix(in srgb, var(--ink-3) 45%, var(--hairline));
   border-radius: 10px;
   padding: 10px 14px;
   margin-bottom: 12px;
@@ -3838,8 +3836,7 @@ body.term-classic #termMode .ico-out { display: block; }
 .actask { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .actaskerr { color: var(--warning); font-size: var(--fs-body); }
 .actsum {
-  border: 1px solid var(--hairline);
-  border-left: 3px solid var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--hairline));
   border-radius: 10px;
   padding: 14px 16px;
   margin-bottom: 16px;
@@ -3924,7 +3921,6 @@ body.term-classic #termMode .ico-out { display: block; }
    is a row like the others and must not read as a greyed-out control. */
 .actrow:disabled { cursor: default; color: inherit; opacity: 1; }
 .actrow:disabled:hover { background: none; }
-.actrow[data-kind="restart"] { border-left-color: var(--warning); }
 /* What the house says now, where the logbook says something else. */
 .actnote {
   flex: 0 1 auto;
@@ -3976,17 +3972,9 @@ body.term-classic #termMode .ico-out { display: block; }
   font-weight: 600;
   white-space: nowrap;
 }
-/* The cause's own colour, on the left edge and nowhere else. Six causes is
-   more than a palette can carry as text colour without the list turning
-   into confetti — and the words are on the row either way, which is what
-   makes the colour reinforcement rather than the signal. */
-.actrow { border-left: 3px solid transparent; }
-.actrow[data-cause="brain"] { border-left-color: var(--accent); }
-.actrow[data-cause="automation"],
-.actrow[data-cause="script"],
-.actrow[data-cause="scene"] { border-left-color: #46b06a; }
-.actrow[data-cause="voice"] { border-left-color: #a071e0; }
-.actrow[data-cause="person"] { border-left-color: var(--warning); }
+/* A cause is said in words on the row and nowhere in colour: six causes on
+   a coloured left edge was a legend nobody had a key to, and the visual
+   standard has no coloured bars. */
 
 .actwhy {
   margin: 2px 0 10px 14px;
@@ -4501,7 +4489,7 @@ body.term-classic #termMode .ico-out { display: block; }
    is about -- the arrangement `.propnote` already uses one rule down. */
 .properror {
   margin-top: 12px; padding: 10px 12px;
-  border-left: 3px solid var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--hairline));
   background: color-mix(in srgb, var(--warning) 12%, transparent);
   border-radius: 0 8px 8px 0;
 }
@@ -5315,7 +5303,7 @@ label.check > input[type="checkbox"]::before {
   width: calc(var(--toggle-h) - 4px);
   height: calc(var(--toggle-h) - 4px);
   border-radius: 50%;
-  background: #ffffff;
+  background: var(--toggle-thumb);
   clip-path: none;
   transform: none;
   transition: transform 0.15s ease;

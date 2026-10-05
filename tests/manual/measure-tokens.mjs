@@ -19,7 +19,10 @@
 //   * every visible <select> carries `.sel` and has no browser appearance,
 //     and every visible checkbox and slider has none either;
 //   * a card's padding, and its direct children's, is on the 4px grid, its
-//     radius is 12 and its left edge is the same width as its right.
+//     radius is 12 and its left edge is the same width as its right — and
+//     the boxes that sit on a page like a card (a notice, a plan, a
+//     permission question, an activity row) have no coloured left bar
+//     either.
 //
 // It runs headless against static files, like every measure beside it.
 import { chromium } from 'playwright';
@@ -34,6 +37,10 @@ const NOW = Math.floor(Date.now() / 1000);
 const SIZES = [12, 14, 16, 20];
 const GRID = 4;
 const CARD_RADIUS = 12;
+// Card-like boxes held to the edge rule (and only that rule).
+const BOXES = ['.setup .notice', '.kstale', '.hint.warn', '.tnote', '.chatnotice',
+               '.permcard', '.chatres', '.chatfinding', '.findplan', '.ideasnote',
+               '.actaway', '.actsum', '.actrow', '.properror'].join(', ');
 
 const kase = (n, extra = {}) => ({
   id: `f:${n}`, kind: 'problem', claim: `Problem number ${n} in the house`,
@@ -122,7 +129,7 @@ const browser = await chromium.launch({
 });
 
 // Everything on screen that the standard is about, read in one pass.
-function readPage({ sizes, grid, radius }) {
+function readPage({ sizes, grid, radius, boxes: BOXES }) {
   const out = { sizes: [], upper: [], spaced: [], selects: [], boxes: [], cards: [], read: 0, picks: 0 };
   const visible = (n) => {
     if (!n.isConnected) return false;
@@ -197,6 +204,16 @@ function readPage({ sizes, grid, radius }) {
       if (offGrid(ccs).length) out.cards.push(`${label(card)} > ${label(child)} padding ${ccs.padding}`);
     }
   }
+  // Boxes that are not a card but sit on a page like one — a notice, a
+  // plan, a permission question — take the same rule about the edge: one
+  // edge all the way round, never a coloured bar down the left.
+  for (const box of document.querySelectorAll(BOXES)) {
+    if (!visible(box)) continue;
+    const cs = getComputedStyle(box);
+    if (cs.borderLeftWidth !== cs.borderRightWidth || cs.borderLeftColor !== cs.borderRightColor) {
+      out.cards.push(`${label(box)} has a left bar (${cs.borderLeftWidth} ${cs.borderLeftColor})`);
+    }
+  }
   return out;
 }
 
@@ -205,7 +222,7 @@ const totals = { screens: 0, text: 0, selects: 0 };
 // have put some text on the screen for its silence to count.
 const MIN_TEXT = 5;
 async function check(page, where) {
-  const r = await page.evaluate(readPage, { sizes: SIZES, grid: GRID, radius: CARD_RADIUS });
+  const r = await page.evaluate(readPage, { sizes: SIZES, grid: GRID, radius: CARD_RADIUS, boxes: BOXES });
   const uniq = (xs) => [...new Set(xs)];
   for (const s of uniq(r.sizes)) note(where, `text off the type scale: ${s}`);
   for (const s of uniq(r.upper)) note(where, `set in capitals: ${s}`);

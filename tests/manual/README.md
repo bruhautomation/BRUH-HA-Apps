@@ -115,7 +115,8 @@ label set in capitals or letter-spaced, a `<select>` without `.sel` or with
 the browser's appearance, a native checkbox or slider, and a card (`.card`,
 `.finding`, `.card-x`) whose padding — or a direct child's — is off the 4px
 grid, whose radius is not 12, which has a shadow, or whose left edge differs
-from its right.
+from its right — and on a notice, plan, permission card or activity row
+(the boxes that sit on a page like a card) with a coloured left bar.
 
 ```bash
 node tests/manual/measure-tokens.mjs        # TOKENS_VERBOSE=1 for counts

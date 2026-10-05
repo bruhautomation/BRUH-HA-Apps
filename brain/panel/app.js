@@ -12395,11 +12395,11 @@ async function composeCardImage(insight, chart) {
     + "display:flex;flex-direction:column;gap:14px");
   const head = add(box, "div", "display:flex;flex-direction:column;gap:3px");
   const eyebrow = shareEyebrow(insight);
-  if (eyebrow) add(head, "div", `font-size:13px;font-weight:600;color:${ink3}`, eyebrow);
-  add(head, "div", "font-size:22px;font-weight:700;line-height:1.25", insight.title || "");
+  if (eyebrow) add(head, "div", `font-size:12px;font-weight:600;color:${ink3}`, eyebrow);
+  add(head, "div", "font-size:20px;font-weight:600;line-height:1.4", insight.title || "");
   if (insight.summary) {
     const [lead, rest] = splitLead(insight.summary);
-    const sum = add(box, "div", `font-size:15px;line-height:1.55;color:${ink2}`);
+    const sum = add(box, "div", `font-size:14px;line-height:1.45;color:${ink2}`);
     if (lead) add(sum, "strong", `color:${ink}`, lead);
     sum.appendChild(document.createTextNode(lead ? ` ${rest}` : rest));
   }
@@ -12412,7 +12412,7 @@ async function composeCardImage(insight, chart) {
       const t = add(grid, "div", `background:${tile};border-radius:10px;padding:10px 12px;`
         + "display:flex;flex-direction:column;gap:3px");
       add(t, "div", `font-size:12px;color:${ink3}`, String(h.label));
-      add(t, "div", "font-size:18px;font-weight:700;line-height:1.2",
+      add(t, "div", "font-size:20px;font-weight:600;line-height:1.2",
         String(h.value != null ? h.value : "—"));
       if (h.delta) add(t, "div", `font-size:12px;color:${ink2}`, String(h.delta));
     });
