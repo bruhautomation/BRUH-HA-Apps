@@ -67,75 +67,14 @@ import os
 import time
 
 import answers
+from urgency import (  # re-exported (named in __all__): callers read these here
+    DEFAULT_URGENCY, PRODUCER_URGENCY, URGENCY, is_urgent, urgency_of)
+import textclip
 
 log = logging.getLogger("brain.notify")
 
 QUEUE_FILE = os.environ.get("BRAIN_NOTIFY_QUEUE", "/data/notify-queue.json")
 
-# How soon, as against how bad. Ordered least to most urgent so an index
-# comparison works the way `findings_store.SEVERITIES` already does.
-URGENCY = ("whenever", "today", "now")
-
-# What each producer's rows are, by `source`. A prefix match on
-# `check:<id>` so a check inherits its family's urgency and only the ones
-# that differ are named. Anything unlisted is `today`, which is the
-# honest default for a report a person has not seen yet: it goes out
-# promptly while somebody is awake, and waits when they are not.
-DEFAULT_URGENCY = "today"
-PRODUCER_URGENCY = {
-    # A smoke, leak, CO or gas detector that has just tripped. Filed by the
-    # deterministic safety lane (`server._safety_trip`) the moment the bus
-    # admits the transition, with no model in the way — and `now` is what
-    # lets it through quiet hours, which is the only hour a leak in a
-    # bedroom ceiling is ever reported in.
-    "safety": "now",
-    # The tripwire (`security.py`): something tried to act on an entity
-    # nothing should touch. That is now, whatever the hour.
-    "security": "now",
-    # Something is happening in the house right now and waiting costs
-    # something real.
-    "check:dev.unavailable": "now",
-    "check:dev.implausible": "now",
-    "check:sys.addon_down": "now",
-    "check:sys.disk_space": "now",
-    # This one fires INSIDE quiet hours by construction — it only speaks
-    # around the hour this house goes to bed, which is the hour the
-    # window starts. Anything but `now` holds it until morning, which is
-    # the one delivery that makes the check pointless.
-    "check:evening.left_open": "now",
-    # A chore is never urgent and often arrives in the evening: an
-    # emptied dishwasher at eight in the morning is the same dishwasher.
-    # `whenever` is what lets quiet hours hold it, which is the whole
-    # reason urgency is declared per producer.
-    "check:chore.waiting": "whenever",
-    # Pipes. This is the one climate finding that is about the next few
-    # hours rather than about the building, and the hours it fires in are
-    # exactly the ones quiet hours would hold it through.
-    "check:climate.freeze": "now",
-    # A window open on a cold night is costing money for as long as it
-    # stays open, and it is a thing somebody can go and close.
-    "check:climate.window": "now",
-    # Everything else here was measured over a month of nights and is
-    # about the building: a room that has been two degrees short all
-    # winter is not two degrees shorter at 3am, and a heating schedule
-    # that starts late starts late again tomorrow.
-    "check:climate.": "whenever",
-    # An update waiting at 23:00 is the same update at 08:00, and
-    # `check:sys.` as a family is `today` because the rest of it is a
-    # disk filling up or an add-on that is down.
-    "check:sys.update_pending": "whenever",
-    # A trend, a forecast, a tidy-up. None of these change overnight.
-    "check:forecast.": "whenever",
-    "check:base.": "whenever",
-    "check:reg.": "whenever",
-    "check:auto.": "whenever",
-    # Who can reach the house. A lock a cloud speaker can open is as true
-    # at 08:00 as at 03:00, and a ban that already happened is history.
-    "check:sec.": "whenever",
-    # A question for the house book is never urgent — it is somebody being
-    # asked where the stopcock is, which keeps until they are up.
-    "house_book": "whenever",
-}
 
 # A queue that has grown past this is a notifier nobody has read for
 # days; the digest says how many rather than listing them.
@@ -243,21 +182,6 @@ def quiet_ends_at(now: float, end: int, tz: dt.tzinfo | None = None) -> float:
 # How soon
 # ---------------------------------------------------------------------------
 
-def urgency_of(finding: dict) -> str:
-    """How soon this producer's rows want to be read.
-
-    Keyed on the producer rather than on the row, because a row's words
-    are written by a model or by a check's f-string and would drift the
-    first time either was reworded. A check that wants a different
-    urgency from its family says so by name.
-    """
-    source = str((finding or {}).get("source") or "")
-    if source in PRODUCER_URGENCY:
-        return PRODUCER_URGENCY[source]
-    for prefix, level in PRODUCER_URGENCY.items():
-        if prefix.endswith(".") and source.startswith(prefix):
-            return level
-    return DEFAULT_URGENCY
 
 
 def worth_sending(findings: list[dict], min_severity: str) -> list[dict]:
@@ -313,6 +237,8 @@ def tier_of(finding: dict, min_severity: str | None = None) -> str:
             or str((finding or {}).get("stakes") or "") == "high"):
         return "escalate"
     return "notify"
+
+
 
 
 def classify(findings: list[dict],
@@ -662,7 +588,7 @@ def compose(rows: list[dict], held: bool = False) -> tuple[str, str]:
         # Counted, never truncated: a list that stops mid-way reads as
         # the whole of what happened.
         lines.append(f"…and {n - LINES_MAX} more on the Findings tab.")
-    return title, "\n".join(lines)[:MESSAGE_MAX]
+    return title, textclip.clip("\n".join(lines), MESSAGE_MAX)
 
 
 def _ordinal(n: int) -> str:
@@ -699,7 +625,7 @@ def compose_escalation(row: dict, tz: dt.tzinfo | None = None) -> tuple[str, str
     if last:
         lines.append("brAIn will not ask about this again; it stays on the "
                      "Findings tab.")
-    return title, "\n".join(lines)[:MESSAGE_MAX]
+    return title, textclip.clip("\n".join(lines), MESSAGE_MAX)
 
 
 
@@ -721,7 +647,7 @@ def compose_accepted(title: str, entity_id: str) -> tuple[str, str]:
     a finding, because a change you asked for arriving under "brAIn found
     a problem" is how a notification stops being read.
     """
-    body = str(title or "a change you accepted").strip()[:MESSAGE_MAX]
+    body = textclip.clip(str(title or "a change you accepted").strip(), MESSAGE_MAX)
     if entity_id:
         body = f"{body}\n\nIt is now {entity_id}."
     return "brAIn made a change you accepted", body[:MESSAGE_MAX]
@@ -736,8 +662,8 @@ def compose_accepted(title: str, entity_id: str) -> tuple[str, str]:
 # actionable notifications can tell whose button was pressed, and short
 # because it travels in a payload with a length limit nobody documents.
 ACTION_PREFIX = "brain"
-ACTION_LABELS = (("todo", "Add to list"), ("fixed", "I've fixed it"),
-                 ("wrong", "Not a problem"), ("snooze", "Dismiss"),
+ACTION_LABELS = (("todo", "Add to list"), ("fixed", "Done"),
+                 ("wrong", "Ignore"), ("snooze", "Snooze"),
                  ("reply", "Reply"))
 # The one button that opens a text box rather than pressing a verb: the
 # companion app renders `behavior: textInput` as a reply field on both
@@ -910,7 +836,7 @@ def hold_timed(entries: list[dict], now: float,
         row["until"] = int(min(float(entry.get("until") or now),
                                now + HOLD_MAX_S))
         title = str(entry.get("title") or "").strip()[:TITLE_MAX]
-        body = str(entry.get("body") or "").strip()[:WORDS_MAX]
+        body = textclip.clip(str(entry.get("body") or "").strip(), WORDS_MAX)
         if title and body:
             row["title"], row["body"] = title, body
         rows.append(row)
@@ -947,7 +873,7 @@ def compose_released(rows: list[dict]) -> tuple[str, str]:
              for r in rows[:LINES_MAX]]
     if n > LINES_MAX:
         lines.append(f"…and {n - LINES_MAX} more on the Findings tab.")
-    return title, "\n".join(lines)[:MESSAGE_MAX]
+    return title, textclip.clip("\n".join(lines), MESSAGE_MAX)
 
 
 # ---------------------------------------------------------------------------
@@ -962,12 +888,12 @@ def compose_released(rows: list[dict]) -> tuple[str, str]:
 
 def compose_brief(body: str) -> tuple[str, str]:
     """The morning brief: a paragraph, under a title that says what it is."""
-    return "brAIn this morning", str(body or "").strip()[:MESSAGE_MAX]
+    return "brAIn this morning", textclip.clip(str(body or "").strip(), MESSAGE_MAX)
 
 
 def compose_weekly(body: str) -> tuple[str, str]:
     """The weekly report, likewise."""
-    return "brAIn: your week", str(body or "").strip()[:MESSAGE_MAX]
+    return "brAIn: your week", textclip.clip(str(body or "").strip(), MESSAGE_MAX)
 
 
 __all__ = [
@@ -976,7 +902,7 @@ __all__ = [
     "ESCALATION_MAX_ROWS", "ESCALATION_S", "PRODUCER_URGENCY", "QUEUE_FILE",
     "TIERS", "URGENCY", "actions_for", "begin_escalation", "can_answer",
     "classify", "compose", "compose_accepted", "compose_escalation",
-    "due_escalations", "escalation_state", "hold", "in_quiet_hours",
+    "due_escalations", "escalation_state", "hold", "in_quiet_hours", "is_urgent",
     "load_escalations", "load_queue", "next_escalation_at", "parse_action",
     "parse_hour", "prune_escalations", "quiet_ends_at", "record_reminder",
     "save_escalations", "save_queue", "stop_escalation", "take_queue",

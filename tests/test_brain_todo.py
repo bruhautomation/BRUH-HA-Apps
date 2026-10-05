@@ -324,21 +324,59 @@ class TestTheItems(unittest.TestCase):
 
 
 class TestTheList(WriterCase):
+    """`todo.brain` is Your list — accepted to-dos and your own items —
+    and nothing else. It used to list the open findings too, so the app
+    held five where the panel's list held four and an undecided finding
+    sat among agreed work."""
+
     def setUp(self):
         super().setUp()
-        self.state = Path(self.hass.config.path(".brain", "findings_state.json"))
-        self.state.parent.mkdir(parents=True, exist_ok=True)
+        base = Path(self.hass.config.path(".brain"))
+        base.mkdir(parents=True, exist_ok=True)
+        self.findings = base / "findings_state.json"
+        self.todo = base / "todo_state.json"
         self.list = brain_todo.BrainTodoList(self.hass)
 
-    def publish(self, findings):
-        self.state.write_text(json.dumps(
+    def publish(self, items):
+        self.todo.write_text(json.dumps(
+            {"generated_at": 1, "open": len(items), "items": items}),
+            encoding="utf-8")
+
+    def publish_findings(self, findings):
+        self.findings.write_text(json.dumps(
             {"ts": 1, "open": len(findings), "findings": findings}),
             encoding="utf-8")
 
-    def row(self, ts, text="something", status="open"):
+    def item(self, item_id, text="Replace the hall sensor battery"):
+        return {"id": item_id, "text": text, "severity": "warning",
+                "detail": "", "fix": "", "source_title": "Checks"}
+
+    def finding(self, ts, text="something", status="open"):
         return {"ts": ts, "text": text, "severity": "warning",
                 "status": status, "detail": "", "fix": "",
                 "source_title": "Checks"}
+
+    def uids(self):
+        return [i.uid for i in self.list._attr_todo_items]
+
+    def test_it_holds_exactly_your_list_and_no_findings(self):
+        self.publish([self.item(1700000000001), self.item(1700000000002)])
+        self.publish_findings([self.finding(1720), self.finding(1721)])
+        asyncio.run(self.list.async_update())
+        self.assertEqual(self.uids(), ["t:1700000000001", "t:1700000000002"])
+
+    def test_findings_alone_are_not_a_list(self):
+        # The findings mirror existing is not the to-do list existing: a
+        # list with nothing behind it would read as "all clear".
+        self.publish_findings([self.finding(1720)])
+        asyncio.run(self.list.async_update())
+        self.assertFalse(self.list.available)
+        self.assertEqual(self.uids(), [])
+
+    def test_it_is_named_brain_to_do_and_keeps_its_id(self):
+        self.assertEqual(brain_todo.BrainTodoList._attr_name, "brAIn to-do")
+        self.assertFalse(brain_todo.BrainTodoList._attr_has_entity_name)
+        self.assertEqual(self.list._attr_unique_id, "brain_work_list")
 
     def test_it_is_unavailable_until_the_addon_has_published_one(self):
         # An empty list and a list that could not be read look identical
@@ -346,52 +384,62 @@ class TestTheList(WriterCase):
         self.assertFalse(self.list.available)
         asyncio.run(self.list.async_update())
         self.assertFalse(self.list.available)
-        self.publish([self.row(1)])
+        self.publish([self.item(1)])
         asyncio.run(self.list.async_update())
         self.assertTrue(self.list.available)
 
     def test_a_restart_holds_the_last_list_rather_than_clearing_it(self):
-        self.publish([self.row(1), self.row(2)])
+        self.publish([self.item(1), self.item(2)])
         asyncio.run(self.list.async_update())
-        self.state.unlink()
+        self.todo.unlink()
         asyncio.run(self.list.async_update())
         self.assertEqual(len(self.list._attr_todo_items), 2)
         self.assertTrue(self.list.available)
 
-    def test_completing_one_is_i_have_fixed_it(self):
-        self.publish([self.row(1720)])
+    def test_completing_one_is_the_tabs_done(self):
+        self.publish([self.item(17)])
         asyncio.run(self.list.async_update())
         asyncio.run(self.list.async_update_todo_item(
-            TodoItem(uid="f:1720", summary="x",
+            TodoItem(uid="t:17", summary="x",
                      status=TodoItemStatus.COMPLETED)))
         rows = self.written()
         self.assertEqual(len(rows), 1)
-        self.assertEqual((rows[0]["ts"], rows[0]["action"]), (1720, "fixed"))
+        self.assertEqual((rows[0]["kind"], rows[0]["action"], rows[0]["id"]),
+                         ("todo", "done", 17))
         # And it leaves the list at once rather than reappearing for half
         # a minute while the add-on catches up.
         self.assertEqual(self.list._attr_todo_items, [])
 
-    def test_deleting_one_is_not_a_problem_here(self):
-        self.publish([self.row(1720), self.row(1721)])
+    def test_deleting_one_takes_it_off_the_list(self):
+        self.publish([self.item(17), self.item(18)])
         asyncio.run(self.list.async_update())
-        asyncio.run(self.list.async_delete_todo_items(["f:1720", "f:1721"]))
+        asyncio.run(self.list.async_delete_todo_items(["t:17", "t:18"]))
         rows = self.written()
-        self.assertEqual([r["action"] for r in rows], ["wrong", "wrong"])
+        self.assertEqual([r["action"] for r in rows], ["drop", "drop"])
         self.assertEqual(self.list._attr_todo_items, [])
 
+    def test_a_stale_finding_uid_is_still_answered_as_a_finding(self):
+        # An app that polled before the change may still hold `f:` items;
+        # ticking one must answer about the right row, not be dropped.
+        asyncio.run(self.list.async_update_todo_item(
+            TodoItem(uid="f:1720", summary="x",
+                     status=TodoItemStatus.COMPLETED)))
+        rows = self.written()
+        self.assertEqual((rows[0]["ts"], rows[0]["action"]), (1720, "fixed"))
+
     def test_an_edit_that_is_not_a_completion_answers_nothing(self):
-        # The summary and description are the finding's, so a rename has
+        # The summary and description are the item's, so a rename has
         # nowhere to go — and failing the whole update over something
         # nobody meant to change would be worse.
-        self.publish([self.row(1720)])
+        self.publish([self.item(17)])
         asyncio.run(self.list.async_update())
         asyncio.run(self.list.async_update_todo_item(
-            TodoItem(uid="f:1720", summary="renamed",
+            TodoItem(uid="t:17", summary="renamed",
                      status=TodoItemStatus.NEEDS_ACTION)))
         self.assertEqual(self.written(), [])
         self.assertEqual(len(self.list._attr_todo_items), 1)
 
-    def test_an_item_with_no_finding_id_answers_nothing(self):
+    def test_an_item_with_no_id_answers_nothing(self):
         asyncio.run(self.list.async_delete_todo_items(["not-a-number", ""]))
         self.assertEqual(self.written(), [])
 

@@ -1581,6 +1581,19 @@ def merge_rows(rows) -> int:
 # Diagnostics
 # ---------------------------------------------------------------------------
 
+def count(now: float | None = None) -> int:
+    """How many facts brAIn knows: THE facts count.
+
+    Every live row — the number House › What it knows shows as its total
+    (`browse`'s ``all``), `summary`'s ``count``, and what the status
+    mirror hands `sensor.brain_facts_learned`. That sensor used to count
+    lines in the memory change log, which said 99 beside a panel saying
+    755; one rule now, so the two cannot disagree.
+    """
+    now = time.time() if now is None else float(now)
+    return sum(1 for row in _load() if not _expired(row, now))
+
+
 def summary(now: float | None = None) -> dict:
     """What is in here, for `/api/diagnostics` and the House view.
 

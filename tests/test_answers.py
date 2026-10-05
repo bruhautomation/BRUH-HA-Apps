@@ -104,40 +104,56 @@ class TestOneRowAndAWayToSayNo(unittest.TestCase):
             verbs = {a["verb"] for a in got}
             self.assertTrue(verbs & NO, f"{name} offers no way to say no: {verbs}")
 
-    def test_dismiss_is_on_every_answerable_card(self):
+    def test_snooze_is_on_every_answerable_card(self):
         """"If I just want to ignore something and you may bring it up
-        later, how do I do that?" — Dismiss (`not_now`, the snooze) is a
-        visible press on every card a person answers, never behind the ⋯.
-        A plan waiting for consent, a change to read, a finished chore and
-        a held row are the four that are not answered that way."""
+        later, how do I do that?" — Snooze (`not_now`) is a visible press on
+        every card a person answers, never behind the ⋯, and always the
+        first of the secondary pair. A change to read, a finished chore and
+        a held row are the three that are not answered that way."""
         for name, shape in SHAPES.items():
             got = answers.answers(shape)
             verbs = [a["verb"] for a in got]
-            if name in ("planning", "fixing", "planned", "change",
-                        "chore_done", "watching", "chore"):
+            if name in ("planning", "fixing", "change", "chore_done", "watching"):
                 self.assertNotIn("not_now", verbs, name)
                 continue
             self.assertIn("not_now", verbs, name)
+            # Second, after the one primary — except on a question, where
+            # Yes and No are the answer and Snooze follows them.
+            self.assertEqual(verbs.index("not_now"), 2 if name == "question" else 1,
+                             name)
             dismiss = [a for a in got if a["verb"] == "not_now"][0]
-            self.assertEqual(dismiss["label"], "Dismiss")
+            self.assertEqual(dismiss["label"], "Snooze")
             self.assertEqual(dismiss["request"], "snooze")
             self.assertFalse(dismiss["note"], "a snooze asks for no reason")
 
     def test_every_problem_takes_the_same_row_in_the_same_order(self):
-        """The fixed row: Fix it where brAIn could act, then Add to list,
-        Dismiss, Not a problem — the same words in the same places on a
-        battery, a quiet device, a stuck sensor and a Resident's case, so a
-        row of buttons can be read without reading the words."""
-        tail = [("todo", "Add to list"), ("not_now", "Dismiss"),
-                ("wrong", "Not a problem")]
+        """One primary, then Snooze · Ignore — the same words in the same
+        places on a battery, a quiet device, a stuck sensor and a Resident's
+        case, so a row of buttons can be read without reading the words.
+        The primary is Plan where brAIn could act and Add to list where a
+        person's hands are needed."""
+        tail = [("not_now", "Snooze"), ("wrong", "Ignore")]
         for name in ("battery", "unplugged", "stuck", "hands", "automation",
                      "fix_failed"):
             got = [(a["verb"], a["label"]) for a in answers.answers(SHAPES[name])]
-            self.assertEqual(got, tail, name)
+            self.assertEqual(got, [("todo", "Add to list")] + tail, name)
         for shape in (SHAPES["generic"],
                       case(source="check:auto.dead_ref", fixable=True)):
             got = [(a["verb"], a["label"]) for a in answers.answers(shape)]
-            self.assertEqual(got, [("fix", "Fix it")] + tail)
+            self.assertEqual(got, [("fix", "Plan")] + tail)
+
+    def test_every_label_is_a_vocabulary_word(self):
+        """docs/design/ui-redesign-2026-10.md, "Action vocabulary": a
+        button's label is one of these words and nothing else — Yes and No
+        being the answer to a question rather than a verb."""
+        vocab = {"Apply", "Plan", "Add to list", "Snooze", "Ignore", "Done",
+                 "Restore", "Undo", "Ask", "Send", "Recheck", "Run", "Save",
+                 "Share", "Delete", "Yes", "No"}
+        for name, shape in SHAPES.items():
+            got = answers.answers(shape)
+            for a in got + answers.more(shape, got, [
+                    {"verb": "trial", "route": "/api/case/p:1/trial"}]):
+                self.assertIn(a["label"], vocab, (name, a["label"]))
 
     def test_nothing_is_called_do_it_and_every_press_has_a_route(self):
         for name, shape in SHAPES.items():
@@ -172,12 +188,12 @@ class TestTheButtonsThatFit(unittest.TestCase):
     def test_hands_are_never_led_by_a_run(self):
         self.assertEqual(self.verbs(SHAPES["hands"]), ["todo", "not_now", "wrong"])
         self.assertEqual(self.verbs(SHAPES["generic"]),
-                         ["fix", "todo", "not_now", "wrong"])
+                         ["fix", "not_now", "wrong"])
         # An automation brAIn could change leads with the plan; one it
         # could not leads with the list.
         self.assertEqual(self.verbs(case(source="check:auto.dead_ref",
                                          fixable=True)),
-                         ["fix", "todo", "not_now", "wrong"])
+                         ["fix", "not_now", "wrong"])
         self.assertEqual(self.verbs(SHAPES["automation"]),
                          ["todo", "not_now", "wrong"])
 
@@ -190,7 +206,7 @@ class TestTheButtonsThatFit(unittest.TestCase):
         stuck = answers.answers(SHAPES["stuck"])[-1]
         plain = answers.answers(SHAPES["battery"])[-1]
         for a in (quiet, stuck, plain):
-            self.assertEqual((a["verb"], a["label"]), ("wrong", "Not a problem"))
+            self.assertEqual((a["verb"], a["label"]), ("wrong", "Ignore"))
             self.assertTrue(a["note"])
         self.assertIn("on purpose", quiet["prefill"])
         self.assertIn("normal for this sensor", stuck["prefill"])
@@ -202,15 +218,22 @@ class TestTheButtonsThatFit(unittest.TestCase):
     def test_a_question_is_yes_or_no_and_can_be_put_off(self):
         got = answers.answers(SHAPES["question"])
         self.assertEqual([(a["verb"], a["label"]) for a in got],
-                         [("yes", "Yes"), ("no", "No"), ("not_now", "Dismiss")])
+                         [("yes", "Yes"), ("no", "No"), ("not_now", "Snooze")])
         self.assertTrue(got[1]["note"])
         self.assertTrue(got[0]["route"].endswith("/do"))
         self.assertTrue(got[1]["route"].endswith("/wrong"))
 
     def test_a_plan_offers_apply_only_where_it_can_fix(self):
-        self.assertEqual(self.verbs(SHAPES["planned"]), ["apply", "cancel", "wrong"])
+        self.assertEqual(self.verbs(SHAPES["planned"]), ["apply", "not_now", "wrong"])
+        # A plan brAIn will not carry out is a pair of hands.
         refused = case(finding_status="planned", plan={"can_fix": False})
-        self.assertEqual(self.verbs(refused), ["cancel", "wrong"])
+        self.assertEqual(self.verbs(refused), ["todo", "not_now", "wrong"])
+        # A plan written before plans were operations is out of date, and
+        # the remedy is to plan again — never an Apply over nothing.
+        legacy = case(finding_status="planned", fixable=True, plan={
+            "can_fix": True, "ops_refused": answers.LEGACY_PLAN_MARK + " …"})
+        got = answers.answers(legacy)
+        self.assertEqual([(a["verb"], a["label"]) for a in got][0], ("fix", "Plan"))
 
     def test_a_change_is_got_it_and_undo_only_inside_a_window(self):
         self.assertEqual(self.verbs(SHAPES["change"]), ["ack"])
@@ -220,8 +243,8 @@ class TestTheButtonsThatFit(unittest.TestCase):
 
     def test_the_rest(self):
         self.assertEqual(self.verbs(SHAPES["opportunity"]),
-                         ["accept", "trial", "not_now", "decline"])
-        self.assertEqual(self.verbs(SHAPES["chore"]), ["complete", "drop"])
+                         ["accept", "not_now", "decline"])
+        self.assertEqual(self.verbs(SHAPES["chore"]), ["complete", "not_now", "drop"])
         self.assertEqual(self.verbs(SHAPES["chore_done"]), ["reopen"])
         self.assertEqual(self.verbs(SHAPES["watching"]), ["elevate", "wrong"])
         # A chore check leads with Done — the work is minutes — and the
@@ -232,18 +255,27 @@ class TestTheButtonsThatFit(unittest.TestCase):
 
 
 class TestWhatGoesBehindTheDots(unittest.TestCase):
-    def test_visible_verbs_are_dropped_and_the_rest_ride_through(self):
-        shape = SHAPES["hands"]
-        visible = answers.answers(shape)
-        overflow = [{"verb": "done", "label": "I've already fixed it",
-                     "route": "/api/finding/1/done", "method": "POST"},
-                    {"verb": "discuss", "label": "Talk about it",
-                     "route": "/api/finding/1/discuss", "method": "POST"},
-                    {"verb": "todo", "label": "dup", "route": "/x", "method": "POST"}]
-        more = answers.more(shape, visible, overflow)
-        # Dismiss is already on the row, so it is not offered twice; the
-        # duplicate to-do is dropped for the same reason.
-        self.assertEqual([m["verb"] for m in more], ["done", "discuss"])
+    def test_the_dots_hold_at_most_three_and_never_a_visible_press(self):
+        """The ⋯ is Ask, Recheck, Done and Plan chosen per kind — at most
+        three, in vocabulary words, and never a press already on the row."""
+        for name, shape in SHAPES.items():
+            visible = answers.answers(shape)
+            more = answers.more(shape, visible, [])
+            self.assertLessEqual(len(more), answers.MAX_MORE, name)
+            self.assertFalse({a["verb"] for a in visible}
+                             & {m["verb"] for m in more}, name)
+        hands = answers.more(SHAPES["hands"], answers.answers(SHAPES["hands"]), [])
+        self.assertEqual([(m["verb"], m["label"]) for m in hands],
+                         [("discuss", "Ask"), ("done", "Done")])
+        quiet = SHAPES["unplugged"]
+        got = answers.more(quiet, answers.answers(quiet), [])
+        self.assertEqual([m["label"] for m in got], ["Ask", "Recheck", "Done"])
+        # A suggestion's week-long trial is the one verb read off the
+        # overflow, and it is called Run.
+        opp = SHAPES["opportunity"]
+        got = answers.more(opp, answers.answers(opp), [
+            {"verb": "trial", "route": "/api/case/p:1/trial"}])
+        self.assertEqual([(m["verb"], m["label"]) for m in got], [("trial", "Run")])
 
     def test_the_row_press_a_card_leaves_off_is_behind_the_dots(self):
         """A chore check leads with Done and shows no Add to list; the
@@ -251,8 +283,8 @@ class TestWhatGoesBehindTheDots(unittest.TestCase):
         is a press of the fixed row missing from both."""
         shape = SHAPES["chore_check"]
         more = answers.more(shape, answers.answers(shape), [])
-        self.assertEqual([(m["verb"], m["label"]) for m in more],
-                         [("todo", "Add to list")])
+        self.assertEqual([(m["verb"], m["label"]) for m in more][0],
+                         ("todo", "Add to list"))
         for name in ("planned", "change", "chore_done", "watching"):
             shape = SHAPES[name]
             more = answers.more(shape, answers.answers(shape), [])
@@ -279,12 +311,12 @@ class TestWhatAPhoneCanCarry(unittest.TestCase):
                                        "source": "check:dev.unavailable",
                                        "fixable": False})
         self.assertEqual([(g["action"], g["label"]) for g in got],
-                         [("todo", "Add to list"), ("snooze", "Dismiss"),
-                          ("wrong", "Not a problem")])
+                         [("todo", "Add to list"), ("snooze", "Snooze"),
+                          ("wrong", "Ignore")])
 
     def test_a_change_is_got_it_alone_and_a_run_in_flight_is_nothing(self):
         self.assertEqual(answers.request_answers({"ts": 1, "status": "fixed"}),
-                         [{"action": "ack", "label": "Got it"}])
+                         [{"action": "ack", "label": "Done"}])
         for status in ("planning", "fixing"):
             self.assertEqual(answers.request_answers({"ts": 1, "status": status}),
                              [], status)
@@ -300,7 +332,7 @@ class TestTheRealRowRoundTrip(StoresCase):
         mirrored = mirror["findings"][0]["answers"]
         self.assertEqual([m["action"] for m in mirrored],
                          ["todo", "snooze", "wrong"])
-        self.assertEqual(mirrored[1]["label"], "Dismiss")
+        self.assertEqual(mirrored[1]["label"], "Snooze")
         # The feed's own answers, on the same row, carry the same
         # wire actions in the same order plus the panel-only press.
         kase = cases.get(f"f:{row['ts']}")
@@ -318,7 +350,13 @@ class TestTheRealRowRoundTrip(StoresCase):
         kase = [c for c in payload["cases"] if c["id"] == f"f:{row['ts']}"][0]
         self.assertEqual([a["verb"] for a in kase["answers"]],
                          ["todo", "not_now", "wrong"])
-        self.assertEqual([m["verb"] for m in kase["more"]][0], "done")
+        self.assertIn("done", [m["verb"] for m in kase["more"]])
+        self.assertLessEqual(len(kase["more"]), answers.MAX_MORE)
+        # Today's card: one status chip, and whether "Ignore all like this"
+        # can mute the rule that raised it.
+        self.assertEqual(kase["chip"], "problem")
+        self.assertTrue(kase["mutable"])
+        self.assertFalse(kase["urgent"])
         self.assertEqual(kase["situation"], "unplugged")
         self.assertEqual(kase["entity_name"], "Hall Motion")
         self.assertEqual(kase["area"], "Hall")

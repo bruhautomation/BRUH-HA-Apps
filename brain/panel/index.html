@@ -35,34 +35,28 @@
     <path class="wm-ink" d="M362,198 L377,198 L486,333 L471,333 Z"/>
   </svg>
 
-  <!-- Four tabs, not eight. Every pane the panel used to give a tab of its
-       own still exists under its own id and `data-view` — Insights, To-do,
-       Proposals, Activity, Knowledge, Docs — so every handler, measure and
-       deep link under them binds exactly as it did. What changed is the
-       strip: a tab is now a GROUP, and the panes in it are the sub-strip
-       under the bar (`#subtabs`), shown only when a group holds more than
-       one. Home is what is waiting on you and the cards; Ask is the chat
-       and the terminal; House is what brAIn knows and what happened; Help
-       is the docs. Each primary tab's `data-view` is the pane the group
-       opens on, and a second press on the group you are already in goes
-       back to it. -->
+  <!-- Three tabs: Today, Ask, House (docs/design/ui-redesign-2026-10.md,
+       "Proposed structure"). Today is for deciding, Ask for asking, House
+       for reading what brAIn knows; the Guide is ⚙ › Guide. A tab is a
+       GROUP and the panes in it are the sub-strip under the bar
+       (`#subtabs`), shown only where a group holds more than one — Today
+       holds one, so it has no sub-strip at all. Every pane kept its id and
+       its `data-view`, so every handler, measure and deep link under one
+       binds as it did. The one badge counts the cards in Today's queue
+       (`queue_count`), and nothing else carries one. -->
   <nav class="viewtabs" role="tablist">
-    <button class="viewtab active" data-view="findings" data-group="home" role="tab" data-tip="Home">
+    <button class="viewtab active" data-view="findings" data-group="today" role="tab" data-tip="Today">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5M5.5 9.8V20h13V9.8M10 20v-6h4v6"/></svg>
-      <span>Home</span>
+      <span>Today</span>
       <span id="findBadge" class="badge hidden"></span>
     </button>
     <button class="viewtab" data-view="terminal" data-group="ask" role="tab" data-tip="Ask">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-5 4v-4H5.5A1.5 1.5 0 0 1 4 14.5zM8 8.5h8M8 12h5"/></svg>
       <span>Ask</span>
     </button>
-    <button class="viewtab" data-view="memory" data-group="house" role="tab" data-tip="House">
+    <button class="viewtab" data-view="insights" data-group="house" role="tab" data-tip="House">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5.5a3 3 0 0 0-5.7-1.3A2.8 2.8 0 0 0 4 9.4a3 3 0 0 0 .4 4.8A2.9 2.9 0 0 0 7 19a3 3 0 0 0 5-1.2zM12 5.5a3 3 0 0 1 5.7-1.3A2.8 2.8 0 0 1 20 9.4a3 3 0 0 1-.4 4.8A2.9 2.9 0 0 1 17 19a3 3 0 0 1-5-1.2z"/></svg>
       <span>House</span>
-    </button>
-    <button class="viewtab" data-view="docs" data-group="help" role="tab" data-tip="Help">
-      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5zM20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z"/></svg>
-      <span>Help</span>
     </button>
   </nav>
 
@@ -92,30 +86,34 @@
   <button id="usageChip" class="chip clickable hidden" aria-expanded="false"><span class="dot"></span><span class="uwin"><span class="ulab">Session</span><span id="usageChipPct"></span></span><span id="usageChipWeek" class="uwin hidden"><span class="ulab">Week</span><span id="usageChipWeekPct"></span></span></button>
   <button id="pausedChip" class="chip clickable warn hidden"><span class="dot"></span><span id="pausedChipText"></span></button>
 
+  <!-- The phone's status: one dot where the chips above sit on a wider
+       screen. A 390px header holds the logo, this and ⚙, and nothing else —
+       the three tabs are a bar along the bottom. The dot is a press, never
+       a hover: it opens the same disclosure as the chips, with the status
+       sentence and whatever they would have said, each with its own
+       press. Hidden above the phone band, where the chips say it. -->
+  <button id="statusDot" class="btn icon statusdot" data-state="watching"
+          aria-expanded="false" aria-label="brAIn status"><span class="sdot" aria-hidden="true"></span></button>
+
   <button id="settingsBtn" class="btn icon hidden" data-tip="Settings">
     <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 8.9 19a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 6.9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
   </button>
 </header>
 
 <!-- The panes inside the tab you are on. Hidden while the group holds one
-     pane (Ask, Help), because a strip with one button is a label. The
-     badges that used to sit on the To-do and Proposals tabs sit on their
-     sub-tabs and count what they always counted: Home's is decisions
-     waiting on you, To-do's is work you agreed to, Proposals' is changes
-     waiting on a yes. `data-view` stays the pane's own name, so every
-     handler under `switchView` and every measure that clicks one still
-     finds it. -->
+     pane (Today, Ask), because a strip with one button is a label. House
+     holds what Insights, Ideas, Knowledge, Activity and Upkeep used to be,
+     and the docs pane is reached from ⚙ › Guide — its button stays here in
+     a group of its own so `switchView("docs")` still has a home.
+     `data-view` stays the pane's own name, so every handler under
+     `switchView` and every measure that clicks one still finds it. -->
 <nav id="subtabs" class="subtabs" role="tablist" aria-label="Sections" hidden>
-  <button class="subtab" data-view="findings" data-group="home" role="tab">Findings</button>
-  <button class="subtab" data-view="insights" data-group="home" role="tab">Insights</button>
-  <button class="subtab" data-view="ideas" data-group="home" role="tab">Ideas <span id="ideasBadge" class="badge hidden"></span></button>
-  <button class="subtab" data-view="todo" data-group="home" role="tab">To-do <span id="todoBadge" class="badge hidden"></span></button>
-  <button class="subtab" data-view="proposals" data-group="home" role="tab">Proposals <span id="propBadge" class="badge hidden"></span></button>
+  <button class="subtab" data-view="findings" data-group="today" role="tab" hidden>Today</button>
   <button class="subtab" data-view="terminal" data-group="ask" role="tab">Chat</button>
+  <button class="subtab" data-view="insights" data-group="house" role="tab">Insights</button>
   <button class="subtab" data-view="memory" data-group="house" role="tab">Knowledge</button>
   <button class="subtab" data-view="activity" data-group="house" role="tab">Activity</button>
-  <button class="subtab" data-view="upkeep" data-group="house" role="tab">Upkeep</button>
-  <button class="subtab" data-view="docs" data-group="help" role="tab">Docs</button>
+  <button class="subtab" data-view="docs" data-group="guide" role="tab">Guide</button>
 </nav>
 
 <!-- What a chip has to say when there is more to it than the chip's own
@@ -130,7 +128,29 @@
 
 <main class="wrap">
 
-<div id="viewInsights" class="view active">
+<!-- House: one segmented control over the four things the House tab holds.
+     It replaces the sub-strip for these panes, which keep their own ids and
+     `data-view`s (Reports is #viewInsights, What it knows is #viewMemory,
+     What happened is #viewActivity), so every handler and measure that
+     reaches a pane by id still does. On a phone the four buttons become one
+     styled select: four labels in a 358px row is a row that scrolls
+     sideways, and the select is the same choice in one control. -->
+<nav id="houseSeg" class="houseseg" aria-label="House" hidden>
+  <div class="segbtns" role="tablist">
+    <button type="button" class="segbtn" data-view="insights" role="tab">Reports</button>
+    <button type="button" class="segbtn" data-view="memory" role="tab">What it knows</button>
+    <button type="button" class="segbtn" data-view="housebook" role="tab">House book</button>
+    <button type="button" class="segbtn" data-view="activity" role="tab">What happened</button>
+  </div>
+  <select id="houseSegSel" class="sel segsel" aria-label="House section">
+    <option value="insights">Reports</option>
+    <option value="memory">What it knows</option>
+    <option value="housebook">House book</option>
+    <option value="activity">What happened</option>
+  </select>
+</nav>
+
+<div id="viewInsights" class="view">
 
   <!-- Connect / setup screen (shown when no credential is stored) -->
   <section id="setup" class="setup hidden">
@@ -141,7 +161,7 @@
          it: a token that died on a Tuesday left the chip saying "Claude auth
          failed" and the panel offering nothing to press. -->
     <div class="row setup-head">
-      <h2 id="setupTitle">Connect your Claude account&nbsp;✨</h2>
+      <h2 id="setupTitle">Connect your Claude account</h2>
       <div class="spacer"></div>
       <button id="setupBack" class="btn ghost hidden">Back</button>
     </div>
@@ -251,9 +271,9 @@
         <label for="obQuietStart">Don't wake the house</label>
         <div class="obquiet">
           <span>Quiet from</span>
-          <select id="obQuietStart" class="selin"></select>
+          <select id="obQuietStart" class="sel selin"></select>
           <span>until</span>
-          <select id="obQuietEnd" class="selin"></select>
+          <select id="obQuietEnd" class="sel selin"></select>
         </div>
         <p class="hint tight">Anything that can wait is held until the quiet hours
           end and arrives as one message. A freeze warning still comes through.
@@ -332,7 +352,7 @@
            sends the sentence through the ask bar's own path: drafted,
            simulated over this house's history, graded against what the
            household did, then watched for a week. Nothing is written to the
-           house until it is accepted on Home → Proposals. -->
+           house until it is accepted on Today. -->
       <div id="obTryBlock" class="hidden">
         <h3 class="obh3">One automation to try for a week</h3>
         <label class="obcard">
@@ -342,7 +362,7 @@
             <div class="obcardwhy" id="obTryWhy"></div>
             <div class="obcardfocus">brAIn simulates it over your recorded history first,
               then watches it for a week beside what you actually do. Nothing is written to
-              your house until you accept it under Home → Proposals.</div>
+              your house until you apply it on Today.</div>
           </div>
         </label>
       </div>
@@ -365,79 +385,81 @@
     </div>
   </section>
 
-  <!-- Dashboard -->
+  <!-- Reports. A card is read, not decided, so all it carries is its
+       headline and how old it is. What used to sit above the grid — the
+       checks/baselines/memory strip, the "problems since yesterday" press,
+       the ask bar and sixteen tag chips — is gone: the strip and the
+       problem count are Diagnostics' and the status line's, asking is the
+       Ask tab's, and tags gave way to a search field that appears only once
+       there are more reports than fit on a screen or two. -->
   <section id="dash" class="hidden">
-    <!-- One wrapping line: what brAIn has done for itself since you last
-         looked. Every segment is read off the /api/status poll that is
-         already running, so this costs no request of its own — and a segment
-         whose data is absent is omitted rather than rendered as a zero,
-         because "0 findings" and "no checks pass has finished" are different
-         reports of the same quiet house. -->
-    <div id="todayStrip" class="today hidden"></div>
-    <!-- One bar, two verbs. Asking makes a card; saying "learn…" runs a study
-         session instead, because a second input for learning meant nobody
-         ever ran one. The placeholder has to teach both — it is the only
-         place either is discoverable. -->
-    <form id="askForm" class="askbar">
-      <input id="askInput" type="text" maxlength="500" autocomplete="off"
-             placeholder="Ask anything about your home…">
-      <button class="btn primary" type="submit">Ask&nbsp;✨</button>
-    </form>
-    <!-- The bar has two verbs and the hint is one line, because that is all
-         the room there is above the first card on a phone. It names the
-         second verb only: asking is what the placeholder already invites,
-         and "＋ Make recurring" is a button on the card it applies to. -->
-    <p class="askhint">Every answer becomes a card. Say <b>“learn about…”</b>
-      to send brAIn studying instead.</p>
-    <!-- A "why" asked in the bar is answered here, in words, rather than as
-         a card: a card is a picture of data, and "why didn't you tell me"
-         is answered by what brAIn decided and why (the decision trail). -->
-    <div id="askExplain" class="askexplain hidden" aria-live="polite"></div>
-
-    <div id="filters" class="filters"></div>
+    <input id="reportSearch" class="reportsearch" type="search" autocomplete="off"
+           spellcheck="false" placeholder="Search reports" aria-label="Search reports" hidden>
     <div id="grid" class="grid"></div>
+
+    <!-- Deep review: a report like the others, priced on its Run button
+         before it is pressed, and dated rather than labelled with a model
+         and a token count. -->
+    <section class="reportrow kreviewsec" aria-label="Deep review">
+      <h2>Deep review</h2>
+      <div id="kReview" class="kreview"></div>
+    </section>
+
+    <!-- Suggested: reports brAIn thinks this house is missing. An idea costs
+         nothing until it is saved, which is why it is a row of its own and
+         not a card that runs. With nothing suggested the row is one line —
+         its name and Run — rather than an empty state. -->
+    <section id="ideasRow" class="reportrow ideasrow" aria-label="Suggested">
+      <div class="reportrowhead">
+        <h2>Suggested</h2>
+        <button id="ideasRun" class="btn small" type="button">Run</button>
+      </div>
+      <div id="ideasNote" class="ideasnote" hidden></div>
+      <div id="ideasList" class="findlist"></div>
+    </section>
   </section>
 </div>
 
-<!-- Findings: the decision list. Memory says what is TRUE of this home; a
-     finding is what is BROKEN in it and a hypothesis is what brAIn might
-     have WRONG about it. Those stay three different kinds of knowledge and
-     three different stores — but the last two are the same job, which is a
-     decision only the person living here can make, and they are shown in
-     one list for that reason. Two lists of decisions meant two badges and
-     neither ever read as done. -->
-<div id="viewFindings" class="view">
-  <section class="findwrap">
-    <div class="findhead">
-      <div>
-        <h2>What's waiting on you</h2>
-        <p class="sub">Everything brAIn wants a decision about, in one list. Every
-          card takes the same answers: <b>Fix it</b> where brAIn can make the
-          change, <b>Add to list</b>, <b>Dismiss</b> (it comes back later) and
-          <b>Not a problem</b> (it never does — say why, and brAIn learns).
-          Work you have accepted lives on the To-do tab.</p>
-      </div>
-      <!-- The house checks read Home Assistant directly and never call
-           Claude, so the button is cheap to press and says so. It sits
-           beside the filters rather than in them because the filters are
-           rebuilt on every render. -->
-      <div class="findside">
-        <div class="findfilters" id="findFilters"></div>
-        <button id="findRunChecks" class="btn small ghost"
-                data-tip="Read the house now — automations, devices, batteries, dashboards. No Claude run, nothing spent.">Run checks now</button>
-      </div>
+<!-- Today: the one screen for deciding (docs/design/ui-redesign-2026-10.md,
+     "The first screen"). Top to bottom: a safety banner only while
+     something is urgent, the status line, the queue — every finding,
+     question, suggestion, name tidy and assessed update as one card type —
+     Your list, and the History drawer. A first-time owner sees the setup
+     card where the queue goes until the first look has finished. The pane
+     keeps its old id and `data-view="findings"`, and `#findList` is still
+     the queue, so every handler and measure that binds to them still does.
+     The sign-in and onboarding sections are moved into `#todaySetupBody`
+     at startup (`adoptSetupScreens`), the Memory pane's arrangement: one
+     copy of each, under the ids every handler is bound to. -->
+<div id="viewFindings" class="view active">
+  <section class="todaypane findwrap">
+    <div id="todayBanner" class="todaybanner" role="alert" hidden></div>
+    <div class="todaystatus">
+      <span id="todayStatus" class="todaystatusline" data-state="watching"><span class="sdot" aria-hidden="true"></span><span id="todayStatusText">Watching</span></span>
+      <span id="todayStatusMenuHost"></span>
     </div>
-    <!-- How right each producer has been, from the endings people gave.
-         Hidden until a producer has enough endings to mean something. -->
-    <div id="findScore" class="findscore" hidden></div>
-    <!-- The producers switched off with "Stop raising these", each with
-         the press that turns it back on. Hidden while nothing is muted. -->
-    <div id="findMuted" class="findscore findmuted" hidden></div>
-    <div id="findList" class="findlist"></div>
-    <!-- What the Resident did today, under the list it produced. Three
-         numbers and the state of the subscription, because a quiet feed and
-         a loop that has stopped look identical from here otherwise. -->
-    <p id="findFoot" class="findfoot" hidden></p>
+    <div id="todayBrief" class="todaybrief" hidden></div>
+    <section id="todaySetup" class="card-x todaysetup" hidden aria-labelledby="todaySetupTitle">
+      <h2 id="todaySetupTitle" class="card-title">Set up brAIn</h2>
+      <ol id="todaySetupSteps" class="todaysteps"></ol>
+      <div id="todaySetupBody"></div>
+    </section>
+    <div id="findList" class="findlist todayqueue"></div>
+    <button id="todayMore" class="btn-tertiary todaymore" hidden></button>
+    <section class="todaysec" aria-labelledby="todayListHead">
+      <h2 id="todayListHead" class="t-card">Your list</h2>
+      <form id="todoAdd" class="todoadd">
+        <input id="todoText" type="text" maxlength="200" autocomplete="off"
+               placeholder="Add to your list…" aria-label="Add to your list">
+        <button type="submit" class="btn-secondary">Add to list</button>
+      </form>
+      <div id="todoList" class="todolist"></div>
+    </section>
+    <details id="todayHistory" class="todayhistory">
+      <summary>History</summary>
+      <div id="histFilters" class="histfilters" role="tablist" aria-label="History"></div>
+      <div id="histList" class="histlist"></div>
+    </details>
   </section>
 </div>
 
@@ -451,161 +473,40 @@
      way, so "unattributed" is the honest answer for both, and a timeline
      that guessed between them would be a timeline nobody could use as
      evidence. -->
-<!-- Work you have accepted. A finding is brAIn asking a question; an item
-     here is one you have already answered with "yes, and I'll do it", so
-     nothing on this list is a decision — it is a chore with the evidence
-     still attached to it. The card that raised it is gone, which is why
-     every word of it was copied here when it moved. -->
-<div id="viewIdeas" class="view">
-  <section class="findwrap">
-    <div class="findhead">
-      <div>
-        <h2>Ideas for new cards</h2>
-        <p class="sub">Cards brAIn thinks this house is missing, with what it
-          found that made it think so. Nothing here is generating anything —
-          an idea costs nothing until you take it, and taking one puts a new
-          card on Insights. Say no and it won't be suggested again.</p>
-      </div>
-      <div class="findside">
-        <button id="ideasRun" class="btn small primary">✨&nbsp; Suggest ideas</button>
-      </div>
-    </div>
-    <div id="ideasNote" class="ideasnote" hidden></div>
-    <div id="ideasList" class="findlist"></div>
-    <p id="ideasFoot" class="findfoot" hidden></p>
-  </section>
-</div>
-
-<div id="viewTodo" class="view">
-  <section class="findwrap">
-    <div class="findhead">
-      <div>
-        <h2>What you're going to do</h2>
-        <p class="sub">Findings you've accepted as real work, plus anything you add
-          yourself. brAIn won't raise an accepted one again while it sits here —
-          and if you take it off without doing it, it's free to find it again.</p>
-      </div>
-      <div class="findside">
-        <div class="findfilters" id="todoFilters"></div>
-      </div>
-    </div>
-    <form id="todoAdd" class="todoadd">
-      <input id="todoText" type="text" maxlength="200" autocomplete="off"
-             placeholder="Something else that needs doing…" aria-label="Add a to-do">
-      <button type="submit" class="btn small primary">Add</button>
-    </form>
-    <div id="todoList" class="findlist"></div>
-  </section>
-</div>
-
-<div id="viewProposals" class="view">
-  <!-- The Findings tab's own column and head, so the Home group reads as
-       one app: it used to be a narrower centred column with a heading of
-       its own. -->
-  <section class="propwrap findwrap">
-    <div class="prophead findhead">
-      <div>
-        <h2>What could be better</h2>
-        <p class="sub">Changes brAIn thinks would suit this house, each with the
-          evidence behind it and what it would have done over the last month of
-          your own history. A trial replays the change over the days since you
-          started it and grades each firing against what you actually did —
-          nothing is called and nothing is switched on. Accepting one writes a
-          real automation into your <code>automations.yaml</code> and reloads
-          Home Assistant; Undo takes it straight back out. Saying no teaches
-          brAIn more than saying nothing.</p>
-      </div>
-    </div>
-    <!-- The one producer a person addresses by name. Every other card on
-         this tab arrives because brAIn watched something; four scenes are
-         asked for, so there is a control for asking. The list is the
-         panel's own — only rooms brAIn can actually compose for, because
-         a picker offering a choice its own rule refuses teaches people to
-         distrust it. -->
-    <div class="propask">
-      <label for="sceneArea">Design scenes for</label>
-      <select id="sceneArea" class="selin"><option value="">a room…</option></select>
-      <button id="sceneGo" class="btn small" disabled>Design them</button>
-      <p id="sceneNote" class="propasknote"></p>
-    </div>
-    <div id="propList" class="proplist"></div>
-  </section>
-</div>
-
 <div id="viewActivity" class="view">
   <section class="actwrap">
+    <!-- The top line is what the house is doing now ("Someone's home",
+         "Settled for the night") — the situation reading, which is the
+         context every row below is read in. -->
+    <div id="actNow" class="actnow" hidden></div>
     <div class="acthead">
-      <div>
-        <h2>What happened</h2>
-        <p class="sub">Not every state change &mdash; the things that actually
-          happened, grouped into episodes and sorted into the parts of a house
-          you would go looking in, each with what caused it. Read straight from
-          the logbook: no Claude run, nothing spent.
-          Tap a row for that entity's own recent history.</p>
-      </div>
-      <div class="actside">
-        <div class="actfilters" id="actFilters"></div>
-        <div class="actnav">
-          <button id="actPrev" class="btn small ghost"
-                  data-tip="The 24 hours before these">&lsaquo; Earlier</button>
-          <span id="actRange" class="actrange"></span>
-          <button id="actNext" class="btn small ghost"
-                  data-tip="The 24 hours after these">Later &rsaquo;</button>
-        </div>
+      <label class="actcause">
+        <span>Caused by</span>
+        <select id="actCause" class="sel" aria-label="Caused by"></select>
+      </label>
+      <div class="actnav">
+        <button id="actPrev" class="btn small ghost"
+                data-tip="The 24 hours before these">&lsaquo; Earlier</button>
+        <span id="actRange" class="actrange"></span>
+        <button id="actNext" class="btn small ghost"
+                data-tip="The 24 hours after these">Later &rsaquo;</button>
       </div>
     </div>
-    <!-- When the house was empty, and the one paragraph on this tab that
-         costs anything. Everything below is arithmetic over one fetch and
-         so is free however often somebody opens this; the summary is a
-         PRESS, because a Claude run behind a tab that refreshes on arrival
-         is the "refresh everything" control this panel deleted. -->
+    <!-- When the house was empty, and the one press on this tab that costs
+         anything: Ask reads the window once. Everything else here is
+         arithmetic over one fetch of the logbook. -->
     <div id="actSummary" class="actsummary"></div>
     <div id="actList" class="actlist"></div>
   </section>
 </div>
 
-<!-- Upkeep: Home Assistant ITSELF, looked after. The house book, tidier
-     names and rooms, whether each waiting update is safe tonight, and what
-     the overnight health check and the access review found. Every press
-     here spends one Claude run and STARTS it — the section reads the
-     outcome back — and nothing changes in Home Assistant until a person
-     ticks rows and presses Apply. -->
-<div id="viewUpkeep" class="view">
-  <section class="upwrap">
-    <div class="findhead">
-      <div>
-        <h2>Upkeep</h2>
-        <p class="sub">Home Assistant itself, looked after: a plain-language
-          book of how this house works, tidier names and rooms, whether each
-          waiting update is safe to install, and what the overnight check
-          found. Each button spends one Claude run; nothing in Home Assistant
-          changes until you tick it and press Apply.</p>
-      </div>
-    </div>
-    <section class="ksec upsec">
-      <h2>House book</h2>
-      <p class="hint tight">How this house works, for a partner or a sitter.
-        Every sentence names what it came from; codes and passwords are left
-        out.</p>
-      <div id="upBook" class="upbody"></div>
-    </section>
-    <section class="ksec upsec">
-      <h2>Names, rooms and aliases</h2>
-      <p class="hint tight">brAIn suggests names in this house's own style,
-        a room for devices in none, and the words people actually say. Tick
-        what you want; Undo works for 30 days.</p>
-      <div id="upTidy" class="upbody"></div>
-    </section>
-    <section class="ksec upsec">
-      <h2>Updates waiting</h2>
-      <p class="hint tight">brAIn reads each update's release notes against
-        your configuration. It never installs anything.</p>
-      <div id="upUpdates" class="upbody"></div>
-    </section>
-    <section class="ksec upsec">
-      <h2>Overnight health and access</h2>
-      <div id="upHealth" class="upbody"></div>
-    </section>
+<!-- House book: how this house works, for a partner or a sitter. Run
+     rewrites it; Share puts a copy at a private link Home Assistant
+     serves. The one line under Share is what a sitter sees too, so it is
+     never folded away. -->
+<div id="viewHousebook" class="view">
+  <section class="bookwrap">
+    <div id="upBook" class="upbody"></div>
   </section>
 </div>
 
@@ -628,31 +529,32 @@
        stream-json output as DOM, so text reflows to the screen it is on;
        classic is ttyd over tmux, which is a character grid and is the right
        answer for anything that draws one (a TUI, htop, an installer). -->
-  <!-- On a wide screen the conversations get a rail of their own rather than
-       living two presses deep in ⋯. Below the breakpoint the rail is not
-       rendered at all and the menu is still the way in — a 240px column is
-       most of a phone. -->
+  <!-- The conversations you started, and nothing else. On a wide screen
+       it is a rail beside the transcript; below the breakpoint it is the
+       page Ask opens on, and a transcript has a back button to it. brAIn's
+       own runs (voice, cards, fixes, the memory pass…) are not here: they
+       are records of what brAIn did, and ⚙ › Diagnostics › Runs reads the
+       same listing with `?source=`. -->
   <aside id="chatRail" class="chatrail" aria-label="Conversations">
     <div class="crhead">
-      <span class="crtitle">Chats</span>
-      <button id="chatRailSel" class="btn icon" data-tip="Select several to delete"
-              aria-label="Select conversations">
-        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true">
-          <path d="M4 6l2 2 3-3M4 12l2 2 3-3M4 18l2 2 3-3M12 7h8M12 13h8M12 19h8"/>
-        </svg>
-      </button>
+      <span class="crtitle">Your chats</span>
       <button id="chatRailNew" class="btn icon" data-tip="New chat" aria-label="New chat">
         <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
     </div>
-    <!-- Who ran what. Only rendered when there is more than one answer:
-         on a house with no voice assistant and no automations there is
-         nothing to filter and the row would be a single dead chip. -->
-    <div id="chatRailFilter" class="crfilters"></div>
     <div id="chatRailList" class="crlist"></div>
   </aside>
 
   <section id="termChat" class="chat">
+    <!-- Below the rail's breakpoint only: the way back to the list, and
+         what this conversation is. On a wide screen the rail beside it is
+         both, so this would say everything twice. -->
+    <div id="chatHead" class="chathead">
+      <button id="chatBack" class="btn icon" type="button" aria-label="Back to your chats">
+        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <span id="chatHeadTitle" class="chtitle">New chat</span>
+    </div>
     <div id="chatLog" class="chatlog" role="log" aria-live="polite" aria-label="Conversation"></div>
     <div id="chatEmpty" class="chatempty">
       <h3>Ask brAIn anything about your house</h3>
@@ -664,25 +566,32 @@
         <button class="seed">Why did the porch light not come on last night?</button>
         <button class="seed">Which of my devices have stopped reporting?</button>
         <button class="seed">Rename the switches in the garage to what they actually are</button>
+        <!-- Fills the box rather than sending: which room is yours to say.
+             This is where "Design scenes for a room" lives now that the
+             Proposals form is gone. -->
+        <button class="seed" data-fill="Design lighting scenes for the ">Design lighting scenes for a room</button>
       </div>
     </div>
     <div id="chatErr" class="chaterr hidden"></div>
-    <!-- What you are discussing, and the decisions that belong to it. The
-         discussion itself changes nothing — the prompt says so — so the
-         buttons that DO have to be here: agreeing to a fix at the end of a
-         conversation about it should be one press, not a trip back to the
-         other tab to find the card again. -->
+    <!-- The card this conversation is about, and the decisions that belong
+         to it. The title is the card's own and links back to it on Today;
+         the buttons are the card's verbs, so agreeing at the end of a
+         conversation is one press rather than a trip back to find the
+         card. The discussion itself changes nothing — its acting tools ask
+         first (chat_session.DISCUSS_ASK). -->
     <div id="chatFinding" class="chatfinding hidden">
       <div class="cfhead">
-        <span class="cflabel">Discussing</span>
-        <span id="chatFindingText" class="cftext"></span>
-        <button id="chatFindingClose" class="btn icon" aria-label="Stop discussing it">✕</button>
+        <button id="chatFindingText" class="cftext" type="button"
+                title="Show this card on Today"></button>
+        <button id="chatFindingClose" class="btn icon" type="button" aria-label="Stop discussing it">
+          <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
       </div>
       <div class="cfacts">
-        <button id="chatFindingFix" class="btn small primary">✦  Fix it</button>
-        <button id="chatFindingDone" class="btn small">✓  I fixed it</button>
-        <button id="chatFindingLater" class="btn small ghost">⏰  Dismiss</button>
-        <button id="chatFindingWrong" class="btn small ghost">✕  Not a problem</button>
+        <button id="chatFindingFix" class="btn small primary">Plan</button>
+        <button id="chatFindingDone" class="btn small">Done</button>
+        <button id="chatFindingLater" class="btn small ghost">Snooze</button>
+        <button id="chatFindingWrong" class="btn small ghost">Ignore</button>
       </div>
     </div>
     <!-- The CLI's own slash commands, as it advertises them over the stream.
@@ -757,13 +666,13 @@
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       <span>New chat</span>
     </button>
-    <!-- Every conversation in this project directory, whichever face made
-         it. Claude Code files them per working directory and both faces
-         stand in /config, so one started in the terminal is listed here
-         beside one started in the chat. -->
+    <!-- Your conversations — whichever face started them: Claude Code
+         files them per working directory and both faces stand in /config.
+         Below the rail's breakpoint this is the list page Ask opens on;
+         beside a rail it is hidden, the rail being that list. -->
     <button id="chatOpen" class="tmitem" role="menuitem">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4M3 4v5h5"/></svg>
-      <span>Conversations…</span>
+      <span>Your chats</span>
     </button>
     <button id="chatInfo" class="tmitem" role="menuitem">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.1"/></svg>
@@ -797,40 +706,26 @@
      identical to one that had, and a baseline pass that stopped running
      looked exactly like a quiet house. Every row says which of those it is. -->
 <div id="viewMemory" class="view">
-
-  <!-- (a) What brAIn said this morning. One paragraph, or one sentence about
-       why there wasn't one — because "the brief is off" and "there was
-       nothing worth saying" are different answers and only the first has
-       something to do about it. -->
-  <section class="ksec kbriefsec">
-    <h2>This morning</h2>
-    <div id="kBrief" class="kbrief"></div>
+  <!-- What it knows: tell it something, and every fact it holds, one per
+       row. The morning brief, the measurements, the memory document and its
+       filing queue used to live here too; the brief is linked from Today's
+       status line and the rest is brAIn's own machinery, which is ⚙'s. -->
+  <section class="ksec kknow">
+    <form id="kAddForm" class="kadd">
+      <input id="kAddInput" type="text" maxlength="500" autocomplete="off"
+             placeholder="Tell brAIn something…" aria-label="Tell brAIn something">
+      <button class="btn small primary" type="submit">Send</button>
+    </form>
+    <div class="kfbar">
+      <input id="kKnownSearch" type="search" autocomplete="off" spellcheck="false"
+             placeholder="Search facts" aria-label="Search facts">
+      <div id="kKnownKinds" class="kfchips" role="group" aria-label="What the fact is about"></div>
+    </div>
+    <div id="kKnown" class="klist"></div>
+    <div class="kfmore">
+      <button id="kKnownMore" class="btn small hidden" type="button">Show more</button>
+    </div>
   </section>
-
-  <!-- (a2) A deep review: the one run on the top tier, and only by a press.
-       Its price is on the button before it is pressed (an estimate read
-       off the reviews this house has already paid for), and what it said
-       stays here to be read — it files nothing anywhere else. -->
-  <section class="ksec kreviewsec">
-    <h2>Deep review</h2>
-    <div id="kReview" class="kreview"></div>
-  </section>
-
-  <!-- (b) The measurements. Always seven rows, always in this order, whatever
-       state each is in: a store that is missing from the list is a store
-       nobody can ask about, and "not started" is the answer for six of the
-       seven on the day you install this. -->
-  <section class="ksec">
-    <h2>What brAIn has measured</h2>
-    <p class="hint tight">Built quietly, over days, from what your house
-      already records. Nothing here costs a Claude run. Press one to see the
-      numbers behind it.</p>
-    <div id="kStores" class="kstores"></div>
-  </section>
-
-  <!-- (c) the memory document and (d) the inbox queue, in that order — the
-       relocated knowledge pane. `adoptMemoryPane()` moves it here. -->
-  <div id="memoryHost"></div>
 </div>
 
 <div id="viewDocs" class="view">
@@ -996,37 +891,6 @@
   </div>
 </div>
 
-<!-- The conversation list. Read out of Claude Code's own store rather than
-     kept by us, so it is the same set the terminal's own /resume offers —
-     picking one here replays it into the chat pane and carries on. -->
-<div id="convModal" class="modal" role="dialog" aria-modal="true">
-  <div class="box edit">
-    <header>
-      <span>⟲</span>
-      <span>Conversations</span>
-      <div class="spacer"></div>
-      <button id="convSel" class="btn icon" data-tip="Select several to delete"
-              aria-label="Select conversations">
-        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true">
-          <path d="M4 6l2 2 3-3M4 12l2 2 3-3M4 18l2 2 3-3M12 7h8M12 13h8M12 19h8"/>
-        </svg>
-      </button>
-      <button id="convClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
-    </header>
-    <div class="edit-body">
-      <!-- One line, not a manual: the chips explain themselves on press,
-           and the full story lives in Docs. The long version of this hint
-           took more of the dialog than the list it was introducing. -->
-      <p class="hint tight">Newest first — pick one to carry on where it left
-        off. brAIn's own runs sit behind their chips; Cards and Fixes open
-        read-only.</p>
-      <div id="convFilter" class="crfilters"></div>
-      <div id="convList" class="convlist"></div>
-      <p id="convEmpty" class="kempty hidden">No other conversations yet.</p>
-    </div>
-  </div>
-</div>
-
 <!-- A card or fix run, replayed to be read. These are records of what brAIn
      sent to Claude about the house and what came back — their turns ran
      under the analyst's read-only scoping (or the fixer's), so the chat
@@ -1060,431 +924,423 @@
       <div class="spacer"></div>
       <button id="setClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
-    <!-- Five sections, and three of them are shut when the dialog opens.
-         What this replaced was one flat scroll of a dozen headings with a
-         paragraph under nearly every control — 5,900px of it on a phone —
-         so the commonest visit (change the model, read the budget, see
-         whether the login is still good) meant scrolling past the corpus
-         capture and the rehearsal to get there. Two decisions. A section
-         REMEMBERS whether it was open, because somebody who lives in
-         Advanced should not have to reopen it every time, and a disclosure
-         that forgets is one people stop using. And the prose that came off
-         the page is on a ? beside the control it is about rather than
-         deleted: the long version is right about something, and it is
-         exactly what is wanted once — which is a tooltip's whole job. -->
+    <!-- Eight named sections, and only the first two are open when the
+         dialog opens. Each one REMEMBERS whether it was open (somebody who
+         lives in Diagnostics should not reopen it every visit), and there
+         is no "?" anywhere: a hint is at most two short sentences on the
+         page or it was cut, because a tooltip is the one place a phone
+         cannot read. The long versions live in the Guide, the last
+         section here. -->
     <div class="edit-body">
-      <!-- First section on purpose, and open on purpose. Everything else in
-           this dialog is a preference; this is the one that decides whether
-           the add-on works at all, and until now the only surface for it was
-           a chip that hides itself whenever the login is fine. -->
+      <!-- First, and open: everything else here is a preference, and this
+           is the one thing that decides whether the add-on works at all. -->
       <details class="setsec" id="setsecAccount" data-sec="account" open>
         <summary>
-          <span class="setsecname">Claude account</span>
-          <span class="setsecsub">Who brAIn signs in as, and whether the other BRUH add-ons
-            share that login</span>
+          <span class="setsecname">Account</span>
+          <span class="setsecsub">Which Claude login brAIn uses, and whether the other BRUH
+            add-ons share it</span>
         </summary>
         <div class="setsecbody">
           <div id="authBody" class="authbox">Loading…</div>
           <div class="row authbtns">
+            <button id="authRecheck" class="btn">Recheck</button>
             <button id="authSignin" class="btn">Sign in again</button>
-            <button id="authRecheck" class="btn">Check it now</button>
-            <button id="authSignout" class="btn danger">Sign out</button>
+            <!-- Neutral at rest: a red button is a warning about a press
+                 nobody has made. It confirms once, and the question says
+                 what a shared copy would do. -->
+            <button id="authSignout" class="btn">Sign out</button>
           </div>
-          <p class="hint tight">brAIn re-checks a stored credential every few hours while the
-            panel is open, so a login that dies is noticed without a restart. <b>Check it now</b>
-            asks Claude straight away — it costs one tiny run, which is why it is a button and
-            not a timer.</p>
-
+          <!-- What sharing COSTS stays on the page, beside the switch: a
+               credential leaving the add-on is a fact a person meets before
+               pressing, not one they have to go and ask for. -->
           <div class="sharebox">
-            <div class="row">
-              <b>Share this login with other BRUH add-ons</b>
-              <!-- What sharing COSTS stays on the page. The rest of this
-                   paragraph moved onto the ?, and the backup sentence did
-                   not: a credential leaving the add-on is the one fact a
-                   person has to meet before pressing, not one they have to
-                   go and ask for. -->
-              <button type="button" class="btn icon tiny"
-                aria-label="More about sharing this login with other add-ons"
-                data-tip="It is the one place outside this add-on's own storage that other BRUH add-ons can read, and it is the same thing `ha login --share` does in the classic terminal on the Ask tab. Sharing is off unless you turn it on, for exactly the backup reason above.">?</button>
-              <div class="spacer"></div>
-              <span id="authShareState" class="chip"><span class="dot"></span><span>—</span></span>
-            </div>
+            <label class="check" for="authShareTog">
+              <input id="authShareTog" class="tog" type="checkbox">
+              <span><b>Share this login with other BRUH add-ons</b></span></label>
             <p class="hint tight" id="authShareNote"></p>
-            <div class="row authbtns">
-              <button id="authShare" class="btn">Share it</button>
-              <button id="authUnshare" class="btn hidden">Stop sharing</button>
-            </div>
-            <p class="hint tight">Writes the credential to
-              <code>/config/.brain/secrets/claude_auth.json</code> (0600). <b>Note:</b>
-              <code>/config</code> is included in Home Assistant backups, and those are not
-              encrypted unless you turn that on — so a shared login travels with your backups.</p>
+            <p class="hint tight" id="authShareCost">Shared logins are stored in Home Assistant
+              backups, which are not encrypted unless you turn that on.</p>
           </div>
         </div>
       </details>
 
-      <details class="setsec" id="setsecInsights" data-sec="insights" open>
+      <!-- What brAIn spends and when it runs on its own. The header pill
+           only appears past 80% or when paused, so this is where the
+           numbers live the rest of the time. -->
+      <details class="setsec" id="setsecUsage" data-sec="usage" open>
         <summary>
-          <span class="setsecname">Insights</span>
-          <span class="setsecsub">Whether cards run on their own, what they may spend, and how
-            each one reads the house</span>
+          <span class="setsecname">Usage &amp; schedule</span>
+          <span class="setsecsub">This session and this week, the budget, and how cards
+            run on their own</span>
         </summary>
         <div class="setsecbody">
+          <div class="usagewrap">
+            <label>This session</label>
+            <div class="usagebar" aria-hidden="true">
+              <div id="usageFill"></div>
+              <div id="usageMark"></div>
+            </div>
+            <label class="usageweeklabel">This week</label>
+            <div class="usagebar" aria-hidden="true">
+              <div id="usageWeekFill" class="usageweekfill"></div>
+            </div>
+            <div id="usageText" class="hint"></div>
+            <div id="usageDetail" class="usagedetail"></div>
+          </div>
+
           <div class="setrow top">
-            <label class="check bigcheck"><input id="setEnabled" type="checkbox">
+            <label class="check bigcheck"><input id="setEnabled" class="tog" type="checkbox">
               <span><b>Automatic insights</b><br>
-              <span class="subtext">Generate cards on their intervals and schedules.</span></span></label>
-            <button type="button" class="btn icon tiny"
-              aria-label="More about automatic insights"
-              data-tip="Turn this off to pause all background generation — nothing runs, and nothing spends tokens, until you turn it back on. Manual Generate and Ask always work either way.">?</button>
+              <span class="subtext">Cards refresh on their own schedules. Asking by hand
+              always runs.</span></span></label>
           </div>
 
           <label for="setPlan">Your Claude subscription</label>
-          <select id="setPlan" class="selin">
+          <select id="setPlan" class="sel selin">
             <option value="pro">Claude Pro</option>
             <option value="max5">Claude Max (5×)</option>
             <option value="max20">Claude Max (20×)</option>
           </select>
 
           <div class="setrow">
-            <label for="setBudget">Session usage budget — let Insights use up to
+            <label for="setBudget">Let automatic insights use up to
               <b id="setBudgetVal">25%</b> of each 5-hour session</label>
-            <button type="button" class="btn icon tiny"
-              aria-label="More about the session usage budget"
-              data-tip="Your Claude plan refills a usage window every five hours. Insights pauses its automatic runs once the window's usage reaches this share, so it never crowds out your own Claude use, and they resume as the window rolls over. Manual clicks are never blocked.">?</button>
           </div>
           <input id="setBudget" type="range" min="5" max="100" step="5" value="25">
-          <p class="hint">Once this session's usage reaches this share, Insights stops starting
-            runs of its own until the window rolls over.</p>
 
-          <div class="usagewrap">
-            <label>This session right now</label>
-            <div class="usagebar" aria-hidden="true">
-              <div id="usageFill"></div>
-              <div id="usageMark"></div>
-            </div>
-            <div id="usageText" class="hint"></div>
-          </div>
-
-          <div class="setrow">
-            <label for="setGatherMode">How a card gets its data</label>
-            <button type="button" class="btn icon tiny"
-              aria-label="More about how a card gets its data"
-              data-tip="Search gives Claude a map of your home — how many entities of each kind, which areas, a few anchors — plus read-only Home Assistant tools, and it goes and looks up what the card actually needs: a question about one room costs a room rather than five hundred entities, and it is the only mode that can afford to pull history for a question you type. Snapshot posts the whole slimmed home in one turn with no tools: predictable, and typically several times the tokens. Search falls back to Snapshot on its own if a lookup run fails, so a card always appears either way. Neither mode can change anything in your house — insight runs get reading tools only.">?</button>
-          </div>
-          <select id="setGatherMode" class="selin">
+          <label for="setGatherMode">How a card gets its data</label>
+          <select id="setGatherMode" class="sel selin">
             <option value="search">Search — only what the card needs</option>
             <option value="snapshot">Snapshot — the whole home every run</option>
           </select>
-          <p class="hint">Search looks up only what the card needs; Snapshot sends the whole
-            home every run and costs several times the tokens.</p>
+          <p class="hint">Snapshot sends the whole home every run and costs several times
+            the tokens.</p>
 
-          <p class="hint">💡 Token-saving tips: each card's ✎ dialog can set fixed daily run times
-            (for example “07:00, 19:00”), a longer every-N-hours interval, or disable that card
-            entirely — scheduled times use far fewer tokens than short intervals.</p>
-
-          <!-- Who hears what, when: one sentence in the household's own words
-               rather than another row of options. Saved on change (blur),
-               like every other control here. The learned lines are shown
-               apart from it, one each, because a clause spliced into
-               somebody's sentence is one they cannot find again to remove.
-               No example in the box itself — a greyed-out example in an
-               empty box is read as content — so it lives on the ?. -->
-          <div class="setrow">
-            <label for="setNotifyPolicy">What deserves a notification — critical alerts
-              always come through</label>
-            <button type="button" class="btn icon tiny"
-              aria-label="More about the notification sentence"
-              data-tip="Say it the way you would to a person, for example: wake me for water, smoke, the freezer or the front door at night; batteries can wait for Saturday. brAIn reads it before each notification and decides whether to send it now, hold it for later or the morning list, or leave it on the Findings tab — and writes the message for your lock screen. Leaks, smoke, gas and other urgent critical alerts always come straight through, whatever this says, and if brAIn cannot ask Claude it sends exactly what it always did.">?</button>
-          </div>
-          <textarea id="setNotifyPolicy" rows="2" maxlength="400"
-            placeholder="In your own words…"></textarea>
-          <div id="setNotifyLearned" class="setlearned hidden"></div>
+          <details class="setsub" id="setUsageAdvanced">
+            <summary>Advanced</summary>
+            <p class="hint" id="setSyncNote"></p>
+            <div class="setgrid">
+              <div>
+                <label for="setRefresh">Default refresh interval (hours)</label>
+                <input id="setRefresh" type="number" min="0" max="168" step="1">
+                <p class="hint tight">0 means no scheduled refresh.</p>
+              </div>
+              <div>
+                <label for="setRefreshMode">When to refresh a card</label>
+                <select id="setRefreshMode" class="sel selin">
+                  <option value="changed">When what it reads changes</option>
+                  <option value="always">Always, on the interval</option>
+                  <option value="never">Never on a schedule</option>
+                </select>
+              </div>
+              <div>
+                <label for="setHistoryDays">History analyzed (days)</label>
+                <input id="setHistoryDays" type="number" min="1" max="30" step="1">
+              </div>
+              <div>
+                <label for="setTimeout">Generation timeout (minutes)</label>
+                <input id="setTimeout" type="number" min="2" max="30" step="1">
+              </div>
+              <div class="setwide">
+                <label for="setModel">Claude model</label>
+                <select id="setModel" class="sel selin"></select>
+                <input id="setModelCustom" class="hidden" type="text" maxlength="100"
+                       autocomplete="off" spellcheck="false" placeholder="e.g. claude-opus-5-5">
+              </div>
+              <div class="setwide">
+                <label for="setThinking">How hard brAIn thinks</label>
+                <select id="setThinking" class="sel selin">
+                  <option value="light">Light — cheaper where it is safe</option>
+                  <option value="normal">Normal — tiered by each job</option>
+                  <option value="generous">Generous — stronger where it counts</option>
+                </select>
+                <!-- Rewritten by syncThinking: with a model chosen above, the
+                     tiers are not consulted at all, so the select is disabled
+                     and this line says why rather than looking live. -->
+                <p class="hint tight" id="setThinkingNote">Every run is tiered by its job (Haiku looks,
+                  Sonnet thinks, Opus acts); this shifts the tiers.</p>
+              </div>
+              <div>
+                <label for="setKeepRuns">Past runs kept per card</label>
+                <input id="setKeepRuns" type="number" min="0" max="200" step="1">
+              </div>
+              <div>
+                <label for="setKeepDays">Keep past runs for (days)</label>
+                <input id="setKeepDays" type="number" min="0" max="365" step="1">
+              </div>
+            </div>
+          </details>
         </div>
       </details>
 
-      <details class="setsec" id="setsecTerminal" data-sec="terminal">
+      <!-- What brAIn may do without asking, and the limits a person sets.
+           One switch with two doors: this is the add-on's
+           `dangerously_skip_permissions` option, written back through the
+           Supervisor, so the Configuration tab shows the same value.
+           "Stop asking…" on a chat approval card opens the dialog here. -->
+      <details class="setsec" id="setsecPermissions" data-sec="permissions">
         <summary>
-          <span class="setsecname">Terminal &amp; chat</span>
-          <span class="setsecsub">Whether brAIn asks before it acts, which face the Ask tab
-            shows, and how many conversations stay live</span>
+          <span class="setsecname">Permissions</span>
+          <span class="setsecsub">Whether brAIn asks before it acts, and the house rules that
+            make it more careful</span>
         </summary>
         <div class="setsecbody">
-          <!-- One switch, two doors: this is the add-on's
-               `dangerously_skip_permissions` option, written back through the
-               Supervisor like the generation defaults, so the Configuration
-               tab shows the same value. "Stop asking" on a chat approval card
-               opens the dialog here. -->
           <div class="setrow top" id="setSkipPermsRow">
-            <label class="check bigcheck"><input id="setSkipPerms" type="checkbox">
+            <label class="check bigcheck"><input id="setSkipPerms" class="tog" type="checkbox">
               <span><b>Let brAIn act without asking</b><br>
               <span class="subtext">The terminal and the chat stop asking before each command,
               edit or change.</span></span></label>
-            <button type="button" class="btn icon tiny"
-              aria-label="More about acting without asking"
-              data-tip="Off, the terminal and the chat ask before Claude runs a command, edits a file or changes something in Home Assistant. Only reading is pre-approved. On, they stop asking. Still guarded: brAIn's Home Assistant tools refuse protected entities, and so do plain shell service calls and YAML edits made with Claude's file tools that name one. A shell command that reaches one some other way is not checked. brAIn's own deny-list still holds, a conversation about a finding still asks (an agreed change still goes through the plan, with Undo), and voice and background runs keep their own rules. Edits made with Claude's file tools can be put back with brain undo; changes made by shell commands cannot. A change reaches the next terminal session and the chat's next message. A terminal session already open keeps the setting it started with, either way, until you end it with /exit; a chat answer already being written finishes first. This is the add-on's dangerously_skip_permissions option, so the Configuration tab shows the same switch.">?</button>
           </div>
           <!-- Rewritten by renderSettingsForm from `permission_sessions`
                when an open terminal session did not get the switch's
-               current value; this text is what it says otherwise. -->
-          <p class="hint" id="setSkipPermsNote">Applies to the next terminal session and chat message.
-            Protected entities are refused through brAIn's own tools, not every shell command.</p>
+               current value; this text is what it says otherwise. The
+               caveat under it is never replaced: it is the half of the
+               switch that is about safety. -->
+          <p class="hint" id="setSkipPermsNote">Applies to the next terminal session and chat
+            message.</p>
+          <p class="hint" id="setSkipPermsCaveat">Protected entities are refused through brAIn's
+            own tools, not every shell command.</p>
 
-          <div class="setrow">
+          <h4 class="sethead">House rules</h4>
+          <p class="hint">One per line, in your own words. Each is checked against every
+            action brAIn takes, and can only make it more careful.</p>
+          <textarea id="setHouseRules" rows="4" maxlength="4000"
+            aria-label="House rules, one per line"></textarea>
+          <div class="row">
+            <button id="setHouseRulesSave" class="btn">Save</button>
+            <span id="setHouseRulesNote" class="hint tight"></span>
+          </div>
+
+          <details class="setsub" id="setPermsAdvanced">
+            <summary>Advanced</summary>
             <label for="setTerminalUi">Ask tab opens as</label>
-            <button type="button" class="btn icon tiny"
-              aria-label="More about the two terminal faces"
-              data-tip="Both run the same Claude Code, with the same login, the same /config and the same permissions — the difference is how you see it. Chat reflows to the screen it is on, folds tool calls into one line each, and gives you a normal text box (so dictation and autocorrect behave); it is the one to use on a phone. Classic is a real terminal, which is what you want for anything that draws its own screen — a TUI, htop, an installer — or for running shell commands yourself. You can switch at any time from the ⋯ menu on the Ask tab, and the conversation comes with you; that switch changes this setting too.">?</button>
-          </div>
-          <select id="setTerminalUi" class="selin">
-            <option value="chat">Chat — Claude Code as messages</option>
-            <option value="classic">Classic — the full terminal (ttyd + tmux)</option>
-          </select>
-          <p class="hint">Both run the same Claude Code with the same login and permissions —
-            the difference is how you see it.</p>
-
-          <div class="setrow">
+            <select id="setTerminalUi" class="sel selin">
+              <option value="chat">Chat — Claude Code as messages</option>
+              <option value="classic">Classic — the full terminal (ttyd + tmux)</option>
+            </select>
             <label for="setChatSessions">Conversations kept open at once</label>
-            <button type="button" class="btn icon tiny"
-              aria-label="More about how many conversations stay open"
-              data-tip="Each open conversation holds its own Claude Code process, the same way a terminal tab does — so switching between them is instant and the one you leave carries on answering. This is how many of those processes brAIn keeps running, not how many conversations you may have: past it, the one you have not touched for longest is closed (never one that is mid-answer) and reopens where it left off the next time you go back to it. Raise it if you keep several going; lower it on a small box.">?</button>
-          </div>
-          <select id="setChatSessions" class="selin">
-            <option value="1">1 — one at a time</option>
-            <option value="2">2</option>
-            <option value="3">3 (default)</option>
-            <option value="4">4</option>
-            <option value="5">5</option>
-            <option value="6">6</option>
-            <option value="8">8</option>
-          </select>
-          <p class="hint">How many Claude Code processes stay running — not how many
-            conversations you may have.</p>
+            <select id="setChatSessions" class="sel selin">
+              <option value="1">1 — one at a time</option>
+              <option value="2">2</option>
+              <option value="3">3 (default)</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+              <option value="6">6</option>
+              <option value="8">8</option>
+            </select>
+            <p class="hint">How many Claude Code processes stay running, not how many
+              conversations you may have.</p>
+          </details>
         </div>
       </details>
 
-      <details class="setsec" id="setsecDefaults" data-sec="defaults">
+      <!-- What brAIn may read beyond Home Assistant's own states: cameras
+           and calendars. Both empty until somebody ticks one, both fetched
+           when this section opens and never on the way into the dialog. -->
+      <details class="setsec" id="setsecSources" data-sec="sources">
         <summary>
-          <span class="setsecname">Generation defaults</span>
-          <span class="setsecsub">Interval, model, history and how long past runs are kept —
-            the same settings as the Configuration tab</span>
+          <span class="setsecname">Sources</span>
+          <span class="setsecsub">Which cameras and calendars brAIn may read on its
+            own</span>
         </summary>
         <div class="setsecbody">
-          <p class="hint" id="setSyncNote"></p>
-
-          <div class="setgrid">
-            <div>
-              <label for="setRefresh">Default refresh interval (hours)</label>
-              <input id="setRefresh" type="number" min="0" max="168" step="1">
-              <p class="hint tight">Cards without their own interval or schedule regenerate this
-                often. 0 = no scheduled refresh.</p>
-            </div>
-            <!-- Beside the interval because the interval is its FLOOR: one says how
-                 soon a card may run again, this says what has to be true once that
-                 has passed. Worded as *when* rather than *how often* for the same
-                 reason — "every 12 hours" and "when the findings list moved" are
-                 answers to different questions, and a card that sat still all day
-                 because nothing changed has to be readable as that rather than as a
-                 schedule nobody can find. Stored by the panel, so its hint says so:
-                 the note above this grid is about the Configuration-tab options. -->
-            <div>
-              <div class="setrow">
-                <label for="setRefreshMode">When to refresh a card</label>
-                <button type="button" class="btn icon tiny"
-                  aria-label="More about when a card refreshes"
-                  data-tip="When what it reads changes skips a run that would produce the same card — the card's foot then says it is waiting. This one is brAIn's own setting and is not on the Configuration tab.">?</button>
-              </div>
-              <select id="setRefreshMode" class="selin">
-                <option value="changed">When what it reads changes</option>
-                <option value="always">Always, on the interval</option>
-                <option value="never">Never on a schedule</option>
-              </select>
-              <p class="hint tight">Once the interval above has passed, this decides whether the
-                card actually runs.</p>
-            </div>
-            <div>
-              <label for="setHistoryDays">History analyzed (days)</label>
-              <input id="setHistoryDays" type="number" min="1" max="30" step="1">
-              <p class="hint tight">Days of sensor history each analysis sees — fewer days =
-                fewer tokens per run.</p>
-            </div>
-            <div>
-              <label for="setTimeout">Generation timeout (minutes)</label>
-              <input id="setTimeout" type="number" min="2" max="30" step="1">
-            </div>
-            <div class="setwide">
-              <label for="setModel">Claude model</label>
-              <select id="setModel" class="selin"></select>
-              <input id="setModelCustom" class="hidden" type="text" maxlength="100"
-                     autocomplete="off" spellcheck="false" placeholder="e.g. claude-opus-5-5">
-              <p class="hint tight">Smaller models cost far fewer tokens per run; the
-                biggest ones dig deeper. Pick <b>Custom model id…</b> for anything newer
-                than this add-on.</p>
-            </div>
-            <div class="setwide">
-              <label for="setThinking">How hard brAIn thinks</label>
-              <select id="setThinking" class="selin">
-                <option value="light">Light — cheaper where it is safe</option>
-                <option value="normal">Normal — tiered by each job</option>
-                <option value="generous">Generous — stronger where it counts</option>
-              </select>
-              <!-- Rewritten by syncThinking: with a model chosen above, the
-                   tiers are not consulted at all, so the select is disabled
-                   and this line says why rather than looking live. -->
-              <p class="hint tight" id="setThinkingNote">Every run is tiered by its job (Haiku looks,
-                Sonnet thinks, Opus acts); this shifts the tiers.</p>
-            </div>
-            <div>
-              <label for="setKeepRuns">Past runs kept per card</label>
-              <input id="setKeepRuns" type="number" min="0" max="200" step="1">
-            </div>
-            <div>
-              <label for="setKeepDays">Keep past runs for (days)</label>
-              <input id="setKeepDays" type="number" min="0" max="365" step="1">
-            </div>
-          </div>
-          <p class="hint">Only <code>log_level</code> stays Configuration-tab-only (it takes
-            effect at startup, so there is nothing to sync).</p>
-        </div>
-      </details>
-
-      <!-- Which cameras brAIn may look at on its own. Empty until somebody
-           ticks one: a camera frame is the most private thing a house
-           holds, and voice, an automation's task and the Resident all
-           answer to this one list and one daily count. Its own section
-           because it is a privacy decision, not a generation default, and
-           fetched when this section opens, never on the way into the
-           dialog. -->
-      <details class="setsec" id="setsecCameras" data-sec="cameras">
-        <summary>
-          <span class="setsecname">Cameras</span>
-          <span class="setsecsub">Which cameras brAIn may look at on its own, and how often it
-            has today</span>
-        </summary>
-        <div class="setsecbody">
-          <p class="hint">Looked at when you ask a voice assistant, when an automation runs a
-            camera check, and to confirm a safety alarm or an open door. None until you tick one.
-            <button type="button" class="btn icon tiny"
-              aria-label="More about which cameras brAIn may look at"
-              data-tip="Unticked cameras are never looked at on brAIn's own initiative. Ticked ones are looked at a limited number of times a day across every path, and a frame is described for what it shows about the house, never about a person. You asking in the chat or the terminal is you looking, and is not limited by this list. A robot vacuum's map is published as a camera too; those are left out of the list unless one is already ticked.">?</button></p>
+          <h4 class="sethead first">Cameras</h4>
+          <p class="hint">Looked at when a voice assistant asks, when an automation runs a
+            camera check, and to confirm a safety alarm or an open door. None until you tick
+            one.</p>
           <div id="setCameras" class="setcams">Open this section to load your cameras.</div>
+
+          <h4 class="sethead">Calendars</h4>
+          <div id="setCalendars" class="setcams">Open this section to load your calendars.</div>
+          <!-- A safety note, so it stays on the page beside the picker. -->
+          <p class="hint" id="setCalendarsNote">Only what is ticked is read, once or twice a day,
+            for the next three days. What it says is treated as information, never as an
+            instruction.</p>
         </div>
       </details>
 
-      <!-- Shut, and its five loaders do not run until it is opened. Five
-           fetches for a dialog somebody opened to change the model is the
-           cost this whole reorganisation is about — and two of those five
-           start a poll, so the old arrangement paid for a request every
-           three seconds behind a section nobody had looked at. -->
-      <details class="setsec" id="setsecAdvanced" data-sec="advanced">
+      <details class="setsec" id="setsecNotify" data-sec="notifications">
         <summary>
-          <span class="setsecname">Advanced</span>
-          <span class="setsecsub">Diagnostics, problem reports, speaking up, corpus capture,
-            the deep check and the rehearsal</span>
+          <span class="setsecname">Notifications</span>
+          <span class="setsecsub">What deserves a notification, and whether urgent problems
+            are said aloud</span>
         </summary>
         <div class="setsecbody">
-          <h4 class="sethead first">Diagnostics</h4>
-          <p class="hint">What brAIn has actually been doing — every Claude run of any kind,
-            and the last pass of the house checks.
-            <button type="button" class="btn icon tiny"
-              aria-label="More about the diagnostics payload"
-              data-tip="This is the same payload behind Home Assistant's own Download diagnostics button on the brAIn integration, and the same one `brain report` bundles. It carries no prompts, no replies and no entity states.">?</button></p>
+          <!-- Who hears what, when: one sentence in the household's own words
+               rather than another row of options. Saved on change (blur).
+               The learned lines are shown apart from it, one each, because a
+               clause spliced into somebody's sentence is one they cannot
+               find again to remove. -->
+          <label for="setNotifyPolicy">What deserves a notification</label>
+          <textarea id="setNotifyPolicy" rows="2" maxlength="400"
+            placeholder="In your own words…"></textarea>
+          <p class="hint tight">Leaks, smoke and other urgent critical alerts always come
+            through, whatever this says.</p>
+          <div id="setNotifyLearned" class="setlearned hidden"></div>
+
+          <div class="setrow top">
+            <label class="check bigcheck"><input id="setSpeakFirst" class="tog" type="checkbox">
+              <span><b>Say urgent problems aloud</b><br>
+              <span class="subtext">On the voice satellite in the room somebody is in, never
+              in quiet hours, then on the phone as usual.</span></span></label>
+          </div>
+        </div>
+      </details>
+
+      <!-- The memory document and what is waiting to be filed into it. The
+           queue files itself once a day; there is deliberately no button to
+           force it here. -->
+      <details class="setsec" id="setsecMemory" data-sec="memory">
+        <summary>
+          <span class="setsecname">Memory</span>
+          <span class="setsecsub">The document brAIn keeps about your home, and what is
+            waiting to be filed into it</span>
+        </summary>
+        <div class="setsecbody">
+          <div class="row setmemrow">
+            <button id="setMemEdit" class="btn">Edit</button>
+            <!-- A real link, not a fetch: the server sets
+                 Content-Disposition and the browser does the rest, which
+                 survives the ingress iframe where a scripted blob download
+                 may not. -->
+            <a id="setMemExport" class="btn" href="api/memory/export" download>Export</a>
+            <button id="setMemSave" class="btn primary hidden">Save</button>
+            <button id="setMemCancel" class="btn ghost hidden">Cancel</button>
+          </div>
+          <div id="setMemView" class="kmd setmemview">Open this section to load the
+            document.</div>
+          <textarea id="setMemTa" class="kmemedit hidden" rows="14" maxlength="100000"
+            spellcheck="false" aria-label="Memory document"></textarea>
+          <h4 class="sethead">Waiting to be filed <span id="setMemCount"
+            class="kcount"></span></h4>
+          <p class="hint tight">Filed into the document once a day, or sooner when the list
+            gets long.</p>
+          <div id="setMemQueue" class="setmemqueue"></div>
+        </div>
+      </details>
+
+      <!-- Every counter, run log and self-test in one place. Shut, and its
+           loaders do not run until it is opened: a dozen fetches for a
+           dialog somebody opened to change the model is the cost this whole
+           arrangement is about, and two of them start a poll. Its first row
+           is "Anything wrong?", the one line that can also surface on
+           Today. -->
+      <details class="setsec" id="setsecDiagnostics" data-sec="diagnostics">
+        <summary>
+          <span class="setsecname">Diagnostics</span>
+          <span class="setsecsub">Anything wrong, how right brAIn has been, what it has
+            measured, its runs and self-tests</span>
+        </summary>
+        <div class="setsecbody">
           <div id="diagBody" class="diag">Loading…</div>
           <div class="row">
-            <button id="diagCopy" class="btn">Copy for a bug report</button>
-            <button id="diagRefresh" class="btn">Refresh</button>
-            <button id="diagMeasure" class="btn" data-tip="Re-measures what is normal
-              in this house — baselines, doors and windows, machines, how rooms hold
-              heat. It runs overnight on its own; this is how to ask for it now.
-              It reads a month of statistics, so it takes a few minutes and costs no
-              Claude turns.">Measure the house now</button>
-            <button id="diagCurious" class="btn" hidden data-tip="brAIn notices the
-              things somebody here does by hand and, once a day at most, spends one
-              Claude run working out why — the weather, the sun, the season, what
-              else was happening. This asks the next one now. Unlike the rest of
-              this dialog it costs a Claude turn, and it never asks twice about the
-              same thing.">Ask why now</button>
+            <button id="diagRefresh" class="btn">Recheck</button>
           </div>
 
-          <h4 class="sethead">Speak first</h4>
-          <div class="setrow top">
-            <label class="check bigcheck"><input id="setSpeakFirst" type="checkbox">
-              <span><b>Say urgent problems aloud</b><br>
-              <span class="subtext">Off by default. A serious problem is announced on the
-              voice satellite in the room somebody is in, then sent to the phone as usual.</span></span></label>
-            <button type="button" class="btn icon tiny"
-              aria-label="More about speaking first"
-              data-tip="Only a check's serious or critical finding that needs attention now is spoken, never during quiet hours, never when everybody is away, at most once per finding and once every half hour. A satellite you have protected is never used, and nothing a person is called is said aloud. The phone notification is sent either way.">?</button>
-          </div>
+          <h4 class="sethead">How right it's been</h4>
+          <div id="diagAccuracy" class="diag">Loading…</div>
 
-          <h4 class="sethead">Problems</h4>
-          <p class="hint">When a run fails or brAIn's health changes, one plain-text file is
-            written under <code>/share/brain/reports</code>.
-            <button type="button" class="btn icon tiny"
-              aria-label="More about problem reports"
-              data-tip="The file says what happened and where to look, and carries the run, the last 80 lines of the add-on log and the diagnostics above, with anything credential-shaped removed. A repeat inside a day adds a line to the file it already has. Tick the ones about the thing you are reporting and press Copy selected; Write a report now makes one with the full diagnostics in it.">?</button></p>
-          <div id="probBody" class="diag prob">Loading…</div>
-          <div class="row probbtns">
-            <button id="probCopySel" class="btn">Copy selected</button>
-            <button id="probCopyAll" class="btn">Copy all</button>
-            <button id="probWrite" class="btn">Write a report now</button>
+          <h4 class="sethead">Measurements</h4>
+          <div id="diagMeasures" class="diag">
+            <div id="kBrief" class="kbrief"></div>
+            <div id="kStores" class="kstores">Loading…</div>
           </div>
-
-          <h4 class="sethead">Capture runs for the corpus</h4>
-          <p class="hint tight"><b>You don't need this to use brAIn.</b> It is for helping
-            improve brAIn's own prompts; leave it off unless you mean to.</p>
-          <div class="setrow top">
-            <label class="check bigcheck"><input id="setCapture" type="checkbox">
-              <span><b>Save a copy of each insight card run</b><br>
-              <span class="subtext">Off by default. Each run writes one file under
-              <code>/data/capture</code>: what Claude was given, the card it made, and how you
-              answered each finding it raised.</span></span></label>
-            <button type="button" class="btn icon tiny"
-              aria-label="More about capturing runs"
-              data-tip="Your answer to a finding (fixed, wrong, to-do) is what grades the run: it says whether the card was right about your house. Anything credential-shaped is stripped as the file is written. Nothing leaves this add-on until you press Export on a run below, which copies that one file to /share/brain/corpus/. Your entity and area names ARE in these files, so read one before you share it. Backups skip the whole folder.">?</button>
-          </div>
-          <p class="hint tight">Nothing leaves this add-on until you press Export; the newest
-            <span id="capMax">50</span> are kept.</p>
-          <div id="capBody" class="diag">Loading…</div>
-          <p class="hint tight">Why it exists: no test can check the card prompts against a real
-            house, so graded runs from real houses are how a prompt change gets measured.
-            <button type="button" class="btn icon tiny"
-              aria-label="More about why runs are captured"
-              data-tip="Sharing one is entirely optional: it is a pull request adding the exported file to tests/corpus/entries/, which you read first.">?</button></p>
-
-          <h4 class="sethead">Deep check</h4>
-          <p class="hint">Everything above is what brAIn <em>recorded</em>; this walks every face
-            with a live round trip each and says which of them works right now. It makes one
-            reversible change: a test helper it creates, renames with a real fix, and removes.
-            <button type="button" class="btn icon tiny"
-              aria-label="More about the deep check"
-              data-tip="It drives a plain Claude run, the analyst's tools, a chat turn, an automation task, Assist, memory, findings and one real fix. The fix renames an input_boolean named brain_test_*, which the check creates first and deletes afterwards; nothing of yours is touched, and the chat turn is filed as the check's, not shown among your chats. It spends about five Claude turns and takes a few minutes; it never runs on its own, only when you press this. Everything it creates it removes, and it checks that it did.">?</button></p>
           <div class="row">
-            <button id="deepRun" class="btn">Run deep check</button>
-            <span id="deepLast" class="hint tight"></span>
+            <button id="diagMeasure" class="btn"
+              aria-label="Run the measurements now">Run</button>
+            <span class="hint tight">Reads a month of statistics. No Claude run.</span>
           </div>
-          <div id="deepBody" class="diag" hidden></div>
 
-          <h4 class="sethead">Rehearsal</h4>
-          <p class="hint">The house checks are tested against made-up houses; this tests them
-            against <em>yours</em>.
-            <button type="button" class="btn icon tiny"
-              aria-label="More about the rehearsal"
-              data-tip="It creates a few deliberately broken things named brain_test_*, runs the checks and the analyst against them, scores both, and removes everything again. The score is the point: on this house, this Home Assistant version, this model, the analyst found 3 of 4 planted defects and reported 1 thing that was not there. It asks first and shows exactly what it would create.">?</button></p>
+          <h4 class="sethead">Overnight health check</h4>
+          <div id="diagOvernight" class="diag">Loading…</div>
           <div class="row">
-            <button id="rehearseRun" class="btn">Rehearse…</button>
-            <!-- Rendered only when the record says something is still in the
-                 house: a button that clears nothing is a control asking to be
-                 understood, and the whole reason this exists is that the only
-                 documented way out of a failed cleanup was another rehearsal. -->
-            <button id="rehearseSweep" class="btn" hidden>Clear up what was left</button>
-            <span id="rehearseLast" class="hint tight"></span>
+            <button id="diagOvernightRun" class="btn"
+              aria-label="Run the overnight health check now">Run</button>
           </div>
-          <div id="rehearseBody" class="diag" hidden></div>
-          <p class="hint tight">Reporting a bug? Run <code>brain report</code> on the Ask
-            tab.
-            <button type="button" class="btn icon tiny"
-              aria-label="More about brain report"
-              data-tip="It writes a redacted bundle — this payload, `brain doctor --json` and the tail of the add-on log — to /share/brain/reports/, and every file in it goes through the same credential scrub.">?</button></p>
+
+          <h4 class="sethead">Who can reach the house</h4>
+          <div id="diagAccess" class="diag">Loading…</div>
+          <div class="row">
+            <button id="diagAccessRun" class="btn"
+              aria-label="Run the access review now">Run</button>
+          </div>
+
+          <h4 class="sethead">Runs</h4>
+          <div id="diagRuns" class="diag">Loading…</div>
+
+          <!-- One export for a bug report. Tick problem files below to send
+               those; with none ticked it writes a fresh report and copies
+               that. -->
+          <h4 class="sethead">Export report</h4>
+          <p class="hint">One redacted text file for a bug report. Anything credential-shaped
+            is removed.</p>
+          <div class="row">
+            <button id="diagCopy" class="btn primary"
+              aria-label="Share a report for a bug report">Share</button>
+          </div>
+
+          <details class="setsub" id="setDiagDeveloper">
+            <summary>Developer</summary>
+            <h4 class="sethead first">Problems</h4>
+            <p class="hint">One text file per failure, under <code>/share/brain/reports</code>.
+              Tick some to share just those.</p>
+            <div id="probBody" class="diag prob">Loading…</div>
+
+            <h4 class="sethead">Why somebody did something</h4>
+            <p class="hint">brAIn asks once a day at most. This asks the next one now, with one
+              Claude run.</p>
+            <div class="row">
+              <button id="diagCurious" class="btn" hidden
+                aria-label="Run the next why question now">Run</button>
+            </div>
+
+            <h4 class="sethead">Capture runs for the corpus</h4>
+            <div class="setrow top">
+              <label class="check bigcheck"><input id="setCapture" class="tog" type="checkbox">
+                <span><b>Save a copy of each insight card run</b><br>
+                <span class="subtext">Off by default. Each file holds your entity names, so
+                read one before you share it.</span></span></label>
+            </div>
+            <p class="hint tight">Nothing leaves this add-on until you press Export; the newest
+              <span id="capMax">50</span> are kept.</p>
+            <div id="capBody" class="diag">Loading…</div>
+
+            <h4 class="sethead">Deep check</h4>
+            <p class="hint">A live round trip through every face, about five Claude runs. It
+              creates one test helper and removes it again.</p>
+            <div class="row">
+              <button id="deepRun" class="btn" aria-label="Run the deep check">Run</button>
+              <span id="deepLast" class="hint tight"></span>
+            </div>
+            <div id="deepBody" class="diag" hidden></div>
+
+            <h4 class="sethead">Rehearsal</h4>
+            <p class="hint">Plants a few broken <code>brain_test_*</code> things, scores the
+              checks against them, and removes them. It asks first.</p>
+            <div class="row">
+              <button id="rehearseRun" class="btn" aria-label="Run a rehearsal">Run</button>
+              <!-- Rendered only when the record says something is still in
+                   the house: a button that clears nothing is a control
+                   asking to be understood. -->
+              <button id="rehearseSweep" class="btn" hidden
+                aria-label="Delete what the last rehearsal left behind">Delete</button>
+              <span id="rehearseLast" class="hint tight"></span>
+            </div>
+            <div id="rehearseBody" class="diag" hidden></div>
+          </details>
+        </div>
+      </details>
+
+      <!-- The guide, grouped. Help left the tab bar: it is not a daily job,
+           and the docs pane is one press away from here. -->
+      <details class="setsec" id="setsecGuide" data-sec="guide">
+        <summary>
+          <span class="setsecname">Guide</span>
+          <span class="setsecsub">How brAIn works, in eight parts, with setup and safety
+            first</span>
+        </summary>
+        <div class="setsecbody">
+          <nav id="setGuide" class="setguide" aria-label="Guide contents"></nav>
         </div>
       </details>
     </div>
@@ -1494,8 +1350,7 @@
 <div id="refineModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="refineTitle">
   <div class="box edit">
     <header>
-      <span aria-hidden="true">✎</span>
-      <span id="refineTitle">Refine card</span>
+      <span id="refineTitle">Ask about this report</span>
       <div class="spacer"></div>
       <button id="refineClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
@@ -1508,10 +1363,16 @@
         Keep asking this on every future run of the card</label>
       <p id="refineFrom" class="hint refinefrom hidden"></p>
       <div class="row">
-        <button id="refineGo" class="btn primary">Regenerate with changes</button>
-        <button id="refineCancel" class="btn ghost">Cancel</button>
+        <button id="refineGo" class="btn primary">Send</button>
+        <button id="refineChat" class="btn ghost" type="button"
+                data-tip="Talk it through in the Ask tab instead">Ask</button>
       </div>
-      <p class="hint">The version on screen stays in the card's history, so you can page back to it.</p>
+      <p class="hint">brAIn makes the report again with your change; the version
+        on screen stays under ⋯ › Past versions.</p>
+      <!-- What the report's definition can change, as links: none of these
+           is something you do to a report you are reading, so none earns a
+           button on the card. -->
+      <div id="refineMore" class="refinemore"></div>
       <div id="refineKeptWrap" class="hidden">
         <label>Already asked of this card</label>
         <div id="refineKept" class="fblist"></div>
@@ -1544,15 +1405,15 @@
       <div class="sharepick">
         <div>
           <label for="shareDash">Dashboard</label>
-          <select id="shareDash" class="selin"></select>
+          <select id="shareDash" class="sel selin"></select>
         </div>
         <div>
           <label for="shareView">View</label>
-          <select id="shareView" class="selin"></select>
+          <select id="shareView" class="sel selin"></select>
         </div>
         <div>
           <label for="shareShow">Show</label>
-          <select id="shareShow" class="selin">
+          <select id="shareShow" class="sel selin">
             <option value="card">The whole card</option>
             <option value="chart">Just the chart</option>
           </select>
@@ -1571,146 +1432,6 @@
         <p class="hint">The address contains this add-on's private card token — anyone with
           the exact link can view the insight, nothing else.</p>
       </details>
-    </div>
-  </div>
-</div>
-
-<div id="kModal" class="modal" role="dialog" aria-modal="true">
-  <div class="box edit kwide">
-    <header>
-      <span>🧠</span>
-      <span>Memory — what Insights has learned</span>
-      <div class="spacer"></div>
-      <button id="kClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
-    </header>
-    <div class="edit-body ksplit">
-      <!-- The document comes FIRST and the queue after it, which is the order
-           they are read in: what brAIn remembers, then what has not landed
-           there yet. They used to be two columns side by side, which said
-           nothing about which was which — and in the tab there is no
-           `.kwide` ancestor, so the two-column rule never applies and this
-           is simply the order down the page. -->
-      <!-- What the three parts ARE, said once, above them. The document,
-           the facts and the queue all hold "things brAIn has learned", and
-           for a year the page said so three times in three places without
-           once saying how they differ — so the facts list read as a second,
-           unsorted copy of the document. They are one pipeline: everything
-           learned is queued, the queue is filed into the document (prose,
-           the one you edit) and kept as individual facts (tagged and
-           searchable, what a run looks up about the thing it is working on). -->
-      <section class="ksec kguide" aria-label="How brAIn's memory works">
-        <h2>How brAIn's memory works</h2>
-        <ol class="kguidelist">
-          <li><b>Waiting to be filed</b> — anything brAIn learns (from you, a
-            correction, voice, the chat, a study session) lands here first.
-            Each line becomes a fact straight away, and once a day the queue
-            is written into the document.</li>
-          <li><b>Memory document</b> — a short written summary of your home,
-            in brAIn's words. Every run reads the top of it and voice reads a
-            condensed copy. It is yours to edit: fix anything wrong here and
-            brAIn stops saying it.</li>
-          <li><b>Facts brAIn has learned</b> — the same knowledge kept one fact
-            at a time, each tagged with the device, room or person it is
-            about, who taught it and when. When brAIn works on one device it
-            looks up that device's facts. Search it, and forget anything
-            wrong; rules you set with <i>Not a problem</i> live here too.</li>
-        </ol>
-      </section>
-
-      <div id="kMemWrap" class="kcol kmemcol">
-        <section class="ksec">
-        <h2>Memory document</h2>
-        <p class="hint tight">brAIn's written summary of your home. Edit it to
-          correct anything; teach it something new with the box below.</p>
-        <form id="kAddForm" class="kadd">
-          <input id="kAddInput" type="text" maxlength="500" autocomplete="off"
-                 placeholder="Teach it something — “The garage fridge is supposed to run 24/7”">
-          <button class="btn small primary" type="submit">Add</button>
-        </form>
-        <!-- Two different states wore the same words. A pass that is
-             RUNNING (the daemon's, daily or once the queue passes 20 facts,
-             or the one you asked for) is work happening now and says so;
-             one that is merely QUEUED is a fact waiting for the next pass.
-             Reporting only the second made a background consolidation look
-             like nothing at all — the queue would empty while you watched
-             and nothing on screen had said why. -->
-        <div id="kMemMerging" class="kmerging hidden">
-          <span id="kMemMergingSpin" class="kspin hidden" aria-hidden="true"></span>
-          <span id="kMemMergingText">✨ Queued — it lands at the next consolidation…</span>
-        </div>
-        <!-- A consolidator that has stopped running is invisible by nature:
-             the queue just sits there, and every screen says everything is
-             fine. This is the one place that would have shown it. -->
-        <div id="kMemStale" class="kstale hidden"></div>
-        <div class="row kmemrow">
-          <button id="kMemEdit" class="btn small">✎ Edit markdown</button>
-          <!-- A real link, not a fetch: the server sets Content-Disposition
-               and the browser does the rest, which survives the ingress
-               iframe where a scripted blob download may not. Import stays
-               CLI-only (`brain memory import`) — restoring is deliberate
-               work and the terminal is where deliberate work lives. -->
-          <a id="kMemExport" class="btn small ghost" href="api/memory/export" download
-             title="Download everything brAIn has learned — the memory document, findings and their answers — as one file. Restore it elsewhere with `brain memory import`.">⬇ Export</a>
-          <button id="kMemSave" class="btn small primary hidden">Save</button>
-          <button id="kMemCancel" class="btn small ghost hidden">Cancel</button>
-          <span id="kMemDirty" class="kdirty hidden">unsaved edits</span>
-        </div>
-        <div id="kMemView" class="kmd"></div>
-        <div id="kMemEmpty" class="kempty hidden">Nothing learned yet — teach it a fact above,
-          or press “Edit markdown” to start one.</div>
-        <textarea id="kMemTa" class="kmemedit hidden" rows="14" maxlength="100000"
-                  spellcheck="false"></textarea>
-        </section>
-      </div>
-
-      <!-- The queue: one heading, one list, one button. -->
-      <div class="kcol kqueuecol">
-        <section class="ksec">
-        <h2>Waiting to be filed</h2>
-        <p class="hint tight">Learned, not merged yet. Filed automatically once a
-          day (sooner past 20); press the button to do it now.</p>
-        <div class="row kmemrow">
-          <button id="kConsolidate" class="btn small"
-                  title="Merge everything queued into the memory document — a few seconds, and one small Claude call">⇪ File into memory now</button>
-          <span id="kPending" class="kpending"></span>
-        </div>
-        <div id="kFacts" class="klist"></div>
-        </section>
-      </div>
-
-      <!-- Every fact, for a person rather than a prompt: searched, filtered
-           and sorted on the server (`facts_store.browse`), paged, and
-           grouped by what it is about when sorted that way. The old list
-           was `recall()` — ranked for a model, three rows per subject — so
-           most of the store was never on screen and what was had no order
-           anybody could name. -->
-      <div id="kKnownWrap" class="kcol kknowncol">
-        <section class="ksec">
-        <h2>Facts brAIn has learned <span id="kKnownCount" class="kcount"></span></h2>
-        <p class="hint tight" id="kKnownHint">One fact per row, with what it is
-          about, who taught it and when. Search for a device or a room, or
-          narrow by kind. ✕ forgets a fact; the memory document is not touched.</p>
-        <div class="kfbar">
-          <input id="kKnownSearch" type="search" autocomplete="off" spellcheck="false"
-                 placeholder="Search facts — a device, a room, a word…"
-                 aria-label="Search facts">
-          <select id="kKnownSort" aria-label="Sort facts">
-            <option value="newest">Newest first</option>
-            <option value="subject">Grouped by what it is about</option>
-            <option value="oldest">Oldest first</option>
-            <option value="certain">Most certain first</option>
-          </select>
-          <select id="kKnownSource" aria-label="Who taught it">
-            <option value="">Anyone taught it</option>
-          </select>
-        </div>
-        <div id="kKnownKinds" class="kfchips" role="group" aria-label="What the fact is about"></div>
-        <div id="kKnown" class="klist"></div>
-        <div class="kfmore">
-          <button id="kKnownMore" class="btn small hidden" type="button">Show more</button>
-        </div>
-        </section>
-      </div>
     </div>
   </div>
 </div>

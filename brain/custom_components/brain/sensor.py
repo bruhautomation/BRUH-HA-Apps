@@ -39,6 +39,7 @@ from .const import (
 )
 from .house_state import SITUATION_FILENAME
 from .house_state import read as read_house_state
+from . import status_mirror
 from .insight_format import build_card_yaml, make_preview
 
 _LOGGER = logging.getLogger(__name__)
@@ -162,6 +163,11 @@ async def async_setup_entry(
     # What brAIn reads the house as doing right now. Same rule as the two
     # above: it never goes unavailable, and a stale reading is `unknown`.
     entities.append(BrainHouseSensor(config_entry))
+
+    # Is brAIn working: the panel's status line, one state for Home
+    # Assistant — Watching / Paused / Needs restart / Signed out /
+    # Degraded. Same rule again, and stale is `unknown`.
+    entities.append(BrainStatusSensor(config_entry))
 
     async_add_entities(entities, update_before_add=True)
 
@@ -608,6 +614,66 @@ class BrainHealthSensor(SensorEntity):
 
 
 # ---------------------------------------------------------------------------
+# Is brAIn working — the status line
+# ---------------------------------------------------------------------------
+
+def status_path(hass: HomeAssistant) -> str:
+    return hass.config.path(SHARED_DIR, status_mirror.STATUS_FILENAME)
+
+
+class BrainStatusSensor(SensorEntity):
+    """`sensor.brain_status`: the status line the panel's Today screen shows.
+
+    One of ``watching`` / ``paused`` / ``needs_restart`` / ``signed_out`` /
+    ``degraded``, or ``unknown`` when the add-on has not published (or has
+    stopped publishing) its status. The attributes carry the sentence the
+    panel shows, when a pause ends and when brAIn last looked.
+
+    Decided in the panel (`brain_status.derive`) and read here
+    (`status_mirror.status`), so this sensor and the status line cannot
+    disagree — the health sensor reading ``ok`` beside a Diagnostics
+    section reading degraded is the drift it replaces as the one answer
+    to "is brAIn working". It never goes unavailable: its job is to be
+    readable at the moment nothing else is.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = True
+    _attr_name = "Status"
+    _attr_translation_key = "status"
+    _attr_icon = "mdi:brain"
+    _attr_device_info = SYSTEM_DEVICE_INFO
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        self._entry = config_entry
+        self._attr_unique_id = f"{DOMAIN}_status"
+        # Asked for by name: the device's name would otherwise make it
+        # `sensor.brain_system_status`. A registry entry already holding
+        # the unique id keeps whatever id it has.
+        self.entity_id = "sensor.brain_status"
+        enum = getattr(SensorDeviceClass, "ENUM", None)
+        if enum is not None:
+            self._attr_device_class = enum
+            self._attr_options = list(status_mirror.STATES)
+        self._attr_native_value = "unknown"
+        self._attrs: dict[str, Any] = {"reason": "not read yet"}
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self._attrs
+
+    async def async_update(self) -> None:
+        try:
+            state, attrs = await self.hass.async_add_executor_job(
+                status_mirror.status, status_path(self.hass))
+        except Exception:  # noqa: BLE001 — never take HA down over a sensor
+            _LOGGER.debug("could not read the status mirror", exc_info=True)
+            state, attrs = "unknown", {"reason": "the status could not be read"}
+        self._attr_native_value = state
+        self._attrs = attrs
+
+
+# ---------------------------------------------------------------------------
 # What the house is doing now
 # ---------------------------------------------------------------------------
 
@@ -760,9 +826,12 @@ MEMORY_DEVICE_INFO = DeviceInfo(
 class BrainFactsSensor(SensorEntity):
     """How much brAIn currently knows about this home.
 
-    Counted from the change log rather than by parsing the document, so a
-    hand-edited memory file can never make the number disagree with the
-    history behind it.
+    The same number House › What it knows shows as its total: the add-on
+    counts its facts store (`facts_store.count`) and publishes the count
+    in the status mirror, and this reads it. It used to count lines in the
+    memory change log, which said 99 beside a panel saying 755. A mirror
+    that is missing or stale is ``unknown`` with the reason, never a zero
+    and never the old count.
     """
 
     _attr_has_entity_name = True
@@ -776,14 +845,22 @@ class BrainFactsSensor(SensorEntity):
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._entry = config_entry
         self._attr_unique_id = f"{DOMAIN}_facts_learned"
-        self._attr_native_value = 0
+        self._attr_native_value = None
+        self._reason = "not read yet"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"reason": self._reason} if self._reason else {}
 
     def update(self) -> None:
-        from .learning import total_learned
         try:
-            self._attr_native_value = total_learned(self.hass)
+            value, reason = status_mirror.count(
+                status_path(self.hass), "facts_count")
         except Exception:  # noqa: BLE001 — never take HA down over a sensor
             _LOGGER.debug("could not count learned facts", exc_info=True)
+            value, reason = None, "the status file could not be read"
+        self._attr_native_value = value
+        self._reason = reason
 
 
 class BrainOpenFindingsSensor(SensorEntity):

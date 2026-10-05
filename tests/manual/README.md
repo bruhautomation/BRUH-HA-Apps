@@ -1,7 +1,7 @@
 # Browser checks
 
 Checks that need a real browser, so they can't run inside the pytest suite.
-The four `measure-*.mjs` scripts run in CI as the **layout** job on every
+The `measure-*.mjs` scripts run in CI as the **layout** job on every
 PR; run them by hand too when you touch what they measure — the failure
 output is far easier to read next to your editor than in a CI log. The
 screenshot pipeline (`demo_panel.py` + `shoot-panel.mjs`) stays manual: it
@@ -24,11 +24,14 @@ one lays out as the shape that width is supposed to have.
 node tests/manual/measure-topbar.mjs
 ```
 
-**The bar has two shapes and no third.** At ≥1240px it is one 56px row. Below
-that it is the two-row bar — status and actions on top, the five tabs on a
-full-width strip beneath, each name under its icon. No width gets a row of
-bare glyphs: nothing in the bar may shrink, so a fit is binary and an overflow
-is something this can see.
+**The bar has three shapes and no fourth.** At ≥850px it is one 56px row.
+From 641 to 849px it is the two-row bar — status and actions on top, the
+three tabs on a full-width strip beneath, each name under its icon. At
+≤640px the header is one 56px row holding the wordmark, the status dot and
+⚙, and the tabs are a bar fixed to the bottom of the screen. No width gets a
+row of bare glyphs: nothing in the bar may shrink, so a fit is binary and an
+overflow is something this can see. Take the breakpoint from what it
+reports (681px running, 832 paused, 844 on a failed login).
 
 It fails on a wrong shape, on any overflow, on a missing tab label, and on any
 target under 44px (chips 40px). Set `TOPBAR_SHOT_DIR=/some/dir` to also write
@@ -79,6 +82,36 @@ negative *bottom* margin left there shortens `.wrap` — whose overflow then
 clips the bottom of the view, which is exactly where this line lives. Set
 `CHATMETA_SHOT_DIR=/some/dir` for PNGs at representative widths.
 
+Its second pass drives the real conversation list at 390 and 1200 — the
+rail beside the transcript on a wide screen and the page Ask opens on below
+1100px, one renderer at both — and fails on a missing, hidden or
+overhanging state pill or a row under the touch floor. Its third pass drives
+the line above the message box through every row state and fails if a plain
+pause draws anything, if a pause offers a button (sending is what resumes),
+or if the word "Resume" comes back.
+
+## `measure-ask.mjs`
+
+Drives the Ask tab — the list of your chats and a transcript — through the
+real renderers behind a stubbed fetch, at 390 (touch) and 1200.
+
+```bash
+node tests/manual/measure-ask.mjs
+```
+
+It fails on any run-type chip (Chats · Automation · Cards · Voice…), a
+selection mode or a ✕ on the rows, a row without its ⋯ or a ⋯ under 44px on
+touch, a row menu offering anything but Delete or a Delete with no Undo, a
+phone that does not open on the list or a transcript with no way back, a
+reply whose tool calls and thinking are not folded into ONE closed "Worked
+through N steps" per reply, an approval card or the resolutions card folded
+away with them, a "Save as report" on anything but a reply's last answer (or
+on a discussion's opener, or one that does not post `report: true` with the
+question), a strip whose buttons are not the card verbs, a discussion still
+titled "Discussing", and any cut text coming back (Resume now, Select
+conversations). Run it after touching the chat renderer, the rail, the
+composer line or the discussion strip.
+
 ## `measure-tooltips.mjs`
 
 Hovers every visible `[data-tip]` control on the Findings tab at five widths
@@ -105,22 +138,118 @@ to also write a PNG per width.
 CI still fails if the pseudo-element version comes back — it just can't
 measure pixels.
 
+## `measure-tokens.mjs`
+
+The visual standard from `docs/design/ui-redesign-2026-10.md`, read off
+every pane and the ⚙ dialog at 1200px and at a 390px phone, on the real
+markup behind a stubbed fetch. It fails on visible text that is not 12, 14,
+16 or 20px (Help's guide and an insight card's chart frame are left out), a
+label set in capitals or letter-spaced, a `<select>` without `.sel` or with
+the browser's appearance, a native checkbox or slider, and a card (`.card`,
+`.finding`, `.card-x`) whose padding — or a direct child's — is off the 4px
+grid, whose radius is not 12, which has a shadow, or whose left edge differs
+from its right — and on a notice, plan, permission card or activity row
+(the boxes that sit on a page like a card) with a coloured left bar.
+
+```bash
+node tests/manual/measure-tokens.mjs        # TOKENS_VERBOSE=1 for counts
+```
+
+Use the tokens at the top of `style.css` (`--fs-*`, `--sp-*`, `--card-*`,
+`--btn-h`, `--status-*`) and the components at its end (`.card-x`,
+`.chip-status[data-kind]`, `.btn-primary`/`-secondary`/`-tertiary`,
+`select.sel`, `input.tog`, `.empty-line`, `.meta`, `.item-state`) rather
+than a number, and this stays green by construction.
+
 ## `measure-chrome.mjs`
 
 What the panel spends on chrome before content, driven on the real markup
-behind a stubbed fetch. At a 390px phone: the sub-tab strip never scrolls
-sideways and Home's five panes fit on one row, the status strip over the
-cards is one segment and a "+N more" with no separator bars, and Help opens
-on the guide with its sixty-section contents behind a fold. At 1448px: the
-Findings feed lays cards two abreast and uses the width, and Proposals sits
-in the same column under the same heading as Findings with a styled select.
+behind a stubbed fetch. At a 390px phone: the three tabs fit one row at 44px
+each, Today and House show no sub-tab strip, no status strip sits over the
+reports, and the guide (⚙ › Guide) opens with its sixty-section contents
+behind a fold. At 1448px: Today's queue and Your list share one column that
+uses the width, and no Proposals or To-do pane has come back beside it.
 
 ```bash
 node tests/manual/measure-chrome.mjs
 ```
 
-Run it after touching `.subtabs`, `.today`, the docs nav, `.findwrap` /
-`.findlist`, or `#viewProposals`.
+Run it after touching `.viewtabs`, `.subtabs`, the docs nav or `.todaypane`.
+
+## `measure-phone.mjs`
+
+The phone layout and the sweep, on the real panel behind the Today fixture,
+at 390 (touch), 320 (touch) and 1200. On a phone it fails on a header over
+56px or holding anything but the wordmark, the status dot and ⚙; on a tab
+bar that is not fixed to the bottom, not one row, unlabelled or under 44px;
+on a pane whose last pixel hides under that bar; on Ask not opening on its
+list; and on a status dot whose popover does not say what the bar's chips
+would have said. At every width it fails on sideways page scroll (and a row
+that scrolls sideways), a button label carrying an emoji or arrow glyph, a
+`?` bubble, and a header target under 44px — on every pane and in ⚙ with
+every section open. At 1200 it asserts the desktop bar is unchanged.
+
+```bash
+node tests/manual/measure-phone.mjs
+```
+
+## `measure-today.mjs` and the Today measures
+
+Today is the one screen for deciding (`docs/design/ui-redesign-2026-10.md`,
+"The first screen"). Every measure of it drives the panel's real renderers
+behind `today-fixture.mjs`, one house in the server's own shapes, so the
+measures of the card, the list, the suggestions and the plan read the same
+house; `openToday` opens it and `posts` reads back what each press sent.
+
+* `measure-today.mjs` — the screen at 390 (touch) and 1190: no sub-tab bar,
+  the first card within 360/240px of the top, 1 card on a phone and 3 on a
+  desktop with "Show N more" revealing exactly the rest, one status chip of
+  the four per card, at most one primary, labels from the action vocabulary
+  only, Snooze before Ignore, a closed Details, a body of at most three
+  lines, "What could go wrong" on every Apply card, what Undo puts back on a
+  change, the cut text staying cut, the status line and its ⋯, the urgent
+  banner, the badge equal to the counted cards, Your list, the History
+  drawer's four filters, the one-line empty state and the three-step setup
+  card.
+* `measure-home.mjs` — what each kind of card offers (Plan, Add to list,
+  Apply, Yes · No · Snooze, Done · Undo) and what each press sends,
+  including Ignore's reason and "Ignore all like this" reaching the mute.
+* `measure-todo.mjs` — Your list: Done with its note, the row's ⋯, the add
+  box at 16px on touch, the empty line.
+* `measure-proposals.mjs` — suggestions: evidence on the face, the three
+  trial sentences, a refused accept keeping its reason on the card, a landed
+  one offering Undo, playbooks, one-offs.
+* `measure-triage.mjs` — "Unchecked" in words, the look's reason under
+  Details, and Set aside by brAIn with Restore.
+* `measure-fixplan.mjs` — the plan, the risk, the out-of-date and refused
+  plans, the run in flight, and what Undo puts back.
+* `measure-upkeep.mjs` — the tidy and update cards on Today, and the house
+  book.
+
+```bash
+node tests/manual/measure-today.mjs
+SHOT_DIR=/tmp node tests/manual/measure-today.mjs   # with screenshots
+```
+
+## `measure-house.mjs`
+
+The House screen, driven on the real markup behind a stubbed fetch at 390px
+(touch) and 1200px. House is one segmented control — Reports · What it knows ·
+House book · What happened — and on a phone that control is one `select.sel`
+rather than four buttons. Fails on a segment that opens the wrong pane or does
+not light up, the control showing on a pane outside House, any cut Reports
+text coming back (the checks strip, the second ask box, tag chips, a tokens
+line), a card head other than Ask · ⋯ or a foot other than "Updated N ago",
+a missing Deep review or Suggested row, a search box shown at eight reports or
+fewer (or one that does not narrow past eight), What happened's top line not
+being the house's situation, a target under 44px on touch, or sideways scroll.
+
+```bash
+node tests/manual/measure-house.mjs
+```
+
+Run it after touching `#houseSeg`, the Reports grid, `#viewHousebook` or the
+top of `#viewActivity`.
 
 ## `demo_panel.py` + `shoot-panel.mjs` — the docs screenshots
 
@@ -197,3 +326,8 @@ text the keyboard did not change, when a keyboard sliding in resizes the
 terminal more than once, when the panel's bar flaps after a keyboard closes,
 and when a toolbar key opens a keyboard that was down. Run against the script
 before 2.10.1 it fails fourteen ways.
+
+Its last pass loads the real panel at 390 (touch): the chat face of Ask must
+open on the list of your chats with a way back from a transcript, the classic
+face must open straight on the terminal with no list over it, and Chat
+options and Full-screen terminal must be on screen in both.

@@ -1,13 +1,15 @@
 // Render the brAIn topbar across viewport widths and assert, per width, that
 // it lays out as intended and that everything in it is big enough to hit.
 //
-// Two shapes, not five. At >=920px the bar is a single 56px row with every
-// tab named. Below that it is the two-row bar: status and actions on top,
-// the tabs on a full-width strip of their own underneath, still named. So
-// the check is no longer "always one row" — it is "the shape this width is
-// supposed to have, with nothing spilling out of it and no target under
-// 44px". Either way every tab carries its name: no width gets a row of
-// bare glyphs.
+// Three shapes, not five. At >=850px the bar is a single 56px row with
+// every tab named. From 641 to 849 it is the two-row bar: status and
+// actions on top, the tabs on a full-width strip of their own underneath,
+// still named. At 640 and under it is a phone: ONE header row no taller
+// than 56px holding the logo, the status dot and ⚙, and the three tabs on
+// a bar fixed along the bottom of the screen (docs/design/ui-redesign-
+// 2026-10.md, PR 10). So the check is "the shape this width is supposed to
+// have, with nothing spilling out of it and no target under 44px". Every
+// width keeps every tab's name: no width gets a row of bare glyphs.
 //
 // Every child of the bar is `flex: none` except the spacer, so items cannot
 // silently compress to fake a fit: the bar either holds its content or it
@@ -48,7 +50,13 @@ const OUT = process.env.TOPBAR_SHOT_DIR || '';
 // shape needs 903px paused and 915px on a failed login now. The number comes
 // from what this script reports rather than from a guess, which is the whole
 // reason it exists — keep the two in step with style.css's own band.
-const PHONE_MAX = 919;
+//
+// It came down again, to 849, when the four tabs became three: the one-row
+// shape needs 681px running, 832 paused and 844 on a failed login.
+const PHONE_MAX = 849;
+// At and under this the tabs are a bottom bar and the header is one row.
+const BOTTOM_MAX = 640;
+const HEADER_MAX = 56;
 // Tabs and icon buttons are 44px, the smallest a target has any business
 // being on a touchscreen. Chips are pills of text and sit at 40 — still a
 // real target, just not a square one.
@@ -56,7 +64,8 @@ const MIN_TOUCH = 44;
 const MIN_CHIP = 40;
 
 const WIDTHS = [
-  320, 340, 360, 375, 379, 380, 390, 400, 414, 428, 480, 500, 540, 600, 640, 700, 720,
+  320, 340, 360, 375, 379, 380, 390, 400, 414, 428, 480, 500, 540, 600, 640, 641, 700, 720,
+  849, 850,
   768, 800, 900, 959, 960, 1000, 1024, 1100, 1199, 1200, 1239, 1240, 1280, 1339, 1340,
   919, 920, 1429, 1430,
   1440, 1920,
@@ -99,8 +108,11 @@ function seed(mode) {
 function probe(floors) {
   const bar = document.querySelector('.topbar');
   const br = bar.getBoundingClientRect();
+  const tabbar = bar.querySelector('.viewtabs');
+  const fixed = getComputedStyle(tabbar).position === 'fixed';
   const kids = [...bar.children]
     .filter((el) => getComputedStyle(el).display !== 'none')
+    .filter((el) => !(fixed && el === tabbar))
     .map((el) => el.getBoundingClientRect())
     .filter((r) => r.width > 0);
 
@@ -135,7 +147,19 @@ function probe(floors) {
   const labelled = [...bar.querySelectorAll('.viewtab span:not(.badge)')]
     .filter((el) => getComputedStyle(el).display !== 'none').length;
 
+  const tr = tabbar.getBoundingClientRect();
+  const tabRects = [...bar.querySelectorAll('.viewtab')].map((t) => t.getBoundingClientRect());
+  // What a phone header may hold: the logo, the status dot and ⚙.
+  const headerItems = [...bar.children]
+    .filter((el) => el !== tabbar && !el.classList.contains('spacer'))
+    .filter((el) => getComputedStyle(el).display !== 'none')
+    .map((el) => el.id || el.getAttribute('class').split(' ')[0]);
   return {
+    fixedTabs: fixed,
+    tabbarAtBottom: fixed && Math.abs(tr.bottom - window.innerHeight) < 1,
+    tabsInside: tabRects.every((r) => r.left >= -0.5 && r.right <= window.innerWidth + 0.5),
+    tabsOneRow: tabRects.every((r) => Math.abs(r.top - tabRects[0].top) < 1),
+    headerItems,
     height: Math.round(br.height),
     rows,
     escaped: kids.some((r) => r.bottom > br.bottom + 0.5 || r.top < br.top - 0.5),
@@ -177,14 +201,23 @@ function probe(floors) {
 
       const m = await page.evaluate(probe, { touch: MIN_TOUCH, chip: MIN_CHIP });
       const phone = width <= PHONE_MAX;
+      const bottom = width <= BOTTOM_MAX;
       const overflow = m.barScrollW > m.barClientW || m.escaped || m.docScrollW > width;
       // Above the breakpoint: one 56px row, labels on only where they fit.
-      // Below it: the tabs on a row of their own with their names showing,
-      // and a third row only when a trouble chip joins the usage pill.
-      const shape = phone
-        ? m.rows >= 2 && m.rows <= (mode === 'running' ? 2 : 3)
-          && m.labelled === m.tabs
-        : m.rows === 1 && m.height === 56 && m.labelled === m.tabs;
+      // Between the two: the tabs on a row of their own with their names
+      // showing, and a third row only when a trouble chip joins the usage
+      // pill. A phone: one header row of the logo, the dot and ⚙, and the
+      // tabs on one row fixed along the bottom, named and inside the screen.
+      const header = new Set(['wordmark', 'statusDot', 'settingsBtn']);
+      const shape = bottom
+        ? m.rows === 1 && m.height <= HEADER_MAX && m.fixedTabs && m.tabbarAtBottom
+          && m.tabsInside && m.tabsOneRow && m.labelled === m.tabs
+          && m.headerItems.every((i) => header.has(i))
+          && m.headerItems.includes('statusDot') && m.headerItems.includes('settingsBtn')
+        : phone
+          ? !m.fixedTabs && m.rows >= 2 && m.rows <= (mode === 'running' ? 2 : 3)
+            && m.labelled === m.tabs
+          : !m.fixedTabs && m.rows === 1 && m.height === 56 && m.labelled === m.tabs;
       const touch = !!m.smallest && m.undersized.length === 0;
       rows.push({ width, mode, ...m, phone, shape, touch, overflow });
 
@@ -204,7 +237,8 @@ function probe(floors) {
       `${String(r.width).padStart(5)}  ${r.mode.padEnd(8)} ${String(r.height).padStart(6)} `
       + `${String(r.rows).padStart(5)}  ${String(r.barScrollW).padStart(6)}/`
       + `${String(r.barClientW).padEnd(6)}   ${t.padEnd(18)} `
-      + (ok ? 'ok' : [!r.shape && `SHAPE rows=${r.rows} h=${r.height} labels=${r.labelled}/${r.tabs}`,
+      + (ok ? 'ok' : [!r.shape && `SHAPE rows=${r.rows} h=${r.height} labels=${r.labelled}/${r.tabs}`
+                        + ` fixed=${r.fixedTabs} bottom=${r.tabbarAtBottom} header=${r.headerItems}`,
                       !r.touch && `TOUCH ${r.undersized.join(', ') || 'no targets'}`,
                       r.overflow && `OVERFLOW +${r.barScrollW - r.barClientW}px`]
         .filter(Boolean).join(' ')));

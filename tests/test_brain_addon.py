@@ -309,10 +309,21 @@ class TestPanelBranding(unittest.TestCase):
     def test_every_view_tab_has_a_pane(self):
         # Named, not counted: a count says nothing about whether the tab
         # added last kept its label.
-        for view in ("insights", "findings", "proposals", "activity",
+        for view in ("insights", "findings", "activity", "housebook",
                      "terminal", "memory", "docs"):
             self.assertIn(f'data-view="{view}"', self.html)
             self.assertIn(f'id="view{view.capitalize()}"', self.html)
+        # The To-do, Proposals and Upkeep panes are Today's now: one screen
+        # holds the queue (suggestions, the name tidy and the updates
+        # included) and Your list; Ideas is a row on House › Reports.
+        for gone in ("todo", "proposals", "upkeep", "ideas"):
+            self.assertNotIn(f'id="view{gone.capitalize()}"', self.html)
+        for gone in ("todo", "proposals", "upkeep"):
+            self.assertNotIn(f'id="view{gone.capitalize()}"', self.html)
+            self.assertNotIn(f'data-view="{gone}"', self.html)
+        # Three tabs, and Today has no sub-strip of its own.
+        tabs = re.findall(r'class="viewtab[^"]*"[^>]*data-group="(\w+)"', self.html)
+        self.assertEqual(tabs, ["today", "ask", "house"])
 
     def test_terminal_frame_is_lazy_and_points_at_the_proxy(self):
         self.assertIn('id="termFrame"', self.html)
@@ -461,7 +472,11 @@ class TestTopbarLayout(unittest.TestCase):
         body = body[:body.index("\n}\n")]
         self.assertIn("chip.removeAttribute(\"title\")", body)
         self.assertNotIn("chip.title =", body)
+        # The pill's popover and the phone's status dot share one body.
         fill = self.js[self.js.index("function fillUsagePop()"):]
+        fill = fill[:fill.index("\n}\n")]
+        self.assertIn("usagePopHtml()", fill)
+        fill = self.js[self.js.index("function usagePopHtml()"):]
         fill = fill[:fill.index("\n}\n")]
         self.assertIn("resets_at", fill)
         self.assertIn("week_resets_at", fill)
@@ -819,7 +834,10 @@ class TestChatTerminalPanel(unittest.TestCase):
         conversation picker, which lists Claude Code's own store and replays
         the one you choose."""
         self.assertIn('id="chatOpen"', self.html)
-        self.assertIn('id="convModal"', self.html)
+        # The list is the rail (beside the transcript, or the page Ask
+        # opens on below the breakpoint) — never a second dialog copy.
+        self.assertIn('id="chatRail"', self.html)
+        self.assertNotIn('id="convModal"', self.html)
         self.assertIn("api/chat/resume", self.js)
         self.assertIn("api/chat/conversations", self.js)
         chat = (PANEL / "chat_session.py").read_text()
@@ -872,7 +890,9 @@ class TestChatTerminalPanel(unittest.TestCase):
         self.assertNotIn("blocked", paused,
                          "the paused chip is reporting usage again")
         # ...and the pill says it, in the one place that now can.
-        fill = self.js[self.js.index("function fillUsagePop()"):]
+        # The popover body is `usagePopHtml`, which both the pill and the
+        # phone's status dot open, so one place says it for both.
+        fill = self.js[self.js.index("function usagePopHtml("):]
         fill = fill[:fill.index("\n}\n")]
         self.assertIn("Automatic insights are paused", fill)
 
@@ -924,7 +944,9 @@ class TestChatTerminalPanel(unittest.TestCase):
                          "snoozing changed the finding's status")
         # It comes back, and it is findable while it waits.
         self.assertIn('if status == "snoozed"', store)
-        self.assertIn('{ id: "snoozed", label: "Dismissed"', self.js)
+        # Today's History drawer holds them, under the word the press used.
+        today = (PANEL / "today.py").read_text()
+        self.assertIn('"snoozed": "Snoozed"', today)
 
     def test_the_palette_offers_the_brain_and_ha_commands_too(self):
         """They are not slash commands, so nothing announced them — and
@@ -995,12 +1017,34 @@ class TestDocsTab(unittest.TestCase):
     def test_every_section_has_the_fields_the_nav_needs(self):
         import re
         ids = re.findall(r'^\s*id: "([^"]+)"', self.docs, re.M)
-        icons = re.findall(r'^\s*icon: "([^"]+)"', self.docs, re.M)
+        groups = re.findall(r'^\s*group: "([^"]+)"', self.docs, re.M)
         titles = re.findall(r'^\s*title: "([^"]+)"', self.docs, re.M)
         self.assertGreaterEqual(len(ids), 6, "guide is suspiciously short")
-        self.assertEqual(len(ids), len(icons), "a section is missing an icon")
+        self.assertEqual(len(ids), len(groups), "a section is missing a group")
         self.assertEqual(len(ids), len(titles), "a section is missing a title")
         self.assertEqual(len(ids), len(set(ids)), "duplicate section id")
+
+    def test_the_guide_is_eight_groups_with_no_emoji(self):
+        """Sixty-odd sections in one column with an emoji each was a list
+        nobody could find anything in (the redesign's Help row): the nav is
+        eight named groups, every section is assigned one by name rather than
+        falling into the last by default, and no row carries a glyph."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "build_docs", PANEL / "build-docs.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.assertEqual(len(mod.GROUPS), 8)
+        sections = mod.parse((PANEL.parent / "DOCS.md").read_text(encoding="utf-8"))
+        unassigned = [s["id"] for s in sections if s["id"] not in mod.GROUP_OF]
+        self.assertEqual(unassigned, [], "a guide section has no group")
+        self.assertNotIn("icon:", self.docs)
+        groups = re.findall(r'^\s*group: "([^"]+)"', self.docs, re.M)
+        # Grouped in the file, so the nav can render one heading per group.
+        runs = [g for i, g in enumerate(groups) if i == 0 or groups[i - 1] != g]
+        self.assertEqual(runs, [name for name, _ in mod.GROUPS])
+        self.assertNotIn("already has nerves", self.docs,
+                         "the marketing hero line belongs to the README")
 
     def test_guide_documents_the_current_cli_not_the_retired_one(self):
         for retired in ("ha-memory", "ha-backup", "ha-share-login", "ha-reload",
@@ -1016,12 +1060,16 @@ class TestDocsTab(unittest.TestCase):
         guide was teaching a UI nobody had."""
         self.assertNotIn("refreshAll", self.app)
         self.assertNotIn("refreshAll", self.html)
-        self.assertIn("⋯ → Regenerate", self.docs)
-        self.assertIn("⋯ → Delete", self.docs)
-        self.assertIn("✎ Refine", self.docs)
-        self.assertIn("↗ Share", self.docs)
-        self.assertNotIn("⋯ → Give feedback", self.docs)
-        self.assertNotIn("⋯ → Add to dashboard", self.docs)
+        # House > Reports: the head is Ask and ⋯, and ⋯ is exactly Share,
+        # Past versions, Run and Delete.
+        self.assertIn("Two controls are on the card", self.docs)
+        for press in ("**Ask**", "**Share**", "**Past versions**",
+                      "**Run**", "**Delete**"):
+            self.assertIn(press, self.docs, press)
+        for gone in ("✎ Refine", "↗ Share", "⤢ Expand", "⋯ → Regenerate",
+                     "⋯ → Edit tags", "⋯ → Give feedback",
+                     "⋯ → Add to dashboard"):
+            self.assertNotIn(gone, self.docs, gone)
 
     def test_no_form_control_can_trigger_the_ios_zoom_trap(self):
         """iOS Safari zooms the page in when a text control's font is under
@@ -1046,7 +1094,7 @@ class TestDocsTab(unittest.TestCase):
             "function esc(", "function inlineMd(", "function renderMarkdown(",
             "function docsSearch(", "function renderDocsNav(", "function selectDocs(",
             "function renderDocs(", "function renderMemory(", "function mdInline(",
-            "function mdToHtml(", "function setMemEditing(", "function makeHypothesis(",
+            "function mdToHtml(", "function setMemEditing(", "function makeLooseQuestion(",
             "function switchView(", "function openNoteForm(",
         ]
         missing = [fn for fn in required if fn not in self.app]
@@ -1063,8 +1111,8 @@ class TestDocsTab(unittest.TestCase):
         self.assertNotIn("api/questions/", self.app)
         self.assertNotIn("makeQuestions", self.app)
         self.assertNotIn("#kOpenQs", self.app)
-        self.assertIn('api/hypothesis/${h.ts}/${verb}', self.app)
-        self.assertIn("list.appendChild(makeHypothesis(h))", self.app)
+        self.assertIn('api/hypothesis/${h.ts}/confirm', self.app)
+        self.assertIn("makeLooseQuestion(h)", self.app)
 
     def test_renderer_escapes_before_formatting(self):
         """The content is ours, but a docs renderer is exactly where a lazy
@@ -2780,18 +2828,19 @@ class TestKnowledgeTab(unittest.TestCase):
                 # docstring rather than in a branch; the rest are branches.
                 self.assertIn(state, chip + "\nnot_started")
 
-    def test_the_four_sections_are_in_the_order_they_are_read(self):
-        """What brAIn said this morning, what it has measured, what it
-        remembers, what is queued. The document used to sit beside the queue
-        in two columns, which said nothing about which was which."""
-        order = ["This morning", "What brAIn has measured",
-                 "How brAIn's memory works", "Memory document",
-                 "Waiting to be filed", "Facts brAIn has learned"]
-        # The headings, not the prose: a comment can say any of these words
-        # in any order, and the thing being asserted is the page.
-        marks = [f"<h2>{h}" for h in order]
-        at = [self.html.index(m) for m in marks]
-        self.assertEqual(at, sorted(at), f"sections are out of order: {order}")
+    def test_what_it_knows_is_a_teach_box_over_the_facts(self):
+        """House > What it knows is two things: tell brAIn something, and
+        what it knows. The brief, the measurements, the memory guide, the
+        document and the queue left the pane in the redesign, and a heading
+        that comes back is a section that comes back."""
+        pane = self.html.split('id="viewMemory"', 1)[1].split(
+            '<div id="view', 1)[0]
+        self.assertLess(pane.index('id="kAddForm"'), pane.index('id="kKnown"'))
+        self.assertIn("Tell brAIn something", pane)
+        for cut in ("This morning", "What brAIn has measured",
+                    "How brAIn's memory works", "Memory document",
+                    "Waiting to be filed", "File into memory now"):
+            self.assertNotIn(f"<h2>{cut}", self.html, cut)
 
     def test_the_today_strip_makes_no_request_of_its_own(self):
         """It is read off the /api/status poll every viewer already makes. A
@@ -2836,9 +2885,12 @@ class TestKnowledgeTab(unittest.TestCase):
         """`POST /api/findings/unsettle` existed with no caller at all: the
         one press that removes a settled key was documented and unreachable
         from the panel."""
-        self.assertIn('api("api/findings/unsettle"', self.app)
-        self.assertIn("Let brAIn raise it again", self.app)
-        self.assertIn('JSON.stringify({ key: entry.key })', self.app)
+        # It is History › Ignored's Restore now: the row's press is the
+        # route, and the panel posts whatever route the row carries.
+        today = (PANEL / "today.py").read_text()
+        self.assertIn('"/api/findings/unsettle"', today)
+        self.assertIn('{"key": entry.get("key") or ""}', today)
+        self.assertIn('api(step.route.replace(/^\\//, "")', self.app)
 
 
 if __name__ == "__main__":

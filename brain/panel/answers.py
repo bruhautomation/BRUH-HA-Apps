@@ -21,44 +21,46 @@ asking two different questions.
 
 Four rules.
 
-**Every problem card offers the same row, in the same order, and only the
-first press on it is conditional.** *Fix it* where brAIn could make the
-change itself (`fixable`, the row's own claim), then *Add to list*,
-*Dismiss* and *Not a problem* — always those words, always that order,
-so a row of buttons can be read without reading the words. The first cut
-of this module gave each situation its own vocabulary (*Replaced it*,
-*It's back*, *It's off on purpose*, *It's normal here*) on the theory
-that a specific press teaches more, and what it taught was that the row
-changed from card to card and had to be read every time: *"this all
-feels really complicated"*. What a situation decides now is the
-**reason** the *Not a problem* box offers ("It's unplugged or switched
+**Every card has one primary, then Snooze · Ignore, always those words
+and that order** (docs/design/ui-redesign-2026-10.md, "One queue, one
+card"), so a row of buttons can be read without reading the words. The
+primary is the one press that fits the card: *Plan* where brAIn could
+work out a change (a read-only run that changes nothing), *Apply* once a
+plan is on the card, *Add to list* where it needs a person's hands, *Done*
+on a chore check, *Send* on a house-book question. Everything rarer —
+*Ask*, *Recheck*, *Done*, *Plan* — is behind the ⋯, at most three. The
+first cut of this module gave each situation its own vocabulary
+(*Replaced it*, *It's back*, *It's off on purpose*) and what it taught
+was that the row changed from card to card and had to be read every
+time: *"this all feels really complicated"*. What a situation decides
+now is the **reason** the Ignore box offers ("It's unplugged or switched
 off on purpose."), never the buttons.
 
-**Dismiss is on every answerable card, and it is a snooze.** "I just
+**Snooze is on every answerable card, and it is a snooze.** "I just
 want to ignore this and you may bring it up later" is the commonest
-answer to a card and it was behind the ⋯ as *Later*. It is the case's
-own `not_now`: nothing is settled, nothing is taught, and brAIn picks
-when it comes back — sooner the more it matters (`cases.SNOOZE_BY_STAKES`)
-— which the toast and the card both say. *Not a problem* is the other
-no, and they are different claims: one is "not this week", the other is
-"you have this wrong", and only the second teaches and only the second
-is for good.
+answer to a card. It is the case's own `not_now`: nothing is settled,
+nothing is taught, and brAIn picks when it comes back — sooner the more
+it matters (`cases.SNOOZE_BY_STAKES`) — which the toast and History both
+say. *Ignore* is the other no, and they are different claims: one is
+"not this week", the other is "never raise this again", and only the
+second teaches and only the second is for good.
 
 **A press that needs hands is never led by a press that needs a run.**
 `fixable` is the row's own claim about whose sentence the fix is, and a
 card whose fix is *Replace the battery* leads with the to-do list, never
 with a plan run: the run costs money to work out that a person has to
-open a cover. Where brAIn could act, *Fix it* leads, and its first step
-is still a read-only plan you consent to.
+open a cover. Where brAIn could act, *Plan* leads, and what it drafts
+is applied only by the *Apply* you press on the plan.
 
 **Every answer names its route and its wire action**, so the panel does
 not hold a second table of what a verb does, and the HA side can carry
 the same press back as a request (`request` is `finding_requests`'
 action name, or None for a press only the panel can make, like a plan
-run whose progress has to be watched). *I've already fixed it*, *Check
-again* and the rest sit behind the ⋯ (`cases.overflow`), because each is
-right for one card in twenty and a row is what somebody reads on every
-one.
+run whose progress has to be watched). *Done*, *Recheck* and *Ask* sit
+behind the ⋯ (`more`), because each is right for one card in twenty and
+a row is what somebody reads on every one. The wire actions never change
+with a label: Home Assistant's Repairs and the notification buttons key
+on them.
 
 Stdlib only, and it imports no store: `cases.py` and `findings_store.py`
 both read it, and a module both of those import may import neither.
@@ -113,12 +115,13 @@ AUTOMATION_PREFIX = "auto."
 # module and the integration reads the mirror.
 REQUEST_ACTIONS = ("todo", "fixed", "wrong", "snooze", "ack")
 
-# How many presses a card shows before the ⋯. Four: the fixed row is
-# *Fix it · Add to list · Dismiss · Not a problem*, and on a phone it wraps
-# to two rows of two rather than dropping the one press somebody wanted.
-MAX_VISIBLE = 4
+# How many presses a card shows before the ⋯. Three: one primary, then
+# *Snooze · Ignore* (docs/design/ui-redesign-2026-10.md, "One queue, one
+# card"). It was four while the row also carried *Add to list* beside
+# *Fix it*, and a fourth button is the one a phone wraps out of sight.
+MAX_VISIBLE = 3
 
-# The situations whose "Not a problem" box opens with a reason already in
+# The situations whose Ignore box opens with a reason already in
 # it — the commonest correction for that kind of row, offered so the press
 # that fits is one tap and still edits. Every other situation opens empty.
 PREFILL = {
@@ -251,16 +254,30 @@ def _finding_key(case: dict):
     return (case.get("origin") or {}).get("key")
 
 
-def _wrong(case_id: str, prefill: str = "", label: str = "Not a problem") -> dict:
+def plan_is_legacy(plan) -> bool:
+    """A plan written before plans were operations: nothing in it can be
+    approved, and its remedy is to plan again (`plan_ops.LEGACY_PLAN`)."""
+    return isinstance(plan, dict) and str(
+        plan.get("ops_refused") or "").startswith(LEGACY_PLAN_MARK)
+
+
+# What a card's ⋯ may hold at most. The design doc's own number: a menu
+# longer than three is a second button row nobody reads.
+MAX_MORE = 3
+
+
+def _wrong(case_id: str, prefill: str = "", label: str = "Ignore",
+           hint: str = "") -> dict:
     """The correction. It is `wrong` on every card, always opens the reason
     box (optional — the reason is the half that teaches), and settles the
-    row for good."""
+    row for good. Called **Ignore**: "never raise this again" is what the
+    press does, whatever brought somebody to it."""
     return _answer(
         "wrong", label,
-        "brAIn has this wrong, or it's normal here. It stops raising this. "
-        "Say why if you like — it learns from the reason, not just the press.",
+        hint or "Never raise this again. Say why if you like — brAIn learns "
+        "from the reason, not just the press.",
         route=f"/api/case/{case_id}/wrong", request="wrong", note=True,
-        prefill=prefill, done="Noted — brAIn won't raise this again")
+        prefill=prefill, done="Ignored — brAIn won't raise this again")
 
 
 def _dismiss(case_id: str, question: bool = False) -> dict:
@@ -273,51 +290,69 @@ def _dismiss(case_id: str, question: bool = False) -> dict:
     the next one (`hypotheses.snooze`)."""
     if question:
         return _answer(
-            "not_now", "Dismiss",
-            "Not now. brAIn asks again in a week, and asks something else "
-            "meanwhile — nothing is recorded either way.",
+            "not_now", "Snooze",
+            "Hide it for now. brAIn asks again later, and asks something "
+            "else meanwhile — nothing is recorded either way.",
             route=f"/api/case/{case_id}/not_now", request="snooze",
-            done="Asked again later")
+            done="Snoozed")
     return _answer(
-        "not_now", "Dismiss",
-        "Off the list for now. Nothing is recorded — brAIn brings it back "
-        "later if it's still true, sooner the more it matters.",
+        "not_now", "Snooze",
+        "Hide it for now. Nothing is recorded — it comes back later if it's "
+        "still true, sooner the more it matters.",
         route=f"/api/case/{case_id}/not_now", request="snooze",
-        done="Dismissed")
+        done="Snoozed")
 
 
 def _todo(case_id: str, primary: bool = False) -> dict:
     return _answer(
         "todo", "Add to list",
-        "It's real and you'll get to it. Onto the To-do tab, and brAIn "
-        "won't raise it again while it's there.",
+        "You'll handle it. It goes on Your list, and brAIn won't raise it "
+        "again while it's there.",
         route=f"/api/case/{case_id}/do", request="todo", primary=primary,
-        done="On your to-do list")
+        done="On your list")
 
 
-def _done(key, label: str = "Done", primary: bool = False) -> dict:
+def _done(key, primary: bool = False) -> dict:
     return _answer(
-        "done", label,
-        "You've handled it yourself. brAIn records that and stops raising it.",
+        "done", "Done",
+        "It's handled. brAIn records that and stops raising it.",
         route=f"/api/finding/{key}/done", request="fixed", primary=primary,
-        done="Recorded")
+        done="Done — recorded")
 
 
-def _fix(key) -> dict:
+def _plan(key, primary: bool = False) -> dict:
+    """The read-only plan run. Called **Plan** and never Apply: it changes
+    nothing, and Apply is the press that consents to what it drafts."""
     return _answer(
-        "fix", "Fix it",
-        "brAIn works out exactly what it would change and shows you the "
-        "steps. Nothing changes until you press Apply.",
-        route=f"/api/finding/{key}/fix", primary=True,
-        done="Working out what it would change — nothing has changed yet")
+        "fix", "Plan",
+        "brAIn drafts exactly what it would change and shows you first. "
+        "Nothing changes until you press Apply.",
+        route=f"/api/finding/{key}/fix", primary=primary,
+        done="Planning — nothing has changed yet")
+
+
+def _ask(key) -> dict:
+    return _answer(
+        "discuss", "Ask",
+        "Talk it through with brAIn, in a chat about this card. Any change "
+        "it suggests still asks you first.",
+        route=f"/api/finding/{key}/discuss", done="Opened a chat about it")
+
+
+def _recheck(key) -> dict:
+    return _answer(
+        "recheck", "Recheck", "Run the check that found this again, now.",
+        route=f"/api/finding/{key}/recheck", done="Checked again")
 
 
 def answers(case: dict) -> list[dict]:
     """The visible presses for this case, in order, primary first.
 
-    Empty for a case nothing can be pressed on — a run in flight — and
-    the caller renders the phase line instead. Never more than
-    `MAX_VISIBLE`, and every non-empty list carries a way to say no.
+    One primary, then the **Snooze · Ignore** pair wherever a card can be
+    put off or waved away — always those words, always that order, so a
+    row can be read without reading the words. Empty for a case nothing
+    can be pressed on — a run in flight — and the caller renders the
+    phase line instead. Never more than `MAX_VISIBLE`.
     """
     sit = situation(case)
     cid = str(case.get("id") or "")
@@ -328,38 +363,36 @@ def answers(case: dict) -> list[dict]:
         return []
 
     if sit == "planned":
-        out = []
-        if plan.get("can_fix"):
-            out.append(_answer(
-                "apply", "Apply", "Let brAIn make exactly these changes, "
-                "then report back.", route=f"/api/finding/{key}/apply",
-                primary=True, done="On it — brAIn is making the change"))
-        # Leads only when there is no Apply: a plan brAIn refused to
-        # carry out is a sentence to read and one press to close.
-        out.append(_answer(
-            "cancel", "Don't change it", "Leave the house as it is. The "
-            "plan stays on the card so you can read it again for free.",
-            route=f"/api/finding/{key}/cancel", primary=not out,
-            done="Left alone — the plan is still here"))
-        out.append(_wrong(cid))
-        return out[:MAX_VISIBLE]
+        if plan.get("can_fix") and not plan_is_legacy(plan):
+            lead = _answer(
+                "apply", "Apply", "brAIn makes exactly these changes now, "
+                "then reports back. Undo puts them back.",
+                route=f"/api/finding/{key}/apply", primary=True,
+                done="Applying — brAIn is making the change")
+        elif plan_is_legacy(plan):
+            # "This plan is out of date." The remedy is to plan again.
+            lead = _plan(key, primary=True)
+        else:
+            # brAIn will not make this change: a person's hands.
+            lead = _todo(cid, primary=True)
+        return [lead, _dismiss(cid), _wrong(cid)]
 
     if sit == "change":
         out = [_answer(
-            "ack", "Got it", "Clear it off the list — what brAIn changed "
-            "is already in memory.", route=f"/api/case/{cid}/do",
-            request="ack", primary=True, done="Cleared")]
+            "ack", "Done", "Clear it off the list — what brAIn changed is "
+            "already in memory.", route=f"/api/case/{cid}/do",
+            request="ack", primary=True, done="Done")]
         if case.get("fix_started") and case.get("fix_ended"):
             out.append(_answer(
-                "unfix", "Undo the fix", "Put back every file brAIn changed "
-                "and reload Home Assistant. Service calls it made are "
-                "listed, not reversed.", route=f"/api/finding/{key}/unfix",
+                "unfix", "Undo", "Put back every file brAIn changed and "
+                "reload Home Assistant. Service calls it made are listed, "
+                "not reversed.", route=f"/api/finding/{key}/unfix",
                 done="Put back — read what it says"))
         return out
 
     if sit == "gap":
         answer = _answer(
-            "answer", "Answer", "Say where it is or what it does. It goes "
+            "answer", "Send", "Say where it is or what it does. It goes "
             "into memory, and the house book uses it next time.",
             route=f"/api/house_book/question/{key}/answer", primary=True,
             note=True, done="Filed into memory for the house book")
@@ -367,120 +400,157 @@ def answers(case: dict) -> list[dict]:
                          "it — never type a code or a password here.")
         answer["placeholder"] = "Behind the boiler, the red lever."
         return [answer, _dismiss(cid),
-                _wrong(cid, label="Doesn't apply")]
+                _wrong(cid, hint="This doesn't apply to this house.")]
 
     if sit == "tidy":
         return [_answer(
-            "fix", "Fix it", "brAIn suggests names, rooms and aliases in "
-            "this house's own style. Nothing changes until you tick them "
-            "under House → Upkeep and press Apply.", route="/api/tidy/run",
-            primary=True, done="Suggesting — review them under House → Upkeep"),
-            _todo(cid), _dismiss(cid), _wrong(cid)]
+            "fix", "Plan", "brAIn suggests names, rooms and aliases in this "
+            "house's own style, as one card to review. Nothing changes "
+            "until you press Apply on it.", route="/api/tidy/run",
+            primary=True, done="Suggesting — they arrive as one card here"),
+            _dismiss(cid), _wrong(cid)]
 
     if sit == "question":
         return [
+            # Yes and No are the answer, not a verb: a guess is a yes/no
+            # question and a button called anything else asks somebody to
+            # translate.
             _answer("yes", "Yes", "That's right. It becomes a plain fact "
                     "in memory.", route=f"/api/case/{cid}/do",
                     primary=True, done="Filed into memory"),
             # `request="wrong"`: a question the Resident filed is a finding
             # row, so Home Assistant's Repairs and a notification can carry
-            # *No* back as the same correction the tab makes. They offered
-            # only Dismiss before.
+            # *No* back as the same correction the tab makes.
             _answer("no", "No", "Not right — say why if you can, and the "
                     "reason retires every guess built on the same "
                     "misreading.", route=f"/api/case/{cid}/wrong",
                     request="wrong", note=True, done="Noted"),
-            # A guess in the hypothesis queue is asked again rather than
-            # brought back, and says so; a question the Resident filed is
-            # a finding row and is snoozed like one.
             _dismiss(cid, question=(case.get("origin") or {}).get("store")
                      == "hypotheses"),
         ]
 
     if sit == "opportunity":
-        out = [_answer(
-            "accept", "Make the change", "Write it into Home Assistant and "
-            "reload. Undo takes it straight back out.",
-            route=f"/api/case/{cid}/do", primary=True,
-            done="Done — Undo puts it back")]
-        if case.get("status") == "open":
-            out.append(_answer(
-                "trial", "Try it for a week", "Replay the last week and "
-                "grade what it would have done against what you did.",
-                route=f"/api/proposal/{key}/trial", done="Trial started"))
-        out.append(_dismiss(cid))
-        out.append(_answer(
-            "decline", "No thanks", "Not for this house. Say why if you "
-            "like, and the reason reaches every future suggestion.",
-            route=f"/api/case/{cid}/wrong", note=True, done="Noted"))
-        return out[:MAX_VISIBLE]
+        return [
+            _answer("accept", "Apply", "Write it into Home Assistant and "
+                    "reload. Undo takes it straight back out.",
+                    route=f"/api/case/{cid}/do", primary=True,
+                    done="Applied — Undo puts it back"),
+            _dismiss(cid),
+            _answer("decline", "Ignore", "Not for this house. Say why if "
+                    "you like, and the reason reaches every future "
+                    "suggestion.", route=f"/api/case/{cid}/wrong", note=True,
+                    done="Ignored"),
+        ]
 
     if sit == "chore":
         return [
             _answer("complete", "Done", "Tick it off. This is the moment "
                     "the fact goes into memory.", route=f"/api/case/{cid}/do",
                     primary=True, done="Done — written into memory"),
-            _answer("drop", "Remove", "Take it off the list undone. brAIn "
-                    "is free to find it again.", route=f"/api/case/{cid}/wrong",
-                    done="Off the list"),
+            _dismiss(cid),
+            _answer("drop", "Ignore", "Take it off the list for good: "
+                    "brAIn will not raise it again.",
+                    route=f"/api/case/{cid}/wrong", done="Ignored"),
         ]
 
     if sit == "chore_done":
-        return [_answer("reopen", "Put it back", "Back onto the list, "
+        return [_answer("reopen", "Restore", "Back onto Your list, "
                         "undone.", route=f"/api/todo/{key}/reopen",
-                        primary=True, done="Back on the list")]
+                        primary=True, done="Back on your list")]
 
     if sit == "watching":
         return [
-            _answer("elevate", "Show it anyway", "brAIn looked and decided "
-                    "not to bother you. This puts it on the list as the "
-                    "check filed it.", route=f"/api/finding/{key}/elevate",
-                    primary=True, done="On the list"),
+            _answer("elevate", "Restore", "brAIn looked and decided not to "
+                    "bother you. This puts it back in the queue as the check "
+                    "filed it.", route=f"/api/finding/{key}/elevate",
+                    primary=True, done="Back in the queue"),
             _wrong(cid),
         ]
 
-    # -- problems: one row, whatever the check --------------------------------
+    # -- problems: one primary, then Snooze · Ignore -------------------------
     # A chore check (empty the dishwasher, shut the back door) is the one
     # problem whose honest first press is "Done": the work is minutes and
     # putting it on a list is sillier than doing it. Everything else leads
-    # with Fix it where brAIn could act and the list where it could not.
+    # with Plan where brAIn could act and the list where it could not.
     if sit == "chore_check":
         return [_done(key, primary=True), _dismiss(cid), _wrong(cid)]
-    out: list[dict] = []
     if (sit not in HANDS and sit != "fix_failed" and case.get("fixable")
             and not plan_refused(plan)):
-        out.append(_fix(key))
-    out.append(_todo(cid, primary=not out))
-    out.append(_dismiss(cid))
-    out.append(_wrong(cid, prefill=PREFILL.get(sit, "")))
-    return out[:MAX_VISIBLE]
+        lead = _plan(key, primary=True)
+    else:
+        lead = _todo(cid, primary=True)
+    return [lead, _dismiss(cid),
+            _wrong(cid, prefill=PREFILL.get(sit, ""))][:MAX_VISIBLE]
+
+
+# The one status chip on a card (docs/design/ui-redesign-2026-10.md,
+# "Visual standard"): a dot and one word, four kinds and no fifth.
+CHIPS = ("urgent", "problem", "tidy", "suggestion")
+CHIP_WORDS = {"urgent": "Urgent", "problem": "Problem", "tidy": "Tidy-up",
+              "suggestion": "Suggestion"}
+
+
+def chip(case: dict, urgent: bool = False) -> str:
+    """Which of `CHIPS` this case wears. `urgent` is the caller's, because
+    it is `notify_router.is_urgent`'s rule and this module is a leaf.
+
+    A question rides as a suggestion: it is brAIn proposing something it
+    thinks is true, in the asking colour, and a fifth chip for it would be
+    the two-severities-at-once card the design doc cut."""
+    if urgent:
+        return "urgent"
+    kind = case.get("kind")
+    if kind in ("opportunity", "question"):
+        return "suggestion"
+    if situation(case) == "tidy" or case.get("severity") == "info":
+        return "tidy"
+    return "problem"
 
 
 def more(case: dict, visible: list[dict], overflow: list[dict]) -> list[dict]:
-    """What goes behind the ⋯: the two presses of the fixed row a card
-    does not show (*Add to list* on a chore check, *Dismiss* wherever the
-    row leaves it off), then every rare verb the row has not already
-    offered.
+    """What goes behind the ⋯: at most `MAX_MORE` of Ask, Recheck, Done
+    and Plan — the design doc's four, chosen per kind — never one already
+    on the row.
 
-    `overflow` is `cases.overflow`'s list, unchanged — this only drops a
-    verb that is already a visible button, so the same press is never
-    offered twice under two names.
+    `overflow` (`cases.overflow`'s whole list) is read only for the verb
+    no finding has: a proposal's week-long trial. Everything else is built
+    here, so the two lists cannot name one press twice under two words.
     """
     shown = {a["verb"] for a in visible}
     out: list[dict] = []
+
+    def add(item: dict) -> None:
+        if item["verb"] not in shown and len(out) < MAX_MORE:
+            shown.add(item["verb"])
+            out.append(item)
+
     sit = situation(case)
+    store = (case.get("origin") or {}).get("store")
+    key = _finding_key(case)
+    kind = case.get("kind")
     cid = str(case.get("id") or "")
-    if (visible and "todo" not in shown and case.get("kind") == "problem"
-            and case.get("status") == "open"
-            and sit not in ("planned", "change")):
-        out.append(_todo(cid))
-    if (visible and "not_now" not in shown
-            and sit not in ("planned", "change", "chore_done", "watching")):
-        out.append(_dismiss(cid))
+    if store == "findings":
+        if sit in ("planning", "fixing", "change"):
+            add(_ask(key))
+            return out
+        if sit == "chore_check":
+            add(_todo(cid))
+        add(_ask(key))
+        if str(case.get("source") or "").startswith("check:"):
+            add(_recheck(key))
+        if kind in ("problem", "opportunity") and sit != "watching":
+            add(_done(key))
+        plan = case.get("plan") or {}
+        if (case.get("fixable") and sit not in HANDS and sit != "watching"
+                and (plan_refused(plan) or sit == "fix_failed")):
+            add(_plan(key))
+        return out
     for item in overflow or []:
-        if item.get("verb") in shown:
-            continue
-        out.append(item)
+        if item.get("verb") == "trial":
+            add(_answer("trial", "Run", "Try it for a week first: replay it "
+                        "over the days since and grade each firing against "
+                        "what you did. Nothing is switched on.",
+                        route=item["route"], done="Trial started"))
     return out
 
 
@@ -492,9 +562,11 @@ def request_answers(row: dict) -> list[dict]:
     Built from a bare store row rather than a case, because the mirror is
     written by the store and the store cannot import `cases`. The
     situation is read the same way; only the presses HA can carry back as
-    a request survive, and *Dismiss* rides at the end of any row that
-    somehow left it off, because "not this minute" is the lock-screen
-    answer.
+    a request survive. A phone cannot start a plan run, so a problem whose
+    card leads with *Plan* is offered *Add to list* in its place — the
+    lock screen's way of saying "I'll handle it" — and *Snooze* rides at
+    the end of any row that somehow left it off, because "not this
+    minute" is the lock-screen answer.
     """
     case = {
         "id": f"f:{int(row.get('ts') or 0)}",
@@ -512,12 +584,16 @@ def request_answers(row: dict) -> list[dict]:
     out = [{"action": a["request"], "label": a["label"]}
            for a in answers(case) if a.get("request")]
     actions = {a["action"] for a in out}
+    if (out and "todo" not in actions and case["kind"] == "problem"
+            and situation(case) != "chore_check"):
+        out.insert(0, {"action": "todo", "label": "Add to list"})
+        actions.add("todo")
     if out and "snooze" not in actions and case["kind"] != "change":
-        out.append({"action": "snooze", "label": "Dismiss"})
+        out.append({"action": "snooze", "label": "Snooze"})
     return out
 
 
-__all__ = ["AUTOMATION_PREFIX", "CHECK_SITUATIONS", "HANDS",
-           "LEGACY_PLAN_MARK", "MAX_VISIBLE", "PREFILL", "REQUEST_ACTIONS",
-           "SITUATIONS", "answers", "more", "plan_refused",
+__all__ = ["AUTOMATION_PREFIX", "CHECK_SITUATIONS", "CHIPS", "CHIP_WORDS", "HANDS",
+           "LEGACY_PLAN_MARK", "MAX_MORE", "MAX_VISIBLE", "PREFILL", "REQUEST_ACTIONS",
+           "SITUATIONS", "answers", "chip", "more", "plan_is_legacy", "plan_refused",
            "request_answers", "situation"]

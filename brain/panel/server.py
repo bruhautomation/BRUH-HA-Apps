@@ -139,10 +139,12 @@ from aiohttp.abc import AbstractAccessLogger
 
 import actions
 import addon_options
+import answers as answers_mod
 import appliances
 import atomic_write
 import automation_writer
 import baselines
+import brain_status
 import brief
 import capture
 import card_tags
@@ -190,6 +192,7 @@ import model_plan
 import music_assistant
 import notify_learn
 import notify_router
+import numfmt
 import override_ledger
 import onboarding
 import outcomes
@@ -229,6 +232,9 @@ import house_book
 import sre
 import tidy
 import upgrades
+# Today's own two additions: a snooze/ignore for the cards no store owns,
+# and the History drawer's rows.
+import today as today_mod
 # Understanding the house: what each entity is, what it is doing now, and
 # what is coming up.
 import occasions
@@ -6245,6 +6251,10 @@ async def _scheduler() -> None:
     while True:
         await asyncio.sleep(60)
         _beat("scheduler")
+        # The status line and the counts, for the integration's sensors —
+        # before every gate below, because "paused" and "signed out" are
+        # exactly the answers the gates are about.
+        await asyncio.to_thread(publish_status)
         # Fold in what the CLI side found. This belongs on the tick rather
         # than on the Findings tab's own request: study sessions are the
         # other producer, and the badge that tells you to go look is served
@@ -6754,6 +6764,179 @@ def _generated_at(card_id: str) -> str | None:
     return value
 
 
+# The last health verdict the diagnostics payload computed, so the status
+# line can say "degraded" without rebuilding that payload on every poll.
+# Written wherever the payload is built (`publish_diagnostics` hourly and
+# after every checks pass, `/api/diagnostics` on demand).
+HEALTH_CACHE: dict = {"verdict": None, "at": 0.0}
+
+# The integration's copy of the status line and the counts. Rewritten every
+# scheduler tick (a minute), so `sensor.brain_status` and
+# `binary_sensor.brain_needs_you` are never more than a minute behind the
+# panel; the reader treats a file older than `STATUS_STALE_S` as the panel
+# having stopped, which is `unknown`, never the last answer it gave.
+STATUS_FILE = Path(os.environ.get(
+    "BRAIN_STATUS_FILE", "/config/.brain/status.json"))
+STATUS_STALE_S = 600
+
+
+def _note_health(verdict) -> None:
+    if isinstance(verdict, dict) and verdict.get("state"):
+        HEALTH_CACHE.update(verdict=verdict, at=time.time())
+
+
+def _brain_status(settings: dict | None = None, budget: dict | None = None,
+                  auth=..., now: float | None = None) -> dict:
+    """The status line: `brain_status.derive` over the panel's own state.
+
+    One derivation for the panel's status line, `/api/status`, the status
+    mirror and `sensor.brain_status`. Never raises.
+    """
+    now = time.time() if now is None else now
+    try:
+        if auth is ...:
+            auth = engine.get_auth()
+        settings = settings if settings is not None else settings_store.load()
+        if budget is None:
+            try:
+                budget = usage_store.budget_state(settings)
+            except Exception:  # noqa: BLE001 — no figure is no budget pause
+                budget = {}
+        versions = _integration_versions()
+        restart_since = 0.0
+        if versions.get("restart_pending"):
+            try:
+                restart_since = RESTART_MARKER_FILE.stat().st_mtime
+            except OSError:
+                restart_since = 0.0
+        last_check = (CHECKS_STATE.get("last") or {}).get("finished_at") or 0
+        look = max(float(RESIDENT_STATE.get("last_look_at") or 0),
+                   float(last_check or 0))
+        style = _clock_style()
+
+        def clock(ts: float) -> str:
+            local = _local_now(ts)
+            return brief.format_clock(local.hour, local.minute, style)
+
+        return brain_status.derive(
+            signed_in=bool(auth),
+            auth_state=str(AUTH_CHECK.get("state") or ""),
+            auth_checked_at=float(AUTH_CHECK.get("checked_at") or 0),
+            restart_pending=bool(versions.get("restart_pending")),
+            restart_since=restart_since,
+            auto_enabled=bool((settings or {}).get("auto_enabled", True)),
+            rate_limit_until=float(RATE_LIMIT_STATE.get("until") or 0),
+            budget=budget,
+            health=HEALTH_CACHE.get("verdict"),
+            last_look_at=look, now=now, clock=clock)
+    except Exception as exc:  # noqa: BLE001 — a status line must not 500
+        log.debug("status could not be composed: %s", exc)
+        return brain_status.derive(signed_in=True, now=now)
+
+
+# What `/api/upgrades` last read pending, so the queue count and the Today
+# card agree about which assessed updates are waiting without a live Core
+# read on every status poll. In memory: an empty cache after a restart
+# counts no update card until Today's own fetch fills it, which is
+# seconds, and over-counting a card nobody can see is the worse error.
+UPGRADES_SEEN: dict = {"updates": [], "at": 0.0}
+
+
+def _today_cards(now: float | None = None) -> dict:
+    """The Today queue's two cards no store owns, as `{tidy, updates}`.
+
+    `tidy` is the pending names-and-rooms table (or None), `updates` the
+    assessed pending updates — each only while not snoozed or ignored on
+    Today. Read off the stores the Upkeep section already reads, so the
+    card and the count are one derivation. Never raises.
+    """
+    now = time.time() if now is None else now
+    out: dict = {"tidy": None, "updates": []}
+    try:
+        hidden = today_mod.hidden(now)
+    except Exception:  # noqa: BLE001 — nothing hidden shows the card
+        hidden = {}
+    try:
+        data = tidy.load()
+        proposal = data.get("proposal") or None
+        if proposal and (proposal.get("rows") or []):
+            key = today_mod.tidy_key(proposal)
+            if key and key not in hidden:
+                out["tidy"] = {"key": key, "proposal": proposal}
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not read the tidy store for Today: %s", exc)
+    try:
+        rows = upgrades.listing(list(UPGRADES_SEEN["updates"] or []))
+        for row in rows:
+            if not row.get("advice"):
+                continue
+            key = today_mod.update_key(row)
+            if key and key not in hidden:
+                out["updates"].append({"key": key, **row})
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not read the upgrade verdicts for Today: %s", exc)
+    return out
+
+
+def _queue_count(now: float | None = None) -> int:
+    """THE count (`cases.queue_count`) plus Today's own two cards: the
+    pending tidy table and every assessed update. One number for the
+    badge, `/api/status`, the status mirror and `binary_sensor.brain_needs
+    _you`, because each of those cards is a decision in the same queue."""
+    base = cases.queue_count(now)
+    try:
+        extra = _today_cards(now)
+        base += (1 if extra["tidy"] else 0) + len(extra["updates"])
+    except Exception:  # noqa: BLE001 — the cases are the count's floor
+        pass
+    return base
+
+
+def _counts(now: float | None = None) -> dict:
+    """The three numbers a person compares across screens, each from its
+    one derivation: the queue (`cases.queue_count`), Your list
+    (`todo_store`'s open items) and the facts (`facts_store.count`). A
+    store that could not be read is None — "I could not look" — never 0."""
+    out: dict = {}
+    for key, fn in (("queue_count", lambda: _queue_count(now)),
+                    ("list_count", lambda: todo_store.counts()["open"]),
+                    ("facts_count", lambda: facts_store.count(now))):
+        try:
+            out[key] = int(fn())
+        except Exception as exc:  # noqa: BLE001
+            log.debug("could not count %s: %s", key, exc)
+            out[key] = None
+    return out
+
+
+def _status_mirror_payload(now: float | None = None) -> dict:
+    now = time.time() if now is None else now
+    return {
+        "generated_at": int(now),
+        "stale_after_s": STATUS_STALE_S,
+        "version": ADDON_VERSION,
+        "status": _brain_status(now=now),
+        **_counts(now),
+    }
+
+
+def publish_status() -> None:
+    """Write the status line and the counts for the integration.
+
+    Skipped on a dev checkout with no /config (the findings mirror's rule)
+    and never raised: the mirror is derived, and a tick that could not
+    write it is a sensor a minute staler, not a broken scheduler.
+    """
+    if not STATUS_FILE.parent.parent.exists():
+        return
+    try:
+        payload = _status_mirror_payload()
+        STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write.write_json(STATUS_FILE, payload)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("status mirror write failed: %s", exc)
+
+
 def _status_payload() -> tuple[dict | None, dict]:
     """Everything `/api/status` reads off disk, in one call off the loop.
 
@@ -6766,15 +6949,71 @@ def _status_payload() -> tuple[dict | None, dict]:
     cats = all_categories()
     insights = {c["id"]: _generated_at(c["id"]) for c in cats}
     settings = settings_store.load()
+    usage = usage_store.budget_state(settings)
+    counts = _counts()
     return auth, {
         "settings": settings,
-        "usage": usage_store.budget_state(settings),
+        "usage": usage,
         "model": eff_model() or "default",
         "refresh_hours": eff_refresh_hours(),
         "history_days": eff_history_days(),
         "categories": [_category_status(c, insights) for c in cats],
-        "findings_open": cases.open_count(),
+        # The badge: the queue's length, from its one derivation. The old
+        # `findings_open` key carries the same number for a panel served
+        # before the change, so no screen can show a second count.
+        "findings_open": counts["queue_count"]
+        if counts["queue_count"] is not None else cases.open_count(),
+        **counts,
+        "status": _brain_status(settings, usage, auth),
+        "brief": _brief_link(),
+        "first_look_done": _first_look_done(counts),
     }
+
+
+# A brief older than this is not "this morning's" any more, and the link on
+# Today's status line goes with it.
+BRIEF_LINK_S = 18 * 3600
+FIRST_LOOK_KEY = "first_look_at"
+
+
+def _brief_link(now: float | None = None) -> dict | None:
+    """This morning's brief, for the "Read this morning's brief" link — or
+    None when there is none worth linking."""
+    now = time.time() if now is None else now
+    sent = float(BRIEF_STATE.get("last_sent") or 0)
+    text = str(BRIEF_STATE.get("last_text") or "").strip()
+    if not sent or not text or now - sent > BRIEF_LINK_S:
+        return None
+    return {"sent_at": int(sent), "text": text}
+
+
+def _first_look_done(counts: dict | None = None) -> bool:
+    """Whether the first-run card on Today can go: brAIn has looked at the
+    house at least once. A stamp written by the first checks pass or look
+    and kept on disk, because both in-memory clocks are zero after every
+    restart and a setup card over an established house's queue is the one
+    wrong answer here. An install that has anything at all — a fact, a
+    case waiting — has plainly been looked at."""
+    try:
+        if schedule_store.get(FIRST_LOOK_KEY):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    if (CHECKS_STATE.get("last") or {}).get("finished_at"):
+        return True
+    if RESIDENT_STATE.get("last_look_at"):
+        return True
+    counts = counts or {}
+    return bool((counts.get("facts_count") or 0) or (counts.get("queue_count") or 0))
+
+
+def _note_first_look(now: float | None = None) -> None:
+    """Stamp the first look, once. Never raises."""
+    try:
+        if not schedule_store.get(FIRST_LOOK_KEY):
+            schedule_store.set(FIRST_LOOK_KEY, time.time() if now is None else now)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def h_status(request: web.Request) -> web.Response:
@@ -6818,6 +7057,20 @@ async def h_status(request: web.Request) -> web.Response:
         # derivation, and it spans the proposals and the accepted chores
         # the old sum did not.
         "findings_open": read["findings_open"],
+        # One source for every count (`_counts`): the queue the badge
+        # shows, Your list, and the facts House › What it knows totals.
+        # None means the store could not be read, never zero.
+        "queue_count": read["queue_count"],
+        "list_count": read["list_count"],
+        "facts_count": read["facts_count"],
+        # The status line (`brain_status.derive`): {state, label,
+        # sentence, since, back_at, last_look_at}. The same object the
+        # status mirror hands `sensor.brain_status`.
+        "status": read["status"],
+        # "Read this morning's brief" on Today's status line, and whether
+        # the first-run card may give way to the queue.
+        "brief": read["brief"],
+        "first_look_done": read["first_look_done"],
         # What brAIn did last and what it will do next. On the poll every
         # viewer already makes, because "is this thing working" is asked
         # of the top bar and not of a tab.
@@ -6921,6 +7174,20 @@ async def h_generate(request: web.Request) -> web.Response:
     # in `SCENE_RE` a single literal one (see the note there), and it is
     # also what stops a room's name arriving as two lines.
     question = " ".join((body.get("question") or "").split()) or None
+    if question and body.get("report") is True:
+        # "Save as report" on an answer in Ask: the person already asked
+        # this, in words, and read the answer — so it is a question for a
+        # card and nothing else. Not read by `interpret` and not matched
+        # against the ask bar's patterns: a question that happens to open
+        # "when…" or "learn…" must not become a rule or a study session
+        # because somebody pressed Save.
+        question = question[:500]
+        stamp = int(time.time())
+        while _job_active(f"custom-{stamp}"):
+            stamp += 1
+        insight_id = f"custom-{stamp}"
+        _enqueue(insight_id, question=question)
+        return web.json_response({"queued": [insight_id]})
     if question:
         if len(question) > 500:
             raise web.HTTPBadRequest(text="question too long")
@@ -7321,7 +7588,7 @@ async def _prompt_preview(cat: dict, mode: str) -> dict:
         {"name": "Dead ends", "chars": len(framing["knowledge"] or ""),
          "what": "Guesses you rejected, so they are not re-asked."},
         {"name": "The work list", "chars": len(framing["findings"] or ""),
-         "what": "What is already filed, and what you marked Wrong and why."},
+         "what": "What is already filed, and what you ignored and why."},
         {"name": "Last run of this card",
          "chars": len(_previous_block(previous)) if previous else 0,
          "what": "So it advances the story instead of regenerating it."},
@@ -7655,21 +7922,26 @@ def _card_eyebrow(insight: dict) -> str:
 _WHOLE_CARD_CSS = """
 :root{color-scheme:light dark;--ink:#0a1622;--ink2:#33506a;--ink3:#5b7185;--tile:#eef4f9}
 @media (prefers-color-scheme: dark){:root{--ink:#ffffff;--ink2:#b9ccdd;--ink3:#8ea5b8;--tile:#15293f}}
-html,body{margin:0;background:transparent;color:var(--ink);
-font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
-.c{padding:14px 16px 12px;display:flex;flex-direction:column;gap:10px}
-.eb{font-size:12px;font-weight:600;color:var(--ink3);white-space:nowrap;
-overflow:hidden;text-overflow:ellipsis}
+html,body{margin:0;height:100%;overflow:hidden;background:transparent;
+color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.c{box-sizing:border-box;height:100%;padding:14px 16px 12px;display:flex;
+flex-direction:column;gap:10px}
+.c>*{flex:none}
+.top{display:flex;align-items:baseline;gap:8px;min-width:0}
+.eb{flex:1 1 auto;min-width:0;font-size:12px;font-weight:600;color:var(--ink3);
+white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.upd{flex:none;font-size:12px;font-weight:600;color:var(--ink2);white-space:nowrap}
 h1{margin:2px 0 0;font-size:17px;line-height:1.25}
-.s{margin:0;font-size:14px;line-height:1.5;color:var(--ink2)}
+.s{margin:0;font-size:14px;line-height:1.5;color:var(--ink2);display:-webkit-box;
+-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .s b{color:var(--ink)}
 .h{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
 .t{background:var(--tile);border-radius:10px;padding:8px 11px}
 .t .l{font-size:11.5px;color:var(--ink3)}
 .t .v{font-size:16px;font-weight:700;margin-top:2px}
 .t .d{font-size:11.5px;color:var(--ink2);margin-top:1px}
-iframe{display:block;width:100%;height:320px;border:0;background:transparent}
-.f{font-size:11px;color:var(--ink3)}
+iframe{display:block;width:100%;flex:1 1 auto!important;min-height:0;
+border:0;background:transparent}
 .age{margin:0;padding:7px 10px;border-radius:8px;font-size:13px;font-weight:600;
 background:#fff3d6;color:#5a3d00}
 @media (prefers-color-scheme: dark){.age{background:#3a2c08;color:#ffe2a3}}
@@ -7687,13 +7959,24 @@ background:#fff3d6;color:#5a3d00}
 # file is written once and read for weeks: an age baked in at write time
 # would always say "today".
 CARD_STALE_DAYS = 2
+# Two halves, both against the viewer's clock and both re-worked every
+# minute: "Updated 7 h ago" beside the eyebrow on every card, always \u2014 the
+# design's one line of age, prominent rather than an 11px foot \u2014 and, past
+# `CARD_STALE_DAYS`, the warning line above the card in words.
 _WHOLE_CARD_AGE = (
-    '<script>(function(){var e=document.getElementById("age");'
-    'if(!e)return;var t=Date.parse(e.getAttribute("data-made")||"");'
-    'if(isNaN(t))return;var d=Math.floor((Date.now()-t)/86400000);'
-    'if(d<' + str(CARD_STALE_DAYS) + ')return;'
+    '<script>(function(){function ago(s){if(s<60)return"just now";'
+    'if(s<3600)return Math.floor(s/60)+" min ago";'
+    'if(s<86400)return Math.floor(s/3600)+" h ago";'
+    'var d=Math.floor(s/86400);return d+(d==1?" day ago":" days ago");}'
+    'function tick(){var u=document.getElementById("upd"),'
+    'e=document.getElementById("age");if(!u||!e)return;'
+    'var t=Date.parse(e.getAttribute("data-made")||"");'
+    'if(isNaN(t))return;var s=Math.max(0,(Date.now()-t)/1000);'
+    'u.textContent="Updated "+ago(s);var d=Math.floor(s/86400);'
+    'if(d<' + str(CARD_STALE_DAYS) + '){e.hidden=true;return;}'
     'e.textContent="This card is "+d+" days old \u2014 it shows the house '
-    'as it was then, not now.";e.hidden=false;})();</script>'
+    'as it was then, not now.";e.hidden=false;}'
+    'tick();setInterval(tick,60000);})();</script>'
 )
 
 # What a dashboard column is assumed to be, for sizing the card's frame.
@@ -7711,7 +7994,9 @@ def _whole_card_aspect(insight: dict, width: int = DASH_COLUMN_PX) -> int:
 
     An estimate from what is on it, with the page's own CSS numbers at a
     narrow column: padding, the eyebrow and title, the summary, the tile
-    rows, the chart's frame, the age line and the foot.
+    rows (the summary clamps at three lines), the chart and the age line.
+    The chart takes what is left of the frame, so an estimate a little
+    long or short is a chart a little taller or shorter, never a scrollbar.
     """
     inner = max(200, width - 24)
     per_line_title = max(1, inner // 9)
@@ -7724,31 +8009,13 @@ def _whole_card_aspect(insight: dict, width: int = DASH_COLUMN_PX) -> int:
     height = 20                                   # padding
     height += 16                                  # eyebrow
     height += 21 * max(1, -(-len(title) // per_line_title))
-    height += 20 * max(1, -(-len(summary) // per_line_text))
+    height += 20 * min(3, max(1, -(-len(summary) // per_line_text)))
     if tiles:
         height += 60 * -(-len(tiles) // per_row)
     height += 320                                 # the chart's frame
-    height += 34 + 14                             # age line, foot
+    height += 34                                  # the age warning
     height += 8 * 5                               # gaps
     return int(min(max(round(height / width * 100), 25), 300))
-
-
-_WHOLE_CARD_SIZE = (
-    '<script>(function(){var f=document.getElementById("v");'
-    'window.addEventListener("message",function(ev){var d=ev.data;'
-    'if(ev.source!==f.contentWindow||!d||d.type!=="bruh-size"||!d.h)return;'
-    'f.style.height=Math.min(Math.max(d.h,80),2000)+"px";});})();</script>'
-)
-
-_WHOLE_CARD_FRAME_SIZE = (
-    '<script>(function(){var last=0;function post(){var b=document.body;'
-    'if(!b)return;var h=Math.ceil(Math.max(b.offsetHeight,'
-    'b.getBoundingClientRect().height));if(h>0&&Math.abs(h-last)>2){last=h;'
-    'parent.postMessage({type:"bruh-size",h:h},"*");}}'
-    'try{new ResizeObserver(post).observe(document.body);}catch(e){}'
-    'window.addEventListener("load",post);setTimeout(post,400);'
-    'setTimeout(post,1200);})();</script>'
-)
 
 
 def _lead_split(summary: str) -> tuple[str, str]:
@@ -7771,7 +8038,12 @@ def _whole_card_page(insight: dict) -> str:
             f'<div class="t"><div class="l">{esc(str(h["label"]))}</div>'
             f'<div class="v">{esc(str(h.get("value", "—")))}</div>{delta}</div>')
     when = str(insight.get("generated_at") or "").replace("T", " ")[:16]
-    viz = str(insight.get("html") or "") + _WHOLE_CARD_FRAME_SIZE
+    # The chart takes whatever height the card's frame has left (`flex: 1`
+    # on the iframe, the page itself exactly the frame's height with its
+    # overflow hidden), so nothing on the dashboard scrolls inside itself:
+    # a frame sized to the chart's own content, inside a Webpage card of a
+    # fixed aspect ratio, was the inner scrollbar.
+    viz = str(insight.get("html") or "")
     return (
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -7780,14 +8052,16 @@ def _whole_card_page(insight: dict) -> str:
         f'<p class="age" id="age" hidden '
         f'data-made="{esc(str(insight.get("generated_at") or ""), quote=True)}">'
         f'</p>'
-        f"<div><div class=\"eb\">{esc(_card_eyebrow(insight))}</div>"
+        f"<div><div class=\"top\"><div class=\"eb\">"
+        f"{esc(_card_eyebrow(insight))}</div>"
+        # The server's words until the script has the viewer's clock.
+        f"<div class=\"upd\" id=\"upd\">Updated {esc(when)}</div></div>"
         f"<h1>{esc(str(insight.get('title') or ''))}</h1></div>"
         f"<p class=\"s\">{summary}</p>"
         + (f'<div class="h">{"".join(tiles)}</div>' if tiles else "")
         + f'<iframe id="v" sandbox="allow-scripts" title="Visualization" '
         f'srcdoc="{esc(viz, quote=True)}"></iframe>'
-        f'<div class="f">brAIn · analysed {esc(when)}</div>'
-        "</div>" + _WHOLE_CARD_SIZE + _WHOLE_CARD_AGE
+        "</div>" + _WHOLE_CARD_AGE
         + _CARD_RELOAD_SNIPPET + "</body></html>"
     )
 
@@ -7902,6 +8176,11 @@ MAINT_WEEK_S = 7 * 86400
 # weekly review needs no snapshot of its own — `_note_registry`'s
 # arrangement, one hook over.
 ACCESS_DIGEST: dict = {"digest": None, "at": 0.0}
+# When each update was last ASKED about on a timer, keyed on
+# `upgrades.key_for` (an entity and a version), so a verdict that keeps
+# failing is asked about every six hours rather than every poll.
+UPGRADE_TRIED: dict = {}
+UPGRADE_RETRY_S = 6 * 3600
 
 
 def _note_access(snapshot: dict, now: float) -> None:
@@ -8078,7 +8357,12 @@ async def h_upgrades(request: web.Request) -> web.Response:
     payload = _maint_status("upgrades")
     if updates is None:
         return web.json_response({**payload, "updates": [], "readable": False})
+    UPGRADES_SEEN.update(updates=list(updates), at=time.time())
     rows = await asyncio.to_thread(upgrades.listing, updates)
+    hidden = await asyncio.to_thread(today_mod.hidden)
+    for row in rows:
+        row["today_key"] = today_mod.update_key(row)
+        row["today_hidden"] = row["today_key"] in hidden
     return web.json_response({**payload, "updates": rows, "readable": True})
 
 
@@ -8396,6 +8680,34 @@ async def _maint_tick(now: float) -> list[str]:
             MAINT_STATE["access"]["held"] = ""
             await asyncio.to_thread(schedule_store.set, ACCESS_TRIED_KEY, now)
             started.append("access")
+
+    # "Is it safe tonight?", asked on its own once per new update rather
+    # than on a press (the design doc's capability decision 5), so an update
+    # arrives on Today already assessed. One per pass, behind the same
+    # gates as every scheduled run, and switched off by the
+    # `upgrade_advice_auto` setting. A failed verdict is not retried more
+    # often than `UPGRADE_RETRY_S`: a guard that refuses has to change the
+    # next attempt.
+    if settings.get("upgrade_advice_auto", True) and not MAINT_STATE["upgrades"]["running"]:
+        updates = await _pending_updates()
+        if updates is not None:
+            UPGRADES_SEEN.update(updates=list(updates), at=now)
+            rows = await asyncio.to_thread(upgrades.listing, updates)
+            waiting = [u for u in updates
+                       if not any(r.get("entity_id") == u.get("entity_id")
+                                  and r.get("advice") for r in rows)
+                       and now - UPGRADE_TRIED.get(upgrades.key_for(u), 0)
+                       >= UPGRADE_RETRY_S]
+            if waiting:
+                if excuse:
+                    MAINT_STATE["upgrades"]["held"] = excuse
+                else:
+                    first = waiting[0]
+                    UPGRADE_TRIED[upgrades.key_for(first)] = now
+                    if _maint_start("upgrades", lambda: _run_advice(first)):
+                        MAINT_STATE["upgrades"]["held"] = ""
+                        MAINT_STATE["upgrades"]["subject"] = first["entity_id"]
+                        started.append("upgrades")
 
     # The house book: weekly, only once somebody has asked for one, and
     # only when what it reads has moved.
@@ -8970,9 +9282,10 @@ def _measurement_signals(snapshot: dict, now: float) -> int:
         unit = baseline.get("unit") or ""
         hits.append((abs(found["sigmas"]), {
             "entity_id": eid,
-            "text": (f"{eid} is reading {found['value']:g}{unit}, "
-                     f"{abs(found['sigmas']):.1f} spreads from its usual "
-                     f"{found['median']:g}{unit}"),
+            "text": (f"{eid} is reading "
+                     f"{numfmt.quantity(found['value'], unit)}, "
+                     f"{numfmt.number(abs(found['sigmas']))} spreads from "
+                     f"its usual {numfmt.quantity(found['median'], unit)}"),
             "value": found["value"],
             "deviation": round(found["sigmas"], 2),
             "source": f"baseline:{found['source']}",
@@ -9888,6 +10201,7 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         inputs=look_inputs)
     TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
     RESIDENT_STATE["last_look_at"] = now
+    await asyncio.to_thread(_note_first_look, now)
     try:
         # No tools: this is a LOOK, not a search. What it is asked is
         # whether a signal deserves another thought, which is answerable
@@ -11921,6 +12235,7 @@ async def run_checks(reason: str = "schedule") -> dict:
     finally:
         CHECKS_STATE["running"] = False
     CHECKS_STATE["last"] = summary
+    await asyncio.to_thread(_note_first_look)
     await asyncio.to_thread(publish_diagnostics)
     return summary
 
@@ -14412,6 +14727,11 @@ def _diagnostics_payload() -> dict:
     # whether brAIn is working — which is exactly the kind of drift a second
     # copy of a rule produces.
     payload["health"] = health.verdict(payload, safe_options)
+    _note_health(payload["health"])
+    # The status line, from the verdict just computed: the mirror and the
+    # Download-diagnostics bundle say what the panel's status line says.
+    payload["status"] = _brain_status(settings, usage or None)
+    payload["counts"] = _counts()
     # And the flat sweep, derived last for the same reason and from the
     # same payload the report reads — so ⚙ → Diagnostics, the mirror,
     # Home Assistant's Download-diagnostics button and `brain report` all
@@ -14660,12 +14980,16 @@ def _case_todo_done(key):
 
 
 def _case_todo_drop(key):
-    """A chore taken off the list undone, which releases the suppression."""
+    """A chore's Ignore: off the list undone, and — where a finding put it
+    there — the report settled as ignored, so it is not raised again.
+    "Off the list and free to come back" is Snooze now (the design doc's
+    capability decision 7), and the route that releases the key stays for
+    the To-do app's delete."""
     async def run() -> dict:
         item = await asyncio.to_thread(todo_store.get, int(key))
         if item is None:
             return {"error": "no such item"}
-        payload = await _drop_todo(item)
+        payload = await _drop_todo(item, ignore=True)
         return payload if payload is not None else {"error": "no such item"}
     return run
 
@@ -14700,6 +15024,17 @@ def _cases_payload(now: float | None = None) -> dict:
         case["answers"] = cases.answers(case)
         case["more"] = cases.more(case)
         case["situation"] = cases.situation(case)
+        # Today's card: the one status chip (`answers.chip`, with the
+        # Urgent rule `notify_router.is_urgent` owns), and whether "Ignore
+        # all like this" can mute the producer — absent for the producers
+        # that are not a rule (`cases.UNMUTABLE_SOURCES`).
+        try:
+            case["urgent"] = bool(notify_router.is_urgent(case))
+        except Exception:  # noqa: BLE001 — a row that cannot be read is not urgent
+            case["urgent"] = False
+        case["chip"] = answers_mod.chip(case, case["urgent"])
+        case["mutable"] = bool(case.get("source")) and (
+            case.get("source") not in cases.UNMUTABLE_SOURCES)
         # Pretty names: the entity the card is about, and every id the
         # prose mentions, so the panel can render words a person reads
         # rather than ids they translate. Only ids the last snapshot saw
@@ -14713,10 +15048,13 @@ def _cases_payload(now: float | None = None) -> dict:
             *(a.get("label") or "" for a in case.get("actions") or [])))
         if row:
             names[case["entity_id"]] = row
+    # Urgent first (a leak, an alarm, a lock), then the server's own band
+    # order: `sorted` is stable, so the rest keep `cases._sort`'s order.
+    rows.sort(key=lambda c: 0 if c.get("urgent") else 1)
     return {
         "cases": rows,
         "names": names,
-        "open": cases.open_count(now),
+        "open": _queue_count(now),
         "ledger": LEDGER.summary(now),
         "resident": _resident_diagnostics(),
         "eventbus": EVENT_BUS.stats() if EVENT_BUS else {
@@ -14783,6 +15121,97 @@ async def h_case_verb(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+async def h_case_wake(request: web.Request) -> web.Response:
+    """History's Restore on a Snoozed row: the case back in the queue now."""
+    case_id = request.match_info["id"]
+    woken = await asyncio.to_thread(cases.wake, case_id)
+    if woken is None:
+        raise web.HTTPNotFound(text="no such case")
+    payload = await asyncio.to_thread(_cases_payload)
+    payload.update(woken)
+    return web.json_response(payload)
+
+
+def _history_payload(now: float | None = None) -> dict:
+    """Today's History drawer (`today.history`), from the stores that hold
+    each kind of hidden thing. Never raises: a store that could not be
+    read is a filter with fewer rows, and the reason is logged."""
+    now = time.time() if now is None else now
+
+    def safe(fn, default):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001
+            log.debug("history: a store could not be read: %s", exc)
+            return default
+
+    listing = safe(findings_store.listing, {"findings": [], "settled": []})
+    todos = safe(todo_store.listing, {"items": [], "done": []})
+    tidy_data = safe(tidy.load, {"batches": []})
+    return today_mod.history(
+        findings=listing.get("findings") or [],
+        settled=listing.get("settled") or [],
+        muted=safe(_muted_rows, []),
+        snoozed_cases=safe(lambda: cases.list_cases(
+            "snoozed", kinds=cases.KINDS, stores=cases.STORES, now=now), []),
+        todo_done=todos.get("done") or [],
+        tidy_batches=safe(lambda: tidy.undoable(
+            tidy_data.get("batches") or [], now), []),
+        hidden_rows=safe(lambda: today_mod.hidden(now), {}),
+        now=now)
+
+
+async def h_history(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_history_payload))
+
+
+def _today_payload() -> dict:
+    """Today's two cards no store owns, in the shape the panel renders."""
+    cards = _today_cards()
+    tidy_card = cards["tidy"]
+    out: dict = {"tidy": None, "updates": cards["updates"]}
+    if tidy_card:
+        proposal = tidy_card["proposal"]
+        out["tidy"] = {"key": tidy_card["key"],
+                       "rows": proposal.get("rows") or [],
+                       "refused": proposal.get("refused") or [],
+                       "at": int(proposal.get("at") or 0),
+                       "undo_days": tidy.UNDO_DAYS}
+    return out
+
+
+async def h_today(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_today_payload))
+
+
+async def h_today_hide(request: web.Request) -> web.Response:
+    """Snooze or Ignore on a Today card no store owns (`today.hide`)."""
+    body = await _json_body(request)
+    key = str((body or {}).get("key") or "")
+    how = str((body or {}).get("how") or "")
+    title = str((body or {}).get("title") or "")
+    row = await asyncio.to_thread(today_mod.hide, key, how, title)
+    if row is None:
+        raise web.HTTPBadRequest(text="that is not a card Today can hide")
+    payload = await asyncio.to_thread(_today_payload)
+    payload["hidden"] = row
+    payload["open"] = await asyncio.to_thread(_queue_count)
+    if how == "snoozed":
+        payload["snoozed_until"] = row["until"]
+    return web.json_response(payload)
+
+
+async def h_today_restore(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    key = str((body or {}).get("key") or "")
+    ok = await asyncio.to_thread(today_mod.restore, key)
+    if not ok:
+        raise web.HTTPNotFound(text="nothing hidden under that")
+    payload = await asyncio.to_thread(_today_payload)
+    payload["open"] = await asyncio.to_thread(_queue_count)
+    return web.json_response(payload)
+
+
 def _findings_payload() -> dict:
     """What the Findings tab reads — and the ONLY thing it reads.
 
@@ -14803,7 +15232,15 @@ def _findings_payload() -> dict:
     # loose card beside the case list that had correctly hidden it.
     open_claims = hypotheses.awake()
     payload["hypotheses"] = open_claims
-    payload["open"] += len(open_claims)
+    # The badge's number, and it is THE queue count (`cases.queue_count`)
+    # rather than this listing's own sum: the tab's badge was painted from
+    # here on one poll and from `/api/status` on the next, two derivations
+    # that disagreed whenever a proposal or a fixed row was waiting.
+    try:
+        payload["open"] = _queue_count()
+    except Exception:  # noqa: BLE001 — the old sum is the floor
+        payload["open"] += len(open_claims)
+    payload["queue_count"] = payload["open"]
     # How right each producer has been, from the endings people gave. It
     # rides this payload rather than its own route because it is read in
     # exactly one place — a line under the filter chips — and a number
@@ -15196,8 +15633,22 @@ def _record_exception(finding: dict, note: str) -> list[str]:
 
 
 def _todo_payload() -> dict:
-    """What the To-do tab reads, and the only thing it reads."""
-    return todo_store.listing()
+    """What Your list reads, and the only thing it reads.
+
+    Each open item carries `snoozed_until` off the cases' snooze sidecar
+    (key `t:<id>`), because Snooze on a list item is the case verb and the
+    list has to know which of its items are asleep — a snoozed chore that
+    stayed on Your list would read as a press that did nothing."""
+    payload = todo_store.listing()
+    try:
+        asleep = cases.snoozes()
+    except Exception:  # noqa: BLE001 — nothing snoozed shows the item
+        asleep = {}
+    now = time.time()
+    for item in payload.get("items") or []:
+        until = int(asleep.get(f"t:{item.get('id')}", 0) or 0)
+        item["snoozed_until"] = until if until > now else 0
+    return payload
 
 
 async def h_todo(request: web.Request) -> web.Response:
@@ -15437,14 +15888,34 @@ async def h_todo_delete(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
-async def _drop_todo(item: dict) -> dict | None:
-    """Take a chore off the list undone, wherever the press came from."""
+async def h_todo_ignore(request: web.Request) -> web.Response:
+    """Today's Ignore on a list item (`_drop_todo(ignore=True)`)."""
+    item = _todo_or_404(request)
+    payload = await _drop_todo(item, ignore=True)
+    if payload is None:
+        raise web.HTTPNotFound(text="no such item")
+    return web.json_response(payload)
+
+
+async def _drop_todo(item: dict, ignore: bool = False) -> dict | None:
+    """Take a chore off the list undone, wherever the press came from.
+
+    `ignore` is Today's Ignore on a list item: the report a finding moved
+    here is settled as `ignored` rather than released, because "never
+    raise this again" is what the word says. The undo token is the same
+    either way, and its reversal writes the key back to `accepted`."""
 
     def drop() -> tuple[dict | None, bool, dict]:
         removed = todo_store.remove(item["id"])
         unsettled = False
         if removed and removed.get("finding_key"):
-            unsettled = findings_store.unsettle(removed["finding_key"])
+            if ignore:
+                findings_store.remember_answer(
+                    removed["finding_key"], removed["text"], "ignored",
+                    source=removed.get("source", ""),
+                    source_title=removed.get("source_title", ""))
+            else:
+                unsettled = findings_store.unsettle(removed["finding_key"])
         return removed, unsettled, _todo_payload()
 
     removed, unsettled, payload = await asyncio.to_thread(drop)
@@ -15596,6 +16067,12 @@ def _proposals_payload() -> dict:
         # fortnight" is a fact about the clock and a stored one would be
         # a number that stops being true the moment it is written.
         row["overdue"] = intents.expired(row, now)
+    try:
+        asleep = cases.snoozes()
+    except Exception:  # noqa: BLE001 — nothing snoozed shows the card
+        asleep = {}
+    for row in rows:
+        row["snoozed_until"] = int(asleep.get(f"p:{int(row.get('ts') or 0)}", 0))
     return {"proposals": rows, "counts": proposals.counts(rows),
             # What is waiting to happen, what already has, and the
             # sentences brAIn would not arm. Not proposals — nobody owes
@@ -19500,7 +19977,7 @@ def _chat_house_lines() -> list[str]:
     cannot be read is a line that is not there."""
     lines: list[str] = []
     try:
-        waiting = cases.open_count()
+        waiting = _queue_count()
         lines.append(f"{waiting} thing{'s' if waiting != 1 else ''} waiting "
                      "on the household in brAIn's feed")
     except Exception:  # noqa: BLE001 — a feed that could not be read is a
@@ -19947,6 +20424,7 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
         # held session or the flag its transcript kept across a restart.
         row["row_state"] = registry.row_state(
             row["id"], view_only=bool(row.get("view_only")))
+        _discussion_row(row, registry)
     return web.json_response({
         "conversations": rows,
         "current": session.session_id,
@@ -19954,6 +20432,30 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
         "sessions": registry.live(),
         "max_sessions": chat_session.max_sessions(),
     })
+
+
+DISCUSS_TITLE_PREFIX = "Discussing: "
+
+
+def _discussion_row(row: dict, registry) -> None:
+    """A discussion is titled by the card it is about, and links back to it.
+
+    A conversation's title is its first message, and a Discuss opener
+    starts "Discussing: <the card's title>" (`DISCUSS_PROMPT`) — so every
+    discussion in the list used to lead with the same word. The word goes
+    and the card's own title stays; ``finding_ts`` is what the panel links
+    back to the card with. It is read off the conversation's kept meta,
+    never parsed out of the title, so a person who happens to type
+    "Discussing:" gets no link to a card that does not exist.
+    """
+    if row.get("view_only"):
+        return
+    ts = registry.finding_of(row["id"])
+    title = str(row.get("title") or "")
+    if ts:
+        row["finding_ts"] = ts
+        if title.startswith(DISCUSS_TITLE_PREFIX):
+            row["title"] = title[len(DISCUSS_TITLE_PREFIX):].strip() or title
 
 
 def _conversation_source_counts() -> list[dict]:
@@ -20357,7 +20859,13 @@ def make_app() -> web.Application:
     app.router.add_get("/api/findings", h_findings)
     # The feed. One object over the four stores, and three endings on it.
     app.router.add_get("/api/cases", h_cases)
+    # Before the verb route, which would answer `wake` as an unknown ending.
+    app.router.add_post("/api/case/{id}/wake", h_case_wake)
     app.router.add_post("/api/case/{id}/{verb}", h_case_verb)
+    app.router.add_get("/api/history", h_history)
+    app.router.add_get("/api/today", h_today)
+    app.router.add_post("/api/today/hide", h_today_hide)
+    app.router.add_post("/api/today/restore", h_today_restore)
     app.router.add_get("/api/checks", h_checks)
     app.router.add_post("/api/checks/run", h_checks_run)
     app.router.add_get("/api/doctor/deep", h_doctor_deep_get)
@@ -20460,6 +20968,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/todo", h_todo_add)
     app.router.add_post("/api/todo/{id}/done", h_todo_done)
     app.router.add_post("/api/todo/{id}/reopen", h_todo_reopen)
+    app.router.add_post("/api/todo/{id}/ignore", h_todo_ignore)
     app.router.add_delete("/api/todo/{id}", h_todo_delete)
     app.router.add_get("/api/insight/{id}/live", h_insight_live)
     app.router.add_get("/api/insight/{id}/history", h_history_list)
@@ -20569,6 +21078,9 @@ def make_app() -> web.Application:
         # ...and the to-do mirror beside it, for the same reason: a boot
         # must not serve last week's list to the To-do app.
         await asyncio.to_thread(todo_store.publish_state)
+        # ...and the status line, so `sensor.brain_status` does not wait a
+        # minute after a boot to stop reading as the panel being down.
+        await asyncio.to_thread(publish_status)
         # Transcripts from before the pool's reflection pass and one-shot
         # voice fallback claimed their ids sat in the person's own Chats
         # list. Label the backlog once, by our own shipped prompt openers

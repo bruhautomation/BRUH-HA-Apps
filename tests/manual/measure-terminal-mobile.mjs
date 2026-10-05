@@ -433,6 +433,79 @@ async function keyboardChecks(browser) {
   }
 }
 
+// --------------------------------------------------------------- the panel
+//
+// On a phone the chat face of Ask opens on the list of your chats. The
+// classic face is one shell with no list, so it must open straight on the
+// terminal — the list page taking the screen over a terminal would be a
+// phone with no terminal on it — and the two floating controls (Chat
+// options and Full-screen terminal) stay on screen in both.
+const PANEL = path.resolve(HERE, '../../brain/panel');
+const PANEL_STUB = `
+window.EventSource = function () {
+  return { close() {}, addEventListener() {}, onmessage: null, onerror: null };
+};
+window.fetch = async (url) => {
+  const p = String(url);
+  const answer = (body) => new Response(JSON.stringify(body), {
+    status: 200, headers: { 'Content-Type': 'application/json' } });
+  if (p.includes('api/status')) {
+    return answer({ version: 'test', authenticated: true, auth_type: 'oauth',
+      auth_check: { state: 'ok', error: '' }, model: 'default',
+      settings: { terminal_ui: 'classic' }, usage: {}, auto: {},
+      categories: [], jobs: {}, queue_size: 0, findings_open: 0 });
+  }
+  if (p.includes('api/chat/conversations')) {
+    return answer({ conversations: [{ id: 'c1', title: 'A chat', age: '1 h ago',
+      modified: 0, source: 'you', row_state: { state: 'paused', label: '', hint: '' } }],
+      sources: [], sessions: [], max_sessions: 3 });
+  }
+  return answer({});
+};
+`;
+
+async function panelChecks(browser) {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 780 }, hasTouch: true, isMobile: true });
+  const page = await context.newPage();
+  // ttyd is not here; the frame's own document is not what this measures.
+  await page.route('**/terminal/**', (route) => route.fulfill({ body: '<!doctype html><p>tty' }));
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.addInitScript(PANEL_STUB);
+  await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+  const shown = (sel) => page.evaluate((s) => {
+    const n = document.querySelector(s);
+    return !!n && n.checkVisibility() && n.getBoundingClientRect().height > 0;
+  }, sel);
+
+  // The chat face: Ask opens on the list, and a row opens the transcript.
+  await page.evaluate(() => { applyTermMode('chat'); });
+  await page.evaluate(() => switchView('terminal'));
+  await page.evaluate(() => refreshChatRail());
+  check(await page.evaluate(() => document.body.classList.contains('ask-list')),
+    'panel: on a phone the chat face opens on the list of your chats');
+  check(await shown('#chatRail') && !(await shown('#termChat')),
+    'panel: the list is the screen, with no transcript behind it');
+  check(await shown('#termMenu') && await shown('#termExpand'),
+    'panel: Chat options and Full-screen terminal are on the list page');
+  await page.evaluate(() => askShow('chat'));
+  check(await shown('#chatBack'), 'panel: a transcript has a way back to the list');
+
+  // The classic face: the terminal, never the list.
+  await page.evaluate(() => switchView('findings'));
+  await page.evaluate(() => { applyTermMode('classic'); });
+  await page.evaluate(() => switchView('terminal'));
+  check(!(await page.evaluate(() => document.body.classList.contains('ask-list'))),
+    'panel: the classic face does not open on the list');
+  check(await shown('#termFrame'), 'panel: the classic face shows the terminal');
+  check(!(await shown('#chatRail')), 'panel: no list over the classic terminal');
+  check(await shown('#termMenu') && await shown('#termExpand'),
+    'panel: Chat options and Full-screen terminal are over the terminal');
+  check(errors.length === 0, `panel: no page errors ${show(errors)}`);
+  await context.close();
+}
+
 // --------------------------------------------------------------------- run
 
 const browser = await chromium.launch(
@@ -441,6 +514,7 @@ try {
   await pasteChecks(browser);
   await typingChecks(browser);
   await keyboardChecks(browser);
+  await panelChecks(browser);
 } catch (e) {
   failures.push(`the measure itself failed: ${e && e.stack || e}`);
   console.log(`FAIL the measure itself failed: ${e && e.stack || e}`);

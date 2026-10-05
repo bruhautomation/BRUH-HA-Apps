@@ -84,75 +84,64 @@ window.BRAIN_DOCS = [
 
 FOOTER = "];\n"
 
-# slug -> emoji. A section with no entry takes DEFAULT_ICON, which is a
-# perfectly good nav row: a missing icon must not be a missing section.
-DEFAULT_ICON = "📄"
-ICONS = {
-    "brain": "🏠",
-    # ## What it can do, split per ###
-    "it-runs-home-assistant": "🏡",
-    "it-finds-whats-broken-and-fixes-it": "🔧",
-    "it-checks-the-house-without-spending-a-token": "✅",
-    "it-explains-your-house-to-you": "📊",
-    "it-remembers": "🧠",
-    "it-answers-when-you-talk-to-it": "🗣️",
-    "it-has-a-full-terminal-in-two-shapes": "💻",
-    "it-works-while-youre-asleep": "🌙",
-    "it-knows-what-unusual-means-here": "📈",
-    "it-knows-what-is-normally-open": "🚪",
-    "it-knows-when-your-house-gets-up": "⏰",
-    "a-morning-brief-when-there-is-something-to-say": "☕",
-    "one-report-a-week": "📰",
-    "what-the-house-used": "⚡",
-    "it-knows-when-the-washing-finished": "🧺",
-    "it-knows-how-your-house-holds-its-heat": "🌡️",
-    "what-the-thermal-model-is-for": "♨️",
-    "where-a-proposal-comes-from": "💡",
-    "it-suggests-things-and-proves-them-first": "🧪",
-    "saying-yes-and-taking-it-back": "↩️",
-    "what-a-replay-can-and-cannot-answer": "⏪",
-    "the-house-acts": "🛠️",
-    "the-condition-it-is-missing": "🧩",
-    "something-that-happens-once": "🎯",
-    "four-scenes-for-a-room": "🎨",
-    "answering-without-opening-anything": "📱",
-    "it-knows-what-changed-and-what-changed-it": "🕵️",
-    "it-says-when-it-is-not-working": "❤️",
-    "everything-it-does-can-be-undone": "🔙",
-    "the-resident": "👁️",
-    "the-to-do-list": "📝",
-    "replying-from-your-phone": "💬",
-    "corrections-that-know-how-far-they-reach": "🎚️",
-    "findings-in-home-assistants-repairs": "🩹",
-    "asking-brain-things": "❓",
-    "why-didnt-brain-tell-me": "🤫",
-    "it-knows-what-the-house-is-doing-right-now": "📍",
-    "a-deep-review-when-you-ask-for-one": "🔎",
-    "a-rule-in-a-sentence": "✍️",
-    "it-manages-your-esphome-devices": "📟",
-    "it-runs-music-assistant": "🎵",
-    "it-runs-your-other-bruh-add-ons": "🧰",
-    "upkeep-keeping-the-house-itself-in-order": "🧹",
-    "it-knows-what-happened-and-what-caused-it": "🗂️",
-    "it-asks-why-you-did-something": "🤔",
-    "cameras": "📷",
-    # the remaining ## sections
-    "setup": "🚀",
-    "what-to-expect": "🗓️",
-    "the-panel": "🖥️",
-    "what-brain-is-measuring": "📐",
-    "checking-brain-itself": "🩺",
-    "capture-corpus-and-replay": "🔬",
-    "the-cli": "⌨️",
-    "configuration-options": "⚙️",
-    "what-it-costs": "💰",
-    "what-it-will-not-do": "🚫",
-    "ports": "🔌",
-    "security": "🔒",
-    "where-things-live": "📁",
-    "credits": "🙏",
-    "license": "📜",
-}
+# The guide's eight groups, in the order the nav shows them, and the
+# sections in each. 64 sections in one column with an emoji each was a list
+# nobody could find anything in; eight named groups is a contents page.
+# A section missing from this table is not a missing section: it lands in
+# the last group (`tests/test_brain_addon.py` fails on one, so the drift is
+# noticed rather than shipped). Sections keep DOCS.md's order inside their
+# group.
+GROUPS: list[tuple[str, list[str]]] = [
+    ("Getting started", [
+        "brain", "setup", "what-to-expect", "the-panel", "what-it-costs",
+    ]),
+    ("Deciding", [
+        "the-resident", "it-finds-whats-broken-and-fixes-it", "your-list",
+        "it-checks-the-house-without-spending-a-token",
+        "findings-in-home-assistants-repairs", "replying-from-your-phone",
+        "answering-without-opening-anything",
+        "corrections-that-know-how-far-they-reach", "why-didnt-brain-tell-me",
+        "everything-it-does-can-be-undone",
+    ]),
+    ("Asking", [
+        "asking-brain-things", "it-explains-your-house-to-you",
+        "it-answers-when-you-talk-to-it", "it-has-a-full-terminal-in-two-shapes",
+        "a-deep-review-when-you-ask-for-one",
+        "a-morning-brief-when-there-is-something-to-say", "one-report-a-week",
+    ]),
+    ("What it knows", [
+        "it-remembers", "it-knows-what-unusual-means-here",
+        "it-knows-what-is-normally-open", "it-knows-when-your-house-gets-up",
+        "it-knows-what-the-house-is-doing-right-now", "what-the-house-used",
+        "it-knows-when-the-washing-finished",
+        "it-knows-how-your-house-holds-its-heat", "what-the-thermal-model-is-for",
+        "it-knows-what-happened-and-what-caused-it",
+        "it-asks-why-you-did-something", "what-brain-is-measuring",
+        "the-house-book",
+    ]),
+    ("Changing the house", [
+        "it-runs-home-assistant", "it-works-while-youre-asleep",
+        "where-a-proposal-comes-from", "it-suggests-things-and-proves-them-first",
+        "saying-yes-and-taking-it-back", "what-a-replay-can-and-cannot-answer",
+        "the-house-acts", "the-condition-it-is-missing", "a-rule-in-a-sentence",
+        "something-that-happens-once", "four-scenes-for-a-room",
+        "keeping-the-house-itself-in-order",
+    ]),
+    ("Other add-ons", [
+        "it-manages-your-esphome-devices", "it-runs-music-assistant",
+        "it-runs-your-other-bruh-add-ons",
+    ]),
+    ("Safety and privacy", [
+        "what-it-will-not-do", "security", "cameras", "ports", "where-things-live",
+    ]),
+    ("Looking after brAIn", [
+        "it-says-when-it-is-not-working", "checking-brain-itself", "the-cli",
+        "configuration-options", "capture-corpus-and-replay", "credits", "license",
+    ]),
+]
+GROUP_OF = {slug: name for name, slugs in GROUPS for slug in slugs}
+DEFAULT_GROUP = GROUPS[-1][0]
+GROUP_ORDER = [name for name, _ in GROUPS]
 
 _SLUG_DROP = re.compile(r"['’]")
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
@@ -187,7 +176,7 @@ def slug(title: str) -> str:
 
     An apostrophe is DROPPED rather than turned into a separator, which is what
     GitHub does and what keeps `it-works-while-youre-asleep` from becoming
-    `...you-re-asleep` — a difference nobody would notice until an icon looked
+    `...you-re-asleep` — a difference nobody would notice until a group looked
     up by slug quietly stopped matching.
     """
     plain = _SLUG_DROP.sub("", title.strip().lower())
@@ -253,7 +242,7 @@ def promote(lines: list[str], levels: int) -> list[str]:
 
 
 def parse(markdown: str) -> list[dict]:
-    """DOCS.md as the list of `{id, icon, title, body}` the panel reads."""
+    """DOCS.md as the list of `{id, group, title, body}` the panel reads."""
     lines = normalise(markdown.replace("\r\n", "\n").split("\n"))
 
     title = "brAIn"
@@ -293,7 +282,7 @@ def parse(markdown: str) -> list[dict]:
     def add(name: str, body_lines: list[str], levels: int) -> None:
         body = _trim(promote(_trim(list(body_lines)), levels))
         sections.append({"id": slug(name), "title": name,
-                         "icon": ICONS.get(slug(name), DEFAULT_ICON),
+                         "group": GROUP_OF.get(slug(name), DEFAULT_GROUP),
                          "body": "\n".join([f"# {name}", ""] + body)})
 
     # The preamble keeps DOCS.md's own H1 as its title, and its body drops that
@@ -334,6 +323,11 @@ def parse(markdown: str) -> list[dict]:
         for sub_name, sub_body in subs:
             add(sub_name, sub_body, 2)
 
+    # Grouped for the nav: the groups in GROUPS order, DOCS.md's order
+    # inside each (a stable sort), so the first section is still the
+    # overview and a group's sections sit together.
+    sections.sort(key=lambda sec: GROUP_ORDER.index(sec["group"]))
+
     seen: dict[str, int] = {}
     for section in sections:
         base = section["id"]
@@ -361,7 +355,7 @@ def render(sections: list[dict]) -> str:
     for section in sections:
         parts.append("  {\n")
         parts.append(f"    id: {js_string(section['id'])},\n")
-        parts.append(f"    icon: {js_string(section['icon'])},\n")
+        parts.append(f"    group: {js_string(section['group'])},\n")
         parts.append(f"    title: {js_string(section['title'])},\n")
         parts.append("    body: `\n")
         parts.append(js_literal(section["body"]))

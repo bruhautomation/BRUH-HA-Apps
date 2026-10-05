@@ -44,9 +44,7 @@ const page_html = `
         <h3>${TITLE}</h3>
       </div>
       <div class="actions">
-        <button class="btn cardact"><span class="caicon">✎</span><span class="calabel">Refine</span></button>
-        <button class="btn cardact"><span class="caicon">↗</span><span class="calabel">Share</span></button>
-        <button class="btn icon">⤢</button>
+        <button class="btn small cardask">Ask</button>
         <button class="btn icon">⋯</button>
       </div>
     </div>
@@ -128,22 +126,23 @@ for (const width of WIDTHS) {
 
 // ------------------------------------------------------------- the foot
 // The head pass above builds its markup by hand, because it is about how a
-// long title and a long category share one row. The foot is about what the
-// server SAYS, so it drives the panel's real `makeCard` behind a stubbed
-// fetch — a copy of the renderer in this file would only ever agree with
-// itself, and both of these fields are new server fields that a hand-built
-// fixture would go on rendering long after the panel stopped.
+// long title and a long category share one row. The rest drives the
+// panel's real `makeCard` behind a stubbed fetch — a copy of the renderer
+// in this file would only ever agree with itself.
 //
-// Two things have to be readable there:
+// A report is read, not decided, so what it carries is its headline and
+// one age (docs/design/ui-redesign-2026-10.md, House › Reports):
 //
-//   * `made_because` — why this run happened. Without it a card that
-//     refreshed itself overnight is a card that changed for reasons nobody
-//     can see, which is the whole reason the field exists. It must never be
-//     truncated to nothing: the foot wraps rather than squeezing it out.
-//   * the refresh HOLD. With `refresh_mode: changed` a card past its
-//     interval has no `next_due` at all — the scheduler is waiting for
-//     something the card reads to move, which has no date. The foot has to
-//     say that rather than falling through to a countdown it does not have.
+//   * the foot says "Updated N ago" and nothing else — no token count, no
+//     reason it ran, no refresh hold, no next-due countdown. The stub hands
+//     the renderer every one of those so their absence is a claim, not a
+//     fixture that never had them.
+//   * the head carries Ask and ⋯ and nothing else (✎ ↗ ⤢ and the ‹ Latest ▾
+//     steppers are cut), ⋯ holds exactly Share · Past versions · Run ·
+//     Delete, and a press on the card opens it full size.
+//   * Ask opens the card's dialog, whose links still reach "Make this an
+//     automation" (drafted into the Ask tab's composer, never sent) and
+//     "See the automation it suggested" (Today, where suggestions are queued).
 const NOW_ISO = new Date().toISOString();
 const FOOT_STUB = `
 window.EventSource = function () {
@@ -160,27 +159,29 @@ window.fetch = async (url) => {
       model: 'default', settings: {}, usage: {}, auto: {},
       jobs: {}, queue_size: 0, findings_open: 0, today: {},
       categories: [
-        // Waiting on its inputs: no next_due, a hold with a reason.
         { id: 'held', title: 'Energy', icon: '⚡', description: '',
           enabled: true, next_due: null,
           refresh_hold: { why: 'nothing it reads has changed',
                           at: ${Math.floor(Date.now() / 1000)} } },
-        // The ordinary case, so the countdown is proved still to render.
         { id: 'due', title: 'Climate', icon: '🌡️', description: '',
           enabled: true, refresh_hold: null,
           next_due: ${Math.floor(Date.now() / 1000) + 4 * 3600} },
       ],
     });
   }
+  if (p.includes('api/insight/') && p.includes('/history')) {
+    return answer({ runs: [] });
+  }
+  if (p.includes('api/insight/') && p.includes('/feedback')) {
+    return answer({ feedback: [] });
+  }
   if (p.includes('api/insights')) {
     return answer({ insights: [
       { id: 'held', category: 'held', title: 'What the house used this week',
         summary: 'Down 8% on last week.', highlights: [], html: '<p>e</p>',
-        generated_at: '${NOW_ISO}', tags: [],
+        generated_at: '${NOW_ISO}', tags: ['energy', 'solar'],
         made_because: '3 new findings',
         inputs_fingerprint: { parts: { findings: 'abc' } },
-        // A suggestion the server could not send (paused): the ⋯ offers to
-        // put it in the ask bar, and says why it was not offered.
         opportunities: [{ text: 'When the back door opens after sunset, '
             + 'turn on the patio light',
           sentence: 'When the back door opens after sunset, turn on the '
@@ -193,7 +194,6 @@ window.fetch = async (url) => {
         summary: 'The hall is the fast one.', highlights: [], html: '<p>c</p>',
         generated_at: '${NOW_ISO}', tags: [],
         made_because: 'you asked',
-        // One the server did send: the ⋯ points at Proposals instead.
         opportunities: [{ text: 'Turn the porch light off at midnight',
           sentence: 'From now on, turn the porch light off at midnight',
           entities: [], queued: true, why: '' }],
@@ -212,6 +212,11 @@ window.fetch = async (url) => {
 };
 `;
 
+const CUT_FROM_A_CARD = [
+  /tokens/i, /3 new findings/, /you asked/, /Waiting for something/,
+  /\bnext\b/, /Analysed/, /readings live/, /Make recurring/, /#energy/,
+];
+
 for (const width of [390, 768, 1200]) {
   const context = await browser.newContext({ viewport: { width, height: 900 } });
   const page2 = await context.newPage();
@@ -221,6 +226,9 @@ for (const width of [390, 768, 1200]) {
   });
   await page2.addInitScript(FOOT_STUB);
   await page2.goto(`file://${path.join(PANEL, 'index.html')}`);
+  // The panel opens on Today now; the cards are House › Reports.
+  await page2.waitForFunction(() => typeof switchView === 'function');
+  await page2.evaluate(() => switchView('insights'));
   await page2.waitForSelector('.card[data-id="held"] .foot', { timeout: 5000 })
     .catch(() => { console.log('        - no card foot rendered'); failures += 1; });
 
@@ -229,30 +237,20 @@ for (const width of [390, 768, 1200]) {
       const card = document.querySelector(`.card[data-id="${id}"]`);
       if (!card) return null;
       const foot = card.querySelector('.foot');
-      const because = foot.querySelector('.because');
-      const hold = foot.querySelector('.hold');
-      const seen = (n) => {
-        if (!n) return false;
-        const cs = getComputedStyle(n);
-        const r = n.getBoundingClientRect();
-        return cs.display !== 'none' && cs.visibility !== 'hidden'
-          && r.width > 0 && r.height > 0;
-      };
       return {
-        text: foot.textContent,
-        because: because ? because.textContent.trim() : '',
-        becauseSeen: seen(because),
-        // Truncated to nothing is the failure this is about: half a reason
-        // reads as a rendering fault rather than as a reason.
-        becauseClipped: because
-          ? because.scrollWidth > because.clientWidth + 1 : false,
-        hold: hold ? hold.textContent.trim() : '',
-        holdSeen: seen(hold),
+        foot: foot.textContent.replace(/\s+/g, ' ').trim(),
+        card: card.textContent.replace(/\s+/g, ' ').trim(),
+        head: [...card.querySelectorAll('.card-head .actions button')]
+          .map((b) => b.textContent.trim()),
+        tagRows: card.querySelectorAll('.tagrow, .tagchip').length,
+        steppers: card.querySelectorAll('.hist, .histsel, .hstep').length,
         overflows: foot.getBoundingClientRect().right
           > card.getBoundingClientRect().right + 0.5,
       };
     };
     return { held: read('held'), due: read('due'),
+             filters: document.querySelectorAll('#filters .fchip, .fchip').length,
+             askBar: !!document.getElementById('askForm'),
              docWidth: document.documentElement.scrollWidth };
   });
 
@@ -262,102 +260,114 @@ for (const width of [390, 768, 1200]) {
   if (!held || !due) {
     problems.push('one of the two cards did not render');
   } else {
-    if (!held.becauseSeen) problems.push('made_because is not on the foot');
-    if (!/3 new findings/.test(held.because)) {
-      problems.push(`made_because reads "${held.because}"`);
+    for (const c of [held, due]) {
+      if (!/^Updated /.test(c.foot)) problems.push(`the foot reads "${c.foot}"`);
+      for (const cut of CUT_FROM_A_CARD) {
+        if (cut.test(c.card)) problems.push(`cut text is back on a card: ${cut}`);
+      }
+      if (JSON.stringify(c.head) !== JSON.stringify(['Ask', '⋯'])) {
+        problems.push(`the head carries ${JSON.stringify(c.head)}, not Ask · ⋯`);
+      }
+      if (c.tagRows) problems.push('a card renders tag chips');
+      if (c.steppers) problems.push('a card renders the ‹ Latest ▾ steppers');
+      if (c.overflows) problems.push('the foot overflows the card');
     }
-    if (held.becauseClipped) problems.push('made_because is clipped');
-    if (/inputs_fingerprint|parts|abc/.test(held.text)) {
+    if (/inputs_fingerprint|parts|abc/.test(held.card)) {
       problems.push('the inputs fingerprint reached the screen');
     }
-    // The hold wins over the countdown, and the countdown is still there
-    // for a card that has one.
-    if (!held.holdSeen) problems.push('a held card does not say it is waiting');
-    if (!/Waiting for something to change/.test(held.hold)) {
-      problems.push(`the hold reads "${held.hold}"`);
-    }
-    if (!/nothing it reads has changed/.test(held.hold)) {
-      problems.push('the hold drops the reason the server gave');
-    }
-    if (/next /.test(held.text)) {
-      problems.push('a held card also renders a countdown it does not have');
-    }
-    if (!/you asked/.test(due.because)) {
-      problems.push(`the second card's reason reads "${due.because}"`);
-    }
-    if (!/next /.test(due.text)) {
-      problems.push('an ordinary card lost its countdown');
-    }
-    if (due.holdSeen) problems.push('a card with no hold rendered one');
-    if (held.overflows || due.overflows) problems.push('the foot overflows the card');
   }
+  if (f.filters) problems.push(`${f.filters} tag chips above the reports`);
+  if (f.askBar) problems.push('the second ask box is back on Reports');
   if (f.docWidth > width + 0.5) {
     problems.push(`page scrolls sideways (${f.docWidth}px)`);
   }
 
-  // "Make this an automation" — what a card says the house is missing,
-  // from its ⋯. The menu is the panel's own (`cardAutomationItems`), and
-  // the press must land the routable sentence in the ask bar and leave it
-  // there for a person to read — never send it.
-  const menuOf = async (id) => page2.evaluate(async (cardId) => {
-    const card = document.querySelector(`.card[data-id="${cardId}"]`);
-    const more = card && [...card.querySelectorAll('.actions button')]
+  // ⋯ holds exactly the four, in the doc's order.
+  const menu = await page2.evaluate(async () => {
+    const card = document.querySelector('.card[data-id="held"]');
+    const more = [...card.querySelectorAll('.actions button')]
       .find((b) => b.textContent.trim() === '⋯');
-    if (!more) return null;
     more.click();
     await new Promise((r) => setTimeout(r, 50));
-    return [...document.querySelectorAll('#chipPop .cardmenuitem')].map((row) => ({
-      label: (row.querySelector('b') || {}).textContent || '',
-      hint: (row.querySelector('small') || {}).textContent || '',
-    }));
+    const rows = [...document.querySelectorAll('#chipPop .cardmenuitem b')]
+      .map((b) => b.textContent);
+    document.body.click();
+    return rows;
+  });
+  if (JSON.stringify(menu) !== JSON.stringify(['Share', 'Past versions', 'Run', 'Delete'])) {
+    problems.push(`⋯ holds ${JSON.stringify(menu)}`);
+  }
+
+  // A press on the card (not on a control) opens it full size.
+  const opened = await page2.evaluate(async () => {
+    const card = document.querySelector('.card[data-id="held"]');
+    card.querySelector('.summary').click();
+    await new Promise((r) => setTimeout(r, 50));
+    const on = document.getElementById('modal').classList.contains('open');
+    document.getElementById('modalClose').click();
+    return on;
+  });
+  if (!opened) problems.push('pressing the card does not open it');
+
+  // Ask: the card's dialog, and the automation links inside it.
+  const ask = (id) => page2.evaluate(async (cardId) => {
+    const card = document.querySelector(`.card[data-id="${cardId}"]`);
+    [...card.querySelectorAll('.actions button')]
+      .find((b) => b.textContent.trim() === 'Ask').click();
+    await new Promise((r) => setTimeout(r, 60));
+    return {
+      open: document.getElementById('refineModal').classList.contains('open'),
+      title: document.getElementById('refineTitle').textContent,
+      send: document.getElementById('refineGo').textContent.trim(),
+      links: [...document.querySelectorAll('#refineMore .refinelink')]
+        .map((a) => a.textContent),
+    };
   }, id);
-  const pressMenu = (label) => page2.evaluate(async (want) => {
-    const row = [...document.querySelectorAll('#chipPop .cardmenuitem')]
-      .find((r) => (r.querySelector('b') || {}).textContent === want);
-    if (!row) return null;
-    row.click();
+  const pressLink = (label) => page2.evaluate(async (want) => {
+    const a = [...document.querySelectorAll('#refineMore .refinelink')]
+      .find((x) => x.textContent === want);
+    if (!a) return null;
+    a.click();
     await new Promise((r) => setTimeout(r, 80));
-    const input = document.getElementById('askInput');
+    const input = document.getElementById('chatInput');
     return {
       value: input ? input.value : null,
-      focused: document.activeElement === input,
-      insights: !!document.querySelector('#viewInsights.active'),
-      proposals: !!document.querySelector('#viewProposals.active'),
+      ask: !!document.querySelector('#viewTerminal.active'),
+      today: !!document.querySelector('#viewFindings.active'),
     };
   }, label);
 
-  const heldMenu = await menuOf('held');
-  const make = (heldMenu || []).find((m) => m.label === 'Make this an automation');
-  if (!make) {
-    problems.push(`the held card's ⋯ has no "Make this an automation" (${JSON.stringify(heldMenu)})`);
+  const heldAsk = await ask('held');
+  if (!heldAsk.open) problems.push('Ask does not open the card\'s dialog');
+  if (heldAsk.send !== 'Send') problems.push(`the dialog's button reads "${heldAsk.send}"`);
+  if (!heldAsk.links.includes('Make this an automation')) {
+    problems.push(`the dialog does not offer the automation (${JSON.stringify(heldAsk.links)})`);
   } else {
-    if (!/patio light/.test(make.hint)) problems.push('the menu row does not say which automation');
-    if (!/automatic runs are paused/.test(make.hint)) {
-      problems.push('the menu row drops why it was not offered');
-    }
-    const after = await pressMenu('Make this an automation');
-    if (!after || !after.insights) problems.push('pressing it did not open the ask bar\'s pane');
+    const after = await pressLink('Make this an automation');
+    if (!after || !after.ask) problems.push('the automation link did not open the Ask tab');
     if (!after || after.value !== 'When the back door opens after sunset, turn on the patio light') {
-      problems.push(`the ask bar holds "${after && after.value}"`);
+      problems.push(`the composer holds "${after && after.value}"`);
     }
-    if (!after || !after.focused) problems.push('the ask bar is not focused after the press');
   }
-  await page2.evaluate(() => { document.getElementById('askInput').value = ''; });
-  const dueMenu = await menuOf('due');
-  const see = (dueMenu || []).find((m) => m.label === 'See the automation it suggested');
-  if (!see) {
-    problems.push(`a card whose suggestion was offered does not point at it (${JSON.stringify(dueMenu)})`);
+  await page2.evaluate(() => {
+    document.getElementById('chatInput').value = '';
+    document.querySelector('.viewtab[data-group="house"]').click();
+  });
+  await page2.evaluate(() => {
+    const b = document.querySelector('#houseSeg .segbtn[data-view="insights"]');
+    if (b) b.click();
+  });
+  const dueAsk = await ask('due');
+  if (!dueAsk.links.includes('See the automation it suggested')) {
+    problems.push(`a card whose suggestion was offered does not point at it (${JSON.stringify(dueAsk.links)})`);
   } else {
-    const after = await pressMenu('See the automation it suggested');
-    if (!after || !after.proposals) problems.push('"See the automation" did not open Proposals');
-  }
-  if (!(dueMenu || []).some((m) => m.label === 'Make an automation from this')) {
-    problems.push('a card with nothing left to offer does not still offer the ask bar');
+    const after = await pressLink('See the automation it suggested');
+    // A suggestion is a card in Today's queue now; Proposals is not a tab.
+    if (!after || !after.today) problems.push('"See the automation" did not open Today');
   }
 
   console.log(`${problems.length ? 'FAIL' : 'ok  '} ${String(width).padStart(4)}px  `
-    + `foot: reason + ${held && held.holdSeen ? 'hold' : 'no hold'}; `
-    + 'menu: automation');
+    + 'foot: one age; head: Ask · ⋯; menu: four');
   for (const p of problems) { console.log(`        - ${p}`); failures++; }
   await context.close();
 }

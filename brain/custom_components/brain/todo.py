@@ -1,5 +1,18 @@
 """brAIn's work list, in Home Assistant's own To-do app.
 
+**It holds exactly Your list — accepted to-dos and your own items — and
+no findings.** It used to show the open findings too, so the app's list
+held five where the panel's list held four, and an undecided finding sat
+in a list of agreed work as if it had been agreed. A finding is a
+decision, and decisions are the panel's queue (and Settings → Repairs,
+and `binary_sensor.brain_needs_you`); a finding joins this list the moment
+somebody presses Add to list. `item_for` still turns a finding into an
+item and a stale `f:` uid is still answered, for an app that polled
+before the change — nothing new is listed from the findings mirror.
+
+The rest of this docstring is the history of a list that carried both,
+kept because the uid scheme and the two-store reasoning still hold.
+
 The Findings tab is where brAIn reports what it thinks is broken, and it
 is behind ingress: a critical finding is a panel somebody has to open.
 The `sensor.brain_open_findings` count answers *how much*, and nothing
@@ -70,7 +83,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
-from .findings import read_findings_state, read_todo_state
+from .findings import read_todo_state
 from .requests import write_request, write_todo_request
 
 _LOGGER = logging.getLogger(__name__)
@@ -186,16 +199,18 @@ def item_for_todo(row: dict) -> TodoItem | None:
 class BrainTodoList(TodoListEntity):
     """The work waiting on a person, as Home Assistant's own to-do items.
 
-    Two stores, one list: the findings brAIn is still asking about, and
-    the chores somebody has already accepted. See the module docstring.
+    Your list: the chores somebody has accepted and the items they added.
+    A finding is not on it until somebody presses Add to list.
     """
 
-    _attr_has_entity_name = True
-    # Read with the device's name in front of it, so "brAIn" here made the
-    # list "brAIn System brAIn". Only the name moves: the unique id is what
-    # the registry keys the entity by, so an install that already has
+    # Named "brAIn to-do" whole, not under the device's name: with the
+    # device in front it read "brAIn System brAIn" and then "brAIn System
+    # To-do", and the To-do app lists entities by friendly name beside
+    # every other list in the house. Only the name moves: the unique id is
+    # what the registry keys the entity by, so an install that already has
     # `todo.brain_system_brain` keeps that id (and its history).
-    _attr_name = "To-do"
+    _attr_has_entity_name = False
+    _attr_name = "brAIn to-do"
     _attr_icon = "mdi:clipboard-list-outline"
     # CREATE is here because there is now a store behind it — see the
     # module docstring. Completing and deleting still mean what each row's
@@ -236,34 +251,22 @@ class BrainTodoList(TodoListEntity):
         return self._read_one
 
     async def async_update(self) -> None:
-        """Both mirrors, as one list. Either one missing is not an empty list.
+        """Your list, off the to-do mirror. Missing is not an empty list.
 
-        A mirror that could not be read keeps whatever that half already
-        held, rather than emptying it — the add-on restarting for ten
-        seconds must not read as "all clear" — and the two are asked
-        separately because an add-on mid-write can leave one current and
-        the other a moment behind, which is a reason to keep the older
-        half and not a reason to drop it.
+        Exactly the items the panel's Your list shows: the to-do mirror's
+        open items and nothing from the findings mirror (see the module
+        docstring). A mirror that could not be read keeps what the list
+        already held — the add-on restarting for ten seconds must not read
+        as "all clear".
         """
-        findings = await self.hass.async_add_executor_job(
-            read_findings_state, self.hass)
         chores = await self.hass.async_add_executor_job(
             read_todo_state, self.hass)
-        if findings is None and chores is None:
+        if chores is None:
             return
-
-        if findings is not None:
-            rows = [item_for(f) for f in findings.get("findings") or []]
-            self._findings = [i for i in rows if i is not None]
-        if chores is not None:
-            rows = [item_for_todo(t) for t in chores.get("items") or []]
-            self._chores = [i for i in rows if i is not None]
-
-        # Accepted work first: it is what somebody has already agreed to
-        # do, where a finding is still a question. A list that led with
-        # the questions would put the undecided above the decided every
-        # morning, which is the order that makes a list feel unfinished.
-        self._attr_todo_items = self._chores + self._findings
+        rows = [item_for_todo(t) for t in chores.get("items") or []]
+        self._chores = [i for i in rows if i is not None]
+        self._findings = []
+        self._attr_todo_items = list(self._chores)
         self._read_one = True
 
     async def _answer_finding(self, ts: int, action: str,

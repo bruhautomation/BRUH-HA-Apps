@@ -414,9 +414,10 @@ class TestThePress(unittest.TestCase):
                 "source": "check:reg.hardware_name", "fixable": True, "plan": {}}
         got = answers.answers(case)
         self.assertEqual(got[0]["route"], "/api/tidy/run")
-        self.assertEqual(got[0]["label"], "Fix it")
+        # Plan, never Apply: the run drafts a table and changes nothing.
+        self.assertEqual(got[0]["label"], "Plan")
         self.assertEqual([a["verb"] for a in got],
-                         ["fix", "todo", "not_now", "wrong"])
+                         ["fix", "not_now", "wrong"])
 
 
 if __name__ == "__main__":

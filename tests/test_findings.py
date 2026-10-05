@@ -485,8 +485,8 @@ class TestButtonsOnTheMessage(NotifyCase):
         # The card's own answers and one turn: Reply is the last button and
         # the one that settles nothing (`test_finding_requests` drives the
         # drain it lands in). A phone gets the feed's fixed row less the
-        # plan run it cannot start — Add to list, Dismiss, Not a problem —
-        # in the row's own order.
+        # plan run it cannot start — Add to list, Snooze, Ignore — in the
+        # row's own order.
         os.environ["BRAIN_FINDINGS_NOTIFY"] = "notify.mobile_app_pixel"
         row, _ = findings_store.add("The hall sensor has stopped")
         self._announce([row])
@@ -498,7 +498,7 @@ class TestButtonsOnTheMessage(NotifyCase):
                           f"brain.wrong.{row['ts']}",
                           f"brain.reply.{row['ts']}"])
         self.assertEqual([a["title"] for a in actions],
-                         ["Add to list", "Dismiss", "Not a problem", "Reply"])
+                         ["Add to list", "Snooze", "Ignore", "Reply"])
 
     def test_any_other_notifier_gets_the_payload_it_always_did(self):
         # Not an empty `data` either: several notifiers treat the key's
@@ -1574,17 +1574,26 @@ class TestFindingsUI(unittest.TestCase):
         Not a problem — on a card no case covers as on one it does, with
         "I've already fixed it" behind the ⋯ beside the other rare presses.
         """
-        self.assertIn("I've already fixed it", self.js)
-        self.assertIn('el("button", "btn small ghost", "Not a problem")', self.js)
-        self.assertNotIn("I did it", self.js)
-        self.assertNotIn('"✕  Wrong"', self.js)
+        # Today's vocabulary (docs/design/ui-redesign-2026-10.md): Snooze
+        # is "not now" and Ignore is "you have this wrong", and the words
+        # are the answers module's, which every surface renders.
+        answers_src = (PANEL_DIR / "answers.py").read_text()
+        self.assertIn('"Snooze"', answers_src)
+        self.assertIn('"Ignore"', answers_src)
+        self.assertIn('hint: "Why? (helps brAIn learn)"', self.js)
+        for gone in ("I did it", '"✕  Wrong"', '"Not a problem"', '"Dismiss"'):
+            self.assertNotIn(gone, self.js)
 
     def test_the_row_matches_the_one_the_header_promises(self):
         """The header says "Fix it, Add to list, Dismiss, Not a problem";
         a card that showed Discuss · I fixed it · Remind me later · Wrong
         beside them was a second vocabulary for the same row."""
-        for label in ('"Fix it"', '"Add to list"', '"Dismiss"', '"Not a problem"'):
+        # A loose card's own row is the feed's: Add to list, Snooze, Ignore.
+        for label in ('"Add to list"', '"Snooze"', '"Ignore"'):
             self.assertIn(label, self.js)
+        # As a label: a comment may still name the flow it used to be.
+        for gone in ('"Fix it")', '"Dismiss")', '"Not a problem")'):
+            self.assertNotIn(gone, self.js)
         for gone in ('"💬  Discuss"', '"⏰  Remind me later"', '"⌫  Dismiss"',
                      '"✓  I fixed it"'):
             self.assertNotIn(gone, self.js)
@@ -1599,8 +1608,10 @@ class TestFindingsUI(unittest.TestCase):
         settles nothing — and a card no case covers reaches it the same way
         rather than through a second word for "off the list".
         """
-        self.assertIn("api(`api/case/f:${f.ts}/not_now`", self.js)
-        self.assertIn('f, "wrong",', self.js)
+        # A card no case covers snoozes and ignores through the finding's
+        # own routes, the same endings the case's answers reach.
+        self.assertIn("looseAction(`api/finding/${f.ts}/snooze`", self.js)
+        self.assertIn("looseAction(`api/finding/${f.ts}/wrong`", self.js)
 
     def test_wrong_asks_why_and_sends_what_it_is_told(self):
         """The reason is the half that teaches. A button that only suppressed
@@ -1621,8 +1632,9 @@ class TestFindingsUI(unittest.TestCase):
     def test_the_endings_tooltips_stay_short(self):
         """These are read at a glance beside five other buttons. The old
         Ignore tooltip ran to two clauses and a caveat about wording."""
-        self.assertIn('"brAIn has this wrong, or it\'s normal here. It stops raising "',
-                      self.js)
+        # The words live in answers.py now and every hint is one sentence.
+        answers_src = (PANEL_DIR / "answers.py").read_text()
+        self.assertNotIn("in any wording", answers_src)
         self.assertNotIn("in any wording", self.js)
 
     def test_there_is_no_archive_of_dismissed_cards(self):
@@ -1635,49 +1647,26 @@ class TestFindingsUI(unittest.TestCase):
         record when memory already is. The ledger stays — it is the dedup
         index that stops the analyst re-raising what you answered — it is
         just not something the panel draws."""
-        # A per-status archive is still refused: "ignored"/"fixed"/
-        # "Everything" would be the growing pile beside a list meant to
-        # empty, which is what this guard was written against.
-        self.assertNotIn('{ id: "ignored"', self.js)
-        self.assertNotIn('{ id: "fixed"', self.js)
-        self.assertNotIn('label: "Everything"', self.js)
-        # The work and what is waiting are still the chips that are always
-        # there.
-        self.assertIn('{ id: "live", label: "Needs you"', self.js)
-        self.assertIn('{ id: "snoozed", label: "Dismissed"', self.js)
-        # 1.48.0 narrows the rule rather than dropping it. `unsettle` is
-        # the one thing that removes a settled entry and CLAUDE.md says it
-        # happens "only because a person pressed 'Let brAIn raise it
-        # again'" — and that press existed nowhere: the route had no
-        # caller in the panel, the CLI or the integration. A button that
-        # lives only in prose is a button nobody can press, so the ledger
-        # gets exactly enough surface to hold it, and no more. What must
-        # stay true is everything that made the old archive a second
-        # record: it is never a work list, and it is invisible until it
-        # holds something.
-        self.assertIn('{ id: "settled", label: "Answered", match: () => false }',
-                      self.js,
-                      "the Answered chip must match no live row: settling "
-                      "deletes the row, so a filter over the list could "
-                      "only ever be empty")
-        self.assertIn("makeSettled", self.js)
-        # No badge counts it. `open` is the badge's number and it spans
-        # findings and hypotheses — work waiting on a person — and an
-        # answered thing is by definition not waiting.
-        badge = self.js[self.js.index("function findBadge") :][:800] \
-            if "function findBadge" in self.js else ""
-        self.assertNotIn("settled", badge,
-                         "an answered finding is not work waiting on you")
-        # Hidden until it holds something, and capped: the two properties
-        # that keep it from becoming the pile.
-        self.assertIn('if (f.id === "settled") return (state.settled || []).length;',
-                      self.js, "the chip is counted, so it can hide at zero")
-        self.assertRegex(self.js, r"answered\.slice\(0,\s*\d+\)",
-                         "the rendered list is capped")
-        # One verb, and it only stops the suppression.
-        self.assertIn("api/findings/unsettle", self.js)
-        for verb in ('"api/finding/" + entry', "restore", "reopen"):
-            self.assertNotIn(f"makeSettled({verb}", self.js)
+        # The redesign's History drawer (`today.history`) is the one view
+        # of what was ended, and it keeps every property that made the old
+        # archive refusable: it is not a work list, it is closed until
+        # opened, it is capped, it counts towards no badge, and each row
+        # carries exactly one press.
+        today = (PANEL_DIR / "today.py").read_text()
+        self.assertIn('FILTERS = ("snoozed", "ignored", "done", "aside")', today)
+        self.assertIn("MAX_ROWS = 60", today)
+        self.assertIn('out[name] = rows[:MAX_ROWS]', today)
+        html = (PANEL_DIR / "index.html").read_text()
+        self.assertIn('<details id="todayHistory" class="todayhistory">', html)
+        self.assertNotIn('<details id="todayHistory" class="todayhistory" open', html)
+        # No badge counts it: the badge is the queue's, and an answered thing
+        # is by definition not waiting.
+        badge = self.js[self.js.index("function updateFindBadge"):][:600]
+        self.assertNotIn("history", badge.lower())
+        # One verb per row, and on an ignored one it only stops the
+        # suppression.
+        self.assertIn('"/api/findings/unsettle"', today)
+        self.assertIn('const btn = qButton(press.label || "Restore", false);', self.js)
 
 
 class TestUndoStore(unittest.TestCase):

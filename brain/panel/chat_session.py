@@ -277,14 +277,16 @@ ROW_STATES: dict[str, dict] = {
         "label": "Needs your OK",
         "hint": "Claude is waiting for your approval"},
     "paused": {
-        # No pill: a conversation with no process is the ordinary case and
-        # is not news. The composer still says what sending does.
+        # No pill and no sentence: a conversation with no process is the
+        # ordinary case and is not news. Sending is what picks it back up,
+        # and a line above the box saying so (with a "Resume now" beside
+        # it) was a control for something the Send button already does.
         "label": "",
-        "hint": "Your next message resumes this conversation with its context"},
+        "hint": ""},
     "paused_room": {
         "label": "Paused to make room",
-        "hint": "brAIn keeps {cap} chats running at once. Sending resumes "
-                "this one and pauses the quietest"},
+        "hint": "brAIn keeps {cap} chats running at once. Sending picks this "
+                "one back up and pauses the quietest"},
     "context_lost": {
         "label": "Context lost",
         "hint": "Claude Code no longer has this conversation. You can read "
@@ -1078,6 +1080,10 @@ class ChatSession:
             # A reload mid-approval must repaint the card, or the turn sits
             # "busy" over a question that is no longer on anyone's screen.
             "permission": self.pending_permission,
+            # Which card this conversation is about, so the strip above the
+            # composer follows the conversation on screen rather than
+            # whichever one was discussed last in this browser.
+            "finding_ts": self.finding_ts or 0,
         }
 
     # -- subscribers -----------------------------------------------------
@@ -2025,8 +2031,8 @@ class ChatSession:
                 self._emit(dict(event))
             if not replay:
                 self._emit({"type": "notice", "text":
-                            "Resumed. Claude has this conversation's history — "
-                            "this pane starts from here."})
+                            "Claude has this conversation's history — this "
+                            "pane starts from here."})
             self._persist()
             if not spawn:
                 self.resume_fell_back = False
@@ -2631,6 +2637,14 @@ class SessionRegistry:
         if session is not None:
             return self.state_of(session)
         return self.state_of(None, self._stored_meta(session_id))
+
+    def finding_of(self, session_id: str) -> int:
+        """Which finding a conversation is about (0 for none), held or
+        not — the listing's link back to the card it discusses."""
+        session = self._find(session_id)
+        if session is not None:
+            return int(session.finding_ts or 0)
+        return int(self._stored_meta(session_id).get("finding_ts") or 0)
 
     def composer_state(self) -> dict:
         """The attached conversation's state — what the composer renders."""

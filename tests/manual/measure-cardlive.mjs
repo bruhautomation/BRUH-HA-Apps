@@ -1,35 +1,29 @@
-// A live card has TWO ages, and the foot used to report one of them.
+// A live card has one age on its face, and one fault it may never hide.
 //
 // `live` in the card contract lets a card name up to a dozen entities whose
 // CURRENT state the panel keeps pushing into its visualization while it is
-// on screen — so a card about a door that is open, or a machine that is
-// running, shows numbers that are seconds old. Everything Claude CONCLUDED
-// about those numbers was written whenever the analysis last ran, which may
-// be days back.
-//
-// The foot said `Updated 3 days ago`, once, for both. That is wrong in both
-// directions at the same time: it invites you to distrust a reading that is
-// current, and to trust a sentence written three days ago against data that
-// has since moved. Nothing anywhere said the card was live at all, so a
-// live card and a frozen one were indistinguishable — and so were a working
-// live card and one whose readings had stopped arriving, which is the
+// on screen. For a while the foot said that out loud — "Analysed 3 d ago ·
+// 2 readings live · 8 min ago" — and the redesign (House › Reports) cut it
+// to "Updated 3 d ago": a report is read for its headline and its age, and
+// a reading that is arriving is as current as the screen, which needs no
+// sentence. What is NOT cut is the fault: readings that have stopped
+// arriving say so, because a frozen number under a live chart is the
 // reading nothing can correct.
 //
 // So this drives the REAL `makeCard` and `paintLive` — a copy of the
-// renderer in the test would only ever agree with itself, which is the rule
-// measure-activity, measure-chatmeta and measure-lightmap all follow — and
-// asserts, at phone and desktop width:
+// renderer in the test would only ever agree with itself — and asserts, at
+// phone and desktop width:
 //
-//   * a card with no `live` still says "Updated" (the unchanged case first)
-//   * a card WITH `live` says "Analysed", and carries a second line naming
-//     how many readings are live and when they last arrived
-//   * that line says "waiting" before the first fetch lands, the age after
-//     it, and "not updating" — with the warning class — when a fetch fails
+//   * every card says "Updated", live or not, and the cut words ("Analysed",
+//     "readings live", "waiting") never come back
+//   * a live card is still registered for live pushes, and its live line is
+//     empty while readings are waiting or arriving
+//   * when a fetch fails the line says "not updating" — in words AND with
+//     the warning class — and ages from the last real reading
 //   * a failed fetch does NOT reset the arrival stamp
-//   * a card pinned to a PAST run says "Generated", carries no live line,
-//     and is never registered for live pushes
-//   * the foot does not overflow the card, and the live line is really
-//     painted (not merely present with zero size)
+//   * a card pinned to a PAST run says which run it is from, carries no
+//     live line, and is never registered for live pushes
+//   * the foot does not overflow the card, and the fault is really painted
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -122,6 +116,10 @@ for (const width of WIDTHS) {
   page.on('pageerror', (e) => note(`${width}px`, `page error: ${e.message}`));
   await page.addInitScript(STUB);
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+  // The panel opens on Today; the cards' grid is House › Reports, and a card
+  // drawn into a hidden pane has no size to measure.
+  await page.waitForFunction(() => typeof switchView === 'function').catch(() => {});
+  await page.evaluate(() => switchView('insights')).catch(() => {});
   const at = (s) => `${width}px ${s}`;
   // Noted rather than thrown. An exception here would abandon every
   // finding already gathered, which is how the first run of this measure
@@ -149,40 +147,27 @@ for (const width of WIDTHS) {
     note(at('frozen card'), `registered ${frozen.registered} frames for live`);
   }
 
-  // 2. A live card, before anything has arrived. It must NOT claim the
-  //    readings are current, and it must not stay silent either — silence
-  //    is what made a live card and a frozen one look identical.
+  // 2. A live card, before anything has arrived, and 3. once readings
+  //    have arrived. One age on the face, the cut words gone, and the card
+  //    still registered for the pushes that keep its chart current.
   const waiting = await page.evaluate(probe,
     [['binary_sensor.front_door', 'sensor.dryer_power'], false, null, OLD]);
-  if (!/^Analysed /.test(waiting.stamp)) {
-    note(at('live card'), `stamp is "${waiting.stamp}", expected "Analysed …"`);
-  }
-  if (!/3 d ago/.test(waiting.stamp)) {
-    note(at('live card'), `the analysis age is gone: "${waiting.stamp}"`);
-  }
-  if (!waiting.liveText || !/2 readings live/.test(waiting.liveText)) {
-    note(at('live card'), `live line is "${waiting.liveText}", expected a count`);
-  }
-  if (!waiting.liveText || !/waiting/.test(waiting.liveText)) {
-    note(at('live card'), `before any fetch it says "${waiting.liveText}"`);
-  }
-  if (waiting.liveStale) note(at('live card'), 'waiting is painted as stale');
-  if (!waiting.livePainted) note(at('live card'), 'the live line has no size');
-  if (waiting.overflows) note(at('live card'), 'the foot overflows the card');
-  if (waiting.registered !== 1) {
-    note(at('live card'), `registered ${waiting.registered} frames, expected 1`);
-  }
-
-  // 3. Readings have arrived. Both ages are on the card and they differ.
   const fresh = await page.evaluate(probe, [
     ['binary_sensor.front_door', 'sensor.dryer_power'], false,
     { at: Date.now() - 4000, n: 2, ok: true }, OLD]);
-  if (!/just now/.test(fresh.liveText || '')) {
-    note(at('live card'), `fresh readings read "${fresh.liveText}"`);
-  }
-  if (fresh.liveStale) note(at('live card'), 'fresh readings painted as stale');
-  if (!/Analysed .*3 d ago/.test(fresh.stamp)) {
-    note(at('live card'), `the two ages collapsed: "${fresh.stamp}"`);
+  for (const [name, c] of [['waiting', waiting], ['fresh', fresh]]) {
+    if (!/^Updated .*3 d ago/.test(c.stamp)) {
+      note(at(`live card (${name})`), `stamp is "${c.stamp}", expected "Updated 3 d ago"`);
+    }
+    if (/Analysed|readings live|waiting|just now/.test(c.footText)) {
+      note(at(`live card (${name})`), `cut words are back: "${c.footText}"`);
+    }
+    if (c.liveText) note(at(`live card (${name})`), `live line reads "${c.liveText}"`);
+    if (c.liveStale) note(at(`live card (${name})`), 'painted as stale');
+    if (c.overflows) note(at(`live card (${name})`), 'the foot overflows the card');
+    if (c.registered !== 1) {
+      note(at(`live card (${name})`), `registered ${c.registered} frames, expected 1`);
+    }
   }
 
   // 4. The fetch has started failing. This is the one that must not read
@@ -197,15 +182,22 @@ for (const width of WIDTHS) {
   if (!stalled.liveStale) {
     note(at('stalled live card'), 'does not carry the warning class');
   }
+  if (!/10 min ago/.test(stalled.liveText || '')) {
+    note(at('stalled live card'), `does not age from the last reading: "${stalled.liveText}"`);
+  }
+  if (!stalled.livePainted) note(at('stalled live card'), 'the fault has no size');
+  if (!/^Updated /.test(stalled.stamp)) {
+    note(at('stalled live card'), `stamp is "${stalled.stamp}"`);
+  }
 
-  // 5. A card pinned to a past run. It is a record: it says when it was
-  //    generated, carries no live line, and is registered for nothing —
+  // 5. A card pinned to a past run. It is a record: it says which run it
+  //    is from, carries no live line, and is registered for nothing —
   //    pushing today's door state into March's chart would make it a
   //    hybrid with nothing on screen saying so.
   const past = await page.evaluate(probe,
     [['binary_sensor.front_door'], true, { at: Date.now(), n: 1, ok: true }, OLD]);
-  if (!/^Generated /.test(past.stamp)) {
-    note(at('pinned run'), `stamp is "${past.stamp}", expected "Generated …"`);
+  if (!/^From /.test(past.stamp)) {
+    note(at('pinned run'), `stamp is "${past.stamp}", expected "From …"`);
   }
   if (past.liveText !== null) {
     note(at('pinned run'), `carries a live line: "${past.liveText}"`);
@@ -261,5 +253,5 @@ if (failures.length) {
   failures.forEach((f) => console.error('  ' + f));
   process.exit(1);
 }
-console.log(`measure-cardlive: OK at ${WIDTHS.join(', ')}px — a live card`
-  + ' reports both of its ages, and a pinned run reports neither');
+console.log(`measure-cardlive: OK at ${WIDTHS.join(', ')}px — every card`
+  + ' says "Updated", a stalled live card says so, and a pinned run is never live');

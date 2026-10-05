@@ -1,33 +1,28 @@
-// Render the Ideas tab and assert an idea can be judged from the card it is
-// on, and that an empty page says WHICH kind of empty it is.
+// Render House › Reports' Suggested row and assert an idea can be judged
+// from the card it is on, and that the row says nothing it does not need to.
 //
-// The failure this exists to prevent is the one that makes the page
-// pointless rather than broken. An idea is a proposal to spend money on a
-// recurring card, so what somebody needs before ticking one is not the
-// title — it is the evidence from THIS house and the question the card
-// would answer every run. A page of titles is a page of guesses, and it
-// looks exactly like a page of good ideas.
+// Ideas used to be a tab of their own with an intro paragraph, a two-
+// sentence empty state and a "Last looked…" foot. The redesign (House ›
+// Reports) folded them into one row under the reports: its name and Run,
+// and the ideas when there are any. An idea is still a proposal to spend
+// money on a recurring report, so what somebody needs before saving one is
+// the evidence from THIS house and the question it would answer every run.
 //
-// So the checks are about what a card SAYS:
+// So the checks are about what a card SAYS, and what the row no longer says:
 //
 //   * every idea carries both blocks — why this house, and what it would
-//     answer — each under a heading of its own. They are the two the whole
-//     page rests on; the title alone says the subject and nothing else.
-//   * every idea carries both presses, and the accepting one is primary.
-//     An idea you cannot take is a card that cannot be made.
-//   * an empty page says which of THREE silences it is: nobody has asked
-//     yet, the last look failed, or brAIn looked and had nothing to add.
-//     Only the second is a fault, and rendering them alike is what teaches
-//     somebody to press the button again. This is `house.py`'s rule about
-//     a measurement that has not started, one tab over.
-//   * a pass in flight says so ON THE PAGE and not only by grey-ing the
-//     button, because a run is minutes long and a disabled button is what
-//     a failed one looks like too.
-//   * "Not for this house" opens a box to say why, in place of the buttons,
-//     at 16px on touch, and what is typed is what the dismissal carries —
-//     the reason is what rules out a kind of card rather than one title.
-//   * nothing scrolls sideways, and the ids the handlers bind to are all
-//     still there.
+//     answer — each under a heading of its own.
+//   * every idea carries Save (primary) and Ignore, in the doc's words.
+//   * the cut prose stays cut: no intro, no "hasn't looked yet" or "nothing
+//     new to suggest" sentence, no "Last looked" foot. An empty row is its
+//     name and Run.
+//   * the one silence that IS a fault — the last look failed — is still
+//     said, because a failed run and a well-covered house look alike
+//     otherwise.
+//   * a pass in flight says so on the page and not only by greying Run.
+//   * Ignore opens a box to say why, at 16px on touch, and what is typed is
+//     what the dismissal carries.
+//   * nothing scrolls sideways, and the ids the handlers bind to are there.
 //
 // It drives the panel's REAL `renderIdeas` behind a stubbed fetch —
 // measure-activity's rule, because a copy of the renderer in this file
@@ -47,8 +42,12 @@ const CASES = [
 ];
 
 // Every element id `app.js` binds a handler to on this view.
-const IDS = ['viewIdeas', 'ideasRun', 'ideasList', 'ideasNote', 'ideasFoot',
-             'ideasBadge'];
+const IDS = ['viewInsights', 'ideasRow', 'ideasRun', 'ideasList', 'ideasNote'];
+
+// Prose the redesign cut from the row. None of it may come back.
+const CUT = [/Nothing here is generating/i, /hasn't looked for ideas yet/i,
+             /Nothing new to suggest/i, /Last looked/i, /looks again once a week/i,
+             /Suggest ideas/i, /Ideas for new cards/i];
 
 const NOW = Math.floor(Date.now() / 1000);
 const IDEAS = [
@@ -159,8 +158,11 @@ const read = (page, ids) => page.evaluate((wanted) => {
     note: note_ && !note_.hidden ? note_.textContent.trim() : '',
     button: btn ? btn.textContent.trim() : '',
     disabled: btn ? btn.disabled : false,
-    foot: (document.getElementById('ideasFoot') || {}).textContent || '',
-    badge: (document.getElementById('ideasBadge') || {}).textContent || '',
+    row: (document.getElementById('ideasRow') || {}).textContent || '',
+    rowShown: (() => {
+      const r = document.getElementById('ideasRow');
+      return !!(r && r.getBoundingClientRect().height > 0);
+    })(),
     missing: wanted.filter((i) => !document.getElementById(i)),
     docWidth: document.documentElement.scrollWidth,
     viewport: window.innerWidth,
@@ -174,7 +176,7 @@ const open = async (width, touch, body) => {
   page.on('pageerror', (e) => note(`${width}px`, `page error: ${e.message}`));
   await page.addInitScript(stub(body));
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
-  await openView(page, 'ideas');
+  await openView(page, 'insights');
   return { context, page };
 };
 
@@ -189,9 +191,7 @@ for (const { width, touch } of CASES) {
   if (view.cards.length !== IDEAS.length) {
     note(`${width}px`, `${view.cards.length} cards for ${IDEAS.length} ideas`);
   }
-  if (view.badge !== String(IDEAS.length)) {
-    note(`${width}px`, `badge reads "${view.badge}", not ${IDEAS.length}`);
-  }
+  if (!view.rowShown) note(`${width}px`, 'the Suggested row is not on Reports');
 
   for (const card of view.cards) {
     if (!card.title.trim()) note(`${width}px`, 'an idea renders no title');
@@ -216,15 +216,12 @@ for (const { width, touch } of CASES) {
       }
     }
     const labels = card.verbs.map((v) => v.label).join(' | ');
-    if (!/Add this card/i.test(labels)) {
-      note(`${width}px`, `"${card.title}" offers no way to take it (${labels})`);
+    if (labels !== 'Save | Ignore') {
+      note(`${width}px`, `"${card.title}" offers ${labels}, not Save | Ignore`);
     }
-    if (!/Not for this house/i.test(labels)) {
-      note(`${width}px`, `"${card.title}" offers no way to refuse it (${labels})`);
-    }
-    // Taking it is the press the page exists for, so it leads.
+    // Saving it is the press the row exists for, so it leads.
     const primary = card.verbs.filter((v) => v.primary).map((v) => v.label);
-    if (primary.length !== 1 || !/Add this card/i.test(primary[0] || '')) {
+    if (primary.length !== 1 || primary[0] !== 'Save') {
       note(`${width}px`,
            `"${card.title}" makes ${primary.join(' | ') || 'nothing'} primary`);
     }
@@ -232,62 +229,54 @@ for (const { width, touch } of CASES) {
       note(`${width}px`, `"${card.title}" hangs off the side`);
     }
   }
-  if (!/looked/i.test(view.foot)) {
-    note(`${width}px`, `the foot does not say when it last looked: "${view.foot}"`);
+  for (const cut of CUT) {
+    if (cut.test(view.row)) note(`${width}px`, `cut prose is back: ${cut}`);
   }
-  if (!/week/i.test(view.foot)) {
-    note(`${width}px`, 'the foot does not say it looks again on its own');
-  }
+  if (view.button !== 'Run') note(`${width}px`, `the row's button reads "${view.button}"`);
   if (view.docWidth > view.viewport + 1) {
     note(`${width}px`, `page scrolls sideways (${view.docWidth} > ${view.viewport})`);
   }
   console.log(`${String(width).padStart(5)}  ${view.cards.length} ideas  `
-    + `badge ${view.badge}  button "${view.button}"`);
+    + `button "${view.button}"`);
   await context.close();
 }
 
-// The three silences. A page with nothing on it is the ordinary state of
-// this tab for most of a week, so what it says in that state IS the tab
-// most of the time.
+// The silences. Nobody having asked and a well-covered house are both an
+// empty row with its name and Run — the prose that told them apart was cut —
+// while the one that is a fault, a look that failed, is still said.
 const SILENCES = [
-  ['never asked', { ideas: [], open: 0, runs: 0, last_run: 0, last_count: 0 },
-   /hasn't looked for ideas yet/i],
+  ['never asked', { ideas: [], open: 0, runs: 0, last_run: 0, last_count: 0 }, null],
   ['a failed look', { ideas: [], open: 0, runs: 2,
                       last_error: 'the reply did not parse' },
    /didn't finish/i],
-  ['nothing to add', { ideas: [], open: 0, runs: 2, last_count: 0 },
-   /nothing new to suggest/i],
+  ['nothing to add', { ideas: [], open: 0, runs: 2, last_count: 0 }, null],
 ];
-const said = new Map();
 for (const [name, over, want] of SILENCES) {
   const { context, page } = await open(1200, false, payload(over));
-  await page.waitForSelector('#ideasList .findempty');
-  // The tab paints once from what it has before the stubbed fetch lands, and
-  // on a slow runner that first paint is the one a bare waitForSelector
-  // reads — "never asked" for every case. Wait for the wording this case
-  // should reach; a timeout is noted by the check below, never thrown.
-  await page.waitForFunction(
-    (src) => new RegExp(src, 'i').test(
-      document.querySelector('#ideasList .findempty')?.textContent || ''),
-    want.source, { timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('#ideasRun');
+  if (want) {
+    await page.waitForFunction(
+      (src) => new RegExp(src, 'i').test(
+        document.querySelector('#ideasList .findempty')?.textContent || ''),
+      want.source, { timeout: 5000 }).catch(() => {});
+  } else {
+    await page.waitForTimeout(300);
+  }
   const view = await read(page, IDS);
-  if (!want.test(view.empty)) {
-    note(name, `the empty page says "${view.empty.trim()}", not ${want}`);
+  if (want && !want.test(view.empty)) {
+    note(name, `the row says "${view.empty.trim()}", not ${want}`);
   }
-  said.set(name, view.empty.trim());
-  console.log(`  ${name.padEnd(16)} "${view.empty.trim().slice(0, 56)}…"`);
+  if (!want && view.empty.trim()) {
+    note(name, `an empty row carries a sentence: "${view.empty.trim()}"`);
+  }
+  if (!view.rowShown || view.button !== 'Run') {
+    note(name, 'the empty row lost its name and Run');
+  }
+  for (const cut of CUT) {
+    if (cut.test(view.row)) note(name, `cut prose is back: ${cut}`);
+  }
+  console.log(`  ${name.padEnd(16)} "${view.empty.trim().slice(0, 56)}"`);
   await context.close();
-}
-// Three silences, three sentences. All three legitimately end by offering
-// the button, so what is asserted is that they are not the SAME sentence —
-// if any two are, the page has stopped telling those two states apart,
-// which is the whole reason this block exists.
-for (const [a] of SILENCES) {
-  for (const [b] of SILENCES) {
-    if (a < b && said.get(a) && said.get(a) === said.get(b)) {
-      note('the empty page', `"${a}" and "${b}" say the same thing`);
-    }
-  }
 }
 
 // A pass in flight. The sentence is on the page, not only in the button.
@@ -297,7 +286,7 @@ for (const [a] of SILENCES) {
   await page.waitForSelector('#ideasRun');
   const view = await read(page, IDS);
   if (!view.disabled) note('running', 'the button is still pressable');
-  if (!/looking/i.test(view.button)) {
+  if (!/running/i.test(view.button)) {
     note('running', `the button reads "${view.button}" while a pass is going`);
   }
   if (!view.note.trim()) {
@@ -310,7 +299,7 @@ for (const [a] of SILENCES) {
   await context.close();
 }
 
-// The reason a no. "Not for this house" opens a box in place of the
+// The reason a no. Ignore opens a box in place of the
 // buttons, the box is a 16px control on touch (or iOS zooms the ingress
 // frame in and never back out), it is optional, and what is typed is what
 // the route receives — the half that rules out a FAMILY of cards rather
@@ -319,7 +308,7 @@ for (const { width, touch } of CASES) {
   const { context, page } = await open(width, touch, payload());
   await page.waitForSelector('#ideasList .finding');
   const card = page.locator('#ideasList .finding').first();
-  await card.locator('.findactions button', { hasText: 'Not for this house' }).click();
+  await card.locator('.findactions button', { hasText: 'Ignore' }).click();
   const area = card.locator('.ideanote textarea');
   if (!(await area.count())) {
     note(`${width}px`, 'refusing an idea opens no box to say why');
@@ -334,7 +323,7 @@ for (const { width, touch } of CASES) {
     note(`${width}px`, 'the buttons stay on screen beside the reason box');
   }
   await area.fill('we do not care about standby power');
-  await card.locator('.ideanote button', { hasText: 'Not for this house' }).click();
+  await card.locator('.ideanote button', { hasText: 'Ignore' }).click();
   await page.waitForFunction(() => window.__calls.some(
     (c) => c.method === 'POST' && /dismiss/.test(c.url)), null,
     { timeout: 5000 }).catch(() => {});
@@ -357,5 +346,5 @@ if (failures.length) {
   failures.forEach((f) => console.error('  - ' + f));
   process.exit(1);
 }
-console.log('\nevery idea can be judged from its card, and an empty page '
-  + 'says which silence it is');
+console.log('\nevery idea can be judged from its card, and the Suggested row '
+  + 'says only what it needs to');

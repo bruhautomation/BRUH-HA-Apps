@@ -64,8 +64,12 @@ def _device_of(module: str, value: ast.AST) -> dict:
 class TestNamesAndDevices(unittest.TestCase):
 
     def test_the_todo_list_is_not_named_after_its_device(self):
+        # "brAIn to-do", whole: under the device's name it read "brAIn
+        # System brAIn" and then "brAIn System To-do", in an app that
+        # lists every list in the house by friendly name.
         attrs = _class_attrs("todo.py", "BrainTodoList")
-        self.assertEqual(ast.literal_eval(attrs["_attr_name"]), "To-do")
+        self.assertEqual(ast.literal_eval(attrs["_attr_name"]), "brAIn to-do")
+        self.assertFalse(ast.literal_eval(attrs["_attr_has_entity_name"]))
         device = _device_of("todo.py", attrs["_attr_device_info"])
         self.assertEqual(device["name"], "'brAIn System'")
 

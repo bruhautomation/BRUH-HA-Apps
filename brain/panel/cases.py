@@ -757,6 +757,32 @@ def open_count(now: float | None = None) -> int:
     return len(list_cases("open", now=now)) + waiting
 
 
+def queue_count(now: float | None = None) -> int:
+    """How many decisions are waiting on a person: THE count.
+
+    The queue is every open finding that needs a decision, every open
+    question and every open suggestion (a proposal) — one list, so one
+    number. It is the badge, `queue_count` on `/api/status`, the `open`
+    on `/api/findings`, the status mirror the integration reads and
+    `binary_sensor.brain_needs_you`. The numbers used to come from three
+    derivations (the findings listing plus the guesses, the cases without
+    the proposals, the mirror's own sum), so a badge said 2 while its list
+    held 4. `open_count` stays for the callers that mean the feed without
+    the proposals; anything a person reads as "how much is waiting on me"
+    asks this.
+
+    A chore is not in it (accepted work is Your list, `list_count`), and
+    neither is anything `watching` or `acting`: nothing there is a
+    decision anybody can make yet. A finding still waiting for its first
+    look past `triage.SHOW_AFTER_S` is, `open_count`'s rule.
+    """
+    try:
+        waiting = findings_store.waiting_look_count(now)
+    except Exception:  # noqa: BLE001 — the cases are the count's floor
+        waiting = 0
+    return len(list_cases("open", now=now, stores=STORES)) + waiting
+
+
 def get(value: str, now: float | None = None) -> dict | None:
     """One case by id, from the one store its prefix names.
 
@@ -860,6 +886,37 @@ def end(value: str, verb: str, note: str = "", *, hooks: Hooks,
             "when": int(now), "snoozed_until": 0, "result": result}
 
 
+def snoozes() -> dict[str, int]:
+    """The sidecar's snoozes, `{case id: epoch}` — for a surface that lists
+    a store directly and must hide what a Snooze on its case hid (Today's
+    suggestions read `/api/proposals`, which knows nothing of this file)."""
+    return _read_snoozes()
+
+
+def wake(value: str, now: float | None = None) -> dict | None:
+    """Bring a snoozed case back now — History's Restore on a Snoozed row.
+
+    The inverse of `not_now`, written to the same place the snooze was:
+    the finding's own field, the hypothesis queue's own field, or this
+    module's sidecar. None for an id that names nothing; a case that was
+    not asleep is answered as woken, because the press asked for the card
+    to be on the list and it is."""
+    now = time.time() if now is None else now
+    case = get(value, now)
+    if case is None:
+        return None
+    store, key = case["origin"]["store"], case["origin"]["key"]
+    if store == "findings":
+        findings_store.snooze(int(key), 0)
+    elif store == "hypotheses":
+        hypotheses.snooze(int(key), 0)
+    rows = _read_snoozes()
+    if case["id"] in rows:
+        rows.pop(case["id"])
+        _write_snoozes(rows, now)
+    return {"id": case["id"], "kind": case["kind"], "woken": True}
+
+
 # ---------------------------------------------------------------------------
 # The rest of the verbs
 # ---------------------------------------------------------------------------
@@ -912,40 +969,39 @@ def overflow(case: dict) -> list[dict]:
         if status == "acting":
             # A run is changing the house. Talking about it is the only
             # thing that does not interfere with what it is doing.
-            add("discuss", "Talk about it", f"/api/finding/{key}/discuss")
+            add("discuss", "Ask", f"/api/finding/{key}/discuss")
             return out
         if kind == "problem":
             # The claim *Add to list* deliberately does not make. It is
             # rarer than agreeing to do something and it writes a memory
             # line that is only true once the work is finished.
-            add("done", "I've already fixed it", f"/api/finding/{key}/done")
+            add("done", "Done", f"/api/finding/{key}/done")
             if status == "open":
-                add("fix", "Work out what to change",
-                    f"/api/finding/{key}/fix")
+                add("fix", "Plan", f"/api/finding/{key}/fix")
             if status == "watching":
                 # `elevate` is `unsettle`'s press one lifecycle earlier:
                 # it stops the suppression and changes nothing else.
-                add("elevate", "Bring it to the front",
+                add("elevate", "Restore",
                     f"/api/finding/{key}/elevate")
             if str(case.get("source") or "").startswith("check:"):
-                add("recheck", "Check again", f"/api/finding/{key}/recheck")
+                add("recheck", "Recheck", f"/api/finding/{key}/recheck")
         if kind == "change":
-            add("unfix", "Put it back", f"/api/finding/{key}/unfix")
-        add("discuss", "Talk about it", f"/api/finding/{key}/discuss")
+            add("unfix", "Undo", f"/api/finding/{key}/unfix")
+        add("discuss", "Ask", f"/api/finding/{key}/discuss")
         add("advice", "Say what to do", f"/api/finding/{key}/advice")
         if case.get("source") and case["source"] not in UNMUTABLE_SOURCES:
             # The press for the RULE rather than for the row. It carries
             # no id because it is about a producer, which is why it is the
             # one route here that is not under `/api/finding/{id}/`.
-            add("mute", "Stop raising these", "/api/findings/mute")
+            add("mute", "Ignore all like this", "/api/findings/mute")
     elif store == "proposals":
         if status == "open":
             # A week of the house as it is really lived, replayed and
             # graded — the evidence that makes an accept a different
             # object from a yes to something that sounded reasonable.
-            add("trial", "Try it for a week", f"/api/proposal/{key}/trial")
+            add("trial", "Run", f"/api/proposal/{key}/trial")
     elif store == "todo" and status == "done":
-        add("reopen", "Put it back", f"/api/todo/{key}/reopen")
+        add("reopen", "Restore", f"/api/todo/{key}/reopen")
     return out
 
 
@@ -954,6 +1010,6 @@ __all__ = [
     "MAX_SNOOZED", "UNMUTABLE_SOURCES",
     "MIN_SNOOZE_S", "PREFIXES", "SNOOZE_BY_STAKES", "SNOOZE_FILE", "STAKES",
     "STATUSES", "STORES", "VERBS", "answers", "case_id", "end", "get",
-    "list_cases", "more", "open_count", "overflow", "situation",
-    "snooze_until", "split_id",
+    "list_cases", "more", "open_count", "overflow", "queue_count", "situation",
+    "snooze_until", "snoozes", "split_id", "wake",
 ]

@@ -346,7 +346,11 @@ def _rate_limited_row(runs: dict, usage: dict) -> tuple[str, str, str] | None:
     if not isinstance(runs, dict):
         return None
     limited = int((runs.get("by_outcome") or {}).get("rate_limited") or 0)
-    total = int(runs.get("runs") or 0)
+    # Out of the Claude runs, where the summary counts them: a refusal is
+    # a run a model was asked for, and the journal's other lines (checks
+    # passes, summary rows) are not runs in any sentence a person reads.
+    total = int(runs.get("claude_runs") or runs.get("runs") or 0)
+    limited = min(limited, total)
     if limited < RATE_LIMITED_MIN or not total:
         return None
     if limited / total < RATE_LIMITED_SHARE:
@@ -640,7 +644,7 @@ def _faults(diag) -> list[dict]:
             title = str(row.get("title") or "")
             name = f"{title} ({source})" if title and title != source else source
             _row(out, f"Producer {name}",
-                 f"marked Wrong {wrong} of {total} times",
+                 f"ignored {wrong} of {total} times",
                  "this rule is firing on a healthy house, which is worse "
                  "than not having it")
 
