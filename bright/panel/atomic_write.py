@@ -129,6 +129,7 @@ def write_text(path, text: str, *, encoding: str = "utf-8",
         # Opened up only now that the contents are complete: an explicit
         # mode from the caller, the one the file already carried, or the
         # umask's answer for a file that did not exist yet.
+        # codeql[py/overly-permissive-file] — this puts back the mode the file already had (or the caller's); files here are read by the non-root claude user.
         os.chmod(tmp, keep_mode if mode is None else mode)
         if uid >= 0:
             try:

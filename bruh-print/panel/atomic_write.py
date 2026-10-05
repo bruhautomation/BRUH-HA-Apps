@@ -100,8 +100,10 @@ def write_bytes(path: Path | str, data: bytes, *, mode: int | None = None) -> No
         # umask's — in that order, because an explicit ask outranks history
         # and history outranks a default.
         if mode is not None:
+            # codeql[py/overly-permissive-file] — the caller named this mode on purpose.
             os.chmod(tmp, mode)
         elif kept_mode is not None:
+            # codeql[py/overly-permissive-file] — this puts back the mode the file already had; tightening it would change who can read an existing file.
             os.chmod(tmp, kept_mode)
         else:
             os.chmod(tmp, _default_mode())

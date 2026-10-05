@@ -160,6 +160,7 @@ def update_ok(update):
 
 def emit(obj):
     obj.setdefault("session_id", SESSION)
+    # codeql[py/clear-text-logging-sensitive-data] a fake CLI's stdout; nothing here is a real secret
     sys.stdout.write(json.dumps(obj) + "\n")
     sys.stdout.flush()
 

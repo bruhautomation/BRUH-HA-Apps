@@ -5,6 +5,16 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.23.1
+
+Security fixes from a code-scanning pass. Nothing you see changes.
+
+- A track path from a request is normalised and checked to be under
+  `/media` a second time, in the form a code scanner recognises. Symlinks
+  under `/media` are still followed exactly as before.
+- The LIFX socket and the panel port carry a CodeQL suppression comment
+  explaining why they listen on every interface.
+
 ## 0.23.0
 
 ### Added

@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import math
 import json
 import os
 import re
@@ -141,7 +142,7 @@ def _num(value) -> float | None:
         out = float(value)
     except (TypeError, ValueError):
         return None
-    return None if out != out else out
+    return None if math.isnan(out) else out
 
 
 def _ts(value) -> float | None:

@@ -2,6 +2,22 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.13.1
+
+Security fixes from a code-scanning pass. Nothing you see changes.
+
+- Error messages the panel sends back are built from the error's own text
+  rather than the raw exception, so a traceback can never reach the page.
+  The sentences are the same ones you saw before.
+- The camera and case log lines strip newlines from values that came off
+  the wire, so a value cannot forge a second log line.
+- An entity id is checked inline before it is put into a Home Assistant
+  URL.
+- Two NaN checks use `math.isnan` instead of comparing a value to itself.
+- Findings that are the design rather than a fault (a file the non-root
+  `claude` user has to read) carry a CodeQL suppression comment with the
+  reason.
+
 ## 2.13.0
 
 **The panel, redesigned around three jobs: decide, ask, read.** Three tabs
