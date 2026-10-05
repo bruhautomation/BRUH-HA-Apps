@@ -66,7 +66,7 @@ class TestTheVocabularyIsClosed(unittest.TestCase):
 
     def parse(self, items, rows=None, **kw):
         return dispatch.parse({"rows": items}, rows or [freezer_row()],
-                              now=NOW, tz=UTC, morning_at=NOW + 17 * 3600,
+                              now=NOW, tz=UTC, morning_at=NOW + 9 * 3600,
                               names=NAMES, **kw)
 
     def test_a_word_outside_the_vocabulary_is_not_a_decision(self):
@@ -90,8 +90,21 @@ class TestTheVocabularyIsClosed(unittest.TestCase):
                           {"id": 102, "deliver": "digest"},
                           {"id": 103, "deliver": "feed_only"}], rows)
         self.assertEqual(out[101]["deliver"], "now")
-        self.assertEqual(out[102]["until"], NOW + 17 * 3600)
+        self.assertEqual(out[102]["until"], NOW + 9 * 3600)
         self.assertEqual(out[103]["deliver"], "feed_only")
+
+    def test_a_daytime_digest_is_not_held_until_tomorrow(self):
+        """The field case: at 14:00 the next morning list is tomorrow 07:00,
+        and a digest held a row for seventeen hours while the household was
+        awake all day. Refused, so the row takes the deterministic path."""
+        out = dispatch.parse({"rows": [{"id": 101, "deliver": "digest"}]},
+                             [freezer_row()], now=NOW, tz=UTC,
+                             morning_at=NOW + 17 * 3600, names=NAMES)
+        self.assertEqual(out, {})
+        prompt = dispatch.frame([freezer_row()], policy="", now=NOW, tz=UTC,
+                                morning_at=NOW + 17 * 3600)
+        self.assertIn("do not use digest now", prompt)
+        self.assertNotIn("The next morning list goes out", prompt)
 
     def test_a_critical_row_is_never_muted(self):
         out = self.parse([{"id": 101, "deliver": "feed_only"}],
@@ -559,13 +572,29 @@ class TestWhatTheDispatcherDecides(DispatchCase):
         self.assertEqual(msg["title"], "Garage freezer is warming")
 
     def test_a_digest_waits_for_the_morning_list(self):
-        self.server._quiet_hours = lambda: (22, 7)
+        # Quiet hours ending three hours from now, whatever the hour the
+        # suite runs at: the morning list is close, so a digest waits for it.
+        end = (dt.datetime.now(UTC).hour + 3) % 24
+        self.server._quiet_hours = lambda: ((end + 12) % 24, end)
         [row] = self.file(NOTIFY_ROW)
         self.looks.append(self.reply([{"id": row["ts"], "deliver": "digest"}]))
         self.announce([row])
         [held] = self.queue()
         local = dt.datetime.fromtimestamp(held["until"], UTC)
-        self.assertEqual((local.hour, local.minute), (7, 0))
+        self.assertEqual((local.hour, local.minute), (end, 0))
+
+    def test_a_digest_a_day_away_is_sent_instead(self):
+        """Outside the quiet hours with the morning list most of a day off,
+        the row goes out now rather than waiting unseen until tomorrow."""
+        hour = dt.datetime.now(UTC).hour
+        # Quiet from two hours ago to one hour ago: not now, and the next
+        # end is twenty-three hours away.
+        self.server._quiet_hours = lambda: ((hour - 2) % 24, (hour - 1) % 24)
+        [row] = self.file(NOTIFY_ROW)
+        self.looks.append(self.reply([{"id": row["ts"], "deliver": "digest"}]))
+        self.announce([row])
+        self.assertEqual(self.queue(), [])
+        self.assertEqual(len(self.sent), 1)
 
     def test_the_policy_and_the_learned_lines_reach_the_prompt(self):
         import settings_store

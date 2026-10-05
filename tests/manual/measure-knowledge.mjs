@@ -253,7 +253,7 @@ const TODAY_FULL = {
                error: '' },
   memory: { last_filed_at: NOW - 7200, waiting: 3, running: false },
   reports: { since_yesterday: 1 },
-  landed_runs_24h: 1,
+  claude_runs_24h: 1,
 };
 
 const STUB = `
@@ -911,7 +911,7 @@ const TODAY_CASES = [
     if (!/Memory filed/.test(t) || !/3 waiting/.test(t)) return 'no memory segment';
     if (!/1 problem since yesterday/.test(t)) return 'no problems segment';
     if (!/Problems/.test(t)) return 'the problems segment does not say where';
-    if (!/1 run landed in the last day/.test(t)) return 'no landed-runs segment';
+    if (!/1 Claude run in the last day/.test(t)) return 'no Claude-runs segment';
     return '';
   }],
   ['partial', {
@@ -920,7 +920,7 @@ const TODAY_CASES = [
     baselines: { built_at: 0, running: false, error: '' },
     memory: { last_filed_at: 0, waiting: 0, running: false },
     reports: { since_yesterday: 0 },
-    landed_runs_24h: 0,
+    claude_runs_24h: 0,
   }, (t) => {
     if (!/Checks ran/.test(t)) return 'no checks segment';
     // A zero is not news, and rendering one is how the line becomes noise.
@@ -929,7 +929,7 @@ const TODAY_CASES = [
     if (/Baselines/.test(t)) return 'baselines rendered with no build';
     if (/Memory/.test(t)) return 'memory rendered with nothing filed';
     if (/problem/.test(t)) return 'a zero problem count was rendered';
-    if (/landed/.test(t)) return 'a zero run count was rendered';
+    if (/Claude run/.test(t)) return 'a zero run count was rendered';
     return '';
   }],
   // What `_today_state` really sends today: a `running` flag and no elapsed.
@@ -941,7 +941,7 @@ const TODAY_CASES = [
     baselines: { built_at: null, next_at: null, running: true, error: '' },
     memory: { last_filed_at: NOW - 100, waiting: 2, running: true },
     reports: { since_yesterday: 0 },
-    landed_runs_24h: 0,
+    claude_runs_24h: 0,
   }, (t) => {
     if (!/Checks running/.test(t)) return 'a running pass does not say so';
     if (!/Baselines rebuilding/.test(t)) return 'a running rebuild does not say so';
@@ -957,7 +957,7 @@ const TODAY_CASES = [
     baselines: { built_at: null, running: false, error: '' },
     memory: { last_filed_at: 0, waiting: 0, running: false },
     reports: { since_yesterday: 0 },
-    landed_runs_24h: 0,
+    claude_runs_24h: 0,
   }, (t) => {
     if (!/Checks running/.test(t)) return 'a running pass does not say so';
     if (!/1m 35s/.test(t)) return 'a known elapsed is not rendered';

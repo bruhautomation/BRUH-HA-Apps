@@ -363,6 +363,11 @@ def summary(hours: float = 24.0, now: float | None = None) -> dict:
     return {
         "hours": hours,
         "runs": len(rows),
+        # Rows a model actually ran for (`is_claude_run`) — the one
+        # definition of "a Claude run" the status strip and ⚙ say. `runs`
+        # is every journal line: checks passes, baseline builds, and the
+        # summary row `_generate` writes beside the run it is about.
+        "claude_runs": sum(1 for r in rows if is_claude_run(r)),
         "by_source": by_source,
         "by_outcome": by_outcome,
         # `is_failure`'s count over the whole window, which `failures` (the

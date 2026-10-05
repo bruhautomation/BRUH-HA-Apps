@@ -147,6 +147,33 @@ class TestTheThingsThatMatter(unittest.TestCase):
                              ids(health.problems(diag(daemons=daemons), now=NOW)),
                              alive)
 
+    def test_the_roll_call_says_why_a_stopped_daemon_is_not_a_fault(self):
+        """⚙ → Diagnostics listed `assist_listener — not running` on a
+        fast-mode install while every verdict said fine. Driven through the
+        server's own annotation, which is what the panel renders."""
+        import importlib
+        server = importlib.import_module("server")
+        fast = {"enable_assist_integration": True, "assist_fast_mode": True}
+        rows = server._annotate_daemons(
+            {"assist_listener": {"running": False},
+             "assist_worker_pool": {"running": True},
+             "automation_listener": {"running": False},
+             "ttyd": {"running": False}},
+            {**fast, "enable_automation_integration": True,
+             "enable_terminal": False})
+        self.assertEqual(rows["assist_listener"]["not_used"],
+                         "not used (fast mode)")
+        self.assertNotIn("not_used", rows["assist_worker_pool"])
+        # Asked for and down: a real fault, said as one.
+        self.assertNotIn("not_used", rows["automation_listener"])
+        self.assertEqual(rows["ttyd"]["not_used"],
+                         "not used (enable_terminal is off)")
+        classic = {"enable_assist_integration": True,
+                   "assist_fast_mode": False}
+        self.assertEqual(health.not_used_reason("assist_worker_pool", classic),
+                         "not used (classic mode)")
+        self.assertEqual(health.not_used_reason("assist_listener", classic), "")
+
     def test_neither_assist_implementation_is_a_failure(self):
         daemons = {**ALL_DAEMONS,
                    "assist_worker_pool": {"running": False},

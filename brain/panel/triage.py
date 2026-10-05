@@ -49,6 +49,8 @@ the promise that a row nothing ever came back for surfaces anyway.
 """
 from __future__ import annotations
 
+import time
+
 # What a row can be in once something has (or has not) looked at it. The
 # third is not a judgement — it is the record that nothing looked, which
 # is why it surfaces like any untriaged finding and says so on the card.
@@ -60,6 +62,18 @@ VERDICTS = ("elevated", "held", "untriaged")
 # will ever judge is a problem nobody is ever shown. It is also what
 # bounds the wait a held batch asks a queued row to accept.
 STALE_S = 3600
+
+# How long a row may wait for its first look before it is SHOWN anyway,
+# still waiting. `STALE_S` is when a row stops waiting and surfaces as
+# unjudged; this is the shorter promise that a row is never invisible for
+# that whole hour. A look is due every ten minutes, so a row older than
+# this is one a look has not reached — a gate holding the batch (a spent
+# usage window, a pause, no credential) is the commonest reason — and a
+# serious problem sitting unseen behind it while every count said
+# "nothing waiting on you" is the failure this exists to end. It is shown
+# and COUNTED (badge, sensor, Diagnostics) with `WAITING` on the card, and
+# it stays `triaging`, so the look still judges it when it comes.
+SHOW_AFTER_S = 15 * 60
 
 # One sentence, shown on the card. Long enough to name what was looked at
 # ("its history has 40 changes today — it is a doorbell button, not a
@@ -79,6 +93,8 @@ MAX_REASON = 300
 # about "the check" would be wrong about four of them.
 UNJUDGED = ("Nothing finished looking at this one, so it is on the list as "
             "it was filed.")
+WAITING = ("brAIn has not looked at this one yet, so it is shown as it was "
+           "filed rather than left waiting out of sight.")
 RUN_FAILED = ("The look at this one did not finish, so it is on the list "
               "as it was filed.")
 
@@ -120,6 +136,21 @@ def gate(rows: list[dict], muted: set[str] | None = None) -> list[dict]:
                     and str(row.get("source") or "") in muted)]
 
 
+def waiting_too_long(row: dict, now: float | None = None) -> bool:
+    """A row still `triaging` past `SHOW_AFTER_S` — shown and counted while
+    it waits. Keyed on the raw store entry or the shaped row alike (both
+    carry `status`, `ts` and `text`); a snoozed row is not waiting on
+    anybody, which is the snooze's own rule."""
+    if not isinstance(row, dict) or row.get("status") != "triaging":
+        return False
+    if not str(row.get("text") or "").strip():
+        return False
+    now = time.time() if now is None else float(now)
+    if float(row.get("snoozed_until") or 0) > now:
+        return False
+    return int(row.get("ts") or 0) <= now - SHOW_AFTER_S
+
+
 # The most first looks one day may spend. Nothing else bounded the look
 # below the usage budget, and on a large house's first pass that is
 # hundreds of runs in an hour. Past this the queue waits for tomorrow
@@ -128,6 +159,6 @@ def gate(rows: list[dict], muted: set[str] | None = None) -> list[dict]:
 MAX_PER_DAY = 200
 
 __all__ = [
-    "MAX_PER_DAY", "MAX_REASON", "RUN_FAILED", "STALE_S", "UNJUDGED",
-    "VERDICTS", "gate",
+    "MAX_PER_DAY", "MAX_REASON", "RUN_FAILED", "SHOW_AFTER_S", "STALE_S",
+    "UNJUDGED", "VERDICTS", "WAITING", "gate", "waiting_too_long",
 ]

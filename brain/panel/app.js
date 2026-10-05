@@ -1801,13 +1801,14 @@ function renderToday(today) {
       openProblems]);
   }
 
-  // Every Claude run and every checks pass that reached the journal. It is
-  // what tells a quiet add-on from a stopped one, which is why the window is
-  // said out loud rather than left as "today".
-  const landed = Number(t.landed_runs_24h) || 0;
-  if (landed) {
+  // Claude runs — rows a model ran for, not the checks passes beside them
+  // (the checks have their own segment). It is what tells a quiet add-on
+  // from a stopped one, which is why the window is said out loud rather
+  // than left as "today", and why it says WHAT it counts.
+  const runs = Number(t.claude_runs_24h) || 0;
+  if (runs) {
     segs.push(["runs",
-      `${landed} run${landed === 1 ? "" : "s"} landed in the last day`, null]);
+      `${runs} Claude run${runs === 1 ? "" : "s"} in the last day`, null]);
   }
 
   strip.classList.toggle("hidden", !segs.length);
@@ -2837,8 +2838,11 @@ function renderDiagnostics(d) {
   rows.push(diagRow("Claude sign-in",
     esc((d.auth || {}).state || "unknown"),
     (d.auth || {}).state !== "ok"));
+  // `claude_runs` is the Claude runs; `by_outcome` counts every journal
+  // line (checks passes and summary rows too), so it is labelled as such.
   rows.push(diagRow("Claude runs, last 24h",
-    `${j.runs || 0} — ${diagCounts(j.by_outcome)}`,
+    `${j.claude_runs ?? j.runs ?? 0} — journal lines by outcome: `
+      + diagCounts(j.by_outcome),
     (j.runs || 0) > 0 && ok < (j.runs || 0)));
   if (c && c.finished_at) {
     const errs = Object.keys(c.errors || {}).length;
@@ -2868,7 +2872,11 @@ function renderDiagnostics(d) {
         + (b.stale ? " — stale" : "")
       : "not measured yet (the first pass runs overnight)",
     !!b.stale && !!b.built_at));
-  rows.push(diagRow("Findings open", String((d.findings || {}).open ?? 0)));
+  {
+    const fd = d.findings || {};
+    rows.push(diagRow("Findings open", String(fd.open ?? 0)
+      + (fd.waiting_look ? ` (${fd.waiting_look} still waiting for brAIn's first look)` : "")));
+  }
   const n = d.notify || {};
   if (n.service) {
     // A hold queue nobody can see is a queue that silently swallows: this
@@ -3046,8 +3054,15 @@ function renderDiagnostics(d) {
     ? Object.keys(daemons) : [];
   if (names.length) {
     const up = (n) => !!(daemons[n] || {}).running;
-    const items = names.sort().map((n) =>
-      `<li><b>${esc(n)}</b> — ${up(n) ? "running" : "not running"}</li>`);
+    // `not_used` is the server's reason a stopped one was never asked for
+    // (`health.not_used_reason`) — "not used (fast mode)" rather than a
+    // bare "not running" beside a verdict that says everything is fine.
+    const items = names.sort().map((n) => {
+      const row = daemons[n] || {};
+      const said = up(n) ? "running"
+        : (row.not_used ? String(row.not_used) : "not running");
+      return `<li><b>${esc(n)}</b> — ${esc(said)}</li>`;
+    });
     // The roll-call is DESCRIPTIVE — some of these are correctly absent
     // because the option behind them is off — so a stopped one is not
     // painted as a fault here. `health.py` is what interprets it against
@@ -4126,9 +4141,13 @@ const FIND_SEVERITY = {
 // and overturn. Hence a reason on every row, the conversation behind it
 // one press away, and one verb that puts it back.
 const FIND_FILTERS = [
+  // `waiting_look` is a row still waiting for its first look past
+  // `triage.SHOW_AFTER_S`: no case covers it, so it renders beneath the
+  // cases as itself, saying it has not been looked at — rather than the
+  // tab saying "Nothing waiting on you" over a serious one.
   { id: "live", label: "Needs you", match: (f) =>
-    ["open", "planning", "planned", "fixing", "fixed", "failed",
-     "needs_you"].includes(f.status)
+    (["open", "planning", "planned", "fixing", "fixed", "failed",
+      "needs_you"].includes(f.status) || !!f.waiting_look)
     && !findings_isSnoozed(f) },
   { id: "snoozed", label: "Dismissed", match: (f) => findings_isSnoozed(f) },
   // What was brought up and looked at and is not worth your time. These
@@ -4504,6 +4523,13 @@ function fixFootLine(f) {
 // saying nothing happened is a badge people stop reading.
 function triageLine(f) {
   const t = f.triage || {};
+  if (!t.verdict && f.waiting_look) {
+    const box = el("p", "findtriage unchecked");
+    box.appendChild(el("span", "findtriagelabel", "Not looked at yet"));
+    box.appendChild(el("span", null, "brAIn has not looked at this one yet, "
+      + "so it is shown as it was filed rather than left waiting out of sight."));
+    return box;
+  }
   if (!t.verdict) return null;
   const box = el("p", "findtriage");
   if (t.verdict === "untriaged") {

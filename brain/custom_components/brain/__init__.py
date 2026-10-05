@@ -511,7 +511,19 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _check_restart_required(hass: HomeAssistant) -> None:
-    """Check if the add-on deployed newer files and create/clear a repair issue."""
+    """Check if the add-on deployed newer files and create/clear a repair issue.
+
+    One channel: the Repairs issue. It used to post a persistent
+    notification as well, so every update said "restart required" twice;
+    the issue is fixable, it is where Home Assistant puts things that need
+    a person, and it clears itself once the restart lands. (A FRESH install
+    still gets run.sh's notification, because no integration is loaded yet
+    to raise an issue.) What the add-on panel shows comes from the file
+    written here — the version actually running — beside the marker.
+    """
+    await hass.async_add_executor_job(
+        _write_loaded_version, hass.config.path(".brain",
+                                                "integration_loaded.json"))
     marker_path = hass.config.path(".brain", "restart_required")
     marker = await hass.async_add_executor_job(_read_marker, marker_path)
 
@@ -550,25 +562,30 @@ async def _check_restart_required(hass: HomeAssistant) -> None:
         translation_placeholders={"version": required_version},
     )
 
-    # Also create a persistent notification as a visible fallback in case
-    # the user doesn't check Settings > System > Repairs.
+    # And take down the duplicate an older release posted beside the issue,
+    # so an install that upgrades through this one is left with one notice.
     try:
         await hass.services.async_call(
             "persistent_notification",
-            "create",
-            {
-                "title": f"brAIn: Restart Required (v{required_version})",
-                "message": (
-                    f"The brAIn integration has been updated to v{required_version}. "
-                    "Please restart Home Assistant to load the new version.\n\n"
-                    "Go to **Settings > System > Restart**, or check "
-                    "**Settings > System > Repairs** to fix automatically."
-                ),
-                "notification_id": "brain_restart_needed",
-            },
+            "dismiss",
+            {"notification_id": "brain_restart_needed"},
         )
-    except Exception:
-        _LOGGER.debug("Could not create persistent notification for restart")
+    except Exception:  # noqa: BLE001 — a missing notifier is nothing to do
+        _LOGGER.debug("Could not dismiss the old restart notification")
+
+
+def _write_loaded_version(path: str) -> None:
+    """Record which integration version this Home Assistant has LOADED, for
+    the add-on panel's fault list. Best effort: a read-only /config is a
+    panel that cannot say so, never a setup that fails."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"version": _LOADED_VERSION, "at": int(time.time())}, fh)
+        os.replace(tmp, path)
+    except OSError:
+        _LOGGER.debug("Could not record the loaded integration version")
 
 
 def _read_marker(path: str) -> dict | None:
