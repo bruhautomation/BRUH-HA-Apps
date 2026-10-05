@@ -1647,23 +1647,26 @@ class TestFindingsUI(unittest.TestCase):
         record when memory already is. The ledger stays — it is the dedup
         index that stops the analyst re-raising what you answered — it is
         just not something the panel draws."""
-        # The redesign's History drawer (`today.history`) is the one view
-        # of what was ended, and it keeps every property that made the old
-        # archive refusable: it is not a work list, it is closed until
-        # opened, it is capped, it counts towards no badge, and each row
-        # carries exactly one press.
+        # History (`today.history`) is the one view of what was ended, and
+        # it keeps every property that made the old archive refusable: it is
+        # not a work list, it is a pane of its own you go to rather than a
+        # pile beside the queue, it is capped, it counts towards no badge,
+        # and each row carries one way back. Its second press, Delete,
+        # clears the record and changes no decision — the settled ledger is
+        # untouched, so nothing deleted from History is raised again.
         today = (PANEL_DIR / "today.py").read_text()
         self.assertIn('FILTERS = ("snoozed", "ignored", "done", "aside")', today)
         self.assertIn("MAX_ROWS = 60", today)
         self.assertIn('out[name] = rows[:MAX_ROWS]', today)
+        self.assertNotIn("findings_store", today.split("def clear(", 1)[1].split("\ndef ", 1)[0])
         html = (PANEL_DIR / "index.html").read_text()
-        self.assertIn('<details id="todayHistory" class="todayhistory">', html)
-        self.assertNotIn('<details id="todayHistory" class="todayhistory" open', html)
+        self.assertIn('<div id="viewArchive" class="view">', html)
+        self.assertNotIn('id="todayHistory"', html)
         # No badge counts it: the badge is the queue's, and an answered thing
         # is by definition not waiting.
         badge = self.js[self.js.index("function updateFindBadge"):][:600]
         self.assertNotIn("history", badge.lower())
-        # One verb per row, and on an ignored one it only stops the
+        # One way back per row, and on an ignored one it only stops the
         # suppression.
         self.assertIn('"/api/findings/unsettle"', today)
         self.assertIn('const btn = qButton(press.label || "Restore", false);', self.js)

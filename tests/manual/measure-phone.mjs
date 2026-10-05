@@ -33,7 +33,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
 const HEADER_MAX = 56;
 const MIN_TARGET = 44;
-const VIEWS = ['findings', 'terminal', 'insights', 'memory', 'housebook', 'activity', 'docs'];
+const VIEWS = ['findings', 'archive', 'terminal', 'insights', 'memory', 'housebook', 'activity', 'docs'];
 
 // The panes beyond Today read a few routes the Today fixture leaves empty;
 // give them enough to draw something, and a trouble state for the dot.
@@ -175,6 +175,9 @@ for (const { width, touch } of [
   await page.addInitScript(stub());
   await page.addInitScript(EXTRA);
   await page.goto(`file://${PANEL}/index.html`);
+  // The panel lands on the insight cards; the queue is Insights › Needs you.
+  await page.waitForFunction(() => typeof switchView === 'function');
+  await page.evaluate(() => switchView('findings'));
   await page.waitForFunction(() => document.querySelector('#findList .qcard'));
   await page.waitForTimeout(300);
 

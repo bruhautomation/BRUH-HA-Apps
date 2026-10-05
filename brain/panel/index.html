@@ -35,28 +35,28 @@
     <path class="wm-ink" d="M362,198 L377,198 L486,333 L471,333 Z"/>
   </svg>
 
-  <!-- Three tabs: Today, Ask, House (docs/design/ui-redesign-2026-10.md,
-       "Proposed structure"). Today is for deciding, Ask for asking, House
-       for reading what brAIn knows; the Guide is ⚙ › Guide. A tab is a
-       GROUP and the panes in it are the sub-strip under the bar
-       (`#subtabs`), shown only where a group holds more than one — Today
-       holds one, so it has no sub-strip at all. Every pane kept its id and
-       its `data-view`, so every handler, measure and deep link under one
-       binds as it did. The one badge counts the cards in Today's queue
-       (`queue_count`), and nothing else carries one. -->
+  <!-- Three tabs: Insights, Ask, Memory. Insights is what brAIn has to
+       tell you — the insight cards first, then what needs a decision
+       (Needs you) and what you already answered (History). Ask is the
+       conversation. Memory is what brAIn holds about the house: its facts,
+       the timeline of what happened, and the house book. A tab is a GROUP
+       and its panes sit on one segmented control under the bar
+       (`#segNav`). Every pane kept its id and its `data-view`, so every
+       handler, measure and deep link under one binds as it did. The one
+       badge counts the decisions waiting on you (`queue_count`). -->
   <nav class="viewtabs" role="tablist">
-    <button class="viewtab active" data-view="findings" data-group="today" role="tab" data-tip="Today">
-      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5M5.5 9.8V20h13V9.8M10 20v-6h4v6"/></svg>
-      <span>Today</span>
+    <button class="viewtab active" data-view="insights" data-group="insights" role="tab" data-tip="Insights">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0 0 12 3z"/></svg>
+      <span>Insights</span>
       <span id="findBadge" class="badge hidden"></span>
     </button>
     <button class="viewtab" data-view="terminal" data-group="ask" role="tab" data-tip="Ask">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-5 4v-4H5.5A1.5 1.5 0 0 1 4 14.5zM8 8.5h8M8 12h5"/></svg>
       <span>Ask</span>
     </button>
-    <button class="viewtab" data-view="insights" data-group="house" role="tab" data-tip="House">
+    <button class="viewtab" data-view="memory" data-group="memory" role="tab" data-tip="Memory">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5.5a3 3 0 0 0-5.7-1.3A2.8 2.8 0 0 0 4 9.4a3 3 0 0 0 .4 4.8A2.9 2.9 0 0 0 7 19a3 3 0 0 0 5-1.2zM12 5.5a3 3 0 0 1 5.7-1.3A2.8 2.8 0 0 1 20 9.4a3 3 0 0 1-.4 4.8A2.9 2.9 0 0 1 17 19a3 3 0 0 1-5-1.2z"/></svg>
-      <span>House</span>
+      <span>Memory</span>
     </button>
   </nav>
 
@@ -100,19 +100,19 @@
   </button>
 </header>
 
-<!-- The panes inside the tab you are on. Hidden while the group holds one
-     pane (Today, Ask), because a strip with one button is a label. House
-     holds what Insights, Ideas, Knowledge, Activity and Upkeep used to be,
-     and the docs pane is reached from ⚙ › Guide — its button stays here in
-     a group of its own so `switchView("docs")` still has a home.
-     `data-view` stays the pane's own name, so every handler under
-     `switchView` and every measure that clicks one still finds it. -->
+<!-- Which group each pane belongs to, read by `groupOf`. Never shown on
+     the three tabs that exist — Insights and Memory navigate on their own
+     segmented control and Ask holds one pane — but it stays as the one
+     place the grouping is spelled, and the docs pane keeps a home here
+     for `switchView("docs")`. -->
 <nav id="subtabs" class="subtabs" role="tablist" aria-label="Sections" hidden>
-  <button class="subtab" data-view="findings" data-group="today" role="tab" hidden>Today</button>
+  <button class="subtab" data-view="insights" data-group="insights" role="tab">Insights</button>
+  <button class="subtab" data-view="findings" data-group="insights" role="tab">Needs you</button>
+  <button class="subtab" data-view="archive" data-group="insights" role="tab">History</button>
   <button class="subtab" data-view="terminal" data-group="ask" role="tab">Chat</button>
-  <button class="subtab" data-view="insights" data-group="house" role="tab">Insights</button>
-  <button class="subtab" data-view="memory" data-group="house" role="tab">Knowledge</button>
-  <button class="subtab" data-view="activity" data-group="house" role="tab">Activity</button>
+  <button class="subtab" data-view="memory" data-group="memory" role="tab">Knowledge</button>
+  <button class="subtab" data-view="activity" data-group="memory" role="tab">Timeline</button>
+  <button class="subtab" data-view="housebook" data-group="memory" role="tab">House book</button>
   <button class="subtab" data-view="docs" data-group="guide" role="tab">Guide</button>
 </nav>
 
@@ -128,29 +128,24 @@
 
 <main class="wrap">
 
-<!-- House: one segmented control over the four things the House tab holds.
-     It replaces the sub-strip for these panes, which keep their own ids and
-     `data-view`s (Reports is #viewInsights, What it knows is #viewMemory,
-     What happened is #viewActivity), so every handler and measure that
-     reaches a pane by id still does. On a phone the four buttons become one
-     styled select: four labels in a 358px row is a row that scrolls
-     sideways, and the select is the same choice in one control. -->
-<nav id="houseSeg" class="houseseg" aria-label="House" hidden>
+<!-- The segmented control over the tab you are on: Insights · Needs you ·
+     History under Insights, Knowledge · Timeline · House book under
+     Memory. Only the current group's buttons are shown (`syncSegNav`). On
+     a phone the buttons become one styled select, because three labels and
+     a count in a 358px row is a row that scrolls sideways. -->
+<nav id="segNav" class="segnav" aria-label="Sections" hidden>
   <div class="segbtns" role="tablist">
-    <button type="button" class="segbtn" data-view="insights" role="tab">Reports</button>
-    <button type="button" class="segbtn" data-view="memory" role="tab">What it knows</button>
-    <button type="button" class="segbtn" data-view="housebook" role="tab">House book</button>
-    <button type="button" class="segbtn" data-view="activity" role="tab">What happened</button>
+    <button type="button" class="segbtn" data-view="insights" data-group="insights" role="tab">Insights</button>
+    <button type="button" class="segbtn" data-view="findings" data-group="insights" role="tab">Needs you<span id="segNeedsCount" class="segcount" hidden></span></button>
+    <button type="button" class="segbtn" data-view="archive" data-group="insights" role="tab">History</button>
+    <button type="button" class="segbtn" data-view="memory" data-group="memory" role="tab">Knowledge</button>
+    <button type="button" class="segbtn" data-view="activity" data-group="memory" role="tab">Timeline</button>
+    <button type="button" class="segbtn" data-view="housebook" data-group="memory" role="tab">House book</button>
   </div>
-  <select id="houseSegSel" class="sel segsel" aria-label="House section">
-    <option value="insights">Reports</option>
-    <option value="memory">What it knows</option>
-    <option value="housebook">House book</option>
-    <option value="activity">What happened</option>
-  </select>
+  <select id="segNavSel" class="sel segsel" aria-label="Section"></select>
 </nav>
 
-<div id="viewInsights" class="view">
+<div id="viewInsights" class="view active">
 
   <!-- Connect / setup screen (shown when no credential is stored) -->
   <section id="setup" class="setup hidden">
@@ -393,8 +388,19 @@
        Ask tab's, and tags gave way to a search field that appears only once
        there are more reports than fit on a screen or two. -->
   <section id="dash" class="hidden">
-    <input id="reportSearch" class="reportsearch" type="search" autocomplete="off"
-           spellcheck="false" placeholder="Search reports" aria-label="Search reports" hidden>
+    <!-- What is waiting on you, one line above the cards: the cards are
+         what this tab opens on, and a decision that only lived one press
+         away would be one nobody saw. Hidden when nothing waits. -->
+    <button id="needsStrip" type="button" class="needstrip" hidden>
+      <span class="needsico" aria-hidden="true"></span>
+      <span class="needstext"><b id="needsStripCount"></b><span id="needsStripSub"></span></span>
+      <span class="needsgo">Review</span>
+    </button>
+    <div class="insighthead">
+      <h1 class="panetitle">Insights</h1>
+      <input id="reportSearch" class="reportsearch" type="search" autocomplete="off"
+             spellcheck="false" placeholder="Search insights" aria-label="Search insights" hidden>
+    </div>
     <div id="grid" class="grid"></div>
 
     <!-- Deep review: a report like the others, priced on its Run button
@@ -431,7 +437,7 @@
      The sign-in and onboarding sections are moved into `#todaySetupBody`
      at startup (`adoptSetupScreens`), the Memory pane's arrangement: one
      copy of each, under the ids every handler is bound to. -->
-<div id="viewFindings" class="view active">
+<div id="viewFindings" class="view">
   <section class="todaypane findwrap">
     <div id="todayBanner" class="todaybanner" role="alert" hidden></div>
     <div class="todaystatus">
@@ -455,11 +461,34 @@
       </form>
       <div id="todoList" class="todolist"></div>
     </section>
-    <details id="todayHistory" class="todayhistory">
-      <summary>History</summary>
-      <div id="histFilters" class="histfilters" role="tablist" aria-label="History"></div>
-      <div id="histList" class="histlist"></div>
-    </details>
+  </section>
+</div>
+
+<!-- History: everything you have already answered — snoozed, ignored,
+     done, or set aside by brAIn. A record, not a queue: Restore puts a row
+     back where it came from, and Delete takes it off this list for good
+     without changing the decision (an ignored thing stays ignored, so
+     brAIn does not raise it again). -->
+<div id="viewArchive" class="view">
+  <section class="archwrap">
+    <header class="panehead">
+      <div>
+        <h1 class="panetitle">History</h1>
+        <p class="panesub">What you've already answered. <b>Restore</b> puts
+          something back on your list; <b>Delete</b> clears it from this
+          record — your answer stands, so brAIn won't raise it again.</p>
+      </div>
+    </header>
+    <div class="archbar">
+      <div id="histFilters" class="histfilters pillseg" role="tablist" aria-label="History"></div>
+      <input id="histSearch" class="archsearch" type="search" autocomplete="off"
+             spellcheck="false" placeholder="Search history" aria-label="Search history">
+    </div>
+    <p id="histHint" class="archhint"></p>
+    <div id="histList" class="histlist"></div>
+    <div class="archfoot">
+      <button id="histClear" class="btn-tertiary danger" type="button" hidden>Delete all shown</button>
+    </div>
   </section>
 </div>
 
@@ -475,23 +504,42 @@
      evidence. -->
 <div id="viewActivity" class="view">
   <section class="actwrap">
+    <header class="panehead">
+      <div>
+        <h1 class="panetitle">Timeline</h1>
+        <p class="panesub">What happened in the house and what caused it — read
+          fresh from Home Assistant's logbook every time you open it.</p>
+      </div>
+    </header>
     <!-- The top line is what the house is doing now ("Someone's home",
          "Settled for the night") — the situation reading, which is the
          context every row below is read in. -->
     <div id="actNow" class="actnow" hidden></div>
     <div class="acthead">
-      <label class="actcause">
-        <span>Caused by</span>
-        <select id="actCause" class="sel" aria-label="Caused by"></select>
-      </label>
+      <div class="actfilters">
+        <input id="actSearch" class="actsearch" type="search" autocomplete="off"
+               spellcheck="false" placeholder="Search devices" aria-label="Search devices">
+        <select id="actArea" class="sel" aria-label="Room"></select>
+        <label class="actcause">
+          <span>Caused by</span>
+          <select id="actCause" class="sel" aria-label="Caused by"></select>
+        </label>
+        <select id="actHours" class="sel" aria-label="Window">
+          <option value="6">6 hours</option>
+          <option value="12">12 hours</option>
+          <option value="24" selected>24 hours</option>
+          <option value="48">2 days</option>
+        </select>
+      </div>
       <div class="actnav">
         <button id="actPrev" class="btn small ghost"
-                data-tip="The 24 hours before these">&lsaquo; Earlier</button>
+                data-tip="The window before this one">&lsaquo; Earlier</button>
         <span id="actRange" class="actrange"></span>
         <button id="actNext" class="btn small ghost"
-                data-tip="The 24 hours after these">Later &rsaquo;</button>
+                data-tip="The window after this one">Later &rsaquo;</button>
       </div>
     </div>
+    <div id="actKinds" class="actkinds pillseg" role="group" aria-label="What kind of thing"></div>
     <!-- When the house was empty, and the one press on this tab that costs
          anything: Ask reads the window once. Everything else here is
          arithmetic over one fetch of the logbook. -->
@@ -711,19 +759,48 @@
        filing queue used to live here too; the brief is linked from Today's
        status line and the rest is brAIn's own machinery, which is ⚙'s. -->
   <section class="ksec kknow">
+    <header class="panehead">
+      <div>
+        <h1 class="panetitle">Knowledge</h1>
+        <p class="panesub">Everything brAIn believes about this house. Pick a
+          room or a device to see what it knows about it, and delete anything
+          that's wrong.</p>
+      </div>
+    </header>
     <form id="kAddForm" class="kadd">
       <input id="kAddInput" type="text" maxlength="500" autocomplete="off"
-             placeholder="Tell brAIn something…" aria-label="Tell brAIn something">
-      <button class="btn small primary" type="submit">Send</button>
+             placeholder="Tell brAIn something about the house…" aria-label="Tell brAIn something">
+      <button class="btn small primary" type="submit">Teach</button>
     </form>
-    <div class="kfbar">
-      <input id="kKnownSearch" type="search" autocomplete="off" spellcheck="false"
-             placeholder="Search facts" aria-label="Search facts">
-      <div id="kKnownKinds" class="kfchips" role="group" aria-label="What the fact is about"></div>
-    </div>
-    <div id="kKnown" class="klist"></div>
-    <div class="kfmore">
-      <button id="kKnownMore" class="btn small hidden" type="button">Show more</button>
+    <div class="kbrowse">
+      <!-- Browse by what a fact is about: every room and device with facts,
+           with how many. A rail beside the list on a wide screen, a select
+           above it on a phone. -->
+      <aside class="ksubjects" aria-label="Browse by subject">
+        <input id="kSubjectFind" class="ksubfind" type="search" autocomplete="off"
+               spellcheck="false" placeholder="Find a room or device" aria-label="Find a room or device">
+        <div id="kSubjects" class="ksublist"></div>
+      </aside>
+      <div class="kmain">
+        <div class="kfbar">
+          <input id="kKnownSearch" type="search" autocomplete="off" spellcheck="false"
+                 placeholder="Search facts" aria-label="Search facts">
+          <select id="kSubjectSel" class="sel ksubsel" aria-label="About"></select>
+          <div id="kKnownKinds" class="kfchips pillseg" role="group" aria-label="What the fact is about"></div>
+          <select id="kKnownSource" class="sel" aria-label="Who taught it"></select>
+          <select id="kKnownSort" class="sel" aria-label="Sort">
+            <option value="newest">Newest</option>
+            <option value="subject">By room or device</option>
+            <option value="oldest">Oldest</option>
+            <option value="certain">Most certain</option>
+          </select>
+        </div>
+        <div id="kActive" class="kactive" hidden></div>
+        <div id="kKnown" class="klist"></div>
+        <div class="kfmore">
+          <button id="kKnownMore" class="btn small hidden" type="button">Show more</button>
+        </div>
+      </div>
     </div>
   </section>
 </div>

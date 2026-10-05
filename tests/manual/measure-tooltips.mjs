@@ -78,8 +78,7 @@ for (const width of WIDTHS) {
   await serveP(page);
   await page.goto('http://panel/index.html');
   await page.waitForTimeout(600);
-  await page.evaluate(() =>
-    document.querySelector('.viewtab[data-view="findings"]').click());
+  await page.evaluate(() => switchView('findings'));
   await page.waitForTimeout(600);
   // The toast is a fixed overlay and would sit on top of the shots.
   await page.evaluate(() => {

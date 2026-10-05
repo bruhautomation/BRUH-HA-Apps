@@ -46,6 +46,9 @@ async function open(width, height, touch) {
   page.on('pageerror', (e) => note(`${width}px`, `page error: ${e.message}`));
   await page.addInitScript(stub());
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+  // The panel lands on the insight cards; the queue is Insights › Needs you.
+  await page.waitForFunction(() => typeof switchView === 'function');
+  await page.evaluate(() => switchView('findings'));
   return { context, page };
 }
 
@@ -69,7 +72,7 @@ async function open(width, height, touch) {
     };
   });
   if (bar.tabs.length !== 3) note(where, `${bar.tabs.length} tabs, not 3`);
-  if (bar.strip) note(where, 'Today shows a sub-tab strip');
+  if (bar.strip) note(where, 'Needs you shows a sub-tab strip');
   for (const t of bar.tabs) {
     if (t.right > bar.vw + 0.5) note(where, `"${t.label}" is cut off at the edge`);
     if (t.h < MIN_TARGET) note(where, `"${t.label}" is ${t.h}px tall`);
@@ -78,14 +81,15 @@ async function open(width, height, touch) {
     note(where, `the tabs take ${new Set(bar.tabs.map((t) => t.top)).size} rows, not 1`);
   }
 
-  // The status strip used to sit over the Insights cards. House > Reports
-  // cut it (the redesign: a report is its headline and its age), so what
-  // is measured now is that it stays cut — a strip of checks and runs over
-  // the reports is the chrome this file exists to keep off a phone.
-  await page.click('.viewtab[data-group="house"]');
+  // The status strip used to sit over the insight cards. The redesign cut
+  // it (a card is its headline and its age), so what is measured now is
+  // that it stays cut — a strip of checks and runs over the cards is the
+  // chrome this file exists to keep off a phone.
+  await page.click('.viewtab[data-group="insights"]');
+  await page.evaluate(() => switchView('insights'));
   await page.waitForSelector('#viewInsights.active');
   if (await page.evaluate(() => !document.querySelector('#subtabs').hidden)) {
-    note(where, 'House shows a sub-tab strip under its own control');
+    note(where, 'Insights shows a sub-tab strip under its own control');
   }
   const strip2 = await page.evaluate(() => {
     const s = document.querySelector('#viewInsights #todayStrip');

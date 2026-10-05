@@ -1,8 +1,8 @@
 // Render the brAIn topbar across viewport widths and assert, per width, that
 // it lays out as intended and that everything in it is big enough to hit.
 //
-// Three shapes, not five. At >=850px the bar is a single 56px row with
-// every tab named. From 641 to 849 it is the two-row bar: status and
+// Three shapes, not five. At >=870px the bar is a single 56px row with
+// every tab named. From 641 to 869 it is the two-row bar: status and
 // actions on top, the tabs on a full-width strip of their own underneath,
 // still named. At 640 and under it is a phone: ONE header row no taller
 // than 56px holding the logo, the status dot and ⚙, and the three tabs on
@@ -52,8 +52,10 @@ const OUT = process.env.TOPBAR_SHOT_DIR || '';
 // reason it exists — keep the two in step with style.css's own band.
 //
 // It came down again, to 849, when the four tabs became three: the one-row
-// shape needs 681px running, 832 paused and 844 on a failed login.
-const PHONE_MAX = 849;
+// shape needs 681px running, 832 paused and 844 on a failed login. It went
+// up to 869 when Today · House became Insights · Memory, two longer words:
+// 859px on a failed login.
+const PHONE_MAX = 869;
 // At and under this the tabs are a bottom bar and the header is one row.
 const BOTTOM_MAX = 640;
 const HEADER_MAX = 56;
@@ -65,7 +67,7 @@ const MIN_CHIP = 40;
 
 const WIDTHS = [
   320, 340, 360, 375, 379, 380, 390, 400, 414, 428, 480, 500, 540, 600, 640, 641, 700, 720,
-  849, 850,
+  849, 850, 869, 870,
   768, 800, 900, 959, 960, 1000, 1024, 1100, 1199, 1200, 1239, 1240, 1280, 1339, 1340,
   919, 920, 1429, 1430,
   1440, 1920,

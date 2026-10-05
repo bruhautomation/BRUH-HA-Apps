@@ -1,22 +1,21 @@
-// Render the House tab and assert it is one screen with one control over
-// four things, and nothing it no longer carries.
+// Render the Insights and Memory tabs and assert each is one control over
+// its sections, and that Insights carries only insight cards.
 //
-// House replaced Insights, Knowledge, Activity and the house-book half of
-// Upkeep (docs/design/ui-redesign-2026-10.md, PR 8). What it must hold:
+// The three tabs are Insights · Ask · Memory. Two of them hold more than
+// one pane and navigate on ONE segmented control (`#segNav`) under the bar:
 //
-//   * ONE segmented control at the top — Reports · What it knows · House
-//     book · What happened — four buttons on a pointer and one styled
-//     select.sel on a phone, shown on those four panes and on no other.
-//     Each segment opens its own pane, which keeps the id every handler and
-//     measure already binds to (#viewInsights, #viewMemory, #viewHousebook,
-//     #viewActivity).
-//   * Reports carries cards with a headline and "Updated N ago", the deep
-//     review and a Suggested row — and NOT the checks/memory/runs strip, the
-//     "problems since yesterday" press, the second ask box and its prose, or
-//     the tag chips. A search field appears only past eight reports.
-//   * no pane scrolls sideways on a phone (the tag chips and the cause
-//     chips were the two rows that did), and every control House adds is a
-//     44px target on a finger.
+//   * Insights — Insights · Needs you · History (#viewInsights,
+//     #viewFindings, #viewArchive). The panel lands on the cards.
+//   * Memory — Knowledge · Timeline · House book (#viewMemory,
+//     #viewActivity, #viewHousebook).
+//
+// Buttons on a pointer and one styled select.sel on a phone, showing only
+// the current tab's sections, and on no pane of Ask. The cards pane carries
+// cards with a headline and "Updated N ago", the deep review and a
+// Suggested row — and NOT the checks/memory/runs strip, the "problems since
+// yesterday" press, a second ask box or the tag chips. A search field
+// appears only past eight cards. Nothing scrolls sideways on a phone, and
+// every control is a 44px target on a finger.
 //
 // It drives the panel's REAL renderers behind a stubbed fetch — a copy of
 // the renderer here would only ever agree with itself.
@@ -31,12 +30,19 @@ const MIN_TARGET = 44;
 const NOW = Math.floor(Date.now() / 1000);
 const ISO = new Date(Date.now() - 15 * 3600 * 1000).toISOString();
 
-const SEGMENTS = [
-  ['insights', 'Reports', 'viewInsights'],
-  ['memory', 'What it knows', 'viewMemory'],
-  ['housebook', 'House book', 'viewHousebook'],
-  ['activity', 'What happened', 'viewActivity'],
-];
+const GROUPS = {
+  insights: [
+    ['insights', 'Insights', 'viewInsights'],
+    ['findings', 'Needs you', 'viewFindings'],
+    ['archive', 'History', 'viewArchive'],
+  ],
+  memory: [
+    ['memory', 'Knowledge', 'viewMemory'],
+    ['activity', 'Timeline', 'viewActivity'],
+    ['housebook', 'House book', 'viewHousebook'],
+  ],
+};
+const SEGMENTS = GROUPS.insights;
 
 const insight = (i) => ({
   id: `custom-${i}`, category: 'custom', title: `Report number ${i} about the house`,
@@ -130,15 +136,15 @@ const open = async (width, touch, count) => {
 };
 
 const seg = (page) => page.evaluate(() => {
-  const nav = document.getElementById('houseSeg');
+  const nav = document.getElementById('segNav');
   const box = (n) => n.getBoundingClientRect();
   const shown = (n) => !!n && getComputedStyle(n).display !== 'none' && box(n).height > 0;
-  const btns = [...document.querySelectorAll('#houseSeg .segbtn')];
-  const sel = document.getElementById('houseSegSel');
+  const btns = [...document.querySelectorAll('#segNav .segbtn')];
+  const sel = document.getElementById('segNavSel');
   return {
     shown: shown(nav),
     buttons: btns.filter(shown).map((b) => ({
-      label: b.textContent.trim(), view: b.dataset.view,
+      label: (b.childNodes[0] || b).textContent.trim(), view: b.dataset.view,
       active: b.classList.contains('active'), h: Math.round(box(b).height) })),
     select: shown(sel) ? { value: sel.value, isSel: sel.classList.contains('sel'),
       h: Math.round(box(sel).height),
@@ -153,7 +159,7 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   const at = `${width}px`;
   const { context, page } = await open(width, touch, 3);
   let s = await seg(page);
-  if (!s.shown) note(at, 'the House control is not shown on Reports');
+  if (!s.shown) note(at, 'the section control is not shown over the insight cards');
   const labels = SEGMENTS.map(([, l]) => l);
   if (touch) {
     if (!s.select || !s.select.isSel) note(at, 'a phone does not get one select.sel');
@@ -193,33 +199,43 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   });
   for (const cut of [/Checks ran/, /Claude runs?/, /since yesterday/, /Every answer becomes a card/,
                      /tokens/i, /#energy/, /Make recurring/, /Analysed/]) {
-    if (cut.test(r.text)) note(at, `cut text is back on Reports: ${cut}`);
+    if (cut.test(r.text)) note(at, `cut text is back over the insight cards: ${cut}`);
   }
-  if (r.strip) note(at, 'the checks/memory/runs strip is back on Reports');
-  if (r.askBox) note(at, 'the second ask box is back on Reports');
-  if (r.chips) note(at, `${r.chips} tag chips on Reports`);
+  if (r.strip) note(at, 'the checks/memory/runs strip is back over the insight cards');
+  if (r.askBox) note(at, 'the second ask box is back over the insight cards');
+  if (r.chips) note(at, `${r.chips} tag chips over the insight cards`);
   if (r.search) note(at, 'a search field shows over three reports');
   if (!/^Updated /.test(r.foot)) note(at, `a card's foot reads "${r.foot}"`);
   if (JSON.stringify(r.ask.map((b) => b.t)) !== JSON.stringify(['Ask', '⋯'])) {
     note(at, `a card's head carries ${JSON.stringify(r.ask.map((b) => b.t))}`);
   }
-  if (!r.review) note(at, 'the deep review is not a row on Reports');
+  if (!r.review) note(at, 'the deep review is not a row under the insight cards');
   if (!r.suggested) note(at, 'the Suggested row shows no idea');
   if (touch) {
     for (const b of [...r.ask, ...r.rowButtons]) {
       if (b.h < MIN_TARGET) note(at, `"${b.t}" is ${b.h}px tall on a finger`);
     }
   }
-  if (s.docWidth > s.viewport + 1) note(at, `Reports scrolls sideways (${s.docWidth}px)`);
+  if (s.docWidth > s.viewport + 1) note(at, `Insights scrolls sideways (${s.docWidth}px)`);
 
-  // Every segment opens its own pane, and the control follows.
-  for (const [view, label, id] of SEGMENTS) {
-    if (touch) await page.selectOption('#houseSegSel', view);
-    else await page.click(`#houseSeg .segbtn[data-view="${view}"]`);
+  // Every segment opens its own pane, and the control follows — and shows
+  // only the sections of the tab it is on.
+  for (const [group, segments] of Object.entries(GROUPS)) {
+  await page.click(`.viewtab[data-group="${group}"]`);
+  await page.waitForTimeout(250);
+  s = await seg(page);
+  const want = segments.map(([, l]) => l);
+  const got = touch ? (s.select || {}).options || [] : s.buttons.map((b) => b.label);
+  if (JSON.stringify(got) !== JSON.stringify(want)) {
+    note(at, `on ${group} the control offers ${JSON.stringify(got)}`);
+  }
+  for (const [view, label, id] of segments) {
+    if (touch) await page.selectOption('#segNavSel', view);
+    else await page.click(`#segNav .segbtn[data-view="${view}"]`);
     await page.waitForTimeout(250);
     s = await seg(page);
     if (s.active !== id) note(at, `${label} opened #${s.active}, not #${id}`);
-    if (!s.shown) note(at, `the House control is gone on ${label}`);
+    if (!s.shown) note(at, `the section control is gone on ${label}`);
     if (touch && s.select && s.select.value !== view) {
       note(at, `on ${label} the select reads "${s.select.value}"`);
     }
@@ -229,20 +245,21 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
     }
     if (s.docWidth > s.viewport + 1) note(at, `${label} scrolls sideways (${s.docWidth}px)`);
   }
-  // What happened's top line is the house's situation.
+  }
+  // The Timeline's top line is the house's situation.
   await openView(page, 'activity');
   await page.waitForFunction(() => !document.getElementById('actNow')?.hidden, null,
     { timeout: 5000 }).catch(() => {});
   const top = await page.evaluate(() => (document.getElementById('actNow') || {}).textContent || '');
-  if (!/^Settled for the night/.test(top)) note(at, `What happened opens on "${top}"`);
+  if (!/^Settled for the night/.test(top)) note(at, `the Timeline opens on "${top}"`);
 
-  // Off House the control is not shown.
-  await openView(page, 'findings');
+  // On Ask the control is not shown.
+  await openView(page, 'terminal');
   await page.waitForTimeout(150);
   s = await seg(page);
-  if (s.shown) note(at, 'the House control shows on Today');
+  if (s.shown) note(at, 'the section control shows on Ask');
   console.log(`${failures.length ? 'ok? ' : 'ok  '}${String(width).padStart(5)}px  `
-    + `${touch ? 'select' : `${SEGMENTS.length} segments`}, Reports cut, four panes`);
+    + `${touch ? 'select' : 'segments'}, cards cut, six panes over two tabs`);
   await context.close();
 }
 
@@ -250,11 +267,11 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
 {
   const { context, page } = await open(1200, false, 10);
   const shown = await page.evaluate(() => !document.getElementById('reportSearch').hidden);
-  if (!shown) note('search', 'no search field over ten reports');
+  if (!shown) note('search', 'no search field over ten cards');
   await page.fill('#reportSearch', 'freezer');
   await page.waitForTimeout(150);
   const n = await page.evaluate(() => document.querySelectorAll('#grid .card').length);
-  if (n !== 1) note('search', `"freezer" left ${n} reports, not 1`);
+  if (n !== 1) note('search', `"freezer" left ${n} cards, not 1`);
   console.log(`${failures.length ? 'ok? ' : 'ok  '}  search: shown past eight, narrows to ${n}`);
   await context.close();
 }
@@ -265,4 +282,4 @@ if (failures.length) {
   failures.forEach((f) => console.error('  - ' + f));
   process.exit(1);
 }
-console.log('\nHouse is one control over four panes, and Reports carries only reports');
+console.log('\nInsights and Memory are each one control over three panes, and the cards pane carries only cards');

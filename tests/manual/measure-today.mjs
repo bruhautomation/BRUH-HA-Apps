@@ -36,7 +36,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
 const CASES = [
   { width: 390, touch: true, top: 360, fits: 1 },
-  { width: 1190, touch: false, top: 240, fits: 3 },
+  // 240 until the segmented control (Insights · Needs you · History) went
+  // above the queue: the pane is one press in from the cards now.
+  { width: 1190, touch: false, top: 290, fits: 3 },
 ];
 const MIN_TARGET = 44;
 
@@ -53,6 +55,9 @@ async function open(width, touch, over) {
   page.on('pageerror', (e) => note(`${width}px`, `page error: ${e.message}`));
   await page.addInitScript(stub(over));
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+  // The panel lands on the insight cards; the queue is Insights › Needs you.
+  await page.waitForFunction(() => typeof switchView === 'function');
+  await page.evaluate(() => switchView('findings'));
   await page.waitForFunction(() => document.querySelector('#findList')
     && (document.querySelector('#findList .qcard')
         || document.querySelector('#findList .empty-line')
@@ -104,7 +109,7 @@ for (const { width, touch, top, fits } of CASES) {
 
   const chrome = await page.evaluate(() => ({
     subtabs: !document.getElementById('subtabs').hidden,
-    tab: document.querySelector('.viewtab[data-group="today"] span')?.textContent || '',
+    tab: document.querySelector('.viewtab[data-group="insights"] span')?.textContent || '',
     tabs: [...document.querySelectorAll('.viewtab')].map((b) =>
       b.querySelector('span:not(.badge)')?.textContent || ''),
     badge: document.getElementById('findBadge')?.textContent || '',
@@ -119,9 +124,9 @@ for (const { width, touch, top, fits } of CASES) {
     viewport: window.innerWidth,
     title: document.querySelector('#viewFindings h2.t-title, #viewFindings .findhead'),
   }));
-  if (chrome.subtabs) note(where, 'Today shows a sub-tab bar');
-  if (chrome.tab.trim() !== 'Today') note(where, `the tab is "${chrome.tab}", not Today`);
-  if (chrome.tabs.join('|') !== 'Today|Ask|House') {
+  if (chrome.subtabs) note(where, 'Needs you shows a sub-tab bar');
+  if (chrome.tab.trim() !== 'Insights') note(where, `the tab is "${chrome.tab}", not Insights`);
+  if (chrome.tabs.join('|') !== 'Insights|Ask|Memory') {
     note(where, `the tabs are ${chrome.tabs.join(' | ')}`);
   }
   if (chrome.title) note(where, 'Today carries an intro heading');
@@ -258,34 +263,47 @@ for (const { width, touch, top, fits } of CASES) {
   if (list.placeholder !== 'Add to your list…') note(where, `add box says "${list.placeholder}"`);
   if (touch && list.addH < MIN_TARGET) note(where, `Add to list is ${list.addH}px`);
 
-  // History: closed, one line; open, four filters and grouped rows.
-  const closed = await page.evaluate(() => ({
-    open: document.getElementById('todayHistory').open,
-    summary: document.querySelector('#todayHistory > summary').textContent.trim(),
-    h: Math.round(document.querySelector('#todayHistory > summary').getBoundingClientRect().height),
-  }));
-  if (closed.open) note(where, 'History is open by default');
-  if (closed.summary !== 'History') note(where, `History's line reads "${closed.summary}"`);
-  if (touch && closed.h < MIN_TARGET) note(where, `History's line is ${closed.h}px`);
-  await page.click('#todayHistory > summary');
+  if (touch) {
+    const small = await page.evaluate((min) => [...document.querySelectorAll(
+      '#viewFindings button, #viewFindings summary')]
+      .filter((b) => b.offsetParent !== null)
+      .map((b) => ({ t: b.textContent.trim().slice(0, 24),
+                     h: Math.round(b.getBoundingClientRect().height) }))
+      .filter((b) => b.h < min), MIN_TARGET);
+    if (small.length) note(where, `under the touch floor: ${JSON.stringify(small.slice(0, 6))}`);
+  }
+
+  // History is a pane of its own now (Insights › History): four filters,
+  // grouped rows, Restore on each and Delete on every row but a snooze.
+  const histOnToday = await page.evaluate(() => !!document.getElementById('todayHistory'));
+  if (histOnToday) note(where, 'History is still a drawer on Needs you');
+  await page.evaluate(() => switchView('archive'));
   await page.waitForSelector('#histFilters button');
+  await page.click('#histFilters button[data-filter="snoozed"]');
   const hist = await page.evaluate(() => ({
     filters: [...document.querySelectorAll('#histFilters button')].map((b) =>
-      b.textContent.replace(/ · \d+$/, '')),
+      b.querySelector('span').textContent),
+    hint: document.getElementById('histHint').textContent,
     rows: [...document.querySelectorAll('#histList .histrow')].map((r) => ({
       title: r.querySelector('.histtitle').textContent,
       meta: r.querySelector('.item-state').textContent,
-      press: r.querySelector('button').textContent })),
+      press: r.querySelector('button').textContent,
+      del: !!r.querySelector('.histdel') })),
   }));
   if (hist.filters.join('|') !== 'Snoozed|Ignored|Done|Set aside by brAIn') {
     note(where, `History filters: ${hist.filters.join(' | ')}`);
   }
+  if (!hist.hint) note(where, 'History does not say what a filter holds');
   const cooling = hist.rows.filter((r) => /Cooling time/.test(r.title));
   if (cooling.length !== 1 || !/^6 times since/.test(cooling[0]?.meta || '')) {
     note(where, `the duplicate reads ${JSON.stringify(cooling)}`);
   }
   if (hist.rows.some((r) => r.press !== 'Restore')) note(where, 'a Snoozed row is not Restore');
+  if (hist.rows.some((r) => r.del)) note(where, 'a Snoozed row offers Delete');
   await page.click('#histFilters button[data-filter="done"]');
+  const doneDel = await page.evaluate(() => [...document.querySelectorAll(
+    '#histList .histrow')].filter((r) => r.querySelector('.histdel')).length);
+  if (!doneDel) note(where, 'no Done row offers Delete');
   let confirmText = '';
   page.once('dialog', (d) => { confirmText = d.message(); d.dismiss(); });
   await page.click('#histList .histrow button');
@@ -295,12 +313,13 @@ for (const { width, touch, top, fits } of CASES) {
   }
   if (touch) {
     const small = await page.evaluate((min) => [...document.querySelectorAll(
-      '#viewFindings button, #viewFindings summary')]
+      '#viewArchive button')]
       .filter((b) => b.offsetParent !== null)
       .map((b) => ({ t: b.textContent.trim().slice(0, 24),
-                     h: Math.round(b.getBoundingClientRect().height) }))
-      .filter((b) => b.h < min), MIN_TARGET);
-    if (small.length) note(where, `under the touch floor: ${JSON.stringify(small.slice(0, 6))}`);
+                     h: Math.round(b.getBoundingClientRect().height),
+                     w: Math.round(b.getBoundingClientRect().width) }))
+      .filter((b) => b.h < min || b.w < min), MIN_TARGET);
+    if (small.length) note(where, `History under the touch floor: ${JSON.stringify(small.slice(0, 6))}`);
   }
   await context.close();
 
