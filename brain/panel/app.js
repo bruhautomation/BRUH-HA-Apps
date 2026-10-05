@@ -430,13 +430,17 @@ async function liveTick() {
 // readings are current, and the last fetch did not get through — the
 // third is the one that must not read as the second, because a frozen
 // number under a "live" label is the reading nothing can correct.
+// A report says one age, "Updated", and the readings a live card keeps
+// current say nothing while they are arriving — they are as current as the
+// screen. What is never silent is the fault: readings that have stopped
+// arriving say so, from the last one that did, because a frozen number
+// under a live chart is the reading nothing can correct.
 function liveAgeText(insightId, declared) {
   const seen = state.liveSeen[insightId];
-  const n = (seen && seen.n) || declared || 0;
-  const what = `${n} reading${n === 1 ? "" : "s"} live`;
-  if (!seen || !seen.at) return `· ${what} · waiting`;
-  if (!seen.ok) return `· ${what} · not updating`;
-  return `· ${what} · ${timeAgo(new Date(seen.at).toISOString())}`;
+  if (!seen || !seen.at || seen.ok) return "";
+  const n = seen.n || declared || 0;
+  return `· ${n} live reading${n === 1 ? "" : "s"} not updating since `
+    + timeAgo(new Date(seen.at).toISOString());
 }
 
 // Text AND the class, from one function, so the two can never disagree
@@ -534,10 +538,13 @@ function renderAuth() {
   const insightsOn = s.insights_enabled !== false;
   document.querySelectorAll('.subtab[data-view="insights"]')
     .forEach((b) => b.classList.toggle("gone", !insightsOn));
+  document.querySelectorAll('#houseSeg [data-view="insights"], #houseSegSel option[value="insights"]')
+    .forEach((b) => { b.hidden = !insightsOn; });
   if (!insightsOn && currentView === "insights") {
     switchView("findings");
   } else {
     syncTabs(currentView);
+    syncHouseSeg(currentView);
   }
   renderUsageChip();
   renderPausedChip();
@@ -1179,6 +1186,29 @@ function historyEntries(id, insight) {
     (state.history[id] || []).filter((r) => r.ts !== latestStamp).map((r) => r.ts));
 }
 
+// ⋯ › Past versions: every run this report has kept, newest first, in the
+// same popover the menu used. Picking one pins the card to it (the card
+// then says so, with a way back to the latest).
+async function openPastVersions(id, insight, card) {
+  const anchor = card && card.querySelector(".card-head .actions .btn.icon");
+  if (!anchor) return;
+  await loadHistory(id);
+  const entries = historyEntries(id, insight);
+  const cur = state.viewing[id] ? state.viewing[id].ts : "";
+  const rows = entries.map((ts, i) =>
+    `<button class="cardmenuitem${ts === cur ? " on" : ""}" data-i="${i}">`
+    + `<span class="cmtext"><b>${esc(ts ? fmtRun(ts) : "Latest")}</b></span></button>`)
+    .join("");
+  setChipPop(anchor, "Past versions", entries.length > 1
+    ? `<div class="cardmenu">${rows}</div>`
+    : "<p>Only the latest version so far.</p>");
+  $("#chipPop").querySelectorAll(".cardmenuitem").forEach((row) =>
+    row.addEventListener("click", () => {
+      closeChipPop();
+      viewRun(id, entries[Number(row.dataset.i)] || null);
+    }));
+}
+
 async function stepRun(id, insight, dir) {
   await loadHistory(id);
   const entries = historyEntries(id, insight);
@@ -1273,7 +1303,7 @@ function cardMenuButton(items) {
     if (chipPopFor === btn) { closeChipPop(); return; }
     const rows = items.map(([icon, label, hint], i) =>
       `<button class="cardmenuitem" data-i="${i}">`
-      + `<span class="cmicon">${esc(icon)}</span>`
+      + (icon ? `<span class="cmicon">${esc(icon)}</span>` : "")
       + `<span class="cmtext"><b>${esc(label)}</b>`
       + `<small>${esc(hint)}</small></span></button>`).join("");
     setChipPop(btn, "", `<div class="cardmenu">${rows}</div>`);
@@ -1312,11 +1342,13 @@ function cardAutomationItems(shown) {
 }
 
 function seedAsk(text) {
-  switchView("insights");
-  const input = $("#askInput");
+  // Asking is the Ask tab's: the sentence goes into the chat's composer for
+  // a person to read and send.
+  switchView("terminal");
+  const input = $("#chatInput");
   if (!input) return;
   input.value = text;
-  input.scrollIntoView({ block: "center", behavior: "smooth" });
+  input.dispatchEvent(new Event("input"));
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
 }
@@ -1368,71 +1400,59 @@ function makeCard(catInfo, insight, fallbackId) {
     });
     actions.appendChild(enable);
   }
-  // One button on the head, and a menu for the rest. Six icons in a row beside
-  // the title is what squeezed the title into an ellipsis on a phone: they are
-  // `flex: none`, so every one of them was taken out of the words you read the
-  // card by. Expand earns the visible slot because it is the only one that
-  // does something to what is on screen rather than to the card's definition.
-  // Refine and Share are the two things people want from a card they are
-  // looking at, so they are named buttons rather than rows in ⋯: one
-  // changes the card by saying what should be different, the other takes
-  // it somewhere else. Their words give way to their icons on a narrow
-  // card (a container query), never the other way round.
-  if (shown && !view && !active && (catInfo || insight)) {
-    actions.appendChild(cardActionButton("✎", "Refine",
-      "Refine — say what should change and brAIn regenerates the card",
-      () => openRefine(id, catInfo, insight)));
-  }
-  if (shown) {
-    actions.appendChild(cardActionButton("↗", "Share",
-      "Share — copy it as an image, or put it on a dashboard",
-      () => openShare(shown)));
-    const expand = el("button", "btn icon", "⤢");
-    tip(expand, "Expand");
-    expand.addEventListener("click", () => openModal(shown, !view));
-    actions.appendChild(expand);
+  // Two controls on a report: Ask, and ⋯ for the rest. Ask is the one
+  // thing people want from a report they are reading — say what should be
+  // different, or ask about it — and it opens the card's own dialog, which
+  // also holds what a card's definition can change (its schedule and
+  // prompt, making an asked one recurring, turning it into an automation).
+  // Expanding is the card itself: pressing it opens it full size.
+  if ((catInfo || insight) && !view) {
+    const ask = el("button", "btn small cardask", "Ask");
+    ask.type = "button";
+    tip(ask, "Ask about this report, or say what should change");
+    ask.disabled = active;
+    ask.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openRefine(id, catInfo, insight);
+    });
+    actions.appendChild(ask);
   }
 
   const menu = [];
-  if (!active && !view) {
-    menu.push(["↻", "Regenerate", "Run this card again now",
+  if (shown) {
+    menu.push(["", "Share", "Copy it as a picture, or put it on a dashboard",
+      () => openShare(shown)]);
+  }
+  if (insight && (catInfo || String(id).startsWith("custom-"))) {
+    menu.push(["", "Past versions", "Read what this report said before",
+      () => openPastVersions(id, insight, card)]);
+  }
+  if (!active && !view && (catInfo || insight)) {
+    menu.push(["", "Run", "Make this report again now",
       () => generate(id, (insight && insight.question) || job.question, true)]);
   }
-  // ✎ edits every card: a category card opens its full editor, an ad-hoc
-  // Ask card (no definition behind it) gets the name/icon dialog
-  if (catInfo || insight) {
-    menu.push(["✎", catInfo ? "Edit" : "Rename", catInfo
-      ? (catInfo.user ? "Edit insight — name, icon, prompt, schedule"
-        : "Edit card — name, icon, prompt, schedule")
-      : "Rename this card — name and icon",
-      () => {
-        if (!catInfo) openNameEdit(insight);
-        else if (catInfo.user) openUserEdit(catInfo);
-        else openEdit(catInfo);
-      }]);
-  }
-  if (insight) {
-    menu.push(["#", "Edit tags", "What this card can be filtered by",
-      () => { state.editingTags = id; render(); }]);
-  }
-  if (shown && !active) {
-    cardAutomationItems(shown).forEach((item) => menu.push(item));
-  }
-  // ✕ deletes every card — including one whose only trace is a job, so a
-  // failed Ask can be cleared away instead of sitting there forever.
+  // Delete is every card's — including one whose only trace is a job, so a
+  // failed question can be cleared away instead of sitting there forever.
   // A still-running job is left alone: the worker would just re-register it.
   if (catInfo || insight || (fallbackId && !active)) {
-    menu.push(["✕", "Delete", "Delete this card and its history",
+    menu.push(["", "Delete", "Delete this report and its history",
       () => deleteCard(id, catInfo, catName)]);
   }
   if (menu.length) actions.appendChild(cardMenuButton(menu));
   head.appendChild(actions);
   card.appendChild(head);
+  if (shown) {
+    card.classList.add("opens");
+    card.addEventListener("click", (ev) => {
+      if (ev.target.closest("button, a, input, select, textarea, summary, .histpill")) return;
+      openModal(shown, !view);
+    });
+  }
 
   if (view) {
     const pill = el("div", "histpill");
     pill.appendChild(el("span", null, `Viewing ${fmtRun(view.ts)}`));
-    const back = el("button", "btn small", "Back to latest");
+    const back = el("button", "btn small", "Latest");
     back.addEventListener("click", () => viewRun(id, null));
     pill.appendChild(back);
     card.appendChild(pill);
@@ -1499,107 +1519,20 @@ function makeCard(catInfo, insight, fallbackId) {
       if (tagRow) card.appendChild(tagRow);
     }
     const foot = el("div", "foot");
-    // A live card has TWO ages and the foot reported one of them.
-    // `generated_at` is when CLAUDE last read this home and wrote these
-    // conclusions; a card that declares `live` entities also carries
-    // numbers that are seconds old. Calling that single stamp "Updated"
-    // was wrong in both directions at once: it invites you to distrust a
-    // reading that is current, and to trust a sentence written three days
-    // ago against different data. So a live card says **Analysed**, which
-    // is a claim about the prose, and the readings get their own line.
+    // One age, the one a reader asks about: when brAIn last wrote this.
+    // Tokens, the reason it ran and when it runs next are Diagnostics'
+    // business, not the report's. A live card still says so when its
+    // readings stop arriving — a frozen number under a live chart is the
+    // one thing on a report that must not pass in silence.
     const liveEnts = (!view && Array.isArray(shown.live)) ? shown.live : [];
-    const analysed = el("span", null,
-      view ? `Generated ${timeAgo(shown.generated_at)}`
-        : liveEnts.length ? `Analysed ${timeAgo(shown.generated_at)}`
-          : `Updated ${timeAgo(shown.generated_at)}`);
-    if (liveEnts.length) {
-      tip(analysed, "When Claude last read this home and wrote these "
-        + "conclusions. The readings in the chart are kept current "
-        + "separately — see the next line. Re-run the analysis with "
-        + "⋯ → Regenerate.");
-    }
-    foot.appendChild(analysed);
-    // And the other age. Rendered for every card that declares live
-    // entities, including before the first fetch has landed: a live card
-    // that says nothing is indistinguishable from a frozen one, which is
-    // also how a live card whose callback never fires goes unnoticed.
+    foot.appendChild(el("span", "cardage",
+      view ? `From ${fmtRun(view.ts)}` : `Updated ${timeAgo(shown.generated_at)}`));
     if (liveEnts.length) {
       const live = el("span", "livemark", "");
       live.dataset.liveAge = id;
       live.dataset.liveN = String(liveEnts.length);
       paintLive(live);
-      tip(live, `This card keeps ${liveEnts.length} entit`
-        + `${liveEnts.length === 1 ? "y" : "ies"} up to date while it is on `
-        + "screen, so those numbers are current. Everything Claude "
-        + "concluded about them is from the analysis above.");
       foot.appendChild(live);
-    }
-    // WHY this run happened, beside when it did. The scheduler's own
-    // sentence when it queued one ("1 new finding", "memory
-    // changed"), and "you asked" / "you pressed Generate" otherwise —
-    // without it a card that refreshed itself is a card that changed for no
-    // reason anybody can see. It is never truncated: the foot wraps rather
-    // than squeezing this to an ellipsis, because half a reason is worse
-    // than none.
-    const because = String(shown.made_because || "").trim();
-    if (because) foot.appendChild(el("span", "because", `· ${because}`));
-    // When the scheduler will come back for this card — the readback of the
-    // auto-refresh settings, on the thing they refresh. Suppressed while a
-    // global gate holds (paused, budget, no auth): those surfaces already
-    // say why nothing will run, and a countdown beside them would be a lie.
-    //
-    // A HOLD comes first, because with `refresh_mode: changed` a card past
-    // its interval has no `next_due` at all — the scheduler is waiting for
-    // something the card reads to move, which has no date. Saying "manual
-    // only" or nothing at all there is the wrong answer to "why has this
-    // stopped updating".
-    const gate = state.status && state.status.auto && state.status.auto.gate;
-    const hold = catInfo && catInfo.refresh_hold;
-    if (!view && hold && !gate) {
-      const why = String(hold.why || "nothing it reads has changed");
-      const held = el("span", "hold", `· Waiting for something to change — ${why}`);
-      tip(held, "brAIn only refreshes a card when what it reads has moved. "
-        + "Change that under ⚙ Settings → When to refresh a card.");
-      foot.appendChild(held);
-    } else if (!view && catInfo && catInfo.next_due && !gate) {
-      const when = el("span", null, `· next ${timeUntil(catInfo.next_due)}`);
-      tip(when, "When auto-refresh regenerates this card. Change it under "
-        + "⋯ → Edit, or the default under ⚙ Settings.");
-      foot.appendChild(when);
-    }
-    foot.appendChild(el("span", "spacer"));
-    // What this run cost, on the run it cost it. The number was already in
-    // the stored card and only the stopwatch was ever rendered — so the
-    // expensive card and the cheap one looked identical, and the only
-    // evidence either way was a percentage in the top bar attributable to
-    // nothing. One figure on the card, the tokens, and the stopwatch and
-    // the split behind it: two numbers side by side read as two costs.
-    const cost = shown.meta && shown.meta.cost;
-    const secs = shown.meta && shown.meta.duration_ms
-      ? `${(shown.meta.duration_ms / 1000).toFixed(0)}s` : "";
-    if (cost && cost.total) {
-      const span = el("span", "cost", `${fmtTokens(cost.total)} tokens`);
-      tip(span, (secs ? `Took ${secs}. ` : "")
-        + `${fmtTokens(cost.input)} in · ${fmtTokens(cost.output)} out`
-        + (cost.cached ? ` · ${fmtTokens(cost.cached)} read from cache (free)` : "")
-        + ". Counted against your 5-hour session window.");
-      foot.appendChild(span);
-    } else if (secs) {
-      foot.appendChild(el("span", "cost", secs));
-    }
-    if (insight && (catInfo || String(id).startsWith("custom-"))) {
-      foot.appendChild(makeHistoryControls(id, insight, view));
-    }
-    if (!view && insight && insight.category === "custom" && insight.question) {
-      const mk = el("button", "btn small", "＋ Make recurring");
-      tip(mk, "Turn this question into a scheduled insight");
-      mk.addEventListener("click", () => openNewInsight({
-        title: (insight.title || insight.question).slice(0, 60),
-        icon: insight.icon || "✨",
-        focus: "Answer this question about the home, keeping the analysis "
-          + `fresh each run: "${insight.question}"`,
-      }));
-      foot.appendChild(mk);
     }
     card.appendChild(foot);
   } else if (job.state === "error") {
@@ -1853,36 +1786,33 @@ function openProblems() {
   }, 60);
 }
 
+// Past this many reports a search field appears above them.
+const REPORT_SEARCH_AFTER = 8;
+
 function render() {
   const s = state.status;
   if (!s) return;
   renderAuth();
   renderToday(s.today);
+  syncHouseSeg();
   if (!s.authenticated) return;
 
-  // filter chips — the dynamic union of tags across all generated cards
-  const filters = $("#filters");
-  filters.textContent = "";
-  const counts = {};
-  state.insights.forEach((i) => effectiveTags(i).forEach((t) => {
-    counts[t] = (counts[t] || 0) + 1;
-  }));
-  if (state.filter !== "all" && !counts[state.filter]) state.filter = "all";
-  const tagList = Object.keys(counts).sort((a, b) =>
-    counts[b] - counts[a] || a.localeCompare(b)).slice(0, 16);
-  const chips = [{ id: "all", label: "✦ All" }]
-    .concat(tagList.map((t) => ({ id: t, label: `#${t}`, n: counts[t] })));
-  chips.forEach((c) => {
-    const chip = el("button", "fchip" + (state.filter === c.id ? " active" : ""),
-      c.n > 1 ? `${c.label} · ${c.n}` : c.label);
-    chip.addEventListener("click", () => { state.filter = c.id; render(); });
-    filters.appendChild(chip);
-  });
+  // A search field once there are more reports than a screen or two holds.
+  // It matches the headline, the summary, the eyebrow and the tags, so the
+  // one-tap tag filter it replaced is a word typed instead.
+  const search = $("#reportSearch");
+  const many = state.insights.length > REPORT_SEARCH_AFTER;
+  if (search) {
+    search.hidden = !many;
+    if (!many && state.query) { state.query = ""; search.value = ""; }
+  }
+  const q = many ? String(state.query || "").trim().toLowerCase() : "";
 
   // cards
   const grid = $("#grid");
   grid.textContent = "";
-  const matches = (i) => state.filter === "all" || effectiveTags(i).includes(state.filter);
+  const matches = (i) => !q || [i.title, i.summary, i.eyebrow, i.category_title,
+    ...effectiveTags(i)].some((t) => String(t || "").toLowerCase().includes(q));
   const customs = state.insights.filter((i) => i.category === "custom");
   // custom in-flight jobs that have no stored insight yet
   Object.keys(s.jobs || {}).forEach((jid) => {
@@ -1892,14 +1822,14 @@ function render() {
     }
   });
   customs.forEach((i) => {
-    if (i.virtual ? (state.filter !== "all" && state.filter !== "asked") : !matches(i)) return;
+    if (i.virtual ? !!q : !matches(i)) return;
     // a virtual card has no insight yet — makeCard works off the job id
     grid.appendChild(makeCard(null, i.virtual ? null : i, i.id));
   });
   s.categories.forEach((c) => {
     const ins = insightFor(c.id);
-    // not-yet-generated placeholders only clutter tag views — All only
-    if (state.filter !== "all" && !(ins && matches(ins))) return;
+    // not-yet-generated placeholders only clutter a search
+    if (q && !(ins && matches(ins)) && !c.title.toLowerCase().includes(q)) return;
     grid.appendChild(makeCard(c, ins));
   });
 }
@@ -1940,7 +1870,7 @@ function renderIfChanged() {
     // the key — otherwise a checks pass finishing while somebody is looking
     // changes nothing on screen until the next unrelated repaint.
     today: s && s.today,
-    filter: state.filter,
+    query: state.query,
   });
   if (key !== lastRenderKey) {
     lastRenderKey = key;
@@ -2083,11 +2013,7 @@ function renderExplain(box, got) {
     const next = el("button", "btn small", got.offer);
     next.type = "button";
     tip(next, "Put this in the question bar to ask for it");
-    next.addEventListener("click", () => {
-      const input = $("#askInput");
-      input.value = got.offer;
-      input.focus();
-    });
+    next.addEventListener("click", () => seedAsk(got.offer));
     body.push(next);
   }
   box.replaceChildren(...body);
@@ -4067,7 +3993,8 @@ function openRefine(id, catInfo, insight) {
   refineState.insight = insight;
   const name = catInfo ? catInfo.title
     : ((insight && insight.title) || "this card");
-  $("#refineTitle").textContent = `Refine — ${name}`;
+  $("#refineTitle").textContent = `Ask about ${name}`;
+  fillRefineMore(id, catInfo, insight);
   $("#refineText").value = "";
   $("#refineKeep").checked = true;
   const chips = $("#refineChips");
@@ -4129,7 +4056,56 @@ $("#refineGo").addEventListener("click", sendRefine);
 $("#refineText").addEventListener("keydown", (ev) => {
   if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) sendRefine();
 });
-$("#refineCancel").addEventListener("click", () => closeBox("#refineModal"));
+$("#refineCancel")?.addEventListener("click", () => closeBox("#refineModal"));
+$("#refineChat")?.addEventListener("click", () => {
+  const ins = refineState.insight;
+  const name = (ins && ins.title) || (refineState.catInfo && refineState.catInfo.title)
+    || "this report";
+  const note = $("#refineText").value.trim();
+  closeBox("#refineModal");
+  seedAsk(`About my report “${name}”: ${note}`);
+});
+
+// The links under Ask: what a report's DEFINITION can change. A recurring
+// card's schedule and prompt, an asked card's name or making it recurring,
+// and turning what it found into an automation (drafted in the Ask tab,
+// where a person reads it before it is sent).
+function fillRefineMore(id, catInfo, insight) {
+  const box = $("#refineMore");
+  if (!box) return;
+  box.textContent = "";
+  const links = [];
+  const link = (label, run) => {
+    const a = el("a", "refinelink", label);
+    a.href = "#";
+    a.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      closeBox("#refineModal");
+      run();
+    });
+    links.push(a);
+  };
+  if (catInfo) {
+    link("Change its schedule and prompt",
+      () => (catInfo.user ? openUserEdit(catInfo) : openEdit(catInfo)));
+  } else if (insight) {
+    link("Rename it", () => openNameEdit(insight));
+    if (insight.category === "custom" && insight.question) {
+      link("Make it recurring", () => openNewInsight({
+        title: (insight.title || insight.question).slice(0, 60),
+        icon: insight.icon || "✨",
+        focus: "Answer this question about the home, keeping the analysis "
+          + `fresh each run: "${insight.question}"`,
+      }));
+    }
+  }
+  const shown = (state.viewing[id] && state.viewing[id].data) || insight;
+  if (shown) {
+    cardAutomationItems(shown).forEach(([, label, , run]) => link(label, run));
+  }
+  links.forEach((a) => box.appendChild(a));
+  box.hidden = !links.length;
+}
 $("#refineClose").addEventListener("click", () => closeBox("#refineModal"));
 $("#refineModal").addEventListener("click", (ev) => {
   if (ev.target === $("#refineModal")) closeBox("#refineModal");
@@ -5878,7 +5854,7 @@ function makeIdea(idea) {
   // first cut invented `findline`, which matches no rule in the
   // stylesheet, so the pill and the date rendered as one run-on word.
   const line = el("div", "findmeta");
-  line.appendChild(el("span", "findstate", `${idea.icon || "✨"} idea`));
+  line.appendChild(el("span", "findstate", "Suggested report"));
   if (idea.added_at) {
     line.appendChild(el("span", "findchecked",
       "suggested " + timeAgo(new Date(idea.added_at * 1000).toISOString())));
@@ -5903,15 +5879,14 @@ function makeIdea(idea) {
   const btns = [];
   const add = (node) => { btns.push(node); actions.appendChild(node); return node; };
 
-  const take = add(el("button", "btn small primary", "✓  Add this card"));
-  tip(take, "Put it on the Insights tab. It generates on the ordinary "
-    + "schedule from then on, and you can edit or delete it like any card.");
+  const take = add(el("button", "btn small primary", "Save"));
+  tip(take, "Keep it as a report. It runs on the ordinary schedule from "
+    + "then on, and you can change or delete it like any report.");
   take.addEventListener("click", () => ideaAction(
-    idea, "accept", "Added — it's on Insights now", btns));
+    idea, "accept", "Saved — it's with your reports now", btns));
 
-  const no = add(el("button", "btn small ghost", "✕  Not for this house"));
-  tip(no, "Take it off the list, and say why if you like — brAIn won't "
-    + "suggest it again, and the reason reaches every later look.");
+  const no = add(el("button", "btn small ghost", "Ignore"));
+  tip(no, "brAIn won't suggest it again; say why if you like.");
   no.addEventListener("click", () => ideaReasonBox(idea, card, actions));
 
   card.appendChild(actions);
@@ -5924,19 +5899,10 @@ function makeIdea(idea) {
 // third is a good answer about a well-covered house — rendering them the
 // same way is what teaches somebody to press the button again.
 function ideasEmptyText() {
-  if (ideasState.running) return "";
-  if (!ideasState.runs) {
-    return "brAIn hasn't looked for ideas yet. Press Suggest ideas, or wait "
-      + "for the weekly pass — it reads what it has learned and measured "
-      + "about this house, and proposes cards worth adding.";
-  }
-  if (ideasState.lastError) {
-    return `The last look didn't finish: ${ideasState.lastError}. `
-      + "Nothing was lost — press Suggest ideas to try again.";
-  }
-  return "Nothing new to suggest. brAIn looked and reckons this house is "
-    + "already well covered; it'll look again next week, or now if you press "
-    + "Suggest ideas.";
+  // Only the fault is said. Nobody having asked yet and a well-covered
+  // house are both an empty row with its Run beside it.
+  if (ideasState.running || !ideasState.lastError) return "";
+  return `The last look didn't finish: ${ideasState.lastError}`;
 }
 
 function renderIdeas() {
@@ -5945,8 +5911,8 @@ function renderIdeas() {
   const btn = $("#ideasRun");
   if (btn) {
     btn.disabled = ideasState.running;
-    btn.textContent = ideasState.running
-      ? "✨  Looking…" : "✨  Suggest ideas";
+    btn.textContent = ideasState.running ? "Running…" : "Run";
+    tip(btn, "Look for reports this house is missing — one Claude run");
   }
 
   const note = $("#ideasNote");
@@ -5955,9 +5921,7 @@ function renderIdeas() {
     // because a run is minutes long and a greyed-out button is the same
     // thing a failed one looks like.
     const words = ideasState.running
-      ? "Reading what it knows about your house… this takes a few "
-        + "minutes, and you can leave the page."
-      : "";
+      ? "Looking for reports this house is missing — a few minutes." : "";
     note.textContent = words;
     note.hidden = !words;
   }
@@ -5969,21 +5933,8 @@ function renderIdeas() {
   } else {
     ideasState.ideas.forEach((i) => list.appendChild(makeIdea(i)));
   }
-
-  const foot = $("#ideasFoot");
-  if (foot) {
-    const bits = [];
-    if (ideasState.lastRun) {
-      bits.push("Last looked "
-        + timeAgo(new Date(ideasState.lastRun * 1000).toISOString()));
-    }
-    if (ideasState.runs) {
-      bits.push(`${ideasState.lastCount} proposed that time`);
-    }
-    bits.push("brAIn looks again once a week");
-    foot.textContent = bits.join(" · ") + ".";
-    foot.hidden = false;
-  }
+  const row = $("#ideasRow");
+  if (row) row.classList.toggle("empty", !ideasState.ideas.length);
 }
 
 async function refreshTodo() {
@@ -6340,47 +6291,55 @@ function factSubjectText(f) {
 }
 
 const FACT_KIND_WORDS = {
-  "": "All", house: "The house", area: "Rooms", entity: "Devices",
+  "": "All", house: "House", area: "Rooms", entity: "Devices",
   person: "People", rule: "Rules you set",
 };
-const FACT_KIND_HINTS = {
-  house: "Facts about the home as a whole — preferences, routines",
-  area: "Facts about a room",
-  entity: "Facts about one device or sensor",
-  person: "Facts about somebody in the household",
-  rule: "Checks you told brAIn to stop raising (from “Not a problem”)",
-};
+// The three a person narrows by. A rule you set is an Ignore answer, and
+// lives with the other answers in Today's History.
+const FACT_CHIPS = ["area", "entity", "house"];
 
 function makeFactRow(f) {
+  // The fact, and what it is about. Who taught it, when, and the run it
+  // came from are the row's detail — opened by pressing the row — because
+  // a list read top to bottom is read for what it says, and the
+  // provenance is what you go looking for about one line.
   const row = el("div", "fbitem kfact");
   const txt = el("div", "txt");
-  txt.appendChild(el("div", null, f.text));
-  const meta = el("div", "when");
-  const named = factSubjectText(f) !== String(f.subject || "");
-  const subj = el("span", "kfactsubj" + (named ? " named" : ""), factSubjectText(f));
-  if (f.subject && factSubjectText(f) !== f.subject) tip(subj, f.subject);
-  meta.appendChild(subj);
-  meta.appendChild(document.createTextNode(" · " + kSourceLabel(f.source)));
-  if (f.observed) meta.appendChild(document.createTextNode(" · " + f.observed));
+  const open = el("button", "kfactopen");
+  open.type = "button";
+  open.setAttribute("aria-expanded", "false");
+  open.appendChild(el("span", "kfacttext", f.text));
+  const subj = el("span", "kfactsubj" + (factSubjectText(f) !== String(f.subject || "") ? " named" : ""),
+    factSubjectText(f));
+  open.appendChild(subj);
+  txt.appendChild(open);
+  const detail = el("div", "when kfactdetail hidden");
+  const bits = [kSourceLabel(f.source)];
+  if (f.observed) bits.push(f.observed);
+  if (f.subject && factSubjectText(f) !== f.subject) bits.push(f.subject);
   if (f.predicate && String(f.predicate).startsWith("exception:")) {
-    meta.appendChild(document.createTextNode(
-      " · stands " + String(f.predicate).slice(10) + " down"));
+    bits.push("stands " + String(f.predicate).slice(10) + " down");
   }
+  detail.appendChild(el("span", null, bits.filter(Boolean).join(" · ")));
   if (f.run_id && f.run_source) {
     const see = el("button", "btn tiny ghost kfactrun", "See the run");
-    tip(see, "Open the run that learned this");
+    see.type = "button";
     see.addEventListener("click", () => viewConversation({
       id: f.run_id, source: f.run_source,
       title: kSourceLabel(f.source) + " run", age: f.observed || "",
     }));
-    meta.appendChild(see);
+    detail.appendChild(see);
   }
-  txt.appendChild(meta);
+  txt.appendChild(detail);
+  open.addEventListener("click", () => {
+    const shut = detail.classList.toggle("hidden");
+    open.setAttribute("aria-expanded", shut ? "false" : "true");
+  });
   row.appendChild(txt);
-  const del = el("button", "btn icon", "✕");
-  tip(del, "Forget this fact — the memory document is not touched");
-  del.addEventListener("click", async () => {
-    del.disabled = true;
+  const forget = async () => {
+    if (!window.confirm(`Delete this fact?\n\n“${f.text}”\n\nbrAIn stops `
+      + "using it. Anything already written in the memory document stays "
+      + "there until you edit it.")) return;
     try {
       await api(`api/fact/${encodeURIComponent(f.id)}/forget`,
                 { method: "POST" });
@@ -6388,13 +6347,14 @@ function makeFactRow(f) {
       factsView.total = Math.max(0, factsView.total - 1);
       factsView.all = Math.max(0, factsView.all - 1);
       paintFacts();
-      toast("Forgotten");
+      toast("Deleted");
     } catch (e) {
       toast(e.message);
-      del.disabled = false;
     }
-  });
-  row.appendChild(del);
+  };
+  row.appendChild(cardMenuButton([
+    ["", "Delete", "brAIn stops using this fact", forget],
+  ]));
   return row;
 }
 
@@ -6403,6 +6363,8 @@ function makeFactRow(f) {
 // already on screen.
 const FACTS_PAGE = 50;
 const factsView = {
+  // Newest first, from anybody: the sort and "who taught it" pickers are
+  // gone from House, and the row's detail says who taught each one.
   q: "", kind: "", source: "", sort: "newest",
   rows: [], total: 0, all: 0, facets: null, seq: 0, error: "",
 };
@@ -6439,50 +6401,29 @@ function paintFactChips() {
   const host = $("#kKnownKinds");
   if (!host) return;
   host.textContent = "";
+  // Three ways to narrow and no count on any of them: a chip is a filter,
+  // and the list under it says how many there are. Pressing the one that
+  // is on turns it off, which is how you get back to everything.
   const kinds = (factsView.facets || {}).kinds || {};
-  const total = Object.values(kinds).reduce((a, b) => a + (Number(b) || 0), 0);
-  ["", "house", "area", "entity", "person", "rule"].forEach((k) => {
-    const n = k ? Number(kinds[k]) || 0 : total;
-    // A kind with nothing in it is a chip that can only ever answer
-    // "none" — hidden, unless it is the one somebody has selected.
-    if (k && !n && factsView.kind !== k) return;
+  FACT_CHIPS.forEach((k) => {
+    const n = Number(kinds[k]) || 0;
+    if (!n && factsView.kind !== k) return;
     const chip = el("button", "fchip" + (factsView.kind === k ? " active" : ""),
-      `${FACT_KIND_WORDS[k]} · ${n}`);
+      FACT_KIND_WORDS[k]);
     chip.type = "button";
     chip.setAttribute("aria-pressed", factsView.kind === k ? "true" : "false");
-    if (FACT_KIND_HINTS[k]) tip(chip, FACT_KIND_HINTS[k]);
     chip.addEventListener("click", () => {
       factsView.kind = factsView.kind === k ? "" : k;
       loadFacts(true);
     });
     host.appendChild(chip);
   });
-  const sel = $("#kKnownSource");
-  if (sel) {
-    const sources = (factsView.facets || {}).sources || {};
-    const keep = factsView.source;
-    sel.textContent = "";
-    const any = el("option", null, "Anyone taught it");
-    any.value = "";
-    sel.appendChild(any);
-    const names = Object.keys(sources);
-    if (keep && !names.includes(keep)) names.unshift(keep);
-    names.forEach((src) => {
-      const opt = el("option", null,
-        `${kSourceLabel(src) || "unknown"} (${Number(sources[src]) || 0})`);
-      opt.value = src;
-      sel.appendChild(opt);
-    });
-    sel.value = keep;
-  }
 }
 
 function paintFacts() {
   const host = $("#kKnown");
   if (!host) return;
   host.textContent = "";
-  const count = $("#kKnownCount");
-  if (count) count.textContent = factsView.all ? String(factsView.all) : "";
   paintFactChips();
   const more = $("#kKnownMore");
   if (factsView.error) {
@@ -6494,9 +6435,8 @@ function paintFacts() {
   const filtered = factsView.q || factsView.kind || factsView.source;
   if (!rows.length) {
     host.appendChild(el("div", "kempty", filtered
-      ? "No facts match. Clear the search or pick another kind."
-      : "Nothing filed as a fact yet — corrections, study sessions, voice, "
-        + "the chat and the terminal all teach it."));
+      ? "No facts match."
+      : "Nothing yet. Tell brAIn something above."));
     if (more) more.classList.add("hidden");
     return;
   }
@@ -6558,6 +6498,7 @@ function paintFacts() {
 function takeQueue(inbox, pending) {
   const items = inbox || [];
   const factsEl = $("#kFacts");
+  if (!factsEl) return;
   factsEl.textContent = "";
   if (!items.length) {
     factsEl.appendChild(el("div", "kempty",
@@ -6577,12 +6518,12 @@ function takeQueue(inbox, pending) {
 }
 
 async function renderKnowledge() {
-  // Two payloads, neither waiting on the other: the document and its queue
-  // come from one store and what brAIn has measured from another, and a tab
-  // that paid for them in series would be a spinner over the half that had
-  // already arrived. A failure on either leaves its own sections saying so
-  // rather than blanking the tab.
-  refreshHouse();
+  // What it knows is one list: the facts, searched and filtered on the
+  // server. The memory document and its filing queue are brAIn's own
+  // machinery and are read only where they are mounted (⚙ › Memory), so
+  // the knowledge payload is fetched only when that markup is present.
+  loadFacts(true);
+  if (!$("#kMemView") && !$("#kFacts")) return;
   let data;
   try {
     data = await api("api/knowledge");
@@ -6590,32 +6531,8 @@ async function renderKnowledge() {
     toast("Could not load knowledge: " + e.message);
     return;
   }
-
-  // Guesses waiting to be confirmed used to head this column. They are on
-  // the Findings tab now — a guess to confirm and a problem to settle are
-  // both "a decision only you can make", and two lists of those meant two
-  // badges, neither of which ever read as done. What is left here is one
-  // queue and one document, which is what this tab is for.
-
-  // What is actually in the inbox, which is what the count counts. This
-  // list used to be built from the facts ledger instead, keeping anything
-  // the last consolidation predated — a different population entirely. The
-  // ledger holds what the ANALYST discovered; the inbox holds that plus
-  // corrections, confirmed guesses, facts you taught it here, voice, study
-  // sessions and whatever another add-on dropped in /share. So the label
-  // said nine things waiting over four cards, and both were right about
-  // different questions.
-  //
-  // Filed facts are still listed nowhere: they are the document on the
-  // right, which is the whole point of filing them.
   memState.lastState = data.memory_state;
   takeQueue(data.inbox, data.inbox_pending);
-  loadFacts(true);
-
-  // "Answered questions" is gone with the model it belonged to: a
-  // confirmed guess becomes a plain memory line and its record is
-  // settled, so there is no Q/A pair left to show.
-
   renderMemory(data);
 }
 
@@ -7596,6 +7513,7 @@ function elapsedLabel(secs) {
 }
 
 function renderMemoryProgress(st) {
+  if (!$("#kMemMerging")) return;
   const merging = !!st.merging;
   const running = !!st.running;
   $("#kMemMerging").classList.toggle("hidden", !merging);
@@ -7643,6 +7561,7 @@ function renderMemory(data) {
   if (st.merging) pollMemoryMerge();
   if (memState.editing) return; // never clobber an edit in progress
   memState.text = data.shared_memory || "";
+  if (!$("#kMemView")) return;
   const has = !!memState.text.trim();
   $("#kMemView").innerHTML = has ? mdToHtml(memState.text) : "";
   $("#kMemView").classList.toggle("hidden", !has);
@@ -7652,6 +7571,7 @@ function renderMemory(data) {
 function setMemEditing(on) {
   memState.editing = on;
   memState.dirty = false;
+  if (!$("#kMemTa")) return;
   $("#kMemTa").classList.toggle("hidden", !on);
   $("#kMemView").classList.toggle("hidden", on || !memState.text.trim());
   $("#kMemEmpty").classList.toggle("hidden", on || !!memState.text.trim());
@@ -7718,15 +7638,15 @@ function reportMemoryPass(st) {
   else toast("Nothing was waiting — memory is up to date");
 }
 
-$("#kMemEdit").addEventListener("click", () => {
+$("#kMemEdit")?.addEventListener("click", () => {
   $("#kMemTa").value = memState.text.trim() ? memState.text : MEM_TEMPLATE;
   setMemEditing(true);
 });
-$("#kMemTa").addEventListener("input", () => {
+$("#kMemTa")?.addEventListener("input", () => {
   memState.dirty = true;
   $("#kMemDirty").classList.remove("hidden");
 });
-$("#kMemCancel").addEventListener("click", () => {
+$("#kMemCancel")?.addEventListener("click", () => {
   if (memState.dirty &&
       !window.confirm("Discard your unsaved memory edits?")) return;
   setMemEditing(false);
@@ -7735,7 +7655,7 @@ $("#kMemCancel").addEventListener("click", () => {
 // Run a consolidation pass now instead of waiting for the daily one. The
 // document below is rewritten by it, so unsaved manual edits have to be
 // settled first — same rule as teaching it a fact.
-$("#kConsolidate").addEventListener("click", async () => {
+$("#kConsolidate")?.addEventListener("click", async () => {
   if (memState.editing && memState.dirty) {
     if (!window.confirm(
       "You have unsaved manual edits to the memory document.\n\n"
@@ -7768,7 +7688,7 @@ $("#kConsolidate").addEventListener("click", async () => {
   }
 });
 
-$("#kMemSave").addEventListener("click", async () => {
+$("#kMemSave")?.addEventListener("click", async () => {
   const text = $("#kMemTa").value;
   try {
     await api("api/memory", { method: "PUT", body: JSON.stringify({ text }) });
@@ -9316,26 +9236,24 @@ async function refreshActivity() {
 }
 
 function renderActFilters(counts) {
-  const el = $("#actFilters");
-  if (!el) return;
-  const kinds = ["", ...Object.keys(CAUSE_WORDS)];
-  el.innerHTML = "";
-  kinds.forEach((kind) => {
-    const n = kind ? (counts[kind] || 0) : Object.values(counts)
-      .reduce((a, b) => a + b, 0);
-    // A filter for a cause this window does not contain is a control that
-    // can only ever empty the list.
-    if (kind && !n) return;
-    const b = document.createElement("button");
-    b.className = "fchip" + (actState.cause === kind ? " active" : "");
-    b.textContent = (kind ? CAUSE_WORDS[kind] : "Everything") + " · " + n;
-    b.addEventListener("click", () => {
-      actState.cause = actState.cause === kind ? "" : kind;
-      actState.open = "";
-      refreshActivity();
-    });
-    el.appendChild(b);
+  // One "Caused by" picker, no counts: the list under it is the count, and
+  // a cause this window holds nothing for is left out because picking it
+  // could only ever empty the list. The one somebody picked stays, so a
+  // window that no longer holds it still shows what is selected.
+  const sel = $("#actCause");
+  if (!sel) return;
+  const kinds = Object.keys(CAUSE_WORDS)
+    .filter((k) => (counts[k] || 0) > 0 || actState.cause === k);
+  sel.textContent = "";
+  const all = el("option", null, "Anything");
+  all.value = "";
+  sel.appendChild(all);
+  kinds.forEach((k) => {
+    const opt = el("option", null, CAUSE_WORDS[k]);
+    opt.value = k;
+    sel.appendChild(opt);
   });
+  sel.value = actState.cause;
 }
 
 // How long an episode covered, in the units a person would say it in.
@@ -9434,10 +9352,10 @@ function renderSummary(host) {
   }
   const row = el("div", "actask");
   const btn = el("button", "btn small",
-    actState.summaryBusy ? "Reading the day…" : "✧  What does this add up to?");
+    actState.summaryBusy ? "Reading the day…" : "Ask");
   btn.disabled = !!actState.summaryBusy;
-  tip(btn, "One Claude run over what is on this screen. Everything else "
-    + "here is read straight from the logbook and costs nothing.");
+  tip(btn, "What does this add up to? One Claude run over what is on "
+    + "this screen; everything else here is read from the logbook.");
   btn.addEventListener("click", () => askActivitySummary(false));
   row.appendChild(btn);
   if (actState.summaryError) {
@@ -9466,27 +9384,23 @@ async function askActivitySummary(again) {
   renderActivity();
 }
 
-function renderActFilters(counts) {
-  const el2 = $("#actFilters");
-  if (!el2) return;
-  const kinds = ["", ...Object.keys(CAUSE_WORDS)];
-  el2.innerHTML = "";
-  kinds.forEach((kind) => {
-    const n = kind ? (counts[kind] || 0) : Object.values(counts)
-      .reduce((a, b) => a + b, 0);
-    // A filter for a cause this window does not contain is a control that
-    // can only ever empty the list.
-    if (kind && !n) return;
-    const b = document.createElement("button");
-    b.className = "fchip" + (actState.cause === kind ? " active" : "");
-    b.textContent = (kind ? CAUSE_WORDS[kind] : "Everything") + " · " + n;
-    b.addEventListener("click", () => {
-      actState.cause = actState.cause === kind ? "" : kind;
-      actState.open = "";
-      refreshActivity();
-    });
-    el2.appendChild(b);
-  });
+
+// The top line of What happened: the situation reading, in its own words.
+// One read per visit, the same `/api/situation` the Resident keeps current.
+async function refreshActNow() {
+  let d = null;
+  try { d = await api("api/situation"); } catch (_err) { d = null; }
+  const node = $("#actNow");
+  if (!node) return;
+  node.textContent = "";
+  if (!d) { node.hidden = true; return; }
+  const mode = HOUSE_MODE_WORDS[d.house_mode] ? d.house_mode : "unknown";
+  node.appendChild(el("b", "actnowmode", HOUSE_MODE_WORDS[mode]));
+  if (d.sentence) {
+    node.appendChild(el("span", "actnowsaid" + (d.sentence_stale ? " stale" : ""),
+      d.sentence_stale ? `Earlier: ${d.sentence}` : d.sentence));
+  }
+  node.hidden = false;
 }
 
 function renderActivity() {
@@ -9566,7 +9480,6 @@ function actSection(sec) {
     ? `${sec.episodes.length} of ${sec.total}`
     : String(sec.total)));
   box.appendChild(h);
-  box.appendChild(el("p", "actsecblurb", sec.blurb));
   sec.episodes.forEach((ep) => {
     const key = epKey(ep);
     const row = document.createElement("button");
@@ -9653,6 +9566,12 @@ async function actOpenRow(key, entityId) {
   if (actState.open === key) renderActivity();
 }
 
+$("#actCause")?.addEventListener("change", (ev) => {
+  actState.cause = ev.currentTarget.value;
+  actState.open = "";
+  refreshActivity();
+});
+
 // Delegated: every row in this list is rebuilt on each render.
 document.addEventListener("click", (ev) => {
   const row = ev.target.closest && ev.target.closest(".actrow");
@@ -9682,6 +9601,8 @@ $("#actNext").addEventListener("click", () => {
 // rather than duplicated, so every id (and every handler bound to one)
 // keeps working untouched.
 let currentView = "insights";
+// House's four panes, in the order the segmented control shows them.
+const HOUSE_VIEWS = ["insights", "memory", "housebook", "activity"];
 
 // Which of the four tabs a pane lives under. Four tabs, not eight: a tab
 // is a group and the panes in it are the sub-strip under the bar. Read
@@ -9689,7 +9610,8 @@ let currentView = "insights";
 // sub-tab is the one place the grouping is spelled.
 function groupOf(name) {
   const sub = document.querySelector(`.subtab[data-view="${name}"]`);
-  return sub ? sub.dataset.group : "home";
+  if (sub) return sub.dataset.group;
+  return HOUSE_VIEWS.includes(name) ? "house" : "home";
 }
 // The pane each group was last on, so pressing Ask after House brings the
 // chat back rather than the group's opening pane; pressing the group you
@@ -9719,7 +9641,31 @@ function syncTabs(name) {
   document.body.classList.toggle("has-subtabs", shown >= 2);
 }
 
+// The segmented control over House. Shown on its four panes and nowhere
+// else — and not over the sign-in or first-run screens, which share the
+// Reports pane and are not a place to navigate from. On a House pane it is
+// the navigation, so the sub-strip under the bar steps aside.
+function syncHouseSeg(name = currentView) {
+  const seg = $("#houseSeg");
+  if (!seg) return;
+  const gated = name === "insights" && $("#dash")
+    && $("#dash").classList.contains("hidden");
+  const on = HOUSE_VIEWS.includes(name) && !gated;
+  seg.hidden = !on;
+  document.body.classList.toggle("house-view", on);
+  if (!on) return;
+  seg.querySelectorAll(".segbtn").forEach((b) => {
+    const mine = b.dataset.view === name;
+    b.classList.toggle("active", mine);
+    b.setAttribute("aria-selected", mine ? "true" : "false");
+  });
+  const sel = $("#houseSegSel");
+  if (sel) sel.value = name;
+}
+
 function switchView(name) {
+  // Ideas are a row on Reports now, so a link to the old pane lands there.
+  if (name === "ideas") name = "insights";
   if (name === currentView) return;
   if (currentView === "memory" && memState.editing && memState.dirty &&
       !window.confirm("Discard your unsaved memory edits?")) return;
@@ -9730,6 +9676,7 @@ function switchView(name) {
   // — two scrollers stacked is why a swipe sometimes moved the wrong one.
   document.body.classList.toggle("term-open", name === "terminal");
   syncTabs(name);
+  syncHouseSeg(name);
   document.querySelectorAll(".view").forEach((v) =>
     v.classList.toggle("active", v.id === "view" + name[0].toUpperCase() + name.slice(1)));
 
@@ -9766,20 +9713,34 @@ function switchView(name) {
   // Same shape: draw what we have, then again once the fetch lands, so
   // opening the tab is never a blank frame. And pick the poll back up if
   // a pass started before you navigated away — a run outlives the page.
-  if (name === "ideas") {
+  // Reports carries the Suggested row and the deep review, so both are
+  // read when it is opened, from what we have and again once they land.
+  if (name === "insights") {
     renderIdeas();
     refreshIdeas().then(() => {
       renderIdeas();
       if (ideasState.running) ideasWatch();
     });
+    refreshDeepReview();
   }
   if (name === "memory") renderKnowledge();
   if (name === "upkeep") { renderUpkeep(); refreshUpkeep().then(renderUpkeep); }
+  if (name === "housebook") {
+    renderUpBook();
+    api("api/house_book").catch((e) => ({ fetch_error: e.message }))
+      .then((book) => {
+        upState.book = book;
+        renderUpBook();
+        if (book && book.running) upWatch("book", "api/house_book");
+      });
+  }
   if (name === "docs") renderDocs();
   // Re-fetched on every entry rather than kept: the window ends "now", and
   // a timeline showing the state of the house when you last looked is the
   // one thing a timeline may not do.
-  if (name === "activity") { actState.end = null; actState.open = ""; refreshActivity(); }
+  if (name === "activity") {
+    actState.end = null; actState.open = ""; refreshActivity(); refreshActNow();
+  }
   // Rendered from what we have, then again once the fetch lands — the same
   // shape Findings uses, so opening the tab is never a blank frame.
   if (name === "proposals") {
@@ -9797,6 +9758,10 @@ document.querySelectorAll(".viewtab").forEach((b) =>
   }));
 document.querySelectorAll(".subtab").forEach((b) =>
   b.addEventListener("click", () => switchView(b.dataset.view)));
+document.querySelectorAll("#houseSeg .segbtn").forEach((b) =>
+  b.addEventListener("click", () => switchView(b.dataset.view)));
+$("#houseSegSel")?.addEventListener("change", (ev) =>
+  switchView(ev.currentTarget.value));
 syncTabs(currentView);
 
 // Add one by hand. Nothing here is required beyond the sentence: a to-do
@@ -9846,17 +9811,17 @@ $("#kAddForm").addEventListener("submit", async (ev) => {
     const res = await api("api/knowledge/fact", {
       method: "POST", body: JSON.stringify({ text }) });
     $("#kAddInput").value = "";
-    toast(res.added ? "Learned — merging it into the memory file…" : "Already known");
-    if (res.merging) {
+    toast(res.added ? "Learned — brAIn will remember that" : "Already known");
+    if (res.merging && $("#kMemMerging")) {
       $("#kMemMerging").classList.remove("hidden");
       pollMemoryMerge();
     }
     renderKnowledge();
   } catch (e) { toast(e.message); }
 });
-// Relocate the knowledge dialog's body into the Memory tab and retire the
-// dialog shell. Done in JS rather than by moving the markup so the ids stay
-// exactly where every handler above expects them.
+// Relocate the knowledge dialog's body wherever a `#memoryHost` is mounted
+// and retire the dialog shell. House no longer mounts one (the memory
+// document is ⚙'s), so with neither present this does nothing.
 (function adoptMemoryPane() {
   const modal = $("#kModal");
   const host = $("#memoryHost");
@@ -12725,7 +12690,12 @@ $("#shareModal").addEventListener("click", (ev) => {
 
 // ------------------------------------------------------------------ boot
 
-$("#askForm").addEventListener("submit", async (ev) => {
+$("#reportSearch")?.addEventListener("input", (ev) => {
+  state.query = ev.currentTarget.value;
+  render();
+});
+
+$("#askForm")?.addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const q = $("#askInput").value.trim();
   if (!q) return;
@@ -12769,6 +12739,12 @@ document.addEventListener("visibilitychange", () => {
   // learns there is something waiting on this list at all.
   refreshProposals();
   refreshTodo();
+  // Reports is where the panel opens, so its two rows under the grid are
+  // read at boot the way switching to it would read them.
+  if (currentView === "insights") {
+    refreshIdeas().then(renderIdeas);
+    refreshDeepReview();
+  }
   // resume a guided sign-in if one is mid-flight (page reload)
   try {
     const st = await api("api/auth/setup/status");
@@ -12818,7 +12794,8 @@ function upWatch(key, path) {
       upState[key] = await api(path);
     } catch (e) { /* keep what we had */ }
     renderUpkeep();
-    if (upState[key] && upState[key].running && currentView === "upkeep") {
+    if (upState[key] && upState[key].running
+        && (currentView === "upkeep" || currentView === "housebook")) {
       upState.polls[key] = setTimeout(tick, 3000);
     } else if (key === "tidy") {
       await refreshUpkeep();
@@ -12874,46 +12851,55 @@ function renderUpBook() {
   host.textContent = "";
   host.appendChild(upStatus(st, "Writing the house book…"));
   const book = st.book;
-  const actions = el("div", "upactions");
-  const run = upButton(book ? "Rewrite it now" : "Write the house book",
-    "One Claude run over your automations, scripts, scenes and what brAIn has learned.",
-    !book);
+  // Two presses. Run writes it (or rewrites it); Share puts a copy at a
+  // private address for a sitter's phone. The sentence under Share is what
+  // that sitter is told too, so it is on screen whether or not it is shared.
+  const actions = el("div", "upactions bookactions");
+  const run = upButton("Run",
+    book ? "Rewrite the house book now — one Claude run"
+      : "Write the house book — one Claude run over your automations, "
+        + "scripts, scenes and what brAIn has learned", !book);
   run.disabled = !!st.running;
   run.addEventListener("click", () => upPress(run, "book", "api/house_book/run", null,
     () => "Writing — it takes a minute or two"));
   actions.appendChild(run);
   if (book && !st.published) {
-    const pub = upButton("Publish a link",
-      "Puts a copy at a private address Home Assistant serves, for a sitter's phone. Codes are never in it.");
+    const pub = upButton("Share",
+      "Puts a copy at a private address Home Assistant serves, for a sitter's phone");
     pub.addEventListener("click", () => upPress(pub, "book", "api/house_book/publish", null,
-      () => "Published — the link is below"));
+      () => "Shared — the link is below"));
     actions.appendChild(pub);
   }
   host.appendChild(actions);
+  host.appendChild(upLine("Every sentence names what it came from; codes and "
+    + "passwords are left out.", "muted booksafe"));
   if (st.published) {
     const wrap = el("div", "uplink");
     const url = location.origin + st.published.path;
-    wrap.appendChild(el("span", null, "Published at "));
     const a = el("a", null, url);
     a.href = url;
     a.target = "_blank";
     a.rel = "noopener";
     wrap.appendChild(a);
-    const revoke = upButton("Take the link down",
-      "Deletes the copy and changes the address, so the old link stops working even for somebody who saved it.");
-    revoke.addEventListener("click", () => upPress(revoke, "book", "api/house_book/revoke", null,
-      () => "Taken down — that link is dead"));
+    const revoke = upButton("Delete",
+      "Takes the link down: deletes the copy and changes the address, so the "
+      + "old link stops working even for somebody who saved it");
+    revoke.addEventListener("click", () => {
+      if (!window.confirm("Delete the shared link? Anybody who has it loses "
+        + "the house book; the book itself stays here.")) return;
+      upPress(revoke, "book", "api/house_book/revoke", null,
+        () => "Link deleted — it no longer works");
+    });
     wrap.appendChild(revoke);
     host.appendChild(wrap);
   }
   if (!book) {
-    if (!st.running) host.appendChild(upLine("No house book yet. Writing one costs a single run; after that brAIn rewrites it weekly, and only when your automations or what it knows have changed.", "muted"));
+    if (!st.running) host.appendChild(upLine("No house book yet.", "muted"));
     return;
   }
   const when = book.at ? timeAgo(new Date(book.at * 1000).toISOString()) : "";
-  const count = (book.sections || []).reduce((n, s) => n + (s.entries || []).length, 0);
-  host.appendChild(upLine(`Written ${when} · ${count} entr${count === 1 ? "y" : "ies"}`
-    + (book.uncited ? ` · ${book.uncited} sentence${book.uncited === 1 ? " was" : "s were"} left out for citing nothing brAIn could check` : ""), "muted"));
+  host.appendChild(upLine(`Updated ${when}`
+    + (book.uncited ? ` · ${book.uncited} sentence${book.uncited === 1 ? "" : "s"} left out for citing nothing brAIn could check` : ""), "muted"));
   for (const section of book.sections || []) {
     const sec = el("div", "upbooksec");
     sec.appendChild(el("h3", null, section.title));
@@ -13540,8 +13526,8 @@ function ideaReasonBox(idea, card, actions) {
   area.maxLength = 200;
   box.appendChild(area);
   const row = el("div", "propbtns");
-  const send = el("button", "btn small", "Not for this house");
-  const back = el("button", "btn small ghost", "Cancel");
+  const send = el("button", "btn small", "Ignore");
+  const back = el("button", "btn small ghost", "Back");
   send.addEventListener("click", async () => {
     send.disabled = true;
     back.disabled = true;
@@ -13590,19 +13576,26 @@ async function refreshDeepReview() {
   // the tab is the one on screen: a poll behind a pane nobody is looking at
   // is a request per minute for an answer nobody will read.
   clearTimeout(reviewState.timer);
-  if (reviewState.data && reviewState.data.running && currentView === "memory") {
+  if (reviewState.data && reviewState.data.running && currentView === "insights") {
     reviewState.timer = setTimeout(refreshDeepReview, 8000);
   }
 }
 
 function reviewCostText(est) {
+  // The price, in the one unit a person can weigh: a share of the session
+  // window it spends. Tokens, the model and how the estimate was made are
+  // in the button's tooltip, for whoever wants them.
   if (!est || !Number(est.tokens)) return "";
-  const k = Math.max(1, Math.round(Number(est.tokens) / 1000));
-  let text = `About ${k}k tokens`;
   if (est.percent !== null && est.percent !== undefined) {
-    text += ` — roughly ${est.percent}% of a five-hour session on your plan`;
+    return `~${est.percent}% of a session`;
   }
-  return `${text}. An estimate: ${est.basis}.`;
+  return `~${Math.max(1, Math.round(Number(est.tokens) / 1000))}k tokens`;
+}
+
+function reviewDate(epoch) {
+  const n = Number(epoch) || 0;
+  if (!n) return "";
+  return new Date(n * 1000).toLocaleDateString([], { day: "numeric", month: "short" });
 }
 
 const REVIEW_KIND_WORD = {
@@ -13622,16 +13615,18 @@ function renderDeepReview() {
   if (!d) return;
 
   const run = el("div", "kreviewrun");
-  const btn = el("button", "btn primary",
-    d.running ? "Reviewing…" : "Run a deep review");
+  const btn = el("button", "btn small", d.running ? "Running…" : "Run");
   btn.type = "button";
   btn.disabled = Boolean(d.running) || reviewState.pressing || !d.authenticated;
+  const est = d.estimate || {};
   tip(btn, "Claude's top model reads the whole house with read-only tools and "
-    + "says what it adds up to. It changes nothing and files nothing.");
+    + "says what it adds up to. It changes nothing and files nothing."
+    + (Number(est.tokens) ? ` About ${Math.round(Number(est.tokens) / 1000)}k `
+      + `tokens — an estimate: ${est.basis}.` : ""));
   btn.addEventListener("click", () => runDeepReview(btn));
   run.appendChild(btn);
-  run.appendChild(el("p", "kreviewcost", d.running
-    ? `Started ${agoAt(d.started_at)} — a review takes several minutes, and lands here.`
+  run.appendChild(el("span", "kreviewcost", d.running
+    ? `Started ${agoAt(d.started_at)}`
     : reviewCostText(d.estimate)));
   box.appendChild(run);
 
@@ -13646,18 +13641,8 @@ function renderDeepReview() {
   if (d.error) box.appendChild(el("p", "kbrieftext off", d.error));
 
   const r = d.latest;
-  if (!r) {
-    if (!d.error) {
-      box.appendChild(el("p", "kbrieftext off",
-        "No review yet. It reads the whole house, not one card's worth, and "
-        + "says what nothing else in brAIn has said."));
-    }
-    return;
-  }
-  const bits = [dateAt(r.at)];
-  if (r.model) bits.push(String(r.model));
-  if (Number(r.tokens)) bits.push(`${Math.round(Number(r.tokens) / 1000)}k tokens`);
-  box.appendChild(el("div", "kbriefwhen", bits.filter(Boolean).join(" · ")));
+  if (!r) return;
+  box.appendChild(el("div", "kbriefwhen", reviewDate(r.at)));
   if (r.summary) box.appendChild(el("p", "kbrieftext", r.summary));
   if (r.one_thing) {
     const one = el("div", "kreviewone");
@@ -13681,7 +13666,7 @@ function renderDeepReview() {
   const older = Array.isArray(d.history) ? d.history : [];
   if (older.length) {
     box.appendChild(el("p", "kreviewcost",
-      "Earlier reviews: " + older.map((h) => dateAt(h.at)).filter(Boolean).join(", ")));
+      "Earlier: " + older.map((h) => reviewDate(h.at)).filter(Boolean).join(", ")));
   }
 }
 
@@ -13698,7 +13683,7 @@ async function runDeepReview(btn) {
       toast(body.error || `Could not start a review (HTTP ${resp.status})`);
     } else {
       reviewState.data = body;
-      toast("Reviewing the house — it lands here in a few minutes");
+      toast("Reviewing the house — it lands under Reports in a few minutes");
     }
   } catch (e) {
     toast(e.message);
