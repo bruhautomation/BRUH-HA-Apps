@@ -4032,7 +4032,7 @@ class TestShareToDashboard(InsightsServerCase):
                 with patch.object(self.ha_data, "_ws_calls", ws_calls):
                     resp = await client.post("/api/card/custom-4/dashboard", json={
                         "url_path": "home-dash", "view": 0, "show": "card",
-                        "aspect": 120})
+                        "aspect": 260})
                     return resp.status, await resp.json()
             finally:
                 await client.close()
@@ -4044,4 +4044,4 @@ class TestShareToDashboard(InsightsServerCase):
         card = saved[0]["config"]["views"][0]["cards"][0]
         self.assertEqual(card["type"], "iframe")
         self.assertTrue(card["url"].endswith(".card.html"))
-        self.assertEqual(card["aspect_ratio"], "120%")
+        self.assertEqual(card["aspect_ratio"], "260%")

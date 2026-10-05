@@ -502,7 +502,10 @@ ANALYSIS RULES:
 - GO DEEPER each run: when the prompt shows your previous analysis, lead with what CHANGED and push one level deeper on what didn't — a repeat of the same headline is a failed run.
 - If the data for the requested angle is thin, say so in the summary and visualize what IS there.
 - Times in the data are ISO timestamps in the home's local timezone unless suffixed Z; present them in a friendly way ("6:42 PM").
-- Never invent data. Every number shown must come from the data you were given or fetched."""
+- Never invent data. Every number shown must come from the data you were given or fetched.
+- A day or hour with NO samples is missing data, never zero: leave it out of BOTH sides of any comparison, say so, draw it as a gap; too little left means no comparison.
+- OPEN QUESTIONS are unconfirmed, but name one as the possible cause when it could explain what the card shows.
+- Never cite brAIn's own numbering ("signal 7", "finding #3"); name the device and time."""
 
 
 SYSTEM_PROMPT = """You are brAIn, the AI analyst inside a Home Assistant add-on. You receive a JSON snapshot of the user's smart home and produce ONE insight card: a handful of sharp, specific data points plus one compact self-contained visualization.
@@ -582,6 +585,7 @@ def _framing(
     previous: dict | None,
     house: str | None = None,
     refine: str | None = None,
+    pending: str | None = None,
 ) -> list[str]:
     """Everything the analyst is told before it is told about the data.
 
@@ -642,6 +646,14 @@ def _framing(
     if knowledge and knowledge.strip():
         parts.append("\n" + knowledge.strip())
 
+    # Guesses waiting on the homeowner. Not facts — but the likeliest
+    # explanation for what a card is looking at is often one of them
+    # (somebody switched the dehumidifier to continuous yesterday), and a
+    # card that credits something else while that question is open is a
+    # card the homeowner knows is wrong.
+    if pending and pending.strip():
+        parts.append("\n" + pending.strip())
+
     if findings and findings.strip():
         parts.append("\n" + findings.strip())
 
@@ -677,6 +689,7 @@ def build_prompt(
     findings: str | None = None,
     house: str | None = None,
     refine: str | None = None,
+    pending: str | None = None,
 ) -> str:
     """Assemble the user prompt: analysis focus + the data bundle.
 
@@ -693,7 +706,7 @@ def build_prompt(
     list, and what the homeowner dismissed as not a problem here.
     """
     parts = _framing(category, question, feedback, knowledge, findings,
-                     hypothesis_budget, previous, house, refine)
+                     hypothesis_budget, previous, house, refine, pending)
     parts.append(
         "\nHOME DATA SNAPSHOT (JSON). Sections: meta (now, timezone, location name), areas, "
         "entities (e=entity_id, s=state, n=friendly name — ABSENT when it is just the "
@@ -724,6 +737,7 @@ def build_orientation_prompt(
     findings: str | None = None,
     house: str | None = None,
     refine: str | None = None,
+    pending: str | None = None,
 ) -> str:
     """The searching path's prompt: the map, not the territory.
 
@@ -734,7 +748,7 @@ def build_orientation_prompt(
     instruction to go and get what answering it needs.
     """
     parts = _framing(category, question, feedback, knowledge, findings,
-                     hypothesis_budget, previous, house, refine)
+                     hypothesis_budget, previous, house, refine, pending)
     parts.append(
         "\nMAP OF THIS HOME (JSON). NOT the data — the shape of it. Sections: meta (now, "
         "timezone, location name), entity_count (how many entities exist in total), "

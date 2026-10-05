@@ -270,7 +270,14 @@ Rules:
   interesting is a person rather than the house, ignore it.
 - "why" is one plain sentence naming what made you decide. It is read by
   the person who maintains this and it is the only record of your
-  reasoning, so "looks fine" is not an answer.
+  reasoning, so "looks fine" is not an answer. The numbers on the signals
+  are for your reply only: a "why" never says "signal 7" or "same as
+  #3" — it names the device ("same Wi-Fi drop as the water meter").
+- A device that something USES is not a device with nothing behind it.
+  When the prompt says what an entity is used by, or what brAIn knows
+  about it, judge its failure by what stops with it — never write "no
+  known load" or "nothing depends on it" about an entity the prompt says
+  something depends on.
 - Judge each signal on what you were given. You have no tools here and
   nothing to look up: if you need to look something up, that is what
   "investigate" means.
@@ -353,7 +360,7 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
                       open_cases_rows=None, *, now_line: str = "",
                       watch_notes=None, examples=None,
                       inputs: dict | None = None,
-                      situation_line: str = "") -> str:
+                      situation_line: str = "", used_by=None) -> str:
     """The prompt for one batch.
 
     ``batch_rows`` is what `signals.prompt_rows` returned — or the raw
@@ -382,6 +389,7 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
             "watch_notes": _rows(watch_notes),
             "examples": _rows(examples)[:MAX_EXAMPLES],
             "situation_line": str(situation_line or ""),
+            "used_by": _rows(used_by),
         })
     parts = ["Decide what each of these signals is worth.\n"]
     # The clock, in the house's own time. A door at 03:00 and a door at
@@ -401,6 +409,12 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
     if memory_excerpt.strip():
         parts.append("WHAT BRAIN KNOWS ABOUT THIS HOME:\n"
                      + memory_excerpt.strip() + "\n")
+    used = _rows(used_by)
+    if used:
+        parts.append("WHAT USES THESE DEVICES — automations and scripts "
+                     "that name them, so whatever stops when one fails:")
+        parts += [f"- {row}" for row in used]
+        parts.append("")
     notes = _rows(watch_notes)
     if notes:
         # What an earlier look said about a subject it decided to watch.
@@ -642,7 +656,13 @@ Rules that matter more than anything about style:
 - Do not restate what brAIn already knows or what is already in front of
   the homeowner. If the answer is already on their list, make no claim.
 - One claim per run. If you found two things, claim the one that matters
-  and say the other in "detail"."""
+  and say the other in "detail".
+- Never refer to brAIn's own bookkeeping in anything the homeowner reads:
+  no "signal 7", "row 3", "finding #12", case ids or timestamps used as
+  ids. Name the device and the time instead.
+- Before saying a device has nothing behind it, read what the prompt says
+  it is USED BY and what brAIn knows about it: a plug that runs the
+  crawl-space fan is the crawl-space fan."""
 
 
 def investigate_prompt(signal: dict, memory_excerpt: str = "",
@@ -651,7 +671,7 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
                        refining: dict | None = None,
                        prior_case: dict | None = None,
                        now_line: str = "", examples=None,
-                       situation_line: str = "") -> str:
+                       situation_line: str = "", used_by=None) -> str:
     """The prompt for one investigation.
 
     One signal, not a batch: the whole point of the tier is that this run
@@ -710,6 +730,12 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
     if memory_excerpt.strip():
         parts.append("WHAT BRAIN KNOWS ABOUT THIS HOME:\n"
                      + memory_excerpt.strip() + "\n")
+    used = _rows(used_by)
+    if used:
+        parts.append("WHAT USES THESE DEVICES — automations and scripts "
+                     "that name them, so whatever stops when one fails:")
+        parts += [f"- {row}" for row in used]
+        parts.append("")
     if house_block.strip():
         parts.append("WHAT BRAIN HAS MEASURED:\n" + house_block.strip() + "\n")
     cases = _rows(open_cases_rows)

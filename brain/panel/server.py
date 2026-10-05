@@ -1695,6 +1695,63 @@ async def _brief_overnight(now: float) -> dict:
     return out
 
 
+def _clock_style() -> str:
+    """'12h' or '24h': the house's country off Core's config, else its
+    timezone. Best effort — an unreadable config is the zone's answer."""
+    country = ""
+    try:
+        with open("/config/.storage/core.config", encoding="utf-8") as fh:
+            country = str((json.load(fh).get("data") or {}).get("country")
+                          or "")
+    except (OSError, ValueError, TypeError, AttributeError):
+        # No config to read (a dev checkout, an older Core with no
+        # country): the zone decides, which is the documented fallback.
+        pass
+    try:
+        _tz, name = baselines.house_timezone()
+    except Exception:  # noqa: BLE001 — no zone is no zone's answer
+        name = ""
+    return brief.clock_style(country, name)
+
+
+def _brief_subjects(state: dict) -> list[str]:
+    """Every entity the brief's reasons are about: a finding's own
+    entity, a light left on, and any id a reason's text names."""
+    out: list[str] = []
+
+    def add(eid) -> None:
+        eid = str(eid or "")
+        if eid and "." in eid and eid not in out:
+            out.append(eid)
+
+    for f in list(state.get("new_findings") or [])[:brief.MAX_NEW] + list(
+            state.get("still_open") or [])[:brief.MAX_STILL_OPEN]:
+        add(f.get("entity_id"))
+        for m in _ENTITY_IN_TEXT_RE.finditer(
+                f"{f.get('text') or ''} {f.get('detail') or ''}"):
+            if m.group(0) in _NAMES:
+                add(m.group(0))
+    for row in ((state.get("morning") or {}).get("left_on") or [])[
+            :brief.MAX_NAMED]:
+        add(row.get("entity_id"))
+    return out
+
+
+def _about_lines(entities) -> list[str]:
+    """One line per entity: what it is called, where, and its labels."""
+    lines = []
+    for eid in entities or ():
+        row = _NAMES.get(str(eid)) or {}
+        bits = [f"{row.get('name') or eid} ({eid})"]
+        if row.get("area"):
+            bits.append(f"in the {row['area']}")
+        labels = [str(x).replace("_", " ") for x in row.get("labels") or []]
+        if labels:
+            bits.append("labels: " + ", ".join(labels))
+        lines.append(", ".join(bits))
+    return lines
+
+
 def _brief_morning(now: float, night: dict) -> dict:
     """`brief.morning_facts` over what `_brief_overnight` fetched."""
     if not night.get("states"):
@@ -1709,8 +1766,11 @@ def _brief_morning(now: float, night: dict) -> dict:
     except Exception:  # noqa: BLE001 — an unreadable store answers nothing
         store = {}
 
+    style = _clock_style()
+
     def clock(ts: float) -> str:
-        return _local_now(ts).strftime("%H:%M")
+        local = _local_now(ts)
+        return brief.format_clock(local.hour, local.minute, style)
 
     try:
         return brief.morning_facts(
@@ -1747,15 +1807,24 @@ async def _send_brief(now: float) -> str:
         return ""
 
     local = _local_now(now)
-    state["woke_at"] = rhythm.clock(
-        rhythm.wake_minute(rhythm.profile(), local))
+    style = await asyncio.to_thread(_clock_style)
+    state["clock_style"] = style
+    wake = rhythm.wake_minute(rhythm.profile(), local)
+    state["woke_at"] = ("" if wake is None else brief.format_clock(
+        int(round(wake)) // 60 % 24, int(round(wake)) % 60, style))
     # The brief reads no memory and no measurements today, which is how
     # it can say the hall is cold in a house whose hall is always cold.
     # Both are handed in rather than fetched there: `brief.py` owns no
     # store, and a second answer to what this house is like is the drift
     # `_CARD_CONTRACT` is shared to avoid.
     state["house"] = await _house_prompt_block(now)
-    state["memory"] = await asyncio.to_thread(_memory_block)
+    # What brAIn knows about the things the reasons are ABOUT, and the
+    # labels on them — not just the house's core facts. A brief handed
+    # neither told somebody to switch off a switch labelled Always On.
+    subjects = _brief_subjects(state)
+    state["about"] = _about_lines(subjects)
+    state["memory"] = await asyncio.to_thread(
+        _memory_block, entities=subjects, query=_subject_names(subjects))
 
     result = await _claude(
         engine.run_analyst, brief.frame(reasons, state), brief.SYSTEM,
@@ -3960,6 +4029,7 @@ async def _generate(insight_id: str) -> None:
                 pass
         framing = dict(question=question, feedback=feedback,
                        hypothesis_budget=hypotheses.budget(),
+                       pending=hypotheses.prompt_block(),
                        knowledge=knowledge, previous=previous,
                        findings=findings_store.prompt_block(),
                        # What brAIn measured. Its own budget (HOUSE_CHARS),
@@ -7024,6 +7094,7 @@ async def _prompt_preview(cat: dict, mode: str) -> dict:
         pass
     framing = dict(question=None, feedback=feedback,
                    hypothesis_budget=hypotheses.budget(),
+                   pending=hypotheses.prompt_block(),
                    knowledge=knowledge_store.prompt_block(),
                    previous=previous,
                    findings=findings_store.prompt_block(),
@@ -7393,7 +7464,68 @@ h1{margin:2px 0 0;font-size:17px;line-height:1.25}
 .t .d{font-size:11.5px;color:var(--ink2);margin-top:1px}
 iframe{display:block;width:100%;height:320px;border:0;background:transparent}
 .f{font-size:11px;color:var(--ink3)}
+.age{margin:0;padding:7px 10px;border-radius:8px;font-size:13px;font-weight:600;
+background:#fff3d6;color:#5a3d00}
+@media (prefers-color-scheme: dark){.age{background:#3a2c08;color:#ffe2a3}}
+.age[hidden]{display:none}
+@media (max-width:420px){.c{padding:10px 12px 10px;gap:8px}
+.h{grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px}
+.t{padding:6px 9px}.t .v{font-size:15px}h1{font-size:16px}.s{font-size:13.5px}}
 """
+
+# How old a mirrored card may be before it says so in words. The mirror
+# is a snapshot written when the card was made, and a dashboard shows it
+# for as long as nobody regenerates it — a battery card footed "analysed
+# 2026-09-24" in 11px was being read as this morning's on October 4th.
+# Worked out in the page itself, against the viewer's clock, because the
+# file is written once and read for weeks: an age baked in at write time
+# would always say "today".
+CARD_STALE_DAYS = 2
+_WHOLE_CARD_AGE = (
+    '<script>(function(){var e=document.getElementById("age");'
+    'if(!e)return;var t=Date.parse(e.getAttribute("data-made")||"");'
+    'if(isNaN(t))return;var d=Math.floor((Date.now()-t)/86400000);'
+    'if(d<' + str(CARD_STALE_DAYS) + ')return;'
+    'e.textContent="This card is "+d+" days old \u2014 it shows the house '
+    'as it was then, not now.";e.hidden=false;})();</script>'
+)
+
+# What a dashboard column is assumed to be, for sizing the card's frame.
+# Home Assistant's Webpage card has a fixed aspect ratio and no way to be
+# told how tall its page is, so a ratio taken from the panel's own (much
+# wider) card left a 246px window over 886px of card, scrolling inside
+# itself. A sections-view column is 300-500px; sizing for the narrow end
+# leaves a little space under the card on a wide one, which is the
+# cheaper mistake.
+DASH_COLUMN_PX = 320
+
+
+def _whole_card_aspect(insight: dict, width: int = DASH_COLUMN_PX) -> int:
+    """The aspect ratio (height as a % of width) the whole card needs.
+
+    An estimate from what is on it, with the page's own CSS numbers at a
+    narrow column: padding, the eyebrow and title, the summary, the tile
+    rows, the chart's frame, the age line and the foot.
+    """
+    inner = max(200, width - 24)
+    per_line_title = max(1, inner // 9)
+    per_line_text = max(1, inner // 7)
+    title = str(insight.get("title") or "")
+    summary = str(insight.get("summary") or "")
+    tiles = [h for h in insight.get("highlights") or []
+             if isinstance(h, dict) and h.get("label")]
+    per_row = max(1, (inner + 6) // 110)
+    height = 20                                   # padding
+    height += 16                                  # eyebrow
+    height += 21 * max(1, -(-len(title) // per_line_title))
+    height += 20 * max(1, -(-len(summary) // per_line_text))
+    if tiles:
+        height += 60 * -(-len(tiles) // per_row)
+    height += 320                                 # the chart's frame
+    height += 34 + 14                             # age line, foot
+    height += 8 * 5                               # gaps
+    return int(min(max(round(height / width * 100), 25), 300))
+
 
 _WHOLE_CARD_SIZE = (
     '<script>(function(){var f=document.getElementById("v");'
@@ -7439,6 +7571,9 @@ def _whole_card_page(insight: dict) -> str:
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         f"<title>{esc(str(insight.get('title') or 'Insight'))}</title>"
         f"<style>{_WHOLE_CARD_CSS}</style></head><body><div class=\"c\">"
+        f'<p class="age" id="age" hidden '
+        f'data-made="{esc(str(insight.get("generated_at") or ""), quote=True)}">'
+        f'</p>'
         f"<div><div class=\"eb\">{esc(_card_eyebrow(insight))}</div>"
         f"<h1>{esc(str(insight.get('title') or ''))}</h1></div>"
         f"<p class=\"s\">{summary}</p>"
@@ -7446,7 +7581,8 @@ def _whole_card_page(insight: dict) -> str:
         + f'<iframe id="v" sandbox="allow-scripts" title="Visualization" '
         f'srcdoc="{esc(viz, quote=True)}"></iframe>'
         f'<div class="f">brAIn · analysed {esc(when)}</div>'
-        "</div>" + _WHOLE_CARD_SIZE + _CARD_RELOAD_SNIPPET + "</body></html>"
+        "</div>" + _WHOLE_CARD_SIZE + _WHOLE_CARD_AGE
+        + _CARD_RELOAD_SNIPPET + "</body></html>"
     )
 
 
@@ -8217,6 +8353,12 @@ def _dashboard_card(insight: dict, whole: bool, aspect) -> dict:
         ratio = int(float(aspect))
     except (TypeError, ValueError):
         ratio = 90 if whole else 60
+    if whole:
+        # The panel measures its own card, which is two or three times
+        # wider than a dashboard column — so its ratio is a window a
+        # third the height of the card it frames. Never shorter than
+        # the card needs at a column's width.
+        ratio = max(ratio, _whole_card_aspect(insight))
     ratio = min(max(ratio, 25), 300)
     title = " ".join(str(insight.get("title") or "Insight").split())[:80]
     card = {"type": "iframe", "url": url, "aspect_ratio": f"{ratio}%"}
@@ -9072,11 +9214,88 @@ def _note_registry(snapshot: dict) -> None:
                      or reg.get("original_device_class") or "")
             if klass:
                 names[eid]["class"] = str(klass)
+            # The labels somebody put on it ("always_on"): the one place
+            # a homeowner has already said how a thing is MEANT to be,
+            # and what the brief has to read before it tells them to
+            # switch one off. Registry label ids, which Core slugs from
+            # the name the label was given.
+            labels = [str(x) for x in (reg.get("labels") or []) if x]
+            if labels:
+                names[eid]["labels"] = labels[:8]
         _NAMES.clear()
         _NAMES.update(names)
     except Exception as exc:  # noqa: BLE001
         log.debug("names note failed: %s", exc)
+    try:
+        _USED_BY.clear()
+        _USED_BY.update(_used_by_map(snapshot))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("used-by note failed: %s", exc)
     _note_world(snapshot)
+
+
+# Which automations and scripts NAME each entity: `{entity_id: [label]}`.
+# A plug dropping off Wi-Fi is nothing in a house where nothing uses it
+# and the crawl-space fan in a house where an automation runs it every
+# hour — and a first look handed only the signal and the memory facts
+# filed under that entity said "no known critical load" about exactly
+# the second. The automations are the one record of what depends on a
+# device that nobody had to type in, so a look is shown them. Built from
+# the snapshot the checks pass already fetched, `_NAMES`' rule.
+_USED_BY: dict[str, list[str]] = {}
+USED_BY_PER_ENTITY = 6
+
+
+def _used_by_map(snapshot: dict) -> dict[str, list[str]]:
+    house = House(snapshot)
+    out: dict[str, list[str]] = {}
+
+    def note(refs, label: str) -> None:
+        for ref in sorted(refs):
+            rows = out.setdefault(ref, [])
+            if label not in rows and len(rows) < USED_BY_PER_ENTITY:
+                rows.append(label)
+
+    for cfg in snapshot.get("automations") or []:
+        if not isinstance(cfg, dict):
+            continue
+        name = str(cfg.get("alias") or cfg.get("id") or "").strip()
+        if name:
+            note(house.entity_refs(cfg), f"automation “{name[:80]}”")
+    scripts = snapshot.get("scripts")
+    for key, cfg in (scripts.items() if isinstance(scripts, dict) else ()):
+        if not isinstance(cfg, dict):
+            continue
+        name = str(cfg.get("alias") or key or "").strip()
+        if name:
+            note(house.entity_refs(cfg) - {f"script.{key}"},
+                 f"script “{name[:80]}”")
+    return out
+
+
+def _used_by_rows(entities) -> list[str]:
+    """One line per entity something depends on, naming what does."""
+    rows: list[str] = []
+    for eid in entities or ():
+        users = _USED_BY.get(str(eid))
+        if not users:
+            continue
+        name = (_NAMES.get(str(eid)) or {}).get("name") or ""
+        label = f"{eid} ({name})" if name and name != eid else str(eid)
+        rows.append(f"{label}: used by " + ", ".join(users))
+    return rows
+
+
+def _subject_names(entities) -> str:
+    """The friendly names of these entities, as a retrieval query: a fact
+    a person typed says "the Wemo Mini drives the crawl-space fan", in
+    words, and is filed under no entity id a tagger could find in it."""
+    names = []
+    for eid in entities or ():
+        name = (_NAMES.get(str(eid)) or {}).get("name") or ""
+        if name and name != eid and name not in names:
+            names.append(name)
+    return " ".join(names)
 
 
 def _entity_names_in(*texts: str) -> dict[str, dict]:
@@ -9453,9 +9672,11 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         # subjects, so a look at twelve signals reads the facts about
         # those twelve and not the head of a document about the house.
         await asyncio.to_thread(
-            _memory_block, entities=outcomes.scope_subjects(batch)),
+            _memory_block, entities=outcomes.scope_subjects(batch),
+            query=_subject_names(outcomes.scope_subjects(batch))),
         await asyncio.to_thread(_open_case_rows),
         now_line=_now_line(now), watch_notes=notes,
+        used_by=_used_by_rows(outcomes.scope_subjects(batch)),
         examples=await asyncio.to_thread(_outcome_examples, batch, now),
         situation_line=await asyncio.to_thread(_situation_line, now),
         inputs=look_inputs)
@@ -9798,12 +10019,14 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
                 if refines else None)
     exclude = {str((refining or {}).get(k) or "") for k in ("claim", "text")}
     rows = signals.prompt_rows([signal], now, numbered=False)
+    about = _signal_entities(signal) + outcomes.scope_subjects([signal])
     prompt = resident.investigate_prompt(
         signal,
-        await asyncio.to_thread(_memory_block, entities=_signal_entities(
-            signal) + outcomes.scope_subjects([signal])),
+        await asyncio.to_thread(_memory_block, entities=about,
+                                query=_subject_names(about)),
         await _house_prompt_block(now),
         await asyncio.to_thread(_open_case_rows, exclude=exclude),
+        used_by=_used_by_rows(about),
         signal_row=rows[0] if rows else "", why=why, refining=refining,
         now_line=_now_line(now),
         examples=await asyncio.to_thread(_outcome_examples, [signal], now,
@@ -9971,10 +10194,12 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
         engine.run_analyst,
         resident.investigate_prompt(
             signal,
-            await asyncio.to_thread(_memory_block,
-                                    entities=_signal_entities(signal)),
+            await asyncio.to_thread(
+                _memory_block, entities=_signal_entities(signal),
+                query=_subject_names(_signal_entities(signal))),
             await _house_prompt_block(now),
             await asyncio.to_thread(_open_case_rows, exclude=exclude),
+            used_by=_used_by_rows(_signal_entities(signal)),
             signal_row=rows[0] if rows else "", why=why, refining=refining,
             prior_case=case, now_line=_now_line(now),
             examples=await asyncio.to_thread(_outcome_examples, [signal], now,
@@ -14548,7 +14773,19 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
                 payload["correction"] = got["why"]
         else:
             template, hint = "", ""
-    if spec.get("hint") and hint:
+    if spec.get("hint") and hint and finding.get("source") == house_book.SOURCE:
+        # A house-book question's hint is a lead-in ("<the subject>:"),
+        # not a fact, and the answer is what somebody typed: filed as
+        # "<subject>: <answer>", never wrapped in the asking. An answer
+        # with no words in it teaches nothing and files nothing.
+        fact = house_book.answer_fact(
+            hint, note)
+        if fact:
+            await _submit_memory(
+                fact, source=spec.get("source", "homeowner"),
+                subject=subjects[0] if subjects else "", subjects=subjects[1:],
+                run_id=str(finding.get("run_id") or ""))
+    elif spec.get("hint") and hint:
         fact = hint + (f" (The homeowner added: {note})" if note else "")
         await _submit_memory(
             fact, source=spec.get("source", "homeowner"),

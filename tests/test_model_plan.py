@@ -305,8 +305,10 @@ class TestTheCardStylesheet(TestCase):
             self.assertNotIn(hexcode, categories._CARD_CONTRACT, hexcode)
         # The ceiling is about the palette not creeping back (it was ~1.5 KB
         # of hex), not a word budget: it moved from 8000 to 8400 for the
-        # `opportunities` field's two lines, which is a field, not a palette.
-        self.assertLess(len(categories._CARD_CONTRACT), 8400)
+        # `opportunities` field's two lines, which is a field, not a palette,
+        # and to 8700 for three analysis rules (missing days are not zero,
+        # open questions may be the cause, no internal numbering).
+        self.assertLess(len(categories._CARD_CONTRACT), 8700)
 
     def test_inject_styles_is_placed_in_head_and_is_idempotent(self):
         html = "<!DOCTYPE html><html><head><title>t</title></head><body></body></html>"
