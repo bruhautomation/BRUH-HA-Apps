@@ -333,7 +333,9 @@ async def entity_exists(entity_id: str, timeout: int = 15) -> bool:
     the answer, not an error; anything else raises, because "Core did not
     answer" and "Core says it is not there" are different claims.
     """
-    if not is_entity_id(str(entity_id or "")):
+    entity_id = str(entity_id or "")
+    # Inline, so a scanner sees the id checked before it reaches the URL.
+    if not ENTITY_ID_RE.fullmatch(entity_id):
         return False
     async with aiohttp.ClientSession() as session:
         async with session.get(
@@ -357,7 +359,9 @@ async def entity_state(entity_id: str, timeout: int = 15) -> dict | None:
     answer; anything else raises, because "Core did not answer" and
     "Core says it is not there" are different claims.
     """
-    if not is_entity_id(str(entity_id or "")):
+    entity_id = str(entity_id or "")
+    # Inline, so a scanner sees the id checked before it reaches the URL.
+    if not ENTITY_ID_RE.fullmatch(entity_id):
         return None
     async with aiohttp.ClientSession() as session:
         async with session.get(

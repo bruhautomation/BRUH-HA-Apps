@@ -220,13 +220,13 @@ class TestTheFirstHourEndsOnATrial(AcceptCase):
             "try_rule": {"sentence": "the back door opens after sunset, turn on the patio light",
                          "why": "by hand most evenings"}})
 
-    async def accept(self, **body):
+    async def accept_onboarding(self, **body):
         resp = await self.client.post("/api/onboarding/accept",
                                       json={"accept": [], "shipped": [], **body})
         return resp.status, await resp.json()
 
     async def test_ticked_it_is_simulated_and_its_week_starts(self):
-        status, out = await self.accept(try_rule=True)
+        status, out = await self.accept_onboarding(try_rule=True)
         self.assertEqual(status, 200, out)
         # Put in the shape the ask bar's third verb reads.
         self.assertEqual(out["tried"],
@@ -243,14 +243,14 @@ class TestTheFirstHourEndsOnATrial(AcceptCase):
         self.assertNotIn("brain_asked_", (self.config / "automations.yaml").read_text())
 
     async def test_unticked_nothing_is_queued(self):
-        status, out = await self.accept(try_rule=False)
+        status, out = await self.accept_onboarding(try_rule=False)
         self.assertEqual((status, out["tried"]), (200, ""))
         self.assertEqual(await self.server._apply_intent_requests(), 0)
         self.assertEqual(self.proposals.listing(), [])
 
     async def test_a_one_off_answer_ignores_the_trial(self):
         self.answers = [ONE_OFF]
-        await self.accept(try_rule=True)
+        await self.accept_onboarding(try_rule=True)
         await self.server._apply_intent_requests()
         [row] = self.proposals.listing()
         self.assertEqual(row["kind"], "intent")

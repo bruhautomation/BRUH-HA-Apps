@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.1
+
+No change to printing. The two places that put a file's own permissions back
+after an atomic write carry a CodeQL suppression comment explaining why.
+
 ## 0.14.0
 
 **`bruh_print.get_status`, so something asking to print can see what is

@@ -168,6 +168,7 @@ def _clear(path: Path) -> bool:
     last: OSError | None = None
     for _attempt in range(2):
         try:
+            # codeql[py/overly-permissive-file] — the terminal runs as the claude user and must read this one word; it holds no secret.
             os.close(os.open(path, flags, 0o644))
             return True
         except IsADirectoryError:

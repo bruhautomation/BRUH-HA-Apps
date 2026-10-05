@@ -94,25 +94,39 @@ jobs:
       # The Home Assistant builder handles the per-architecture base image,
       # the OCI labels from build.yaml, and the tagging convention the
       # Supervisor expects ({arch}-<slug>:<version> plus :latest).
+      # What home-assistant/builder@master did, written out here so nothing
+      # in this job runs from a branch that can move under it. That action
+      # could not be pinned: it reads its own checkout directory's name as
+      # the builder image tag, so `@<sha>` asked for an image that was never
+      # pushed (`manifest unknown`), and its own fallback named 2026.02.1 as
+      # the last release that has a builder image. So the image tag is
+      # pinned here instead, its signature is checked the way the action
+      # checked it, and the container is run with the action's exact flags.
+      # The action is also deprecated upstream, which is one more reason
+      # not to depend on its master branch.
+      - name: Install Cosign
+        if: steps.decide.outputs.build == 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+
       - name: Build and publish
         if: steps.decide.outputs.build == 'true'
-        # NOT pinnable to a commit, and CodeQL's unpinned-tag alert for this
-        # line is a false positive that has to stay. The action reads the last
-        # path segment of its own checkout directory — which is whatever ref
-        # it was used with — and uses that string as a *Docker image tag*:
-        #
-        #   input=$(echo "$GITHUB_ACTION_PATH" | rev | cut -d/ -f1 | rev)
-        #   if [[ "${input}" == "master" ]]; then input="2026.02.1"; fi
-        #   docker pull ghcr.io/home-assistant/amd64-builder:${input}
-        #
-        # So `@master` resolves to a real published builder image and a SHA
-        # resolves to a tag that was never pushed — `manifest unknown`, which
-        # is how all four image builds broke on main. A release tag is no help
-        # either: the action's own fallback comment calls 2026.02.1 "latest
-        # official release with builder image", so the newer tags have none.
-        uses: home-assistant/builder@master
-        with:
-          args: |
+        env:
+          BUILDER: ghcr.io/home-assistant/amd64-builder:2026.02.1
+        run: |
+          docker pull "$BUILDER"
+          cosign verify \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp 'https://github.com/home-assistant/builder/.*' \
+            "$BUILDER"
+          env_file="$RUNNER_TEMP/builder.env"
+          env > "$env_file"
+          sed -i "/\(HOME\|TERM\|PWD\|HOSTNAME\|PATH\|SHLVL\|USER\|GOROOT\)/d" "$env_file"
+          docker run --rm --privileged \
+            -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            -v ~/.docker:/root/.docker \
+            -v "$GITHUB_WORKSPACE":/data \
+            --env-file "$env_file" \
+            "$BUILDER" \
             --${{ matrix.arch }} \
             --target /data/${{ matrix.addon }} \
             --image ${{ matrix.arch }}-${{ matrix.addon }} \

@@ -176,6 +176,7 @@ class LifxEngine:
         # now 31 unpredictable bits rather than a pid behind a fixed
         # prefix. That id is the security boundary, so it is where the
         # strength belongs.
+        # codeql[py/bind-socket-all-network-interfaces] — LIFX discovery is a LAN broadcast; replies only reach an unbound socket. BRIGHT_LIFX_BIND narrows it.
         sock.bind((os.environ.get("BRIGHT_LIFX_BIND", ""), 0))
         self._transport, _ = await loop.create_datagram_endpoint(
             lambda: _Protocol(self), sock=sock)

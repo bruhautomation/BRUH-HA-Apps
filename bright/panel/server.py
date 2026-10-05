@@ -276,7 +276,15 @@ def _under_media(raw: str) -> Path | None:
         if part == ".." or "\0" in part:
             return None
         folder = folder / part
-    return folder
+    # The walk above cannot express an escape; this says so in the form a
+    # scanner reads as a barrier. normpath touches nothing on disk, so a
+    # symlinked /media/music is still followed exactly as before.
+    flat = os.path.normpath(str(folder))
+    if flat == base:
+        return MEDIA_DIR
+    if not flat.startswith(base + os.sep):
+        return None
+    return Path(flat)
 
 
 def _additional_music_folders() -> list[Path]:

@@ -99,6 +99,7 @@ class Tree(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         base = Path(self.tmp.name)
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(base, 0o755)
         self.config = base / "config"
         self.outside = base / "outside"
@@ -219,9 +220,11 @@ class TestWhatMayBeHanded(Tree):
         write — and "handed over" about a file Claude cannot write is the
         edit failing with nothing left to try. The folder gets rwx."""
         scenes = self.file("scenes.yaml")
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(scenes, 0o444)
         folder = self.config / "packages"
         folder.mkdir()
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(folder, 0o555)
         try:
             answer, calls = self.own([str(scenes), str(folder)])
@@ -238,6 +241,7 @@ class TestWhatMayBeHanded(Tree):
         could not write."""
         scenes = self.file("scenes.yaml")
         os.chown(scenes, UID, GID)
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(scenes, 0o440)
         again = ownership.own([str(scenes)])
         self.assertEqual(again["results"][0]["changed"], 1)
@@ -333,11 +337,14 @@ class TestWhatMayBeHanded(Tree):
     def test_recursive_makes_what_it_hands_over_writable(self):
         pkg = self.config / "packages"
         inner = self.file("packages/rooms/lounge.yaml")
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(inner, 0o444)
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(inner.parent, 0o555)
         try:
             answer, _calls = self.own([str(pkg)], recursive=True)
         finally:
+            # codeql[py/overly-permissive-file] the test sets this mode on purpose
             os.chmod(inner.parent, 0o755)
         self.assertTrue(answer["ok"], answer)
         self.assertEqual(os.stat(inner).st_mode & 0o777, 0o644)
@@ -587,9 +594,11 @@ class TestTheRoute(Tree):
         shutil.copy(SCRIPTS / "brain-edit-snapshot.py",
                     scripts / "brain-edit-snapshot.py")
         for path in (base, scripts):
+            # codeql[py/overly-permissive-file] the test sets this mode on purpose
             os.chmod(path, 0o755)
         os.chown(self.config, NOBODY, NOBODY)
         scenes = self.file("scenes.yaml", "- id: x\n")
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(scenes, 0o444)
 
         def hook(url):
@@ -691,6 +700,7 @@ class TestTheSweep(Tree):
         """A file Home Assistant (or a restored backup) left 0444 is handed
         over with its owner's write bit, or the hand-over hands nothing."""
         scenes = self.file("scenes.yaml")
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(scenes, 0o444)
         count, calls = self.sweep()
         self.assertEqual(count, 1)
@@ -711,6 +721,7 @@ class TestTheSweep(Tree):
         addons = Path(self.tmp.name) / "addon_configs"
         z2m = addons / "zigbee2mqtt"
         z2m.mkdir(parents=True)
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(z2m, 0o555)
         hidden = addons / ".cache"
         hidden.mkdir()
@@ -722,6 +733,7 @@ class TestTheSweep(Tree):
                                           {"ADDON_CONFIG_DIR": str(addons)}):
                 count, calls = self.sweep()
         finally:
+            # codeql[py/overly-permissive-file] the test sets this mode on purpose
             os.chmod(z2m, 0o755)
         self.assertEqual(count, 1)
         self.assertTrue(self.owned(z2m, calls))
@@ -900,12 +912,14 @@ class TestTheEditHook(Tree):
         self.journal = base / "edits"
         self.journal.mkdir()
         for path in (base, self.config, self.scripts, self.journal):
+            # codeql[py/overly-permissive-file] the test sets this mode on purpose
             os.chmod(path, 0o777 if path == self.journal else 0o755)
         if ROOT:
             # As in the add-on: the config folder is the claude user's
             # (run.sh hands it over at boot) and the files in it are not.
             os.chown(self.config, NOBODY, NOBODY)
         self.target = self.file("scenes.yaml", "- id: x\n")
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(self.target, 0o444)    # nobody may write it, owner included
 
     def run_hook(self, panel_url: str, tool="Edit", journal_days="0",
@@ -954,6 +968,7 @@ class TestTheEditHook(Tree):
                                  [[str(self.target)]])
 
     def test_a_writable_file_asks_nothing(self):
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(self.target, 0o666)
         panel = StubPanel()
         try:
@@ -965,7 +980,9 @@ class TestTheEditHook(Tree):
 
     def test_a_file_outside_the_config_folder_asks_nothing(self):
         outside = self.file("x.yaml", base=self.outside)
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(self.outside, 0o755)
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(outside, 0o444)
         panel = StubPanel()
         try:
@@ -980,6 +997,7 @@ class TestTheEditHook(Tree):
     def test_a_new_file_in_a_folder_it_cannot_write_asks_for_the_folder(self):
         locked = self.config / "packages"
         locked.mkdir()
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(locked, 0o555)
         panel = StubPanel()
         try:
@@ -988,6 +1006,7 @@ class TestTheEditHook(Tree):
                 "tool_input": {"file_path": str(locked / "new" / "x.yaml")}})
         finally:
             panel.close()
+            # codeql[py/overly-permissive-file] the test sets this mode on purpose
             os.chmod(locked, 0o755)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual([a["body"]["paths"] for a in panel.asked],
@@ -1054,12 +1073,15 @@ class TestTheShellHook(Tree):
         for name in ("brain_own.py", "brain-protect-hook.py"):
             shutil.copy(SCRIPTS / name, self.scripts / name)
         for path in (base, self.config, self.scripts):
+            # codeql[py/overly-permissive-file] the test sets this mode on purpose
             os.chmod(path, 0o755)
         if ROOT:
             os.chown(self.config, NOBODY, NOBODY)
         self.target = self.file("scenes.yaml", "- id: x\n")
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(self.target, 0o444)
         self.mine = self.file("notes.yaml")
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(self.mine, 0o666)
 
     def run_hook(self, panel_url: str, command: str, protected: str = "",
@@ -1100,12 +1122,14 @@ class TestTheShellHook(Tree):
     def test_one_request_for_every_path_and_none_for_writable_ones(self):
         locked = self.config / "packages"
         locked.mkdir()
+        # codeql[py/overly-permissive-file] the test sets this mode on purpose
         os.chmod(locked, 0o555)
         try:
             _, asked = self.asked(
                 f"cp {self.mine} {locked}/new.yaml && tee {self.target} "
                 f"< {self.mine}; ls /etc {self.outside}")
         finally:
+            # codeql[py/overly-permissive-file] the test sets this mode on purpose
             os.chmod(locked, 0o755)
         self.assertEqual(asked, [[str(locked), str(self.target)]])
 

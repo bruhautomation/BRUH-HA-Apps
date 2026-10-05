@@ -57,6 +57,7 @@ Stdlib only; the store is one JSON file written with `atomic_write`.
 from __future__ import annotations
 
 import hashlib
+import math
 import json
 import os
 import re
@@ -467,7 +468,7 @@ def _num(value, default: float = 0.0) -> float:
         out = float(value)
     except (TypeError, ValueError):
         return default
-    if out != out:  # NaN
+    if math.isnan(out):
         return default
     return max(0.0, min(1.0, out))
 

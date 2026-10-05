@@ -5377,7 +5377,7 @@ async def h_house_rules_save(request: web.Request) -> web.Response:
     try:
         texts = house_rules.clean_rules(body.get("rules"))
     except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc))
+        raise web.HTTPBadRequest(text=_exc_text(exc))
     known = {r["text"]: r for r in (await asyncio.to_thread(
         house_rules.load))["rules"] if r.get("compiled")}
     if any(t not in known for t in texts) and not engine.get_auth():
@@ -5408,7 +5408,7 @@ async def h_house_rules_save(request: web.Request) -> web.Response:
     try:
         await asyncio.to_thread(house_rules.save, rows, texts)
     except OSError as exc:
-        raise web.HTTPInternalServerError(text=f"could not save: {exc}")
+        raise web.HTTPInternalServerError(text=f"could not save: {_exc_text(exc)}")
     gate._CACHE.clear()          # a verdict cached before the rule is stale
     return web.json_response(await asyncio.to_thread(house_rules.load))
 
@@ -5479,7 +5479,7 @@ async def h_security_honeytoken(request: web.Request) -> web.Response:
                 "name": security.HONEYTOKEN_NAME, "icon": "mdi:shield-alert"}])
     except Exception as exc:  # noqa: BLE001
         raise web.HTTPBadGateway(text=f"Home Assistant would not create it: "
-                                      f"{exc}")
+                                      f"{_exc_text(exc)}")
     first = answer[0] if answer else {}
     result = first.get("result") if isinstance(first, dict) else None
     if not (isinstance(first, dict) and first.get("ok")
@@ -7715,7 +7715,7 @@ async def h_prompt_put(request: web.Request) -> web.Response:
         try:
             fields["schedule"] = settings_store.clean_schedule(body["schedule"])
         except ValueError as exc:
-            raise web.HTTPBadRequest(text=str(exc))
+            raise web.HTTPBadRequest(text=_exc_text(exc))
     prompt_store.save_override(cat_id, fields)
     return web.json_response(_prompt_record(cat_id))
 
@@ -7735,7 +7735,7 @@ async def h_user_category_create(request: web.Request) -> web.Response:
     try:
         cat = user_categories.create(body if isinstance(body, dict) else {})
     except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc))
+        raise web.HTTPBadRequest(text=_exc_text(exc))
     if body.get("generate_now", True) and cat.get("enabled", True):
         _enqueue(cat["id"])
     return web.json_response(cat)
@@ -7747,7 +7747,7 @@ async def h_user_category_put(request: web.Request) -> web.Response:
     try:
         cat = user_categories.update(cat_id, body if isinstance(body, dict) else {})
     except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc))
+        raise web.HTTPBadRequest(text=_exc_text(exc))
     if cat is None:
         raise web.HTTPNotFound(text="no such insight")
     return web.json_response(cat)
@@ -7808,7 +7808,7 @@ async def h_feedback_add(request: web.Request) -> web.Response:
     try:
         entry = feedback_store.add_feedback(cat_id, body.get("feedback"))
     except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc))
+        raise web.HTTPBadRequest(text=_exc_text(exc))
     # feedback is durable knowledge about this home's preferences — remember it
     fact = f'Homeowner feedback on the "{cat["title"]}" insight card: {entry["text"]}'
     knowledge_store.add_fact(fact, source="feedback", category=cat_id)
@@ -8563,7 +8563,7 @@ async def h_book_publish(request: web.Request) -> web.Response:
             path = house_book.publish(state["book"], WWW_CARD_DIR)
         except OSError as exc:
             raise web.HTTPConflict(
-                text=f"brAIn could not write to /config/www ({exc}).") from exc
+                text=f"brAIn could not write to /config/www ({_exc_text(exc)}).") from exc
         state["published"] = {"at": int(time.time()), "path": path}
         house_book.save(state)
         return _book_payload()
@@ -13237,10 +13237,12 @@ async def h_camera_permit(request: web.Request) -> web.Response:
         camera_policy.permit, entity, channel, grant, opted,
         _house_day(now), now)
     if allowed:
-        log.info("camera look allowed: %s for %s", entity, channel or "a run")
+        log.info("camera look allowed: %s for %s", log_safe(entity),
+                 log_safe(channel) or "a run")
     else:
-        log.info("camera look refused: %s for %s — %s", entity,
-                 channel or "a run", reason)
+        log.info("camera look refused: %s for %s — %s", log_safe(entity),
+                 log_safe(channel) or "a run",
+                 str(reason).replace("\r", " ").replace("\n", " "))
     return web.json_response({"allowed": allowed, "reason": reason})
 
 
@@ -15117,7 +15119,7 @@ async def h_case_verb(request: web.Request) -> web.Response:
     # card says when it comes back.
     if isinstance(outcome, dict) and outcome.get("undo"):
         payload["undo"] = outcome["undo"]
-    log.info("case %s: %s", log_safe(case_id), verb)
+    log.info("case %s: %s", log_safe(case_id), log_safe(verb))
     return web.json_response(payload)
 
 
@@ -18399,7 +18401,7 @@ async def h_onboarding_notify_save(request: web.Request) -> web.Response:
             onboarding.save_notify, body.get("service"),
             body.get("quiet_start"), body.get("quiet_end"), body.get("brief"))
     except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc)) from exc
+        raise web.HTTPBadRequest(text=_exc_text(exc)) from exc
     return web.json_response(saved)
 
 
@@ -19679,7 +19681,7 @@ async def h_settings_put(request: web.Request) -> web.Response:
                          for k, v in options.items()}
         settings = settings_store.save(panel) if panel else settings_store.load()
     except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc))
+        raise web.HTTPBadRequest(text=_exc_text(exc))
 
     if clean_options:
         wrote_addon = False
@@ -19717,7 +19719,7 @@ async def h_settings_put(request: web.Request) -> web.Response:
             settings = settings_store.save(
                 dict.fromkeys(clean_options) if wrote_addon else clean_options)
         except ValueError as exc:
-            raise web.HTTPBadRequest(text=str(exc))
+            raise web.HTTPBadRequest(text=_exc_text(exc))
         if permission_mode.OPTION in clean_options:
             _publish_permission_mode()
         if refused_switch:
@@ -19741,7 +19743,7 @@ async def h_auth_token(request: web.Request) -> web.Response:
     try:
         saved = engine.save_auth(token)
     except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc))
+        raise web.HTTPBadRequest(text=_exc_text(exc))
     start_auth_check()
     return web.json_response({"saved": True, "type": saved["type"]})
 
@@ -20318,7 +20320,35 @@ def _refusal(exc: Exception) -> str:
     message through unwhitened turned "the session died" into a 500 about
     carriage returns. One line, bounded, or the refusal cannot be sent.
     """
-    return " ".join(str(exc).split())[:300] or "refused"
+    return " ".join(_exc_text(exc).split())[:300] or "refused"
+
+
+def _exc_text(exc: BaseException) -> str:
+    """What `str(exc)` says, read off the exception's own fields.
+
+    A refusal's sentence is the answer a person sent a value for ("the
+    schedule needs a time"), so the panel hands it back. Building it from
+    `args` / `strerror` rather than `str()` keeps the same words while
+    saying, in a form a scanner can follow, that it is the message and
+    never a traceback. An exception that keeps its message somewhere else
+    answers with its type name rather than an empty sentence.
+    """
+    if isinstance(exc, OSError) and exc.strerror:
+        text = (f"[Errno {exc.errno}] {exc.strerror}"
+                if exc.errno is not None else str(exc.strerror))
+        if exc.filename is not None:
+            text += f": {exc.filename!r}"
+            if exc.filename2 is not None:
+                text += f" -> {exc.filename2!r}"
+        return text
+    args = exc.args
+    if len(args) == 1:
+        text = str(args[0])
+    elif args:
+        text = str(args)
+    else:
+        text = ""
+    return text or type(exc).__name__
 
 
 async def h_chat_send(request: web.Request) -> web.Response:
