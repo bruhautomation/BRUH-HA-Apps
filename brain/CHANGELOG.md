@@ -2,6 +2,32 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.14.0
+
+**Insights · Ask · Memory.** The three tabs are renamed and regrouped so the
+panel opens on what brAIn has found, not on a to-do queue.
+
+### Insights
+- The panel opens on your **insight cards** ("Reports" is called Insights
+  again). A line above them says how many things need you and takes you there.
+- **Needs you** is what Today was: the queue and Your list.
+- **History** is its own page now, with a sentence saying what it is for,
+  counted filters, a search box, and **Restore** and a **Delete** bin on every
+  row except snoozed ones, plus **Delete all shown**. Deleting clears the record
+  only — your answer stands, so brAIn does not raise it again.
+
+### Memory
+- **Knowledge** (was What it knows) can be browsed by room and device, with a
+  count beside each and devices grouped under their room. It also has counted
+  kind filters, *Taught by* and sort pickers, removable filter tags, and a
+  visible bin on every fact. Tap a fact's subject to see everything about it.
+- **Timeline** (was What happened) can be searched by device and narrowed by
+  room, kind of thing, cause and window (6 hours to 2 days).
+
+### Look
+- Pane headings, pill filters, list cards with hover states and proper empty
+  states, in light and dark.
+
 ## 2.13.1
 
 Security fixes from a code-scanning pass. Nothing you see changes.
