@@ -157,7 +157,8 @@ CATEGORIES: list[dict] = [
         "include_unavailable": True,
         "focus": (
             "Pull the device-health facts: count of unavailable entities (grouped by likely "
-            "device, worst named), batteries below 30% (name + %), pending updates, and the ONE "
+            "device, worst named), batteries below 30% (name + %; a battery reading in V "
+            "is a voltage, never a percentage), pending updates, and the ONE "
             "thing to fix first. Visualize a compact health scoreboard — one visual."
         ),
     },

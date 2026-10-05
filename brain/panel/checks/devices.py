@@ -7,8 +7,8 @@ no longer there.
 """
 from __future__ import annotations
 
-from ._util import (SOFTWARE_DOMAINS, House, age_days, domain_of, join_names,
-                    num, when)
+from ._util import (SOFTWARE_DOMAINS, House, after_restart, age_days,
+                    domain_of, join_names, num, parse_ts, when)
 
 UNAVAILABLE_DAYS = 1.0
 BATTERY_LOW_PCT = 15
@@ -223,6 +223,23 @@ def zwave_dead_nodes(snap: dict) -> list[dict]:
 # dev.unavailable — grouped by device, or a dead hub files forty rows
 # ---------------------------------------------------------------------------
 
+def _restart_note(snap: dict, st: dict) -> str:
+    """A sentence when the drop came right after Home Assistant started.
+
+    Said in the detail and never the text — the text is what the store
+    dedupes on — and only when a start is on record within
+    `RESTART_WINDOW_S` before the change: a device that did not come back
+    from a restart is usually its integration, not its batteries, and a
+    card that does not mention the restart sends somebody to the wrong
+    end of the house.
+    """
+    if after_restart(snap, st.get("last_changed")) is None:
+        return ""
+    return (" It went unavailable right after Home Assistant restarted, so "
+            "its integration may not have come back from the restart — "
+            "reloading the integration is the first thing to try.")
+
+
 def unavailable(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     # A node the Z-Wave controller has declared dead is dev.zwave_dead's
@@ -261,7 +278,8 @@ def unavailable(snap: dict, now: float) -> list[dict]:
                       f"{house.where(first)}"
                       + (f"; {len(rows)} of its entities are affected"
                          if len(rows) > 1 else "")
-                      + ".",
+                      + "."
+                      + _restart_note(snap, house.states[first]),
             "fix": "Check its power and its connection (batteries, Wi-Fi, "
                    "the hub it pairs through), then reload its integration.",
             "severity": "serious",
@@ -275,7 +293,8 @@ def unavailable(snap: dict, now: float) -> list[dict]:
             "text": f"{house.name(eid)} has been unavailable for more than "
                     "a day",
             "detail": f"Since {when(house.states[eid].get('last_changed'))}"
-                      f"{house.where(eid)}.",
+                      f"{house.where(eid)}."
+                      + _restart_note(snap, house.states[eid]),
             "fix": "Check whatever provides it, then reload its integration.",
             "severity": "serious",
             "fixable": False,
@@ -523,6 +542,16 @@ def frozen(snap: dict, now: float) -> list[dict]:
         if abs(lo) < 1e-9:
             # A power sensor on an idle plug reads 0 for a week and is fine.
             continue
+        # The live state is the one reading the statistics cannot speak
+        # for: a sensor whose state changed inside the window to something
+        # other than the value the week supposedly held was not frozen —
+        # the statistics are missing the rows that would have shown it.
+        live = num(st.get("state"))
+        changed = parse_ts(st.get("last_changed"))
+        if (live is not None and abs(live - lo) > 1e-9
+                and changed is not None
+                and changed >= now - len(days) * 86400):
+            continue
         if not house.should_report(eid, "dev.frozen"):
             # "It is a contact on a cupboard nobody opens" — said once,
             # on the Wrong button, and read here ever after.
@@ -665,7 +694,11 @@ CHECKS = [
     {"id": "dev.implausible", "title": "Impossible sensor readings",
      "needs": ("states", "registry"), "run": implausible},
     {"id": "dev.frozen", "title": "Sensors frozen on one value",
-     "needs": ("states", "registry", "stats"), "run": frozen},
+     "needs": ("states", "registry", "stats"), "run": frozen,
+     # A week of one value read off a recorder that is missing rows is a
+     # week of holes: skipped (never "it went away") while the history
+     # probe says the recorder is incomplete — `checks.run_all`.
+     "reads_history": True},
     {"id": "dev.restored", "title": "Entities with no integration",
      "needs": ("states", "registry"), "run": restored},
     {"id": "dev.zwave_dead", "title": "Z-Wave nodes marked dead",

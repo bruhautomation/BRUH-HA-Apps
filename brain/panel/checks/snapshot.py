@@ -28,6 +28,11 @@ and so cannot clear anything):
                     for every numeric measurement sensor
     battery_stats  {entity_id: [{start, mean}]} — 60 daily rows for every
                     battery sensor
+    history_health {probed, cut: {eid: {history_ends, live_changed}},
+                    hours} — a few recently-changed entities asked for over
+                    `HISTORY_PROBE_HOURS`, and the ones whose history stops
+                    before their own live last change. Unavailable when
+                    Core would not answer, which is not a whole recorder
     dashboards     [{url_path, title, config}] — the storage-mode ones.
                     Empty on a house with only the Overview, and that IS
                     available; unavailable only when Core would not list
@@ -124,6 +129,12 @@ LOGBOOK_HOURS = 26
 # the cap is only there so a pathological install cannot make a checks
 # pass unbounded.
 MAX_ADDON_INFO = 40
+# The history probe: how far back it asks, how many entities, and how long
+# after a change before it is asked about (the recorder commits in
+# seconds; half an hour is never the recorder merely being slow).
+HISTORY_PROBE_HOURS = 96
+HISTORY_PROBE_MAX = 12
+HISTORY_PROBE_SETTLE_S = 1800
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +354,25 @@ async def collect(now: float | None = None) -> dict:
         except Exception as exc:  # noqa: BLE001
             snap["battery_stats"] = {}
             _mark("battery_stats", False, str(exc))
+
+        # Whether the history Core hands back is whole. Everything the
+        # checks and the measurements read off a window assumes it is, and
+        # on a real house it was not: the longer the window, the earlier
+        # the data ended — and brAIn filed "silent since", "0 W all week"
+        # and "frozen" off the hole. A handful of entities that changed
+        # recently are asked for over a few days, and any whose history
+        # stops before its own live last change is the recorder missing
+        # rows (`ha_data.history_cutoffs`).
+        try:
+            probe = await _history_probe(session, snap.get("states") or {},
+                                         now)
+            snap["history_health"] = probe or {}
+            _mark("history_health", probe is not None,
+                  "" if probe is not None else
+                  "Home Assistant did not answer the history probe")
+        except Exception as exc:  # noqa: BLE001
+            snap["history_health"] = {}
+            _mark("history_health", False, str(exc))
 
         # A house with no storage dashboards answers with an empty list
         # and that IS available; a Core that would not list them answers
@@ -720,6 +750,49 @@ async def _addon_details(session, addons: list) -> list:
                              if k in extra}}
         out.append(row)
     return out
+
+
+def probe_candidates(states: dict, now: float,
+                     cap: int = HISTORY_PROBE_MAX) -> list[str]:
+    """Which entities the history probe asks about: real devices whose
+    live state changed inside the probe window — long enough ago that the
+    recorder has certainly committed it — newest first, then by id so
+    two passes over the same house ask the same question."""
+    from ._util import SOFTWARE_DOMAINS, domain_of, parse_ts
+    picked: list[tuple[float, str]] = []
+    oldest = now - (HISTORY_PROBE_HOURS - 6) * 3600
+    newest = now - HISTORY_PROBE_SETTLE_S
+    for eid, st in states.items():
+        if domain_of(eid) in SOFTWARE_DOMAINS or not isinstance(st, dict):
+            continue
+        if st.get("state") in ("unavailable", "unknown", None):
+            continue
+        changed = parse_ts(st.get("last_changed"))
+        if changed is None or not oldest <= changed <= newest:
+            continue
+        picked.append((changed, eid))
+    picked.sort(key=lambda p: (-p[0], p[1]))
+    return [eid for _changed, eid in picked[:cap]]
+
+
+async def _history_probe(session, states: dict, now: float) -> dict | None:
+    """`{probed, cut: {eid: {history_ends, live_changed}}, hours}`, or None
+    when Core would not answer — "I could not look" is not "it is whole"."""
+    import ha_data
+
+    ids = probe_candidates(states, now)
+    if not ids:
+        return {"probed": 0, "cut": {}, "hours": HISTORY_PROBE_HOURS}
+    end = dt.datetime.fromtimestamp(now, tz=dt.timezone.utc)
+    start = end - dt.timedelta(hours=HISTORY_PROBE_HOURS)
+    raw = await ha_data._rest_get(
+        session, ha_data.history_path(start), timeout=60,
+        params=ha_data.history_params(ids, end, minimal=True,
+                                      no_attributes=True))
+    if not isinstance(raw, list):
+        return None
+    cut = ha_data.history_cutoffs(ha_data.series_by_entity(raw), states, now)
+    return {"probed": len(ids), "cut": cut, "hours": HISTORY_PROBE_HOURS}
 
 
 def _stat_candidates(states: dict) -> tuple[list[str], list[str]]:

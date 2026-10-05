@@ -80,7 +80,9 @@ def house(**over) -> dict:
                           "baselines", "closures", "appliances", "thermal",
             # The access steward's keys (checks/security.py): read, and
             # nothing in them anybody has to look at twice.
-            "users", "exposure", "posture", "ip_bans")},
+            "users", "exposure", "posture", "ip_bans",
+            # The history probe: asked, and the recorder whole.
+            "history_health")},
         "errors": {},
         "blueprints_dir": "",
         "states": {
@@ -175,6 +177,7 @@ def house(**over) -> dict:
         # the key being unavailable is a different fixture and a
         # different claim.
         "updates": [],
+        "history_health": {"probed": 4, "cut": {}, "hours": 96},
         "recorder": {"db_bytes": 220 * 1024 * 1024, "purge_keep_days": 10,
                      "db_path": "/config/home-assistant_v2.db"},
         "zha_devices": [{"name": "Back Door sensor", "ieee": "00:11",
@@ -495,6 +498,37 @@ class TestDeviceChecks(unittest.TestCase):
         snap["states"]["light.kitchen_2"]["last_changed"] = iso(3600)
         self.assertEqual(devices.unavailable(snap, NOW), [])
 
+    def test_unavailable_says_when_it_dropped_right_after_a_restart(self):
+        """One Ecobee outage, three stories, and none of them mentioned the
+        restart a minute before it. The text stays the stable sentence the
+        store dedupes on; the restart is said in the detail, and only when
+        the drop came within a few minutes of Core starting."""
+        snap = house()
+        snap["states"]["light.kitchen"].update(state="unavailable",
+                                               last_changed=iso(3 * DAY))
+        snap["actions"]["starts"] = [NOW - 3 * DAY - 90]
+        found = devices.unavailable(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("right after Home Assistant restarted",
+                      found[0]["detail"])
+        self.assertEqual(found[0]["text"],
+                         "Hue bulb has been unavailable for more than a day")
+
+        # The uptime integration's sensor says the same thing past the
+        # logbook's day.
+        snap["actions"]["starts"] = []
+        snap["states"]["sensor.uptime"] = {
+            "state": iso(3 * DAY + 120),
+            "attributes": {"device_class": "timestamp"},
+            "last_changed": iso(3 * DAY)}
+        self.assertIn("right after Home Assistant restarted",
+                      devices.unavailable(snap, NOW)[0]["detail"])
+
+        # A start an hour before the drop is not why it dropped.
+        snap["states"]["sensor.uptime"]["state"] = iso(3 * DAY + 3600)
+        self.assertNotIn("restarted",
+                         devices.unavailable(snap, NOW)[0]["detail"])
+
     def test_unavailable_skips_software_domains_and_restored_entities(self):
         snap = house()
         snap["states"]["automation.morning"].update(state="unavailable",
@@ -543,6 +577,30 @@ class TestDeviceChecks(unittest.TestCase):
         # no last_reported at all (older core): cannot tell, so silent
         del snap["states"]["sensor.back_door_battery"]["last_reported"]
         self.assertEqual(devices.battery_low(snap, NOW), [])
+
+    def test_a_battery_reading_in_volts_is_not_a_percentage(self):
+        """Two GW1100B soil probes at 1.3 V were reported as batteries at
+        1.3% that had died together. A reading is a percentage only when
+        it says so; a voltage is skipped, by the rule and by the forecast
+        alike, rather than guessed at."""
+        snap = house()
+        for n in (1, 2):
+            eid = f"sensor.gw1100b_soil_battery_{n}"
+            snap["states"][eid] = {
+                "state": "1.3",
+                "attributes": {"device_class": "voltage",
+                               "unit_of_measurement": "V",
+                               "state_class": "measurement",
+                               "friendly_name": f"GW1100B Soil Battery {n}"},
+                "last_changed": iso(DAY), "last_reported": iso(600)}
+            snap["entities"].append({"entity_id": eid, "platform": "ecowitt",
+                                     "device_id": ""})
+            snap["battery_stats"][eid] = [
+                {"start": NOW - d * DAY, "mean": 1.3 - d * 0.01}
+                for d in range(30)]
+        self.assertEqual(devices.battery_low(snap, NOW), [])
+        self.assertFalse([f for f in checks.run_all(snap, NOW)["findings"]
+                          if "soil" in f.get("entity_id", "")])
 
     def test_implausible_uses_the_unit(self):
         snap = house()
@@ -635,6 +693,10 @@ class TestDeviceChecks(unittest.TestCase):
         snap["stats"]["sensor.hall_temp"] = [
             {"start": NOW - d * DAY, "mean": 21, "min": 21, "max": 21}
             for d in range(7)]
+        # Really stuck: the live state agrees with the week it is said to
+        # have held, and has not changed inside it.
+        snap["states"]["sensor.hall_temp"].update(
+            state="21", last_changed=iso(9 * DAY))
         found = devices.frozen(snap, NOW)
         self.assertEqual(len(found), 1)
         self.assertIn("21°C", found[0]["detail"])
@@ -650,6 +712,54 @@ class TestDeviceChecks(unittest.TestCase):
             {"start": NOW - d * DAY, "mean": 100, "min": 100, "max": 100}
             for d in range(7)]}
         self.assertEqual(devices.frozen(snap, NOW), [])
+
+    def test_frozen_believes_the_live_state_over_a_week_with_holes(self):
+        """Statistics that say one value all week, under a live state that
+        changed to another inside that week, are statistics missing the
+        rows that would have shown it — not a stuck sensor. The fixture's
+        hall thermometer reads 21.4 as of a minute ago."""
+        snap = house()
+        snap["stats"]["sensor.hall_temp"] = [
+            {"start": NOW - d * DAY, "mean": 21, "min": 21, "max": 21}
+            for d in range(7)]
+        self.assertEqual(devices.frozen(snap, NOW), [])
+
+    def test_a_recorder_missing_rows_is_one_finding_and_frozen_stands_down(self):
+        """The history probe found the recorder cut short: ONE row about
+        the recorder, and `dev.frozen` skipped — never run empty, which
+        would clear what it filed before on the say-so of a hole."""
+        snap = house()
+        snap["stats"]["sensor.hall_temp"] = [
+            {"start": NOW - d * DAY, "mean": 21, "min": 21, "max": 21}
+            for d in range(7)]
+        snap["states"]["sensor.hall_temp"].update(
+            state="21", last_changed=iso(9 * DAY))
+        self.assertEqual(len(checks.run_all(snap, NOW)["findings"]), 1)
+
+        snap["history_health"] = {"probed": 6, "hours": 96, "cut": {
+            "climate.downstairs": {"history_ends": NOW - 3 * DAY,
+                                   "live_changed": NOW - 2 * 3600},
+            "binary_sensor.lev_door_open": {"history_ends": NOW - 3 * DAY,
+                                            "live_changed": NOW - 3600 * 5},
+        }}
+        result = checks.run_all(snap, NOW)
+        self.assertIn("dev.frozen", result["skipped"])
+        self.assertNotIn("dev.frozen", result["ran"])
+        self.assertIn("sys.history_incomplete", result["ran"])
+        rows = [f for f in result["findings"]
+                if f["source"] == "check:sys.history_incomplete"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["text"], system.HISTORY_INCOMPLETE_TEXT)
+        self.assertIn("2 of 6", rows[0]["detail"])
+        self.assertIn("climate.downstairs", rows[0]["detail"])
+        self.assertEqual(rows[0]["entity_id"], "")
+
+        # One entity of many cut short is not yet the recorder.
+        snap["history_health"]["cut"].pop("binary_sensor.lev_door_open")
+        result = checks.run_all(snap, NOW)
+        self.assertIn("dev.frozen", result["ran"])
+        self.assertFalse([f for f in result["findings"]
+                          if f["source"] == "check:sys.history_incomplete"])
 
     def test_frozen_says_nothing_about_a_number_that_is_not_a_measurement(self):
         """0 confirmed against 6 marked Wrong, with ten more in one pass.

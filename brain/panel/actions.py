@@ -334,6 +334,29 @@ def mine(entries: list[dict], users: dict[str, str] | None = None,
             "counts": count_causes(actions)}
 
 
+def ha_starts(entries: list[dict]) -> list[float]:
+    """When Home Assistant itself started inside the window, oldest first.
+
+    Core logs its own start as a line with no entity (`domain:
+    homeassistant`, message "started"), which `mine` drops on purpose —
+    it is not a change anybody made. It is the one fact that explains a
+    row of devices going unavailable in the same minute, so it is kept
+    here, apart from the actions.
+    """
+    out = []
+    for entry in entries or []:
+        if not isinstance(entry, dict) or entry.get("entity_id"):
+            continue
+        if str(entry.get("domain") or "") != "homeassistant":
+            continue
+        if "start" not in str(entry.get("message") or "").lower():
+            continue
+        ts = parse_when(entry.get("when"))
+        if ts is not None:
+            out.append(ts)
+    return sorted(out)
+
+
 def count_causes(actions: list[dict]) -> dict[str, int]:
     counts = {c: 0 for c in CAUSES}
     for a in actions:
@@ -584,7 +607,7 @@ async def collect(session, start: float, end: float,
     if entries is None:
         return {"available": False, "error": "logbook could not be read",
                 "actions": [], "overrides": [], "conflicts": [],
-                "moves": {}, "counts": count_causes([]),
+                "moves": {}, "counts": count_causes([]), "starts": [],
                 "capped": False, "start": start, "end": end}
     mined = mine(entries, users, read_ledger(start))
     return {
@@ -602,4 +625,5 @@ async def collect(session, start: float, end: float,
         # same mined list over the same window, and two passes over the
         # same data is two chances to disagree about the window.
         "moves": automation_moves(mined["actions"]),
+        "starts": ha_starts(entries),
     }

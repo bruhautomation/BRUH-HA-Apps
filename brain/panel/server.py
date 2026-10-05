@@ -4424,22 +4424,16 @@ def _spawn_fix_verification(ts: int) -> None:
     task.add_done_callback(_FIX_VERIFICATIONS.discard)
 
 
-async def _verify_fix(ts: int) -> dict:
-    """Run the check that filed a row brAIn just fixed, and believe it.
+async def _rerun_check(source: str) -> dict:
+    """Run one house check over a fresh snapshot and apply what it says.
 
-    What makes `fixed` a claim about the house rather than about a run.
-    Only a house check's row can be verified this way — a model's report
-    has no rule to re-run — and only a check that RAN may answer: a
-    snapshot key that would not fetch is "I could not look", which leaves
-    the row exactly as the fix left it. The answer goes through
-    `clear_resolved`, the same door the scheduled pass and "Check again"
-    use, so the reopen (`findings_store._came_back`) and the answer's
-    lapse are one rule with three callers rather than three rules.
+    The re-run half of `_verify_fix` and `_verify_chore`: only a house
+    check's row has a rule to re-run, and only a check that RAN may
+    answer — a snapshot key that would not fetch is "I could not look".
+    The answer goes through `clear_resolved`, the door the scheduled pass
+    and "Check again" use, so what it does with a still-reported row (a
+    fix that did not hold, a chore that is not done) is one rule.
     """
-    finding = await asyncio.to_thread(findings_store.get, ts)
-    if finding is None or finding.get("status") != "fixed":
-        return {"checked": False, "why": "the row moved on"}
-    source = str(finding.get("source") or "")
     check_id = source[6:] if source.startswith("check:") else ""
     if (not check_id or checks.get_check(check_id) is None
             or checks.is_shadow(check_id)):
@@ -4458,6 +4452,82 @@ async def _verify_fix(ts: int) -> dict:
     keys = {findings_store.normalize(f["text"]) for f in result["findings"]}
     await asyncio.to_thread(findings_store.clear_resolved,
                             {checks.source_for(check_id)}, keys)
+    return {"checked": True, "check": check_id, "keys": keys}
+
+
+# How long after a chore from a check is ticked off before that check is
+# asked again: past `todo_store.CHORE_SETTLE_S`, so a battery device has
+# reported its new level before "still 0%" is believed.
+CHORE_VERIFY_DELAY_S = todo_store.CHORE_SETTLE_S + 60
+_CHORE_VERIFICATIONS: set = set()
+
+
+def _spawn_chore_verification(item: dict) -> None:
+    """Ask the check behind a finished chore again, later.
+
+    `_spawn_fix_verification`'s arrangement. In memory only, on purpose:
+    a restart loses it, and the next scheduled pass of the same check is
+    the same verification — `findings_store.clear_resolved` reopens a
+    chore it still reports whichever pass asks.
+    """
+    source = str(item.get("source") or "")
+    if not source.startswith("check:") or not item.get("finding_key"):
+        return
+
+    async def later() -> None:
+        try:
+            await asyncio.sleep(CHORE_VERIFY_DELAY_S)
+            await _verify_chore(int(item["id"]))
+        except asyncio.CancelledError:
+            # The panel is shutting down; the next scheduled pass of the
+            # same check reopens the chore if it is still reported.
+            pass
+        except Exception as exc:  # noqa: BLE001 — a verification, not the chore
+            log.debug("could not verify chore %s: %s", item.get("id"), exc)
+    try:
+        task = asyncio.get_running_loop().create_task(later())
+    except RuntimeError:
+        return
+    _CHORE_VERIFICATIONS.add(task)
+    task.add_done_callback(_CHORE_VERIFICATIONS.discard)
+
+
+async def _verify_chore(item_id: int) -> dict:
+    """Re-run the check behind a chore marked done; reopen it if the check
+    still reports the problem (through `clear_resolved`)."""
+    item = await asyncio.to_thread(todo_store.get, item_id)
+    if item is None or item.get("status") != "done":
+        return {"checked": False, "why": "the item moved on"}
+    answer = await _rerun_check(str(item.get("source") or ""))
+    if not answer["checked"]:
+        return answer
+    still = item.get("finding_key") in answer["keys"]
+    if still:
+        log.info("chore %s came back: %s still reports it after it was "
+                 "marked done", item_id, answer["check"])
+    return {"checked": True, "came_back": still}
+
+
+async def _verify_fix(ts: int) -> dict:
+    """Run the check that filed a row brAIn just fixed, and believe it.
+
+    What makes `fixed` a claim about the house rather than about a run.
+    Only a house check's row can be verified this way — a model's report
+    has no rule to re-run — and only a check that RAN may answer: a
+    snapshot key that would not fetch is "I could not look", which leaves
+    the row exactly as the fix left it. The answer goes through
+    `clear_resolved`, the same door the scheduled pass and "Check again"
+    use, so the reopen (`findings_store._came_back`) and the answer's
+    lapse are one rule with three callers rather than three rules.
+    """
+    finding = await asyncio.to_thread(findings_store.get, ts)
+    if finding is None or finding.get("status") != "fixed":
+        return {"checked": False, "why": "the row moved on"}
+    answer = await _rerun_check(str(finding.get("source") or ""))
+    if not answer["checked"]:
+        return answer
+    keys = answer["keys"]
+    check_id = answer["check"]
     still = findings_store.normalize(finding.get("text", "")) in keys
     if still:
         log.info("finding %s came back: %s still reports it after the fix",
@@ -14848,6 +14918,9 @@ async def _complete_todo(item: dict, note: str) -> tuple[dict | None, str]:
     done = await asyncio.to_thread(finish)
     if done is None:
         return None, ""
+    # "Done" on somebody's word; the check that filed it says whether it
+    # is. A chore it still reports goes back on the list.
+    _spawn_chore_verification(done)
 
     # The same sentence "I fixed it" writes on the Findings tab, because it
     # is the same claim — said later, which is the only difference the to-do
