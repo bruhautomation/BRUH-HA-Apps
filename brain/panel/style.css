@@ -662,7 +662,8 @@ html, body {
   display: none;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  --modal-pad: 24px;
+  padding: var(--modal-pad);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -682,7 +683,12 @@ body.modal-open {
   border: 1px solid var(--hairline);
   border-radius: 16px;
   width: min(1100px, 100%);
-  max-height: 94vh;
+  /* Never taller than what the overlay's own padding leaves. 94vh alone is
+     taller than that on any screen under ~800px (6% of it is less than the
+     48px of padding), so the overlay scrolled by a few pixels as well as the
+     dialog's body — two scrollbars side by side on a phone. */
+  max-height: min(94vh, calc(100vh - 2 * var(--modal-pad)));
+  max-height: min(94vh, calc(100dvh - 2 * var(--modal-pad)));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1336,6 +1342,13 @@ body.modal-open {
   gap: 4px 16px;
 }
 .setgrid input[type="number"] { max-width: 110px; }
+/* A select names its choice in words, and those words were being cut at
+   260px ("When something it reads has chang"). In ⚙ a select takes the width
+   it is given — a column, or the whole row for the two whose options carry a
+   model's name — and the measure checks every option still fits. */
+#setModal .edit-body .selin { max-width: none; }
+.setgrid .setwide { grid-column: 1 / -1; }
+.edit-body .selin:disabled { opacity: 0.55; cursor: not-allowed; }
 
 /* Claude account — the first section of the ⚙ dialog. No text inputs live
    here on purpose: the sign-in screen owns the boxes you type a token into,
@@ -1383,6 +1396,11 @@ body.modal-open {
 }
 @media (max-width: 520px) {
   .setgrid { grid-template-columns: 1fr; }
+}
+/* On a phone 24px of overlay on each side is a tenth of the screen spent on
+   a backdrop nobody can see past the dialog anyway. */
+@media (max-width: 480px) {
+  .modal { --modal-pad: 10px; }
 }
 
 /* diagnostics block of the ⚙ dialog: rows of label + value, and a short
@@ -1614,10 +1632,36 @@ body.modal-open {
   padding: 0 2px;
 }
 
+.docsfoldsum { display: none; }
 @media (max-width: 860px) {
   .docs { grid-template-columns: 1fr; gap: 16px; }
   .docsnav { position: static; }
   .docsbody { max-width: none; }
+  .docsfoldsum {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    padding: 0 12px;
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    background: var(--surface);
+    cursor: pointer;
+    font-size: 13.5px;
+  }
+  .docsfoldlabel { color: var(--ink-3); flex: none; }
+  .docsfoldcur {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .docsfoldsum::-webkit-details-marker { display: none; }
+  .docsfoldsum::after { content: "▾"; margin-left: auto; color: var(--ink-3); }
+  .docsfold[open] > .docsfoldsum::after { content: "▴"; }
+  .docsfold[open] > .docsfoldsum { margin-bottom: 8px; }
 }
 
 /* A path or an entity_id in inline code is one unbreakable token, and one of
@@ -1804,7 +1848,10 @@ body.modal-open {
   align-items: center;
   gap: 4px;
   padding: 6px 12px;
-  overflow-x: auto;
+  /* Wraps rather than scrolling: a sideways scroll put a scrollbar across
+     the strip on a phone and cut Proposals off at the edge, where nothing
+     said there was a fifth pane. A wrap is binary, and a test can see it. */
+  flex-wrap: wrap;
   background: color-mix(in srgb, var(--plane) 88%, transparent);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -1845,6 +1892,14 @@ body.modal-open {
   font-weight: 700;
   line-height: 18px;
   text-align: center;
+}
+/* A phone fits Home's five panes on one row at 390px, badges and all, with
+   tighter padding; the targets keep their 44px height and their words.
+   After the badge's own rule, because it overrides it at equal specificity. */
+@media (max-width: 520px) {
+  .subtabs { gap: 0; padding: 6px 4px; }
+  .subtab { padding: 0 6px; gap: 4px; font-size: 0.8rem; }
+  .subtab .badge { min-width: 16px; height: 16px; padding: 0 3px; line-height: 16px; }
 }
 
 /* Icon-only actions — labels were noise beside five tabs. */
@@ -2923,6 +2978,8 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 }
 .tmitem:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .tmitem .ico { width: 17px; height: 17px; flex: none; color: var(--ink-3); }
+.tmitem .tmlabel { display: flex; flex-direction: column; gap: 1px; padding: 5px 0; }
+.tmitem .tmsub { font-size: 11.5px; color: var(--ink-3); }
 /* Chat-only entries: in the classic terminal there is no chat to start, no
    transcript to list and no chat session to describe. */
 body.term-classic #chatNew,
@@ -3195,6 +3252,29 @@ body.term-classic #termMode .ico-out { display: block; }
 .findnotecheck input { width: 18px; height: 18px; margin: 0; }
 
 .findlist { display: grid; gap: 14px; }
+
+/* A wide screen gives the feed the room it has. At 1448px the column held
+   ~55% of the width with the right half empty, while the cards themselves
+   are short enough to sit two abreast. Row-major, so the first two are the
+   most pressing pair and the order still reads left to right, top to
+   bottom; anything that is not a card (an empty line, a lede) takes the
+   row. The To-do list stays one column: it is a list of lines to tick, not
+   cards to weigh. */
+@media (min-width: 1200px) {
+  #viewFindings .findwrap,
+  #viewIdeas .findwrap,
+  #viewProposals .findwrap { max-width: none; }
+  #findList,
+  #ideasList,
+  #propList {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+  #findList > :not(.finding):not(.propcard),
+  #ideasList > :not(.finding):not(.propcard),
+  #propList > :not(.propcard) { grid-column: 1 / -1; }
+}
 
 /* Adding something to the to-do list. One row, and it wraps rather than
    shrinking: a text box squeezed to a sliver beside a button is the design
@@ -3952,6 +4032,28 @@ body.term-classic #termMode .ico-out { display: block; }
   padding: 1px 7px;
   font-size: 11.5px;
 }
+.today .tsegmore { display: none; }
+/* A phone: one line until asked, and no drawn separators. A separator is
+   drawn before every segment but the first, and on a phone nearly every
+   segment begins a line — so each wrapped line started with a stray bar.
+   Stacked, a segment needs no separator at all. */
+@media (max-width: 600px) {
+  .today { gap: 0 10px; }
+  .today.open { flex-direction: column; align-items: flex-start; }
+  .today .tseg + .tseg::before { display: none; }
+  .today:not(.open) .tseg:not(:first-child):not(.press) { display: none; }
+  .today .tsegmore {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent-2);
+    font: inherit;
+    cursor: pointer;
+  }
+}
 
 /* -------------------------------------------------------------- knowledge
    Four sections: what brAIn said this morning, what it has measured, what it
@@ -4209,7 +4311,9 @@ body.term-classic #termMode .ico-out { display: block; }
    same card rhythm, same button sizes -- because it is the same *job*:
    a decision only the person living here can make. What differs is the
    vocabulary, and that is deliberate: nothing on this tab is broken. */
-.propwrap { max-width: 860px; margin: 0 auto; }
+/* Same column and head as Findings (`.findwrap` / `.findhead` ride on the
+   markup): a tab in the Home group with a narrower centred column and a
+   heading of its own read as a different app. */
 .prophead { margin-bottom: 18px; }
 .proplist { display: flex; flex-direction: column; gap: 14px; }
 
@@ -4237,7 +4341,7 @@ body.term-classic #termMode .ico-out { display: block; }
    it is a fact about what the yes does, not a warning and not a stage. */
 .pilledit {
   flex: none; font-size: 12px; padding: 2px 8px; border-radius: 999px;
-  background: var(--bg-2); color: var(--ink-2);
+  background: var(--plane); color: var(--ink-2);
   border: 1px solid var(--hairline);
 }
 /* A one-off intent. Three states, three colours, and the pill is the only
@@ -4291,12 +4395,26 @@ body.term-classic #termMode .ico-out { display: block; }
 .propask {
   display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
   margin: 0 0 14px; padding: 10px 12px;
-  background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px;
+  background: var(--plane); border: 1px solid var(--hairline); border-radius: var(--radius);
 }
 .propask label { font-size: 13.5px; color: var(--ink-2); flex: none; }
 /* `width: auto` sizes a select to its widest option, which is how a picker
    sets a row's min-content and takes the page's width with it. */
-.propask select { min-width: 0; max-width: 100%; flex: 1 1 160px; }
+.propask select { min-width: 0; max-width: 100%; flex: 0 1 320px; }
+/* `.selin` outside a dialog: the select every ⚙ form uses, rather than the
+   browser's own grey box, which is what made this tab look borrowed.
+   No `font:` and no font-size here: either one outranks the bare `select`
+   in the 16px touch floor, which is the iOS zoom trap. */
+select.selin {
+  padding: 9px 12px;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  outline: none;
+}
+select.selin:focus { border-color: var(--accent); }
 .propasknote {
   flex: 1 1 100%; margin: 0; font-size: 12.5px; color: var(--ink-3);
   line-height: 1.5;

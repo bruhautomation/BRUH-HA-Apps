@@ -18793,7 +18793,7 @@ async def h_auth_share(request: web.Request) -> web.Response:
                 "refreshes for itself. The shared file has nowhere to record a "
                 "refresh, so a copy would stop working within hours and every "
                 "add-on reading it would fail with nothing to say why. Sign in "
-                "here (or run `ha login` in the Terminal tab) to mint a "
+                "here (or run `ha login` in the classic terminal on the Ask tab) to mint a "
                 "long-lived token that can be shared.",
             "unwritable":
                 "Could not write to /config/.brain/secrets — check the add-on "

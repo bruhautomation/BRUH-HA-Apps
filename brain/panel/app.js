@@ -1821,6 +1821,25 @@ function renderToday(today) {
     }
     strip.appendChild(node);
   });
+  // On a phone the strip is one line until asked: five segments wrapped to
+  // five lines above the first card, which is a record of what brAIn did for
+  // itself pushing what is waiting on you below the fold. The first segment
+  // and any press stay; the rest are behind "+N more" (CSS hides it, and
+  // the segments, only under the phone breakpoint — a wide screen has the
+  // room for all of them on one line).
+  const folded = segs.filter(([, , press], i) => i > 0 && !press).length;
+  if (folded) {
+    const more = el("button", "tsegmore", `+${folded} more`);
+    more.type = "button";
+    more.setAttribute("aria-expanded", String(strip.classList.contains("open")));
+    more.addEventListener("click", () => {
+      const open = strip.classList.toggle("open");
+      more.setAttribute("aria-expanded", String(open));
+      more.textContent = open ? "Less" : `+${folded} more`;
+    });
+    if (strip.classList.contains("open")) more.textContent = "Less";
+    strip.appendChild(more);
+  }
 }
 
 // ⚙ opens on the Diagnostics/Problems half; the section is already loaded by
@@ -2547,6 +2566,28 @@ function renderModelField(data) {
   sel.value = current;
   custom.value = known ? "" : current;
   custom.classList.add("hidden");
+  syncThinking(current);
+}
+
+// "How hard brAIn thinks" shifts the tiers each job runs on, and a model
+// chosen above replaces the tiers for every run — so with one chosen the
+// select changes nothing. It used to look exactly as live as when it
+// mattered; now it is disabled and its line says why. The saved value is
+// kept, so choosing the automatic model again brings it back as it was.
+const THINKING_NOTE = "Every run is tiered by its job (Haiku looks, Sonnet thinks, "
+  + "Opus acts); this shifts the tiers.";
+
+function syncThinking(model) {
+  const sel = $("#setThinking");
+  const note = $("#setThinkingNote");
+  const fixed = Boolean(model) && model !== CUSTOM_MODEL;
+  if (sel) sel.disabled = fixed;
+  if (note) {
+    note.textContent = fixed
+      ? "Not used while a model is chosen above: every run uses that model. "
+        + "Pick CLI default to use the tiers."
+      : THINKING_NOTE;
+  }
 }
 
 function renderSettingsForm(data) {
@@ -2579,12 +2620,12 @@ function renderSettingsForm(data) {
       + "and override the add-on's Configuration tab until it is.";
 }
 
-// ⚙ is five `<details>`, and a section remembers whether it was open —
+// ⚙ is six `<details>`, and a section remembers whether it was open —
 // somebody who lives in Advanced should not have to reopen it every visit,
 // and a disclosure that forgets is one people stop using. `prefGet` can
 // throw or answer null (an ingress iframe may be refused storage), so the
 // markup's own `open` is the fallback rather than an assumed shut.
-const SET_SECTIONS = ["account", "insights", "terminal", "defaults", "advanced"];
+const SET_SECTIONS = ["account", "insights", "terminal", "defaults", "cameras", "advanced"];
 const setSectionKey = (name) => "brain.set." + name;
 
 function restoreSettingsSections() {
@@ -2597,7 +2638,7 @@ function restoreSettingsSections() {
     box.addEventListener("toggle", () => {
       prefSet(setSectionKey(name), box.open ? "1" : "0");
       if (name === "advanced" && box.open) loadAdvanced();
-      if (name === "defaults" && box.open) loadCameras();
+      if (name === "cameras" && box.open) loadCameras();
     });
   });
 }
@@ -2685,7 +2726,7 @@ async function openSettings() {
   loadAuth();
   advancedLoaded = false;
   camerasLoaded = false;
-  if ($("#setsecDefaults") && $("#setsecDefaults").open) loadCameras();
+  if ($("#setsecCameras") && $("#setsecCameras").open) loadCameras();
   // Its open state survived the close (it is remembered), so a visit that
   // lands on an already-expanded Advanced still has to fetch: the section
   // being open is not the same claim as its rows being current.
@@ -3660,7 +3701,10 @@ $("#rehearseSweep").addEventListener("click", async () => {
 function fmtSaved(epoch) {
   if (!epoch) return "";
   const d = new Date(epoch * 1000);
-  return isNaN(d.getTime()) ? "" : d.toLocaleString();
+  // No seconds: "3:52:44 PM" is precision nobody reads a sign-in date for.
+  return isNaN(d.getTime()) ? "" : d.toLocaleString([], {
+    year: "numeric", month: "short", day: "numeric",
+    hour: "numeric", minute: "2-digit" });
 }
 
 // Where the credential in use came from. `source` is the field that makes a
@@ -3925,6 +3969,7 @@ $("#setModel").addEventListener("change", () => {
     return;
   }
   custom.classList.add("hidden");
+  syncThinking(sel.value);
   saveSettings({ model: sel.value });
 });
 $("#setModelCustom").addEventListener("change", () =>
@@ -7783,10 +7828,26 @@ function renderDocsNav() {
   });
 }
 
-function selectDocs(id) {
+// The contents fold. Wherever the nav sits beside the page it is always open
+// (its summary is not rendered there); where it stacks above the page it
+// starts shut, closes again once a section is picked, and opens while a
+// search is typed so the hits are what you see.
+const DOCS_NARROW = "(max-width: 860px)";
+function docsNarrow() {
+  return Boolean(window.matchMedia && window.matchMedia(DOCS_NARROW).matches);
+}
+function setDocsFold(open) {
+  const fold = $("#docsNavFold");
+  if (fold) fold.open = open || !docsNarrow();
+}
+
+function selectDocs(id, opts) {
   const sections = window.BRAIN_DOCS || [];
   const sec = sections.find((s) => s.id === id) || sections[0];
   if (!sec) return;
+  const cur = $("#docsNavCurrent");
+  if (cur) cur.textContent = sec.title;
+  if (!(opts && opts.keepFold)) setDocsFold(false);
   docsState.section = sec.id;
   $("#docsBody").innerHTML = renderMarkdown(sec.body);
   $("#docsBody").scrollTop = 0;
@@ -7829,10 +7890,16 @@ function renderDocs() {
 $("#docsSearch").addEventListener("input", (ev) => {
   docsState.query = ev.target.value;
   const hits = docsSearch(docsState.query);
+  setDocsFold(Boolean(docsState.query.trim()));
   // Jump straight to the best match so typing feels like it does something.
-  if (hits && hits.length) selectDocs(hits[0].sec.id);
+  if (hits && hits.length) selectDocs(hits[0].sec.id, { keepFold: true });
   else renderDocsNav();
 });
+if (window.matchMedia) {
+  const mq = window.matchMedia(DOCS_NARROW);
+  const onChange = () => setDocsFold(false);
+  if (mq.addEventListener) mq.addEventListener("change", onChange);
+}
 
 // ----------------------------------------------------------- onboarding
 // A fresh install has no cards. brAIn studies the home first, then
@@ -11667,10 +11734,10 @@ async function switchTermMode(next) {
   try {
     if (next === "classic") {
       if (chatState.sessionId) { await chatHandoff(); return; }
-      setTermMode("classic", "Classic terminal");
+      setTermMode("classic", "Ask now opens as the classic terminal");
       return;
     }
-    setTermMode("chat", "Chat terminal");
+    setTermMode("chat", "Ask now opens as chat");
     const out = await chatAdopt();
     if (out && out.adopted) {
       toast(out.title ? `Picked up: ${out.title}` : "Picked up where you left off");
@@ -11847,8 +11914,10 @@ function applyTermMode(mode) {
   document.body.classList.toggle("term-classic", classic);
   const btn = $("#termMode");
   const label = classic ? "Chat" : "Classic terminal";
+  // Saved, not peeked: the same setting ⚙ → Terminal & chat changes.
   btn.setAttribute("aria-label",
-    classic ? "Switch to chat" : "Switch to the classic terminal");
+    classic ? "Switch to chat (Ask opens this way from now on)"
+      : "Switch to the classic terminal (Ask opens this way from now on)");
   $("#termModeLabel").textContent = label;
   const onTab = currentView === "terminal";
   if (classic) {
@@ -13442,7 +13511,7 @@ async function runDeepReview(btn) {
 
 
 // ---------------------------------------------------------------------------
-// ⚙ → Generation defaults → Cameras. One tick per camera brAIn may look at
+// ⚙ → Cameras. One tick per camera brAIn may look at
 // on its own; empty until somebody ticks one. Read when the section opens,
 // never on the way into the dialog, and saved through the ordinary
 // settings PUT, so there is one route that changes a setting.
@@ -13466,8 +13535,14 @@ function renderCameras(data) {
   const box = $("#setCameras");
   if (!box) return;
   box.textContent = "";
-  const cams = Array.isArray(data.cameras) ? data.cameras : [];
-  if (!cams.length) {
+  const all = Array.isArray(data.cameras) ? data.cameras : [];
+  // A robot vacuum publishes its floor map as a camera entity, and a house
+  // with a few of them had nine "cameras" here that show no room at all.
+  // Left out unless one is already ticked, because a tick nobody can see is
+  // a tick nobody can take back.
+  const cams = all.filter((c) => c.allowed || !isMapCamera(c));
+  const maps = all.length - cams.length;
+  if (!cams.length && !maps) {
     box.appendChild(el("p", "hint tight", data.registry_read
       ? "This house has no cameras brAIn can see."
       : "brAIn has not read your devices yet — this list fills in after the first house check."));
@@ -13488,11 +13563,23 @@ function renderCameras(data) {
     label.appendChild(words);
     box.appendChild(label);
   });
+  if (maps) {
+    box.appendChild(el("p", "hint tight", maps === 1
+      ? "1 vacuum map is left out — it is published as a camera but shows no room."
+      : `${maps} vacuum maps are left out — they are published as cameras but show no room.`));
+  }
   const used = Number(data.used_today) || 0;
   const cap = Number(data.per_day) || 0;
   box.appendChild(el("p", "hint tight", data.error
     ? `brAIn will not look at any camera until it can count again: ${data.error}`
     : `Looked ${used} of ${cap} times today.`));
+}
+
+// A map, not a view: the object id says so (`camera.roborock_s7_map`,
+// `camera.downstairs_map_2`), which is how vacuum integrations name them.
+function isMapCamera(cam) {
+  const object = String(cam.entity_id || "").split(".").pop();
+  return /(^|_)map(_|$)/.test(object);
 }
 
 async function saveCameras() {

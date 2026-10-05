@@ -49,7 +49,13 @@ const MIN_TEXT = 16;
 // Before this reorganisation: 5910 at 390, 3837 at 1200. The budgets leave
 // room for a font or a hairline to move and not for a section to come back
 // flat, which is the regression worth failing on.
-const MAX_SCROLL = { 390: 2200, 1200: 1600 };
+//
+// Cameras moved out of Generation defaults into a section of its own (a
+// privacy decision is not a generation default), which is one more shut
+// summary at open: ~55px at 1200, added here rather than eaten out of the
+// headroom. At 390 the same release narrowed the overlay's padding, which
+// gave back more than the summary cost, so that budget did not move.
+const MAX_SCROLL = { 390: 2200, 1200: 1660 };
 
 // Every id the flat dialog carried. Handlers in app.js bind to these by
 // name, and several other measure scripts drive them, so losing one is a
@@ -80,6 +86,7 @@ const SECTIONS = [
   { sec: 'insights', name: 'Insights', open: true },
   { sec: 'terminal', name: 'Terminal & chat', open: false },
   { sec: 'defaults', name: 'Generation defaults', open: false },
+  { sec: 'cameras', name: 'Cameras', open: false },
   { sec: 'advanced', name: 'Advanced', open: false },
 ];
 
@@ -99,15 +106,20 @@ window.fetch = async (url, opts) => {
   const answer = (body) => new Response(JSON.stringify(body), {
     status: 200, headers: { 'Content-Type': 'application/json' } });
   // The camera list, in \`server._cameras_payload\`'s shape. Not one of the
-  // Advanced reads: it is fetched when Generation defaults opens.
+  // Advanced reads: it is fetched when the Cameras section opens. The two
+  // \`_map\` ones are a robot vacuum's floor plans, published as cameras:
+  // one unticked (left out of the list) and one ticked (kept, because a tick
+  // nobody can see is a tick nobody can take back).
   if (p.includes('api/cameras')) {
     return answer({
       cameras: [
         { entity_id: 'camera.porch', name: 'Porch', allowed: true },
         { entity_id: 'camera.garden_long_name_that_wraps_on_a_phone',
           name: 'The garden camera over the vegetable beds', allowed: false },
+        { entity_id: 'camera.roborock_s7_map', name: 'Roborock S7 Map', allowed: false },
+        { entity_id: 'camera.upstairs_map', name: 'Upstairs map', allowed: true },
       ],
-      allowed: ['camera.porch'], per_day: 12, used_today: 3, error: '',
+      allowed: ['camera.porch', 'camera.upstairs_map'], per_day: 12, used_today: 3, error: '',
       registry_read: true,
     });
   }
@@ -244,7 +256,11 @@ const browser = await chromium.launch({
 for (const width of WIDTHS) {
   const touch = width <= 430;
   const context = await browser.newContext({
-    viewport: { width, height: 900 }, hasTouch: touch, isMobile: touch,
+    // 740 on a phone: about an iPhone's height once Safari's bars and Home
+    // Assistant's own header have taken their share, and short enough that a
+    // dialog taller than the overlay leaves room for shows up as a second
+    // scrollbar.
+    viewport: { width, height: touch ? 740 : 900 }, hasTouch: touch, isMobile: touch,
   });
   const page = await context.newPage();
   const where = `${width}px`;
@@ -380,6 +396,63 @@ for (const width of WIDTHS) {
     (ids) => ids.filter((id) => !document.getElementById(id)), IDS);
   if (missing.length) note(where, `ids lost in the move: ${missing.join(', ')}`);
 
+  // ---- a select says its whole choice --------------------------------------
+  // Native selects cannot wrap, so a choice wider than its box was cut
+  // mid-word ("When something it reads has chang"). Measured with the
+  // select's own font: every option at the wide width (where somebody reads
+  // them side by side), and the shown one on a phone.
+  const cut = await page.evaluate((all) => {
+    const ctx = document.createElement('canvas').getContext('2d');
+    const out = [];
+    document.querySelectorAll('#setModal select').forEach((sel) => {
+      const cs = getComputedStyle(sel);
+      ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      const room = sel.clientWidth - parseFloat(cs.paddingLeft)
+        - parseFloat(cs.paddingRight) - 20;          // the arrow
+      const opts = all ? [...sel.options] : [sel.options[sel.selectedIndex]];
+      opts.filter(Boolean).forEach((o) => {
+        const w = ctx.measureText(o.textContent).width;
+        if (w > room) out.push(`#${sel.id} "${o.textContent}" (${Math.round(w)} > ${Math.round(room)})`);
+      });
+    });
+    return out;
+  }, !touch);
+  // The model list is the CLI's catalog, label and hint, and runs long on a
+  // phone by design; everything else is ours to keep short.
+  for (const c of cut.filter((x) => !(touch && x.startsWith('#setModel ')))) {
+    note(where, `a select cuts its text: ${c}`);
+  }
+
+  // ---- "How hard brAIn thinks" is inactive under a chosen model ----------
+  // The stub's model is a pinned one, which replaces the tiers for every run.
+  const think = await page.evaluate(() => ({
+    disabled: document.querySelector('#setThinking').disabled,
+    note: (document.querySelector('#setThinkingNote') || {}).textContent || '',
+  }));
+  if (!think.disabled) note(where, 'the thinking tiers look live under a chosen model');
+  if (!/Not used while a model is chosen/.test(think.note)) {
+    note(where, `the thinking line does not say why it is off: "${think.note}"`);
+  }
+
+  // ---- one scrollbar ------------------------------------------------------
+  // The dialog's body scrolls; the overlay around it must not as well. It
+  // did on any screen under ~800px tall (94vh plus 48px of padding), which
+  // put two scrollbars side by side on a phone.
+  const overlay = await page.evaluate(() => {
+    const m = document.querySelector('#setModal');
+    return { scroll: m.scrollHeight, client: m.clientHeight };
+  });
+  if (overlay.scroll > overlay.client) {
+    note(where, `the overlay scrolls as well as the dialog (${overlay.scroll} > ${overlay.client})`);
+  }
+
+  // ---- a date is a minute, not a second -----------------------------------
+  const seconds = await page.evaluate(() => {
+    const t = document.querySelector('#setModal').innerText;
+    return (t.match(/\b\d{1,2}:\d{2}:\d{2}\b/g) || []);
+  });
+  if (seconds.length) note(where, `a time is shown to the second: ${seconds.join(', ')}`);
+
   // ---- Advanced is lazy --------------------------------------------------
   try {
     const early = await page.evaluate(
@@ -444,22 +517,24 @@ for (const width of WIDTHS) {
     note(where, `driving the disclosures failed: ${String(e.message).split('\n')[0]}`);
   }
 
-  // ⚙ → Generation defaults → Cameras: read when the section opens, a full
-  // row per camera, and a tick saved through the ordinary settings PUT.
+  // ⚙ → Cameras: read when the section opens, a full row per camera, a
+  // vacuum map left out unless it is ticked, and a tick saved through the
+  // ordinary settings PUT.
   try {
     const before = await page.evaluate(
       () => window.__fetched.filter((u) => u.includes('api/cameras')).length);
     await page.evaluate(() => {
-      const d = document.querySelector('#setsecDefaults');
+      const d = document.querySelector('#setsecCameras');
       if (d.open) d.open = false;
     });
-    await page.click('#setsecDefaults > summary');
+    await page.click('#setsecCameras > summary');
     await page.waitForSelector('#setCameras .setcam', { timeout: 5000 });
     const cams = await page.evaluate(() => {
       const rows = [...document.querySelectorAll('#setCameras .setcam')];
       return {
         fetched: window.__fetched.filter((u) => u.includes('api/cameras')).length,
         rows: rows.map((r) => ({
+          id: r.querySelector('input').dataset.entity,
           h: Math.round(r.getBoundingClientRect().height),
           checked: r.querySelector('input').checked,
           right: r.getBoundingClientRect().right,
@@ -469,8 +544,17 @@ for (const width of WIDTHS) {
           .getBoundingClientRect().right,
       };
     });
-    if (cams.fetched <= before) note(where, 'opening Generation defaults did not read the cameras');
-    if (cams.rows.length !== 2) note(where, `${cams.rows.length} camera rows, not 2`);
+    if (cams.fetched <= before) note(where, 'opening the Cameras section did not read the cameras');
+    if (cams.rows.length !== 3) note(where, `${cams.rows.length} camera rows, not 3`);
+    if (cams.rows.some((r) => r.id === 'camera.roborock_s7_map')) {
+      note(where, 'an unticked vacuum map is listed as a camera');
+    }
+    if (!cams.rows.some((r) => r.id === 'camera.upstairs_map')) {
+      note(where, 'a ticked vacuum map was hidden, so its tick cannot be taken back');
+    }
+    if (!/1 vacuum map is left out/.test(cams.text)) {
+      note(where, 'the camera list does not say a vacuum map was left out');
+    }
     cams.rows.forEach((r, i) => {
       if (r.h < MIN_TARGET) note(where, `camera row ${i} is ${r.h}px`);
       if (r.right > cams.bodyRight + 0.5) note(where, `camera row ${i} overflows`);
@@ -481,7 +565,8 @@ for (const width of WIDTHS) {
     await page.waitForTimeout(200);
     const put = await page.evaluate(() => (window.__puts || []).slice(-1)[0] || null);
     if (!put || JSON.stringify(put.camera_confirm || null)
-        !== JSON.stringify(['camera.porch', 'camera.garden_long_name_that_wraps_on_a_phone'])) {
+        !== JSON.stringify(['camera.porch', 'camera.garden_long_name_that_wraps_on_a_phone',
+                            'camera.upstairs_map'])) {
       note(where, `ticking a camera saved ${JSON.stringify(put)}`);
     }
   } catch (e) {

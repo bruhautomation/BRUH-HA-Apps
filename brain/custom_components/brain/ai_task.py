@@ -127,7 +127,7 @@ class BrainAITaskEntity(AITaskEntity):
         identifiers={(DOMAIN, "system_health")},
         name="brAIn System",
         manufacturer="BRUH Automation",
-        model="Claude Terminal",
+        model="brAIn add-on",
     )
 
     def __init__(self, config_entry: ConfigEntry) -> None:

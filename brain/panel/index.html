@@ -499,8 +499,11 @@
 </div>
 
 <div id="viewProposals" class="view">
-  <section class="propwrap">
-    <div class="prophead">
+  <!-- The Findings tab's own column and head, so the Home group reads as
+       one app: it used to be a narrower centred column with a heading of
+       its own. -->
+  <section class="propwrap findwrap">
+    <div class="prophead findhead">
       <div>
         <h2>What could be better</h2>
         <p class="sub">Changes brAIn thinks would suit this house, each with the
@@ -521,7 +524,7 @@
          distrust it. -->
     <div class="propask">
       <label for="sceneArea">Design scenes for</label>
-      <select id="sceneArea"><option value="">a room…</option></select>
+      <select id="sceneArea" class="selin"><option value="">a room…</option></select>
       <button id="sceneGo" class="btn small" disabled>Design them</button>
       <p id="sceneNote" class="propasknote"></p>
     </div>
@@ -776,7 +779,11 @@
     <button id="termMode" class="tmitem" role="menuitem">
       <svg viewBox="0 0 24 24" class="ico ico-in" aria-hidden="true"><path d="m5 8 4 4-4 4M13 16h6"/></svg>
       <svg viewBox="0 0 24 24" class="ico ico-out" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg>
-      <span id="termModeLabel">Classic terminal</span>
+      <!-- Not a view toggle: the face is a saved setting (terminal_ui), the
+           same one ⚙ → Terminal & chat changes, so the item says so rather
+           than looking like a tab somebody can peek into and back out of. -->
+      <span class="tmlabel"><span id="termModeLabel">Classic terminal</span>
+        <span class="tmsub">Ask opens this way from now on</span></span>
     </button>
   </div>
 </div>
@@ -833,7 +840,15 @@
         <input id="docsSearch" type="search" autocomplete="off" spellcheck="false"
                placeholder="Search the guide…" aria-label="Search documentation">
       </div>
-      <nav id="docsNav" aria-label="Documentation sections"></nav>
+      <!-- A fold so a phone reaches the page before the contents: the nav
+           is sixty sections, and stacked above the body it was a screen and
+           a half of links before a word of the guide. Open (and the summary
+           hidden) wherever the nav sits beside the page. -->
+      <details id="docsNavFold" class="docsfold" open>
+        <summary class="docsfoldsum"><span class="docsfoldlabel">Contents</span>
+          <span id="docsNavCurrent" class="docsfoldcur"></span></summary>
+        <nav id="docsNav" aria-label="Documentation sections"></nav>
+      </details>
     </aside>
     <article id="docsBody" class="docsbody"></article>
   </div>
@@ -1090,7 +1105,7 @@
                    go and ask for. -->
               <button type="button" class="btn icon tiny"
                 aria-label="More about sharing this login with other add-ons"
-                data-tip="It is the one place outside this add-on's own storage that other BRUH add-ons can read, and it is the same thing `ha login --share` does in the Terminal tab. Sharing is off unless you turn it on, for exactly the backup reason above.">?</button>
+                data-tip="It is the one place outside this add-on's own storage that other BRUH add-ons can read, and it is the same thing `ha login --share` does in the classic terminal on the Ask tab. Sharing is off unless you turn it on, for exactly the backup reason above.">?</button>
               <div class="spacer"></div>
               <span id="authShareState" class="chip"><span class="dot"></span><span>—</span></span>
             </div>
@@ -1157,8 +1172,8 @@
               data-tip="Search gives Claude a map of your home — how many entities of each kind, which areas, a few anchors — plus read-only Home Assistant tools, and it goes and looks up what the card actually needs: a question about one room costs a room rather than five hundred entities, and it is the only mode that can afford to pull history for a question you type. Snapshot posts the whole slimmed home in one turn with no tools: predictable, and typically several times the tokens. Search falls back to Snapshot on its own if a lookup run fails, so a card always appears either way. Neither mode can change anything in your house — insight runs get reading tools only.">?</button>
           </div>
           <select id="setGatherMode" class="selin">
-            <option value="search">Search — fetch only what the card needs</option>
-            <option value="snapshot">Snapshot — send the whole home every time</option>
+            <option value="search">Search — only what the card needs</option>
+            <option value="snapshot">Snapshot — the whole home every run</option>
           </select>
           <p class="hint">Search looks up only what the card needs; Snapshot sends the whole
             home every run and costs several times the tokens.</p>
@@ -1190,7 +1205,7 @@
       <details class="setsec" id="setsecTerminal" data-sec="terminal">
         <summary>
           <span class="setsecname">Terminal &amp; chat</span>
-          <span class="setsecsub">Whether brAIn asks before it acts, which face the Terminal tab
+          <span class="setsecsub">Whether brAIn asks before it acts, which face the Ask tab
             shows, and how many conversations stay live</span>
         </summary>
         <div class="setsecbody">
@@ -1215,10 +1230,10 @@
             Protected entities are refused through brAIn's own tools, not every shell command.</p>
 
           <div class="setrow">
-            <label for="setTerminalUi">Terminal tab</label>
+            <label for="setTerminalUi">Ask tab opens as</label>
             <button type="button" class="btn icon tiny"
               aria-label="More about the two terminal faces"
-              data-tip="Both run the same Claude Code, with the same login, the same /config and the same permissions — the difference is how you see it. Chat reflows to the screen it is on, folds tool calls into one line each, and gives you a normal text box (so dictation and autocorrect behave); it is the one to use on a phone. Classic is a real terminal, which is what you want for anything that draws its own screen — a TUI, htop, an installer — or for running shell commands yourself. You can switch at any time from the Terminal tab, and the conversation comes with you.">?</button>
+              data-tip="Both run the same Claude Code, with the same login, the same /config and the same permissions — the difference is how you see it. Chat reflows to the screen it is on, folds tool calls into one line each, and gives you a normal text box (so dictation and autocorrect behave); it is the one to use on a phone. Classic is a real terminal, which is what you want for anything that draws its own screen — a TUI, htop, an installer — or for running shell commands yourself. You can switch at any time from the ⋯ menu on the Ask tab, and the conversation comes with you; that switch changes this setting too.">?</button>
           </div>
           <select id="setTerminalUi" class="selin">
             <option value="chat">Chat — Claude Code as messages</option>
@@ -1276,10 +1291,10 @@
                 <label for="setRefreshMode">When to refresh a card</label>
                 <button type="button" class="btn icon tiny"
                   aria-label="More about when a card refreshes"
-                  data-tip="When something it reads has changed skips a run that would produce the same card — the card's foot then says it is waiting. This one is brAIn's own setting and is not on the Configuration tab.">?</button>
+                  data-tip="When what it reads changes skips a run that would produce the same card — the card's foot then says it is waiting. This one is brAIn's own setting and is not on the Configuration tab.">?</button>
               </div>
               <select id="setRefreshMode" class="selin">
-                <option value="changed">When something it reads has changed</option>
+                <option value="changed">When what it reads changes</option>
                 <option value="always">Always, on the interval</option>
                 <option value="never">Never on a schedule</option>
               </select>
@@ -1296,7 +1311,7 @@
               <label for="setTimeout">Generation timeout (minutes)</label>
               <input id="setTimeout" type="number" min="2" max="30" step="1">
             </div>
-            <div>
+            <div class="setwide">
               <label for="setModel">Claude model</label>
               <select id="setModel" class="selin"></select>
               <input id="setModelCustom" class="hidden" type="text" maxlength="100"
@@ -1305,15 +1320,18 @@
                 biggest ones dig deeper. Pick <b>Custom model id…</b> for anything newer
                 than this add-on.</p>
             </div>
-            <div>
+            <div class="setwide">
               <label for="setThinking">How hard brAIn thinks</label>
               <select id="setThinking" class="selin">
-                <option value="light">Light — cheaper models wherever being wrong is cheap</option>
-                <option value="normal">Normal — Haiku looks, Sonnet thinks, Opus acts</option>
-                <option value="generous">Generous — a stronger model on cards and investigations</option>
+                <option value="light">Light — cheaper where it is safe</option>
+                <option value="normal">Normal — tiered by each job</option>
+                <option value="generous">Generous — stronger where it counts</option>
               </select>
-              <p class="hint tight">Every run is tiered by its job; this shifts the tiers.
-                A model chosen above overrides the tiers for every run.</p>
+              <!-- Rewritten by syncThinking: with a model chosen above, the
+                   tiers are not consulted at all, so the select is disabled
+                   and this line says why rather than looking live. -->
+              <p class="hint tight" id="setThinkingNote">Every run is tiered by its job (Haiku looks,
+                Sonnet thinks, Opus acts); this shifts the tiers.</p>
             </div>
             <div>
               <label for="setKeepRuns">Past runs kept per card</label>
@@ -1326,19 +1344,28 @@
           </div>
           <p class="hint">Only <code>log_level</code> stays Configuration-tab-only (it takes
             effect at startup, so there is nothing to sync).</p>
+        </div>
+      </details>
 
-          <!-- Which cameras brAIn may look at on its own. Empty until somebody
-               ticks one: a camera frame is the most private thing a house
-               holds, and voice, an automation's task and the Resident all
-               answer to this one list and one daily count. Fetched when this
-               section opens, never on the way into the dialog. -->
-          <h4 class="sethead">Cameras</h4>
-          <p class="hint">Cameras brAIn may look at on its own — when you ask a voice assistant,
-            when an automation runs a camera check, and to confirm a safety alarm or an open door.
-            None until you tick one.
+      <!-- Which cameras brAIn may look at on its own. Empty until somebody
+           ticks one: a camera frame is the most private thing a house
+           holds, and voice, an automation's task and the Resident all
+           answer to this one list and one daily count. Its own section
+           because it is a privacy decision, not a generation default, and
+           fetched when this section opens, never on the way into the
+           dialog. -->
+      <details class="setsec" id="setsecCameras" data-sec="cameras">
+        <summary>
+          <span class="setsecname">Cameras</span>
+          <span class="setsecsub">Which cameras brAIn may look at on its own, and how often it
+            has today</span>
+        </summary>
+        <div class="setsecbody">
+          <p class="hint">Looked at when you ask a voice assistant, when an automation runs a
+            camera check, and to confirm a safety alarm or an open door. None until you tick one.
             <button type="button" class="btn icon tiny"
               aria-label="More about which cameras brAIn may look at"
-              data-tip="Unticked cameras are never looked at on brAIn's own initiative. Ticked ones are looked at a limited number of times a day across every path, and a frame is described for what it shows about the house, never about a person. You asking in the chat or the terminal is you looking, and is not limited by this list.">?</button></p>
+              data-tip="Unticked cameras are never looked at on brAIn's own initiative. Ticked ones are looked at a limited number of times a day across every path, and a frame is described for what it shows about the house, never about a person. You asking in the chat or the terminal is you looking, and is not limited by this list. A robot vacuum's map is published as a camera too; those are left out of the list unless one is already ticked.">?</button></p>
           <div id="setCameras" class="setcams">Open this section to load your cameras.</div>
         </div>
       </details>
@@ -1452,7 +1479,7 @@
             <span id="rehearseLast" class="hint tight"></span>
           </div>
           <div id="rehearseBody" class="diag" hidden></div>
-          <p class="hint tight">Reporting a bug? Run <code>brain report</code> in the Terminal
+          <p class="hint tight">Reporting a bug? Run <code>brain report</code> on the Ask
             tab.
             <button type="button" class="btn icon tiny"
               aria-label="More about brain report"

@@ -71,7 +71,7 @@ Output: a short markdown list, one line per finding, most important first. If no
 3. Flag battery-powered devices that have gone unavailable (they often die silently).
 
 Output a compact markdown checklist grouped by urgency (replace now / soon / watch). Omit healthy items entirely. If everything is healthy, output exactly: "All batteries and consumables healthy." """,
-    "camera_check": """Use get_camera_snapshot to look at the cameras in this home (find them with get_all_states domain camera, skip unavailable ones). brAIn only looks at the cameras the homeowner has allowed it to (the brAIn panel, ⚙ → Generation defaults → Cameras) and only so many times a day; a camera that refuses is one it may not look at — skip it without comment.
+    "camera_check": """Use get_camera_snapshot to look at the cameras in this home (find them with get_all_states domain camera, skip unavailable ones). brAIn only looks at the cameras the homeowner has allowed it to (the brAIn panel, ⚙ → Cameras) and only so many times a day; a camera that refuses is one it may not look at — skip it without comment.
 
 For each camera you could look at: one line describing anything NOTABLE about the house — vehicles, packages, open doors/gates, weather damage, anything out of place. Never describe a person. Skip cameras showing nothing notable.
 

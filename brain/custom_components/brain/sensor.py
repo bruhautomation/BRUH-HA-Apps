@@ -64,7 +64,17 @@ USAGE_DEVICE_INFO = DeviceInfo(
     identifiers={(DOMAIN, "usage_limits")},
     name="brAIn Usage Limits",
     manufacturer="BRUH Automation",
-    model="Claude Terminal",
+    model="Anthropic usage limits",
+)
+
+# The device the add-on's own state hangs off: the to-do list, the house
+# checks button, Assist's pool, the AI Task entity — and the health verdict,
+# which is about all of those and nothing to do with usage limits.
+SYSTEM_DEVICE_INFO = DeviceInfo(
+    identifiers={(DOMAIN, "system_health")},
+    name="brAIn System",
+    manufacturer="BRUH Automation",
+    model="brAIn add-on",
 )
 
 
@@ -485,7 +495,7 @@ class BrainHealthSensor(SensorEntity):
     _attr_name = "Health"
     _attr_icon = "mdi:heart-pulse"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_device_info = USAGE_DEVICE_INFO
+    _attr_device_info = SYSTEM_DEVICE_INFO
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._entry = config_entry
@@ -618,11 +628,16 @@ class BrainHouseSensor(SensorEntity):
 
     _attr_has_entity_name = True
     _attr_should_poll = True
-    _attr_name = "House"
+    # The device carries the whole name: three devices were all called
+    # "brAIn" (this one beside the conversation agents), which nobody can
+    # tell apart in a device picker. Named after the device, the entity
+    # still reads "brAIn House" and a new install still gets
+    # `sensor.brain_house`.
+    _attr_name = None
     _attr_icon = "mdi:home-search"
     _attr_device_info = DeviceInfo(
         identifiers={(DOMAIN, "brain_house")},
-        name="brAIn",
+        name="brAIn House",
         manufacturer="BRUH Automation",
         model="House situation",
     )

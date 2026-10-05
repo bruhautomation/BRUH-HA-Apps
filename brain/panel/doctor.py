@@ -272,7 +272,7 @@ def _engine_failure(result: dict, what: str, timeout_message: str) -> dict:
                    "add-on log has the last thing it said.",
         "auth": f"{what} could not authenticate. Sign in again from "
                 "⚙ Settings → Claude account, or run `claude /login` in "
-                "the Terminal tab.",
+                "the classic terminal on the Ask tab.",
         "no_cli": "The Claude Code CLI is not in this image — nothing "
                   "here can run until it is back. Restart the add-on.",
         "max_turns": f"{what} hit the turn limit before answering.",

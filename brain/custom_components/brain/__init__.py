@@ -1257,7 +1257,7 @@ def _register_services(hass: HomeAssistant) -> None:
         await async_require_admin(hass, call.context)
         verdict, reason = _verdict(call.data["answer"])
         open_guesses = await hass.async_add_executor_job(
-            read_open_hypotheses, hass)
+            partial(read_open_hypotheses, hass, awake_only=False))
         ts = _which_guess(open_guesses, call.data.get("ts"),
                           call.data.get("question"))
         landed = await hass.async_add_executor_job(
